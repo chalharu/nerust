@@ -282,8 +282,10 @@ class MainActivityE2eTest {
         val start = requireNotNull(zones["START"])
         val b = requireNotNull(zones["B"])
         val a = requireNotNull(zones["A"])
+        val l = requireNotNull(zones["L"])
+        val r = requireNotNull(zones["R"])
 
-        assertEquals(4, zones.size)
+        assertEquals(6, zones.size)
         assertTrue(joystick.activationBounds.contains(joystick.centerX, joystick.centerY))
         assertTrue(joystick.centerX - joystick.baseRadius >= 0f)
         assertTrue(joystick.centerY + joystick.baseRadius <= 1920f)
@@ -295,6 +297,9 @@ class MainActivityE2eTest {
         assertTrue("Start should sit above the face buttons", start.y + start.height < a.y)
         assertTrue("Select should sit between the joystick and face buttons", select.x > joystick.centerX)
         assertTrue("Start should sit between the D-pad and face buttons", start.x + start.width < b.x)
+        assertTrue("L should sit left of R", l.x + l.width < r.x)
+        assertTrue("Shoulders should sit above the face buttons", l.y + l.height < b.y)
+        assertTrue("Shoulders should sit above the face buttons", r.y + r.height < a.y)
     }
 
     @Test
@@ -303,7 +308,7 @@ class MainActivityE2eTest {
         val height = 1080f
         val zones = controlsLayout(width, height)
         val joystick = floatingJoystickLayout(width, height)
-        assertEquals(4, zones.size)
+        assertEquals(6, zones.size)
         zones.forEach { zone ->
             assertTrue(zone.x >= 0f && zone.y >= 0f)
             assertTrue(zone.x + zone.width <= width)

@@ -1,0 +1,1007 @@
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DmaTrigger {
+    #[default]
+    Immediate,
+    VBlank,
+    HBlank,
+    Special,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DmaTransfer {
+    pub channel: usize,
+    /// Programmed-counter source (drives N/S timing; may descend).
+    pub source: u32,
+    /// Actual data-read source (forced increment inside GamePak ROM).
+    pub data_source: u32,
+    pub destination: u32,
+    pub width: u8,
+    pub latched_value: u32,
+    /// GamePak-idle bus ticks issued before this transfer's read, this
+    /// burst (handover tick plus earlier non-cartridge accesses). Lets
+    /// the prefetch fill clock advance across the DMA window.
+    pub pre_read_idle: u32,
+    /// Same, including this transfer's own source ticks, for the write
+    /// side collision check.
+    pub pre_write_idle: u32,
+    /// True when the burst head issued outside GamePak ROM; only such
+    /// bursts apply the 16-bit ROM read-path shift.
+    pub shift_primed: bool,
+    /// True when this unit is the only unit of its burst. The 16-bit
+    /// GamePak pre-increment read (dest[i] = mem16(src+2+2i)) is a
+    /// multi-unit pipeline effect (HW-pinned by hw-test ROM burst-into-tears,
+    /// count 3): single-unit 16-bit reads land on the aligned source
+    /// (mgba-suite "ROM load DMA1 16" pins 0xBEEF, not 0xDEAD).
+    pub single_unit: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
+struct DmaChannel {
+    source: u32,
+    destination: u32,
+    count: u16,
+    control: u16,
+    current_source: u32,
+    current_destination: u32,
+    remaining: u32,
+    active: bool,
+    delay: u8,
+    latch: u32,
+    prev_src: u32,
+    prev_dst: u32,
+    is_first: bool,
+    pending: u8,
+    stalled: bool,
+    /// Latched at enable: whether the burst head issued outside GamePak
+    /// ROM (see `DmaTransfer::shift_primed`). The latched source is fixed
+    /// for the burst (re-arms keep it), so the flag needs no per-unit
+    /// update.
+    shift_primed: bool,
+    /// Data-stream source: forced increment inside GamePak ROM while
+    /// N/S timing follows the programmed counter.
+    data_source: u32,
+    /// GamePak-idle ticks issued so far this burst (handover plus
+    /// non-cartridge accesses). Resets at every burst head.
+    burst_idle: u32,
+    completing: bool,
+    completion_interrupt: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct GbaDma {
+    channels: [DmaChannel; 4],
+    completion_interrupts: u16,
+    /// Cached active-channel bitmask (bit i = `channels[i].active`).
+    /// `is_active()` runs on nearly every T-cycle (~280k/frame), so a
+    /// single integer test replaces the 4-element iterator scan. Pure
+    /// perf hint, excluded from wire state: maintained at every site
+    /// that flips `channel.active`, recomputed on state import, reset
+    /// by `Default` (0 is always valid; any drift would only cost a
+    /// recompute, but the sites below keep it exact).
+    active_mask: u8,
+    /// Cached pending-latency bitmask (bit i = `channels[i].pending > 0`).
+    /// Same contract as `active_mask`: `tick_pending()` (every T-cycle)
+    /// and `has_pending()` (every opcode fetch) early-out on zero.
+    /// Maintained at every site that moves `pending` across zero:
+    /// triggers set, `tick_pending` clears on expiry, `write_control` /
+    /// `finish` / `stop_video_transfer` resync. `retime_pending` and
+    /// `advance_idle` provably never cross zero (the former only lowers
+    /// nonzero values, the latter runs under a `pending - 1` horizon
+    /// cap), so they need no update.
+    pending_mask: u8,
+}
+
+/// Phase 10 wire state: all four channels plus latched completion IRQs.
+/// `DmaTransfer` is a transient per-unit descriptor and never enters the DTO.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct GbaDmaState {
+    channels: [DmaChannel; 4],
+    completion_interrupts: u16,
+}
+
+impl GbaDmaState {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        for (index, channel) in self.channels.iter().enumerate() {
+            // `remaining` is NOT bounded by `count`: sound-FIFO DMA
+            // re-latches `remaining = 4` with a zero count register.
+            // The hard ceiling is the DMA3 16-bit count.
+            if channel.remaining > 0x1_0000 {
+                return Err(format!(
+                    "dma{index}: remaining out of range: {}",
+                    channel.remaining
+                ));
+            }
+            // Armed by trigger paths to 3 (4 on the burst head); counts down.
+            if channel.pending > 8 {
+                return Err(format!(
+                    "dma{index}: pending out of range: {}",
+                    channel.pending
+                ));
+            }
+            // `finish_unit` decrements unconditionally on the unit path, so
+            // an active non-completing channel must hold at least one unit.
+            // (active + remaining 0 + completing is the transient tail.)
+            if channel.active && channel.remaining == 0 && !channel.completing {
+                return Err(format!("dma{index}: active channel with no units left"));
+            }
+            // Per-burst idle ticks (a 64K-unit burst accrues at most ~33M);
+            // the step path adds to it without saturation.
+            if channel.burst_idle > 0x1000_0000 {
+                return Err(format!("dma{index}: burst idle out of range"));
+            }
+        }
+        // Latched only as 1 << (8 + channel) for channels 0-3.
+        if self.completion_interrupts & !0x0F00 != 0 {
+            return Err(format!(
+                "dma: completion interrupts out of range: {:#X}",
+                self.completion_interrupts
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl GbaDma {
+    /// The bus stays owned through the completion tick: the CPU resumes
+    /// once the last unit's delay has fully elapsed and the channel state
+    /// has settled.
+    pub fn is_active(&self) -> bool {
+        self.active_mask != 0
+    }
+
+    /// Re-derive one channel's mask bits after a free-function channel
+    /// writer ran (`write_control` / `finish` take `&mut DmaChannel`
+    /// and know nothing of the masks; each call site names its channel).
+    /// Both the active and the pending bit resync: `write_control` arms
+    /// (`pending = 4`) or kills (`pending = 0`) countdowns, `finish`
+    /// always clears both.
+    fn sync_mask_bits(&mut self, channel: usize) {
+        let dma = &self.channels[channel];
+        let active_bit = u8::from(dma.active) << channel;
+        let pending_bit = u8::from(dma.pending > 0) << channel;
+        // Preserve the other channels' bits; only this channel resyncs.
+        let keep = !(1 << channel);
+        self.active_mask = (self.active_mask & keep) | active_bit;
+        self.pending_mask = (self.pending_mask & keep) | pending_bit;
+    }
+
+    pub fn read(&self, address: u32) -> Option<u16> {
+        let (channel, register) = decode(address)?;
+        let dma = self.channels[channel];
+        Some(match register {
+            0 => dma.source as u16,
+            1 => (dma.source >> 16) as u16,
+            2 => dma.destination as u16,
+            3 => (dma.destination >> 16) as u16,
+            4 => dma.count,
+            _ => dma.control,
+        })
+    }
+
+    pub fn write(&mut self, address: u32, value: u16) -> bool {
+        let Some((channel, register)) = decode(address) else {
+            return false;
+        };
+        let dma = &mut self.channels[channel];
+        match register {
+            0 => dma.source = (dma.source & 0xFFFF0000) | u32::from(value),
+            1 => dma.source = (dma.source & 0xFFFF) | (u32::from(value) << 16),
+            2 | 3 => {
+                if register == 2 {
+                    dma.destination = (dma.destination & 0xFFFF0000) | u32::from(value);
+                } else {
+                    dma.destination = (dma.destination & 0xFFFF) | (u32::from(value) << 16);
+                }
+                // A destination rewrite on an idle enabled channel can turn
+                // it into FIFO DMA (enable latched it as a plain transfer);
+                // re-latch the 4x32-bit burst. Never touch a running burst.
+                if !dma.active && dma.control & 0x8000 != 0 && sound_dma(channel, dma.control) {
+                    dma.remaining = 4;
+                }
+            }
+            4 => dma.count = value,
+            _ => {
+                write_control(dma, channel, value);
+                // `write_control` flips this channel's active bit on
+                // enable/disable edges; re-derive the cached mask bits.
+                self.sync_mask_bits(channel);
+            }
+        }
+        true
+    }
+
+    pub fn trigger(&mut self, trigger: DmaTrigger) {
+        for (channel, dma) in self.channels.iter_mut().enumerate() {
+            // GBATEK: Special on DMA0 is Prohibited — it never fires.
+            if channel == 0 && trigger == DmaTrigger::Special {
+                continue;
+            }
+            if dma.control & 0x8000 != 0
+                && timing_for(channel, dma.control) == trigger
+                && !dma.active
+                && dma.pending == 0
+            {
+                // The DMA owns the bus 3 cycles after the start
+                // condition fires (event-triggered latency; dma_fit
+                // HBlank/VBlank phases pin it against shorter values).
+                dma.pending = 3;
+                self.pending_mask |= 1 << channel;
+                dma.is_first = true;
+            }
+        }
+    }
+
+    pub fn trigger_channel(&mut self, channel: usize, trigger: DmaTrigger) {
+        // GBATEK: Special on DMA0 is Prohibited — it never fires.
+        if channel == 0 && trigger == DmaTrigger::Special {
+            return;
+        }
+        if channel < 4 {
+            let dma = &mut self.channels[channel];
+            if dma.control & 0x8000 != 0
+                && timing_for(channel, dma.control) == trigger
+                && !dma.active
+                && dma.pending == 0
+            {
+                dma.pending = 3;
+                self.pending_mask |= 1 << channel;
+                dma.is_first = true;
+            }
+        }
+    }
+
+    #[inline]
+    pub fn tick_pending(&mut self) {
+        if self.pending_mask == 0 {
+            return;
+        }
+        let mut mask = self.pending_mask;
+        for (index, dma) in self.channels.iter_mut().enumerate() {
+            if dma.pending > 0 {
+                dma.pending -= 1;
+                if dma.pending == 0 {
+                    mask &= !(1 << index);
+                    if dma.control & 0x8000 != 0 {
+                        dma.active = true;
+                        dma.is_first = true;
+                        self.active_mask |= 1 << index;
+                    }
+                }
+            }
+        }
+        self.pending_mask = mask;
+    }
+
+    pub fn has_pending(&self) -> bool {
+        self.pending_mask != 0
+    }
+
+    /// Delay ticks remaining before the priority active channel's next
+    /// word phase (its `delay` burns down, then the unit issues), or 0
+    /// when the next tick must run the word phase (no active channel,
+    /// delay exhausted, or a completion tick pending). Lets the bus
+    /// fold pure delay burns arithmetically.
+    pub(crate) fn burn_remaining(&self) -> u8 {
+        let Some(dma) = self.channels.iter().find(|dma| dma.active) else {
+            return 0;
+        };
+        if dma.completing || dma.delay == 0 {
+            return 0;
+        }
+        dma.delay
+    }
+
+    /// Burn `n` delay ticks on the priority active channel
+    /// (`n <= burn_remaining()` at the same state): exactly equivalent
+    /// to `n` per-tick `tick_delay` burns with no unit issued.
+    pub(crate) fn burn_delay(&mut self, n: u8) {
+        let dma = self
+            .channels
+            .iter_mut()
+            .find(|dma| dma.active)
+            .expect("burn target active");
+        debug_assert!(!dma.completing && dma.delay >= n);
+        dma.delay -= n;
+    }
+
+    /// Batching horizon: quiet prefix before the next startup-latency
+    /// expiry. An active channel forces per-cycle stepping (word side
+    /// effects stay on the exact path for now).
+    #[inline]
+    pub(crate) fn quiet_cycles(&self) -> u64 {
+        if self.is_active() {
+            return 0;
+        }
+        self.pending_quiet_cycles()
+    }
+
+    /// Pending-latency caps only, tolerating an active channel (for the
+    /// DMA-active fast path: word side effects stay per-tick in the DMA
+    /// phase, but a latency expiry still changes the phase mid-tick).
+    #[inline]
+    pub(crate) fn pending_quiet_cycles(&self) -> u64 {
+        let mut horizon = u64::MAX;
+        for dma in &self.channels {
+            if dma.pending > 0 {
+                horizon = horizon.min(u64::from(dma.pending) - 1);
+            }
+        }
+        horizon
+    }
+
+    /// Decrement startup latencies. Valid only with no activation inside
+    /// the span (verified by the horizon) and no active channel.
+    #[inline]
+    pub(crate) fn advance_idle(&mut self, n: u64) {
+        if n == 0 {
+            return;
+        }
+        for dma in &mut self.channels {
+            if dma.pending > 0 {
+                dma.pending -= n as u8;
+            }
+        }
+    }
+
+    /// Shorten a pending Immediate startup to 3 (prefetch overlaps one
+    /// tick; see the CNT_H arming site). Never lengthens.
+    pub fn retime_pending(&mut self, channel: usize, pending: u8) {
+        if channel < 4 {
+            let dma = &mut self.channels[channel];
+            if dma.pending > 0 && pending < dma.pending {
+                dma.pending = pending;
+            }
+        }
+    }
+
+    pub(crate) fn export_state(&self) -> GbaDmaState {
+        GbaDmaState {
+            channels: self.channels,
+            completion_interrupts: self.completion_interrupts,
+        }
+    }
+
+    pub(crate) fn import_state(&mut self, state: GbaDmaState) -> Result<(), String> {
+        state.validate()?;
+        self.channels = state.channels;
+        self.completion_interrupts = state.completion_interrupts;
+        // Re-derive the cached masks (excluded from wire state).
+        let mut active = 0u8;
+        let mut pending = 0u8;
+        for (index, channel) in self.channels.iter().enumerate() {
+            if channel.active {
+                active |= 1 << index;
+            }
+            if channel.pending > 0 {
+                pending |= 1 << index;
+            }
+        }
+        self.active_mask = active;
+        self.pending_mask = pending;
+        Ok(())
+    }
+
+    /// Produce at most one bus transfer. Lower-numbered active channels have priority.
+    /// `stall` maps an address to the display-controller contention wait
+    /// (0 outside video RAM / VBlank); the bus owner pays it like the CPU.
+    pub fn step(&mut self, waitcnt: u16, stall: &mut dyn FnMut(u32) -> u8) -> Option<DmaTransfer> {
+        // Priority select off the cached mask: the lowest-numbered
+        // active channel wins, exactly like the linear `position` scan
+        // this replaces (bit 0 = channel 0 = highest priority).
+        if self.active_mask == 0 {
+            return None;
+        }
+        let channel = self.active_mask.trailing_zeros() as usize;
+        // Burn order matters: the last unit's delay elapses across the
+        // completion tail (one burn per tick), so `tick_delay` runs
+        // before the completing check, exactly like the historic
+        // borrow-then-burn-then-check sequence.
+        if !tick_delay(&mut self.channels[channel]) {
+            return None;
+        }
+        if self.channels[channel].completing {
+            let interrupt = self.channels[channel].completion_interrupt;
+            finish(&mut self.channels[channel], channel);
+            self.sync_mask_bits(channel);
+            if interrupt {
+                self.completion_interrupts |= 1 << (8 + channel);
+            }
+            return None;
+        }
+        let dma = &mut self.channels[channel];
+        let raw_width = if dma.control & (1 << 10) != 0 { 4 } else { 2 };
+        // Sound-FIFO DMA always moves 32-bit units (GBATEK DMA).
+        let width = if sound_dma(channel, dma.control) {
+            4
+        } else {
+            raw_width
+        };
+        let source = dma.current_source & !(u32::from(width) - 1);
+        let destination = dma.current_destination & !(u32::from(width) - 1);
+        // 16-bit GamePak reads pre-increment (bus carries source+2);
+        // track the phantom stream for N/S, with no shift for 32-bit
+        // or non-ROM sources.
+        let lands_in_rom = is_rom(source) || is_rom(source.wrapping_add(2));
+        let bus_src = if width == 2 && lands_in_rom {
+            source.wrapping_add(2)
+        } else {
+            source
+        };
+        let is_seq_src = seq_src_active(dma, bus_src, width);
+        // GBATEK transfer rate ("Except for the first data unit, all
+        // units are transferred by sequential reads and writes"): every
+        // destination mode, including fixed, is sequential after the
+        // first unit.
+        let is_seq_dst = if dma.is_first {
+            // HW-observed (mgba-suite Timing ROM-to-ROM cells): a both-ROM
+            // burst streams the destination from the first unit (S); all
+            // other first units are N (GBATEK 2N). Single-ROM and non-ROM
+            // first-destinations stay N (their cells pin it).
+            is_rom(source) && is_rom(destination)
+        } else {
+            true
+        };
+        let src_wait = dma_bus_wait(source, width, is_seq_src, waitcnt, stall(source));
+        let dst_wait = dma_bus_wait(destination, width, is_seq_dst, waitcnt, stall(destination));
+        // Per-burst cost is N/S waits plus a single 2I on the first unit,
+        // except DMA3 video-capture bursts which start with plain 2N.
+        let total_wait = u32::from(src_wait) + u32::from(dst_wait);
+        // HW-observed (mgba-suite Timing ROM-to-ROM cells): a both-ROM
+        // burst pays 2I (GBATEK's 4I overshoots); single/non-ROM keep 2I.
+        // DMA3 video-capture bursts skip it (see above).
+        let internal: u32 =
+            if dma.is_first && !(channel == 3 && timing(dma.control) == DmaTrigger::Special) {
+                2
+            } else {
+                0
+            };
+        dma.delay = (total_wait + internal) as u8;
+        // GamePak-idle ticks before this transfer's accesses, this burst:
+        // the bus-handover tick plus earlier non-cartridge accesses. The
+        // handover hands the bus from the CPU to DMA with no access in
+        // flight, so the count starts at 1 at every burst head.
+        if dma.is_first {
+            dma.burst_idle = 1;
+        }
+        let src_idle = if on_cart_bus(source) {
+            0
+        } else {
+            u32::from(src_wait)
+        };
+        let dst_idle = if on_cart_bus(destination) {
+            0
+        } else {
+            u32::from(dst_wait)
+        };
+        let pre_read_idle = dma.burst_idle;
+        let pre_write_idle = dma.burst_idle + src_idle;
+        dma.burst_idle += src_idle + dst_idle;
+        Some(finish_unit(
+            dma,
+            channel,
+            UnitOut {
+                source,
+                destination,
+                width,
+                bus_src,
+                pre_read_idle,
+                pre_write_idle,
+            },
+        ))
+    }
+
+    #[inline]
+    pub fn take_completion_interrupts(&mut self) -> u16 {
+        std::mem::take(&mut self.completion_interrupts)
+    }
+
+    /// Find an enabled Special channel (1 or 2) feeding a sound FIFO,
+    /// for timer-overflow-driven sound DMA (GBATEK SOUNDCNT_H). The FIFO
+    /// side follows the destination word (A0/A2 -> A, A4/A6 -> B).
+    pub fn sound_channel_for_fifo(&self, fifo_b: bool) -> Option<usize> {
+        [1, 2].into_iter().find(|&channel| {
+            let dma = &self.channels[channel];
+            dma.control & 0x8000 != 0
+                && timing(dma.control) == DmaTrigger::Special
+                && ((dma.destination & 4) != 0) == fifo_b
+                && matches!(dma.destination & !7, 0x0400_00A0 | 0x0400_00A4)
+        })
+    }
+
+    /// DMA3 video-capture (special) transfer armed (enabled + special timing).
+    pub fn has_video_transfer(&self) -> bool {
+        let dma = &self.channels[3];
+        dma.control & 0x8000 != 0 && timing(dma.control) == DmaTrigger::Special
+    }
+
+    /// Stop a DMA3 video transfer.
+    pub fn stop_video_transfer(&mut self) {
+        let dma = &mut self.channels[3];
+        if dma.control & 0x8000 != 0 && timing(dma.control) == DmaTrigger::Special {
+            dma.control &= !0x8000;
+            dma.active = false;
+            self.active_mask &= !(1 << 3);
+            dma.pending = 0;
+            self.pending_mask &= !(1 << 3);
+            dma.delay = 0;
+            dma.stalled = false;
+            dma.completing = false;
+            dma.completion_interrupt = false;
+        }
+    }
+
+    pub fn update_latch(&mut self, channel: usize, width: u8, value: u32) {
+        self.channels[channel].latch = if width == 2 {
+            let halfword = value & 0xFFFF;
+            halfword | (halfword << 16)
+        } else {
+            value
+        };
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
+    let was_enabled = dma.control & 0x8000 != 0;
+    // DRQ exists on DMA3 only; latch Repeat+DRQ verbatim, never re-arm
+    // a DRQ+Repeat channel.
+    dma.control = value & if channel == 3 { 0xFFE0 } else { 0xF7E0 };
+    if dma.control & 0x8000 != 0 && !was_enabled {
+        dma.current_source = dma.source
+            & if channel == 0 {
+                0x07FF_FFFF
+            } else {
+                0x0FFF_FFFF
+            };
+        dma.current_destination = dma.destination
+            & if channel == 3 {
+                0x0FFF_FFFF
+            } else {
+                0x07FF_FFFF
+            };
+        dma.remaining = if sound_dma(channel, dma.control) {
+            // GBATEK DMA: sound transfers ignore CNT_L and always move
+            // 4x32-bit per timer overflow.
+            4
+        } else {
+            effective_count(channel, dma.count)
+        };
+        dma.is_first = true;
+        dma.prev_src = 0;
+        dma.prev_dst = 0;
+        dma.shift_primed = !is_rom(dma.current_source);
+        dma.data_source = dma.current_source;
+        dma.delay = 0;
+        dma.stalled = false;
+        dma.completing = false;
+        dma.completion_interrupt = false;
+        if timing_for(channel, dma.control) == DmaTrigger::Immediate {
+            // GBATEK startup + the enabling bus cycle: event-triggered
+            // DMA starts 3 cycles after its trigger (pending=3), but an
+            // Immediate channel pays one more cycle for the CNT_H enabling
+            // write itself (nba start-delay reads 20, not 19; uniform 3
+            // was tried and fails the pin, so the +1 stays).
+            dma.pending = 4;
+            dma.active = false;
+        }
+    } else if dma.control & 0x8000 == 0 {
+        dma.active = false;
+        dma.pending = 0;
+        dma.delay = 0;
+        dma.stalled = false;
+        dma.completing = false;
+        dma.completion_interrupt = false;
+    }
+}
+
+fn finish(dma: &mut DmaChannel, channel: usize) {
+    let repeat = dma.control & (1 << 9) != 0;
+    // GBATEK DMA3: Repeat must be zero when DRQ is set; such a combo is a
+    // programming error, so it never re-arms (the latch itself is kept
+    // verbatim for HW readback; see write_control).
+    let repeat = repeat && !(channel == 3 && dma.control & 0x0800 != 0);
+    dma.active = false;
+    dma.pending = 0;
+    dma.delay = 0;
+    dma.stalled = false;
+    dma.completing = false;
+    dma.completion_interrupt = false;
+    if repeat {
+        dma.remaining = if sound_dma(channel, dma.control) {
+            4
+        } else {
+            effective_count(channel, dma.count)
+        };
+        dma.is_first = true;
+        if destination_mode(dma.control) == 3 {
+            // Reload with the same masking as enable-time latching.
+            dma.current_destination = dma.destination
+                & if channel == 3 {
+                    0x0FFF_FFFF
+                } else {
+                    0x07FF_FFFF
+                };
+        }
+        if timing_for(channel, dma.control) == DmaTrigger::Immediate {
+            // Immediate has no recurring start condition, so Repeat cannot
+            // re-arm it: clear Enable like the non-repeat path instead
+            // of looping.
+            dma.control &= !0x8000;
+        }
+    } else {
+        dma.control &= !0x8000;
+    }
+}
+
+fn effective_count(channel: usize, count: u16) -> u32 {
+    // GBATEK DMA: channels 0-2 count 14 bits (0 = 0x4000), channel 3 16 bits.
+    if channel == 3 {
+        if count != 0 {
+            u32::from(count)
+        } else {
+            0x1_0000
+        }
+    } else {
+        let masked = u32::from(count & 0x3FFF);
+        if masked != 0 { masked } else { 0x4000 }
+    }
+}
+
+fn timing(control: u16) -> DmaTrigger {
+    match (control >> 12) & 3 {
+        1 => DmaTrigger::VBlank,
+        2 => DmaTrigger::HBlank,
+        3 => DmaTrigger::Special,
+        _ => DmaTrigger::Immediate,
+    }
+}
+
+/// Per-channel start timing. GBATEK DMA Start Timing: Special on DMA0 is
+/// Prohibited — it has no start source, so it never fires. Return the raw
+/// timing so no enable, trigger, or repeat path can mistake it for
+/// Immediate.
+fn timing_for(_channel: usize, control: u16) -> DmaTrigger {
+    timing(control)
+}
+
+/// Sound-FIFO DMA: a Special-timed transfer on channel 1/2 always moves
+/// 4x32-bit with a fixed destination (no destination-address condition).
+/// GBATEK restricts sound DMA to channels 1/2 (DMA0 Special is Prohibited,
+/// DMA3 Special is Video Capture), so the channel gates the quirk: other
+/// channels fall through to normal timing.
+fn sound_dma(channel: usize, control: u16) -> bool {
+    (channel == 1 || channel == 2) && timing(control) == DmaTrigger::Special
+}
+
+/// Count one delay tick down; true once the unit may issue.
+fn tick_delay(dma: &mut DmaChannel) -> bool {
+    if dma.delay == 0 {
+        return true;
+    }
+    dma.delay -= 1;
+    dma.delay == 0
+}
+
+/// Source N/S for this unit (false on the burst head).
+fn seq_src_active(dma: &DmaChannel, bus_src: u32, width: u8) -> bool {
+    if dma.is_first {
+        return false;
+    }
+    let same_block = (bus_src & !0x1FFFF) == (dma.prev_src & !0x1FFFF);
+    let seq = match source_mode(dma.control) {
+        1 => bus_src == dma.prev_src.wrapping_sub(u32::from(width)),
+        0 => bus_src == dma.prev_src.wrapping_add(u32::from(width)),
+        // GBATEK transfer rate ("Except for the first data unit,
+        // all units are transferred by sequential reads and writes").
+        _ => true,
+    };
+    if !is_rom(bus_src) {
+        return seq;
+    }
+    // 128K blocks force N (GBATEK GamePak Prefetch), except the
+    // final unit: N/S describes the gap to a successor access,
+    // and the last unit has none (nba 128kb-boundary late-cross
+    // measures S-cost while early/mid crosses measure N).
+    seq && (same_block || dma.remaining == 1)
+}
+
+/// Unit fields consumed by the advance-and-emit tail.
+struct UnitOut {
+    source: u32,
+    destination: u32,
+    width: u8,
+    bus_src: u32,
+    pre_read_idle: u32,
+    pre_write_idle: u32,
+}
+
+/// Advance the address streams and emit the transfer descriptor.
+fn finish_unit(dma: &mut DmaChannel, channel: usize, unit: UnitOut) -> DmaTransfer {
+    dma.current_source = advance(
+        dma.current_source,
+        source_mode(dma.control),
+        unit.width,
+        false,
+    );
+    // Data stream: forced increment inside GamePak ROM, re-evaluated
+    // per unit on region crossing; programmed mode elsewhere, where it
+    // coincides with the counter above.
+    let data_source = dma.data_source & !(u32::from(unit.width) - 1);
+    let data_mode = if is_rom(data_source) {
+        0
+    } else {
+        source_mode(dma.control)
+    };
+    dma.data_source = advance(dma.data_source, data_mode, unit.width, false);
+    if !sound_dma(channel, dma.control) {
+        // GBATEK DMA: sound FIFO transfers never increment the
+        // destination; the 4x32-bit burst always lands in the FIFO.
+        dma.current_destination = advance(
+            dma.current_destination,
+            destination_mode(dma.control),
+            unit.width,
+            true,
+        );
+    }
+    dma.prev_src = unit.bus_src;
+    dma.prev_dst = unit.destination;
+    let was_first = dma.is_first;
+    dma.is_first = false;
+    dma.remaining -= 1;
+    if dma.remaining == 0 {
+        dma.completing = true;
+        dma.completion_interrupt = dma.control & (1 << 14) != 0;
+        // No completion tail: the corrected CPU model needs none.
+    }
+    DmaTransfer {
+        channel,
+        source: unit.source,
+        data_source,
+        destination: unit.destination,
+        width: unit.width,
+        pre_read_idle: unit.pre_read_idle,
+        pre_write_idle: unit.pre_write_idle,
+        shift_primed: dma.shift_primed,
+        latched_value: dma.latch,
+        // `remaining` already counts down past this unit, and
+        // `was_first` marks the burst head: only a lone unit
+        // (remaining == 0 after decrement with was_first) skips the
+        // pre-increment; every unit of a multi-unit burst shifts,
+        // including the last (burst-into-tears TIME pin).
+        single_unit: dma.remaining == 0 && was_first,
+    }
+}
+
+pub(crate) fn is_rom(address: u32) -> bool {
+    (0x08000000..=0x0DFFFFFF).contains(&address)
+}
+
+/// True while the access occupies the cartridge bus (GamePak ROM,
+/// SRAM/Flash backup, GPIO/RTC): the prefetch fill clock freezes.
+/// Anything else leaves the GamePak bus free to keep filling.
+pub(crate) fn on_cart_bus(address: u32) -> bool {
+    (0x08000000..=0x0FFFFFFF).contains(&address)
+}
+
+fn source_mode(control: u16) -> u16 {
+    (control >> 7) & 3
+}
+
+fn destination_mode(control: u16) -> u16 {
+    (control >> 5) & 3
+}
+
+fn advance(address: u32, mode: u16, width: u8, destination: bool) -> u32 {
+    match mode {
+        1 => address.wrapping_sub(u32::from(width)),
+        2 => address,
+        // GBATEK marks source mode 3 "Prohibited"; de-facto HW behavior
+        // is increment, which is what the fallthrough implements.
+        // Destination mode 3 is Increment+Reload (reload handled at finish).
+        3 if destination => address.wrapping_add(u32::from(width)),
+        _ => address.wrapping_add(u32::from(width)),
+    }
+}
+
+fn dma_bus_wait(address: u32, width: u8, is_seq: bool, waitcnt: u16, stall: u8) -> u8 {
+    match address {
+        0x00000000..=0x00003FFF => 1,
+        0x02000000..=0x02FFFFFF => {
+            if width == 4 {
+                6
+            } else {
+                3
+            }
+        }
+        0x03000000..=0x03FFFFFF => 1,
+        0x04000000..=0x040003FE => 1,
+        // GBATEK bus widths: Palette/VRAM 16bit=1, 32bit=2 (+display stall).
+        0x05000000..=0x05FFFFFF => (if width == 4 { 2 } else { 1 }) + stall,
+        0x06000000..=0x06FFFFFF => (if width == 4 { 2 } else { 1 }) + stall,
+        // DMA owns the bus but still contends with the display controller
+        // on video memory (hw-test ROM burst-into-tears: 3 draw-phase
+        // OAM accesses stall +1 each; without them TIME reads 38
+        // instead of 41).
+        0x07000000..=0x07FFFFFF => 1 + stall,
+        0x08000000..=0x0DFFFFFF => {
+            const FIRST: [u8; 4] = [4, 3, 2, 8];
+            let (first_shift, second_shift, second_slow) = match address {
+                0x08000000..=0x09FFFFFF => (2, 4, 2),
+                0x0A000000..=0x0BFFFFFF => (5, 7, 4),
+                _ => (8, 10, 8),
+            };
+            let first = FIRST[((waitcnt >> first_shift) & 0b11) as usize];
+            let second = if (waitcnt >> second_shift) & 1 == 0 {
+                second_slow
+            } else {
+                1
+            };
+            // DMA uses the same Game Pak access timing as the CPU
+            // (1 base + waits: N16=5/S16=3 at WS0 defaults).
+            if width == 4 {
+                if is_seq {
+                    second * 2 + 2
+                } else {
+                    first + second + 2
+                }
+            } else if is_seq {
+                second + 1
+            } else {
+                first + 1
+            }
+        }
+        0x0E000000..=0x0FFFFFFF => {
+            // Same as the CPU path: waitstates + 1 base, no width
+            // multiplier (8-bit SRAM bus; wide accesses move one byte).
+            const SRAM_WAIT: [u8; 4] = [4, 3, 2, 8];
+            SRAM_WAIT[(waitcnt & 0b11) as usize] + 1
+        }
+        _ => 1,
+    }
+}
+
+fn decode(address: u32) -> Option<(usize, usize)> {
+    if !(0x040000B0..=0x040000DE).contains(&address) || address & 1 != 0 {
+        return None;
+    }
+    let offset = (address - 0x040000B0) as usize;
+    Some((offset / 12, (offset % 12) / 2))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn immediate_transfer_latches_and_completes() {
+        let mut dma = GbaDma::default();
+        dma.write(0x040000D4, 0x1000);
+        dma.write(0x040000D6, 0x0200);
+        dma.write(0x040000D8, 0x2000);
+        dma.write(0x040000DA, 0x0300);
+        dma.write(0x040000DC, 2);
+        dma.write(0x040000DE, 0xC400);
+        let mut first = None;
+        for _ in 0..30 {
+            dma.tick_pending();
+            if let Some(t) = dma.step(0, &mut |_| 0) {
+                first = Some(t);
+                break;
+            }
+        }
+        let first = first.expect("first transfer should complete");
+        assert_eq!(
+            (first.source, first.destination, first.width),
+            (0x02001000, 0x03002000, 4)
+        );
+        let mut second = None;
+        for _ in 0..30 {
+            if let Some(t) = dma.step(0, &mut |_| 0) {
+                second = Some(t);
+                break;
+            }
+        }
+        let second = second.expect("second transfer should complete");
+        // Completion IRQs arrive via take_completion_interrupts (one tick
+        // after the final write; GBATEK only says "upon end of Word Count").
+        for _ in 0..30 {
+            if !dma.is_active() {
+                break;
+            }
+            dma.step(0, &mut |_| 0);
+        }
+        assert_eq!(dma.take_completion_interrupts(), 1 << (8 + second.channel));
+        assert_eq!(dma.read(0x040000DE).unwrap() & 0x8000, 0);
+    }
+
+    #[test]
+    fn sound_dma_ignores_count_and_fixes_destination() {
+        // GBATEK DMA: Special FIFO transfers always move 4x32-bit with a
+        // fixed destination, regardless of CNT_L/width/mode bits.
+        let mut dma = GbaDma::default();
+        dma.write(0x040000BC, 0x1000);
+        dma.write(0x040000BE, 0x0200);
+        dma.write(0x040000C0, 0x00A0);
+        dma.write(0x040000C2, 0x0400);
+        dma.write(0x040000C4, 100); // CNT_L ignored for sound
+        // 16-bit + dst increment + repeat + IRQ + Special + enable
+        dma.write(0x040000C6, 0x8000 | 0x3000 | 0x4000 | 0x0200 | (2 << 5));
+        // Special timing waits for its trigger (here: timer overflow).
+        dma.trigger_channel(1, DmaTrigger::Special);
+        let mut units = Vec::new();
+        for _ in 0..60 {
+            dma.tick_pending();
+            if let Some(t) = dma.step(0, &mut |_| 0) {
+                units.push((t.source, t.destination, t.width));
+            }
+            if !dma.is_active() && !dma.has_pending() && units.len() >= 4 {
+                break;
+            }
+        }
+        assert_eq!(units.len(), 4);
+        for (src, dst, width) in &units {
+            assert_eq!(*width, 4);
+            assert_eq!(*dst, 0x0400_00A0);
+            let _ = src;
+        }
+        // Sources advance by 4 despite the 16-bit control bit.
+        assert_eq!(units[1].0 - units[0].0, 4);
+    }
+
+    #[test]
+    fn dma_state_round_trips_mid_burst() {
+        let mut dma = GbaDma::default();
+        dma.write(0x040000D4, 0x1000);
+        dma.write(0x040000D6, 0x0200);
+        dma.write(0x040000D8, 0x2000);
+        dma.write(0x040000DA, 0x0300);
+        dma.write(0x040000DC, 4);
+        dma.write(0x040000DE, 0xC400);
+        dma.trigger_channel(3, DmaTrigger::Immediate);
+        // Advance into the burst: pending drains, first unit issues.
+        let mut issued = 0;
+        for _ in 0..30 {
+            dma.tick_pending();
+            if dma.step(0, &mut |_| 0).is_some() {
+                issued += 1;
+                break;
+            }
+        }
+        assert_eq!(issued, 1);
+        assert!(dma.is_active());
+
+        let state = dma.export_state();
+        state.validate().unwrap();
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: GbaDmaState = rmp_serde::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        let mut restored = GbaDma::default();
+        restored.import_state(decoded).unwrap();
+        let again = rmp_serde::to_vec_named(&restored.export_state()).unwrap();
+        assert_eq!(bytes, again);
+        // The restored channel resumes the same burst.
+        assert!(restored.is_active());
+        let mut bad = restored.export_state();
+        bad.channels[0].remaining = 0x1_0001;
+        assert!(bad.validate().is_err());
+        bad = restored.export_state();
+        bad.channels[0].pending = 9;
+        assert!(bad.validate().is_err());
+        // An active non-completing channel always holds a unit (the unit
+        // path decrements unconditionally).
+        bad = restored.export_state();
+        bad.channels[0].remaining = 0;
+        bad.channels[0].active = true;
+        bad.channels[0].completing = false;
+        assert!(bad.validate().is_err());
+        // The transient completion tail is legitimate.
+        bad.channels[0].completing = true;
+        assert!(bad.validate().is_ok());
+        bad = restored.export_state();
+        bad.channels[0].burst_idle = 0x1000_0001;
+        assert!(bad.validate().is_err());
+    }
+}

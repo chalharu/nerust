@@ -23,7 +23,7 @@ use crate::{
     registry::SystemRegistry,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
-        commands::{SessionCommand, SessionCommandOutcome},
+        commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
     },
 };
 
@@ -159,6 +159,7 @@ fn session_commands_drive_pause_resume_toggle_and_reset() {
         SessionCommandOutcome {
             executed: true,
             needs_redraw: true,
+            slot_failure: None,
         }
     );
     assert!(session.can_pause());
@@ -167,6 +168,7 @@ fn session_commands_drive_pause_resume_toggle_and_reset() {
         SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
+            slot_failure: None,
         }
     );
     assert_eq!(
@@ -194,7 +196,11 @@ fn session_commands_report_missing_core_and_empty_slots() {
     ));
     assert_eq!(
         session.run_command(SessionCommand::LoadActiveSlot).unwrap(),
-        SessionCommandOutcome::default()
+        SessionCommandOutcome {
+            executed: false,
+            needs_redraw: false,
+            slot_failure: Some(SlotOpFailure::Empty),
+        }
     );
     assert_eq!(
         session.run_command(SessionCommand::SelectNextSlot).unwrap(),

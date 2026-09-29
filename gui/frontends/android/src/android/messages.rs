@@ -13,6 +13,7 @@ pub(crate) enum MenuAction {
     LoadState,
     OpenRom,
     OpenSettings,
+    OrientationChanged,
     Reset,
     SaveState,
     TogglePause,

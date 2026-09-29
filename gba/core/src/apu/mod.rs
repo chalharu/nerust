@@ -1,0 +1,1676 @@
+#[cfg(test)]
+pub(crate) mod fft_test;
+/// GBA APU owning sound registers, wave RAM and DirectSound FIFOs.
+/// Four PSG channels (sweep/duty/envelope/length timers, wave table,
+/// noise LFSR) mix with the two timer-clocked FIFO DAC latches at the
+/// 32.768kHz native grid; the console drains device-rate samples per frame.
+pub mod psg;
+
+use nerust_core_traits::audio::StereoSample;
+use nerust_sound_filter::{Filter, IirFilter};
+
+use self::psg::{Noise, Square, Wave};
+
+/// Runtime voice state of the BIOS sound driver (GBATEK `SoundArea.vchn[]`
+/// register side lives in SoundArea RAM). Defined here — next to its owner
+/// `GbaApu::driver_voices` — so `apu` never depends on `crate::sound_driver`.
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct DriverVoice {
+    pub started: bool,
+    pub pos: f64,
+    pub env: f32,
+}
+
+/// Native DAC grid: 16.78MHz / 512.
+pub const MIX_RATE: u32 = 32_768;
+const T_CYCLES_PER_MIX: u64 = 512;
+/// Frame sequencer: 512Hz steps (32768 T-cycles each).
+const T_CYCLES_PER_SEQ_STEP: u64 = 32_768;
+/// DC-blocking high-pass on the drained device-rate output (first-order,
+/// negligible in-band effect; provisional, revisit with measurements in
+/// Phase 12). `SimpleDownSampler` does not apply here: the native grid
+/// (32.768kHz) sits *below* the device rate (48kHz), i.e. the rate step is
+/// an upsample, so only the `IirFilter` half of `nerust_sound_filter` fits.
+const OUTPUT_HPF_CUTOFF_HZ: f32 = 20.0;
+/// Default device rate for the output HPF (matches `AudioBackend` default).
+const OUTPUT_HPF_DEFAULT_RATE: u32 = 48_000;
+
+#[derive(Debug)]
+pub struct GbaApu {
+    pub sound1cnt_lo: u16,
+    pub sound1cnt_hi: u16,
+    pub sound1cnt_x: u16,
+    pub sound2cnt_lo: u16,
+    pub sound2cnt_hi: u16,
+    pub sound3cnt_lo: u16,
+    pub sound3cnt_hi: u16,
+    pub sound3cnt_x: u16,
+    pub sound4cnt_lo: u16,
+    pub sound4cnt_hi: u16,
+    pub soundcnt_lo: u16,
+    pub soundcnt_hi: u16,
+    pub soundcnt_x: u16,
+    pub soundbias: u16,
+    /// Two 16-byte wave banks (GBATEK NR30): bit 6 selects the PLAYING
+    /// bank while CPU access addresses the other bank.
+    pub wave_ram: Box<[u8; 0x20]>,
+    pub fifo_a: std::collections::VecDeque<u8>,
+    pub fifo_b: std::collections::VecDeque<u8>,
+    /// Minimal sound-driver HLE state (GBATEK BIOS Sound Functions).
+    pub sound_area: u32,
+    pub sound_mode: u32,
+    pub sound_vsync_enabled: bool,
+    /// BIOS driver voice runtime (vchn[] register side lives in SoundArea).
+    pub driver_voices: [DriverVoice; 12],
+    /// PSG voices.
+    sq1: Square,
+    sq2: Square,
+    wave: Wave,
+    noise: Noise,
+    /// FIFO DAC latches (signed 8-bit, clocked by timer overflow).
+    dac_a: i8,
+    dac_b: i8,
+    /// Frame-sequencer position (0-7) and countdowns.
+    seq_step: u8,
+    seq_timer: u64,
+    mix_timer: u64,
+    /// Native-grid stereo mix buffer (f32 pairs at 32.768kHz).
+    mix_buffer: Vec<(f32, f32)>,
+    /// W-only voice latches (length/duty/frequency never read back;
+    /// the stored registers keep readable bits only).
+    freq1: u16,
+    freq2: u16,
+    freq3: u16,
+    len1: u8,
+    len2: u8,
+    len3: u16,
+    len4: u8,
+    duty1: u8,
+    duty2: u8,
+    /// Device-rate resample cursor over the grid timeline.
+    rs_pos: f64,
+    rs_prev: (f32, f32),
+    /// Stereo DC-block state for the drained output (rebuilt when the
+    /// device rate changes; filter memory, excluded from save states).
+    output_hpf_l: IirFilter,
+    output_hpf_r: IirFilter,
+    output_hpf_rate: u32,
+}
+
+impl Default for GbaApu {
+    fn default() -> Self {
+        Self {
+            sound1cnt_lo: 0,
+            sound1cnt_hi: 0,
+            sound1cnt_x: 0,
+            sound2cnt_lo: 0,
+            sound2cnt_hi: 0,
+            sound3cnt_lo: 0,
+            sound3cnt_hi: 0,
+            sound3cnt_x: 0,
+            sound4cnt_lo: 0,
+            sound4cnt_hi: 0,
+            soundcnt_lo: 0,
+            soundcnt_hi: 0,
+            soundcnt_x: 0,
+            soundbias: 0x200,
+            wave_ram: Box::new([0u8; 0x20]),
+            fifo_a: std::collections::VecDeque::with_capacity(32),
+            fifo_b: std::collections::VecDeque::with_capacity(32),
+            sound_area: 0,
+            sound_mode: 0,
+            sound_vsync_enabled: false,
+            driver_voices: [DriverVoice::default(); 12],
+            sq1: Square::default(),
+            sq2: Square::default(),
+            wave: Wave::default(),
+            noise: Noise::default(),
+            dac_a: 0,
+            dac_b: 0,
+            seq_step: 0,
+            seq_timer: T_CYCLES_PER_SEQ_STEP,
+            mix_timer: T_CYCLES_PER_MIX,
+            mix_buffer: Vec::new(),
+            freq1: 0,
+            freq2: 0,
+            freq3: 0,
+            len1: 64,
+            len2: 64,
+            len3: 255,
+            len4: 64,
+            duty1: 0,
+            duty2: 0,
+            rs_pos: 0.0,
+            rs_prev: (0.0, 0.0),
+            output_hpf_l: IirFilter::get_highpass_filter(
+                OUTPUT_HPF_DEFAULT_RATE as f32,
+                OUTPUT_HPF_CUTOFF_HZ,
+            ),
+            output_hpf_r: IirFilter::get_highpass_filter(
+                OUTPUT_HPF_DEFAULT_RATE as f32,
+                OUTPUT_HPF_CUTOFF_HZ,
+            ),
+            output_hpf_rate: OUTPUT_HPF_DEFAULT_RATE,
+        }
+    }
+}
+
+/// Phase 10 wire state. `mix_buffer` (native-grid content) and the output
+/// HPF filter memory are excluded by design: export requires the buffer to
+/// hold at most the interpolation tail (see below) and import rebuilds the
+/// HPF at the default rate (it re-tracks on the next drain).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct GbaApuState {
+    sound1cnt_lo: u16,
+    sound1cnt_hi: u16,
+    sound1cnt_x: u16,
+    sound2cnt_lo: u16,
+    sound2cnt_hi: u16,
+    sound3cnt_lo: u16,
+    sound3cnt_hi: u16,
+    sound3cnt_x: u16,
+    sound4cnt_lo: u16,
+    sound4cnt_hi: u16,
+    soundcnt_lo: u16,
+    soundcnt_hi: u16,
+    soundcnt_x: u16,
+    soundbias: u16,
+    wave_ram: serde_bytes::ByteBuf,
+    fifo_a: Vec<u8>,
+    fifo_b: Vec<u8>,
+    sound_area: u32,
+    sound_mode: u32,
+    sound_vsync_enabled: bool,
+    driver_voices: [DriverVoice; 12],
+    sq1: Square,
+    sq2: Square,
+    wave: Wave,
+    noise: Noise,
+    dac_a: i8,
+    dac_b: i8,
+    seq_step: u8,
+    seq_timer: u64,
+    mix_timer: u64,
+    freq1: u16,
+    freq2: u16,
+    freq3: u16,
+    len1: u8,
+    len2: u8,
+    len3: u16,
+    len4: u8,
+    duty1: u8,
+    duty2: u8,
+    rs_pos: f64,
+    rs_prev: (f32, f32),
+}
+
+impl GbaApuState {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.wave_ram.len() != 0x20 {
+            return Err(format!(
+                "apu: wave RAM length wrong: {}",
+                self.wave_ram.len()
+            ));
+        }
+        if self.fifo_a.len() > 32 || self.fifo_b.len() > 32 {
+            return Err(format!(
+                "apu: fifo overflow: {}/{}",
+                self.fifo_a.len(),
+                self.fifo_b.len()
+            ));
+        }
+        if self.seq_step > 7 {
+            return Err(format!("apu: seq_step out of range: {}", self.seq_step));
+        }
+        // Both countdowns reset the same tick they hit zero, so zero is
+        // never observable at rest; a restored zero would underflow the
+        // unconditional decrement in `tick`.
+        if self.seq_timer == 0 || self.seq_timer > T_CYCLES_PER_SEQ_STEP {
+            return Err(format!("apu: seq_timer out of range: {}", self.seq_timer));
+        }
+        if self.mix_timer == 0 || self.mix_timer > T_CYCLES_PER_MIX {
+            return Err(format!("apu: mix_timer out of range: {}", self.mix_timer));
+        }
+        // Latch bounds follow the register write masks.
+        if self.freq1 > 0x7FF || self.freq2 > 0x7FF || self.freq3 > 0x7FF {
+            return Err("apu: freq latch out of range".to_string());
+        }
+        if self.len1 > 64 || self.len2 > 64 || self.len4 > 64 || self.len3 > 256 {
+            return Err("apu: length latch out of range".to_string());
+        }
+        if self.duty1 > 3 || self.duty2 > 3 {
+            return Err("apu: duty latch out of range".to_string());
+        }
+        self.sq1.validate(true)?;
+        self.sq2.validate(false)?;
+        self.wave.validate()?;
+        self.noise.validate()?;
+        for (index, voice) in self.driver_voices.iter().enumerate() {
+            if !voice.pos.is_finite() || voice.pos < 0.0 {
+                return Err(format!("apu: driver voice {index} bad pos"));
+            }
+            if !voice.env.is_finite() || !(0.0..=255.0).contains(&voice.env) {
+                return Err(format!("apu: driver voice {index} bad env"));
+            }
+        }
+        if !self.rs_pos.is_finite() || self.rs_pos < 0.0 {
+            return Err("apu: bad resample cursor".to_string());
+        }
+        if !self.rs_prev.0.is_finite() || !self.rs_prev.1.is_finite() {
+            return Err("apu: bad resample predecessor".to_string());
+        }
+        Ok(())
+    }
+}
+
+impl GbaApu {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::default();
+        // RegisterRamReset SOUND sets bias 0x200 and clears wave
+        self.soundbias = 0x200;
+        self.wave_ram.fill(0);
+    }
+
+    pub fn reset_sound(&mut self) {
+        // Called for 0x40 flag (SOUND)
+        self.sound1cnt_lo = 0;
+        self.sound1cnt_hi = 0;
+        self.sound1cnt_x = 0;
+        self.sound2cnt_lo = 0;
+        self.sound2cnt_hi = 0;
+        self.sound3cnt_lo = 0;
+        self.sound3cnt_hi = 0;
+        self.sound3cnt_x = 0;
+        self.sound4cnt_lo = 0;
+        self.sound4cnt_hi = 0;
+        self.soundcnt_lo = 0;
+        self.soundcnt_hi = 0;
+        self.soundcnt_x = 0;
+        self.soundbias = 0x200;
+        self.wave_ram.fill(0);
+        self.fifo_a.clear();
+        self.fifo_b.clear();
+        self.sq1 = Square::default();
+        self.sq2 = Square::default();
+        self.wave = Wave::default();
+        self.noise = Noise::default();
+        self.dac_a = 0;
+        self.dac_b = 0;
+        self.seq_step = 0;
+        self.seq_timer = T_CYCLES_PER_SEQ_STEP;
+        self.mix_timer = T_CYCLES_PER_MIX;
+        self.mix_buffer.clear();
+        self.freq1 = 0;
+        self.freq2 = 0;
+        self.freq3 = 0;
+        self.len1 = 64;
+        self.len2 = 64;
+        self.len3 = 255;
+        self.len4 = 64;
+        self.duty1 = 0;
+        self.duty2 = 0;
+        self.rs_pos = 0.0;
+        self.rs_prev = (0.0, 0.0);
+        // Fresh filter memory (host-side only); keep the device rate so a
+        // non-default backend does not fall back to 48kHz coefficients.
+        let rate = self.output_hpf_rate;
+        self.output_hpf_l = IirFilter::get_highpass_filter(rate as f32, OUTPUT_HPF_CUTOFF_HZ);
+        self.output_hpf_r = IirFilter::get_highpass_filter(rate as f32, OUTPUT_HPF_CUTOFF_HZ);
+    }
+
+    /// Remaining bytes in a DirectSound FIFO.
+    pub fn fifo_len(&self, fifo_b: bool) -> usize {
+        if fifo_b {
+            self.fifo_b.len()
+        } else {
+            self.fifo_a.len()
+        }
+    }
+
+    /// Move one byte from FIFO to the DAC latch on timer overflow
+    /// (GBATEK "DMA-Sound Playback Procedure").
+    pub fn drain_fifo(&mut self, fifo_b: bool) {
+        let (fifo, dac) = if fifo_b {
+            (&mut self.fifo_b, &mut self.dac_b)
+        } else {
+            (&mut self.fifo_a, &mut self.dac_a)
+        };
+        if let Some(byte) = fifo.pop_front() {
+            *dac = byte as i8;
+        }
+    }
+
+    /// SOUNDCNT_H write: FIFO reset bits (11/15) act on the written value,
+    /// then the R/W mask 0x770F is stored (GBATEK R/W map; both reset bits
+    /// read 0, pinned by mgba-suite io-read).
+    pub fn write_soundcnt_hi(&mut self, value: u16) {
+        if value & (1 << 11) != 0 {
+            self.fifo_a.clear();
+        }
+        if value & (1 << 15) != 0 {
+            self.fifo_b.clear();
+        }
+        self.soundcnt_hi = value & 0x770F;
+    }
+
+    /// SOUNDCNT_X write: only bit 7 is R/W; clearing master enable resets PSG state.
+    pub fn write_soundcnt_x(&mut self, value: u16) {
+        if value & 0x80 == 0 && self.soundcnt_x & 0x80 != 0 {
+            self.sound1cnt_lo = 0;
+            self.sound1cnt_hi = 0;
+            self.sound1cnt_x = 0;
+            self.sound2cnt_lo = 0;
+            self.sound2cnt_hi = 0;
+            self.sound3cnt_lo = 0;
+            self.sound3cnt_hi = 0;
+            self.sound3cnt_x = 0;
+            self.sound4cnt_lo = 0;
+            self.sound4cnt_hi = 0;
+            self.soundcnt_lo = 0;
+            // SOUNDCNT_H (4000082h) is kept readable and intact while
+            // sound is off (GBATEK: only 4000060h..4000081h reset).
+            self.fifo_a.clear();
+            self.fifo_b.clear();
+            self.dac_a = 0;
+            self.dac_b = 0;
+            self.sq1.core.active = false;
+            self.sq2.core.active = false;
+            self.wave.active = false;
+            self.noise.core.active = false;
+            self.sq1.clear_blep();
+            self.sq2.clear_blep();
+        }
+        self.soundcnt_x = value & 0x80;
+    }
+
+    /// NR30 write: bit 7 off stops the wave channel at once (GBATEK).
+    pub fn write_sound3cnt_lo(&mut self, value: u16) {
+        self.sound3cnt_lo = value & 0x00E0;
+        if value & (1 << 7) == 0 {
+            self.wave.active = false;
+        }
+    }
+
+    /// NR10 write: sweep staging (live zombie rule).
+    pub fn write_sound1cnt_lo(&mut self, value: u16) {
+        self.sound1cnt_lo = value & 0x007F;
+        self.sq1.write_sweep((value & 0x7F) as u8);
+    }
+
+    /// NR11/12 write: length + duty latch (W-only), envelope stays live.
+    /// Envelope 0 (bits 11-15 clear) powers the DAC off and stops the
+    /// channel at once (Pan Docs DAC power). The full halfword is staged:
+    /// M4A programs CGB voices with byte stores (NR11 then NR12 alone on
+    /// envelope steps), and the bus merges a byte lane against the staged
+    /// value — dropping length/duty here would reset them mid-note.
+    /// CPU reads still mask to the R bits (see `read`).
+    pub fn write_sound1cnt_hi(&mut self, value: u16) {
+        self.sound1cnt_hi = value;
+        self.len1 = 64 - (value & 0x3F) as u8;
+        self.duty1 = ((value >> 6) & 3) as u8;
+        if value & 0xF800 == 0 {
+            self.sq1.core.active = false;
+        }
+    }
+
+    /// NR13/14 write: frequency latch, restart on bit 15 (W-only).
+    /// The latch keeps frequency + length (trigger never persists); byte
+    /// stores of NR13/NR14 merge against it, so the low byte must survive
+    /// until the high byte lands. CPU reads mask to the R bit (0x4000).
+    pub fn write_sound1cnt_x(&mut self, value: u16) {
+        self.freq1 = value & 0x7FF;
+        self.sound1cnt_x = value & 0x7FFF;
+        if value & 0x8000 != 0 {
+            self.trigger_ch1();
+        }
+    }
+
+    /// NR21/22 write: same staging rule as NR11/12 (full halfword kept
+    /// for byte-lane merges; CPU reads mask to 0xFFC0).
+    pub fn write_sound2cnt_lo(&mut self, value: u16) {
+        self.sound2cnt_lo = value;
+        self.len2 = 64 - (value & 0x3F) as u8;
+        self.duty2 = ((value >> 6) & 3) as u8;
+        if value & 0xF800 == 0 {
+            self.sq2.core.active = false;
+        }
+    }
+
+    /// NR23/24 write: same staging rule as NR13/14 (frequency + length
+    /// kept, trigger never persists; CPU reads mask to 0x4000).
+    pub fn write_sound2cnt_hi(&mut self, value: u16) {
+        self.freq2 = value & 0x7FF;
+        self.sound2cnt_hi = value & 0x7FFF;
+        if value & 0x8000 != 0 {
+            self.trigger_ch2();
+        }
+    }
+
+    /// NR31 write: wave length latch (W-only). Full halfword is staged:
+    /// M4A writes NR32 alone on volume steps, which must not reset the
+    /// length latch. CPU reads mask to 0xE000 (see `read`).
+    pub fn write_sound3cnt_hi(&mut self, value: u16) {
+        self.sound3cnt_hi = value;
+        self.len3 = 256 - (value & 0xFF);
+    }
+
+    /// NR33/34 write: rate latch, restart on bit 15 (W-only). Same
+    /// staging rule as NR13/14 (CPU reads mask to 0x4000).
+    pub fn write_sound3cnt_x(&mut self, value: u16) {
+        self.freq3 = value & 0x7FF;
+        self.sound3cnt_x = value & 0x7FFF;
+        if value & 0x8000 != 0 {
+            self.trigger_ch3();
+        }
+    }
+
+    /// NR41 write: noise length latch (W-only); envelope 0 kills DAC.
+    /// Full halfword is staged (same byte-merge rule as NR11/12;
+    /// CPU reads mask to 0xFF00).
+    pub fn write_sound4cnt_lo(&mut self, value: u16) {
+        self.sound4cnt_lo = value;
+        self.len4 = 64 - (value & 0x3F) as u8;
+        if value & 0xF800 == 0 {
+            self.noise.core.active = false;
+        }
+    }
+
+    /// NR44 write: restart on bit 15 (W-only).
+    pub fn write_sound4cnt_hi(&mut self, value: u16) {
+        self.sound4cnt_hi = value & 0x40FF;
+        if value & 0x8000 != 0 {
+            self.trigger_ch4();
+        }
+    }
+
+    /// Channel restarts (NRx4 bit 15). Envelope/length/sweep state reload
+    /// from the staged registers.
+    pub fn trigger_ch1(&mut self) {
+        let env = self.sound1cnt_hi;
+        self.sq1.write_sweep((self.sound1cnt_lo & 0x7F) as u8);
+        self.sq1.trigger(
+            self.freq1,
+            self.len1,
+            (env >> 12) as u8 & 0xF,
+            env,
+            self.seq_step & 1 != 0,
+        );
+        // Obscure: a trigger just before an envelope step (step 6 leads
+        // into step 7) reloads the envelope timer with pace + 1.
+        if self.seq_step == 6 {
+            self.sq1.core.envelope_extra_tick();
+        }
+        // Dead envelope (DAC off) never starts the voice.
+        if env & 0xF800 == 0 {
+            self.sq1.core.active = false;
+        }
+    }
+
+    pub fn trigger_ch2(&mut self) {
+        let env = self.sound2cnt_lo;
+        self.sq2.trigger(
+            self.freq2,
+            self.len2,
+            (env >> 12) as u8 & 0xF,
+            env,
+            self.seq_step & 1 != 0,
+        );
+        if self.seq_step == 6 {
+            self.sq2.core.envelope_extra_tick();
+        }
+        if env & 0xF800 == 0 {
+            self.sq2.core.active = false;
+        }
+    }
+
+    pub fn trigger_ch3(&mut self) {
+        self.wave.bank = if self.sound3cnt_lo & (1 << 6) != 0 {
+            1
+        } else {
+            0
+        };
+        self.wave.dimension_64 = self.sound3cnt_lo & (1 << 5) != 0;
+        self.wave.trigger(
+            self.len3,
+            self.sound3cnt_lo & (1 << 5) != 0,
+            self.seq_step & 1 != 0,
+        );
+        if self.sound3cnt_lo & (1 << 7) == 0 {
+            self.wave.active = false;
+        }
+    }
+
+    pub fn trigger_ch4(&mut self) {
+        let env = self.sound4cnt_lo;
+        self.noise.trigger(
+            self.len4,
+            (env >> 12) as u8 & 0xF,
+            env,
+            self.sound4cnt_hi & (1 << 3) != 0,
+            self.seq_step & 1 != 0,
+        );
+        if self.seq_step == 6 {
+            self.noise.core.envelope_extra_tick();
+        }
+        if env & 0xF800 == 0 {
+            self.noise.core.active = false;
+        }
+    }
+
+    /// SOUNDCNT_X read value: bit 7 master flag plus live channel status
+    /// bits 0-3 (GBATEK: set on start, cleared on length expiry).
+    pub fn soundcnt_x_read(&self) -> u16 {
+        (self.soundcnt_x & 0x80)
+            | (u16::from(self.sq1.core.active))
+            | (u16::from(self.sq2.core.active) << 1)
+            | (u16::from(self.wave.active) << 2)
+            | (u16::from(self.noise.core.active) << 3)
+    }
+
+    /// Advance channel timers, the 512Hz frame sequencer and the native
+    /// mix grid by one CPU T-cycle. Returns true when a grid sample was
+    /// pushed (driver voices fold into the tail on the bus side).
+    /// Batching horizon: quiet prefix length before the next cycle that
+    /// needs full per-cycle processing (sequencer step, mix point, or
+    /// channel phase hit). Interior cycles only decrement countdowns;
+    /// phases, banks, the LFSR, envelopes and the mix buffer are untouched
+    /// (their changes happen exactly at capped boundary cycles).
+    #[inline]
+    pub(crate) fn quiet_cycles(&self) -> u64 {
+        const INF: u64 = u64::MAX;
+        let mut horizon = INF;
+        horizon = horizon.min(self.seq_timer.saturating_sub(1));
+        horizon = horizon.min(self.mix_timer.saturating_sub(1));
+        if self.soundcnt_x & 0x80 != 0 {
+            for voice in [
+                self.sq1.timer_horizon(),
+                self.sq2.timer_horizon(),
+                self.wave.timer_horizon(),
+                self.noise.timer_horizon(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                horizon = horizon.min(u64::from(voice));
+            }
+        }
+        horizon
+    }
+
+    /// Advance countdowns by `n` cycles. Valid only for
+    /// `n <= quiet_cycles()` at the same state.
+    #[inline]
+    pub(crate) fn advance_idle(&mut self, n: u64) {
+        if n == 0 {
+            return;
+        }
+        self.seq_timer -= n;
+        self.mix_timer -= n;
+        if self.soundcnt_x & 0x80 != 0 {
+            let m = n as u32;
+            self.sq1.advance_timer(m);
+            self.sq2.advance_timer(m);
+            self.wave.advance_timer(m);
+            self.noise.advance_timer(m);
+        }
+    }
+
+    #[inline]
+    pub fn tick(&mut self) -> bool {
+        if self.soundcnt_x & 0x80 != 0 {
+            // Fast path: no active voice means the timers below are all
+            // frozen; only the sequencer/mixer countdowns advance. Checked
+            // once here instead of per-voice early returns.
+            let any_voice = self.sq1.core.active
+                || self.sq2.core.active
+                || self.wave.active
+                || self.noise.core.active;
+            if any_voice {
+                self.sq1
+                    .tick_timer(self.freq1, true, self.duty1, self.mix_timer as u32);
+                self.sq2
+                    .tick_timer(self.freq2, false, self.duty2, self.mix_timer as u32);
+                self.wave.tick_timer(self.freq3);
+                let r = (self.sound4cnt_hi & 7) as u8;
+                // NR43 shift is 4 bits (0-15); masking 3 dropped shift 8-15.
+                let s = ((self.sound4cnt_hi >> 4) & 15) as u8;
+                self.noise.tick_timer(r, s);
+            }
+        }
+        self.seq_timer -= 1;
+        if self.seq_timer == 0 {
+            self.seq_timer = T_CYCLES_PER_SEQ_STEP;
+            // The 512Hz sequencer free-runs from boot (no master-off
+            // freeze, no enable reset); channels gate individually.
+            self.seq_step = (self.seq_step + 1) & 7;
+            self.tick_sequencer();
+        }
+        self.mix_timer -= 1;
+        if self.mix_timer == 0 {
+            self.mix_timer = T_CYCLES_PER_MIX;
+            let (l, r) = self.mix_grid();
+            self.mix_buffer.push((l, r));
+            return true;
+        }
+        false
+    }
+
+    fn tick_sequencer(&mut self) {
+        let step = self.seq_step;
+        if step & 1 == 0 {
+            let l1 = self.sound1cnt_x & (1 << 14) != 0;
+            let l2 = self.sound2cnt_hi & (1 << 14) != 0;
+            let l3 = self.sound3cnt_x & (1 << 14) != 0;
+            let l4 = self.sound4cnt_hi & (1 << 14) != 0;
+            self.sq1.core.tick_length(l1);
+            self.sq2.core.tick_length(l2);
+            self.wave.tick_length(l3);
+            self.noise.core.tick_length(l4);
+        }
+        if step == 2 || step == 6 {
+            self.sq1.tick_sweep();
+        }
+        if step == 7 {
+            self.sq1.core.tick_envelope(self.sound1cnt_hi);
+            self.sq2.core.tick_envelope(self.sound2cnt_lo);
+            self.noise.core.tick_envelope(self.sound4cnt_lo);
+        }
+    }
+
+    /// Raw PSG voice sums per side, before the SOUNDCNT_H/L post-scale.
+    /// Branchless routing: each voice joins the sides its enable bit names.
+    fn psg_voice_sums(&mut self, en_l: u16, en_r: u16) -> (i32, i32) {
+        let outs = [
+            self.sq1.output(self.duty1) as i32,
+            self.sq2.output(self.duty2) as i32,
+            self.wave.output(
+                &self.wave_ram,
+                ((self.sound3cnt_hi >> 13) & 3) as u8,
+                self.sound3cnt_hi & (1 << 15) != 0,
+            ) as i32,
+            self.noise.output() as i32,
+        ];
+        let mut sum_l = 0i32;
+        let mut sum_r = 0i32;
+        for (i, out) in outs.iter().enumerate() {
+            if en_l & (1 << i) != 0 {
+                sum_l += out;
+            }
+            if en_r & (1 << i) != 0 {
+                sum_r += out;
+            }
+        }
+        (sum_l, sum_r)
+    }
+
+    /// PolyBLEP square-edge corrections (Kleimola 2-tap): naive
+    /// per-sample synthesis folds edge harmonics back as inharmonic
+    /// aliases (metallic harshness); the `after` tap joins the sample
+    /// being pushed while each `retro` tap reaches back to the
+    /// previously pushed sample (still buffered: this frame has not
+    /// drained yet). Integer voice mix is untouched; corrections ride a
+    /// parallel float layer in the same post-scale units.
+    fn blep_corrections(&mut self, en_l: u16, en_r: u16, post_l: f32, post_r: f32) -> (f32, f32) {
+        let (after1, retro1, nretro1) = self.sq1.take_blep();
+        let (after2, retro2, nretro2) = self.sq2.take_blep();
+        let mut corr_l = 0.0f32;
+        let mut corr_r = 0.0f32;
+        if en_l & 1 != 0 {
+            corr_l += after1;
+        }
+        if en_r & 1 != 0 {
+            corr_r += after1;
+        }
+        if en_l & 2 != 0 {
+            corr_l += after2;
+        }
+        if en_r & 2 != 0 {
+            corr_r += after2;
+        }
+        if nretro1 + nretro2 > 0 {
+            // Retro taps land on already-normalized samples
+            // ((sum + bias) / 512 - 1), so they scale by post/512.
+            if let Some(prev) = self.mix_buffer.last_mut() {
+                Self::apply_retro(
+                    prev,
+                    &retro1[..nretro1 as usize],
+                    en_l,
+                    en_r,
+                    1,
+                    post_l,
+                    post_r,
+                );
+                Self::apply_retro(
+                    prev,
+                    &retro2[..nretro2 as usize],
+                    en_l,
+                    en_r,
+                    2,
+                    post_l,
+                    post_r,
+                );
+            }
+        }
+        (corr_l, corr_r)
+    }
+
+    /// One voice's retro taps onto the previously pushed sample.
+    fn apply_retro(
+        prev: &mut (f32, f32),
+        retros: &[(f32, f32)],
+        en_l: u16,
+        en_r: u16,
+        voice_bit: u16,
+        post_l: f32,
+        post_r: f32,
+    ) {
+        for &(t, h) in retros {
+            let c = h * 0.5 * (1.0 - t) * (1.0 - t);
+            if en_l & voice_bit != 0 {
+                prev.0 += c * post_l / 512.0;
+            }
+            if en_r & voice_bit != 0 {
+                prev.1 += c * post_r / 512.0;
+            }
+        }
+    }
+
+    /// Signed FIFO contributions per side (DAC latch x2/x4 by the
+    /// SOUNDCNT_H volume bits, routed by the enable bits).
+    fn fifo_sums(&self) -> (i32, i32) {
+        let gain_a = if self.soundcnt_hi & (1 << 2) != 0 {
+            4
+        } else {
+            2
+        };
+        let gain_b = if self.soundcnt_hi & (1 << 3) != 0 {
+            4
+        } else {
+            2
+        };
+        let da = i32::from(self.dac_a) * gain_a;
+        let db = i32::from(self.dac_b) * gain_b;
+        let mut sum_l = 0i32;
+        let mut sum_r = 0i32;
+        if self.soundcnt_hi & (1 << 8) != 0 {
+            sum_l += da;
+        }
+        if self.soundcnt_hi & (1 << 9) != 0 {
+            sum_r += da;
+        }
+        if self.soundcnt_hi & (1 << 12) != 0 {
+            sum_l += db;
+        }
+        if self.soundcnt_hi & (1 << 13) != 0 {
+            sum_r += db;
+        }
+        (sum_l, sum_r)
+    }
+
+    /// One native-grid stereo sample. Integer 10-bit mix: PSG voices
+    /// scaled by SOUNDCNT_H/L, FIFO latches x2/x4, plus bias, clipped to
+    /// 0..0x3FF and centered.
+    fn mix_grid(&mut self) -> (f32, f32) {
+        if self.soundcnt_x & 0x80 == 0 {
+            // SOUNDBIAS is a 10-bit level (default 0x200 = silence center);
+            // an unwritten bias parks the DAC at mid-rail.
+            let bias = f32::from(self.soundbias & 0x3FF);
+            let out = (bias - 512.0) / 512.0;
+            return (out, out);
+        }
+        let psg_mul = [1i32, 2, 4, 4][(self.soundcnt_hi & 3) as usize];
+        let l_vol = ((self.soundcnt_lo >> 4) & 7) as i32 + 1;
+        let r_vol = (self.soundcnt_lo & 7) as i32 + 1;
+        let en_l = (self.soundcnt_lo >> 12) & 0xF;
+        let en_r = (self.soundcnt_lo >> 8) & 0xF;
+        let (mut sum_l, mut sum_r) = self.psg_voice_sums(en_l, en_r);
+        // GBATEK Max Output Levels: each PSG spans +/-80h of the 10-bit
+        // range at full settings (voice +/-15 x mul x vol >> 2 ~= +/-120:
+        // squares bipolar, wave bipolar around digit 8, noise unipolar
+        // with DC stripped downstream), each FIFO the full +/-200h
+        // (DAC x gain ~= +/-508).
+        // The summed signed value plus bias clips against the 10-bit rail
+        // below, matching hardware (voices + FIFOs reach ~+/-600h hot).
+        sum_l = (sum_l * psg_mul * l_vol) >> 2;
+        sum_r = (sum_r * psg_mul * r_vol) >> 2;
+        let post_l = psg_mul as f32 * l_vol as f32 / 4.0;
+        let post_r = psg_mul as f32 * r_vol as f32 / 4.0;
+        let (corr_l, corr_r) = self.blep_corrections(en_l, en_r, post_l, post_r);
+        let (fifo_l, fifo_r) = self.fifo_sums();
+        sum_l += fifo_l;
+        sum_r += fifo_r;
+        let bias = i32::from(self.soundbias & 0x3FF);
+        let to_f32 = |sum: i32, corr: f32| {
+            (sum as f32 + corr + bias as f32).clamp(0.0, 0x3FF as f32) / 512.0 - 1.0
+        };
+        (
+            to_f32(sum_l, corr_l * post_l),
+            to_f32(sum_r, corr_r * post_r),
+        )
+    }
+
+    /// Phase 10 export. `drain_resampled` always leaves the interpolation
+    /// tail (1-2 samples) behind; that residue is structural, so it is
+    /// truncated deterministically here (`rs_prev` keeps the last sample,
+    /// the cursor restarts at the buffer head). Anything larger is mid-frame
+    /// content and rejected.
+    pub(crate) fn export_state(&self) -> Result<GbaApuState, String> {
+        if self.mix_buffer.len() > 2 {
+            return Err(format!(
+                "apu: mix_buffer not drained: {}",
+                self.mix_buffer.len()
+            ));
+        }
+        let rs_prev = self.mix_buffer.last().copied().unwrap_or(self.rs_prev);
+        Ok(GbaApuState {
+            sound1cnt_lo: self.sound1cnt_lo,
+            sound1cnt_hi: self.sound1cnt_hi,
+            sound1cnt_x: self.sound1cnt_x,
+            sound2cnt_lo: self.sound2cnt_lo,
+            sound2cnt_hi: self.sound2cnt_hi,
+            sound3cnt_lo: self.sound3cnt_lo,
+            sound3cnt_hi: self.sound3cnt_hi,
+            sound3cnt_x: self.sound3cnt_x,
+            sound4cnt_lo: self.sound4cnt_lo,
+            sound4cnt_hi: self.sound4cnt_hi,
+            soundcnt_lo: self.soundcnt_lo,
+            soundcnt_hi: self.soundcnt_hi,
+            soundcnt_x: self.soundcnt_x,
+            soundbias: self.soundbias,
+            wave_ram: serde_bytes::ByteBuf::from(self.wave_ram.to_vec()),
+            fifo_a: self.fifo_a.iter().copied().collect(),
+            fifo_b: self.fifo_b.iter().copied().collect(),
+            sound_area: self.sound_area,
+            sound_mode: self.sound_mode,
+            sound_vsync_enabled: self.sound_vsync_enabled,
+            driver_voices: self.driver_voices,
+            sq1: self.sq1,
+            sq2: self.sq2,
+            wave: self.wave,
+            noise: self.noise,
+            dac_a: self.dac_a,
+            dac_b: self.dac_b,
+            seq_step: self.seq_step,
+            seq_timer: self.seq_timer,
+            mix_timer: self.mix_timer,
+            freq1: self.freq1,
+            freq2: self.freq2,
+            freq3: self.freq3,
+            len1: self.len1,
+            len2: self.len2,
+            len3: self.len3,
+            len4: self.len4,
+            duty1: self.duty1,
+            duty2: self.duty2,
+            rs_pos: 0.0,
+            rs_prev,
+        })
+    }
+
+    pub(crate) fn import_state(&mut self, state: GbaApuState) -> Result<(), String> {
+        state.validate()?;
+        self.sound1cnt_lo = state.sound1cnt_lo;
+        self.sound1cnt_hi = state.sound1cnt_hi;
+        self.sound1cnt_x = state.sound1cnt_x;
+        self.sound2cnt_lo = state.sound2cnt_lo;
+        self.sound2cnt_hi = state.sound2cnt_hi;
+        self.sound3cnt_lo = state.sound3cnt_lo;
+        self.sound3cnt_hi = state.sound3cnt_hi;
+        self.sound3cnt_x = state.sound3cnt_x;
+        self.sound4cnt_lo = state.sound4cnt_lo;
+        self.sound4cnt_hi = state.sound4cnt_hi;
+        self.soundcnt_lo = state.soundcnt_lo;
+        self.soundcnt_hi = state.soundcnt_hi;
+        self.soundcnt_x = state.soundcnt_x;
+        self.soundbias = state.soundbias;
+        self.wave_ram.copy_from_slice(&state.wave_ram);
+        self.fifo_a = state.fifo_a.into_iter().collect();
+        self.fifo_b = state.fifo_b.into_iter().collect();
+        self.sound_area = state.sound_area;
+        self.sound_mode = state.sound_mode;
+        self.sound_vsync_enabled = state.sound_vsync_enabled;
+        self.driver_voices = state.driver_voices;
+        self.sq1 = state.sq1;
+        self.sq2 = state.sq2;
+        self.wave = state.wave;
+        self.noise = state.noise;
+        self.dac_a = state.dac_a;
+        self.dac_b = state.dac_b;
+        self.seq_step = state.seq_step;
+        self.seq_timer = state.seq_timer;
+        self.mix_timer = state.mix_timer;
+        self.freq1 = state.freq1;
+        self.freq2 = state.freq2;
+        self.freq3 = state.freq3;
+        self.len1 = state.len1;
+        self.len2 = state.len2;
+        self.len3 = state.len3;
+        self.len4 = state.len4;
+        self.duty1 = state.duty1;
+        self.duty2 = state.duty2;
+        self.rs_pos = state.rs_pos;
+        self.rs_prev = state.rs_prev;
+        // HPF filter memory is excluded from the wire: rebuild at the
+        // default rate; the next drain re-tracks the device rate.
+        self.mix_buffer.clear();
+        self.output_hpf_l =
+            IirFilter::get_highpass_filter(OUTPUT_HPF_DEFAULT_RATE as f32, OUTPUT_HPF_CUTOFF_HZ);
+        self.output_hpf_r =
+            IirFilter::get_highpass_filter(OUTPUT_HPF_DEFAULT_RATE as f32, OUTPUT_HPF_CUTOFF_HZ);
+        self.output_hpf_rate = OUTPUT_HPF_DEFAULT_RATE;
+        Ok(())
+    }
+
+    /// Drain the grid buffer as device-rate samples (linear interpolation
+    /// over the 32.768kHz timeline; cursor persists across frames).
+    /// Each drained sample passes the stereo DC-block HPF
+    /// (`nerust_sound_filter::IirFilter`, rebuilt on device-rate change).
+    pub fn drain_resampled(&mut self, rate: u32) -> Vec<StereoSample> {
+        let mut out = Vec::new();
+        self.drain_resampled_into(rate, &mut out);
+        out
+    }
+
+    /// Hot-path half of [`drain_resampled`](Self::drain_resampled):
+    /// fills the caller-owned buffer (cleared first, capacity reused)
+    /// instead of allocating per frame. Bit-identical output.
+    pub fn drain_resampled_into(&mut self, rate: u32, out: &mut Vec<StereoSample>) {
+        out.clear();
+        if self.mix_buffer.is_empty() || rate == 0 {
+            return;
+        }
+        if self.output_hpf_rate != rate {
+            self.output_hpf_l = IirFilter::get_highpass_filter(rate as f32, OUTPUT_HPF_CUTOFF_HZ);
+            self.output_hpf_r = IirFilter::get_highpass_filter(rate as f32, OUTPUT_HPF_CUTOFF_HZ);
+            self.output_hpf_rate = rate;
+        }
+        let step = f64::from(MIX_RATE) / f64::from(rate);
+        // Position relative to the current buffer head.
+        let mut pos = self.rs_pos;
+        let buf = &self.mix_buffer;
+        // Pre-size the output (one realloc-free push per sample): the
+        // resampler emits roughly one output per `step` grid samples.
+        // Capacity persists across frames via the caller-owned buffer.
+        let estimate = ((buf.len() as f64 - pos) / step) as usize + 1;
+        out.reserve(estimate);
+        while (pos as usize) + 1 < buf.len() {
+            let i = pos as usize;
+            let frac = (pos - i as f64) as f32;
+            let (l0, r0) = if i == 0 { self.rs_prev } else { buf[i - 1] };
+            let (l1, r1) = buf[i];
+            out.push(StereoSample {
+                left: l0 + (l1 - l0) * frac,
+                right: r0 + (r1 - r0) * frac,
+            });
+            pos += step;
+        }
+        // Carry the tail for the next drain: the sample just before the
+        // new head stays as the interpolation predecessor.
+        let keep_from = (pos as usize).saturating_sub(1);
+        if keep_from > 0 {
+            self.rs_prev = buf[keep_from - 1];
+        }
+        self.rs_pos = pos - keep_from as f64;
+        self.mix_buffer.drain(..keep_from);
+        for sample in out.iter_mut() {
+            sample.left = self.output_hpf_l.step(sample.left);
+            sample.right = self.output_hpf_r.step(sample.right);
+        }
+    }
+    /// Mutable tail of the grid mix buffer (driver-voice fold-in).
+    pub fn mix_tail_mut(&mut self) -> Option<&mut (f32, f32)> {
+        self.mix_buffer.last_mut()
+    }
+
+    /// Buffered native-grid samples (test introspection: FFT capture and
+    /// the driver-voice grid loop drain without touching `mix_buffer`).
+    #[cfg(test)]
+    pub(crate) fn grid_buffer(&self) -> &[(f32, f32)] {
+        &self.mix_buffer
+    }
+
+    /// Latched ch1 duty (test introspection: bus byte-lane merges must
+    /// not reset NR11 duty on mid-note NR12 writes).
+    #[cfg(test)]
+    pub(crate) fn duty1_for_test(&self) -> u8 {
+        self.duty1
+    }
+
+    /// Wave RAM CPU access (GBATEK NR30): the CPU sees the bank NOT
+    /// selected for playback (bit 6). `aligned` is the 0x90-0x9E address.
+    fn wave_cpu_base(&self) -> usize {
+        if self.sound3cnt_lo & (1 << 6) != 0 {
+            0
+        } else {
+            16
+        }
+    }
+
+    pub fn wave_read(&self, aligned: u32) -> u16 {
+        let base = self.wave_cpu_base() + ((aligned & 0xF) as usize);
+        u16::from_le_bytes([self.wave_ram[base], self.wave_ram[base + 1]])
+    }
+
+    pub fn wave_write(&mut self, aligned: u32, value: u16) {
+        let base = self.wave_cpu_base() + ((aligned & 0xF) as usize);
+        self.wave_ram[base] = (value & 0xFF) as u8;
+        self.wave_ram[base + 1] = (value >> 8) as u8;
+    }
+
+    /// Push bytes into a DirectSound FIFO (max 32 bytes; overflow is dropped,
+    /// approximating full-FIFO HW where extra writes have no effect).
+    /// `bytes` are appended LSB-first from `value` for `width` bytes.
+    /// Writes while master enable (SOUNDCNT_X bit 7) is off are dropped:
+    /// HW leaves the FIFO empty so a later timer overflow still requests
+    /// its DMA channel (alyosha fifo t002 observes DMA fire with the
+    /// FIFO supposedly loaded).
+    pub fn push_fifo(&mut self, fifo_b: bool, value: u32, width: u8) {
+        if self.soundcnt_x & 0x80 == 0 {
+            return;
+        }
+        let fifo = if fifo_b {
+            &mut self.fifo_b
+        } else {
+            &mut self.fifo_a
+        };
+        for i in 0..width.min(4) {
+            if fifo.len() >= 32 {
+                break;
+            }
+            fifo.push_back((value >> (i * 8)) as u8);
+        }
+    }
+
+    /// Raw CNT staging latches: the full halfword, unlike the R-masked
+    /// CPU `read`. The bus byte-lane merge reads through here so NR13
+    /// low bytes (etc.) survive until the high byte lands; CPU-visible
+    /// reads stay masked. `None` for addresses without a wide latch.
+    pub fn read_staging(&self, addr: u32) -> Option<u16> {
+        Some(match addr {
+            0x04000062 => self.sound1cnt_hi,
+            0x04000064 => self.sound1cnt_x,
+            0x04000068 => self.sound2cnt_lo,
+            0x0400006C => self.sound2cnt_hi,
+            0x04000072 => self.sound3cnt_hi,
+            0x04000074 => self.sound3cnt_x,
+            0x04000078 => self.sound4cnt_lo,
+            _ => return None,
+        })
+    }
+
+    pub fn read(&self, addr: u32) -> Option<u16> {
+        Some(match addr {
+            0x04000060 => self.sound1cnt_lo,
+            0x04000062 => self.sound1cnt_hi & 0xFFC0,
+            0x04000064 => self.sound1cnt_x & 0x4000,
+            0x04000068 => self.sound2cnt_lo & 0xFFC0,
+            0x0400006C => self.sound2cnt_hi & 0x4000,
+            0x04000070 => self.sound3cnt_lo,
+            0x04000072 => self.sound3cnt_hi & 0xE000,
+            0x04000074 => self.sound3cnt_x & 0x4000,
+            0x04000078 => self.sound4cnt_lo & 0xFF00,
+            0x0400007C => self.sound4cnt_hi,
+            0x04000080 => self.soundcnt_lo,
+            0x04000082 => self.soundcnt_hi,
+            0x04000084 => self.soundcnt_x_read(),
+            0x04000088 => self.soundbias,
+            0x04000090 => self.wave_read(0x90),
+            0x04000092 => self.wave_read(0x92),
+            0x04000094 => self.wave_read(0x94),
+            0x04000096 => self.wave_read(0x96),
+            0x04000098 => self.wave_read(0x98),
+            0x0400009A => self.wave_read(0x9A),
+            0x0400009C => self.wave_read(0x9C),
+            0x0400009E => self.wave_read(0x9E),
+            // FIFO_A/B (A0/A4) are write-only streaming buffers; reads are open bus.
+            _ => return None,
+        })
+    }
+
+    pub fn write(&mut self, addr: u32, value: u16) -> bool {
+        // Write-time staging: CNT latches keep the full halfword (minus
+        // the trigger strobe) so bus byte-lane merges round-trip; the
+        // R-bit masks apply at read time (`read`, bus `read_io_low`).
+        match addr {
+            0x04000060 => self.write_sound1cnt_lo(value),
+            0x04000062 => self.write_sound1cnt_hi(value),
+            0x04000064 => self.write_sound1cnt_x(value),
+            0x04000068 => self.write_sound2cnt_lo(value),
+            0x0400006C => self.write_sound2cnt_hi(value),
+            0x04000070 => self.write_sound3cnt_lo(value),
+            0x04000072 => self.write_sound3cnt_hi(value),
+            0x04000074 => self.write_sound3cnt_x(value),
+            0x04000078 => self.write_sound4cnt_lo(value),
+            0x0400007C => self.write_sound4cnt_hi(value),
+            0x04000080 => self.soundcnt_lo = value & 0xFF77,
+            0x04000082 => self.write_soundcnt_hi(value),
+            0x04000084 => self.write_soundcnt_x(value),
+            0x04000088 => self.soundbias = value & 0xC3FE,
+            0x04000090 => self.wave_write(0x90, value),
+            0x04000092 => self.wave_write(0x92, value),
+            0x04000094 => self.wave_write(0x94, value),
+            0x04000096 => self.wave_write(0x96, value),
+            0x04000098 => self.wave_write(0x98, value),
+            0x0400009A => self.wave_write(0x9A, value),
+            0x0400009C => self.wave_write(0x9C, value),
+            0x0400009E => self.wave_write(0x9E, value),
+            // FIFO handled by the bus (needs byte-lane info); ignore here.
+            _ => return false,
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fft_test::{FFT_SAMPLE_COUNT, dominant_frequency, dominant_frequency_tolerance};
+    use super::*;
+
+    fn dc_apu(frames: usize, level: f32) -> GbaApu {
+        let mut apu = GbaApu::new();
+        apu.mix_buffer = vec![(level, level); frames];
+        apu
+    }
+
+    #[test]
+    fn output_hpf_blocks_dc_but_passes_edges() {
+        let mut apu = dc_apu(4800, 0.5);
+        let out = apu.drain_resampled(48_000);
+        assert!(!out.is_empty());
+        // Fast edges pass near unity through the first-order HPF...
+        let peak = out.iter().take(10).map(|s| s.left).fold(0.0f32, f32::max);
+        assert!(peak > 0.4, "HPF should pass the leading edge, got {peak}");
+        // ...while sustained DC converges to silence (tau ~= 8ms at 20Hz).
+        let tail = out[out.len() - 1];
+        assert!(
+            tail.left.abs() < 0.01 && tail.right.abs() < 0.01,
+            "DC should converge to 0, got ({}, {})",
+            tail.left,
+            tail.right
+        );
+    }
+
+    #[test]
+    fn output_hpf_rebuilds_on_rate_change() {
+        let mut apu = dc_apu(1024, 0.25);
+        let first = apu.drain_resampled(48_000);
+        assert!(!first.is_empty());
+        assert_eq!(apu.output_hpf_rate, 48_000);
+        apu.mix_buffer = vec![(0.25, -0.25); 1024];
+        let second = apu.drain_resampled(44_100);
+        assert!(!second.is_empty());
+        assert_eq!(apu.output_hpf_rate, 44_100);
+        assert!(
+            second
+                .iter()
+                .all(|s| s.left.is_finite() && s.right.is_finite())
+        );
+    }
+
+    #[test]
+    fn output_hpf_state_clears_on_sound_reset() {
+        let mut apu = dc_apu(4800, 0.5);
+        let _ = apu.drain_resampled(48_000);
+        apu.reset_sound();
+        // Fresh filter memory: the next leading edge passes near unity again
+        // instead of continuing from the converged (silent) state.
+        apu.mix_buffer = vec![(0.5, 0.5); 64];
+        let out = apu.drain_resampled(48_000);
+        let peak = out.iter().map(|s| s.left).fold(0.0f32, f32::max);
+        assert!(peak > 0.4, "reset should clear HPF memory, got {peak}");
+    }
+
+    #[test]
+    fn ball_tray_ball_sequence_triggers_and_sounds() {
+        // se_ball_tray_ball (Pokemon Center ball placement): square_1_alt,
+        // sweep 0x24 (pace 2/inc/shift 4), duty 0, decay 2. The note is a
+        // by-design ~12ms blip (the arming sweep overflows at the second
+        // sequencer tick on HW too); assert it triggers and sounds at all.
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0x77FF);
+        apu.write_soundcnt_hi(0x0B0B);
+        apu.write_sound1cnt_lo(0x24);
+        // NR11 = duty 0/len 0, NR12 = vol 12/dec/pace 2 (halfword).
+        apu.write_sound1cnt_hi(0xC200);
+        apu.write_sound1cnt_x(0x8762);
+        assert!(apu.sq1.core.active);
+        for _ in 0..280896u32 {
+            apu.tick();
+        }
+        let out = apu.drain_resampled(48_000);
+        let energy: f32 = out
+            .iter()
+            .map(|s| s.left * s.left + s.right * s.right)
+            .sum();
+        assert!(energy > 0.05, "ball SE must sound, energy={energy}");
+    }
+
+    #[test]
+    fn apu_state_round_trips_mid_note() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // Ch1: sweep off, duty 2, envelope up, freq with trigger.
+        apu.write_sound1cnt_lo(0x0040);
+        apu.write_sound1cnt_hi(0x81F3);
+        apu.write_sound1cnt_x(0x8385);
+        // FIFO A gets two samples (non-empty FIFO path).
+        apu.fifo_a.extend([0x10, 0x20]);
+        apu.dac_a = 0x10;
+        // A driver voice is mid-note.
+        apu.driver_voices[0] = DriverVoice {
+            started: true,
+            pos: 12.5,
+            env: 200.0,
+        };
+        // Run long enough for the envelope and sequencer to advance and
+        // the grid buffer to fill.
+        for _ in 0..4000 {
+            apu.tick();
+        }
+        assert!(!apu.mix_buffer.is_empty());
+        // A full grid buffer is mid-frame content: export must refuse.
+        assert!(apu.export_state().is_err());
+        // Draining leaves only the interpolation tail: export succeeds.
+        let _ = apu.drain_resampled(48_000);
+        assert!(apu.mix_buffer.len() <= 2);
+
+        let state = apu.export_state().unwrap();
+        state.validate().unwrap();
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: GbaApuState = rmp_serde::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        let mut restored = GbaApu::new();
+        restored.import_state(decoded).unwrap();
+        let again = rmp_serde::to_vec_named(&restored.export_state().unwrap()).unwrap();
+        assert_eq!(bytes, again);
+        assert!(restored.mix_buffer.is_empty());
+        assert_eq!(restored.output_hpf_rate, OUTPUT_HPF_DEFAULT_RATE);
+
+        let mut bad = restored.export_state().unwrap();
+        bad.seq_step = 8;
+        assert!(bad.validate().is_err());
+        let mut bad = restored.export_state().unwrap();
+        bad.fifo_a = vec![0; 33];
+        assert!(bad.validate().is_err());
+        // Zero countdowns never rest at zero (unconditional decrement).
+        let mut bad = restored.export_state().unwrap();
+        bad.seq_timer = 0;
+        assert!(bad.validate().is_err());
+        let mut bad = restored.export_state().unwrap();
+        bad.mix_timer = 0;
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn apu_state_round_trips_sounding_ch2() {
+        // ch2 has no sweep unit: a sounding ch2 keeps the never-written
+        // sweep pace 0. Saves from such moments must import (this scored
+        // "Save state is corrupt" on device for music-heavy games).
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // NR22: envelope up. NR24: freq + trigger. (ch2 has no NR10:
+        // sweep pace stays at the never-written zero while sounding.)
+        apu.write_sound2cnt_lo(0x81F3);
+        apu.write_sound2cnt_hi(0x8385);
+        assert!(apu.sq2.core.active);
+        assert_eq!(apu.sq2.sweep_pace_for_test(), 0);
+        for _ in 0..4000 {
+            apu.tick();
+        }
+        assert!(apu.sq2.core.active);
+        let _ = apu.drain_resampled(48_000);
+        let state = apu.export_state().unwrap();
+        state.validate().unwrap();
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: GbaApuState = rmp_serde::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        let mut restored = GbaApu::new();
+        restored.import_state(decoded).unwrap();
+        assert!(restored.sq2.core.active);
+    }
+
+    #[test]
+    fn noise_shift_uses_all_four_bits() {
+        // NR43 shift is 4 bits; masking 3 misread shift 8-15 as 0-7
+        // (wrong noise pitch for games using slow LFSR clocks).
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // NR42: vol 15, envelope off. NR43: ratio 7, 15-bit, shift 15.
+        // NR44: trigger, length off.
+        apu.write_sound4cnt_lo(0xF000);
+        apu.write_sound4cnt_hi(0x80F7);
+        assert!(apu.noise.core.active);
+        apu.tick();
+        // Interval (64<<15)*7, minus the tick just consumed. The old
+        // 3-bit mask gave (64<<7)*7 - 1 = 57343.
+        assert_eq!(apu.noise.timer_horizon(), Some((64 << 15) * 7 - 1));
+        let _ = apu.drain_resampled(48_000);
+        let state = apu.export_state().unwrap();
+        state.validate().unwrap();
+        let mut restored = GbaApu::new();
+        restored
+            .import_state(rmp_serde::from_slice(&rmp_serde::to_vec_named(&state).unwrap()).unwrap())
+            .unwrap();
+        assert!(restored.noise.core.active);
+    }
+
+    #[test]
+    fn apu_state_round_trips_all_channels_at_extremes() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // ch1: sweep pace 7 / dec / shift 7, duty 3, env vol 15 up pace 3,
+        // len on, freq low (sweep runs without overflow-kill at this pitch).
+        apu.write_sound1cnt_lo(0x0077);
+        apu.write_sound1cnt_hi(0xFFF3);
+        apu.write_sound1cnt_x(0xC100);
+        // ch2: duty 3, env vol 15 down pace 7, freq max, len on.
+        apu.write_sound2cnt_lo(0xF7F3);
+        apu.write_sound2cnt_hi(0xFFFF);
+        // ch3: DAC on, dim64, bank 1, len max (256), rate max (rapid
+        // phase/bank cycling), len on, trigger.
+        apu.write_sound3cnt_lo(0x00E0);
+        apu.write_sound3cnt_hi(0x0000);
+        apu.write_sound3cnt_x(0x87FF);
+        // ch4: env vol 8 up pace 7, len max; ratio 7, 7-bit, shift 7,
+        // len on, trigger.
+        apu.write_sound4cnt_lo(0x8F00);
+        apu.write_sound4cnt_hi(0xC07F);
+        // FIFO A packed full (32) through the MMIO path.
+        for i in 0..8 {
+            apu.push_fifo(false, 0x11111111u32.wrapping_add(i), 4);
+        }
+        for i in 0..60000 {
+            apu.tick();
+            if i % 37 == 0 {
+                let _ = apu.drain_resampled(48_000);
+                let state = apu
+                    .export_state()
+                    .unwrap_or_else(|e| panic!("export failed at tick {i}: {e}"));
+                state
+                    .validate()
+                    .unwrap_or_else(|e| panic!("invalid at tick {i}: {e}"));
+                let bytes = rmp_serde::to_vec_named(&state).unwrap();
+                let decoded: GbaApuState = rmp_serde::from_slice(&bytes).unwrap();
+                decoded.validate().unwrap();
+                let mut restored = GbaApu::new();
+                restored
+                    .import_state(decoded)
+                    .unwrap_or_else(|e| panic!("import failed at tick {i}: {e}"));
+            }
+        }
+    }
+
+    #[test]
+    fn channel_enables_gate_left_and_right() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // ch2 on the right only: full volumes, R enable bit 9, no L enable.
+        apu.write(0x04000080, 0x0277);
+        apu.write_soundcnt_hi(0x0003);
+        apu.write_sound2cnt_lo(0xF080);
+        apu.write_sound2cnt_hi(0x8700);
+        assert!(apu.sq2.core.active);
+        while apu.mix_buffer.len() < 2048 {
+            apu.tick();
+        }
+        assert!(
+            apu.mix_buffer.iter().all(|sample| sample.0 == 0.0),
+            "muted side must be exactly silent"
+        );
+        let energy: f32 = apu
+            .mix_buffer
+            .iter()
+            .map(|sample| sample.1 * sample.1)
+            .sum();
+        assert!(energy > 1e-6, "enabled side must sound, energy={energy}");
+    }
+
+    #[test]
+    fn master_volumes_scale_each_side() {
+        // L volume 0 (x1) vs R volume 7 (x8): peaks must carry the exact
+        // integer ratio, documenting the >>2 truncation asymmetry
+        // ((-60) >> 2 == -15 on the quiet side).
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0xFF07);
+        apu.write_soundcnt_hi(0x0003);
+        apu.write_sound2cnt_lo(0xF080);
+        apu.write_sound2cnt_hi(0x8700);
+        while apu.mix_buffer.len() < 2048 {
+            apu.tick();
+        }
+        let peak_l = apu
+            .mix_buffer
+            .iter()
+            .map(|sample| sample.0.abs())
+            .fold(0.0f32, f32::max);
+        let peak_r = apu
+            .mix_buffer
+            .iter()
+            .map(|sample| sample.1.abs())
+            .fold(0.0f32, f32::max);
+        assert_eq!(peak_l, 15.0 / 512.0, "quiet side peak");
+        assert_eq!(peak_r, 120.0 / 512.0, "loud side peak");
+    }
+
+    #[test]
+    fn voices_route_to_left_and_right_independently() {
+        // ch1 512Hz left-only, ch2 256Hz right-only: each side must carry
+        // its own pitch.
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0x1277);
+        apu.write_soundcnt_hi(0x0003);
+        apu.write_sound1cnt_lo(0x00);
+        apu.write_sound1cnt_hi(0xF080);
+        apu.write_sound1cnt_x(0x8700);
+        apu.write_sound2cnt_lo(0xF080);
+        apu.write_sound2cnt_hi(0x8600);
+        assert!(apu.sq1.core.active);
+        assert!(apu.sq2.core.active);
+        while apu.mix_buffer.len() < FFT_SAMPLE_COUNT {
+            apu.tick();
+        }
+        let left: Vec<f32> = apu.mix_buffer.iter().map(|sample| sample.0).collect();
+        let right: Vec<f32> = apu.mix_buffer.iter().map(|sample| sample.1).collect();
+        let tolerance = dominant_frequency_tolerance(MIX_RATE as f32, FFT_SAMPLE_COUNT);
+        let pitch_l = dominant_frequency(&left, MIX_RATE as f32);
+        let pitch_r = dominant_frequency(&right, MIX_RATE as f32);
+        assert!(
+            (pitch_l - 512.0).abs() <= tolerance,
+            "left should carry ch1 512Hz, got {pitch_l}"
+        );
+        assert!(
+            (pitch_r - 256.0).abs() <= tolerance,
+            "right should carry ch2 256Hz, got {pitch_r}"
+        );
+    }
+
+    #[test]
+    fn mix_clips_at_upper_rail() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0xFFFF);
+        // PSG x4, FIFO A x4 to L+R.
+        apu.write_soundcnt_hi(0x0307);
+        // ch1/ch2 maxed at duty 50%, ch3 full-volume 0xFF table, ch4 idle.
+        apu.write_sound1cnt_lo(0x00);
+        apu.write_sound1cnt_hi(0xF080);
+        apu.write_sound1cnt_x(0x8700);
+        apu.write_sound2cnt_lo(0xF080);
+        apu.write_sound2cnt_hi(0x8700);
+        apu.wave_ram.fill(0xFF);
+        apu.write_sound3cnt_lo(0x0080);
+        apu.write_sound3cnt_hi(0x2000);
+        apu.write_sound3cnt_x(0x8700);
+        apu.dac_a = 127;
+        // Square phase starts at step 0 (high for duty 50%): the very
+        // first grid sample already clips.
+        while apu.mix_buffer.is_empty() {
+            apu.tick();
+        }
+        let first = apu.mix_buffer[0];
+        // (15 + 15 + 15) * 32 >> 2 + 127 * 4 = 868; +512 bias = 1380,
+        // clamped to the 10-bit rail: 1023 / 512 - 1.
+        assert_eq!(first.0, 1023.0 / 512.0 - 1.0);
+        assert_eq!(first.1, 1023.0 / 512.0 - 1.0);
+    }
+
+    #[test]
+    fn mix_clips_at_lower_rail() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0xFFFF);
+        // PSG x4, FIFO A x4 to L+R.
+        apu.write_soundcnt_hi(0x0307);
+        // ch1/ch2 maxed at duty 0 (low from phase 1), ch3 0x00 table.
+        apu.write_sound1cnt_lo(0x00);
+        apu.write_sound1cnt_hi(0xF000);
+        apu.write_sound1cnt_x(0x8700);
+        apu.write_sound2cnt_lo(0xF000);
+        apu.write_sound2cnt_hi(0x8700);
+        apu.wave_ram.fill(0x00);
+        apu.write_sound3cnt_lo(0x0080);
+        apu.write_sound3cnt_hi(0x2000);
+        apu.write_sound3cnt_x(0x8700);
+        apu.dac_a = -128;
+        while apu.mix_buffer.is_empty() {
+            apu.tick();
+        }
+        let first = apu.mix_buffer[0];
+        // (-15 - 15 + 0) * 32 >> 2 - 128 * 4 = -752; +512 bias = -240,
+        // clamped to the rail: silence at -1.0.
+        assert_eq!(first.0, -1.0);
+        assert_eq!(first.1, -1.0);
+    }
+
+    #[test]
+    fn soundbias_centers_silence() {
+        for (bias, expected) in [
+            (0x000u16, -1.0f32),
+            (0x200, 0.0),
+            (0x3FF, 1022.0 / 512.0 - 1.0),
+        ] {
+            let mut apu = GbaApu::new();
+            apu.write_soundcnt_x(0x80);
+            apu.write(0x04000080, 0x0077);
+            apu.write(0x04000088, bias);
+            // Bit 0 is not used (GBATEK bias level is bits 1-9).
+            assert_eq!(apu.soundbias, bias & 0xC3FE, "bias {bias:#X} mask");
+            while apu.mix_buffer.is_empty() {
+                apu.tick();
+            }
+            let sample = apu.mix_buffer[0];
+            assert_eq!(sample.0, expected, "bias {bias:#X} left");
+            assert_eq!(sample.1, expected, "bias {bias:#X} right");
+        }
+    }
+
+    #[test]
+    fn length_retrigger_quirk_follows_sequencer_parity() {
+        // The trigger-time quirk (extra length tick just before a length
+        // step) is wired to the live sequencer position.
+        for (step, expected) in [(0u8, 64u8), (1, 63)] {
+            let mut apu = GbaApu::new();
+            apu.write_soundcnt_x(0x80);
+            apu.seq_step = step;
+            apu.write_sound2cnt_lo(0xF000);
+            apu.write_sound2cnt_hi(0x8700);
+            assert!(apu.sq2.core.active);
+            assert_eq!(apu.sq2.core.length, expected, "seq_step {step}");
+        }
+    }
+
+    #[test]
+    fn soundcnt_x_off_resets_psg_and_fifos() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0xFFFF);
+        apu.write_soundcnt_hi(0x0B0B);
+        // A sounding voice, a loaded FIFO and a nonzero DAC latch.
+        apu.write_sound2cnt_lo(0xF080);
+        apu.write_sound2cnt_hi(0x8700);
+        apu.push_fifo(false, 0xAABBCCDD, 4);
+        apu.dac_a = 0x40;
+        assert!(apu.sq2.core.active);
+        assert_eq!(apu.fifo_len(false), 4);
+        // Clearing master enable resets voices, registers, FIFOs and
+        // DACs — but keeps the FIFO routing high byte (the reset bits
+        // 11/15 were already stripped at write time, so 0x0B0B stored
+        // as 0x030B).
+        apu.write_soundcnt_x(0x00);
+        assert_eq!(apu.soundcnt_x, 0);
+        assert!(!apu.sq2.core.active);
+        assert_eq!(apu.sound1cnt_lo, 0);
+        assert_eq!(apu.soundcnt_lo, 0);
+        assert_eq!(apu.soundcnt_hi, 0x030B);
+        assert!(apu.fifo_a.is_empty());
+        assert_eq!(apu.dac_a, 0);
+        // ...while the frame sequencer free-runs from boot.
+        let step = apu.seq_step;
+        for _ in 0..32768 {
+            apu.tick();
+        }
+        assert_eq!(apu.seq_step, (step + 1) & 7);
+        // Re-enable: silence at the bias center.
+        apu.write_soundcnt_x(0x80);
+        while apu.mix_buffer.is_empty() {
+            apu.tick();
+        }
+        assert_eq!(apu.mix_buffer[0], (0.0, 0.0));
+    }
+
+    #[test]
+    fn trigger_before_envelope_step_reloads_timer_plus_one() {
+        // Envelope pace 2; step 6 leads into the step-7 envelope tick.
+        for (step, expected) in [(5u8, 2u8), (6, 3)] {
+            let mut apu = GbaApu::new();
+            apu.write_soundcnt_x(0x80);
+            apu.seq_step = step;
+            apu.write_sound2cnt_lo(0xF200);
+            apu.write_sound2cnt_hi(0x8700);
+            assert!(apu.sq2.core.active);
+            assert_eq!(apu.sq2.core.env_timer_for_test(), expected, "step {step}");
+        }
+        // Pace 7 + extra tick parks the timer at 8: still a legal state
+        // that must export (not "corrupt").
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.seq_step = 6;
+        apu.write_sound2cnt_lo(0xF700);
+        apu.write_sound2cnt_hi(0x8700);
+        assert_eq!(apu.sq2.core.env_timer_for_test(), 8);
+        apu.export_state().unwrap().validate().unwrap();
+    }
+
+    #[test]
+    fn wave_64digit_starts_with_selected_bank() {
+        // Bank 0 replays 0xFF (nibble 15 -> +14 bipolar), bank 1 replays
+        // 0x00 (nibble 0 -> -16): the first grid sample must follow the
+        // NR30-selected bank (GBATEK: output starts by replaying the
+        // currently selected bank).
+        for (bank_bit, expected) in [(0x0000u16, 112.0 / 512.0), (0x0040, -128.0 / 512.0)] {
+            let mut apu = GbaApu::new();
+            apu.write_soundcnt_x(0x80);
+            apu.write(0x04000080, 0x4477);
+            apu.write_soundcnt_hi(0x0002);
+            apu.wave_ram[..16].fill(0xFF);
+            apu.wave_ram[16..].fill(0x00);
+            apu.write_sound3cnt_lo(0x0080 | bank_bit | 0x0020);
+            apu.write_sound3cnt_hi(0x2000);
+            apu.write_sound3cnt_x(0x8700);
+            assert!(apu.wave.active);
+            assert_eq!(apu.wave.bank, (bank_bit != 0) as usize);
+            while apu.mix_buffer.is_empty() {
+                apu.tick();
+            }
+            assert_eq!(apu.mix_buffer[0].0, expected, "bank bit {bank_bit:#X}");
+            assert_eq!(apu.mix_buffer[0].1, expected, "bank bit {bank_bit:#X}");
+        }
+    }
+}

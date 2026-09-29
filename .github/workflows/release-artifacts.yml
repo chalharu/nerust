@@ -384,6 +384,11 @@ jobs:
           java-version: "17.0.20+8"
       - name: Set up Android SDK
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          # Default packages ('tools platform-tools') fails: obsolete 'tools'
+          # package was removed from the SDK repository. Install only
+          # platform-tools; Gradle downloads the rest on demand.
+          packages: platform-tools
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
