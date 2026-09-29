@@ -265,7 +265,12 @@ impl GbaSystem {
                     // Sample IRQ only at instruction boundaries; mid-instruction never samples.
                     // Falls through to the shared epilogue (decrement sets dispatch timing).
                     // Entry cost comes from service_irq (real refill waits + prologue count).
-                    if let Some(irq_entry_cycles) = self.cpu.service_irq(&mut self.bus) {
+                    let irq_entry = if self.bus.irq_pending() {
+                        self.cpu.service_irq(&mut self.bus)
+                    } else {
+                        None
+                    };
+                    if let Some(irq_entry_cycles) = irq_entry {
                         self.cpu_cycles_remaining = irq_entry_cycles;
                     } else if let Some(acc) = self.drain_micro() {
                         self.cpu_cycles_remaining = acc.max(1) as u32;
