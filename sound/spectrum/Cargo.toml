@@ -2,9 +2,6 @@
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
-name = "nerust_sound_filter"
+name = "nerust_sound_spectrum"
 rust-version.workspace = true
 version.workspace = true
-
-[dependencies]
-nerust_core_traits.workspace = true

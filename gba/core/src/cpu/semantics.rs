@@ -85,6 +85,14 @@ pub(crate) fn update_nz(regs: &mut CpuRegisters, result: u32) {
 
 /// Evaluate an ARM condition code against CPSR N/Z/C/V flags.
 pub(crate) fn condition_passed(cpsr: u32, condition: u8) -> bool {
+    // AL/NV decide without flag extraction (the overwhelmingly common
+    // ARM case is unconditional execution).
+    if condition == 0xE {
+        return true;
+    }
+    if condition == 0xF {
+        return false;
+    }
     let n = cpsr & (1 << 31) != 0;
     let z = cpsr & (1 << 30) != 0;
     let c = cpsr & (1 << 29) != 0;

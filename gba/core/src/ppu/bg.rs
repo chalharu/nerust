@@ -148,8 +148,11 @@ fn affine_pixel(ctx: &mut BgContext<'_>, bg: usize, cnt: u16, x: usize, y: usize
     let mut sy = (line_y + rel_x * i32::from(ctx.registers.pc[affine])) >> 8;
     let size = 128i32 << ((cnt >> 14) & 3);
     if cnt & (1 << 13) != 0 {
-        sx = sx.rem_euclid(size);
-        sy = sy.rem_euclid(size);
+        // `size` is always a power of two, so masking equals `rem_euclid`
+        // without the division.
+        let mask = size - 1;
+        sx &= mask;
+        sy &= mask;
     } else if sx < 0 || sy < 0 || sx >= size || sy >= size {
         return None;
     }

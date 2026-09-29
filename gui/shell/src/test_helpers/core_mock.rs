@@ -1,5 +1,6 @@
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, identity::SystemIdentity,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, audio::StereoSample,
+    identity::SystemIdentity,
 };
 use nerust_render_traits::{
     FrameBuffer, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
@@ -30,7 +31,12 @@ impl ConsoleCore for MockConsoleCore {
             video_signal: nerust_core_traits::VideoSignalKind::Ntsc,
         }
     }
-    fn render_frame(&mut self, _frame_slot: &mut FrameBuffer) -> Result<(), CoreError> {
+    fn render_frame(
+        &mut self,
+        _frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<(), CoreError> {
+        audio_out.clear();
         Ok(())
     }
     fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
@@ -85,6 +91,7 @@ pub(crate) fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts 
     let (gui_input, _input_split) = test_input_resources();
     CoreParts {
         core: Box::new(core),
+        audio: Box::new(nerust_core_traits::audio::NullAudio),
         gui_input,
         field_map: std::collections::HashMap::new(),
         render_profile,

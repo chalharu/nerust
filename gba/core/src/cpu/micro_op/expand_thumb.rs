@@ -3,7 +3,7 @@
 //! from the parent module, so this file depends downward on nothing.
 use super::{
     AluEffect, AluImmOp, BlockEmptyEffect, BlockEndEffect, BlockStartEffect, BlockWord,
-    BranchEffect, MemAccess, MicroOp, MulEffect, PcRelRead,
+    BranchEffect, MemAccess, MicroOp, MicroOpVec, MulEffect, PcRelRead,
 };
 use crate::cpu::semantics::{condition_passed, multiplier_cycles};
 use crate::cpu_registers::CpuRegisters;
@@ -13,67 +13,73 @@ use crate::cpu_registers::CpuRegisters;
 /// `regs` snapshots stack/base pointers and STM store words at
 /// queue-fill (pre-instruction state; registers are frozen across the
 /// words of one instruction).
-pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+/// Test-only wrapper (the hot path uses [`expand_thumb_into`]); kept so
+/// the decoder unit tests keep their readable by-value form.
+#[cfg(test)]
+pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<MicroOpVec> {
+    let mut ops = MicroOpVec::new();
+    expand_thumb_into(instr, regs, &mut ops).map(|()| ops)
+}
+
+/// Branch/trap head of [`expand_thumb_into`]: conditional B
+/// (cond < 0xE; 0xDE00/0xDF00 fall through to the UND/SWI traps
+/// below), unconditional B, long BL halves, BX, SWI, UND and the
+/// decoder gaps (0xB100-0xB3FF, 0xB600-0xBBFF, 0xBE00-0xBFFF).
+/// `Some` when the instruction was handled.
+#[inline]
+fn expand_thumb_branch_trap(instr: u16, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     // Conditional B (cond < 0xE); 0xDE00/0xDF00 fall through to the
     // UND/SWI traps below.
     if instr >> 12 == 0xD && ((instr >> 8) & 0xF) < 0xE {
         let condition = ((instr >> 8) & 0xF) as u8;
         if !condition_passed(regs.cpsr(), condition) {
-            return Some(vec![MicroOp::Internal]);
+            out.push(MicroOp::Internal);
+            return Some(());
         }
         let offset = ((instr & 0xFF) as i8 as i32) << 1;
-        return Some(vec![
-            MicroOp::Internal,
-            MicroOp::Internal,
-            MicroOp::TakenBranch(BranchEffect {
-                offset: offset as u32,
-                link: false,
-            }),
-        ]);
+        out.push(MicroOp::TakenBranch(BranchEffect {
+            offset: offset as u32,
+            link: false,
+        }));
+        return Some(());
     }
     // B (unconditional).
     if instr >> 11 == 0b11100 {
         let offset = ((instr & 0x7FF) as i32) << 1;
         let offset = (offset << 20) >> 20;
-        return Some(vec![
-            MicroOp::Internal,
-            MicroOp::Internal,
-            MicroOp::TakenBranch(BranchEffect {
-                offset: offset as u32,
-                link: false,
-            }),
-        ]);
+        out.push(MicroOp::TakenBranch(BranchEffect {
+            offset: offset as u32,
+            link: false,
+        }));
+        return Some(());
     }
     // Long BL: high half sets LR (1 cycle); low half refills like B.
     if instr >> 11 == 0b11110 {
         let offset = ((instr & 0x7FF) as i32) << 12;
         let offset = (offset << 9) >> 9; // sign extend
-        return Some(vec![MicroOp::BlHigh(offset as u32)]);
+        out.push(MicroOp::BlHigh(offset as u32));
+        return Some(());
     }
     if instr >> 11 == 0b11111 {
         let offset = ((instr & 0x7FF) as u32) << 1;
-        return Some(vec![
-            MicroOp::Internal,
-            MicroOp::Internal,
-            MicroOp::BlLow(offset),
-        ]);
+        out.push(MicroOp::BlLow(offset));
+        return Some(());
     }
     // BX (the whole 0x4700 range is op 0b11): interworking branch.
     if (instr & 0xFF00) == 0x4700 {
         let rs = ((instr >> 3) & 0xF) as usize;
-        return Some(vec![
-            MicroOp::Internal,
-            MicroOp::Internal,
-            MicroOp::Bx(regs.r(rs)),
-        ]);
+        out.push(MicroOp::Bx(regs.r(rs)));
+        return Some(());
     }
     // SWI: trap to the BIOS HLE (or the SVC vector when unhandled).
     if (instr & 0xFF00) == 0xDF00 {
-        return Some(vec![MicroOp::TrapSwi((instr & 0xFF) as u8)]);
+        out.push(MicroOp::TrapSwi((instr & 0xFF) as u8));
+        return Some(());
     }
     // UND: the 0xDE00 range traps to the undefined vector.
     if (instr & 0xFF00) == 0xDE00 {
-        return Some(vec![MicroOp::TrapUnd]);
+        out.push(MicroOp::TrapUnd);
+        return Some(());
     }
     // UND: decoder gaps (0xB100-0xB3FF, 0xB600-0xBBFF, 0xBE00-0xBFFF)
     // are undefined-instruction traps.
@@ -81,8 +87,17 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         || (0xB600..=0xBBFF).contains(&instr)
         || (0xBE00..=0xBFFF).contains(&instr)
     {
-        return Some(vec![MicroOp::TrapUnd]);
+        out.push(MicroOp::TrapUnd);
+        return Some(());
     }
+    None
+}
+
+/// MOV/CMP/ADD/SUB immediate + Thumb MUL head of [`expand_thumb_into`]
+/// (op 0xD in 0x4000..=0x43FF: m from the incoming Rd; other ALU ops
+/// expand via `expand_thumb_alu_rest` below). `Some` when handled.
+#[inline]
+fn expand_thumb_alu_imm_mul(instr: u16, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     // MOV/CMP/ADD/SUB immediate.
     if instr >> 13 == 0b001 {
         let op = match (instr >> 11) & 0x3 {
@@ -93,7 +108,7 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         };
         let rd = ((instr >> 8) & 0x7) as usize;
         let imm = (instr & 0xFF) as u32;
-        return Some(vec![MicroOp::CommitAlu(AluEffect {
+        out.push(MicroOp::CommitAlu(AluEffect {
             op,
             rd,
             rn: rd,
@@ -101,43 +116,207 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
             set_flags: true,
             thumb_mov: matches!(op, AluImmOp::Mov),
             carry: None,
-        })]);
+        }));
+        return Some(());
     }
     // Thumb MUL (op 0xD in 0x4000..=0x43FF): m from the incoming Rd;
     // other ALU ops expand via `expand_thumb_alu_rest` below.
     if (instr & 0xFFC0) == 0x4340 {
         let m = multiplier_cycles(regs.r((instr & 0x7) as usize));
-        let mut ops = vec![MicroOp::CommitMul(MulEffect {
+        out.push(MicroOp::CommitMul(MulEffect {
             instr: u32::from(instr),
             thumb: true,
-        })];
-        ops.extend(vec![MicroOp::Internal; m as usize]);
-        return Some(ops);
+        }));
+        out.extend(core::iter::repeat_n(MicroOp::Internal, m as usize));
+        return Some(());
     }
-    if let Some(ops) = expand_thumb_alu_rest(instr) {
-        return Some(ops);
+    None
+}
+
+/// Nibble-0x4 arm of [`expand_thumb_into`]: 0x4000-0x47FF ALU/hi-reg
+/// via ALU-rest only, 0x4800-0x4FFF literal loads via PC-relative only.
+#[inline]
+fn expand_thumb_nibble_4(
+    instr: u16,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+) -> Option<()> {
+    if instr < 0x4800 {
+        if expand_thumb_alu_rest_into(instr, out).is_some() {
+            return Some(());
+        }
+    } else if expand_thumb_pcrel_into(instr, regs, out).is_some() {
+        return Some(());
     }
-    expand_thumb_push_pop(instr, regs)
-        .or_else(|| expand_thumb_multiple(instr, regs))
-        .or_else(|| expand_thumb_pcrel(instr, regs))
-        .or_else(|| expand_thumb_load_store(instr))
+    out.truncate(base);
+    None
+}
+
+/// Nibble-0xB arm of [`expand_thumb_into`]: ADD-SP (ALU-rest) and
+/// PUSH/POP, in legacy order.
+#[inline]
+fn expand_thumb_nibble_b(
+    instr: u16,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+) -> Option<()> {
+    if expand_thumb_alu_rest_into(instr, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_push_pop_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    None
+}
+
+/// Fallback arm of [`expand_thumb_into`]: 0x2-0x3 (imm ALU, handled
+/// above) and 0xD-0xF (branches/traps, handled above) keep the legacy
+/// attempt order for exactness.
+#[inline]
+fn expand_thumb_fallback_arm(
+    instr: u16,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+) -> Option<()> {
+    if expand_thumb_alu_rest_into(instr, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_push_pop_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_multiple_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_pcrel_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    None
+}
+
+/// Legacy tail chain of [`expand_thumb_into`]: attempts the remaining
+/// leaves after the nibble pre-dispatch falls through (each leaf
+/// truncates on failure; `base` makes that bulletproof).
+#[inline]
+fn expand_thumb_tail(
+    instr: u16,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+) -> Option<()> {
+    if expand_thumb_alu_rest_into(instr, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_push_pop_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_multiple_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_pcrel_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    expand_thumb_load_store_into(instr, out)
+}
+
+/// Hot-path expansion: build directly into `out` with no whole-buffer
+/// moves (return-by-value `SmallVec` chains codegen as per-instruction
+/// `memcpy` calls). Fallible leaves truncate `out` back to its entry
+/// length on `None`, so sequential attempts compose cleanly.
+pub(crate) fn expand_thumb_into(
+    instr: u16,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+) -> Option<()> {
+    if expand_thumb_branch_trap(instr, regs, out).is_some() {
+        return Some(());
+    }
+    if expand_thumb_alu_imm_mul(instr, regs, out).is_some() {
+        return Some(());
+    }
+    // Sequential attempts (not `or_else` chains): each link of an
+    // `or_else` chain moves the whole inline buffer through a generic
+    // `Option::or_else` instantiation, which codegen outlines as a
+    // `memcpy` call on the hot path. Leaves truncate on failure, and
+    // the base/truncate below makes that bulletproof.
+    //
+    // Nibble pre-dispatch: the leaves are class-disjoint by top nibble
+    // (each leaf rejects every other nibble in its first bit tests), so
+    // each route below is the legacy attempt order with provably-dead
+    // attempts removed — identical outcomes, fewer failed attempts on
+    // the hot path.
+    let base = out.len();
+    match instr >> 12 {
+        // Shift-imm / add-sub (0x0-0x1) and ADR (0xA): ALU-rest only.
+        0x0 | 0x1 | 0xA => {
+            if expand_thumb_alu_rest_into(instr, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+        }
+        // 0x4000-0x47FF ALU/hi-reg: ALU-rest only. 0x4800-0x4FFF
+        // literal loads: PC-relative only.
+        0x4 => {
+            if expand_thumb_nibble_4(instr, regs, out, base).is_some() {
+                return Some(());
+            }
+        }
+        // Register/imm/SP-relative transfers: load-store only.
+        0x5..=0x9 => {
+            if expand_thumb_load_store_into(instr, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+        }
+        // ADD-SP (ALU-rest) and PUSH/POP, in legacy order.
+        0xB => {
+            if expand_thumb_nibble_b(instr, regs, out, base).is_some() {
+                return Some(());
+            }
+        }
+        // LDM/STM: multiple only.
+        0xC => {
+            if expand_thumb_multiple_into(instr, regs, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+        }
+        // 0x2-0x3 (imm ALU, handled above), 0xD-0xF (branches/traps,
+        // handled above): keep the legacy order for exactness.
+        _ => {
+            if expand_thumb_fallback_arm(instr, regs, out, base).is_some() {
+                return Some(());
+            }
+        }
+    }
+    expand_thumb_tail(instr, regs, out, base)
 }
 
 /// Thumb LDR (literal) 0x4800..=0x4FFF. Expands to [Read, I, I] (= 3),
 /// matching `handle_pc_relative` (bus read32, then fetch-stream-break).
-fn expand_thumb_pcrel(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+fn expand_thumb_pcrel_into(instr: u16, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     if !(0x4800..=0x4FFF).contains(&instr) {
         return None;
     }
     let addr = (regs.pc() & !3).wrapping_add(((instr & 0xFF) as u32) << 2);
-    Some(vec![
-        MicroOp::PcRelRead(PcRelRead {
-            addr,
-            rd: ((instr >> 8) & 0x7) as usize,
-        }),
-        MicroOp::Internal,
-        MicroOp::Internal,
-    ])
+    // Pinned base ([Read, I, I] = 3) folds into the op's own cost.
+    out.push(MicroOp::PcRelRead(PcRelRead {
+        addr,
+        rd: ((instr >> 8) & 0x7) as usize,
+    }));
+    Some(())
 }
 
 /// Thumb LDMIA/STMIA, including the empty forms (single PC word with
@@ -146,54 +325,61 @@ fn expand_thumb_pcrel(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
 /// open/close and the single fetch-stream break instruction-scoped,
 /// base writeback (LDM skips it when the base is loaded) in the end
 /// commit.
-fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+fn expand_thumb_multiple_into(instr: u16, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
+    // Class check first: no push precedes it, so `None` leaves `out`
+    // untouched (top-level truncate covers the rest).
     if instr >> 12 != 0xC {
         return None;
     }
     let load = (instr >> 11) & 1 == 1;
     let rb = ((instr >> 8) & 0x7) as usize;
     let rlist = instr & 0xFF;
-    let base = regs.r(rb);
+    let base_addr = regs.r(rb);
     if rlist == 0 {
         // Empty LDMIA/STMIA: the single PC word at [Rb] with Rb
         // advancing 0x40 (NOT the PUSH/POP shape: no batch framing,
         // writeback through `set_r`, store R15+2; cycle bases 5/2).
-        let mut ops = vec![MicroOp::BlockEmpty(BlockEmptyEffect {
+        out.push(MicroOp::BlockEmpty(BlockEmptyEffect {
             load,
-            addr: base,
-            writeback_reg: Some((rb, base.wrapping_add(0x40))),
+            addr: base_addr,
+            writeback_reg: Some((rb, base_addr.wrapping_add(0x40))),
             store_value: regs.pc().wrapping_add(2),
             restore_cpsr: false,
             reset_sequential: false,
             // Standalone (no BlockEnd follows): break here.
             break_stream: true,
-        })];
-        ops.extend(vec![MicroOp::Internal; if load { 4 } else { 1 }]);
-        return Some(ops);
+        }));
+        out.extend(core::iter::repeat_n(
+            MicroOp::Internal,
+            if load { 4 } else { 1 },
+        ));
+        return Some(());
     }
     let count = rlist.count_ones();
-    let slots: Vec<usize> = (0..8).filter(|i| rlist & (1 << i) != 0).collect();
     // STM stored-base quirk: a non-first occurrence of the base stores
     // the final address.
-    let final_addr = base.wrapping_add(count * 4);
+    let final_addr = base_addr.wrapping_add(count * 4);
     let first = rlist.trailing_zeros() as usize;
-    let mut ops = vec![MicroOp::BlockStart(BlockStartEffect {
+    out.push(MicroOp::BlockStart(BlockStartEffect {
         is_load: load,
         fetch_width: 2,
-    })];
-    for (i, reg) in slots.iter().enumerate() {
+    }));
+    for (i, reg) in (0..8usize)
+        .filter(|reg| rlist & (1 << reg) != 0)
+        .enumerate()
+    {
         let store_value = if load {
             None
         } else {
-            Some(if *reg == rb && rb != first {
+            Some(if reg == rb && rb != first {
                 final_addr
             } else {
-                regs.r(*reg)
+                regs.r(reg)
             })
         };
-        ops.push(MicroOp::BlockWord(BlockWord {
-            addr: base.wrapping_add(i as u32 * 4),
-            reg: *reg,
+        out.push(MicroOp::BlockWord(BlockWord {
+            addr: base_addr.wrapping_add(i as u32 * 4),
+            reg,
             load,
             first: i == 0,
             pc_load: false,
@@ -208,25 +394,23 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     } else {
         Some((rb, final_addr))
     };
-    ops.push(MicroOp::BlockEnd(BlockEndEffect {
+    out.push(MicroOp::BlockEnd(BlockEndEffect {
         sp: None,
         writeback,
         ldm_conflict: false,
-        first_addr: base,
+        first_addr: base_addr,
     }));
     // Pad to the pinned cycle base (LDM 2+count, STM 1+count), except
     // single-register Thumb LDM (Break's ldmia r2!,{r3}): HW retires it
     // like a single LDR (1I, not 2I). Multi-word blocks (Timing OAM
     // 5-word cells pin 2I) keep 2.
-    ops.extend(vec![
-        MicroOp::Internal;
-        if load {
-            if count == 1 { 1 } else { 2 }
-        } else {
-            1
-        }
-    ]);
-    Some(ops)
+    let pad = if load {
+        if count == 1 { 1 } else { 2 }
+    } else {
+        1
+    };
+    out.extend(core::iter::repeat_n(MicroOp::Internal, pad as usize));
+    Some(())
 }
 
 /// Thumb ALU remainder: move-shifted (0x0000..=0x17FF, 1 cycle),
@@ -236,8 +420,35 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
 /// ADD SP/PC (0xA000..=0xAFFF) and SP offset (0xB000..=0xB0FF).
 /// Expansion is [CommitThumb] padded to the pinned base; the commit
 /// applies the semantics, the padding carries the cycle split.
-pub(crate) fn expand_thumb_alu_rest(instr: u16) -> Option<Vec<MicroOp>> {
-    let trailing: usize = if instr <= 0x1FFF || (0xA000..=0xB0FF).contains(&instr) {
+/// Test-only wrapper (the hot path uses the `_into` half below).
+#[cfg(test)]
+pub(crate) fn expand_thumb_alu_rest(instr: u16) -> Option<MicroOpVec> {
+    let mut ops = MicroOpVec::new();
+    expand_thumb_alu_rest_into(instr, &mut ops).map(|()| ops)
+}
+
+/// Hot-path half of [`expand_thumb_alu_rest`]: see
+/// [`expand_thumb_into`] for the no-move discipline.
+fn expand_thumb_alu_rest_into(instr: u16, out: &mut MicroOpVec) -> Option<()> {
+    // Class gate only: the cycle padding folds into the commit op's
+    // own cost (see `apply_op`), so no trailing Internals are emitted.
+    let known = instr <= 0x1FFF
+        || (0xA000..=0xB0FF).contains(&instr)
+        || ((0x4000..=0x43FF).contains(&instr) && ((instr >> 6) & 0xF) != 0xD)
+        || ((0x4400..=0x47FF).contains(&instr) && (instr & 0xFF00) != 0x4700);
+    if !known {
+        return None;
+    }
+    out.push(MicroOp::CommitThumb(instr));
+    Some(())
+}
+
+/// Pinned-base padding for the Thumb ALU remainder (register shifts
+/// +1, hi-reg PC writes +2): pure function of the opcode, folded into
+/// the commit cost by `apply_op`. Single definition site (expand no
+/// longer emits it), so the two can never drift.
+pub(crate) fn thumb_alu_rest_trailing(instr: u16) -> u32 {
+    if instr <= 0x1FFF || (0xA000..=0xB0FF).contains(&instr) {
         0
     } else if (0x4000..=0x43FF).contains(&instr) && ((instr >> 6) & 0xF) != 0xD {
         let op = ((instr >> 6) & 0xF) as u8;
@@ -251,17 +462,14 @@ pub(crate) fn expand_thumb_alu_rest(instr: u16) -> Option<Vec<MicroOp>> {
             0
         }
     } else {
-        return None;
-    };
-    let mut ops = vec![MicroOp::CommitThumb(instr)];
-    ops.extend(vec![MicroOp::Internal; trailing]);
-    Some(ops)
+        0
+    }
 }
 
 /// Thumb PUSH/POP, including the empty forms (single PC word with
 /// +0x40 SP arithmetic on POP, single R15+2 store on PUSH). Decode
 /// covers the PUSH/POP ranges exactly (no extra validation here).
-fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+fn expand_thumb_push_pop_into(instr: u16, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     let push = match instr {
         0xB400..=0xB5FF => true,
         0xBC00..=0xBDFF => false,
@@ -272,37 +480,53 @@ fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     let list = instr & 0xFF;
     let count = list.count_ones() + u32::from(extra);
     if count == 0 {
-        return Some(expand_thumb_push_pop_empty(push, sp, regs));
+        expand_thumb_push_pop_empty_into(push, sp, regs, out);
+        return Some(());
     }
-    let mut slots: Vec<(usize, bool)> = (0..8)
-        .filter(|r| list & (1 << r) != 0)
-        .map(|r| (r as usize, false))
-        .collect();
-    if extra {
-        slots.push((if push { 14 } else { 15 }, !push));
-    }
-    let mut ops = vec![MicroOp::BlockStart(BlockStartEffect {
+    out.push(MicroOp::BlockStart(BlockStartEffect {
         is_load: !push,
         fetch_width: 2,
-    })];
-    for (i, (reg, pc_load)) in slots.iter().enumerate() {
+    }));
+    let mut i = 0usize;
+    for r in 0..8u32 {
+        if list & (1 << r) == 0 {
+            continue;
+        }
         let addr = if push {
             sp.wrapping_sub(count * 4).wrapping_add(i as u32 * 4)
         } else {
             sp.wrapping_add(i as u32 * 4)
         };
-        ops.push(MicroOp::BlockWord(BlockWord {
+        out.push(MicroOp::BlockWord(BlockWord {
             addr,
-            reg: *reg,
+            reg: r as usize,
             load: !push,
             first: i == 0,
-            pc_load: *pc_load,
+            pc_load: false,
+            user_bank: false,
+            restore_cpsr: false,
+            store_value: None,
+        }));
+        i += 1;
+    }
+    if extra {
+        let addr = if push {
+            sp.wrapping_sub(count * 4).wrapping_add(i as u32 * 4)
+        } else {
+            sp.wrapping_add(i as u32 * 4)
+        };
+        out.push(MicroOp::BlockWord(BlockWord {
+            addr,
+            reg: if push { 14 } else { 15 },
+            load: !push,
+            first: i == 0,
+            pc_load: !push,
             user_bank: false,
             restore_cpsr: false,
             store_value: None,
         }));
     }
-    ops.push(MicroOp::BlockEnd(BlockEndEffect {
+    out.push(MicroOp::BlockEnd(BlockEndEffect {
         sp: Some(if push {
             sp.wrapping_sub(count * 4)
         } else {
@@ -321,60 +545,66 @@ fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     } else {
         2
     };
-    ops.extend(vec![MicroOp::Internal; trailing as usize]);
-    Some(ops)
+    out.extend(core::iter::repeat_n(MicroOp::Internal, trailing as usize));
+    Some(())
 }
 
 /// Thumb empty PUSH/POP: PUSH stores R15+2 with SP moving one word
 /// (base 2); POP loads PC with SP advancing 0x40 (base 6). Batched
 /// with Start/Empty/End; the op carries +1 with trailing Internals
 /// to the base.
-fn expand_thumb_push_pop_empty(push: bool, sp: u32, regs: &CpuRegisters) -> Vec<MicroOp> {
+fn expand_thumb_push_pop_empty_into(
+    push: bool,
+    sp: u32,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+) {
     let addr = if push { sp.wrapping_sub(4) } else { sp };
-    let mut ops = vec![
-        MicroOp::BlockStart(BlockStartEffect {
-            is_load: !push,
-            fetch_width: 2,
+    out.push(MicroOp::BlockStart(BlockStartEffect {
+        is_load: !push,
+        fetch_width: 2,
+    }));
+    out.push(MicroOp::BlockEmpty(BlockEmptyEffect {
+        load: !push,
+        addr,
+        writeback_reg: None,
+        store_value: regs.pc().wrapping_add(2),
+        restore_cpsr: false,
+        reset_sequential: true,
+        // The trailing BlockEnd carries the single break.
+        break_stream: false,
+    }));
+    out.push(MicroOp::BlockEnd(BlockEndEffect {
+        sp: Some(if push {
+            sp.wrapping_sub(4)
+        } else {
+            sp.wrapping_add(0x40)
         }),
-        MicroOp::BlockEmpty(BlockEmptyEffect {
-            load: !push,
-            addr,
-            writeback_reg: None,
-            store_value: regs.pc().wrapping_add(2),
-            restore_cpsr: false,
-            reset_sequential: true,
-            // The trailing BlockEnd carries the single break.
-            break_stream: false,
-        }),
-        MicroOp::BlockEnd(BlockEndEffect {
-            sp: Some(if push {
-                sp.wrapping_sub(4)
-            } else {
-                sp.wrapping_add(0x40)
-            }),
-            writeback: None,
-            ldm_conflict: false,
-            first_addr: addr,
-        }),
-    ];
+        writeback: None,
+        ldm_conflict: false,
+        first_addr: addr,
+    }));
     // Pad to the pinned base: empty PUSH 2, empty POP 6
     // (the op already carries +1).
-    ops.extend(vec![MicroOp::Internal; if push { 1 } else { 5 }]);
-    ops
+    out.extend(core::iter::repeat_n(
+        MicroOp::Internal,
+        if push { 1 } else { 5 },
+    ));
 }
 
-/// Shared immediate-form load/store shape: [Read, I, I] / [Write, I].
-fn imm_access_ops(load: bool, acc: MemAccess) -> Vec<MicroOp> {
+/// Shared immediate-form load/store shape: the [Read, I, I] / [Write, I]
+/// pinned base folds into the access op's own cost (see `apply_op`).
+fn imm_access_ops_into(load: bool, acc: MemAccess, out: &mut MicroOpVec) {
     if load {
-        vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
+        out.push(MicroOp::MemRead(acc));
     } else {
-        vec![MicroOp::MemWrite(acc), MicroOp::Internal]
+        out.push(MicroOp::MemWrite(acc));
     }
 }
 
 /// Thumb word LDR/STR (immediate offset and SP-relative) and
 /// LDRH/STRH immediate. Same [Read, I, I] / [Write, I] shape as ARM.
-pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
+fn expand_thumb_load_store_into(instr: u16, out: &mut MicroOpVec) -> Option<()> {
     // Register-offset word/byte and signed/halfword transfers (0101).
     if instr >> 12 == 0b0101 {
         let op = (instr >> 10) & 0x3;
@@ -411,7 +641,8 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             // Only the Thumb LDRSH carries the odd-address bus quirk.
             halfword_odd_quirk: load && width == 2 && signed_load,
         };
-        return Some(imm_access_ops(load, acc));
+        imm_access_ops_into(load, acc, out);
+        return Some(());
     }
     // SP-relative (1001): addr = SP + imm8<<2.
     if instr >> 12 == 0b1001 {
@@ -432,7 +663,8 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             halfword_odd_quirk: false,
         };
         // Cycle totals: load 3, store 2.
-        return Some(imm_access_ops(l, acc));
+        imm_access_ops_into(l, acc, out);
+        return Some(());
     }
     // Immediate-offset word (011, B == 0).
     if instr >> 13 == 0b011 && (instr >> 12) & 1 == 0 {
@@ -454,7 +686,8 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             halfword_odd_quirk: false,
         };
         // Cycle totals: load 3, store 2.
-        return Some(imm_access_ops(l, acc));
+        imm_access_ops_into(l, acc, out);
+        return Some(());
     }
     // Immediate-offset byte (011, B == 1): offset is imm5 unshifted.
     if instr >> 13 == 0b011 && (instr >> 12) & 1 == 1 {
@@ -476,7 +709,8 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             halfword_odd_quirk: false,
         };
         // Cycle totals: load 3, store 2.
-        return Some(imm_access_ops(l, acc));
+        imm_access_ops_into(l, acc, out);
+        return Some(());
     }
     // Halfword immediate (1000).
     if instr >> 12 == 0b1000 {
@@ -498,7 +732,8 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             halfword_odd_quirk: false,
         };
         // Cycle totals: load 3, store 2.
-        return Some(imm_access_ops(l, acc));
+        imm_access_ops_into(l, acc, out);
+        return Some(());
     }
     None
 }

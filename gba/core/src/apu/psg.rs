@@ -1,11 +1,16 @@
-/// GBA PSG channels; clocks are CPU T-cycles (16.78MHz square/wave/noise
-/// periods with a 512Hz frame sequencer, per GBATEK).
+/// Square duty patterns (HW-pinned): 12.5% has a single
+/// high step, 25% two, 50% four, 75% six. Phase 0 is the trigger start.
 const DUTY: [[i8; 8]; 4] = [
+    [0, 0, 0, 0, 0, 0, 0, 1],
     [1, 0, 0, 0, 0, 0, 0, 1],
-    [1, 1, 0, 0, 0, 0, 0, 1],
-    [1, 1, 1, 1, 0, 0, 0, 0],
-    [0, 0, 1, 1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 0],
 ];
+
+/// PolyBLEP edge slots per square voice per grid period (12 output edges
+/// need a sub-85-T-cycle phase step, i.e. fundamentals above ~24kHz;
+/// extras saturate there, where the fundamental itself is inaudible).
+const BLEP_MAX_EDGES: usize = 12;
 
 /// Shared length/envelope core for square/noise channels.
 #[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -39,6 +44,17 @@ impl LengthEnvelope {
         if self.length == 0 {
             self.active = false;
         }
+    }
+
+    /// Obscure Behavior (mirrors GBC `reload_timer`): a trigger landing
+    /// just before an envelope step reloads the timer with pace + 1.
+    pub(crate) fn envelope_extra_tick(&mut self) {
+        self.env_timer = self.env_timer.wrapping_add(1);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn env_timer_for_test(&self) -> u8 {
+        self.env_timer
     }
 
     pub fn tick_envelope(&mut self, env_reg: u16) {
@@ -84,16 +100,51 @@ pub struct Square {
     sweep_timer: u8,
     sweep_dir_dec: bool,
     sweep_occurred: bool,
+    /// PolyBLEP edge backlog for the grid period being accumulated:
+    /// `(t, h)` = (fraction from period start, baked step height in
+    /// naive output units). Transient (sub-sample timing): skipped by
+    /// serde so save format and old saves are untouched; a load simply
+    /// skips one retro tap (inaudible).
+    #[serde(skip)]
+    blep_edges: [(f32, f32); BLEP_MAX_EDGES],
+    #[serde(skip)]
+    blep_len: u8,
+    /// False after a trigger/reconfig inside the current period: pending
+    /// retro taps would mix pre/post-trigger state, so they are dropped
+    /// once (after taps still apply).
+    #[serde(skip)]
+    blep_clean: bool,
 }
 
 impl Square {
+    /// Batching support: first zero-hit is `timer + 1` ticks out (hit fires
+    /// when the timer reads 0 at tick start), so `timer` upcoming ticks are
+    /// hit-free. Interior advance only decrements; phase/bank stay put.
+    pub(crate) fn timer_horizon(&self) -> Option<u32> {
+        self.core.active.then_some(self.timer)
+    }
+
+    /// Decrement the phase timer. Valid only when no zero-hit occurs
+    /// inside the span (verified by the horizon): plain `-=` matches the
+    /// per-cycle behavior exactly, including dev-profile underflow panic.
+    /// Inactive voices are untouched, mirroring the `tick_timer` early
+    /// return.
+    pub(crate) fn advance_timer(&mut self, n: u32) {
+        if !self.core.active {
+            return;
+        }
+        self.timer -= n;
+    }
+
     pub fn trigger(&mut self, freq: u16, init_len: u8, init_vol: u8, env_reg: u16, seq_odd: bool) {
         self.freq_shadow = freq;
         self.core.trigger(init_len, init_vol, env_reg, seq_odd);
-        self.timer = 0;
-        self.phase = 0;
+        // The duty step is kept across triggers (only its timer restarts,
+        // Pan Docs): the latched step plays a full period.
+        self.timer = 16 * u32::from(2048 - freq.min(2047));
         self.sweep_timer = self.sweep_pace;
         self.sweep_occurred = false;
+        self.clear_blep();
         // Immediate overflow check when sweep is armed with a shift.
         if self.sweep_active() {
             self.sweep_calc(true);
@@ -102,6 +153,16 @@ impl Square {
 
     fn sweep_active(&self) -> bool {
         self.sweep_pace != 8 || self.sweep_shift != 0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sweep_pace_for_test(&self) -> u8 {
+        self.sweep_pace
+    }
+
+    #[cfg(test)]
+    pub(crate) fn phase_for_test(&self) -> u8 {
+        self.phase
     }
 
     /// NR10 write (GBATEK sweep, incl. direction-flip zombie rule).
@@ -119,8 +180,10 @@ impl Square {
     }
 
     /// `freq` is the live register value for ch2; ch1 (sweep) uses the
-    /// shadow once the sweep unit has run.
-    pub fn tick_timer(&mut self, freq: u16, use_shadow: bool) {
+    /// shadow once the sweep unit has run. `duty` resolves output edges
+    /// for polyBLEP recording; `mix_left` is the grid countdown remaining
+    /// (1..=512), fixing each edge's fractional position in the period.
+    pub fn tick_timer(&mut self, freq: u16, use_shadow: bool, duty: u8, mix_left: u32) {
         if !self.core.active {
             return;
         }
@@ -131,15 +194,66 @@ impl Square {
                 freq & 0x7FF
             };
             self.timer = 16 * u32::from(2048 - base.min(2047));
+            let from = self.phase;
             self.phase = (self.phase + 1) & 7;
+            // Band-limited synthesis: a duty-boundary crossing is a step
+            // discontinuity; naive per-sample synthesis folds its harmonics
+            // back as inharmonic aliases (metallic harshness next to
+            // blip_buf emulators). Record `(t, h)` for the Kleimola
+            // 2-tap polyBLEP consumed at the next grid push.
+            let pat = &DUTY[(duty & 3) as usize];
+            let step = f32::from(pat[self.phase as usize] - pat[from as usize]);
+            if step != 0.0 && (self.blep_len as usize) < BLEP_MAX_EDGES {
+                let period = super::T_CYCLES_PER_MIX as f32;
+                let t = (period - mix_left.min(super::T_CYCLES_PER_MIX as u32) as f32) / period;
+                let h = step * 2.0 * f32::from(self.core.volume);
+                self.blep_edges[self.blep_len as usize] = (t, h);
+                self.blep_len += 1;
+            }
         }
         self.timer -= 1;
     }
 
+    /// Drain recorded polyBLEP edges for the grid sample being pushed.
+    /// Returns `(after, retros, retro_len)`: `after` corrects the current
+    /// sample (`-h/2 * t^2` per edge, naive output units); `retros` holds
+    /// `(t, h)` pairs correcting the previously pushed sample with
+    /// `+h/2 * (1-t)^2` (empty when a trigger/reconfig dirtied the
+    /// period). Bookkeeping resets for the next period.
+    pub(crate) fn take_blep(&mut self) -> (f32, [(f32, f32); BLEP_MAX_EDGES], u8) {
+        let mut after = 0.0f32;
+        let mut retros = [(0.0f32, 0.0f32); BLEP_MAX_EDGES];
+        let mut retro_len = 0u8;
+        for i in 0..self.blep_len as usize {
+            let (t, h) = self.blep_edges[i];
+            after += -h * 0.5 * t * t;
+            if self.blep_clean {
+                retros[retro_len as usize] = (t, h);
+                retro_len += 1;
+            }
+        }
+        self.blep_len = 0;
+        self.blep_clean = true;
+        (after, retros, retro_len)
+    }
+
+    /// Drop polyBLEP bookkeeping (trigger starts a fresh note; master-off
+    /// parks the voices). Pending retro taps would mix states, so the
+    /// next drain skips them once.
+    pub(crate) fn clear_blep(&mut self) {
+        self.blep_len = 0;
+        self.blep_clean = false;
+    }
+
     /// Frame-sequencer sweep steps (2, 6). Returns false when the sweep
-    /// overflows and kills the channel.
+    /// overflows and kills the channel. Pace 0 (NR10 never written) and    /// the pace-8 off-code both disable the unit: no timer movement, no
+    /// calculation. (Without this, pace 0 would underflow `sweep_timer`
+    /// on the reload-then-decrement below.)
     pub fn tick_sweep(&mut self) -> bool {
         if !self.core.active {
+            return true;
+        }
+        if self.sweep_pace == 0 || self.sweep_pace == 8 {
             return true;
         }
         if self.sweep_timer == 0 {
@@ -210,6 +324,19 @@ pub struct Wave {
 }
 
 impl Wave {
+    /// Batching support: see `Square::timer_horizon`.
+    pub(crate) fn timer_horizon(&self) -> Option<u32> {
+        self.active.then_some(self.timer)
+    }
+
+    /// Batching support: see `Square::advance_timer`.
+    pub(crate) fn advance_timer(&mut self, n: u32) {
+        if !self.active {
+            return;
+        }
+        self.timer -= n;
+    }
+
     pub fn trigger(&mut self, init_len: u16, dimension_64: bool, seq_odd: bool) {
         if self.length == 0 {
             self.length = init_len;
@@ -220,9 +347,9 @@ impl Wave {
         self.active = self.length != 0;
         self.timer = 0;
         self.phase = 0;
-        if dimension_64 {
-            self.bank = 0;
-        }
+        // The start bank was latched from NR30 bit 6 by the caller:
+        // GBATEK plays the selected bank first in 64-digit mode too.
+        self.dimension_64 = dimension_64;
         // Triggered retrigger latches the first nibble immediately.
     }
 
@@ -271,15 +398,20 @@ impl Wave {
         if !self.active {
             return 0;
         }
+        // Bipolar DAC model (GBATEK's +/-80h per-PSG span): the 4-bit
+        // digit centers on 8, so a full-swing table carries the same
+        // amplitude as a full-volume square voice. DC rides along and
+        // the output HPF strips it downstream.
         let base = i16::from(self.nibble(wave_ram)) - 8;
+        let full = base * 2;
         if force_75 {
-            base * 3 / 4
+            full * 3 / 4
         } else {
             match vol_code & 3 {
                 0 => 0,
-                1 => base,
-                2 => base / 2,
-                _ => base / 4,
+                1 => full,
+                2 => full >> 1,
+                _ => full >> 2,
             }
         }
     }
@@ -295,6 +427,20 @@ pub struct Noise {
 }
 
 impl Noise {
+    /// Batching support: see `Square::timer_horizon`. The LFSR only shifts
+    /// on zero-hits, so capping at the first hit keeps it exact.
+    pub(crate) fn timer_horizon(&self) -> Option<u32> {
+        self.core.active.then_some(self.timer)
+    }
+
+    /// Batching support: see `Square::advance_timer`.
+    pub(crate) fn advance_timer(&mut self, n: u32) {
+        if !self.core.active {
+            return;
+        }
+        self.timer -= n;
+    }
+
     pub fn trigger(
         &mut self,
         init_len: u8,
@@ -314,8 +460,9 @@ impl Noise {
             return;
         }
         if self.timer == 0 {
-            // Interval form: (64 << shift), ratio 0 halves.
-            let mut interval = 64u32 << shift.min(12);
+            // Interval form: (64 << shift), ratio 0 halves. Shift is a
+            // full 4 bits (0-15); all positions are defined dividers.
+            let mut interval = 64u32 << shift.min(15);
             if ratio == 0 {
                 interval /= 2;
             } else {
@@ -335,9 +482,13 @@ impl Noise {
         if !self.core.active {
             return 0;
         }
-        // GBATEK: carry-out drives HIGH.
+        // Unipolar DAC model (DMG DAC hardware: the LFSR bit gates
+        // volume-or-zero; the output HPF strips the DC downstream).
+        // A bipolar model would double noise against the documented
+        // +/-80h per-channel span. Polarity (HIGH on clear bit 0) is
+        // inaudible for white noise.
         let vol = i16::from(self.core.volume);
-        if self.lfsr & 1 == 0 { vol } else { -vol }
+        if self.lfsr & 1 == 0 { vol } else { 0 }
     }
 }
 
@@ -356,7 +507,9 @@ impl LengthEnvelope {
                 self.volume
             ));
         }
-        if self.env_timer > 7 {
+        // 8 is producible: pace 7 reloaded with the pre-envelope-step
+        // extra tick (not a corrupt import).
+        if self.env_timer > 8 {
             return Err(format!(
                 "apu: envelope timer out of range: {}",
                 self.env_timer
@@ -367,7 +520,11 @@ impl LengthEnvelope {
 }
 
 impl Square {
-    pub(super) fn validate(&self) -> Result<(), String> {
+    /// Phase 10 import validation (bounds follow the trigger/write masks).
+    /// `has_sweep` is ch1-only: ch2 shares this struct but has no sweep
+    /// unit, so its sweep fields stay at the never-written zero and must
+    /// not be policed (an active ch2 with pace 0 is everyday state).
+    pub(super) fn validate(&self, has_sweep: bool) -> Result<(), String> {
         self.core.validate()?;
         // `tick_timer`: 16 * (2048 - base), base 11-bit.
         if self.timer > 0x8000 {
@@ -375,6 +532,9 @@ impl Square {
         }
         if self.phase > 7 {
             return Err(format!("apu: square phase out of range: {}", self.phase));
+        }
+        if !has_sweep {
+            return Ok(());
         }
         if self.sweep_shift > 7 {
             return Err(format!(
@@ -385,10 +545,11 @@ impl Square {
         if self.sweep_pace > 8 {
             return Err(format!("apu: sweep pace out of range: {}", self.sweep_pace));
         }
-        // A sounding channel with pace 0 would underflow `sweep_timer` in
-        // `tick_sweep` (the timer reloads pace, then decrements). Pace 0
-        // only exists pre-trigger (inactive), never on a live voice.
-        if self.core.active && self.sweep_pace == 0 {
+        // Pace 0 with no shift is the never-written shape (NR10 untouched:
+        // sweep off); `tick_sweep` treats it as disabled, so a live voice
+        // in that shape is legitimate. With a shift it is non-producible
+        // and would arm the sweep path, so keep rejecting that.
+        if self.core.active && self.sweep_pace == 0 && self.sweep_shift != 0 {
             return Err("apu: sounding channel with zero sweep pace".to_string());
         }
         if self.sweep_timer > 8 {
@@ -426,8 +587,8 @@ impl Wave {
 impl Noise {
     pub(super) fn validate(&self) -> Result<(), String> {
         self.core.validate()?;
-        // `tick_timer`: (64 << shift<=12) * ratio<=7.
-        if self.timer > 0x200_000 {
+        // `tick_timer`: (64 << shift<=15) * ratio<=7, max (64<<15)*7.
+        if self.timer > 0xE00_000 {
             return Err(format!("apu: noise timer out of range: {}", self.timer));
         }
         if self.lfsr > 0x7FFF {
@@ -446,11 +607,28 @@ mod tests {
         let mut sq = Square::default();
         sq.core.active = true;
         sq.core.volume = 12;
+        // Duty 0 (12.5%): only phase 7 high.
+        sq.phase = 7;
+        assert_eq!(sq.output(0), 12);
         sq.phase = 0;
-        // Duty 2 (50%): phases 0-3 high.
+        assert_eq!(sq.output(0), -12);
+        // Duty 1 (25%): phases 0 and 7 high.
+        sq.phase = 0;
+        assert_eq!(sq.output(1), 12);
+        sq.phase = 7;
+        assert_eq!(sq.output(1), 12);
+        sq.phase = 3;
+        assert_eq!(sq.output(1), -12);
+        // Duty 2 (50%): phases 0, 5, 6, 7 high.
+        sq.phase = 5;
         assert_eq!(sq.output(2), 12);
         sq.phase = 4;
         assert_eq!(sq.output(2), -12);
+        // Duty 3 (75%): only phases 0 and 7 low.
+        sq.phase = 0;
+        assert_eq!(sq.output(3), -12);
+        sq.phase = 3;
+        assert_eq!(sq.output(3), 12);
         sq.core.active = false;
         assert_eq!(sq.output(2), 0);
     }
@@ -481,6 +659,26 @@ mod tests {
     }
 
     #[test]
+    fn length_retrigger_quirk_consumes_extra_tick() {
+        // A trigger landing on an even sequencer step reloads the full
+        // length; one landing just before a length step (odd step)
+        // consumes an extra tick immediately.
+        let mut even = LengthEnvelope::default();
+        even.trigger(64, 8, 0, false);
+        assert_eq!(even.length, 64);
+        let mut odd = LengthEnvelope::default();
+        odd.trigger(64, 8, 0, true);
+        assert_eq!(odd.length, 63);
+        // The wave channel shares the quirk.
+        let mut wave = Wave::default();
+        wave.trigger(200, false, false);
+        assert_eq!(wave.length, 200);
+        let mut wave_odd = Wave::default();
+        wave_odd.trigger(200, false, true);
+        assert_eq!(wave_odd.length, 199);
+    }
+
+    #[test]
     fn sweep_increment_overflow_disables() {
         let mut sq = Square::default();
         sq.core.active = true;
@@ -495,6 +693,45 @@ mod tests {
     }
 
     #[test]
+    fn sweep_direction_flip_zombie_kills_channel() {
+        // Arm in decrement mode and run one calculation.
+        let mut sq = Square::default();
+        sq.core.active = true;
+        sq.freq_shadow = 0x200;
+        sq.write_sweep(0x19); // pace 1, decrement, shift 1
+        sq.sweep_timer = 1;
+        assert!(sq.tick_sweep());
+        // Flipping decrement -> increment kills the voice (zombie rule).
+        sq.write_sweep(0x11); // pace 1, increment, shift 1
+        assert!(!sq.core.active);
+    }
+
+    #[test]
+    fn sweep_direction_flip_without_history_spares_channel() {
+        // No calculation ran yet: flipping direction is harmless.
+        let mut sq = Square::default();
+        sq.core.active = true;
+        sq.freq_shadow = 0x200;
+        sq.write_sweep(0x19); // pace 1, decrement, shift 1
+        sq.write_sweep(0x11); // pace 1, increment, shift 1
+        assert!(sq.core.active);
+        // Same-direction rewrite after a calculation is harmless too.
+        sq.sweep_timer = 1;
+        assert!(sq.tick_sweep());
+        sq.write_sweep(0x11);
+        assert!(sq.core.active);
+        // Increment -> decrement flips are always safe.
+        let mut inc = Square::default();
+        inc.core.active = true;
+        inc.freq_shadow = 0x200;
+        inc.write_sweep(0x11);
+        inc.sweep_timer = 1;
+        assert!(inc.tick_sweep());
+        inc.write_sweep(0x19);
+        assert!(inc.core.active);
+    }
+
+    #[test]
     fn noise_lfsr_advances_and_resets() {
         let mut nz = Noise::default();
         nz.trigger(64, 10, 0, false, false);
@@ -502,6 +739,44 @@ mod tests {
         nz.tick_timer(1, 3);
         // Timer expiry shifts immediately: bit0 was 0, so plain shift.
         assert_eq!(nz.lfsr, 0x2000);
+    }
+
+    #[test]
+    fn noise_output_is_unipolar() {
+        // HW DAC model: the LFSR bit gates volume-or-zero (a bipolar
+        // model would double noise against the documented +/-80h
+        // per-channel span).
+        let mut nz = Noise::default();
+        nz.trigger(64, 10, 0, false, false);
+        nz.lfsr = 0x4000; // bit 0 clear -> HIGH.
+        assert_eq!(nz.output(), 10);
+        nz.lfsr = 0x4001; // bit 0 set -> gated.
+        assert_eq!(nz.output(), 0);
+        nz.core.active = false;
+        assert_eq!(nz.output(), 0);
+    }
+
+    #[test]
+    fn wave_output_is_bipolar_centered_on_8() {
+        // Full-swing nibbles must span like a full-volume square voice
+        // (+14/-16 ~= +/-15), not the unipolar 0..15 half-amplitude.
+        let mut w = Wave {
+            active: true,
+            ..Default::default()
+        };
+        let mut ram = [0u8; 0x20];
+        ram[0] = 0xF0; // digits 15, 0.
+        w.phase = 0;
+        assert_eq!(w.output(&ram, 1, false), 14);
+        w.phase = 1;
+        assert_eq!(w.output(&ram, 1, false), -16);
+        // Volume codes divide the bipolar swing; mute stays silent.
+        w.phase = 0;
+        assert_eq!(w.output(&ram, 2, false), 7);
+        assert_eq!(w.output(&ram, 3, false), 3);
+        assert_eq!(w.output(&ram, 0, false), 0);
+        w.active = false;
+        assert_eq!(w.output(&ram, 1, false), 0);
     }
 
     #[test]
@@ -519,12 +794,36 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_live_voice_with_zero_sweep_pace() {
-        // Pace 0 exists pre-trigger (inactive) but would underflow the
-        // sweep timer once sounding.
-        let idle = Square::default();
-        idle.validate().unwrap();
-        let live = Square {
+    fn wave_64digit_mode_alternates_banks() {
+        let mut w = Wave::default();
+        w.trigger(255, true, false);
+        assert!(w.active);
+        assert_eq!(w.bank, 0);
+        // Bank 0 replays 0xFF (nibble 15 -> +14 bipolar), bank 1 replays
+        // 0x00 (nibble 0 -> -16): the output must follow the playing bank.
+        let mut ram = [0xFFu8; 0x20];
+        ram[16..].fill(0x00);
+        assert_eq!(w.output(&ram, 1, false), 14);
+        // Fastest rate: 8 T-cycles per digit, 32 digits per wrap.
+        for _ in 0..32 * 8 {
+            w.tick_timer(0x7FF);
+        }
+        assert_eq!(w.phase, 0);
+        assert_eq!(w.bank, 1);
+        assert_eq!(w.output(&ram, 1, false), -16);
+        for _ in 0..32 * 8 {
+            w.tick_timer(0x7FF);
+        }
+        assert_eq!(w.phase, 0);
+        assert_eq!(w.bank, 0);
+        assert_eq!(w.output(&ram, 1, false), 14);
+    }
+
+    #[test]
+    fn validate_accepts_live_ch2_with_zero_sweep_pace() {
+        // ch2 has no sweep unit: pace stays at the never-written zero
+        // while sounding. This everyday state must import cleanly.
+        let live_ch2 = Square {
             core: LengthEnvelope {
                 active: true,
                 ..Default::default()
@@ -532,6 +831,71 @@ mod tests {
             sweep_pace: 0,
             ..Default::default()
         };
-        assert!(live.validate().is_err());
+        live_ch2.validate(false).unwrap();
+        // ch1 (sweep unit present) still rejects a live pace-0 voice
+        // once a shift arms the sweep path...
+        let armed = Square {
+            sweep_shift: 3,
+            ..live_ch2
+        };
+        assert!(armed.validate(true).is_err());
+        // ...but accepts the never-written shape (pace 0, no shift).
+        live_ch2.validate(true).unwrap();
+        // ...and the untouched default either way.
+        Square::default().validate(true).unwrap();
+        Square::default().validate(false).unwrap();
+    }
+
+    #[test]
+    fn tick_sweep_treats_pace_zero_and_off_code_as_disabled() {
+        for pace in [0u8, 8] {
+            let mut sq = Square {
+                core: LengthEnvelope {
+                    active: true,
+                    ..Default::default()
+                },
+                freq_shadow: 0x7F0,
+                sweep_shift: 1,
+                sweep_pace: pace,
+                sweep_timer: 0,
+                ..Default::default()
+            };
+            // No underflow panic, no overflow kill, no timer movement.
+            for _ in 0..300 {
+                assert!(sq.tick_sweep());
+            }
+            assert!(sq.core.active);
+            assert_eq!(sq.sweep_timer, 0);
+        }
+    }
+
+    #[test]
+    fn trigger_keeps_phase_and_reloads_timer() {
+        // The duty step survives retriggers (only its timer restarts):
+        // freq 0x700 reloads 4096 T-cycles, advancing every 4097th tick
+        // (the model's steady-state cadence).
+        let mut sq = Square::default();
+        sq.trigger(0x700, 64, 15, 0xF000, false);
+        assert_eq!(sq.phase_for_test(), 0);
+        assert_eq!(sq.timer_horizon(), Some(4096));
+        for _ in 0..4096 {
+            sq.tick_timer(0x700, false, 0, 512);
+        }
+        assert_eq!(sq.phase_for_test(), 0);
+        sq.tick_timer(0x700, false, 0, 512);
+        assert_eq!(sq.phase_for_test(), 1);
+        // Retrigger keeps step 1 and restarts its full period.
+        sq.trigger(0x700, 64, 15, 0xF000, false);
+        assert_eq!(sq.phase_for_test(), 1);
+        assert_eq!(sq.timer_horizon(), Some(4096));
+    }
+
+    #[test]
+    fn envelope_extra_tick_adds_one_to_reload() {
+        let mut le = LengthEnvelope::default();
+        le.trigger(64, 8, 0xF200, false);
+        assert_eq!(le.env_timer_for_test(), 2);
+        le.envelope_extra_tick();
+        assert_eq!(le.env_timer_for_test(), 3);
     }
 }

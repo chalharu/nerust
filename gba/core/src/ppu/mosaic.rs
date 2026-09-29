@@ -6,6 +6,10 @@ pub fn bg_mosaic(mosaic: u16, cnt: u16, x: usize, y: usize) -> (usize, usize) {
     }
     let h = usize::from(mosaic & 0xF) + 1;
     let v = usize::from((mosaic >> 4) & 0xF) + 1;
+    // 1x1 is identity without the divisions below.
+    if h == 1 && v == 1 {
+        return (x, y);
+    }
     (x - x % h, y - y % v)
 }
 
@@ -22,6 +26,12 @@ pub fn apply_obj_mosaic(
 ) {
     let h = usize::from((mosaic >> 8) & 0xF) + 1;
     let v = usize::from((mosaic >> 12) & 0xF) + 1;
+    // 1x1 is identity without the divisions below.
+    if h == 1 && v == 1 {
+        local.0 = (screen.0 as i32 - origin.0).clamp(0, field.0 as i32 - 1);
+        local.1 = (screen.1 as i32 - origin.1).clamp(0, field.1 as i32 - 1);
+        return;
+    }
     let held_x = (screen.0 - screen.0 % h) as i32;
     let held_y = (screen.1 - screen.1 % v) as i32;
     local.0 = (held_x - origin.0).clamp(0, field.0 as i32 - 1);

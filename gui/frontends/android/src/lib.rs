@@ -18,6 +18,7 @@ use jni::{
     sys::{JNI_VERSION_1_6, jint},
 };
 use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_gba_factory::GbaFactory;
 use nerust_gbc_factory::GbcFactory;
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_nes_factory::NesFactory;
@@ -50,6 +51,7 @@ fn create_system_registry() -> Arc<SystemRegistry> {
     Arc::new(SystemRegistry::new(vec![
         Arc::new(NesFactory),
         Arc::new(GbcFactory),
+        Arc::new(GbaFactory),
     ]))
 }
 
@@ -150,6 +152,12 @@ mod tests {
         rom
     }
 
+    fn minimal_gba_rom() -> Vec<u8> {
+        let mut rom = vec![0; 0xC0];
+        nerust_gba_core::cartridge::header::finalize_test_gba_rom(&mut rom);
+        rom
+    }
+
     #[test]
     fn registry_contains_nes_and_gbc_factories() {
         let registry = create_system_registry();
@@ -159,7 +167,7 @@ mod tests {
             .map(|factory| factory.system_id().to_string())
             .collect();
 
-        assert_eq!(ids, ["nes", "gbc"]);
+        assert_eq!(ids, ["nes", "gbc", "gba"]);
     }
 
     #[test]
@@ -167,6 +175,7 @@ mod tests {
         let registry = create_system_registry();
         let nes = MediaObject::new(None, b"NES\x1a".to_vec());
         let gbc = MediaObject::new(None, minimal_gbc_rom());
+        let gba = MediaObject::new(None, minimal_gba_rom());
 
         assert_eq!(
             registry
@@ -185,6 +194,15 @@ mod tests {
                 .system_id()
                 .to_string(),
             "gbc"
+        );
+        assert_eq!(
+            registry
+                .detect(&gba)
+                .unwrap()
+                .expect("GBA factory")
+                .system_id()
+                .to_string(),
+            "gba"
         );
     }
 }

@@ -34,6 +34,29 @@ pub trait AudioBackend: Send {
     }
     fn push(&mut self, sample: StereoSample);
 
+    /// Drop and re-acquire the OS audio stream with identical parameters.
+    /// Backends whose streams can die underneath them (AAudio
+    /// `Disconnected` after device/route change or server reclaim across
+    /// app suspend) must recreate the stream here: a dead stream can
+    /// never be revived with `start()`. Implementations must keep
+    /// reporting the same sample rate (cores validate save states
+    /// against it) and should drop stale queued samples. Default is a
+    /// no-op for backends that never lose their stream.
+    fn reconnect(&mut self) {}
+
+    /// Samples currently queued for the device (device callback has not
+    /// consumed them yet). Observed by the session-owned rate-control
+    /// filter (`nerust_sound_filter::dynamic_rate`), which holds the
+    /// queue near half of `buffer_capacity`. Default 0 (unknown).
+    fn buffered(&self) -> u64 {
+        0
+    }
+
+    /// Queue capacity in samples matching `buffered`. Default 0 (unknown).
+    fn buffer_capacity(&self) -> u64 {
+        0
+    }
+
     /// 再生音量を 0.0〜1.0 の範囲で設定する。
     ///
     /// デフォルト実装は no-op。`GainBackend` が `set_gain()` に委譲する。
@@ -149,12 +172,24 @@ impl AudioBackend for GainBackend {
         self.inner.pause();
     }
 
+    fn reconnect(&mut self) {
+        self.inner.reconnect();
+    }
+
     fn sample_rate(&self) -> u32 {
         self.inner.sample_rate()
     }
 
     fn push(&mut self, sample: StereoSample) {
         self.inner.push(sample.scale(self.gain));
+    }
+
+    fn buffered(&self) -> u64 {
+        self.inner.buffered()
+    }
+
+    fn buffer_capacity(&self) -> u64 {
+        self.inner.buffer_capacity()
     }
 
     fn set_volume(&mut self, volume: f32) {
@@ -197,5 +232,31 @@ mod tests {
             samples.lock().unwrap().as_slice(),
             &[StereoSample::new(0.4, -0.2)]
         );
+    }
+
+    #[test]
+    fn gain_backend_delegates_reconnect() {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+
+        struct ReconnectProbe {
+            reconnected: Arc<AtomicBool>,
+        }
+        impl AudioBackend for ReconnectProbe {
+            fn start(&mut self) {}
+            fn pause(&mut self) {}
+            fn push(&mut self, _sample: StereoSample) {}
+            fn reconnect(&mut self) {
+                self.reconnected.store(true, SeqCst);
+            }
+        }
+        let reconnected = Arc::new(AtomicBool::new(false));
+        let mut backend = GainBackend::new(
+            Box::new(ReconnectProbe {
+                reconnected: Arc::clone(&reconnected),
+            }),
+            0.5,
+        );
+        backend.reconnect();
+        assert!(reconnected.load(SeqCst));
     }
 }

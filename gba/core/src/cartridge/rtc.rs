@@ -19,6 +19,12 @@ pub struct Rtc {
     pub control: u8,
     /// Host-time override from datetime/time writes (binary fields).
     datetime_set: Option<[u8; 7]>,
+    /// Wall-clock second when `datetime_set` was written. Reads report
+    /// `datetime_set + (now - set_at)`, so the clock keeps ticking from
+    /// the game-set value like the hardware (and keeps running across
+    /// State Save/Load). `None` on pre-fix states: those keep the legacy
+    /// frozen behavior. Missing on decode (serde `Option` default).
+    set_at_unix_secs: Option<u64>,
     /// SIO level currently driven for input-pin reads.
     pub sio_out: bool,
 }
@@ -202,6 +208,7 @@ impl Rtc {
                     dt[4] &= 0x7F;
                 }
                 self.datetime_set = Some(dt);
+                self.set_at_unix_secs = Some(unix_now_secs());
             }
             3 => {
                 // Time write: BCD hh,mm,ss replaces the time fields.
@@ -210,6 +217,7 @@ impl Rtc {
                     *b = from_bcd(self.param[i]);
                 }
                 self.datetime_set = Some(dt);
+                self.set_at_unix_secs = Some(unix_now_secs());
             }
             1 => {
                 self.control = self.param[0];
@@ -238,24 +246,54 @@ impl Rtc {
     }
 
     fn datetime_binary(&self) -> [u8; 7] {
-        if let Some(dt) = self.datetime_set {
-            return dt;
+        match (self.datetime_set, self.set_at_unix_secs) {
+            (Some(set), Some(set_at)) => advance_binary_datetime(set, set_at, unix_now_secs()),
+            // Pre-fix states carry no stamp: keep the legacy frozen value.
+            (Some(set), None) => set,
+            (None, _) => host_datetime_utc(),
         }
-        host_datetime_utc()
     }
 }
 
-/// Host clock as binary [yy,mm,dd,dow,hh,mm,ss] in UTC (civil-from-days;
-/// no timezone database is available in core; UTC is documented).
-fn host_datetime_utc() -> [u8; 7] {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let days = (secs / 86_400) as i64;
-    let tod = secs % 86_400;
-    // Howard Hinnant's civil_from_days.
+/// Game-set datetime advanced by wall-clock elapsed seconds. `dt` is
+/// binary [yy,mm,dd,dow,hh,mm,ss] (24h); the two-digit year is read in
+/// the 2000s. A clock running backward (or no elapsed time) reports the
+/// set value unchanged, mirroring the GBC backward-clock guard.
+fn advance_binary_datetime(dt: [u8; 7], set_at_unix_secs: u64, now_unix_secs: u64) -> [u8; 7] {
+    let elapsed = now_unix_secs.saturating_sub(set_at_unix_secs);
+    if elapsed == 0 {
+        return dt;
+    }
+    let base_days = days_from_civil(2000 + i64::from(dt[0]), dt[1], dt[2]);
+    let base_tod = i64::from(dt[4]) * 3_600 + i64::from(dt[5]) * 60 + i64::from(dt[6]);
+    let total = base_days * 86_400 + base_tod + elapsed as i64;
+    let days = total.div_euclid(86_400);
+    let tod = total.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    [
+        (year % 100) as u8,
+        month,
+        day,
+        day_of_week(days),
+        (tod / 3_600) as u8,
+        ((tod % 3_600) / 60) as u8,
+        (tod % 60) as u8,
+    ]
+}
+
+/// Howard Hinnant's days_from_civil (days since 1970-01-01).
+fn days_from_civil(year: i64, month: u8, day: u8) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let yoe = year - era * 400;
+    let mp = (i64::from(month) + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + i64::from(day) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Howard Hinnant's civil_from_days (full year, 1-based month/day).
+fn civil_from_days(days: i64) -> (i64, u8, u8) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
@@ -265,14 +303,35 @@ fn host_datetime_utc() -> [u8; 7] {
     let mp = (5 * doy + 2) / 153;
     let d = (doy - (153 * mp + 2) / 5 + 1) as u8;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u8;
-    let y = (if m <= 2 { y + 1 } else { y }) as u32;
-    // 1970-01-01 was a Thursday.
-    let dow = ((days + 4).rem_euclid(7)) as u8;
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+/// 1970-01-01 was a Thursday; GBA dow is 0=Sunday..6=Saturday.
+fn day_of_week(days_since_epoch: i64) -> u8 {
+    ((days_since_epoch + 4).rem_euclid(7)) as u8
+}
+
+fn unix_now_secs() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Host clock as binary [yy,mm,dd,dow,hh,mm,ss] in UTC (civil-from-days;
+/// no timezone database is available in core; UTC is documented).
+fn host_datetime_utc() -> [u8; 7] {
+    let secs = unix_now_secs();
+    let days = (secs / 86_400) as i64;
+    let tod = secs % 86_400;
+    let (year, month, day) = civil_from_days(days);
     [
-        (y % 100) as u8,
-        m,
-        d,
-        dow,
+        (year % 100) as u8,
+        month,
+        day,
+        day_of_week(days),
         (tod / 3_600) as u8,
         ((tod % 3_600) / 60) as u8,
         (tod % 60) as u8,
@@ -411,5 +470,160 @@ mod tests {
             ..Default::default()
         };
         assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn advance_binary_datetime_keeps_value_without_elapsed_time() {
+        let dt = [24u8, 1, 2, 2, 10, 30, 45];
+        assert_eq!(advance_binary_datetime(dt, 1_000_000, 1_000_000), dt);
+    }
+
+    #[test]
+    fn advance_binary_datetime_rolls_time_and_date() {
+        // 2024-01-02 (Tue) 23:59:30 + 90s -> 2024-01-03 (Wed) 00:01:00.
+        assert_eq!(
+            advance_binary_datetime([24, 1, 2, 2, 23, 59, 30], 1_000_000, 1_000_090),
+            [24, 1, 3, 3, 0, 1, 0]
+        );
+        // 2024-12-31 (Tue) 23:59:30 + 90s -> 2025-01-01 (Wed) 00:01:00.
+        assert_eq!(
+            advance_binary_datetime([24, 12, 31, 2, 23, 59, 30], 1_000_000, 1_000_090),
+            [25, 1, 1, 3, 0, 1, 0]
+        );
+    }
+
+    #[test]
+    fn advance_binary_datetime_handles_leap_years() {
+        // 2024-02-28 (Wed) 12:00:00 + 1 day -> Feb 29 (Thu).
+        assert_eq!(
+            advance_binary_datetime([24, 2, 28, 3, 12, 0, 0], 1_000_000, 1_086_400),
+            [24, 2, 29, 4, 12, 0, 0]
+        );
+        // + 2 days -> Mar 1 (Fri).
+        assert_eq!(
+            advance_binary_datetime([24, 2, 28, 3, 12, 0, 0], 1_000_000, 1_172_800),
+            [24, 3, 1, 5, 12, 0, 0]
+        );
+        // 2023 is not a leap year: Feb 28 (Tue) + 1 day -> Mar 1 (Wed).
+        assert_eq!(
+            advance_binary_datetime([23, 2, 28, 2, 12, 0, 0], 1_000_000, 1_086_400),
+            [23, 3, 1, 3, 12, 0, 0]
+        );
+    }
+
+    #[test]
+    fn advance_binary_datetime_ignores_backward_clock() {
+        let dt = [24u8, 5, 6, 1, 8, 0, 0];
+        assert_eq!(advance_binary_datetime(dt, 1_000_100, 1_000_000), dt);
+    }
+
+    #[test]
+    fn civil_round_trip_is_identity() {
+        for days in (-730_000..730_000).step_by(997) {
+            let (y, m, d) = civil_from_days(days);
+            assert_eq!(days_from_civil(y, m, d), days, "days={days}");
+        }
+        // Leap-day boundaries both sides of the epoch.
+        for days in [59, 60, 61, -30, -31, 365, 366, 15_218, 15_219] {
+            let (y, m, d) = civil_from_days(days);
+            assert_eq!(days_from_civil(y, m, d), days, "days={days}");
+        }
+    }
+
+    #[test]
+    fn stamped_override_ticks_with_wall_clock() {
+        let now = unix_now_secs();
+        let rtc = Rtc {
+            datetime_set: Some([24, 1, 2, 2, 10, 0, 0]),
+            set_at_unix_secs: Some(now - 90),
+            ..Default::default()
+        };
+        assert_eq!(rtc.datetime_binary(), [24, 1, 2, 2, 10, 1, 30]);
+    }
+
+    #[test]
+    fn unstamped_override_keeps_legacy_frozen_value() {
+        let rtc = Rtc {
+            datetime_set: Some([24, 1, 2, 2, 10, 0, 0]),
+            set_at_unix_secs: None,
+            ..Default::default()
+        };
+        assert_eq!(rtc.datetime_binary(), [24, 1, 2, 2, 10, 0, 0]);
+    }
+
+    #[test]
+    fn datetime_write_records_stamp() {
+        let mut rtc = Rtc::default();
+        rtc.pins(false, false, true, false, false);
+        send_byte(&mut rtc, 0x26);
+        for b in [0x24u8, 0x01, 0x02, 0x03, 0x15, 0x30, 0x45] {
+            send_byte(&mut rtc, b);
+        }
+        assert_eq!(
+            rtc.datetime_set,
+            Some([24u8, 1, 2, 3, 15, 30, 45]),
+            "datetime write stores 24h binary"
+        );
+        assert!(
+            rtc.set_at_unix_secs.is_some_and(|set_at| {
+                let now = unix_now_secs();
+                set_at <= now && now.saturating_sub(set_at) < 60
+            }),
+            "datetime write stamps wall-clock time"
+        );
+    }
+
+    #[test]
+    fn stamp_survives_serde_round_trip() {
+        let rtc = Rtc {
+            control: 0x40,
+            datetime_set: Some([24, 1, 2, 2, 10, 0, 0]),
+            set_at_unix_secs: Some(1_700_000_000),
+            ..Default::default()
+        };
+        let bytes = rmp_serde::to_vec_named(&rtc).expect("encode");
+        let restored: Rtc = rmp_serde::from_slice(&bytes).expect("decode");
+        assert_eq!(restored.control, rtc.control);
+        assert_eq!(restored.datetime_set, rtc.datetime_set);
+        assert_eq!(restored.set_at_unix_secs, rtc.set_at_unix_secs);
+    }
+
+    #[test]
+    fn pre_fix_states_decode_without_stamp() {
+        // States written before the stamp field existed must still load,
+        // falling back to the legacy frozen override.
+        #[derive(serde::Serialize)]
+        struct LegacyRtc {
+            phase: Phase,
+            cmd: u8,
+            bits: u8,
+            param: [u8; 8],
+            param_len: u8,
+            out: [u8; 8],
+            out_len: u8,
+            out_bit: u8,
+            is_read: bool,
+            control: u8,
+            datetime_set: Option<[u8; 7]>,
+            sio_out: bool,
+        }
+        let legacy = LegacyRtc {
+            phase: Phase::Idle,
+            cmd: 0,
+            bits: 0,
+            param: [0; 8],
+            param_len: 0,
+            out: [0; 8],
+            out_len: 0,
+            out_bit: 0,
+            is_read: false,
+            control: 0,
+            datetime_set: Some([24, 1, 2, 2, 10, 0, 0]),
+            sio_out: false,
+        };
+        let bytes = rmp_serde::to_vec_named(&legacy).expect("encode");
+        let restored: Rtc = rmp_serde::from_slice(&bytes).expect("decode");
+        assert_eq!(restored.set_at_unix_secs, None);
+        assert_eq!(restored.datetime_binary(), [24, 1, 2, 2, 10, 0, 0]);
     }
 }

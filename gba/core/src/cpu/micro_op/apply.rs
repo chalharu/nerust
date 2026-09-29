@@ -3,6 +3,7 @@
 //! (SWP/PSR/DP/traps) live in [`apply_arm`]; this file calls down
 //! into it, never the reverse.
 use super::apply_arm::{apply_dp_reg, apply_psr, apply_swp, apply_trap_swi, apply_trap_und};
+use super::expand_thumb::thumb_alu_rest_trailing;
 use super::{
     AluEffect, AluImmOp, BlockEmptyEffect, BlockEndEffect, BlockWord, MemAccess, MicroOp,
     MulEffect, PcRelRead,
@@ -432,7 +433,9 @@ pub(super) fn apply_op(
         }
         MicroOp::CommitThumb(instr) => {
             apply_commit_thumb(regs, instr);
-            cycles += 1;
+            // Pinned-base padding folded in (register shifts +1,
+            // hi-reg PC writes +2; pure function of the opcode).
+            cycles += 1 + i64::from(thumb_alu_rest_trailing(instr));
         }
         MicroOp::CommitDpReg(instr) => {
             // Data-processing performs no bus access: native
@@ -459,7 +462,8 @@ pub(super) fn apply_op(
                 regs.set_lr(pc.wrapping_sub(4));
             }
             regs.set_pc(pc.wrapping_add(branch.offset));
-            cycles += 1;
+            // Pinned base folded in (2 refill Internals + commit).
+            cycles += 3;
         }
         MicroOp::BlHigh(offset) => {
             regs.set_lr(pc.wrapping_add(offset));
@@ -469,12 +473,14 @@ pub(super) fn apply_op(
             let target = regs.lr().wrapping_add(offset);
             regs.set_lr(pc.wrapping_sub(2) | 1);
             regs.set_pc(target & !1);
-            cycles += 1;
+            // Pinned base folded in (2 refill Internals + commit).
+            cycles += 3;
         }
         MicroOp::Bx(target) => {
             regs.set_cpsr((regs.cpsr() & !(1 << 5)) | ((target & 1) << 5));
             regs.set_pc(target & !1);
-            cycles += 1;
+            // Pinned base folded in (2 refill Internals + commit).
+            cycles += 3;
         }
         MicroOp::TrapSwi(swi) => {
             cycles += apply_trap_swi(regs, bus, swi, is_thumb) as i64;
@@ -484,15 +490,21 @@ pub(super) fn apply_op(
         }
         MicroOp::MemRead(a) => {
             apply_mem_read(regs, bus, a, is_thumb);
-            cycles += 1;
+            // Pinned base folded in (loads 3, 5 for R15 — the padding
+            // ticks run no bus calls, so one drain round suffices).
+            // Only ARM loads can target R15 (Thumb rd <= 7, POP-PC is a
+            // block word), so the R15 check doubles as the ARM check.
+            cycles += if a.rd == 15 { 5 } else { 3 };
         }
         MicroOp::MemWrite(a) => {
             apply_write(regs, bus, a);
-            cycles += 1;
+            // Pinned base folded in (stores 2).
+            cycles += 2;
         }
         MicroOp::PcRelRead(r) => {
             apply_pcrel_read(regs, bus, r, is_thumb);
-            cycles += 1;
+            // Pinned base folded in ([Read, I, I] = 3).
+            cycles += 3;
         }
         MicroOp::BlockStart(e) => {
             bus.begin_block_batch(e.is_load, e.fetch_width);

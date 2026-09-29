@@ -25,6 +25,7 @@ impl Gpio {
     /// CPU read of the GPIO window. Returns `None` when the access should
     /// fall through to ROM (dormant, misaligned, or disabled-control read
     /// of data/direction which returns 00h per GBATEK — still `Some(0)`).
+    #[inline]
     pub fn read(&self, addr: u32, width: u8) -> Option<u32> {
         // GBATEK cartridge GPIO: the C4/C6/C8 registers mirror across the
         // WS0/WS1/WS2 ROM regions (08/0A/0C). ROM-bus accesses are 16/32-bit

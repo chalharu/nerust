@@ -1,5 +1,6 @@
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::AudioBackend,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
+    audio::{AudioBackend, StereoSample},
     identity::SystemIdentity,
 };
 use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
@@ -21,41 +22,58 @@ unsafe impl Send for SendCore {}
 pub struct NesConsoleCore {
     core: SendCore,
     controller: ControllerCollection,
-    audio: Box<dyn AudioBackend>,
     emu_input: EmuInput,
     paused: bool,
+    /// Device sample rate for the APU resampler, stamped from
+    /// `CoreConfig::audio_sample_rate` at load (data only; the backend
+    /// lives in the session layer).
+    sample_rate: u32,
+}
+
+/// Session-side audio sink: collects the frame's nominal samples into
+/// the caller-provided Vec (transport separation: the core never sees
+/// the real backend).
+struct VecSink<'a> {
+    out: &'a mut Vec<StereoSample>,
+    sample_rate: u32,
+}
+
+impl AudioBackend for VecSink<'_> {
+    fn start(&mut self) {}
+    fn pause(&mut self) {}
+    fn push(&mut self, sample: StereoSample) {
+        self.out.push(sample);
+    }
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
 }
 
 impl NesConsoleCore {
     pub fn new(
         cartridge_data: CartridgeData,
         controller: ControllerCollection,
-        audio: Box<dyn AudioBackend>,
         emu_input: EmuInput,
     ) -> Result<Self, CoreError> {
         let core = Core::new(cartridge_data).map_err(CoreError::Core)?;
         Ok(Self {
             core: SendCore(Some(core)),
             controller,
-            audio,
             emu_input,
             paused: false,
+            sample_rate: 48_000,
         })
     }
 
     /// Creates a NesConsoleCore with no ROM loaded.
     /// Call `load()` before `render_frame()`.
-    pub fn new_empty(
-        controller: ControllerCollection,
-        audio: Box<dyn AudioBackend>,
-        emu_input: EmuInput,
-    ) -> Self {
+    pub fn new_empty(controller: ControllerCollection, emu_input: EmuInput) -> Self {
         Self {
             core: SendCore(None),
             controller,
-            audio,
             emu_input,
             paused: false,
+            sample_rate: 48_000,
         }
     }
 }
@@ -80,7 +98,11 @@ impl ConsoleCore for NesConsoleCore {
         }
     }
 
-    fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<(), CoreError> {
+    fn render_frame(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<(), CoreError> {
         let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
 
         // Take latest input and sync to controller
@@ -89,7 +111,14 @@ impl ConsoleCore for NesConsoleCore {
             self.controller.sync_input(&state.0);
         }
 
-        core.run_frame(frame_slot, &mut self.controller, self.audio.as_mut());
+        // Nominal-rate audio production only: samples collect into the
+        // caller buffer; the session layer owns transport to the backend.
+        audio_out.clear();
+        let mut sink = VecSink {
+            out: audio_out,
+            sample_rate: self.sample_rate,
+        };
+        core.run_frame(frame_slot, &mut self.controller, &mut sink);
 
         Ok(())
     }
@@ -109,6 +138,7 @@ impl ConsoleCore for NesConsoleCore {
         let core = Core::new_with_options(cartridge_data, options).map_err(CoreError::Core)?;
         self.core = SendCore(Some(core));
         self.paused = false;
+        self.sample_rate = config.audio_sample_rate.unwrap_or(48_000);
         Ok(())
     }
 
@@ -139,10 +169,6 @@ impl ConsoleCore for NesConsoleCore {
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let core = self.core_mut()?;
         core.import_machine_state(data).map_err(CoreError::Core)
-    }
-
-    fn set_volume(&mut self, volume: f32) {
-        self.audio.set_volume(volume);
     }
 
     fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
@@ -218,7 +244,6 @@ mod tests {
         let mut core = NesConsoleCore::new(
             cartridge,
             ControllerCollection::new(vec![Box::new(MockController)]),
-            Box::new(nerust_core_traits::audio::NullAudio),
             test_emu_input(),
         )
         .expect("NesConsoleCore::new should succeed");
@@ -231,8 +256,10 @@ mod tests {
                 palette: Box::new([0u32; 256]),
             },
         );
-        let result = core.render_frame(&mut fb);
+        let mut audio = Vec::new();
+        let result = core.render_frame(&mut fb, &mut audio);
         assert!(result.is_ok(), "render_frame should succeed: {:?}", result);
+        assert!(!audio.is_empty(), "frame must produce audio");
     }
 
     #[test]
@@ -240,7 +267,6 @@ mod tests {
         let rom = test_rom();
         let mut core = NesConsoleCore::new_empty(
             ControllerCollection::new(vec![Box::new(MockController)]),
-            Box::new(nerust_core_traits::audio::NullAudio),
             test_emu_input(),
         );
         let config = CoreConfig {
@@ -248,6 +274,7 @@ mod tests {
             bios_paths: HashMap::new(),
             controllers: HashMap::new(),
             core_options: None,
+            audio_sample_rate: None,
         };
 
         // load should succeed via trait method
@@ -262,7 +289,8 @@ mod tests {
                 palette: Box::new([0u32; 256]),
             },
         );
-        let result = core.render_frame(&mut fb);
+        let mut audio = Vec::new();
+        let result = core.render_frame(&mut fb, &mut audio);
         assert!(
             result.is_ok(),
             "render_frame after load should succeed: {:?}",
