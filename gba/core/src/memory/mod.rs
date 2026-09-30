@@ -1751,7 +1751,11 @@ impl GbaMemoryBus {
     }
 
     pub fn set_keyinput(&mut self, value: u16) {
-        self.keyinput = value | 0xFC00;
+        // GBATEK 4000130h: bits 10-15 are unused and read 0 on hardware
+        // (never forced to 1). Games rely on this: Pokemon Emerald's
+        // evolution cancel requires heldKeys == B_BUTTON exactly, i.e. a
+        // 16-bit KEYINPUT read of precisely 0x03FD while B alone is held.
+        self.keyinput = value & 0x03FF;
         self.check_keycnt();
         // `check_keycnt` may raise (see `request_interrupt`, which already
         // resets), but the keypad level itself is observable; be explicit.

@@ -48,7 +48,8 @@ impl Controller for StandardPad {
         if state.len() >= 2 {
             self.cached = u16::from_le_bytes([state[0], state[1]]);
         } else if let Some(s) = state.first() {
-            self.cached = *s as u16 | 0xFC00;
+            // KEYINPUT bits 10-15 read 0 on hardware; mask, never force.
+            self.cached = *s as u16 & 0x03FF;
         }
     }
 
@@ -207,7 +208,8 @@ mod tests {
     fn sync_input_single_byte_fallback() {
         let mut pad = StandardPad::default();
         pad.sync_input(&[0xFE]);
-        assert_eq!(pad.cached, 0xFCFE);
+        // KEYINPUT bits 10-15 read 0 on hardware, never forced to 1.
+        assert_eq!(pad.cached, 0x00FE);
     }
 
     #[test]

@@ -3,7 +3,8 @@ use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 /// Active-low state for the ten GBA buttons.
 /// Bits 0-9 are A, B, Select, Start, Right, Left, Up, Down, R, L
 /// (GBATEK KEYINPUT 4000130h).
-/// Upper 6 bits are unused and always 1 (mirrors KEYINPUT 0x03FF).
+/// Upper 6 bits are unused and always 0 (real KEYINPUT reads 0 above
+/// bit 9; games such as Pokemon Emerald rely on exact 16-bit equality).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GbaInputBuffer(pub u16);
 
