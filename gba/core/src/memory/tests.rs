@@ -443,12 +443,25 @@ fn write_if_clears() {
 }
 
 #[test]
-fn keyinput_always_1_upper_bits() {
+fn keyinput_zero_upper_bits() {
+    // GBATEK 4000130h: bits 10-15 are unused and read 0 on hardware.
     let mut bus = GbaMemoryBus::new();
     bus.set_keyinput(0x0000);
-    assert_eq!(bus.read16(0x04000130) & 0xFC00, 0xFC00);
+    assert_eq!(bus.read16(0x04000130) & 0xFC00, 0x0000);
     bus.set_keyinput(0x03FF);
-    assert_eq!(bus.read16(0x04000130), 0x03FF | 0xFC00);
+    assert_eq!(bus.read16(0x04000130), 0x03FF);
+    bus.set_keyinput(0xFFFF);
+    assert_eq!(bus.read16(0x04000130), 0x03FF);
+}
+
+#[test]
+fn keyinput_b_only_reads_exact() {
+    // Pokemon Emerald's evolution cancel requires heldKeys == B_BUTTON
+    // exactly: with only B held, the 16-bit KEYINPUT read must be
+    // precisely 0x03FD (no forced upper bits).
+    let mut bus = GbaMemoryBus::new();
+    bus.set_keyinput(0x03FD); // B pressed (bit 1 = 0), rest released
+    assert_eq!(bus.read16(0x04000130), 0x03FD);
 }
 
 #[test]
