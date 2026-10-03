@@ -789,6 +789,28 @@ fn halt_wakes_once_irq_availability_propagates() {
 }
 
 #[test]
+fn halt_wake_latency_by_source() {
+    // Halted raster ISRs must land inside their scanline (mgba-suite
+    // Layer toggle 2: the HBlank ISR's DISPCNT write has to precede the
+    // line-end latch shift). Video-source wakes (VBlank/HBlank/VCount)
+    // burn 5; timer-source wakes 10; everything else keeps 32 (mgba
+    // sio-timing pin).
+    for (bit, expected) in [(1u16 << 1, 5), (1u16 << 3, 10), (1u16 << 7, 32)] {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000200, bit);
+        bus.write16(0x04000208, 1);
+        bus.tick(); // apply IE/IME
+        bus.enter_halt(0x3FFF);
+        assert!(bus.is_halted());
+        bus.request_interrupt(bit);
+        bus.tick();
+        bus.tick();
+        assert!(!bus.is_halted());
+        assert_eq!(bus.take_wake_latency(), expected, "irq bit {bit:#06x}");
+    }
+}
+
+#[test]
 fn svc_vector_contains_safe_loop() {
     let mut bus = GbaMemoryBus::new();
     bus.set_current_pc(0x08);

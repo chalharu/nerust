@@ -1933,12 +1933,30 @@ impl GbaMemoryBus {
             // plain Halt 32 (timer-source wakes cost 10: the timer
             // IRQ line rises without the serial/DMA/video wake path;
             // pinned by alyosha halt_pc t001 and mgba sio-timing).
+            // Video-source wakes (VBlank/HBlank/VCount) cost 5: the
+            // halted raster ISR must still land inside its scanline
+            // (mgba-suite Layer toggle 2: the HBlank ISR's DISPCNT
+            // write has to precede the line-end latch shift). SIO/DMA/
+            // keypad wakes keep 32 (mgba sio-timing pin). 5 also keeps
+            // the mgba-suite hblankBit poll phase (misc_edge Flip 4-6);
+            // neighboring values reshuffle it (2-4 and 10 fail there).
             let src = self.ie & self.sif & self.halt_irq_mask;
             let timer_only = src & 0x0078 != 0 && src & !0x0078 == 0;
+            // Unmasked cause: an IntrWait halt awaiting VBlank still
+            // wakes (wide) on HBlank alone mid-frame; the mask would
+            // hide that cause, so test the raw pending level here.
+            let cause = self.ie & self.sif;
+            let video_only = cause != 0 && cause & !0x0007 == 0;
             self.wake_latency = if clear != 0 {
                 48
             } else if self.ime {
-                if timer_only { 10 } else { 32 }
+                if timer_only {
+                    10
+                } else if video_only {
+                    5
+                } else {
+                    32
+                }
             } else {
                 0
             };
