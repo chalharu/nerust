@@ -105,7 +105,7 @@ Build the Android APK with the Gradle packaging project:
 packaging/android/package.sh
 ```
 
-This requires Java 17, the Android SDK/NDK, and `cargo-ndk` on the host.
+This requires Java 25, the Android SDK/NDK, and `cargo-ndk` on the host.
 If `ANDROID_CERTIFICATE` and `ANDROID_PRIVATE_KEY` are exported, the packaging
 script generates a temporary JKS keystore automatically before Gradle signs the
 release APK.
