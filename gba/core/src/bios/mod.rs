@@ -359,6 +359,8 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
 fn halt(bus: &mut GbaMemoryBus) {
     // BIOS-context write so the BIOS-PC gate in write_io lets it halt.
     bus.write_hle_bios16(0x04000300, 0x00);
+    // Plain Halt is not an IntrWait: no awaited mask survives it.
+    bus.set_intrwait_mask(0);
     bus.enter_halt(0x3FFF);
 }
 
@@ -378,6 +380,7 @@ fn intr_wait(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     // BIOS-context write so the BIOS-PC gate in write_io lets it halt.
     bus.write_hle_bios16(0x04000300, 0x0000);
     bus.set_wake_clear_mask(mask);
+    bus.set_intrwait_mask(mask);
     bus.enter_halt(mask);
 }
 
@@ -1167,7 +1170,21 @@ mod tests {
         bus.tick();
         assert_eq!(bus.read16(0x04000202), 2);
         assert_eq!(bus.read16(0x03007FF8), 2);
+        // GBATEK HALTCNT: halt wakes on ANY enabled interrupt, so the
+        // still-raised HBlank flag wakes this VBlank-only wait at once
+        // (on HW its ISR would run, then IntrWait re-halts). The old
+        // narrow-wake model parked here instead; mgba-suite's layer-toggle
+        // video tests prove the wide wake (mid-frame band missing).
+        assert!(!bus.is_halted());
+        // ...and with the awaited flags still clear, IRQ return re-halts.
+        assert!(bus.rehalt_after_irq());
         assert!(bus.is_halted());
+        // Awaited flags raised: the SWI exits, no re-halt.
+        bus.request_interrupt(1);
+        bus.tick();
+        bus.tick();
+        assert!(!bus.is_halted());
+        assert!(!bus.rehalt_after_irq());
     }
 
     #[test]
