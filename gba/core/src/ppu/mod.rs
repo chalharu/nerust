@@ -189,7 +189,13 @@ struct LineLatch {
     /// and apply a line later (mgba-suite OAM Update Delay).
     pending_oam: Box<[u8; 1024]>,
     /// `dispcnt_latch[0]` sampled at the first fetch of the line
-    /// (cycle 32): the enable/blank reference for this scanline.
+    /// (cycle 32): the enable reference for this scanline's pixels.
+    /// A DISPCNT write at/after the first fetch re-syncs it to the
+    /// live value, so pixels fetched after the write observe
+    /// contemporary state; future lines still ride the 3-stage latch.
+    /// (A write before the first fetch is naturally superseded by
+    /// this sample. Fetch contention deliberately ignores the
+    /// re-sync: see `bg_fetch_active`.)
     enable: u16,
 }
 
@@ -417,6 +423,9 @@ impl GbaPpu {
         if self.vcount < HEIGHT as u16 && self.cycle == FETCH_START_CYCLES {
             // Per-line enable sample (OAM itself is latched at HBlank
             // start above): keeps pixel 0 contemporary with the line.
+            // A same-line DISPCNT write before this sample is
+            // superseded here (no pixel has rendered yet); a later
+            // write re-syncs `line.enable` itself (see write_register).
             self.line.enable = self.dispcnt_latch[0];
             let y = self.vcount as usize;
             let cache = self.obj_span_cache(y);
@@ -872,9 +881,13 @@ impl GbaPpu {
     }
 
     /// Any BG layer enabled in both the latched and the live DISPCNT;
-    /// gates BG-VRAM fetch contention.
+    /// gates BG-VRAM fetch contention. Unlike pixel rendering (which
+    /// re-syncs to live mid-line, see `LineLatch::enable`), contention
+    /// stays on the line latch: a mid-line enable write does not turn
+    /// the fetch schedule back on (nba ram-access-timing latch probe:
+    /// the line-2 DMA burst stays fast).
     pub fn bg_fetch_active(&self) -> bool {
-        self.line.enable & self.registers.dispcnt & 0x0F00 != 0
+        self.dispcnt_latch[0] & self.registers.dispcnt & 0x0F00 != 0
     }
 
     pub fn dispstat(&self) -> u16 {
@@ -921,6 +934,14 @@ impl GbaPpu {
                 // CPU writes must not change it, so preserve the old bit.
                 let old = self.registers.dispcnt;
                 self.registers.dispcnt = (value & !(1 << 3)) | (old & (1 << 3));
+                if self.registers.dispcnt != old {
+                    // Mid-line re-sync (see `LineLatch::enable`): the
+                    // current line's not-yet-rendered pixels observe the
+                    // live value; the latch still gates future lines
+                    // (and fetch contention ignores this: see
+                    // `bg_fetch_active`).
+                    self.line.enable = self.registers.dispcnt;
+                }
                 // The OBJ working-set key includes DISPCNT (cycle budget):
                 // retire the cached set when it changes.
                 if self.registers.dispcnt != old {
@@ -1665,6 +1686,73 @@ mod tests {
             ppu.frame_buffer()[4 * WIDTH].to_le_bytes(),
             [255, 255, 255, 255]
         );
+    }
+
+    #[test]
+    fn dispcnt_mid_line_on_resyncs_remainder() {
+        // mgba-suite Layer toggle 2 wait-case rows (65/146): a DISPCNT
+        // BG enable write landing mid-draw turns the not-yet-rendered
+        // pixels on immediately, while the next line still follows the
+        // 3-stage latch (stays off until the write propagates through).
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        vram[0] = 0x11; // tile 0 px0-1 = palette index 1
+        palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes()); // red
+        // Latch settled OFF (BG0 disabled), live OFF.
+        steady_dispcnt(&mut ppu, 0, &vram, &palette);
+        ppu.write_register(0x04000008, 31 << 8, &vram, &palette);
+        // Step to mid-draw (cycle 64): the write below renders the
+        // [1,9) prefix with pre-write state, like `note_ppu_write`.
+        for _ in 0..64 {
+            ppu.step(&vram, &palette, &oam);
+        }
+        ppu.write_register(0x04000000, 1 << 8, &vram, &palette);
+        for _ in 64..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        // Pixel 0 (fetched at cycle 32, pre-write): backdrop.
+        assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [0, 0, 0, 255]);
+        // Prefix [1,9) rendered pre-write; remainder post-write (red).
+        assert_eq!(ppu.frame_buffer()[8].to_le_bytes(), [0, 0, 0, 255]);
+        assert_eq!(ppu.frame_buffer()[9].to_le_bytes(), [255, 0, 0, 255]);
+        // Next line: the latch has not propagated yet -> backdrop.
+        for _ in 0..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.frame_buffer()[WIDTH].to_le_bytes(), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn dispcnt_pre_fetch_write_is_superseded_by_line_sample() {
+        // Complement to the resync test above: a DISPCNT BG enable
+        // write landing before the first fetch (cycle 32) is superseded
+        // by the per-line latch sample, so the whole line still follows
+        // the latch (stays off until the write propagates through).
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        vram[0] = 0x11;
+        palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes()); // red
+        steady_dispcnt(&mut ppu, 0, &vram, &palette);
+        ppu.write_register(0x04000008, 31 << 8, &vram, &palette);
+        for _ in 0..20 {
+            ppu.step(&vram, &palette, &oam);
+        }
+        ppu.write_register(0x04000000, 1 << 8, &vram, &palette);
+        for _ in 20..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        // Whole line 0 follows the (still-off) latch: all backdrop.
+        for x in 0..WIDTH {
+            assert_eq!(
+                ppu.frame_buffer()[x].to_le_bytes(),
+                [0, 0, 0, 255],
+                "pixel {x} must stay off"
+            );
+        }
     }
 
     #[test]
