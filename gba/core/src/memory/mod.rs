@@ -403,6 +403,10 @@ pub(crate) struct GbaMemoryBusState {
     halted: bool,
     halt_irq_mask: u16,
     stopped: bool,
+    // IntrWait await mask (added after the Phase 12 start): absent in
+    // older saves. Zero means unrestricted wake, matching the old
+    // behavior (no awaited-mask tracking).
+    #[serde(default)]
     intrwait_mask: u16,
     wake_clear_mask: u16,
     wake_latency: u32,
