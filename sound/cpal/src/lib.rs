@@ -120,7 +120,7 @@ impl CpalAudio {
                                     // clear-drain and its counter reset can
                                     // leave a queued sample uncounted.
                                     callback_queued
-                                        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                                        .try_update(Ordering::AcqRel, Ordering::Acquire, |v| {
                                             v.checked_sub(1)
                                         })
                                         .ok();
