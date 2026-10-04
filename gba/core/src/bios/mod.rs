@@ -359,6 +359,8 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
 fn halt(bus: &mut GbaMemoryBus) {
     // BIOS-context write so the BIOS-PC gate in write_io lets it halt.
     bus.write_hle_bios16(0x04000300, 0x00);
+    // Plain Halt is not an IntrWait: no awaited mask survives it.
+    bus.set_intrwait_mask(0);
     bus.enter_halt(0x3FFF);
 }
 
@@ -378,6 +380,7 @@ fn intr_wait(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     // BIOS-context write so the BIOS-PC gate in write_io lets it halt.
     bus.write_hle_bios16(0x04000300, 0x0000);
     bus.set_wake_clear_mask(mask);
+    bus.set_intrwait_mask(mask);
     bus.enter_halt(mask);
 }
 
@@ -647,8 +650,18 @@ fn bios_arctan2_full(x: i32, y: i32) -> (u16, Option<i32>) {
         let (v, a, _) = bios_arctan_poly(div(x, y));
         (0xC000u16.wrapping_sub(v as u16), Some(a))
     } else {
-        let (v, a, _) = bios_arctan_poly(div(x, y));
-        (0xC000u16.wrapping_sub(v as u16), Some(a))
+        // Fourth quadrant (x > 0, y < 0). The polynomial only converges
+        // for |ratio| <= 1: use the reciprocal for shallow angles
+        // (|x| >= |y|), mirroring the first-quadrant split. Feeding x/y
+        // directly here overflows the fixed-point square and returns
+        // garbage (e.g. Mario Kart kart/camera angles tens of degrees off).
+        if x >= -y {
+            let (v, a, _) = bios_arctan_poly(div(y, x));
+            (v as u16, Some(a))
+        } else {
+            let (v, a, _) = bios_arctan_poly(div(x, y));
+            (0xC000u16.wrapping_sub(v as u16), Some(a))
+        }
     }
 }
 
@@ -1167,7 +1180,21 @@ mod tests {
         bus.tick();
         assert_eq!(bus.read16(0x04000202), 2);
         assert_eq!(bus.read16(0x03007FF8), 2);
+        // GBATEK HALTCNT: halt wakes on ANY enabled interrupt, so the
+        // still-raised HBlank flag wakes this VBlank-only wait at once
+        // (on HW its ISR would run, then IntrWait re-halts). The old
+        // narrow-wake model parked here instead; mgba-suite's layer-toggle
+        // video tests prove the wide wake (mid-frame band missing).
+        assert!(!bus.is_halted());
+        // ...and with the awaited flags still clear, IRQ return re-halts.
+        assert!(bus.rehalt_after_irq());
         assert!(bus.is_halted());
+        // Awaited flags raised: the SWI exits, no re-halt.
+        bus.request_interrupt(1);
+        bus.tick();
+        bus.tick();
+        assert!(!bus.is_halted());
+        assert!(!bus.rehalt_after_irq());
     }
 
     #[test]
@@ -1298,5 +1325,30 @@ mod tests {
             bus.tick();
         }
         assert_eq!(bus.read16(0x04000100), 0x00C8);
+    }
+
+    #[test]
+    fn arctan2_fourth_quadrant_shallow_angles() {
+        // SWI 0x0A ArcTan2, fourth quadrant (x > 0, y < 0): shallow angles
+        // (|x| >= |y|) must use the reciprocal so the polynomial stays in
+        // its |ratio| <= 1 domain. Feeding x/y directly overflows the
+        // fixed-point square and returns angles tens of degrees off, which
+        // visibly breaks Mario Kart Super Circuit kart/camera angles
+        // (karts vanish into a spinning camera ~1s after the race start).
+        // Values below match f64 atan2 mapped to GBA units within 1 LSB.
+        for ((x, y), expected) in [
+            ((789i32, -131i32), 0xF94C),
+            ((63, -52), 0xE3E2),
+            ((100, -100), 0xE000),
+            ((100, -101), 0xDFCC),
+            ((50, -100), 0xD2E4),
+            ((1, -1), 0xE000),
+            ((1000, -1), 0xFFF5),
+            ((760, -211), 0xF4F7),
+            ((63, -211), 0xCBD2),
+        ] {
+            let (v, _) = super::bios_arctan2_full(x, y);
+            assert_eq!(v, expected, "ArcTan2({x},{y}) mismatch");
+        }
     }
 }

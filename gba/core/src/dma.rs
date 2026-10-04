@@ -952,6 +952,76 @@ mod tests {
     }
 
     #[test]
+    fn repeat_reloads_count_but_not_source() {
+        // GBATEK DMA: SAD/DAD/CNT_L hold the initial values and the
+        // hardware never rewrites them; the transfer runs on internal
+        // pointers. Upon Enable 0->1 the internals reload SAD, DAD and
+        // CNT_L; upon Repeat only CNT_L (and DAD in Increment+Reload
+        // mode) reloads, while the source keeps incrementing (this is
+        // what sound streaming relies on). A regression here would show
+        // up as drifting/corrupted repeat transfers.
+        let mut dma = GbaDma::default();
+        // ch0: VBlank repeat, 16-bit, src-inc, dst-inc, count 4.
+        dma.write(0x040000B0, 0x0000);
+        dma.write(0x040000B2, 0x0200);
+        dma.write(0x040000B4, 0x0000);
+        dma.write(0x040000B6, 0x0300);
+        dma.write(0x040000B8, 4);
+        dma.write(0x040000BA, 0x8000 | 0x0200 | 0x1000);
+        // ch1: same but dst Increment+Reload (mode 3).
+        dma.write(0x040000BC, 0x4000);
+        dma.write(0x040000BE, 0x0200);
+        dma.write(0x040000C0, 0x8000);
+        dma.write(0x040000C2, 0x0300);
+        dma.write(0x040000C4, 4);
+        dma.write(0x040000C6, 0x8000 | 0x0200 | 0x1000 | (3 << 5));
+        for burst in 0..2 {
+            dma.trigger_channel(0, DmaTrigger::VBlank);
+            dma.trigger_channel(1, DmaTrigger::VBlank);
+            let mut units0 = Vec::new();
+            let mut units1 = Vec::new();
+            for _ in 0..200 {
+                dma.tick_pending();
+                // Drain whichever channel issues (ch0 wins ties).
+                while let Some(t) = dma.step(0, &mut |_| 0) {
+                    if t.channel == 0 {
+                        units0.push((t.source, t.destination));
+                    } else {
+                        units1.push((t.source, t.destination));
+                    }
+                    if units0.len() + units1.len() >= 8 {
+                        break;
+                    }
+                }
+                if units0.len() + units1.len() >= 8 {
+                    break;
+                }
+            }
+            assert_eq!(units0.len(), 4, "burst {burst}: ch0 unit count");
+            assert_eq!(units1.len(), 4, "burst {burst}: ch1 unit count");
+            // Settle completion tails before re-triggering (a channel
+            // still draining its tail ignores the next trigger).
+            for _ in 0..50 {
+                dma.tick_pending();
+                dma.step(0, &mut |_| 0);
+                if !dma.is_active() && !dma.has_pending() {
+                    break;
+                }
+            }
+            let base = burst as u32 * 8;
+            // Sources advance continuously across repeats (no reload).
+            assert_eq!(units0[0].0, 0x0200_0000 + base);
+            assert_eq!(units1[0].0, 0x0200_4000 + base);
+            // Destinations: plain increment continues, mode 3 restarts.
+            assert_eq!(units0[0].1, 0x0300_0000 + base);
+            assert_eq!(units1[0].1, 0x0300_8000);
+            // Enable stays set on repeat for event-triggered channels.
+            assert_ne!(dma.read(0x040000BA).unwrap() & 0x8000, 0);
+            assert_ne!(dma.read(0x040000C6).unwrap() & 0x8000, 0);
+        }
+    }
+
+    #[test]
     fn dma_state_round_trips_mid_burst() {
         let mut dma = GbaDma::default();
         dma.write(0x040000D4, 0x1000);

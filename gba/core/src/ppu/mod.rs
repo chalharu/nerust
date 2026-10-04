@@ -32,8 +32,6 @@ pub const LINES_PER_FRAME: u16 = 228;
 /// at 32+4x cycles into the scanline, one pixel every four cycles.
 pub const FETCH_START_CYCLES: u16 = 32;
 pub const FETCH_END_CYCLES: u16 = 988;
-/// DISPCNT latch shift point (+40 cycles into the line).
-pub const DISPCNT_LATCH_CYCLES: u16 = 40;
 
 pub fn bgr555_to_rgba8888(color: u16) -> u32 {
     color::rgba8888(color & 0x7FFF)
@@ -140,8 +138,10 @@ pub struct GbaPpu {
     /// Last sub-boundary BG VRAM halfword: BG fetches at/above the OBJ
     /// at/above the OBJ boundary return this instead of physical VRAM.
     bg_latch: u16,
-    /// DISPCNT 3-stage shift latch (HW-confirmed): shifted at +40 cycles
-    /// of every scanline. BG/OBJ enables gate on `latch[0] & live`,
+    /// DISPCNT 3-stage shift latch (HW-confirmed): shifted at line end,
+    /// after the HBlank-period register writes, so an HBlank ISR enable
+    /// write is visible 3 lines later (mgba-suite layer-toggle ON edge).
+    /// BG/OBJ enables gate on `latch[0] & live`,
     /// forced blank on `latch[0] | live`. Window enables stay live.
     dispcnt_latch: [u16; 3],
     /// Forced-blank sample taken at line end for the next scanline.
@@ -181,9 +181,21 @@ pub struct GbaPpu {
 
 #[derive(Debug)]
 struct LineLatch {
+    /// OAM snapshot for the scanline currently rendering: fixed before
+    /// the line starts (previous HBlank), so mid-line writes defer.
     oam: Box<[u8; 1024]>,
-    /// `dispcnt_latch[0]` sampled at the first fetch of the line (cycle 32,
-    /// before the +40 shift): the enable/blank reference for this scanline.
+    /// OAM snapshot accumulating for the NEXT scanline, taken at HBlank
+    /// start (the HW fetch bursts first): HBlank-period writes land here
+    /// and apply a line later (mgba-suite OAM Update Delay).
+    pending_oam: Box<[u8; 1024]>,
+    /// `dispcnt_latch[0]` sampled at the first fetch of the line
+    /// (cycle 32): the enable reference for this scanline's pixels.
+    /// A DISPCNT write at/after the first fetch re-syncs it to the
+    /// live value, so pixels fetched after the write observe
+    /// contemporary state; future lines still ride the 3-stage latch.
+    /// (A write before the first fetch is naturally superseded by
+    /// this sample. Fetch contention deliberately ignores the
+    /// re-sync: see `bg_fetch_active`.)
     enable: u16,
 }
 
@@ -191,13 +203,19 @@ impl LineLatch {
     fn new() -> Self {
         Self {
             oam: Box::new([0; 1024]),
+            pending_oam: Box::new([0; 1024]),
             enable: 0,
         }
     }
 
-    fn capture(&mut self, oam: &[u8], enable: u16) {
-        self.oam.copy_from_slice(oam);
-        self.enable = enable;
+    /// Stage live OAM for the next scanline (HBlank-start snapshot).
+    fn snapshot(&mut self, oam: &[u8]) {
+        self.pending_oam.copy_from_slice(oam);
+    }
+
+    /// Promote the staged snapshot for the upcoming scanline.
+    fn advance(&mut self) {
+        std::mem::swap(&mut self.oam, &mut self.pending_oam);
     }
 }
 
@@ -217,6 +235,11 @@ pub(crate) struct GbaPpuState {
     dispcnt_latch: [u16; 3],
     blank_sample: bool,
     line_oam: serde_bytes::ByteBuf,
+    // Staged OAM snapshot (added after the Phase 12 start): absent in
+    // older saves, which then seed it from the live OAM (the old model
+    // had no staging, so the live OAM is the whole truth).
+    #[serde(default)]
+    pending_oam: Option<serde_bytes::ByteBuf>,
     line_enable: u16,
     rendered_up_to_x: u8,
 }
@@ -239,6 +262,16 @@ impl GbaPpuState {
             return Err(format!(
                 "ppu: line latch length wrong: {}",
                 self.line_oam.len()
+            ));
+        }
+        if self
+            .pending_oam
+            .as_ref()
+            .is_some_and(|pending| pending.len() != 1024)
+        {
+            return Err(format!(
+                "ppu: pending latch length wrong: {}",
+                self.pending_oam.as_ref().map_or(0, |pending| pending.len())
             ));
         }
         if self.rendered_up_to_x > WIDTH as u8 {
@@ -307,6 +340,7 @@ impl GbaPpu {
             dispcnt_latch: self.dispcnt_latch,
             blank_sample: self.blank_sample,
             line_oam: serde_bytes::ByteBuf::from(self.line.oam.to_vec()),
+            pending_oam: Some(serde_bytes::ByteBuf::from(self.line.pending_oam.to_vec())),
             line_enable: self.line.enable,
             rendered_up_to_x: self.rendered_up_to_x,
         }
@@ -333,6 +367,12 @@ impl GbaPpu {
         self.dispcnt_latch = state.dispcnt_latch;
         self.blank_sample = state.blank_sample;
         self.line.oam.copy_from_slice(&state.line_oam);
+        match &state.pending_oam {
+            Some(pending) => self.line.pending_oam.copy_from_slice(pending),
+            // Pre-staging saves carry no snapshot: seed it from the live
+            // OAM (see the field docs).
+            None => self.line.pending_oam.copy_from_slice(&self.line.oam[..]),
+        }
         self.line.enable = state.line_enable;
         self.rendered_up_to_x = state.rendered_up_to_x;
         // Derivable scratch: the epoch bump retires the cached set.
@@ -342,11 +382,11 @@ impl GbaPpu {
     }
 
     /// Batching horizon: quiet prefix length before the next cycle that
-    /// needs full per-cycle processing (first-pixel fetch with OAM
-    /// capture, latch, flag/IRQ/DMA edges, line end). Pixel fetches past
-    /// x==0 render lazily in scanline segments (see `render_prefix_up_to`),
-    /// so only cycle 32 stays a boundary; interior cycles only bump the
-    /// dot counter.
+    /// needs full per-cycle processing (first-pixel fetch, OAM capture at
+    /// HBlank start, latch, flag/IRQ/DMA edges, line end). Pixel fetches
+    /// past x==0 render lazily in scanline segments (see
+    /// `render_prefix_up_to`), so interior dot cycles only bump the dot
+    /// counter.
     #[inline]
     pub(crate) fn quiet_cycles(&self) -> u64 {
         const INF: u64 = u64::MAX;
@@ -358,7 +398,7 @@ impl GbaPpu {
         }
         // Single-cycle edges and line end.
         for edge in [
-            u64::from(DISPCNT_LATCH_CYCLES),
+            u64::from(HDRAW_CYCLES),
             u64::from(HBLANK_FLAG_CYCLES),
             u64::from(HBLANK_IRQ_CYCLES),
             u64::from(HBLANK_DMA_CYCLES),
@@ -387,26 +427,32 @@ impl GbaPpu {
         let mut event = PpuEvent::default();
         self.cycle += 1;
         // Deferred scanline rendering: only the first fetch stays on the
-        // exact cycle (OAM capture + pixel 0). Later pixels render in
-        // segments at mid-fetch writes (`render_prefix_up_to`) or at line
-        // end, each exactly once with contemporary state.
+        // exact cycle (pixel 0). Later pixels render in segments at
+        // mid-fetch writes (`render_prefix_up_to`) or at line end, each
+        // exactly once with contemporary state. OAM is latched separately
+        // below (HBlank start), so mid-HBlank OAM writes (HBlank ISR/DMA)
+        // land on the line after next, matching HW (mgba-suite OAM Update
+        // Delay rows 64/96).
         if self.vcount < HEIGHT as u16 && self.cycle == FETCH_START_CYCLES {
-            // Latch OAM at the first fetch of the line; later mid-draw
-            // writes defer to the next line. MOSAIC stays live.
-            self.line.capture(oam, self.dispcnt_latch[0]);
-            // New line OAM: retire the cached OBJ working set.
-            self.obj_epoch = self.obj_epoch.wrapping_add(1);
-            self.obj_cover_valid = false;
+            // Per-line enable sample (OAM itself is latched at HBlank
+            // start above): keeps pixel 0 contemporary with the line.
+            // A same-line DISPCNT write before this sample is
+            // superseded here (no pixel has rendered yet); a later
+            // write re-syncs `line.enable` itself (see write_register).
+            self.line.enable = self.dispcnt_latch[0];
             let y = self.vcount as usize;
             let cache = self.obj_span_cache(y);
             self.render_pixel(0, y, vram, palette, &cache);
             self.rendered_up_to_x = 1;
         }
-        if self.cycle == DISPCNT_LATCH_CYCLES {
-            // 3-stage shift of the DISPCNT enable latch.
-            self.dispcnt_latch[0] = self.dispcnt_latch[1];
-            self.dispcnt_latch[1] = self.dispcnt_latch[2];
-            self.dispcnt_latch[2] = self.registers.dispcnt;
+        if self.cycle == HDRAW_CYCLES && self.vcount < HEIGHT as u16 {
+            // Stage OAM at HBlank start for the next scanline: the HW
+            // fetch bursts first, so writes landing later in HBlank
+            // (HBlank ISR, HBlank DMA) defer a line. Later mid-draw
+            // writes defer the same way. MOSAIC stays live.
+            // (The working-set retire moves with the promotion at line
+            // end, where the staged snapshot takes effect.)
+            self.line.snapshot(oam);
         }
         if self.cycle == HBLANK_FLAG_CYCLES {
             self.handle_hblank_flag(&mut event);
@@ -419,6 +465,12 @@ impl GbaPpu {
         }
         if self.cycle == CYCLES_PER_LINE {
             self.render_remainder(vram, palette);
+            // Frame wrap: refresh the staged OAM from live memory so
+            // writes landing late in VBlank (after line 227's HBlank)
+            // still apply to line 0; handle_line_end promotes it below.
+            if self.vcount == LINES_PER_FRAME - 1 {
+                self.line.snapshot(oam);
+            }
             self.handle_line_end(&mut event);
             self.rendered_up_to_x = 0;
         }
@@ -740,12 +792,30 @@ impl GbaPpu {
         self.cycle = 0;
         // Refresh per-line enable/blank refs for the next scanline:
         // enables ride the latch, blank samples live for within-line response.
+        // The 3-stage DISPCNT shift lands here (line end), after the
+        // HBlank-period register writes: an HBlank ISR write is therefore
+        // visible 3 lines later (mgba-suite layer-toggle ON edge), while
+        // earlier writes behave exactly as before.
+        self.dispcnt_latch[0] = self.dispcnt_latch[1];
+        self.dispcnt_latch[1] = self.dispcnt_latch[2];
+        self.dispcnt_latch[2] = self.registers.dispcnt;
         self.line.enable = self.dispcnt_latch[0];
         self.blank_sample = self.registers.dispcnt & (1 << 7) != 0;
         event.line_started = true;
         self.registers.dispstat &= !(1 << 1);
         self.advance_affine();
         self.advance_vcount(event);
+        // Promote the HBlank-start OAM snapshot staged above when the
+        // upcoming scanline renders (visible lines and the wrapped line
+        // 0): the new line renders from pre-line state, so mid-line
+        // writes defer. VBlank lines keep the frozen snapshot (the
+        // frame-wrap refresh in `step` covers post-HBlank VBlank writes).
+        // A fresh snapshot also retires the cached OBJ working set.
+        if self.vcount < HEIGHT as u16 || self.vcount == 0 {
+            self.line.advance();
+            self.obj_epoch = self.obj_epoch.wrapping_add(1);
+            self.obj_cover_valid = false;
+        }
         // Pending BGX/Y writes land in the internal registers at the
         // next line start (or unconditionally at vcount 0).
         let first_scanline = self.vcount == 0;
@@ -824,9 +894,13 @@ impl GbaPpu {
     }
 
     /// Any BG layer enabled in both the latched and the live DISPCNT;
-    /// gates BG-VRAM fetch contention.
+    /// gates BG-VRAM fetch contention. Unlike pixel rendering (which
+    /// re-syncs to live mid-line, see `LineLatch::enable`), contention
+    /// stays on the line latch: a mid-line enable write does not turn
+    /// the fetch schedule back on (nba ram-access-timing latch probe:
+    /// the line-2 DMA burst stays fast).
     pub fn bg_fetch_active(&self) -> bool {
-        self.line.enable & self.registers.dispcnt & 0x0F00 != 0
+        self.dispcnt_latch[0] & self.registers.dispcnt & 0x0F00 != 0
     }
 
     pub fn dispstat(&self) -> u16 {
@@ -873,6 +947,14 @@ impl GbaPpu {
                 // CPU writes must not change it, so preserve the old bit.
                 let old = self.registers.dispcnt;
                 self.registers.dispcnt = (value & !(1 << 3)) | (old & (1 << 3));
+                if self.registers.dispcnt != old {
+                    // Mid-line re-sync (see `LineLatch::enable`): the
+                    // current line's not-yet-rendered pixels observe the
+                    // live value; the latch still gates future lines
+                    // (and fetch contention ignores this: see
+                    // `bg_fetch_active`).
+                    self.line.enable = self.registers.dispcnt;
+                }
                 // The OBJ working-set key includes DISPCNT (cycle budget):
                 // retire the cached set when it changes.
                 if self.registers.dispcnt != old {
@@ -1362,6 +1444,10 @@ mod tests {
         // BG2 priority 0, OBJ0 (tile 512, priority 1).
         oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0x00, 0x06]);
         steady_dispcnt(&mut ppu, 4 | (1 << 10) | (1 << 12), &vram, &palette);
+        // Prime the HBlank-start OAM capture (a fresh PPU has no prior
+        // HBlank; on HW line 0 fetches OAM itself, hidden by boot blank).
+        ppu.line.snapshot(&oam);
+        ppu.line.advance();
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1583,7 +1669,7 @@ mod tests {
     #[test]
     fn dispcnt_enable_latch_delays_and_blank_is_or() {
         // HW-confirmed model: BG enables gate on latched AND live
-        // (3-stage shift at +40 cycles/line), forced blank on latched OR live.
+        // (3-stage shift at line end), forced blank on latched OR live.
         let mut ppu = GbaPpu::new();
         let mut vram = vec![0; 0x18000];
         let palette = vec![0; 0x400];
@@ -1613,6 +1699,73 @@ mod tests {
             ppu.frame_buffer()[4 * WIDTH].to_le_bytes(),
             [255, 255, 255, 255]
         );
+    }
+
+    #[test]
+    fn dispcnt_mid_line_on_resyncs_remainder() {
+        // mgba-suite Layer toggle 2 wait-case rows (65/146): a DISPCNT
+        // BG enable write landing mid-draw turns the not-yet-rendered
+        // pixels on immediately, while the next line still follows the
+        // 3-stage latch (stays off until the write propagates through).
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        vram[0] = 0x11; // tile 0 px0-1 = palette index 1
+        palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes()); // red
+        // Latch settled OFF (BG0 disabled), live OFF.
+        steady_dispcnt(&mut ppu, 0, &vram, &palette);
+        ppu.write_register(0x04000008, 31 << 8, &vram, &palette);
+        // Step to mid-draw (cycle 64): the write below renders the
+        // [1,9) prefix with pre-write state, like `note_ppu_write`.
+        for _ in 0..64 {
+            ppu.step(&vram, &palette, &oam);
+        }
+        ppu.write_register(0x04000000, 1 << 8, &vram, &palette);
+        for _ in 64..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        // Pixel 0 (fetched at cycle 32, pre-write): backdrop.
+        assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [0, 0, 0, 255]);
+        // Prefix [1,9) rendered pre-write; remainder post-write (red).
+        assert_eq!(ppu.frame_buffer()[8].to_le_bytes(), [0, 0, 0, 255]);
+        assert_eq!(ppu.frame_buffer()[9].to_le_bytes(), [255, 0, 0, 255]);
+        // Next line: the latch has not propagated yet -> backdrop.
+        for _ in 0..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.frame_buffer()[WIDTH].to_le_bytes(), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn dispcnt_pre_fetch_write_is_superseded_by_line_sample() {
+        // Complement to the resync test above: a DISPCNT BG enable
+        // write landing before the first fetch (cycle 32) is superseded
+        // by the per-line latch sample, so the whole line still follows
+        // the latch (stays off until the write propagates through).
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        vram[0] = 0x11;
+        palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes()); // red
+        steady_dispcnt(&mut ppu, 0, &vram, &palette);
+        ppu.write_register(0x04000008, 31 << 8, &vram, &palette);
+        for _ in 0..20 {
+            ppu.step(&vram, &palette, &oam);
+        }
+        ppu.write_register(0x04000000, 1 << 8, &vram, &palette);
+        for _ in 20..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        // Whole line 0 follows the (still-off) latch: all backdrop.
+        for x in 0..WIDTH {
+            assert_eq!(
+                ppu.frame_buffer()[x].to_le_bytes(),
+                [0, 0, 0, 255],
+                "pixel {x} must stay off"
+            );
+        }
     }
 
     #[test]
@@ -1657,6 +1810,9 @@ mod tests {
         palette[0x202..0x204].copy_from_slice(&0x7C00u16.to_le_bytes()); // blue
         oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0x00, 0x02]);
         steady_dispcnt(&mut ppu, (1 << 12) | (1 << 6), &vram, &palette);
+        // Prime the HBlank-start OAM capture (see above).
+        ppu.line.snapshot(&oam);
+        ppu.line.advance();
         // Write after the first fetch (cycle 32): line 0 keeps the sprite.
         for _ in 0..64 {
             ppu.step(&vram, &palette, &oam);
@@ -1874,7 +2030,8 @@ mod tests {
         let mut ppu = GbaPpu::new();
         // OBJ layer on, no H-blank free: 1210-cycle budget.
         steady_dispcnt(&mut ppu, 1 << 12, &vram, &palette);
-        ppu.line.capture(&oam, 1 << 12);
+        ppu.line.snapshot(&oam);
+        ppu.line.advance();
         let full = obj::line_cache(&ppu.registers, &ppu.line.oam[..], 0);
         assert!(
             full.cover_len > 0 && full.cover_len < 128,
