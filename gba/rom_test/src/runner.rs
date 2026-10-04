@@ -533,6 +533,11 @@ mod tests {
             );
         }
 
+        fn ldrb(&mut self, rd: usize, rn: usize, off: u32) {
+            assert!(off < 4096);
+            self.emit(0xE5D0_0000 | ((rn as u32) << 16) | ((rd as u32) << 12) | off);
+        }
+
         fn swi(&mut self, num: u32) {
             // devkitARM ABI (which the core decodes): the SWI number
             // lives in bits 16-23, so `swi 0x0B` assembles to EF0B0000.
@@ -986,6 +991,78 @@ mod tests {
         asm.spin();
         let rom = asm.build(0x400, &[(0x300, b"SRAM_V100")]);
         let result = run_assembled_rom("dma3_sram", rom, mem_check("0x0E000000", "0xD8", 1));
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// CPU byte access reaches the SRAM backend selected by ROM-string
+    /// detection: a STRB/LDRB round-trip through the 0x0E window works
+    /// when the image carries an SRAM ID string.
+    #[test]
+    fn synthetic_save_sram_cpu_roundtrip() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(0, 0x0E00_0000);
+        asm.mov_imm(1, 0xAB);
+        asm.strb(1, 0, 0);
+        asm.ldrb(2, 0, 0);
+        asm.ldr_lit(3, 0x0200_0000);
+        asm.str_imm(2, 3, 0);
+        asm.spin();
+        let rom = asm.build(0x400, &[(0x300, b"SRAM_V100")]);
+        let result = run_assembled_rom("save_sram_cpu", rom, mem_check("0x02000000", "0xAB", 1));
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// Without an ID string the cart selects NoneSave: SRAM-window
+    /// writes are ignored and reads return erased (0xFF per byte).
+    #[test]
+    fn synthetic_save_none_ignores_sram_window() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(0, 0x0E00_0000);
+        asm.mov_imm(1, 0xAB);
+        asm.strb(1, 0, 0);
+        asm.ldrb(2, 0, 0);
+        asm.ldr_lit(3, 0x0200_0000);
+        asm.str_imm(2, 3, 0);
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let result = run_assembled_rom("save_none_cpu", rom, mem_check("0x02000000", "0xFF", 1));
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// CPU-driven Flash autoselect (AA@5555, 55@2AAA, 90@5555) on a
+    /// FLASH_V-detected cart enters ID mode: the default Panasonic64
+    /// chip reports manufacturer 0x32 / device 0x1B. A trailing even
+    /// read brackets the odd lane, pinning that ID mode persists.
+    #[test]
+    fn synthetic_save_flash64_cpu_autoselect_id() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(0, 0x0E00_5555);
+        asm.ldr_lit(1, 0x0E00_2AAA);
+        asm.ldr_lit(2, 0x0E00_0000);
+        asm.ldr_lit(4, 0x0200_0000);
+        asm.mov_imm(3, 0xAA);
+        asm.strb(3, 0, 0);
+        asm.mov_imm(3, 0x55);
+        asm.strb(3, 1, 0);
+        asm.mov_imm(3, 0x90);
+        asm.strb(3, 0, 0);
+        asm.ldrb(3, 2, 0);
+        asm.str_imm(3, 4, 0);
+        asm.ldrb(3, 2, 1);
+        asm.str_imm(3, 4, 4);
+        asm.ldrb(3, 2, 0);
+        asm.str_imm(3, 4, 8);
+        asm.spin();
+        let rom = asm.build(0x400, &[(0x300, b"FLASH_V130")]);
+        let result = run_assembled_rom(
+            "save_flash64_cpu_id",
+            rom,
+            mem_checks(&[
+                ("0x02000000", "0x32", 1),
+                ("0x02000004", "0x1B", 1),
+                ("0x02000008", "0x32", 1),
+            ]),
+        );
         assert!(result.passed, "{:?} {:?}", result.error, result.checks);
     }
 
