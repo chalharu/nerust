@@ -595,6 +595,86 @@ fn eeprom_dma_bitstream_roundtrip() {
 }
 
 #[test]
+fn eeprom_dma_read_tolerates_trailing_request_bit() {
+    use crate::cartridge::Cartridge;
+    use crate::cartridge::header::finalize_test_gba_rom;
+    // Minish Cap sends its 16-bit 8KB read request as 17 DMA units; the
+    // 17th is uninitialized stack. The request must still decode end to
+    // end (dropped requests read back stale 0xFF and flag healthy files
+    // corrupt on fresh boot).
+    let mut rom = vec![0u8; 0x1000];
+    finalize_test_gba_rom(&mut rom);
+    rom[0x200..0x20A].copy_from_slice(b"EEPROM_V12");
+    let mut bus = GbaMemoryBus::new();
+    bus.set_cartridge(Cartridge::new(rom).unwrap());
+    // Store one block via an exact 81-bit write frame first.
+    let data = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
+    let mut bits = vec![true, false];
+    bits.extend_from_slice(&[false; 14]);
+    for byte in data {
+        for i in (0..8).rev() {
+            bits.push((byte >> i) & 1 != 0);
+        }
+    }
+    bits.push(false);
+    for (i, bit) in bits.iter().enumerate() {
+        bus.write16(0x03000000 + (i as u32) * 2, u16::from(*bit));
+    }
+    bus.write32(0x040000D4, 0x03000000);
+    bus.write32(0x040000D8, 0x0D000000);
+    bus.write16(0x040000DC, bits.len() as u16);
+    bus.write16(0x040000DE, 0x8000);
+    for _ in 0..100000 {
+        bus.tick();
+        if !bus.dma_active() && !bus.dma.has_pending() {
+            break;
+        }
+    }
+    for _ in 0..10 {
+        bus.tick();
+    }
+    // Read request with trailing 1 bit (17 units), then the 68-unit read.
+    let mut req = vec![true, true];
+    req.extend_from_slice(&[false; 14]);
+    req.push(true);
+    assert_eq!(req.len(), 17);
+    for (i, bit) in req.iter().enumerate() {
+        bus.write16(0x03001000 + (i as u32) * 2, u16::from(*bit));
+    }
+    bus.write32(0x040000D4, 0x03001000);
+    bus.write32(0x040000D8, 0x0D000000);
+    bus.write16(0x040000DC, req.len() as u16);
+    bus.write16(0x040000DE, 0x8000);
+    for _ in 0..100000 {
+        bus.tick();
+        if !bus.dma_active() && !bus.dma.has_pending() {
+            break;
+        }
+    }
+    for _ in 0..10 {
+        bus.tick();
+    }
+    bus.write32(0x040000D4, 0x0D000000);
+    bus.write32(0x040000D8, 0x03002000);
+    bus.write16(0x040000DC, 68);
+    bus.write16(0x040000DE, 0x8000);
+    for _ in 0..100000 {
+        bus.tick();
+        if !bus.dma_active() && !bus.dma.has_pending() {
+            break;
+        }
+    }
+    let mut got = [0u8; 8];
+    for i in 0..64 {
+        let bit = bus.read16(0x03002000 + 8 + (i as u32) * 2) & 1;
+        if bit != 0 {
+            got[i / 8] |= 1 << (7 - (i % 8));
+        }
+    }
+    assert_eq!(got, data);
+}
+
+#[test]
 fn eeprom_cart_has_no_cpu_sram_window() {
     use crate::cartridge::Cartridge;
     use crate::cartridge::header::finalize_test_gba_rom;
