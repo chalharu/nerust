@@ -235,7 +235,11 @@ pub(crate) struct GbaPpuState {
     dispcnt_latch: [u16; 3],
     blank_sample: bool,
     line_oam: serde_bytes::ByteBuf,
-    pending_oam: serde_bytes::ByteBuf,
+    // Staged OAM snapshot (added after the Phase 12 start): absent in
+    // older saves, which then seed it from the live OAM (the old model
+    // had no staging, so the live OAM is the whole truth).
+    #[serde(default)]
+    pending_oam: Option<serde_bytes::ByteBuf>,
     line_enable: u16,
     rendered_up_to_x: u8,
 }
@@ -260,10 +264,14 @@ impl GbaPpuState {
                 self.line_oam.len()
             ));
         }
-        if self.pending_oam.len() != 1024 {
+        if self
+            .pending_oam
+            .as_ref()
+            .is_some_and(|pending| pending.len() != 1024)
+        {
             return Err(format!(
                 "ppu: pending latch length wrong: {}",
-                self.pending_oam.len()
+                self.pending_oam.as_ref().map_or(0, |pending| pending.len())
             ));
         }
         if self.rendered_up_to_x > WIDTH as u8 {
@@ -332,7 +340,7 @@ impl GbaPpu {
             dispcnt_latch: self.dispcnt_latch,
             blank_sample: self.blank_sample,
             line_oam: serde_bytes::ByteBuf::from(self.line.oam.to_vec()),
-            pending_oam: serde_bytes::ByteBuf::from(self.line.pending_oam.to_vec()),
+            pending_oam: Some(serde_bytes::ByteBuf::from(self.line.pending_oam.to_vec())),
             line_enable: self.line.enable,
             rendered_up_to_x: self.rendered_up_to_x,
         }
@@ -359,7 +367,12 @@ impl GbaPpu {
         self.dispcnt_latch = state.dispcnt_latch;
         self.blank_sample = state.blank_sample;
         self.line.oam.copy_from_slice(&state.line_oam);
-        self.line.pending_oam.copy_from_slice(&state.pending_oam);
+        match &state.pending_oam {
+            Some(pending) => self.line.pending_oam.copy_from_slice(pending),
+            // Pre-staging saves carry no snapshot: seed it from the live
+            // OAM (see the field docs).
+            None => self.line.pending_oam.copy_from_slice(&self.line.oam[..]),
+        }
         self.line.enable = state.line_enable;
         self.rendered_up_to_x = state.rendered_up_to_x;
         // Derivable scratch: the epoch bump retires the cached set.
