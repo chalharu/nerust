@@ -132,23 +132,41 @@ impl EepromSave {
             return;
         }
         let is_read = frame[1];
+        if is_read {
+            // Length-disambiguated read: 8-9 units are a 512B request,
+            // 16+ units an 8KB request (lengths never overlap). Only the
+            // leading bits are decoded; trailing bits are ignored like
+            // the real chip, which clocks just what it needs. Minish Cap
+            // sends its 16-bit 8KB read request as 17 DMA units and the
+            // 17th is uninitialized stack: rejecting a stop=1 there drops
+            // genuine reads, so status reads return stale 0xFF and healthy
+            // files look corrupt.
+            let width = if frame.len() <= 9 {
+                8
+            } else if frame.len() >= 16 {
+                16
+            } else {
+                return;
+            };
+            if self.width_ruled_out(width) {
+                return;
+            }
+            let addr_bits = if width == 8 { 6 } else { 14 };
+            if let Some(addr) = decode_read_prefix(&frame, addr_bits) {
+                self.size_8k = Some(width == 16);
+                self.commit_read_request(addr);
+            }
+            return;
+        }
         for width in self.probe_order(frame.len()) {
             if self.width_ruled_out(width) {
                 continue;
             }
             let addr_bits = if width == 8 { 6 } else { 14 };
-            let addr = if is_read {
-                decode_read_addr(&frame, addr_bits)
-            } else {
-                decode_write_addr(&frame, addr_bits)
-            };
+            let addr = decode_write_addr(&frame, addr_bits);
             if let Some(addr) = addr {
                 self.size_8k = Some(width == 16);
-                if is_read {
-                    self.commit_read_request(addr);
-                } else {
-                    self.commit_write_data(&frame, width, addr_bits, addr);
-                }
+                self.commit_write_data(&frame, width, addr_bits, addr);
                 return;
             }
         }
@@ -210,16 +228,11 @@ impl EepromSave {
     }
 }
 
-/// GBATEK EEPROM read request: `11` + addr(6/14) + `0` (9/17 bits).
-/// Accept the trailing stop bit or its omission (both seen in the
-/// wild), but reject overlong frames.
-fn decode_read_addr(frame: &[bool], addr_bits: usize) -> Option<usize> {
-    let exact = 2 + addr_bits;
-    let with_stop = exact + 1;
-    if frame.len() != exact && frame.len() != with_stop {
-        return None;
-    }
-    if frame.len() == with_stop && frame[exact] {
+/// GBATEK EEPROM read request: `11` + addr(6/14). Only the leading bits
+/// are decoded; any trailing bits (including a stop 1) are ignored like
+/// the real chip, which clocks just what it needs.
+fn decode_read_prefix(frame: &[bool], addr_bits: usize) -> Option<usize> {
+    if frame.len() < 2 + addr_bits || !frame[0] || !frame[1] {
         return None;
     }
     Some(read_addr_bits(frame, addr_bits))
@@ -461,6 +474,62 @@ mod tests {
             got_bits.push(restored2.serial_read_bit());
         }
         assert_eq!(got_bits, ref_bits);
+    }
+
+    #[test]
+    fn read_request_ignores_trailing_garbage_bit() {
+        // Minish Cap sends its 16-bit 8KB read request as 17 DMA units;
+        // the 17th is uninitialized stack. A stop=1 there must not drop
+        // the request (real chips ignore trailing bits): dropped status
+        // reads return stale 0xFF, so healthy files look corrupt
+        // (file-2-corrupt on fresh boot).
+        let mut eeprom = EepromSave::new();
+        let data = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
+        for bit in write_frame(14, 5, &data) {
+            eeprom.serial_write_bit(bit);
+        }
+        eeprom.end_burst();
+        for garbage in [false, true] {
+            let mut req = vec![true, true];
+            for i in (0..14).rev() {
+                req.push((5 >> i) & 1 != 0);
+            }
+            req.push(garbage);
+            assert_eq!(req.len(), 17);
+            for bit in req {
+                eeprom.serial_write_bit(bit);
+            }
+            eeprom.end_burst();
+            assert_eq!(eeprom.latched_width(), Some(EepromAddrWidth::Bits8k));
+            let mut out = Vec::new();
+            for _ in 0..68 {
+                out.push(eeprom.serial_read_bit());
+            }
+            let mut got = [0u8; 8];
+            for (i, bit) in out.iter().skip(4).enumerate() {
+                if *bit {
+                    got[i / 8] |= 1 << (7 - (i % 8));
+                }
+            }
+            assert_eq!(got, data, "garbage bit {garbage}");
+        }
+    }
+
+    #[test]
+    fn read_request_rejects_ambiguous_lengths() {
+        // 10-15 units match no valid read request (512B is 8-9, 8KB is
+        // 16+): reject instead of mislatching a size.
+        let mut eeprom = EepromSave::new();
+        let mut req = vec![true, true];
+        req.extend_from_slice(&[false; 10]);
+        assert_eq!(req.len(), 12);
+        for bit in req {
+            eeprom.serial_write_bit(bit);
+        }
+        eeprom.end_burst();
+        assert_eq!(eeprom.latched_width(), None);
+        // Nothing queued: the chip idles high.
+        assert!(eeprom.serial_read_bit());
     }
 
     #[test]

@@ -248,6 +248,11 @@ pub struct GbaMemoryBus {
     access_wait_cycles: i64,
     halted: bool,
     halt_irq_mask: u16,
+    /// IntrWait/VBlankIntrWait awaited mask (SWI r1). While nonzero the CPU
+    /// is inside an IntrWait halt: wakes run their ISR, then the BIOS
+    /// re-halts until the awaited flags raise (see `rehalt_after_irq`).
+    /// Plain Halt/Stop leave this zero.
+    intrwait_mask: u16,
     /// Stop mode latched (HALTCNT bit 7, GBATEK "System Control"): the CPU
     /// stays parked until a wake interrupt arrives. GBATEK SWI 03h stops the
     /// CPU, system clock, sound, video, SIO-shift clock, DMAs and timers, so
@@ -398,6 +403,11 @@ pub(crate) struct GbaMemoryBusState {
     halted: bool,
     halt_irq_mask: u16,
     stopped: bool,
+    // IntrWait await mask (added after the Phase 12 start): absent in
+    // older saves. Zero means unrestricted wake, matching the old
+    // behavior (no awaited-mask tracking).
+    #[serde(default)]
+    intrwait_mask: u16,
     wake_clear_mask: u16,
     wake_latency: u32,
     woke_from_halt: bool,
@@ -670,6 +680,7 @@ impl GbaMemoryBus {
             access_wait_cycles: 0,
             halted: false,
             halt_irq_mask: 0,
+            intrwait_mask: 0,
             stopped: false,
             wake_clear_mask: 0,
             wake_latency: 0,
@@ -1714,8 +1725,16 @@ impl GbaMemoryBus {
                 }
                 // Halt wake on the effective IE/IF registers, evaluated at
                 // apply time (sees final levels); CPU entry uses the
-                // delayed line.
-                if ie & sif & self.halt_irq_mask != 0 {
+                // delayed line. Stop wakes on its mask only; other halts
+                // wake on any enabled interrupt (see evaluate_halt_wake).
+                // Skipped while running (the tail below would no-op).
+                let wake_pending = self.halted
+                    && if self.stopped {
+                        ie & sif & self.halt_irq_mask != 0
+                    } else {
+                        ie & sif != 0
+                    };
+                if wake_pending {
                     self.evaluate_halt_wake();
                 }
             }
@@ -1751,7 +1770,11 @@ impl GbaMemoryBus {
     }
 
     pub fn set_keyinput(&mut self, value: u16) {
-        self.keyinput = value | 0xFC00;
+        // GBATEK 4000130h: bits 10-15 are unused and read 0 on hardware
+        // (never forced to 1). Games rely on this: Pokemon Emerald's
+        // evolution cancel requires heldKeys == B_BUTTON exactly, i.e. a
+        // 16-bit KEYINPUT read of precisely 0x03FD while B alone is held.
+        self.keyinput = value & 0x03FF;
         self.check_keycnt();
         // `check_keycnt` may raise (see `request_interrupt`, which already
         // resets), but the keypad level itself is observable; be explicit.
@@ -1872,50 +1895,111 @@ impl GbaMemoryBus {
 
     /// Wake a halted/stopped CPU once delayed availability arrives.
     fn evaluate_halt_wake(&mut self) {
-        if self.ie & self.sif & self.halt_irq_mask != 0 {
-            if self.halted {
-                // IntrWait wake: reset the waited flags in the BIOS RAM
-                // mirror (GBATEK IntrWait/VBlankIntrWait).
-                let clear = std::mem::take(&mut self.wake_clear_mask);
-                if clear != 0 {
-                    let kept =
-                        u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) & !clear;
-                    self.iwram[0x7FF8..0x7FFA].copy_from_slice(&kept.to_le_bytes());
-                }
-                // A live-line wake pays the exit latency and stalls past
-                // line-rise so the wake dispatch runs before the thread
-                // resumes; an IME=0 wake stays free. IntrWait burns 48,
-                // plain Halt 32 (timer-source wakes cost 10: the timer
-                // IRQ line rises without the serial/DMA/video wake path;
-                // pinned by alyosha halt_pc t001 and mgba sio-timing).
-                let src = self.ie & self.sif & self.halt_irq_mask;
-                let timer_only = src & 0x0078 != 0 && src & !0x0078 == 0;
-                self.wake_latency = if clear != 0 {
-                    48
-                } else if self.ime {
-                    if timer_only { 10 } else { 32 }
-                } else {
-                    0
-                };
-                self.woke_from_halt = true;
-                // Wake resumes through the BIOS exit branch (halt loop
-                // exit / IntrWait tail return): like any taken branch, it
-                // restarts the fetch stream (next fetch N), while the
-                // prefetch buffer window itself survives for buffered
-                // targets. IWRAM-flat code observes nothing (N == S);
-                // ROM code pays one N-S on resume (Break T0 phase).
-                self.invalidate_prefetch_for_branch();
-                // IntrWait-family wake: the real BIOS exit path runs after
-                // the wake ISR, leaving 0xE3A02004 latched (mgba-suite
-                // "BIOS load"). Latch it now (covers the no-ISR IME=0
-                // wake) and arm the IRQ-return restore below.
-                if clear != 0 {
-                    self.bios_prefetch = 0xE3A02004;
-                    self.bios_wait_exit_armed = true;
-                }
+        let pending = self.ie & self.sif;
+        // GBATEK HALTCNT: halt wakes on ANY enabled interrupt. Stop is the
+        // exception (serial/keypad/GamePak only). IntrWait's mask only gates
+        // SWI exit: a non-awaited wake still runs its ISR (HBlank raster
+        // effects during VBlankIntrWait, mgba-suite layer-toggle video
+        // tests), then the BIOS re-halts until awaited flags raise.
+        let wake = if self.stopped {
+            pending & self.halt_irq_mask
+        } else {
+            pending
+        };
+        if wake == 0 {
+            return;
+        }
+        if self.halted {
+            // An IntrWait halt with IME forced off cannot dispatch, so no
+            // ISR can make progress: stay halted (intr_wait always forces
+            // IME on, so this only guards hand-driven state).
+            let awaited = self.intrwait_mask == 0 || pending & self.intrwait_mask != 0;
+            if self.intrwait_mask != 0 && !awaited && !self.ime {
+                return;
             }
-            self.halted = false;
-            self.stopped = false;
+            // IntrWait wake: reset the waited flags in the BIOS RAM
+            // mirror (GBATEK IntrWait/VBlankIntrWait), but only on a
+            // true SWI exit (awaited flags raised). A non-awaited wake
+            // keeps waiting: its mask survives for the IRQ-return
+            // re-halt below.
+            let clear = if awaited {
+                std::mem::take(&mut self.wake_clear_mask)
+            } else {
+                0
+            };
+            if clear != 0 {
+                let kept = u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) & !clear;
+                self.iwram[0x7FF8..0x7FFA].copy_from_slice(&kept.to_le_bytes());
+            }
+            // A live-line wake pays the exit latency and stalls past
+            // line-rise so the wake dispatch runs before the thread
+            // resumes; an IME=0 wake stays free. IntrWait burns 48,
+            // plain Halt 32 (timer-source wakes cost 10: the timer
+            // IRQ line rises without the serial/DMA/video wake path;
+            // pinned by alyosha halt_pc t001 and mgba sio-timing).
+            // Video-source wakes (VBlank/HBlank/VCount) cost 5: the
+            // halted raster ISR must still land inside its scanline
+            // (mgba-suite Layer toggle 2: the HBlank ISR's DISPCNT
+            // write has to precede the line-end latch shift). SIO/DMA/
+            // keypad wakes keep 32 (mgba sio-timing pin). 5 also keeps
+            // the mgba-suite hblankBit poll phase (misc_edge Flip 4-6);
+            // neighboring values reshuffle it (2-4 and 10 fail there).
+            let src = self.ie & self.sif & self.halt_irq_mask;
+            let timer_only = src & 0x0078 != 0 && src & !0x0078 == 0;
+            // Unmasked cause: an IntrWait halt awaiting VBlank still
+            // wakes (wide) on HBlank alone mid-frame; the mask would
+            // hide that cause, so test the raw pending level here.
+            let cause = self.ie & self.sif;
+            let video_only = cause != 0 && cause & !0x0007 == 0;
+            self.wake_latency = if clear != 0 {
+                48
+            } else if self.ime {
+                if timer_only {
+                    10
+                } else if video_only {
+                    5
+                } else {
+                    32
+                }
+            } else {
+                0
+            };
+            self.woke_from_halt = true;
+            // Wake resumes through the BIOS exit branch (halt loop
+            // exit / IntrWait tail return): like any taken branch, it
+            // restarts the fetch stream (next fetch N), while the
+            // prefetch buffer window itself survives for buffered
+            // targets. IWRAM-flat code observes nothing (N == S);
+            // ROM code pays one N-S on resume (Break T0 phase).
+            self.invalidate_prefetch_for_branch();
+            // IntrWait-family wake: the real BIOS exit path runs after
+            // the wake ISR, leaving 0xE3A02004 latched (mgba-suite
+            // "BIOS load"). Latch it now (covers the no-ISR IME=0
+            // wake) and arm the IRQ-return restore below.
+            if clear != 0 {
+                self.bios_prefetch = 0xE3A02004;
+                self.bios_wait_exit_armed = true;
+                // True SWI exit: the IntrWait is over.
+                self.intrwait_mask = 0;
+            }
+        }
+        self.halted = false;
+        self.stopped = false;
+    }
+
+    /// IntrWait re-halt check for IRQ return: when an IntrWait halt woke
+    /// for a non-awaited IRQ, its ISR returns here with the awaited flags
+    /// still clear; the BIOS would halt again instead of exiting the SWI
+    /// early (which would desync VBlankIntrWait loops). Returns true when
+    /// the CPU parked again. Only the vector-installed return path calls
+    /// this; a missing vector cannot host an IntrWait waiter.
+    pub fn rehalt_after_irq(&mut self) -> bool {
+        if self.intrwait_mask != 0 && self.ie & self.sif & self.intrwait_mask == 0 {
+            let mask = self.intrwait_mask;
+            self.enter_halt(mask);
+            true
+        } else {
+            false
         }
     }
 
@@ -2161,6 +2245,12 @@ impl GbaMemoryBus {
     /// Arm the IntrWait wake-clear mask (cleared on next halt wake).
     pub fn set_wake_clear_mask(&mut self, mask: u16) {
         self.wake_clear_mask = mask & 0x1FFF;
+    }
+
+    /// Arm the IntrWait awaited mask (SWI r1). Zero means no IntrWait halt
+    /// is logically active.
+    pub fn set_intrwait_mask(&mut self, mask: u16) {
+        self.intrwait_mask = mask & 0x1FFF;
     }
 
     pub fn reset_io_groups(&mut self, flags: u8) {
@@ -2508,6 +2598,7 @@ impl GbaMemoryBus {
             halted: self.halted,
             halt_irq_mask: self.halt_irq_mask,
             stopped: self.stopped,
+            intrwait_mask: self.intrwait_mask,
             wake_clear_mask: self.wake_clear_mask,
             wake_latency: self.wake_latency,
             woke_from_halt: self.woke_from_halt,
@@ -2605,6 +2696,7 @@ impl GbaMemoryBus {
         self.halted = state.halted;
         self.halt_irq_mask = state.halt_irq_mask;
         self.stopped = state.stopped;
+        self.intrwait_mask = state.intrwait_mask;
         self.wake_clear_mask = state.wake_clear_mask;
         self.wake_latency = state.wake_latency;
         self.woke_from_halt = state.woke_from_halt;

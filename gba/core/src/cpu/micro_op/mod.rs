@@ -385,6 +385,10 @@ fn retire_step(
                 bus.set_bios_prefetch(0xE55EC002);
             }
             regs.set_pc(return_address);
+            // IntrWait re-halt: a non-awaited wake ISR returns here with
+            // the awaited flags still clear; park again instead of
+            // exiting the SWI early (see `rehalt_after_irq`).
+            bus.rehalt_after_irq();
             irq_epilogue = bus.bios_irq_epilogue_cycles();
         }
         *pipeline = [0; 2];
