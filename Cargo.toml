@@ -118,7 +118,7 @@ edition = "2024"
 homepage = "https://github.com/chalharu/nerust"
 license = "MPL-2.0"
 repository = "https://github.com/chalharu/nerust"
-rust-version = "1.89"
+rust-version = "1.95"
 version = "0.1.0-dev"
 
 [workspace.dependencies]
