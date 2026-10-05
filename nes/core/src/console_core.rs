@@ -313,4 +313,37 @@ mod tests {
             result
         );
     }
+
+    #[test]
+    fn debugger_wiring_follows_load_state() {
+        use nerust_core_traits::ConsoleCore as _;
+
+        // Empty console: no ROM, no observers.
+        let mut empty = NesConsoleCore::new_empty(
+            ControllerCollection::new(vec![Box::new(MockController)]),
+            test_emu_input(),
+        );
+        assert!(empty.debugger().is_none());
+        assert!(empty.debug_control().is_none());
+
+        // Loaded console: both observers available.
+        let rom = test_rom();
+        let cartridge = crate::rom_parse::parse_rom(&rom).expect("parse");
+        let mut loaded = NesConsoleCore::new(
+            cartridge,
+            ControllerCollection::new(vec![Box::new(MockController)]),
+            test_emu_input(),
+        )
+        .expect("console");
+        {
+            let debugger = loaded.debugger().expect("debugger");
+            assert_eq!(debugger.spaces().len(), 1);
+            assert!(
+                debugger
+                    .read(crate::debugger::SPACE_WORK_RAM, 0, 1)
+                    .is_some()
+            );
+        }
+        assert!(loaded.debug_control().is_some());
+    }
 }

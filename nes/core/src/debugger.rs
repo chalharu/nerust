@@ -66,15 +66,18 @@ impl Debugger for NesDebugger<'_> {
         if !NES_SPACE_TABLE.covers(space, addr, width) {
             return None;
         }
-        // Integer dispatch, never string matching.
-        match (space.0, width) {
-            (0, 1) => self.read_byte(addr),
-            (0, 2) => {
+        // The table holds exactly one space and covers() already pinned
+        // the id, so dispatch on width only. A new space needs a new
+        // arm here; the assert fails fast in tests if forgotten.
+        debug_assert_eq!(space, SPACE_WORK_RAM);
+        match width {
+            1 => self.read_byte(addr),
+            2 => {
                 let lo = self.read_byte(addr)?;
                 let hi = self.read_byte(addr + 1)?;
                 Some(lo | (hi << 8))
             }
-            (0, 4) => {
+            4 => {
                 let mut v = 0u64;
                 for i in 0..4 {
                     v |= self.read_byte(addr + i)? << (8 * i);
