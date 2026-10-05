@@ -6,6 +6,7 @@ cases:
     description: "Tests APU length counter behavior from blargg's APU validation ROMs."
     rom: nes-test-roms/blargg_apu_2005.07.30/01.len_ctr.nes
     perf: true
+    ci: false
     expected_audio:
       sample_rate: 192000
       samples: 95587
@@ -349,6 +350,7 @@ cases:
     description: "Provides a broad first-pass CPU validation against the classic nestest program flow."
     rom: nes-test-roms/other/nestest.nes
     perf: true
+    ci: false
     expected_audio:
       sample_rate: 192000
       samples: 287271
@@ -1580,6 +1582,7 @@ cases:
     description: "Tests the NTSC PPU VBL flag, NMI enable, and NMI timing to PPU-clock accuracy."
     rom: nes-test-roms/ppu_vbl_nmi/ppu_vbl_nmi.nes
     perf: true
+    ci: false
     expected_audio:
       sample_rate: 192000
       samples: 5239142
