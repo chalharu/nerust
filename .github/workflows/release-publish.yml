@@ -101,7 +101,7 @@ jobs:
     needs: [publish]
     permissions:
       contents: write
-    uses: ./.github/workflows/release-artifacts.yml
+    uses: $/.github/workflows/release-artifacts.yml
     with:
       publish_release: true
       ref: ${{ github.sha }}
