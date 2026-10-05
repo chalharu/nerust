@@ -2,17 +2,16 @@ use super::super::expand_arm::{
     expand_arm, expand_arm_dp_reg, expand_arm_mul, expand_arm_single,
 };
 use super::super::expand_thumb::{expand_thumb, expand_thumb_alu_rest};
-use super::{run_arm, run_thumb};
+use super::{run_arm, run_thumb, test_bus};
 use crate::cpu::semantics::shifter::condition_passed;
 use crate::cpu_registers::CpuRegisters;
-use crate::memory::GbaMemoryBus;
 
 #[test]
 fn alu_format_reaches_native() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_r(0, 1);
     regs.set_r(1, 2);
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     run_thumb(&mut regs, &mut bus, 0x4308); // ORR R0,R1
     assert_eq!(regs.r(0), 3);
 }
@@ -20,7 +19,7 @@ fn alu_format_reaches_native() {
 #[test]
 fn pop_and_ldmia_reachable() {
     let mut regs = CpuRegisters::post_bios();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     regs.set_sp(0x03000000);
     bus.write32(0x03000000, 0x12345678);
     run_thumb(&mut regs, &mut bus, 0xBC01); // POP {R0}
@@ -34,7 +33,7 @@ fn pop_and_ldmia_reachable() {
 #[test]
 fn multiply_long_reaches_native() {
     let mut regs = CpuRegisters::post_bios();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     regs.set_r(0, 3);
     regs.set_r(1, 4);
     run_arm(&mut regs, &mut bus, 0xE0832190); // UMULL R2,R3,R0,R1

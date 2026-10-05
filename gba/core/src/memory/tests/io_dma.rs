@@ -1,8 +1,8 @@
-use super::super::*;
+use super::test_bus;
 
 #[test]
 fn read_write_dispcnt() {
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     assert_eq!(bus.read16(0x04000000), 0x0080);
     bus.write16(0x04000000, 0x0403);
     assert_eq!(bus.read16(0x04000000), 0x0403);
@@ -10,7 +10,7 @@ fn read_write_dispcnt() {
 
 #[test]
 fn read_vcount() {
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     assert_eq!(bus.read16(0x04000006), 0);
     // VCOUNT は RO
     bus.write16(0x04000006, 0x1234);
@@ -19,7 +19,7 @@ fn read_vcount() {
 
 #[test]
 fn display_stall_inserts_wait_during_draw() {
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     // Reset state keeps forced blank set (DISPCNT=0x0080): no contention.
     assert_eq!(bus.cycles_for(0x06000000, 2), 1);
     // Mode 0, BG0 on: the enable propagates through the 3-stage
@@ -49,7 +49,7 @@ fn display_stall_inserts_wait_during_draw() {
 #[test]
 fn internal_memory_control_mirror() {
     // GBATEK System Control: R/W, init 0D000020h, mirrored each 64K.
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     assert_eq!(bus.read32(0x04000800), 0x0D00_0020);
     assert_eq!(bus.read32(0x04100800), 0x0D00_0020);
     bus.write32(0x04200800, 0xFFFF_FFFF);
@@ -60,7 +60,7 @@ fn internal_memory_control_mirror() {
 
 #[test]
 fn write_if_clears() {
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.request_interrupt(0x0003);
     bus.tick();
     assert_eq!(bus.sif, 0x0003);
@@ -75,7 +75,7 @@ fn write_if_clears() {
 #[test]
 fn keyinput_zero_upper_bits() {
     // GBATEK 4000130h: bits 10-15 are unused and read 0 on hardware.
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.set_keyinput(0x0000);
     assert_eq!(bus.read16(0x04000130) & 0xFC00, 0x0000);
     bus.set_keyinput(0x03FF);
@@ -89,7 +89,7 @@ fn keyinput_b_only_reads_exact() {
     // Pokemon Emerald's evolution cancel requires heldKeys == B_BUTTON
     // exactly: with only B held, the 16-bit KEYINPUT read must be
     // precisely 0x03FD (no forced upper bits).
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.set_keyinput(0x03FD); // B pressed (bit 1 = 0), rest released
     assert_eq!(bus.read16(0x04000130), 0x03FD);
 }
@@ -100,7 +100,7 @@ fn fifo_writes_append_bytes() {
     // reads are open bus (not wave RAM). FIFO writes land only
     // while the sound master enable is on (HW-observed: an empty
     // FIFO stays empty with the master off).
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.write32(0x040000A0, 0x04030201);
     assert!(bus.apu.fifo_a.is_empty());
     bus.write16(0x04000084, 0x0080);
@@ -129,7 +129,7 @@ fn fifo_writes_append_bytes() {
 #[test]
 fn keycnt_raises_keypad_interrupt() {
     // GBATEK KEYCNT: enable + OR over button A; pressing A sets IF bit 12.
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.write16(0x04000132, (1 << 14) | (1 << 0));
     bus.set_keyinput(0x03FF); // nothing pressed
     assert_eq!(bus.sif & (1 << 12), 0);
@@ -147,7 +147,7 @@ fn eeprom_dma_bitstream_roundtrip() {
     let mut rom = vec![0u8; 0x1000];
     finalize_test_gba_rom(&mut rom);
     rom[0x200..0x20A].copy_from_slice(b"EEPROM_V12");
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.set_cartridge(Cartridge::new(rom).unwrap());
     // CPU loads from the EEPROM window see the chip state: idle
     // drives 1 (Ready), never open bus.
@@ -235,7 +235,7 @@ fn eeprom_dma_read_tolerates_trailing_request_bit() {
     let mut rom = vec![0u8; 0x1000];
     finalize_test_gba_rom(&mut rom);
     rom[0x200..0x20A].copy_from_slice(b"EEPROM_V12");
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.set_cartridge(Cartridge::new(rom).unwrap());
     // Store one block via an exact 81-bit write frame first.
     let data = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
@@ -313,7 +313,7 @@ fn eeprom_cart_has_no_cpu_sram_window() {
     let mut rom = vec![0u8; 0x1000];
     finalize_test_gba_rom(&mut rom);
     rom[0x200..0x20A].copy_from_slice(b"EEPROM_V12");
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.set_cartridge(Cartridge::new(rom).unwrap());
     bus.write32(0x02000000, 0x12345678);
     bus.write16(0x0E000000, 0xBEEF);
@@ -335,7 +335,7 @@ fn gpio_overlay_attaches_on_control_write() {
     finalize_test_gba_rom(&mut rom);
     rom[0xC4] = 0x12;
     rom[0xC5] = 0x34;
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.set_cartridge(Cartridge::new(rom).unwrap());
     assert_eq!(bus.read16(0x080000C4), 0x3412);
     bus.write16(0x080000C8, 1);
@@ -350,7 +350,7 @@ fn hblank_dma_fires_on_vdraw_lines_only() {
     // during V-Blank the H-Blank flag and IRQ still toggle, but no
     // DMA request is generated — one full frame of a repeat HBlank
     // channel transfers 160 units, not 228.
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     for i in 0..256u16 {
         bus.write16(0x03000000 + u32::from(i) * 2, 0xABCD);
     }
@@ -377,7 +377,7 @@ fn hblank_dma_fires_on_vdraw_lines_only() {
 fn video_dma_runs_after_line_162_latch() {
     // DMA3 video-capture: latched at vcount==162, runs on lines [2,162)
     // of the next frame. Must not transfer before the latch.
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.write16(0x03000000, 0x1111);
     bus.write16(0x03000002, 0x2222);
     bus.write16(0x03000004, 0x3333);
