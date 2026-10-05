@@ -72,12 +72,14 @@ jobs:
             release_tsv="${lookup}"
           fi
           if [[ -z "${release_tsv}" ]]; then
-            release_tsv="$(gh api -X POST "repos/${GH_REPO}/releases" \
-              -f tag_name="${TAG_NAME}" \
-              -f target_commitish="${GITHUB_SHA}" \
-              -f name="${TAG_NAME}" \
-              -f body="$(<release-notes.md)" \
-              -F draft=true \
+            # The notes file exceeds the per-argument size limit, so feed it
+            # via stdin instead of embedding it in argv.
+            release_tsv="$(jq -n \
+              --arg tag_name "${TAG_NAME}" \
+              --arg target_commitish "${GITHUB_SHA}" \
+              --rawfile body release-notes.md \
+              '{tag_name: $tag_name, target_commitish: $target_commitish, name: $tag_name, body: $body, draft: true}' \
+              | gh api -X POST "repos/${GH_REPO}/releases" --input - \
               --jq '[.id, (.upload_url | sub("\\{.*$"; "")), .target_commitish] | @tsv')"
           fi
 
