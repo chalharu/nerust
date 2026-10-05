@@ -139,7 +139,7 @@ pub enum EmuCommand {
 // ConsoleCore trait
 // ---------------------------------------------------------------------------
 
-pub trait ConsoleCore: Send {
+pub trait ConsoleCore: Send + Downcast {
     // -- video + audio production --
     fn capabilities(&self) -> CoreCapabilities;
     /// Run one frame: video into `frame_slot`, nominal-rate audio into
@@ -216,6 +216,7 @@ pub trait ConsoleCore: Send {
 pub trait CoreOptions: Debug + DynClone + Downcast + Send {}
 
 downcast_rs::impl_downcast!(CoreOptions);
+downcast_rs::impl_downcast!(ConsoleCore);
 dyn_clone::clone_trait_object!(CoreOptions);
 
 impl<T: CoreOptions> From<T> for Box<dyn CoreOptions> {
