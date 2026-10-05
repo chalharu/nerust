@@ -14,7 +14,7 @@ pub struct ReportSummary {
 }
 
 pub fn default_output_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/rom-tests")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../target/rom-tests")
 }
 
 pub fn write_html_report(

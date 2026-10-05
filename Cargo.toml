@@ -33,7 +33,7 @@ members = [
   "render/softbuffer",
   "render/traits",
   "render/wgpu",
-  "rom_test",
+  "gui/frontends/headless",
   "settings/core",
   "serialize",
   "sound/cpal",
@@ -194,7 +194,7 @@ nerust_render_ntsc = { path = "render/ntsc" }
 nerust_render_softbuffer = { path = "render/softbuffer" }
 nerust_render_traits = { path = "render/traits" }
 nerust_render_wgpu = { path = "render/wgpu" }
-nerust_rom_test = { path = "rom_test" }
+nerust_rom_test = { path = "gui/frontends/headless" }
 nerust_run_options = { path = "gui/run-options" }
 nerust_serialize = { path = "serialize" }
 nerust_settings_core = { path = "settings/core" }

@@ -310,5 +310,5 @@ pub(crate) fn apply_case_rom_overrides(
 }
 
 fn default_rom_root() -> PathBuf {
-    PathBuf::from("../roms")
+    PathBuf::from("../../../roms")
 }
