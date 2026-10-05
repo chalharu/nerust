@@ -6,7 +6,7 @@ use crate::{
 };
 
 impl CaseHarness for ValidationRunner {
-    fn run_frame(&mut self) -> u64 {
+    fn run_frame(&mut self) -> Result<(), RomTestError> {
         self.run_frame()
     }
 

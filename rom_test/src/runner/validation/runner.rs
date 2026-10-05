@@ -40,7 +40,7 @@ impl ValidationRunner {
             .finish(case, &self.runtime, totals, self.options))
     }
 
-    pub(in crate::runner::validation) fn run_frame(&mut self) -> u64 {
+    pub(in crate::runner::validation) fn run_frame(&mut self) -> Result<(), RomTestError> {
         self.runtime.run_frame()
     }
 

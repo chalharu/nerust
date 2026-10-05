@@ -89,14 +89,13 @@ pub fn write_html_report(
                     "<section class=\"case\"><h3>{}</h3><p>{}</p>\
                      <p>Status: <span class=\"{}\">{}</span></p>\
                      <p>ROM: <code>{}</code></p>\
-                     <p>Frames: {} / Steps: {} / Final screen hash: <code>0x{:016X}</code></p>",
+                     <p>Frames: {} / Final screen hash: <code>0x{:016X}</code></p>",
                     escape_html(&validation.case_id),
                     escape_html(&validation.description),
                     status_class,
                     status_label,
                     escape_html(&validation.rom),
                     validation.frames,
-                    validation.steps,
                     validation.final_screen_hash
                 )
                 .unwrap();

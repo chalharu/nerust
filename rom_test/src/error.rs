@@ -30,6 +30,8 @@ pub enum RomTestError {
     InvalidManifest(String),
     #[error("failed to construct emulator core for {case_id}: {message}")]
     CoreConstruction { case_id: String, message: String },
+    #[error("failed to render frame: {0}")]
+    RenderFrame(String),
     #[error("failed to encode screenshot: {0}")]
     ScreenshotEncoding(#[from] png::EncodingError),
 }

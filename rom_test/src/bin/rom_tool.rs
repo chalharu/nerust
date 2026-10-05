@@ -184,12 +184,11 @@ fn print_outcome(outcome: &CaseOutcome) {
     match outcome {
         CaseOutcome::Completed(validation) => {
             println!(
-                "case={} category={} status={} frames={} steps={} final_hash=0x{:016X}",
+                "case={} category={} status={} frames={} final_hash=0x{:016X}",
                 outcome.case_id(),
                 validation.category.label(),
                 if validation.passed() { "pass" } else { "fail" },
                 validation.frames,
-                validation.steps,
                 validation.final_screen_hash
             );
             println!("  description={}", validation.description);
