@@ -1,0 +1,22 @@
+pub mod apu;
+pub mod bios;
+pub mod cartridge;
+pub mod console_core;
+pub mod core_options;
+pub mod cpu;
+pub mod cpu_pipeline;
+pub mod cpu_registers;
+pub mod dma;
+#[cfg(test)]
+mod dma_fit;
+pub mod input_types;
+pub mod math;
+pub mod memory;
+pub mod persistence;
+pub mod persistence_error;
+pub mod ppu;
+pub mod rom_identity;
+pub mod scheduler;
+pub mod sound_driver;
+pub mod system;
+pub mod timer;

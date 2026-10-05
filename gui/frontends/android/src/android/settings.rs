@@ -79,6 +79,18 @@ struct AndroidSystemChoice {
     options: Vec<(SystemSettingsChoiceId, String)>,
 }
 
+/// One settings-dialog row: stable key, label, offered choices and
+/// current choice index travel together. Every dialog array and codec
+/// derives from [`AndroidSettings::setting_defs`], so a row can never
+/// drift apart from its own choices again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SettingDef {
+    pub key: String,
+    pub label: String,
+    pub choices: Vec<String>,
+    pub current: usize,
+}
+
 impl AndroidSettings {
     pub(crate) fn prioritize_system(&mut self, active: Option<&dyn SystemId>) {
         let Some(active) = active else {
@@ -187,169 +199,198 @@ impl AndroidSettings {
     // Dialog encoding
     // -----------------------------------------------------------------------
 
+    /// One settings row: stable key, label, offered choices and current
+    /// choice index travel together in a single struct. Every dialog
+    /// array and codec below derives from [`Self::setting_defs`], so a
+    /// row can never drift apart from its own choices again (a past
+    /// parallel-arrays layout showed percentages on the visibility row
+    /// while the length check still passed).
+    ///
+    /// The single ordered source of truth for the settings dialog.
+    /// Positional codecs ([`Self::from_choice_indices`]) index into this
+    /// same list, so reordering rows here stays consistent everywhere.
+    pub(crate) fn setting_defs(&self) -> Vec<SettingDef> {
+        let off_on = || vec!["Off".to_string(), "On".to_string()];
+        let percent = |range: std::ops::RangeInclusive<u8>| {
+            range.map(|value| format!("{value}%")).collect::<Vec<_>>()
+        };
+        let mut defs = vec![
+            SettingDef {
+                key: "audio_muted".to_string(),
+                label: "Mute".to_string(),
+                choices: off_on(),
+                current: usize::from(self.audio_muted),
+            },
+            SettingDef {
+                key: "master_volume".to_string(),
+                label: "Volume".to_string(),
+                choices: percent(VOLUME_MIN..=VOLUME_MAX),
+                current: usize::from(self.master_volume_percent.min(VOLUME_MAX)),
+            },
+            SettingDef {
+                key: "latency_ms".to_string(),
+                label: "Audio Latency (ms)".to_string(),
+                choices: (LATENCY_MIN..=LATENCY_MAX)
+                    .map(|value| format!("{value} ms"))
+                    .collect(),
+                current: usize::from(self.latency_ms.clamp(LATENCY_MIN, LATENCY_MAX) - LATENCY_MIN),
+            },
+            SettingDef {
+                key: "sample_rate".to_string(),
+                label: "Sample Rate (Hz)".to_string(),
+                choices: SAMPLE_RATE_CHOICES
+                    .iter()
+                    .map(|value| format!("{value} Hz"))
+                    .collect(),
+                // Default: highest rate.
+                current: SAMPLE_RATE_CHOICES
+                    .iter()
+                    .position(|&v| v == self.sample_rate)
+                    .unwrap_or(SAMPLE_RATE_CHOICES.len().saturating_sub(1)),
+            },
+            SettingDef {
+                key: "vsync".to_string(),
+                label: "VSync".to_string(),
+                choices: off_on(),
+                current: usize::from(self.vsync),
+            },
+            SettingDef {
+                key: "screen.orientation".to_string(),
+                label: "Screen Orientation".to_string(),
+                choices: ["Auto Rotate", "Portrait", "Landscape"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                current: match self.screen_orientation {
+                    ScreenOrientation::Auto => 0,
+                    ScreenOrientation::Portrait => 1,
+                    ScreenOrientation::Landscape => 2,
+                },
+            },
+            SettingDef {
+                key: "storage.policy".to_string(),
+                label: "Save Location".to_string(),
+                choices: ["Next to ROM", "App Storage", "Custom Directory"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                current: match self.storage_policy {
+                    StoragePolicy::Sidecar => 0,
+                    StoragePolicy::AppSharedData => 1,
+                    StoragePolicy::CustomDirectory => 2,
+                },
+            },
+            SettingDef {
+                key: "controls.overlay.visibility".to_string(),
+                label: "Touch Overlay".to_string(),
+                choices: ["Always", "Auto", "Hidden"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                current: match self.overlay_visibility {
+                    TouchOverlayVisibility::Always => 0,
+                    TouchOverlayVisibility::Auto => 1,
+                    TouchOverlayVisibility::Hidden => 2,
+                },
+            },
+            SettingDef {
+                key: "controls.overlay.opacity".to_string(),
+                label: "Overlay Opacity".to_string(),
+                choices: percent(0..=100),
+                current: usize::from(self.overlay_opacity_percent.min(100)),
+            },
+            SettingDef {
+                key: "controls.overlay.scale".to_string(),
+                label: "Overlay Scale".to_string(),
+                choices: percent(OVERLAY_SCALE_MIN..=OVERLAY_SCALE_MAX),
+                current: usize::from(
+                    self.overlay_scale_percent
+                        .clamp(OVERLAY_SCALE_MIN, OVERLAY_SCALE_MAX)
+                        - OVERLAY_SCALE_MIN,
+                ),
+            },
+            SettingDef {
+                key: "controls.overlay.vertical_offset".to_string(),
+                label: "Overlay Vertical Position".to_string(),
+                choices: (OVERLAY_OFFSET_MIN..=OVERLAY_OFFSET_MAX)
+                    .map(|value| format!("{value}%"))
+                    .collect(),
+                current: i16::from(
+                    self.overlay_vertical_offset_percent
+                        .clamp(OVERLAY_OFFSET_MIN, OVERLAY_OFFSET_MAX),
+                )
+                .checked_sub(i16::from(OVERLAY_OFFSET_MIN))
+                .unwrap_or_default() as usize,
+            },
+            SettingDef {
+                key: "controls.overlay.haptics".to_string(),
+                label: "Overlay Haptics".to_string(),
+                choices: off_on(),
+                current: usize::from(self.overlay_haptics),
+            },
+            SettingDef {
+                key: "controls.cartridge.motion".to_string(),
+                label: "Cartridge Motion Sensor".to_string(),
+                choices: off_on(),
+                current: usize::from(self.motion_enabled),
+            },
+            SettingDef {
+                key: "controls.cartridge.rumble".to_string(),
+                label: "Cartridge Rumble".to_string(),
+                choices: off_on(),
+                current: usize::from(self.rumble_enabled),
+            },
+            SettingDef {
+                key: "controls.cartridge.rumble_strength".to_string(),
+                label: "Rumble Strength".to_string(),
+                choices: percent(0..=100),
+                current: usize::from(self.rumble_strength_percent.min(100)),
+            },
+            SettingDef {
+                key: "controls.cartridge.rumble_target".to_string(),
+                label: "Rumble Target".to_string(),
+                choices: ["Auto", "Handset", "Controller"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                current: match self.rumble_target {
+                    RumbleTarget::Auto => 0,
+                    RumbleTarget::Handset => 1,
+                    RumbleTarget::Controller => 2,
+                },
+            },
+        ];
+        defs.extend(self.system_choices.iter().map(|choice| {
+            SettingDef {
+                key: format!("system.{}.{}", choice.system_id, choice.field_id.as_str()),
+                label: choice.label.clone(),
+                choices: choice
+                    .options
+                    .iter()
+                    .map(|(_, label)| label.clone())
+                    .collect(),
+                current: choice
+                    .options
+                    .iter()
+                    .position(|(id, _)| id == &choice.selected)
+                    .unwrap_or_default(),
+            }
+        }));
+        defs
+    }
+
     /// Stable setting keys sent to Kotlin (also used for decoding the result).
     pub(crate) fn dialog_keys(&self) -> Vec<String> {
-        let mut keys = vec![
-            "audio_muted".to_string(),
-            "master_volume".to_string(),
-            "latency_ms".to_string(),
-            "sample_rate".to_string(),
-            "vsync".to_string(),
-            "screen.orientation".to_string(),
-            "storage.policy".to_string(),
-            "controls.overlay.visibility".to_string(),
-            "controls.overlay.opacity".to_string(),
-            "controls.overlay.scale".to_string(),
-            "controls.overlay.vertical_offset".to_string(),
-            "controls.overlay.haptics".to_string(),
-            "controls.cartridge.motion".to_string(),
-            "controls.cartridge.rumble".to_string(),
-            "controls.cartridge.rumble_strength".to_string(),
-            "controls.cartridge.rumble_target".to_string(),
-        ];
-        keys.extend(
-            self.system_choices
-                .iter()
-                .map(|choice| format!("system.{}.{}", choice.system_id, choice.field_id.as_str())),
-        );
-        keys
-    }
-
-    /// Human-readable labels, one per key, in the same order.
-    pub(crate) fn dialog_labels(&self) -> Vec<String> {
-        let mut labels = vec![
-            "Mute".to_string(),
-            "Volume".to_string(),
-            "Audio Latency (ms)".to_string(),
-            "Sample Rate (Hz)".to_string(),
-            "VSync".to_string(),
-            "Screen Orientation".to_string(),
-            "Save Location".to_string(),
-            "Touch Overlay".to_string(),
-            "Overlay Opacity".to_string(),
-            "Overlay Scale".to_string(),
-            "Overlay Vertical Position".to_string(),
-            "Overlay Haptics".to_string(),
-            "Cartridge Motion Sensor".to_string(),
-            "Cartridge Rumble".to_string(),
-            "Rumble Strength".to_string(),
-            "Rumble Target".to_string(),
-        ];
-        labels.extend(
-            self.system_choices
-                .iter()
-                .map(|choice| choice.label.clone()),
-        );
-        labels
-    }
-
-    /// Tab-separated choice labels, one string per setting, in key order.
-    pub(crate) fn dialog_choices(&self) -> Vec<String> {
-        let mut choices = vec![
-            "Off\tOn".to_string(),
-            join_tab_labels((VOLUME_MIN..=VOLUME_MAX).map(|value| format!("{value}%"))),
-            join_tab_labels((LATENCY_MIN..=LATENCY_MAX).map(|value| format!("{value} ms"))),
-            join_tab_labels(
-                SAMPLE_RATE_CHOICES
-                    .iter()
-                    .map(|value| format!("{value} Hz")),
-            ),
-            "Off\tOn".to_string(),
-            "Off\tOn".to_string(),
-            "Off\tOn".to_string(),
-            join_tab_labels((0..=100).map(|value| format!("{value}%"))),
-            "Auto\tHandset\tController".to_string(),
-            "Auto Rotate\tPortrait\tLandscape".to_string(),
-            "Next to ROM\tApp Storage\tCustom Directory".to_string(),
-            "Always\tAuto\tHidden".to_string(),
-            join_tab_labels((0..=100).map(|value| format!("{value}%"))),
-            join_tab_labels(
-                (OVERLAY_SCALE_MIN..=OVERLAY_SCALE_MAX).map(|value| format!("{value}%")),
-            ),
-            join_tab_labels(
-                (OVERLAY_OFFSET_MIN..=OVERLAY_OFFSET_MAX).map(|value| format!("{value}%")),
-            ),
-            "Off\tOn".to_string(),
-        ];
-        choices.extend(
-            self.system_choices.iter().map(|choice| {
-                join_tab_labels(choice.options.iter().map(|(_, label)| label.clone()))
-            }),
-        );
-        choices
-    }
-
-    /// Index of the current choice for each setting, in key order, as strings.
-    pub(crate) fn current_indices(&self) -> Vec<String> {
-        let volume_idx = usize::from(self.master_volume_percent.min(VOLUME_MAX));
-        let latency_idx =
-            usize::from(self.latency_ms.clamp(LATENCY_MIN, LATENCY_MAX) - LATENCY_MIN);
-        let sample_rate_idx = SAMPLE_RATE_CHOICES
-            .iter()
-            .position(|&v| v == self.sample_rate)
-            .unwrap_or(SAMPLE_RATE_CHOICES.len().saturating_sub(1)); // default: highest rate
-        let mut indices = vec![
-            (self.audio_muted as usize).to_string(),
-            volume_idx.to_string(),
-            latency_idx.to_string(),
-            sample_rate_idx.to_string(),
-            (self.vsync as usize).to_string(),
-            match self.screen_orientation {
-                ScreenOrientation::Auto => 0,
-                ScreenOrientation::Portrait => 1,
-                ScreenOrientation::Landscape => 2,
-            }
-            .to_string(),
-            match self.storage_policy {
-                StoragePolicy::Sidecar => 0,
-                StoragePolicy::AppSharedData => 1,
-                StoragePolicy::CustomDirectory => 2,
-            }
-            .to_string(),
-            match self.overlay_visibility {
-                TouchOverlayVisibility::Always => 0,
-                TouchOverlayVisibility::Auto => 1,
-                TouchOverlayVisibility::Hidden => 2,
-            }
-            .to_string(),
-            usize::from(self.overlay_opacity_percent.min(100)).to_string(),
-            usize::from(
-                self.overlay_scale_percent
-                    .clamp(OVERLAY_SCALE_MIN, OVERLAY_SCALE_MAX)
-                    - OVERLAY_SCALE_MIN,
-            )
-            .to_string(),
-            i16::from(
-                self.overlay_vertical_offset_percent
-                    .clamp(OVERLAY_OFFSET_MIN, OVERLAY_OFFSET_MAX),
-            )
-            .checked_sub(i16::from(OVERLAY_OFFSET_MIN))
-            .unwrap_or_default()
-            .to_string(),
-            (self.overlay_haptics as usize).to_string(),
-            (self.motion_enabled as usize).to_string(),
-            (self.rumble_enabled as usize).to_string(),
-            usize::from(self.rumble_strength_percent.min(100)).to_string(),
-            match self.rumble_target {
-                RumbleTarget::Auto => 0,
-                RumbleTarget::Handset => 1,
-                RumbleTarget::Controller => 2,
-            }
-            .to_string(),
-        ];
-        indices.extend(self.system_choices.iter().map(|choice| {
-            choice
-                .options
-                .iter()
-                .position(|(id, _)| id == &choice.selected)
-                .unwrap_or_default()
-                .to_string()
-        }));
-        indices
+        self.setting_defs().into_iter().map(|def| def.key).collect()
     }
 
     /// Build an `AndroidSettings` from a comma-separated list of choice indices
     /// (as returned by the Kotlin callback).
+    ///
+    /// Positional contract: index N is the choice for `setting_defs()[N]`.
+    /// Callers must feed positions derived from the same defs list (as
+    /// [`Self::from_keyed_indices`] does), never a separately maintained
+    /// array.
     ///
     /// Returns `None` if the string is malformed or any index is out of range.
     pub(crate) fn from_choice_indices(raw: &str, current: &Self) -> Option<Self> {
@@ -460,29 +501,25 @@ impl AndroidSettings {
     }
 
     pub(crate) fn dialog_payload(&self, request_id: u64) -> String {
-        let keys = self.dialog_keys();
-        let labels = self.dialog_labels();
-        let choices = self.dialog_choices();
-        let indices = self.current_indices();
         let mut sections: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
-        for (index, key) in keys.iter().enumerate() {
-            let section = if key.starts_with("system.") {
-                key.split('.').take(2).collect::<Vec<_>>().join(".")
-            } else if key.starts_with("controls.") {
+        for def in self.setting_defs() {
+            let section = if def.key.starts_with("system.") {
+                def.key.split('.').take(2).collect::<Vec<_>>().join(".")
+            } else if def.key.starts_with("controls.") {
                 "controls".to_string()
-            } else if key.starts_with("storage.") {
+            } else if def.key.starts_with("storage.") {
                 "storage".to_string()
-            } else if key == "vsync" || key.starts_with("screen.") {
+            } else if def.key == "vsync" || def.key.starts_with("screen.") {
                 "video".to_string()
             } else {
                 "audio".to_string()
             };
             let field = serde_json::json!({
-                    "key": key,
-                    "label": labels[index],
+                    "key": def.key,
+                    "label": def.label,
                     "kind": "choice",
-                    "value": indices[index].parse::<usize>().unwrap_or_default(),
-                    "options": choices[index].split('\t').collect::<Vec<_>>(),
+                    "value": def.current,
+                    "options": def.choices,
                     "enabled": true,
             });
             if let Some((_, fields)) = sections.iter_mut().find(|(id, _)| id == &section) {
@@ -507,13 +544,13 @@ impl AndroidSettings {
         values: &BTreeMap<String, usize>,
         current: &Self,
     ) -> Option<Self> {
-        let keys = current.dialog_keys();
-        if values.len() != keys.len() || keys.iter().any(|key| !values.contains_key(key)) {
+        let defs = current.setting_defs();
+        if values.len() != defs.len() || defs.iter().any(|def| !values.contains_key(&def.key)) {
             return None;
         }
-        let raw = keys
+        let raw = defs
             .iter()
-            .map(|key| values.get(key).map(usize::to_string))
+            .map(|def| values.get(&def.key).map(usize::to_string))
             .collect::<Option<Vec<_>>>()?
             .join(",");
         Self::from_choice_indices(&raw, current)
@@ -529,16 +566,6 @@ struct SettingsResultPayload {
     dismissed: bool,
     #[serde(default)]
     values: BTreeMap<String, usize>,
-}
-
-fn join_tab_labels(values: impl IntoIterator<Item = String>) -> String {
-    let mut labels = values.into_iter();
-    let mut joined = labels.next().unwrap_or_default();
-    for value in labels {
-        joined.push('\t');
-        joined.push_str(&value);
-    }
-    joined
 }
 
 // ---------------------------------------------------------------------------
@@ -784,6 +811,8 @@ mod tests {
     use std::sync::Arc;
 
     use nerust_core_traits::factory::CoreFactory;
+    use nerust_gba_factory::GbaFactory;
+    use nerust_gba_settings::GbaSettings;
     use nerust_gbc_factory::GbcFactory;
     use nerust_gbc_settings::GbcSettings;
     use nerust_gui_runtime::settings::SettingsSnapshot;
@@ -805,6 +834,10 @@ mod tests {
             GbcFactory.system_id(),
             Box::new(GbcSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
         );
+        shared.systems.insert(
+            GbaFactory.system_id(),
+            Box::new(GbaSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
+        );
         SettingsSnapshot {
             shared,
             local: HostBackendLocalSettings::default(),
@@ -813,7 +846,11 @@ mod tests {
     }
 
     fn registry() -> SystemRegistry {
-        SystemRegistry::new(vec![Arc::new(NesFactory), Arc::new(GbcFactory)])
+        SystemRegistry::new(vec![
+            Arc::new(NesFactory),
+            Arc::new(GbcFactory),
+            Arc::new(GbaFactory),
+        ])
     }
 
     fn android_settings(snapshot: &SettingsSnapshot, registry: &SystemRegistry) -> AndroidSettings {
@@ -827,6 +864,15 @@ mod tests {
             .find(|choice| choice.field_id.as_str() == field_id)
             .expect("system field should exist");
         choice.selected = SystemSettingsChoiceId(choice_id.to_string().into());
+    }
+
+    /// Current choice indices in dialog order, via the single defs list.
+    fn def_currents(android: &AndroidSettings) -> Vec<usize> {
+        android
+            .setting_defs()
+            .into_iter()
+            .map(|def| def.current)
+            .collect()
     }
 
     #[test]
@@ -920,17 +966,22 @@ mod tests {
         let snapshot = default_snapshot();
         let registry = registry();
         let android = android_settings(&snapshot, &registry);
-        let indices = android.current_indices();
+        let indices = def_currents(&android);
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
         // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
         assert_eq!(
             &indices[..16],
-            [
-                "0", "100", "40", "1", "1", "0", "0", "1", "65", "50", "30", "1", "1", "1", "100",
-                "0"
-            ]
+            [0, 100, 40, 1, 1, 0, 0, 1, 65, 50, 30, 1, 1, 1, 100, 0]
         );
-        assert_eq!(indices.len(), 20);
+        assert_eq!(indices.len(), 21);
+    }
+
+    #[test]
+    fn dialog_payload_contains_gba_system_key() {
+        let registry = registry();
+        let android = android_settings(&default_snapshot(), &registry);
+        let keys = android.dialog_keys();
+        assert!(keys.iter().any(|key| key.starts_with("system.gba.")));
     }
 
     #[test]
@@ -953,7 +1004,11 @@ mod tests {
             .apply_to_snapshot(&mut snapshot, &registry)
             .unwrap();
         let recovered = android_settings(&snapshot, &registry);
-        let indices_str = recovered.current_indices().join(",");
+        let indices_str = def_currents(&recovered)
+            .into_iter()
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
 
         let parsed = AndroidSettings::from_choice_indices(&indices_str, &recovered).unwrap();
         assert_eq!(parsed, original);
@@ -971,7 +1026,11 @@ mod tests {
         original.screen_orientation = ScreenOrientation::Portrait;
         set_system_choice(&mut original, "video.filter", "none");
 
-        let indices_str = original.current_indices().join(",");
+        let indices_str = def_currents(&original)
+            .into_iter()
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         let parsed = AndroidSettings::from_choice_indices(&indices_str, &original).unwrap();
         assert_eq!(parsed, original);
     }
@@ -990,24 +1049,24 @@ mod tests {
     fn dialog_choices_cover_full_android_audio_range() {
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
-        let choices = android.dialog_choices();
-        let volume_choices: Vec<_> = choices[1].split('\t').collect();
-        let latency_choices: Vec<_> = choices[2].split('\t').collect();
-        let sample_rate_choices: Vec<_> = choices[3].split('\t').collect();
+        let defs = android.setting_defs();
+        let volume_choices = &defs[1].choices;
+        let latency_choices = &defs[2].choices;
+        let sample_rate_choices = &defs[3].choices;
 
-        assert_eq!(volume_choices.first(), Some(&"0%"));
-        assert_eq!(volume_choices.last(), Some(&"100%"));
+        assert_eq!(volume_choices.first().map(String::as_str), Some("0%"));
+        assert_eq!(volume_choices.last().map(String::as_str), Some("100%"));
         assert_eq!(volume_choices.len(), 101);
 
-        assert_eq!(latency_choices.first(), Some(&"10 ms"));
-        assert_eq!(latency_choices.last(), Some(&"200 ms"));
+        assert_eq!(latency_choices.first().map(String::as_str), Some("10 ms"));
+        assert_eq!(latency_choices.last().map(String::as_str), Some("200 ms"));
         assert_eq!(latency_choices.len(), 191);
 
         assert!(
             !sample_rate_choices.is_empty(),
             "sample rate choices should be non-empty"
         );
-        for choice in &sample_rate_choices {
+        for choice in sample_rate_choices {
             let Some(rate_str) = choice.strip_suffix(" Hz") else {
                 panic!("sample rate choice '{choice}' must end with ' Hz'");
             };
@@ -1030,14 +1089,74 @@ mod tests {
     }
 
     #[test]
-    fn dialog_arrays_are_consistent_length() {
+    fn setting_defs_are_internally_consistent() {
+        // Structural replacement for the old parallel-arrays length check:
+        // every row must offer at least one choice, point at a valid one,
+        // and carry a unique key.
         let snapshot = default_snapshot();
         let registry = registry();
         let android = android_settings(&snapshot, &registry);
-        let n = android.dialog_keys().len();
-        assert_eq!(android.dialog_labels().len(), n);
-        assert_eq!(android.dialog_choices().len(), n);
-        assert_eq!(android.current_indices().len(), n);
+        let defs = android.setting_defs();
+        let mut keys = std::collections::BTreeSet::new();
+        for def in &defs {
+            assert!(keys.insert(def.key.clone()), "duplicate key {}", def.key);
+            assert!(!def.label.is_empty(), "empty label for {}", def.key);
+            assert!(!def.choices.is_empty(), "no choices for {}", def.key);
+            assert!(
+                def.current < def.choices.len(),
+                "current {} out of range for {}",
+                def.current,
+                def.key
+            );
+        }
+    }
+
+    #[test]
+    fn dialog_choices_align_with_keys() {
+        // Regression test: the choice list attached to each key must be
+        // that setting's own. A past misalignment showed percentages on
+        // the visibility row and words on the opacity row, silently
+        // rejecting every save outside 0..=2.
+        use std::collections::BTreeMap;
+        let registry = registry();
+        let android = android_settings(&default_snapshot(), &registry);
+        let owned: BTreeMap<String, Vec<String>> = android
+            .setting_defs()
+            .into_iter()
+            .map(|def| (def.key, def.choices))
+            .collect();
+        let at = |key: &str| owned.get(key).unwrap().join("\t");
+        assert_eq!(at("screen.orientation"), "Auto Rotate\tPortrait\tLandscape");
+        assert_eq!(
+            at("storage.policy"),
+            "Next to ROM\tApp Storage\tCustom Directory"
+        );
+        assert_eq!(at("controls.overlay.visibility"), "Always\tAuto\tHidden");
+        let opacity_str = at("controls.overlay.opacity");
+        let opacity: Vec<_> = opacity_str.split('\t').collect();
+        assert_eq!(opacity.len(), 101);
+        assert_eq!(opacity.first(), Some(&"0%"));
+        assert_eq!(opacity.last(), Some(&"100%"));
+        let scale_str = at("controls.overlay.scale");
+        let scale: Vec<_> = scale_str.split('\t').collect();
+        assert_eq!(scale.len(), 101);
+        assert_eq!(scale.first(), Some(&"50%"));
+        assert_eq!(scale.last(), Some(&"150%"));
+        let offset_str = at("controls.overlay.vertical_offset");
+        let offset: Vec<_> = offset_str.split('\t').collect();
+        assert_eq!(offset.len(), 61);
+        assert_eq!(offset.first(), Some(&"-30%"));
+        assert_eq!(offset.last(), Some(&"30%"));
+        assert_eq!(at("controls.overlay.haptics"), "Off\tOn");
+        assert_eq!(at("controls.cartridge.motion"), "Off\tOn");
+        assert_eq!(at("controls.cartridge.rumble"), "Off\tOn");
+        let strength_str = at("controls.cartridge.rumble_strength");
+        let strength: Vec<_> = strength_str.split('\t').collect();
+        assert_eq!(strength.len(), 101);
+        assert_eq!(
+            at("controls.cartridge.rumble_target"),
+            "Auto\tHandset\tController"
+        );
     }
 
     #[test]
@@ -1101,13 +1220,8 @@ mod tests {
         let registry = registry();
         let current = android_settings(&default_snapshot(), &registry);
         let mut values = BTreeMap::new();
-        for (key, value) in current
-            .dialog_keys()
-            .into_iter()
-            .zip(current.current_indices())
-            .rev()
-        {
-            values.insert(key, value.parse().unwrap());
+        for def in current.setting_defs().into_iter().rev() {
+            values.insert(def.key, def.current);
         }
 
         assert_eq!(

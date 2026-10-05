@@ -7,6 +7,7 @@ const ACTION_EXIT: &str = "exit";
 const ACTION_LOAD_STATE: &str = "load_state";
 const ACTION_OPEN_ROM: &str = "open_rom";
 const ACTION_OPEN_SETTINGS: &str = "open_settings";
+const ACTION_ORIENTATION_CHANGED: &str = "orientation_changed";
 const ACTION_RESET: &str = "reset";
 const ACTION_SAVE_STATE: &str = "save_state";
 const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
@@ -28,6 +29,8 @@ fn decode_action(raw: &str) -> Option<MenuAction> {
         let key = match key {
             "button1" => AbstractKey::Button1,
             "button2" => AbstractKey::Button2,
+            "button5" => AbstractKey::Button5,
+            "button6" => AbstractKey::Button6,
             "start" => AbstractKey::Start,
             "select" => AbstractKey::Select,
             "up" => AbstractKey::DpadUp,
@@ -52,6 +55,7 @@ fn decode_action(raw: &str) -> Option<MenuAction> {
         ACTION_LOAD_STATE => Some(MenuAction::LoadState),
         ACTION_OPEN_ROM => Some(MenuAction::OpenRom),
         ACTION_OPEN_SETTINGS => Some(MenuAction::OpenSettings),
+        ACTION_ORIENTATION_CHANGED => Some(MenuAction::OrientationChanged),
         ACTION_RESET => Some(MenuAction::Reset),
         ACTION_SAVE_STATE => Some(MenuAction::SaveState),
         ACTION_TOGGLE_PAUSE => Some(MenuAction::TogglePause),
@@ -111,8 +115,9 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
 #[cfg(test)]
 mod tests {
     use super::{
-        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS, ACTION_RESET,
-        ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE, ACTION_UNLOAD, MenuAction, decode_action,
+        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
+        ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE,
+        ACTION_UNLOAD, MenuAction, decode_action,
     };
 
     #[test]
@@ -137,6 +142,10 @@ mod tests {
         assert_eq!(decode_action(ACTION_RESET), Some(MenuAction::Reset));
         assert_eq!(decode_action(ACTION_EXIT), Some(MenuAction::Exit));
         assert_eq!(decode_action(ACTION_UNLOAD), Some(MenuAction::Unload));
+        assert_eq!(
+            decode_action(ACTION_ORIENTATION_CHANGED),
+            Some(MenuAction::OrientationChanged)
+        );
     }
 
     #[test]

@@ -1,0 +1,35 @@
+[package]
+name = "nerust_gba_core"
+description = "GBA emulator core"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+crc.workspace = true
+log.workspace = true
+rmp-serde.workspace = true
+nerust_core_traits.workspace = true
+nerust_gba_settings.workspace = true
+nerust_input_traits.workspace = true
+nerust_render_traits.workspace = true
+nerust_serialize.workspace = true
+nerust_sound_filter.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
+typetag.workspace = true
+serde.workspace = true
+serde_bytes.workspace = true
+
+[dev-dependencies]
+nerust_sound_spectrum.workspace = true
+
+[features]
+# Test-ROM log sink speaking the mGBA debug-log protocol (0x4FFF600
+# string buffer, 0x4FFF700 flags, 0x4FFF780 enable handshake). This is
+# NOT hardware: production frontends must not enable it. It exists so
+# headless test harnesses (nerust_gba_rom_test) can capture per-subtest
+# PASS/FAIL lines from test ROMs built against the mGBA suite SDK.
+# Zero wait cycles, no bus-state side effects.
+mgba-debug-log = []
