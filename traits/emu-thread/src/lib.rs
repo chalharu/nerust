@@ -98,6 +98,13 @@ impl EmuThread {
                                 loaded = handle_load(&mut *core, &mut *audio, &mut filter, *cmd);
                             }
                             EmuCommand::Quit => return,
+                            // Reply-bearing commands must answer even when
+                            // idle: dropping the reply would hang the caller.
+                            EmuCommand::Step { reply, .. } => {
+                                let _ = reply.send(Err(
+                                    nerust_core_traits::debugger::DebuggerError::Unsupported,
+                                ));
+                            }
                             _ => {}
                         },
                         Err(_) => return,
@@ -149,6 +156,20 @@ impl EmuThread {
                         }
                         EmuCommand::Identity { reply } => {
                             let result = core.identity();
+                            // reply send failure: receiver dropped (timeout/abort) — expected
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::Step { unit, reply } => {
+                            // Processed synchronously here, so receipt is
+                            // the barrier: each reply matches exactly one
+                            // executed step. Deterministic callers pause
+                            // first; stepping while running races free-run.
+                            let result = match core.debug_control() {
+                                Some(mut control) => control.step(unit),
+                                None => {
+                                    Err(nerust_core_traits::debugger::DebuggerError::Unsupported)
+                                }
+                            };
                             // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = reply.send(result);
                         }
@@ -235,4 +256,190 @@ fn handle_load(
     let loaded = result.is_ok();
     let _ = cmd.reply.send(result);
     loaded
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        sync::atomic::AtomicBool,
+        sync::mpsc,
+        sync::{Arc, Mutex},
+    };
+
+    use nerust_core_traits::{
+        CoreConfig, CoreError,
+        audio::{AudioBackend, StereoSample},
+        debugger::{DebugControl, DebuggerError, StepUnit},
+    };
+
+    use super::*;
+
+    struct SilentBackend;
+
+    impl AudioBackend for SilentBackend {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
+        fn push(&mut self, _sample: StereoSample) {}
+        fn sample_rate(&self) -> u32 {
+            48_000
+        }
+    }
+
+    /// Minimal deterministic core: frames advance only via control.
+    struct FakeCore {
+        paused: bool,
+        loaded: bool,
+        stepped_frames: u64,
+    }
+
+    struct FakeControl<'a> {
+        core: &'a mut FakeCore,
+    }
+
+    impl DebugControl for FakeControl<'_> {
+        fn step(&mut self, unit: StepUnit) -> Result<u64, DebuggerError> {
+            match unit {
+                StepUnit::Frame => {
+                    self.core.stepped_frames += 1;
+                    Ok(1_000)
+                }
+                StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
+            }
+        }
+
+        fn write_memory(
+            &mut self,
+            _space: nerust_core_traits::debugger::SpaceId,
+            _addr: u32,
+            _width: u8,
+            _value: u64,
+        ) -> Result<(), DebuggerError> {
+            Err(DebuggerError::Unsupported)
+        }
+    }
+
+    impl ConsoleCore for FakeCore {
+        fn capabilities(&self) -> nerust_core_traits::CoreCapabilities {
+            nerust_core_traits::CoreCapabilities {
+                output_formats: vec![],
+                video_signal: nerust_core_traits::VideoSignalKind::Other,
+            }
+        }
+
+        fn render_frame(
+            &mut self,
+            _frame_slot: &mut FrameBuffer,
+            _audio_out: &mut Vec<StereoSample>,
+        ) -> Result<(), CoreError> {
+            Ok(())
+        }
+
+        fn load(&mut self, _rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
+            self.loaded = true;
+            Ok(())
+        }
+
+        fn unload(&mut self) {
+            self.loaded = false;
+        }
+
+        fn reset(&mut self) {}
+
+        fn paused(&self) -> bool {
+            self.paused
+        }
+
+        fn set_paused(&mut self, paused: bool) {
+            self.paused = paused;
+        }
+
+        fn save_state(&self) -> Result<Vec<u8>, CoreError> {
+            Ok(Vec::new())
+        }
+
+        fn load_state(&mut self, _data: &[u8]) -> Result<(), CoreError> {
+            Ok(())
+        }
+
+        fn debug_control(
+            &mut self,
+        ) -> Option<Box<dyn nerust_core_traits::debugger::DebugControl + '_>> {
+            // Mirrors real consoles: no ROM means no control handle.
+            if !self.loaded {
+                return None;
+            }
+            Some(Box::new(FakeControl { core: self }) as _)
+        }
+    }
+
+    fn spawn_loaded() -> EmuThread {
+        let fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0u32; 256]),
+            },
+        )));
+        let thread = EmuThread::spawn(
+            Box::new(FakeCore {
+                paused: false,
+                loaded: false,
+                stepped_frames: 0,
+            }),
+            Arc::clone(&fb),
+            Arc::new(AtomicBool::new(false)),
+            Box::new([0u32; 256]),
+            Box::new(SilentBackend),
+        );
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::Load(Box::new(LoadCommand {
+                rom: vec![0u8; 16],
+                config: CoreConfig {
+                    region: None,
+                    bios_paths: HashMap::new(),
+                    controllers: HashMap::new(),
+                    core_options: None,
+                    audio_sample_rate: None,
+                },
+                reply: tx,
+            })))
+            .expect("load send");
+        rx.recv().expect("load reply").expect("load ok");
+        thread
+    }
+
+    fn step(thread: &EmuThread, unit: StepUnit) -> Result<u64, DebuggerError> {
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::Step { unit, reply: tx })
+            .expect("step send");
+        rx.recv().expect("step reply")
+    }
+
+    #[test]
+    fn step_replies_are_synchronous_barriers() {
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Pause).expect("pause send");
+        // Each reply matches exactly one executed step, in order.
+        assert_eq!(step(&thread, StepUnit::Frame), Ok(1_000));
+        assert_eq!(step(&thread, StepUnit::Frame), Ok(1_000));
+        assert_eq!(
+            step(&thread, StepUnit::Instruction),
+            Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
+        );
+    }
+
+    #[test]
+    fn step_while_unloaded_is_unsupported() {
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Unload).expect("unload send");
+        // Unload is processed before this Step (FIFO channel): the idle
+        // arm must still answer instead of hanging the caller.
+        assert_eq!(
+            step(&thread, StepUnit::Frame),
+            Err(DebuggerError::Unsupported)
+        );
+    }
 }

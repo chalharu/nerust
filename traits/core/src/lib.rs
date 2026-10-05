@@ -133,6 +133,14 @@ pub enum EmuCommand {
     Identity {
         reply: Sender<Result<identity::SystemIdentity, CoreError>>,
     },
+    /// Advance execution by one unit. Processed synchronously when the
+    /// command is drained, so receipt is the frame barrier: each reply
+    /// corresponds to exactly one executed step. Callers pause first
+    /// for determinism; stepping while running races with free-run.
+    Step {
+        unit: debugger::StepUnit,
+        reply: Sender<Result<u64, debugger::DebuggerError>>,
+    },
 }
 
 // ---------------------------------------------------------------------------
