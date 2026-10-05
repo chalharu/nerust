@@ -1,11 +1,14 @@
 //! Thumb micro-op expansion: one [`MicroOp`] queue per instruction.
 //! Pure decode over snapshots (`regs`); shares only the op types
 //! from the parent module, so this file depends downward on nothing.
-use super::{
-    AluEffect, AluImmOp, BlockEmptyEffect, BlockEndEffect, BlockStartEffect, BlockWord,
-    BranchEffect, MemAccess, MicroOp, MicroOpVec, MulEffect, PcRelRead,
-};
-use crate::cpu::semantics::{condition_passed, multiplier_cycles};
+use super::ops_alu::{AluEffect, AluImmOp};
+use super::ops_block::{BlockEndEffect, BlockStartEffect};
+use super::ops_block_words::{BlockEmptyEffect, BlockWord};
+use super::ops_branch::{BranchEffect, MulEffect};
+use super::ops_mem::{MemAccess, PcRelRead};
+use super::{MicroOp, MicroOpVec};
+use crate::cpu::semantics::multiply::multiplier_cycles;
+use crate::cpu::semantics::shifter::condition_passed;
 use crate::cpu_registers::CpuRegisters;
 
 /// Expand a Thumb instruction. `None` = uncovered instruction (no

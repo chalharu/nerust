@@ -2,10 +2,11 @@ pub mod micro_op;
 pub(crate) mod semantics;
 
 use crate::cpu::micro_op::HLE_IRQ_RETURN_TRAMPOLINE;
-use crate::cpu::micro_op::{
-    AluEffect, BlockEmptyEffect, BlockEndEffect, BlockWord, MemAccess, MicroOp, MicroOpVec,
-    PcRelRead,
-};
+use crate::cpu::micro_op::ops_alu::AluEffect;
+use crate::cpu::micro_op::ops_block::BlockEndEffect;
+use crate::cpu::micro_op::ops_block_words::{BlockEmptyEffect, BlockWord};
+use crate::cpu::micro_op::ops_mem::{MemAccess, PcRelRead};
+use crate::cpu::micro_op::{MicroOp, MicroOpVec};
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
@@ -557,7 +558,7 @@ mod tests {
         state = cpu.export_state();
         state
             .micro_queue
-            .push(MicroOp::MemRead(crate::cpu::micro_op::MemAccess {
+            .push(MicroOp::MemRead(crate::cpu::micro_op::ops_mem::MemAccess {
                 width: 3,
                 rd: 0,
                 rn: 0,
