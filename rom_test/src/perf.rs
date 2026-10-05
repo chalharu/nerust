@@ -86,10 +86,9 @@ fn run() -> Result<(), String> {
         ) {
             CaseOutcome::Completed(validation) if validation.passed() => {
                 println!(
-                    "validated case={} frames={} steps={} final_hash=0x{:016X} audio_samples={} audio_hash=0x{:016X}",
+                    "validated case={} frames={} final_hash=0x{:016X} audio_samples={} audio_hash=0x{:016X}",
                     validation.case_id,
                     validation.frames,
-                    validation.steps,
                     validation.final_screen_hash,
                     validation.audio.samples,
                     validation.audio.hash
@@ -243,6 +242,7 @@ struct PerfRunner {
     controller: ControllerCollection,
     mixer: PerfMixer,
     frame_counter: u64,
+    total_steps: u64,
     pad1: Buttons,
     pad2: Buttons,
     mic: bool,
@@ -290,6 +290,7 @@ impl PerfRunner {
             ]),
             mixer: PerfMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
+            total_steps: 0,
             pad1: Buttons::empty(),
             pad2: Buttons::empty(),
             mic: false,
@@ -300,14 +301,14 @@ impl PerfRunner {
         let totals = drive_case(case, &mut self)?;
         Ok(PerfRunResult {
             frames: totals.frames,
-            steps: totals.steps,
+            steps: self.total_steps,
             final_marker: self.checksum,
         })
     }
 }
 
 impl CaseHarness for PerfRunner {
-    fn run_frame(&mut self) -> u64 {
+    fn run_frame(&mut self) -> Result<(), RomTestError> {
         let steps = self
             .core
             .run_frame(&mut self.screen, &mut self.controller, &mut self.mixer);
@@ -316,7 +317,8 @@ impl CaseHarness for PerfRunner {
             self.checksum = self.checksum.wrapping_mul(31).wrapping_add(u64::from(b));
         }
         self.frame_counter += 1;
-        steps
+        self.total_steps += steps;
+        Ok(())
     }
 
     fn frame_counter(&self) -> u64 {

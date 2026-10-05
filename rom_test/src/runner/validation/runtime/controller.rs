@@ -1,5 +1,3 @@
-use nerust_input_traits::ControllerHub as _;
-
 use super::ValidationRuntime;
 use crate::{
     events::{ButtonCode, Buttons, ControllerPad, PadState},
@@ -31,7 +29,9 @@ impl ValidationRuntime {
     }
 
     fn sync_input(&mut self) {
-        self.controller
-            .sync_input(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
+        // Absolute pad state published for the next frame. The console
+        // picks it up in render_frame via EmuInput.
+        self.system
+            .sync_input(self.pad1.bits(), self.pad2.bits(), self.mic);
     }
 }

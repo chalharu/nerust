@@ -1,11 +1,10 @@
-use nerust_input_traits::ControllerCollection;
-use nerust_nes_core::{Core, rom_parse};
-use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
+use nerust_nes_factory::NesFactory;
 
 use super::ValidationRuntime;
 use crate::{
     error::RomTestError,
     events::Buttons,
+    factory_adapter,
     manifest::RomCase,
     media::{HashingMixer, validation_screen_buffer},
 };
@@ -15,27 +14,19 @@ impl ValidationRuntime {
         case: &RomCase,
         rom_bytes: &[u8],
     ) -> Result<Self, RomTestError> {
-        let cartridge_data =
-            rom_parse::parse_rom(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
-                case_id: case.id.clone(),
-                message: error.to_string(),
-            })?;
-        let core =
-            Core::new_with_options(cartridge_data, case.core_options()).map_err(|error| {
-                RomTestError::CoreConstruction {
-                    case_id: case.id.clone(),
-                    message: error.to_string(),
-                }
-            })?;
+        let system = factory_adapter::open_nes_system(
+            &NesFactory,
+            &case.id,
+            rom_bytes,
+            case.core_options(),
+            case.audio_sample_rate(),
+        )?;
 
         Ok(Self {
             screen_buffer: validation_screen_buffer(),
-            core,
-            controller: ControllerCollection::new(vec![
-                Box::new(FamicomPadP1::new()),
-                Box::new(FamicomPadP2::new()),
-            ]),
+            system,
             mixer: HashingMixer::new(case.audio_sample_rate()),
+            audio_sink: Vec::new(),
             frame_counter: 0,
             pad1: Buttons::empty(),
             pad2: Buttons::empty(),

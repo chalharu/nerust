@@ -3,6 +3,7 @@ use nerust_core_traits::audio::AudioBackend;
 use super::ValidationRuntime;
 use crate::{
     error::RomTestError,
+    factory_adapter,
     media::{encode_screenshot_png, screen_hash},
 };
 
@@ -29,20 +30,29 @@ impl ValidationRuntime {
         encode_screenshot_png(&self.screen_buffer)
     }
 
+    /// Work-RAM byte through the generic debugger path.
+    ///
+    /// `space_containing` returning `None` is structurally impossible
+    /// to mis-resolve: callers still treat `None` as out-of-range,
+    /// exactly like the old concrete peek.
     pub(in crate::runner::validation) fn peek_work_ram(&self, address: usize) -> Option<u8> {
-        self.core.peek_work_ram(address)
+        let addr = u32::try_from(address).ok()?;
+        let debugger = self.system.console.debugger()?;
+        let space = debugger.space_containing(addr)?;
+        debugger.read(space, addr, 1).map(|value| value as u8)
     }
 
     pub(in crate::runner::validation) fn peek_cartridge_ram(
         &self,
         address: usize,
     ) -> Option<(u8, bool)> {
-        self.core
-            .peek_cartridge_ram(address)
-            .map(|read_result| (read_result.data, read_result.mask != 0xFF))
+        factory_adapter::peek_cartridge_ram(&*self.system.console, address)
     }
 
     pub(in crate::runner::validation) fn peek_ppu_vram(&self, address: usize) -> Option<u8> {
-        self.core.peek_ppu_vram(address)
+        let addr = u32::try_from(address).ok()?;
+        let debugger = self.system.console.debugger()?;
+        let space = debugger.space_containing(addr)?;
+        debugger.read(space, addr, 1).map(|value| value as u8)
     }
 }

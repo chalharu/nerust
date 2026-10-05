@@ -43,7 +43,6 @@ impl ValidationArtifacts {
             description: case.description.clone(),
             rom: case.rom.clone(),
             frames: totals.frames,
-            steps: totals.steps,
             final_screen_hash,
             screen_checks: self.screen.screen_checks,
             work_ram_checks: self.memory.work_ram.checks,

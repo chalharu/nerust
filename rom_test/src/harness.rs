@@ -7,7 +7,7 @@ use super::{
 use crate::events::Buttons;
 
 pub trait CaseHarness {
-    fn run_frame(&mut self) -> u64;
+    fn run_frame(&mut self) -> Result<(), RomTestError>;
     fn frame_counter(&self) -> u64;
     fn on_assert(&mut self, frame: u64, assertion: &RomAssertion) -> Result<(), RomTestError>;
     fn on_reset(&mut self) -> Result<(), RomTestError>;
@@ -25,19 +25,17 @@ pub fn drive_case<H: CaseHarness>(
     harness: &mut H,
 ) -> Result<ExecutionTotals, RomTestError> {
     let final_frame = case.final_frame();
-    let mut total_steps = 0_u64;
     let mut next_event = 0_usize;
 
     dispatch_pending_events(case, harness, &mut next_event)?;
 
     while harness.frame_counter() < final_frame {
-        total_steps += harness.run_frame();
+        harness.run_frame()?;
         dispatch_pending_events(case, harness, &mut next_event)?;
     }
 
     Ok(ExecutionTotals {
         frames: harness.frame_counter(),
-        steps: total_steps,
     })
 }
 

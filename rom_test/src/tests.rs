@@ -134,9 +134,9 @@ fn drive_case_dispatches_frame_zero_events() {
     }
 
     impl CaseHarness for Harness {
-        fn run_frame(&mut self) -> u64 {
+        fn run_frame(&mut self) -> Result<(), RomTestError> {
             self.frame_counter += 1;
-            1
+            Ok(())
         }
 
         fn frame_counter(&self) -> u64 {
@@ -233,6 +233,7 @@ fn drive_case_dispatches_frame_zero_events() {
             },
         ],
         expected_audio: None,
+        ci: true,
         resolved_rom_path: PathBuf::new(),
     };
     let mut harness = Harness {
@@ -243,7 +244,6 @@ fn drive_case_dispatches_frame_zero_events() {
     let totals = drive_case(&case, &mut harness).expect("case should run");
 
     assert_eq!(totals.frames, 1);
-    assert_eq!(totals.steps, 1);
     assert_eq!(
         harness.events,
         vec![
@@ -346,6 +346,7 @@ fn rom_case_builds_core_options() {
             kind: RomEventKind::CheckScreen { hash: 1 },
         }],
         expected_audio: None,
+        ci: true,
         resolved_rom_path: PathBuf::new(),
     };
 
@@ -395,6 +396,7 @@ fn submapper_override_promotes_rom_header_in_memory() {
             kind: RomEventKind::CheckScreen { hash: 1 },
         }],
         expected_audio: None,
+        ci: true,
         resolved_rom_path: PathBuf::new(),
     };
     let rom_bytes = vec![
@@ -423,6 +425,7 @@ fn submapper_override_clears_ines_prg_ram_bits_when_promoting_to_nes20() {
             kind: RomEventKind::CheckScreen { hash: 1 },
         }],
         expected_audio: None,
+        ci: true,
         resolved_rom_path: PathBuf::new(),
     };
     let rom_bytes = vec![

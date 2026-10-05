@@ -25,7 +25,6 @@ impl ValidationOptions {
 #[derive(Debug, Clone, Copy)]
 pub struct ExecutionTotals {
     pub frames: u64,
-    pub steps: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -102,7 +101,6 @@ pub struct CaseValidation {
     pub description: String,
     pub rom: String,
     pub frames: u64,
-    pub steps: u64,
     pub final_screen_hash: u64,
     pub screen_checks: Vec<ScreenCheck>,
     pub work_ram_checks: Vec<WorkRamCheck>,

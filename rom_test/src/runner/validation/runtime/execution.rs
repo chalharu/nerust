@@ -1,14 +1,21 @@
 use super::ValidationRuntime;
+use crate::error::RomTestError;
+use nerust_core_traits::audio::AudioBackend;
 
 impl ValidationRuntime {
-    pub(in crate::runner::validation) fn run_frame(&mut self) -> u64 {
-        let steps = self.core.run_frame(
-            &mut self.screen_buffer,
-            &mut self.controller,
-            &mut self.mixer,
-        );
+    pub(in crate::runner::validation) fn run_frame(&mut self) -> Result<(), RomTestError> {
+        self.audio_sink.clear();
+        self.system
+            .console
+            .render_frame(&mut self.screen_buffer, &mut self.audio_sink)
+            .map_err(|error| RomTestError::RenderFrame(error.to_string()))?;
+        // Forward production audio into the hashing mixer. The sample
+        // stream is identical to direct pushing, so hashes are unchanged.
+        for sample in self.audio_sink.drain(..) {
+            self.mixer.push(sample);
+        }
         self.frame_counter += 1;
-        steps
+        Ok(())
     }
 
     pub(in crate::runner::validation) fn frame_counter(&self) -> u64 {
@@ -16,6 +23,6 @@ impl ValidationRuntime {
     }
 
     pub(in crate::runner::validation) fn reset(&mut self) {
-        self.core.reset();
+        self.system.console.reset();
     }
 }
