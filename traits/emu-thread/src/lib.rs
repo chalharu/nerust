@@ -2,7 +2,7 @@ use std::{
     fmt,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc::{self, SyncSender},
     },
     thread::{self, JoinHandle},
@@ -13,7 +13,7 @@ use nerust_core_traits::{
     audio::{AudioBackend, StereoSample},
     debugger::{
         DUMP_ROW_BYTES, DebuggerError, HexRow, InspectError, InspectRequest, InspectResult,
-        MAX_DUMP_BYTES, MemoryDump,
+        MAX_DUMP_BYTES, MemoryDump, StepUnit,
     },
 };
 use nerust_render_traits::{FrameBuffer, PixelFormat};
@@ -185,15 +185,41 @@ impl EmuThread {
                             // the barrier: each reply matches exactly one
                             // executed step. Deterministic callers pause
                             // first; stepping while running races free-run.
-                            let result = match core.debug_control() {
-                                Some(mut control) => {
-                                    let outcome = control.step(unit);
-                                    if outcome.is_ok() {
-                                        push_nominal_tap(&nominal_tap, control.take_last_audio());
+                            //
+                            // Frame steps run the standard frame block
+                            // directly: the pixels must land in the shared
+                            // framebuffer, which a delegated control
+                            // cannot reach. The reply is the frame counter
+                            // after the step (barrier position).
+                            // Instruction steps carry no pixels, so they
+                            // delegate to the control (cycles kept).
+                            //
+                            // Stepping an unloaded core is refused: the
+                            // render block would silently succeed without
+                            // advancing anything observable.
+                            let result = if !loaded {
+                                Err(DebuggerError::Unsupported)
+                            } else {
+                                match unit {
+                                    StepUnit::Frame => {
+                                        render_one_frame(
+                                            &mut *core,
+                                            &mut frame_slot,
+                                            &mut audio_scratch,
+                                            &mut filter,
+                                            &mut *audio,
+                                            &nominal_tap,
+                                            &fb,
+                                            &fr,
+                                            &fc,
+                                        );
+                                        Ok(fc.load(Ordering::Relaxed))
                                     }
-                                    outcome
+                                    StepUnit::Instruction => match core.debug_control() {
+                                        Some(mut control) => control.step(unit),
+                                        None => Err(DebuggerError::Unsupported),
+                                    },
                                 }
-                                None => Err(DebuggerError::Unsupported),
                             };
                             // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = reply.send(result);
@@ -234,22 +260,17 @@ impl EmuThread {
 
                 if loaded && !core.paused() {
                     // render_frame only fails with NoRomLoaded (guarded by loaded flag)
-                    if core
-                        .render_frame(&mut frame_slot, &mut audio_scratch)
-                        .is_ok()
-                    {
-                        filter.push_frame(&audio_scratch, &mut *audio);
-                        // Clone only with a tap installed: headless
-                        // capture pays, interactive frames do not.
-                        if nominal_tap.is_some() {
-                            push_nominal_tap(&nominal_tap, audio_scratch.clone());
-                        }
-                        fc.fetch_add(1, Ordering::Relaxed);
-                        if let Ok(mut guard) = fb.lock() {
-                            std::mem::swap(&mut *guard, &mut frame_slot);
-                            fr.store(true, Ordering::Release);
-                        }
-                    }
+                    render_one_frame(
+                        &mut *core,
+                        &mut frame_slot,
+                        &mut audio_scratch,
+                        &mut filter,
+                        &mut *audio,
+                        &nominal_tap,
+                        &fb,
+                        &fr,
+                        &fc,
+                    );
                 }
 
                 timer.wait();
@@ -329,6 +350,39 @@ fn push_nominal_tap(tap: &Option<Arc<Mutex<Vec<StereoSample>>>>, samples: Vec<St
     {
         guard.clear();
         guard.extend_from_slice(&samples);
+    }
+}
+
+/// Run one frame through the standard path: render, audio transport,
+/// nominal tap, shared-buffer publish, and counter advance.
+///
+/// Free-run iterations and `Step(Frame)` share this so stepped frames
+/// are indistinguishable from free ones.
+#[allow(clippy::too_many_arguments)]
+fn render_one_frame(
+    core: &mut dyn ConsoleCore,
+    frame_slot: &mut FrameBuffer,
+    audio_scratch: &mut Vec<StereoSample>,
+    filter: &mut DynamicRateFilter,
+    audio: &mut dyn AudioBackend,
+    nominal_tap: &Option<Arc<Mutex<Vec<StereoSample>>>>,
+    fb: &Arc<Mutex<FrameBuffer>>,
+    fr: &Arc<AtomicBool>,
+    fc: &Arc<AtomicU64>,
+) {
+    // render_frame only fails with NoRomLoaded (callers guard loaded).
+    if core.render_frame(frame_slot, audio_scratch).is_ok() {
+        filter.push_frame(audio_scratch, audio);
+        // Clone only with a tap installed: headless capture pays,
+        // interactive frames do not.
+        if nominal_tap.is_some() {
+            push_nominal_tap(nominal_tap, audio_scratch.clone());
+        }
+        fc.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut guard) = fb.lock() {
+            std::mem::swap(&mut *guard, frame_slot);
+            fr.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -482,7 +536,6 @@ mod tests {
 
     struct FakeControl<'a> {
         core: &'a mut FakeCore,
-        audio: Vec<StereoSample>,
     }
 
     impl DebugControl for FakeControl<'_> {
@@ -490,7 +543,6 @@ mod tests {
             match unit {
                 StepUnit::Frame => {
                     self.core.stepped_frames += 1;
-                    self.audio.push(StereoSample::new(1.0, 1.0));
                     Ok(1_000)
                 }
                 StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
@@ -518,10 +570,6 @@ mod tests {
             }
             Ok(())
         }
-
-        fn take_last_audio(&mut self) -> Vec<StereoSample> {
-            std::mem::take(&mut self.audio)
-        }
     }
 
     impl ConsoleCore for FakeCore {
@@ -535,8 +583,12 @@ mod tests {
         fn render_frame(
             &mut self,
             _frame_slot: &mut FrameBuffer,
-            _audio_out: &mut Vec<StereoSample>,
+            audio_out: &mut Vec<StereoSample>,
         ) -> Result<(), CoreError> {
+            // Mirrors the console contract: clear, then produce one
+            // deterministic sample. The tap observes exactly this stream.
+            audio_out.clear();
+            audio_out.push(StereoSample::new(2.0, 2.0));
             Ok(())
         }
 
@@ -574,10 +626,7 @@ mod tests {
             if !self.loaded {
                 return None;
             }
-            Some(Box::new(FakeControl {
-                core: self,
-                audio: Vec::new(),
-            }) as _)
+            Some(Box::new(FakeControl { core: self }) as _)
         }
 
         fn debugger(&self) -> Option<Box<dyn Debugger + '_>> {
@@ -638,9 +687,11 @@ mod tests {
     fn step_replies_are_synchronous_barriers() {
         let thread = spawn_loaded();
         thread.send(EmuCommand::Pause).expect("pause send");
-        // Each reply matches exactly one executed step, in order.
-        assert_eq!(step(&thread, StepUnit::Frame), Ok(1_000));
-        assert_eq!(step(&thread, StepUnit::Frame), Ok(1_000));
+        // Free-run frames may precede the pause; after it each reply
+        // matches exactly one executed step, in order.
+        let first = step(&thread, StepUnit::Frame).expect("step ok");
+        let second = step(&thread, StepUnit::Frame).expect("step ok");
+        assert_eq!(second, first + 1);
         assert_eq!(
             step(&thread, StepUnit::Instruction),
             Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
@@ -780,14 +831,15 @@ mod tests {
             })
             .expect("tap send");
         rx.recv().expect("tap ack");
-        assert_eq!(step(&thread, StepUnit::Frame), Ok(1_000));
-        // The fake control emits one mono sample per stepped frame.
+        step(&thread, StepUnit::Frame).expect("step ok");
+        // The fake render emits one mono sample per frame; the tap holds
+        // the latest stepped frame only.
         assert_eq!(
             *tap.lock().expect("tap lock"),
-            vec![StereoSample::new(1.0, 1.0)]
+            vec![StereoSample::new(2.0, 2.0)]
         );
         // Take semantics: a second step overwrites, not appends.
-        assert_eq!(step(&thread, StepUnit::Frame), Ok(1_000));
+        step(&thread, StepUnit::Frame).expect("step ok");
         assert_eq!(tap.lock().expect("tap lock").len(), 1);
     }
 

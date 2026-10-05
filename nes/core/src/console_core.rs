@@ -225,9 +225,7 @@ impl ConsoleCore for NesConsoleCore {
     fn debug_control(
         &mut self,
     ) -> Option<Box<dyn nerust_core_traits::debugger::DebugControl + '_>> {
-        if self.core.0.is_none() {
-            return None;
-        }
+        self.core.0.as_mut()?;
         Some(Box::new(crate::debugger::NesDebugControl::new(self)) as _)
     }
 }
