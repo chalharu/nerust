@@ -9,6 +9,7 @@ use std::{
 
 use nerust_core_traits::{
     CoreConfig, CoreOptions, EmuCommand, LoadCommand, StateDataCommand,
+    debugger::{DebuggerError, InspectError, InspectRequest, InspectResult, MemoryWrite, StepUnit},
     factory::{CoreParts, load::MediaObject},
     identity::SystemIdentity,
 };
@@ -324,6 +325,81 @@ impl EmuCore {
     /// Generate a preview frame from the EmuThread's shared frame buffer.
     pub fn generate_preview(&self) -> Option<crate::state::PreviewFrame> {
         crate::state::generate_preview(&self.emu)
+    }
+
+    /// Advance execution by one unit. The reply is the barrier: it arrives
+    /// after exactly one step. Returns thread errors outer, domain step
+    /// errors inner.
+    pub fn step(&self, unit: StepUnit) -> Result<Result<u64, DebuggerError>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::Step {
+                unit,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// On-demand inspect through the emu thread. Returns thread errors
+    /// outer, inspect errors (including `NotPaused`) inner.
+    pub fn inspect(
+        &self,
+        req: InspectRequest,
+    ) -> Result<Result<InspectResult, InspectError>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerInspect {
+                req,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// Memory edit through the emu thread. Pause-ungated by design;
+    /// deterministic callers pause first.
+    pub fn write_memory(
+        &self,
+        req: MemoryWrite,
+    ) -> Result<Result<(), DebuggerError>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::WriteMemory {
+                req,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// Install a nominal-audio tap: every rendered frame clones its
+    /// caller-buffer samples into `tap`. Headless capture only.
+    pub fn tap_nominal_audio(
+        &self,
+        tap: Arc<Mutex<Vec<nerust_core_traits::audio::StereoSample>>>,
+    ) -> Result<(), OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::TapNominalAudio {
+                tap,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// Cartridge-RAM peek preserving bus state. `None` when idle or when
+    /// the core has no cartridge space.
+    pub fn peek_cartridge_ram(&self, addr: usize) -> Result<Option<(u8, bool)>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::PeekCartridgeRam {
+                addr,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
     }
 
     pub fn canonical_media_identity(&self) -> Option<SystemIdentity> {

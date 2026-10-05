@@ -10,7 +10,7 @@ use std::{
 
 use nerust_core_traits::{
     ConsoleCore, EmuCommand, LoadCommand,
-    audio::AudioBackend,
+    audio::{AudioBackend, StereoSample},
     debugger::{
         DUMP_ROW_BYTES, DebuggerError, HexRow, InspectError, InspectRequest, InspectResult,
         MAX_DUMP_BYTES, MemoryDump,
@@ -93,6 +93,8 @@ impl EmuThread {
             // into the backend (both reused every frame, no allocation).
             let mut filter = DynamicRateFilter::new();
             let mut audio_scratch: Vec<nerust_core_traits::audio::StereoSample> = Vec::new();
+            let mut nominal_tap: Option<Arc<Mutex<Vec<nerust_core_traits::audio::StereoSample>>>> =
+                None;
 
             let mut timer = Timer::new();
             let mut loaded = false;
@@ -116,6 +118,13 @@ impl EmuThread {
                             }
                             EmuCommand::WriteMemory { reply, .. } => {
                                 let _ = reply.send(Err(DebuggerError::Unsupported));
+                            }
+                            EmuCommand::TapNominalAudio { tap, reply } => {
+                                nominal_tap = Some(tap);
+                                let _ = reply.send(());
+                            }
+                            EmuCommand::PeekCartridgeRam { reply, .. } => {
+                                let _ = reply.send(None);
                             }
                             _ => {}
                         },
@@ -177,7 +186,13 @@ impl EmuThread {
                             // executed step. Deterministic callers pause
                             // first; stepping while running races free-run.
                             let result = match core.debug_control() {
-                                Some(mut control) => control.step(unit),
+                                Some(mut control) => {
+                                    let outcome = control.step(unit);
+                                    if outcome.is_ok() {
+                                        push_nominal_tap(&nominal_tap, control.take_last_audio());
+                                    }
+                                    outcome
+                                }
                                 None => Err(DebuggerError::Unsupported),
                             };
                             // reply send failure: receiver dropped (timeout/abort) — expected
@@ -201,6 +216,18 @@ impl EmuThread {
                             // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = reply.send(result);
                         }
+                        EmuCommand::TapNominalAudio { tap, reply } => {
+                            nominal_tap = Some(tap);
+                            let _ = reply.send(());
+                        }
+                        EmuCommand::PeekCartridgeRam { addr, reply } => {
+                            let result = match core.debug_control() {
+                                Some(mut control) => control.peek_cartridge_ram(addr),
+                                None => None,
+                            };
+                            // reply send failure: receiver dropped (timeout/abort) — expected
+                            let _ = reply.send(result);
+                        }
                         EmuCommand::Quit => return,
                     }
                 }
@@ -212,6 +239,11 @@ impl EmuThread {
                         .is_ok()
                     {
                         filter.push_frame(&audio_scratch, &mut *audio);
+                        // Clone only with a tap installed: headless
+                        // capture pays, interactive frames do not.
+                        if nominal_tap.is_some() {
+                            push_nominal_tap(&nominal_tap, audio_scratch.clone());
+                        }
                         fc.fetch_add(1, Ordering::Relaxed);
                         if let Ok(mut guard) = fb.lock() {
                             std::mem::swap(&mut *guard, &mut frame_slot);
@@ -283,6 +315,21 @@ fn handle_load(
     let loaded = result.is_ok();
     let _ = cmd.reply.send(result);
     loaded
+}
+
+/// Overwrite a nominal-audio tap with one frame's samples, when a tap
+/// is installed and the frame produced any. The tap always holds the
+/// latest frame only; accumulation is the reader's job.
+fn push_nominal_tap(tap: &Option<Arc<Mutex<Vec<StereoSample>>>>, samples: Vec<StereoSample>) {
+    if samples.is_empty() {
+        return;
+    }
+    if let Some(tap) = tap
+        && let Ok(mut guard) = tap.lock()
+    {
+        guard.clear();
+        guard.extend_from_slice(&samples);
+    }
 }
 
 /// Serve one inspect request against a paused core.
@@ -435,6 +482,7 @@ mod tests {
 
     struct FakeControl<'a> {
         core: &'a mut FakeCore,
+        audio: Vec<StereoSample>,
     }
 
     impl DebugControl for FakeControl<'_> {
@@ -442,6 +490,7 @@ mod tests {
             match unit {
                 StepUnit::Frame => {
                     self.core.stepped_frames += 1;
+                    self.audio.push(StereoSample::new(1.0, 1.0));
                     Ok(1_000)
                 }
                 StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
@@ -468,6 +517,10 @@ mod tests {
                 self.core.mem[(addr + i) as usize] = (value >> (8 * i)) as u8;
             }
             Ok(())
+        }
+
+        fn take_last_audio(&mut self) -> Vec<StereoSample> {
+            std::mem::take(&mut self.audio)
         }
     }
 
@@ -521,7 +574,10 @@ mod tests {
             if !self.loaded {
                 return None;
             }
-            Some(Box::new(FakeControl { core: self }) as _)
+            Some(Box::new(FakeControl {
+                core: self,
+                audio: Vec::new(),
+            }) as _)
         }
 
         fn debugger(&self) -> Option<Box<dyn Debugger + '_>> {
@@ -709,5 +765,44 @@ mod tests {
             ),
             Err(DebuggerError::BadWidth(0))
         );
+    }
+
+    #[test]
+    fn nominal_tap_collects_stepped_frame_audio() {
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Pause).expect("pause send");
+        let tap = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::TapNominalAudio {
+                tap: Arc::clone(&tap),
+                reply: tx,
+            })
+            .expect("tap send");
+        rx.recv().expect("tap ack");
+        assert_eq!(step(&thread, StepUnit::Frame), Ok(1_000));
+        // The fake control emits one mono sample per stepped frame.
+        assert_eq!(
+            *tap.lock().expect("tap lock"),
+            vec![StereoSample::new(1.0, 1.0)]
+        );
+        // Take semantics: a second step overwrites, not appends.
+        assert_eq!(step(&thread, StepUnit::Frame), Ok(1_000));
+        assert_eq!(tap.lock().expect("tap lock").len(), 1);
+    }
+
+    #[test]
+    fn cartridge_peek_reports_none_without_space() {
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Pause).expect("pause send");
+        // The fake control keeps the trait default (no cartridge space).
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::PeekCartridgeRam {
+                addr: 0x6000,
+                reply: tx,
+            })
+            .expect("peek send");
+        assert_eq!(rx.recv().expect("peek reply"), None);
     }
 }
