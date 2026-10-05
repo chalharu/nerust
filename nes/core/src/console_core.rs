@@ -79,12 +79,42 @@ impl NesConsoleCore {
 }
 
 impl NesConsoleCore {
-    fn core_ref(&self) -> Result<&Core, CoreError> {
+    pub(crate) fn core_ref(&self) -> Result<&Core, CoreError> {
         self.core.0.as_ref().ok_or(CoreError::NoRomLoaded)
     }
 
-    fn core_mut(&mut self) -> Result<&mut Core, CoreError> {
+    pub(crate) fn core_mut(&mut self) -> Result<&mut Core, CoreError> {
         self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)
+    }
+
+    /// Advance one frame, reporting the cycles the core counted.
+    ///
+    /// Same path as the [`ConsoleCore::render_frame`] implementation;
+    /// the cycle count that path discards is returned here for
+    /// debugger stepping.
+    pub(crate) fn render_frame_cycles(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<u64, CoreError> {
+        let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
+
+        // Take latest input and sync to controller
+        self.emu_input.take();
+        if let Some(state) = self.emu_input.read_buf.downcast_ref::<NesInputBuffer>() {
+            self.controller.sync_input(&state.0);
+        }
+
+        // Nominal-rate audio production only: samples collect into the
+        // caller buffer; the session layer owns transport to the backend.
+        audio_out.clear();
+        let mut sink = VecSink {
+            out: audio_out,
+            sample_rate: self.sample_rate,
+        };
+        let cycles = core.run_frame(frame_slot, &mut self.controller, &mut sink);
+
+        Ok(cycles)
     }
 
     /// Cartridge RAM peek that preserves bus state.
@@ -116,23 +146,7 @@ impl ConsoleCore for NesConsoleCore {
         frame_slot: &mut FrameBuffer,
         audio_out: &mut Vec<StereoSample>,
     ) -> Result<(), CoreError> {
-        let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
-
-        // Take latest input and sync to controller
-        self.emu_input.take();
-        if let Some(state) = self.emu_input.read_buf.downcast_ref::<NesInputBuffer>() {
-            self.controller.sync_input(&state.0);
-        }
-
-        // Nominal-rate audio production only: samples collect into the
-        // caller buffer; the session layer owns transport to the backend.
-        audio_out.clear();
-        let mut sink = VecSink {
-            out: audio_out,
-            sample_rate: self.sample_rate,
-        };
-        core.run_frame(frame_slot, &mut self.controller, &mut sink);
-
+        self.render_frame_cycles(frame_slot, audio_out)?;
         Ok(())
     }
 
@@ -211,10 +225,10 @@ impl ConsoleCore for NesConsoleCore {
     fn debug_control(
         &mut self,
     ) -> Option<Box<dyn nerust_core_traits::debugger::DebugControl + '_>> {
-        self.core
-            .0
-            .as_mut()
-            .map(|core| Box::new(crate::debugger::NesDebugControl::new(core)) as _)
+        if self.core.0.is_none() {
+            return None;
+        }
+        Some(Box::new(crate::debugger::NesDebugControl::new(self)) as _)
     }
 }
 
