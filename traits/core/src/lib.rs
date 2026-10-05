@@ -6,7 +6,12 @@ pub mod peripheral;
 pub mod save_state;
 pub mod touch;
 
-use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::mpsc::Sender};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    path::PathBuf,
+    sync::{Arc, Mutex, mpsc::Sender},
+};
 
 use downcast_rs::Downcast;
 use dyn_clone::DynClone;
@@ -147,10 +152,27 @@ pub enum EmuCommand {
         req: debugger::InspectRequest,
         reply: Sender<Result<debugger::InspectResult, debugger::InspectError>>,
     },
-    /// Memory edit through the control path. Pause-gated like inspection.
+    /// Memory edit through the control path. Deliberately pause-ungated:
+    /// `DebuggerError` has no not-paused variant by design (§5.2), so
+    /// deterministic callers pause first and racing writes interleave
+    /// with free-run by contract.
     WriteMemory {
         req: debugger::MemoryWrite,
         reply: Sender<Result<(), debugger::DebuggerError>>,
+    },
+    /// Install a nominal-audio tap: every rendered frame clones its
+    /// caller-buffer samples into `tap`. Headless capture only; the
+    /// session audio transport is unaffected.
+    TapNominalAudio {
+        tap: Arc<Mutex<Vec<audio::StereoSample>>>,
+        reply: Sender<()>,
+    },
+    /// Cartridge-RAM peek preserving bus state. Exists because the
+    /// generic inspect path carries values only; answered from the
+    /// control handle, which owns the needed borrows.
+    PeekCartridgeRam {
+        addr: usize,
+        reply: Sender<Option<(u8, bool)>>,
     },
 }
 

@@ -11,6 +11,8 @@
 use std::ops::RangeInclusive;
 use std::sync::Arc;
 
+use crate::audio::StereoSample;
+
 // ---------------------------------------------------------------------------
 // Spaces
 // ---------------------------------------------------------------------------
@@ -378,9 +380,9 @@ pub trait DebugControl {
 
     /// Edit memory (memory-viewer path).
     ///
-    /// `Result`, not `bool`: the failure reasons need producers.
-    /// Validation order matters: bad width first, so that
-    /// "width 0 with unknown SpaceId" does not mask as `UnknownSpace`.
+    /// **`Result<(), DebuggerError>` であり `bool` ではない。**
+    /// `UnknownSpace` / `ReadOnlySpace` / `BadWidth` を返すために理由が
+    /// 必要で、`bool` ではこれらの variant が producers を持たない。
     fn write_memory(
         &mut self,
         space: SpaceId,
@@ -388,6 +390,28 @@ pub trait DebugControl {
         width: u8,
         value: u64,
     ) -> Result<(), DebuggerError>;
+
+    /// Last frame's nominal audio samples, for headless capture.
+    ///
+    /// Emptied on each call (`take` semantics): the caller owns the
+    /// accumulation, the control only holds the latest frame. Empty by
+    /// default; cores with a scratch audio buffer override this.
+    fn take_last_audio(&mut self) -> Vec<StereoSample> {
+        Vec::new()
+    }
+
+    /// Cartridge-RAM peek preserving bus state.
+    ///
+    /// Returns `(value, is_open_bus)`: `mask == 0x00` (nothing drove the
+    /// bus) reads as open bus, `mask == 0xFF` as mapped RAM. `None` when
+    /// the core has no cartridge space or cannot answer.
+    ///
+    /// This exists because the generic [`Debugger::read`] path carries
+    /// values only, while some suites also assert mapped-vs-open-bus
+    /// state. `None` by default; cores with cartridge RAM override this.
+    fn peek_cartridge_ram(&mut self, _addr: usize) -> Option<(u8, bool)> {
+        None
+    }
 }
 
 #[cfg(test)]
