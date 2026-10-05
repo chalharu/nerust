@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use serde::{Deserialize, Serialize};
 
 use super::{error::RomTestError, events::RomEvent};
@@ -87,6 +86,17 @@ impl RomManifest {
             case.resolve_rom_path(&resolved_rom_root);
         }
     }
+}
+
+/// Manifest-schema MMC3 IRQ variant. Deliberately separate from the
+/// core's same-named type: the manifest must not name NES-concrete
+/// types, so `factory_adapter` maps this to the core type at
+/// construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mmc3IrqVariant {
+    Sharp,
+    Nec,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,12 +191,6 @@ impl RomCase {
         self.expected_audio
             .as_ref()
             .map_or(DEFAULT_AUDIO_SAMPLE_RATE, |expected| expected.sample_rate)
-    }
-
-    pub fn core_options(&self) -> CoreOptions {
-        CoreOptions {
-            mmc3_irq_variant: self.mmc3_irq_variant,
-        }
     }
 
     fn resolve_rom_path(&mut self, rom_root: &Path) {

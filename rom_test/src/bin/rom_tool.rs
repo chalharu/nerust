@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use nerust_nes_factory::NesFactory;
 use nerust_rom_test::{
     manifest::{RomManifest, load_default_manifest, load_manifest},
     report::{default_output_root, write_html_report},
@@ -140,7 +141,7 @@ fn run_command(
             case.description
         );
 
-        let outcome = validate_case(case, options);
+        let outcome = validate_case(&NesFactory, case, options);
         print_outcome(&outcome);
         outcomes.push(outcome);
     }

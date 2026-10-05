@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use nerust_nes_core::core_options::Mmc3IrqVariant;
+use crate::manifest::Mmc3IrqVariant;
 
 use super::{
     error::RomTestError,
@@ -350,10 +350,7 @@ fn rom_case_builds_core_options() {
         resolved_rom_path: PathBuf::new(),
     };
 
-    assert_eq!(
-        case.core_options().mmc3_irq_variant,
-        Some(Mmc3IrqVariant::Nec)
-    );
+    assert_eq!(case.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     assert_eq!(case.sub_mapper_type, Some(4));
 }
 
