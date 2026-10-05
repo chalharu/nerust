@@ -11,8 +11,6 @@
 use std::ops::RangeInclusive;
 use std::sync::Arc;
 
-use crate::audio::StereoSample;
-
 // ---------------------------------------------------------------------------
 // Spaces
 // ---------------------------------------------------------------------------
@@ -390,15 +388,6 @@ pub trait DebugControl {
         width: u8,
         value: u64,
     ) -> Result<(), DebuggerError>;
-
-    /// Last frame's nominal audio samples, for headless capture.
-    ///
-    /// Emptied on each call (`take` semantics): the caller owns the
-    /// accumulation, the control only holds the latest frame. Empty by
-    /// default; cores with a scratch audio buffer override this.
-    fn take_last_audio(&mut self) -> Vec<StereoSample> {
-        Vec::new()
-    }
 
     /// Cartridge-RAM peek preserving bus state.
     ///

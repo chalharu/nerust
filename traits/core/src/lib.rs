@@ -142,6 +142,12 @@ pub enum EmuCommand {
     /// command is drained, so receipt is the frame barrier: each reply
     /// corresponds to exactly one executed step. Callers pause first
     /// for determinism; stepping while running races free-run.
+    ///
+    /// The success value is the frame counter after the stepped frame
+    /// (barrier position), not a cycle count: the thread renders the
+    /// frame itself so pixels, tap, and swap stay on the shared path.
+    /// Cycle counts remain available through `DebugControl::step`
+    /// for direct-console drivers.
     Step {
         unit: debugger::StepUnit,
         reply: Sender<Result<u64, debugger::DebuggerError>>,
