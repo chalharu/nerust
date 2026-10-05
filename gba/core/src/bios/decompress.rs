@@ -1,5 +1,52 @@
+use super::SwiResult;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
+
+/// Decompression SWI dispatch (0x10-0x18).
+pub(crate) fn dispatch(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> SwiResult {
+    match swi {
+        0x10 => {
+            let cycles = bit_unpack(regs, bus);
+            SwiResult::Return(cycles)
+        }
+        0x11 => {
+            let cycles = lz77(regs, bus, 1);
+            SwiResult::Return(cycles)
+        }
+        0x12 => {
+            let cycles = lz77(regs, bus, 2);
+            SwiResult::Return(cycles)
+        }
+        0x13 => {
+            let cycles = huff(regs, bus);
+            SwiResult::Return(cycles)
+        }
+        0x14 => {
+            let cycles = rl(regs, bus, 1);
+            SwiResult::Return(cycles)
+        }
+        0x15 => {
+            let cycles = rl(regs, bus, 2);
+            SwiResult::Return(cycles)
+        }
+        0x16 => {
+            // Diff8bitUnFilterWram: HLE 0xD051 + 0x2000 wait = 0xF051
+            diff8_wram(regs, bus, 1);
+            SwiResult::Return(0xD051)
+        }
+        0x17 => {
+            // Diff8bitUnFilterVram: VRAM dest, no extra wait beyond HLE
+            diff8_wram(regs, bus, 2);
+            SwiResult::Return(0x3853)
+        }
+        0x18 => {
+            // Diff16bitUnFilter: HLE 0x6851 + 0x1000 wait = 0x7851
+            diff16(regs, bus);
+            SwiResult::Return(0x6851)
+        }
+        _ => SwiResult::Unsupported,
+    }
+}
 
 pub fn bit_unpack(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let Some(spec) = BitUnpackSpec::read(regs, bus) else {

@@ -1,13 +1,15 @@
 //! ARM micro-op expansion: one [`MicroOp`] queue per instruction.
 //! Pure decode over snapshots (`regs`); shares only the op types
 //! from the parent module, so this file depends downward on nothing.
-use super::{
-    AluEffect, AluImmOp, BlockEmptyEffect, BlockEndEffect, BlockStartEffect, BlockWord,
-    BranchEffect, MemAccess, MicroOp, MicroOpVec, MulEffect,
-};
-use crate::cpu::semantics::{
-    barrel_shift, condition_passed, is_psr_transfer, multiplier_cycles, multiplier_cycles_long,
-    start_address,
+use super::ops_alu::{AluEffect, AluImmOp};
+use super::ops_block::{BlockEndEffect, BlockStartEffect};
+use super::ops_block_words::{BlockEmptyEffect, BlockWord};
+use super::ops_branch::{BranchEffect, MulEffect};
+use super::ops_mem::MemAccess;
+use super::{MicroOp, MicroOpVec};
+use crate::cpu::semantics::multiply::{multiplier_cycles, multiplier_cycles_long};
+use crate::cpu::semantics::shifter::{
+    barrel_shift, condition_passed, is_psr_transfer, start_address,
 };
 use crate::cpu_registers::CpuRegisters;
 
