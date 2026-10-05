@@ -110,9 +110,12 @@ impl<'a> NesDebugControl<'a> {
 
 impl DebugControl for NesDebugControl<'_> {
     fn step(&mut self, unit: StepUnit) -> Result<u64, DebuggerError> {
-        // No cycle-accounted entry point exists yet: single-stepping has
-        // no instruction-boundary API, and frame stepping has no
-        // reported cycle count. Both stay explicit until wired.
+        // No cycle-accounted entry point exists yet, so both units stay
+        // explicit for now:
+        // - Frame needs a rendering-free frame entry that reports cycles
+        //   (planned: wire `Core::run_frame`'s cycle count through).
+        // - Instruction is a required debug capability and planned as well,
+        //   but needs an instruction-boundary API in the CPU core first.
         Err(DebuggerError::UnsupportedStepUnit(unit))
     }
 
