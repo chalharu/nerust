@@ -136,10 +136,21 @@ pub enum EmuCommand {
     /// Advance execution by one unit. Processed synchronously when the
     /// command is drained, so receipt is the frame barrier: each reply
     /// corresponds to exactly one executed step. Callers pause first
-    /// for determinism; stepping while running races with free-run.
+    /// for determinism; stepping while running races free-run.
     Step {
         unit: debugger::StepUnit,
         reply: Sender<Result<u64, debugger::DebuggerError>>,
+    },
+    /// On-demand memory/panel inspection. Requires pause (§5.1): reading
+    /// while running cannot guarantee the values match the displayed frame.
+    DebuggerInspect {
+        req: debugger::InspectRequest,
+        reply: Sender<Result<debugger::InspectResult, debugger::InspectError>>,
+    },
+    /// Memory edit through the control path. Pause-gated like inspection.
+    WriteMemory {
+        req: debugger::MemoryWrite,
+        reply: Sender<Result<(), debugger::DebuggerError>>,
     },
 }
 

@@ -349,6 +349,22 @@ impl DebuggerError {
     }
 }
 
+/// `EmuCommand::DebuggerInspect` failure reasons.
+///
+/// Defined in the kernel next to `EmuCommand` (not in `traits/emu-thread`
+/// as §5.2 sketched: the command type lives here, so its reply type must
+/// too — otherwise the crates cycle). The layering still holds: `NotPaused`
+/// is produced only by the loop guard (infrastructure), every other
+/// variant arrives wrapped from domain code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InspectError {
+    /// Not paused, so inspection is refused. Produced by the loop guard;
+    /// domain code can never observe `paused` and never produces this.
+    NotPaused,
+    /// The core refused the debug capability. Reason comes from domain.
+    Core(DebuggerError),
+}
+
 /// Execution control and memory editing. Separate from [`Debugger`] so
 /// that `&self` observation never implies write permission, and so that
 /// cores with observation but no single-stepping stay expressible.
