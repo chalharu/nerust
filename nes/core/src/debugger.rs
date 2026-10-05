@@ -205,6 +205,16 @@ impl DebugControl for NesDebugControl<'_> {
         }
         Ok(())
     }
+
+    fn take_last_audio(&mut self) -> Vec<StereoSample> {
+        std::mem::take(&mut self.audio_sink)
+    }
+
+    fn peek_cartridge_ram(&mut self, addr: usize) -> Option<(u8, bool)> {
+        let core = self.console.core_mut().ok()?;
+        core.peek_cartridge_ram(addr)
+            .map(|read| (read.data, read.mask != 0xFF))
+    }
 }
 
 #[cfg(test)]
