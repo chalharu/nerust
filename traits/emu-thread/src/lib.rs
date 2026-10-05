@@ -8,7 +8,14 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use nerust_core_traits::{ConsoleCore, EmuCommand, LoadCommand, audio::AudioBackend};
+use nerust_core_traits::{
+    ConsoleCore, EmuCommand, LoadCommand,
+    audio::AudioBackend,
+    debugger::{
+        DUMP_ROW_BYTES, DebuggerError, HexRow, InspectError, InspectRequest, InspectResult,
+        MAX_DUMP_BYTES, MemoryDump,
+    },
+};
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 use nerust_sound_filter::dynamic_rate::DynamicRateFilter;
 use nerust_timer::Timer;
@@ -101,9 +108,14 @@ impl EmuThread {
                             // Reply-bearing commands must answer even when
                             // idle: dropping the reply would hang the caller.
                             EmuCommand::Step { reply, .. } => {
-                                let _ = reply.send(Err(
-                                    nerust_core_traits::debugger::DebuggerError::Unsupported,
-                                ));
+                                let _ = reply.send(Err(DebuggerError::Unsupported));
+                            }
+                            EmuCommand::DebuggerInspect { reply, .. } => {
+                                let _ =
+                                    reply.send(Err(InspectError::Core(DebuggerError::Unsupported)));
+                            }
+                            EmuCommand::WriteMemory { reply, .. } => {
+                                let _ = reply.send(Err(DebuggerError::Unsupported));
                             }
                             _ => {}
                         },
@@ -166,9 +178,25 @@ impl EmuThread {
                             // first; stepping while running races free-run.
                             let result = match core.debug_control() {
                                 Some(mut control) => control.step(unit),
-                                None => {
-                                    Err(nerust_core_traits::debugger::DebuggerError::Unsupported)
+                                None => Err(DebuggerError::Unsupported),
+                            };
+                            // reply send failure: receiver dropped (timeout/abort) — expected
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::DebuggerInspect { req, reply } => {
+                            let frame = fc.load(Ordering::Relaxed);
+                            let result = inspect_memory(&*core, &req, frame);
+                            // reply send failure: receiver dropped (timeout/abort) — expected
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::WriteMemory { req, reply } => {
+                            // Deliberately pause-ungated (see InspectError):
+                            // deterministic callers pause first.
+                            let result = match core.debug_control() {
+                                Some(mut control) => {
+                                    control.write_memory(req.space, req.addr, req.width, req.value)
                                 }
+                                None => Err(DebuggerError::Unsupported),
                             };
                             // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = reply.send(result);
@@ -239,8 +267,7 @@ impl Drop for EmuThread {
     }
 }
 
-/// Shared Load handling for the idle and running command loops:
-/// stamps the authoritative device rate (the core needs it as data —
+/// Shared Load handling for the idle and running command loops:/// stamps the authoritative device rate (the core needs it as data —
 /// resamplers, save-state validation — never the backend), loads the
 /// ROM and restarts the rate filter. Returns whether a ROM is loaded.
 /// Reply send failure (receiver dropped) is expected during teardown.
@@ -258,6 +285,62 @@ fn handle_load(
     loaded
 }
 
+/// Serve one inspect request against a paused core.
+///
+/// Pause is enforced here (infrastructure guard): reading while running
+/// cannot guarantee the values match any single frame. Unmapped holes
+/// inside the range end the dump; the final row may be short.
+fn inspect_memory(
+    core: &dyn ConsoleCore,
+    req: &InspectRequest,
+    frame: u64,
+) -> Result<InspectResult, InspectError> {
+    if !core.paused() {
+        return Err(InspectError::NotPaused);
+    }
+    let debugger = core
+        .debugger()
+        .ok_or(InspectError::Core(DebuggerError::Unsupported))?;
+    let (space, base) = match (req.space, req.addr) {
+        (Some(id), Some(addr)) => (id, addr),
+        // Documented default: start of the address map (viewer default view).
+        _ => {
+            let first = debugger
+                .spaces()
+                .first()
+                .ok_or(InspectError::Core(DebuggerError::Unsupported))?;
+            (first.id, *first.range.start())
+        }
+    };
+    let max_rows = (req.rows as usize).min(MAX_DUMP_BYTES / DUMP_ROW_BYTES);
+    let mut rows = Vec::with_capacity(max_rows);
+    for row in 0..max_rows {
+        let addr = base.saturating_add(row as u32 * DUMP_ROW_BYTES as u32);
+        let mut bytes = [0u8; DUMP_ROW_BYTES];
+        let n = debugger.read_bytes(space, addr, &mut bytes);
+        if n == 0 {
+            break;
+        }
+        rows.push(HexRow {
+            addr,
+            valid: n as u8,
+            bytes,
+        });
+        if n < DUMP_ROW_BYTES {
+            break;
+        }
+    }
+    Ok(InspectResult {
+        dump: MemoryDump {
+            space,
+            base,
+            rows: rows.into(),
+        },
+        panels: debugger.panels().into(),
+        captured_at_frame: frame,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -270,7 +353,10 @@ mod tests {
     use nerust_core_traits::{
         CoreConfig, CoreError,
         audio::{AudioBackend, StereoSample},
-        debugger::{DebugControl, DebuggerError, StepUnit},
+        debugger::{
+            DebugControl, Debugger, DebuggerError, InspectError, InspectRequest, InspectResult,
+            MemoryWrite, SpaceAccess, SpaceId, SpaceInfo, SpaceTable, StepUnit,
+        },
     };
 
     use super::*;
@@ -291,6 +377,60 @@ mod tests {
         paused: bool,
         loaded: bool,
         stepped_frames: u64,
+        mem: [u8; 256],
+    }
+
+    static FAKE_SPACES: [SpaceInfo; 1] = [SpaceInfo {
+        id: SpaceId(0),
+        key: "wram",
+        name: "WRAM",
+        address_bits: 8,
+        range: 0x0000..=0x00FF,
+        access: SpaceAccess::ReadWrite,
+    }];
+
+    static FAKE_TABLE: SpaceTable = SpaceTable::build(&FAKE_SPACES);
+
+    struct FakeDebugger<'a> {
+        mem: &'a [u8; 256],
+        regs: Vec<(&'static str, u64)>,
+    }
+
+    impl<'a> FakeDebugger<'a> {
+        fn new(mem: &'a [u8; 256]) -> Self {
+            let mut regs = vec![("a", 1u64), ("b", 2u64)];
+            regs.sort_by_key(|(name, _)| *name);
+            Self { mem, regs }
+        }
+
+        fn read_byte(&self, addr: u32) -> Option<u64> {
+            self.mem.get(addr as usize).copied().map(u64::from)
+        }
+    }
+
+    impl Debugger for FakeDebugger<'_> {
+        fn spaces(&self) -> &[SpaceInfo] {
+            &FAKE_SPACES
+        }
+
+        fn space_containing(&self, addr: u32) -> Option<SpaceId> {
+            (addr <= 0xFF).then_some(SpaceId(0))
+        }
+
+        fn read(&self, space: SpaceId, addr: u32, width: u8) -> Option<u64> {
+            if !FAKE_TABLE.covers(space, addr, width) {
+                return None;
+            }
+            let mut value = 0u64;
+            for i in 0..width as u32 {
+                value |= self.read_byte(addr + i)? << (8 * i);
+            }
+            Some(value)
+        }
+
+        fn registers(&self) -> &[(&'static str, u64)] {
+            &self.regs
+        }
     }
 
     struct FakeControl<'a> {
@@ -310,12 +450,24 @@ mod tests {
 
         fn write_memory(
             &mut self,
-            _space: nerust_core_traits::debugger::SpaceId,
-            _addr: u32,
-            _width: u8,
-            _value: u64,
+            space: SpaceId,
+            addr: u32,
+            width: u8,
+            value: u64,
         ) -> Result<(), DebuggerError> {
-            Err(DebuggerError::Unsupported)
+            if !SpaceTable::width_is_valid(width) {
+                return Err(DebuggerError::BadWidth(width));
+            }
+            FAKE_TABLE
+                .get(space)
+                .ok_or(DebuggerError::UnknownSpace(space))?;
+            if !FAKE_TABLE.covers(space, addr, width) {
+                return Err(DebuggerError::UnmappedAddress { space, addr });
+            }
+            for i in 0..width as u32 {
+                self.core.mem[(addr + i) as usize] = (value >> (8 * i)) as u8;
+            }
+            Ok(())
         }
     }
 
@@ -371,6 +523,13 @@ mod tests {
             }
             Some(Box::new(FakeControl { core: self }) as _)
         }
+
+        fn debugger(&self) -> Option<Box<dyn Debugger + '_>> {
+            if !self.loaded {
+                return None;
+            }
+            Some(Box::new(FakeDebugger::new(&self.mem)) as _)
+        }
     }
 
     fn spawn_loaded() -> EmuThread {
@@ -386,6 +545,7 @@ mod tests {
                 paused: false,
                 loaded: false,
                 stepped_frames: 0,
+                mem: std::array::from_fn(|i| i as u8),
             }),
             Arc::clone(&fb),
             Arc::new(AtomicBool::new(false)),
@@ -440,6 +600,114 @@ mod tests {
         assert_eq!(
             step(&thread, StepUnit::Frame),
             Err(DebuggerError::Unsupported)
+        );
+    }
+
+    fn inspect(thread: &EmuThread, req: InspectRequest) -> Result<InspectResult, InspectError> {
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::DebuggerInspect { req, reply: tx })
+            .expect("inspect send");
+        rx.recv().expect("inspect reply")
+    }
+
+    fn write(thread: &EmuThread, req: MemoryWrite) -> Result<(), DebuggerError> {
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::WriteMemory { req, reply: tx })
+            .expect("write send");
+        rx.recv().expect("write reply")
+    }
+
+    fn paused_inspect_request() -> InspectRequest {
+        InspectRequest {
+            space: Some(SpaceId(0)),
+            addr: Some(0x10),
+            rows: 2,
+        }
+    }
+
+    #[test]
+    fn inspect_paused_reads_deterministic_bytes() {
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Pause).expect("pause send");
+        let result = inspect(&thread, paused_inspect_request()).expect("inspect ok");
+        assert_eq!(result.dump.space, SpaceId(0));
+        assert_eq!(result.dump.base, 0x10);
+        assert_eq!(result.dump.rows.len(), 2);
+        // Fake memory holds its own address: row 0 covers 0x10..0x1F.
+        let row = &result.dump.rows[0];
+        assert_eq!(row.addr, 0x10);
+        assert_eq!(row.valid, 16);
+        assert_eq!(row.bytes[0], 0x10);
+        assert_eq!(row.bytes[15], 0x1F);
+        assert!(result.panels.is_empty());
+    }
+
+    #[test]
+    fn inspect_while_running_is_refused() {
+        let thread = spawn_loaded();
+        // Never paused: the guard must refuse instead of racing free-run.
+        assert!(matches!(
+            inspect(&thread, paused_inspect_request()),
+            Err(InspectError::NotPaused)
+        ));
+    }
+
+    #[test]
+    fn inspect_defaults_to_map_start() {
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Pause).expect("pause send");
+        let result = inspect(
+            &thread,
+            InspectRequest {
+                space: None,
+                addr: None,
+                rows: 1,
+            },
+        )
+        .expect("inspect ok");
+        assert_eq!(result.dump.space, SpaceId(0));
+        assert_eq!(result.dump.base, 0);
+        assert_eq!(result.dump.rows[0].bytes[0], 0);
+    }
+
+    #[test]
+    fn write_roundtrip_reads_back_through_inspect() {
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Pause).expect("pause send");
+        write(
+            &thread,
+            MemoryWrite {
+                space: SpaceId(0),
+                addr: 0x20,
+                width: 1,
+                value: 0xAB,
+            },
+        )
+        .expect("write ok");
+        let result = inspect(
+            &thread,
+            InspectRequest {
+                space: Some(SpaceId(0)),
+                addr: Some(0x20),
+                rows: 1,
+            },
+        )
+        .expect("inspect ok");
+        assert_eq!(result.dump.rows[0].bytes[0], 0xAB);
+        // Width validation precedes all other checks.
+        assert_eq!(
+            write(
+                &thread,
+                MemoryWrite {
+                    space: SpaceId(9),
+                    addr: 0,
+                    width: 0,
+                    value: 0,
+                },
+            ),
+            Err(DebuggerError::BadWidth(0))
         );
     }
 }
