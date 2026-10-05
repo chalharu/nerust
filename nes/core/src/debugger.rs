@@ -14,15 +14,30 @@ use crate::Core;
 /// Work RAM with CPU mirrors ($0000-$07FF mirrored to $1FFF).
 /// Matches `peek_work_ram` semantics exactly.
 pub const SPACE_WORK_RAM: SpaceId = SpaceId(0);
+/// PPU nametables and palette ($2000-$3EFF, $3F00-$3FFF).
+/// CHR ($0000-$1FFF) is cartridge-dependent and intentionally excluded:
+/// it has no stable range in this table.
+pub const SPACE_PPU_VRAM: SpaceId = SpaceId(1);
 
-static NES_SPACES: [SpaceInfo; 1] = [SpaceInfo {
-    id: SPACE_WORK_RAM,
-    key: "wram",
-    name: "WRAM",
-    address_bits: 13,
-    range: 0x0000..=0x1FFF,
-    access: SpaceAccess::ReadWrite,
-}];
+static NES_SPACES: [SpaceInfo; 2] = [
+    SpaceInfo {
+        id: SPACE_WORK_RAM,
+        key: "wram",
+        name: "WRAM",
+        address_bits: 13,
+        range: 0x0000..=0x1FFF,
+        access: SpaceAccess::ReadWrite,
+    },
+    SpaceInfo {
+        id: SPACE_PPU_VRAM,
+        key: "ppu_vram",
+        name: "PPU VRAM",
+        address_bits: 14,
+        range: 0x2000..=0x3FFF,
+        // No VRAM poke exists yet, so edits are refused for now.
+        access: SpaceAccess::ReadOnly,
+    },
+];
 
 static NES_SPACE_TABLE: SpaceTable = SpaceTable::build(&NES_SPACES);
 
@@ -46,6 +61,10 @@ impl<'a> NesDebugger<'a> {
     fn read_byte(&self, addr: u32) -> Option<u64> {
         self.core.peek_work_ram(addr as usize).map(u64::from)
     }
+
+    fn read_vram_byte(&self, addr: u32) -> Option<u64> {
+        self.core.peek_ppu_vram(addr as usize).map(u64::from)
+    }
 }
 
 impl Debugger for NesDebugger<'_> {
@@ -66,21 +85,33 @@ impl Debugger for NesDebugger<'_> {
         if !NES_SPACE_TABLE.covers(space, addr, width) {
             return None;
         }
-        // The table holds exactly one space and covers() already pinned
-        // the id, so dispatch on width only. A new space needs a new
-        // arm here; the assert fails fast in tests if forgotten.
-        debug_assert_eq!(space, SPACE_WORK_RAM);
-        match width {
-            1 => self.read_byte(addr),
-            2 => {
+        // The table holds WorkRam and PpuVram; covers() already pinned
+        // the id, so dispatch on (space, width). A new space needs a
+        // new arm here; unknown ids cannot reach this point.
+        match (space, width) {
+            (SPACE_WORK_RAM, 1) => self.read_byte(addr),
+            (SPACE_WORK_RAM, 2) => {
                 let lo = self.read_byte(addr)?;
                 let hi = self.read_byte(addr + 1)?;
                 Some(lo | (hi << 8))
             }
-            4 => {
+            (SPACE_WORK_RAM, 4) => {
                 let mut v = 0u64;
                 for i in 0..4 {
                     v |= self.read_byte(addr + i)? << (8 * i);
+                }
+                Some(v)
+            }
+            (SPACE_PPU_VRAM, 1) => self.read_vram_byte(addr),
+            (SPACE_PPU_VRAM, 2) => {
+                let lo = self.read_vram_byte(addr)?;
+                let hi = self.read_vram_byte(addr + 1)?;
+                Some(lo | (hi << 8))
+            }
+            (SPACE_PPU_VRAM, 4) => {
+                let mut v = 0u64;
+                for i in 0..4 {
+                    v |= self.read_vram_byte(addr + i)? << (8 * i);
                 }
                 Some(v)
             }
@@ -169,9 +200,11 @@ mod tests {
     fn nes_debugger_can_be_boxed() {
         let core = live_core();
         let boxed: Box<dyn Debugger + '_> = Box::new(NesDebugger::new(&core));
-        assert_eq!(boxed.spaces().len(), 1);
+        assert_eq!(boxed.spaces().len(), 2);
         assert_eq!(boxed.space_containing(0x0100), Some(SPACE_WORK_RAM));
-        assert_eq!(boxed.space_containing(0x2000), None);
+        assert_eq!(boxed.space_containing(0x2000), Some(SPACE_PPU_VRAM));
+        assert_eq!(boxed.space_containing(0x1000), Some(SPACE_WORK_RAM));
+        assert_eq!(boxed.space_containing(0x4000), None);
         // Registers: 6 entries in ascending name order (kernel contract).
         let names: Vec<&str> = boxed.registers().iter().map(|(n, _)| *n).collect();
         assert_eq!(names, vec!["a", "p", "pc", "sp", "x", "y"]);

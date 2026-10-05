@@ -86,6 +86,19 @@ impl NesConsoleCore {
     fn core_mut(&mut self) -> Result<&mut Core, CoreError> {
         self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)
     }
+
+    /// Cartridge RAM peek that preserves bus state.
+    ///
+    /// Kept concrete on purpose: the generic debugger read path
+    /// carries values only, and cartridge assertions also compare
+    /// open-bus vs mapped-RAM state. Reached through the factory
+    /// adapter's downcast escape, never from generic harness code.
+    pub fn peek_cartridge_ram(
+        &self,
+        address: usize,
+    ) -> Option<nerust_input_traits::OpenBusReadResult> {
+        self.core.0.as_ref()?.peek_cartridge_ram(address)
+    }
 }
 
 impl ConsoleCore for NesConsoleCore {
@@ -337,7 +350,7 @@ mod tests {
         .expect("console");
         {
             let debugger = loaded.debugger().expect("debugger");
-            assert_eq!(debugger.spaces().len(), 1);
+            assert_eq!(debugger.spaces().len(), 2);
             assert!(
                 debugger
                     .read(crate::debugger::SPACE_WORK_RAM, 0, 1)
