@@ -59,7 +59,7 @@ pub trait AudioBackend: Send {
 
     /// 再生音量を 0.0〜1.0 の範囲で設定する。
     ///
-    /// デフォルト実装は no-op。`GainBackend` が `set_gain()` に委譲する。
+    /// デフォルト実装は no-op。`GainBackend` は `self.gain` を保持し、`push()` で適用する。
     fn set_volume(&mut self, _volume: f32) {}
 }
 
