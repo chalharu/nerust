@@ -6,6 +6,10 @@ use crate::{
     results::{CaseOutcome, ValidationOptions},
 };
 
-pub fn validate_case(case: &RomCase, options: ValidationOptions) -> CaseOutcome {
-    entry::validate_case(case, options)
+pub fn validate_case(
+    factory: &dyn nerust_core_traits::factory::CoreFactory,
+    case: &RomCase,
+    options: ValidationOptions,
+) -> CaseOutcome {
+    entry::validate_case(factory, case, options)
 }
