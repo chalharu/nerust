@@ -187,6 +187,22 @@ impl ConsoleCore for NesConsoleCore {
             .into_system_identity()
             .map_err(|e| CoreError::Core(Box::new(e)))
     }
+
+    fn debugger(&self) -> Option<Box<dyn nerust_core_traits::debugger::Debugger + '_>> {
+        self.core
+            .0
+            .as_ref()
+            .map(|core| Box::new(crate::debugger::NesDebugger::new(core)) as _)
+    }
+
+    fn debug_control(
+        &mut self,
+    ) -> Option<Box<dyn nerust_core_traits::debugger::DebugControl + '_>> {
+        self.core
+            .0
+            .as_mut()
+            .map(|core| Box::new(crate::debugger::NesDebugControl::new(core)) as _)
+    }
 }
 
 #[cfg(test)]

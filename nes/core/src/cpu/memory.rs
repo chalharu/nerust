@@ -69,6 +69,14 @@ impl Memory {
         }
     }
 
+    /// Direct WRAM poke for the debugger. Bypasses bus side effects
+    /// (PPU/APU/DMA): a memory-viewer edit targets stored bytes only.
+    pub(crate) fn poke_work_ram(&mut self, address: usize, value: u8) {
+        if address <= 0x1FFF {
+            self.wram[address & 0x07FF] = value;
+        }
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "CPU bus reads need access to every attached device"

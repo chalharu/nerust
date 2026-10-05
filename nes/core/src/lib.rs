@@ -10,6 +10,7 @@ pub mod console_core;
 pub mod controller;
 pub mod core_options;
 mod cpu;
+pub mod debugger;
 pub mod input_types;
 mod interrupt;
 mod mapper;
@@ -239,6 +240,27 @@ impl Core {
 
     pub fn peek_work_ram(&self, address: usize) -> Option<u8> {
         self.cpu.peek_work_ram(address)
+    }
+
+    pub(crate) fn poke_work_ram(&mut self, address: usize, value: u8) {
+        self.cpu.poke_work_ram(address, value)
+    }
+
+    /// CPU registers as name → value pairs in ascending name order.
+    ///
+    /// Kernel contract shared with the other systems' debuggers.
+    /// Calls the existing `pub(crate)` getters only; `Register` itself
+    /// stays crate-private.
+    pub fn cpu_registers(&self) -> [(&'static str, u64); 6] {
+        let r = self.cpu.register();
+        [
+            ("a", u64::from(r.get_a())),
+            ("p", u64::from(r.get_p())),
+            ("pc", u64::from(r.get_pc())),
+            ("sp", u64::from(r.get_sp())),
+            ("x", u64::from(r.get_x())),
+            ("y", u64::from(r.get_y())),
+        ]
     }
 
     pub fn peek_cartridge_ram(&self, address: usize) -> Option<OpenBusReadResult> {
