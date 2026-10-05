@@ -1,7 +1,7 @@
 /// Serial (Link Cable) with transfer timing.
 ///
 /// No link cable emulation: the external device is always disconnected, so
-/// reads return 0xFF. A master transfer takes a fixed number of M-cycles
+/// reads return the last value written to SB. A master transfer takes a fixed number of M-cycles
 /// (8 bits at 8192 Hz = 1024 M-cycles) before it completes, clears SC bit 7
 /// and requests the Serial interrupt. Outgoing characters are buffered.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
