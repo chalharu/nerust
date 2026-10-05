@@ -2,6 +2,7 @@
 //! multiply, and the [`apply_op`] dispatcher. ARM commit helpers
 //! (SWP/PSR/DP/traps) live in [`apply_arm`]; this file calls down
 //! into it, never the reverse.
+use super::MicroOp;
 use super::apply_arm::{apply_dp_reg, apply_psr, apply_swp, apply_trap_swi, apply_trap_und};
 use super::expand_thumb::thumb_alu_rest_trailing;
 use super::ops_alu::{AluEffect, AluImmOp};
@@ -9,7 +10,6 @@ use super::ops_block::BlockEndEffect;
 use super::ops_block_words::{BlockEmptyEffect, BlockWord};
 use super::ops_branch::MulEffect;
 use super::ops_mem::{MemAccess, PcRelRead};
-use super::MicroOp;
 use crate::cpu::semantics::multiply::{
     multiplier_cycles, multiplier_cycles_long, multiply_64, multiply_carry_hi, multiply_carry_lo,
     multiply_tick_full, register_pair,

@@ -83,7 +83,6 @@ pub(crate) fn dispatch(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8)
     }
 }
 
-
 /// Operand-dependent Div latency (see SWI 0x06 call site for the HW
 /// evidence). Magnitudes drive the normalizing shift loop; the quotient-0
 /// fast path skips it.
@@ -254,7 +253,6 @@ fn arc_tan2(regs: &mut CpuRegisters) {
     }
     regs.set_r(3, 0x170);
 }
-
 
 fn bg_affine_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     use crate::math::affine::{BgAffineDst, BgAffineSrc, bg_affine_set as math_bg};
