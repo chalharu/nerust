@@ -65,12 +65,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          # Direct tag lookup: single request, no full-list pagination scan.
-          # gh prints the 404 body to stdout, so gate on exit status.
-          release_tsv=""
-          if lookup="$(gh api "repos/${GH_REPO}/releases/tags/${TAG_NAME}" --jq '[.id, (.upload_url | sub("\\{.*$"; "")), .target_commitish] | @tsv' 2>/dev/null)"; then
-            release_tsv="${lookup}"
-          fi
+          # List (single bounded request) instead of get-by-tag: the by-tag
+          # endpoint 404s on draft releases, so a re-run would miss the
+          # draft it created and fail the create with already_exists.
+          release_tsv="$(gh api "repos/${GH_REPO}/releases?per_page=100" \
+            --jq '.[] | [.tag_name, .id, (.upload_url | sub("\\{.*$"; "")), .target_commitish] | @tsv' \
+            | awk -F'\t' -v tag="${TAG_NAME}" '$1 == tag {print $2"\t"$3"\t"$4; exit}')"
           if [[ -z "${release_tsv}" ]]; then
             # The notes file exceeds the per-argument size limit, so feed it
             # via stdin instead of embedding it in argv.
