@@ -44,12 +44,22 @@ pub struct SpaceInfo {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpaceError {
-    Overlap { a: SpaceId, b: SpaceId },
-    OutOfOrder { space: SpaceId },
+    Overlap {
+        a: SpaceId,
+        b: SpaceId,
+    },
+    OutOfOrder {
+        space: SpaceId,
+    },
     /// `start > end`: `contains` is always false, a ghost space.
-    EmptyRange { space: SpaceId },
+    EmptyRange {
+        space: SpaceId,
+    },
     /// `SpaceId` value does not match the table index.
-    IdIndexMismatch { id: SpaceId, index: usize },
+    IdIndexMismatch {
+        id: SpaceId,
+        index: usize,
+    },
 }
 
 /// Verify that a space list is sorted, disjoint, and id/index consistent.
@@ -443,7 +453,10 @@ mod tests {
         );
 
         let mut ghost = ok.clone();
-        ghost[1].range = 0x20..=0x1F;
+        // Built from variables so the empty range is a runtime value,
+        // not a literal the compiler rejects outright.
+        let (ghost_start, ghost_end) = (0x20u32, 0x1Fu32);
+        ghost[1].range = ghost_start..=ghost_end;
         assert_eq!(
             validate_spaces(&ghost),
             Err(SpaceError::EmptyRange { space: SpaceId(1) })
