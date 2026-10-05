@@ -432,6 +432,30 @@ command_next_version() {
         bump_kind "${BUMP_KIND}"
 }
 
+# Cap a release body at GitHub's 125000-character limit, keeping whole lines
+# (newest entries first) and appending a truncation marker when entries are
+# dropped. Prints the result to stdout.
+truncate_release_body() {
+    local body="$1"
+    local max_chars=124000
+    if ((${#body} <= max_chars)); then
+        printf '%s' "${body}"
+        return 0
+    fi
+
+    local marker=$'\n\n...(older entries omitted; see git history for the full list)'
+    local budget=$((max_chars - ${#marker}))
+    local kept=""
+    local line
+    while IFS= read -r line; do
+        if ((${#kept} + ${#line} + 1 > budget)); then
+            break
+        fi
+        kept+="${line}"$'\n'
+    done <<< "${body}"
+    printf '%s%s' "${kept}" "${marker}"
+}
+
 command_release_notes() {
     local version="$1"
     shift
@@ -470,6 +494,9 @@ command_release_notes() {
 
     local rendered
     rendered="$(printf '## %s changes\n\n%s\n' "${version_tag}" "${notes}")"
+    # GitHub rejects release bodies over 125000 characters. git log emits
+    # newest commits first, so drop the oldest entries until the body fits.
+    rendered="$(truncate_release_body "${rendered}")"
     if [[ -n "${output}" ]]; then
         printf '%s' "${rendered}" > "${output}"
     else
