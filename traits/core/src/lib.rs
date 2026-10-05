@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod debugger;
 pub mod factory;
 pub mod identity;
 pub mod peripheral;
@@ -170,6 +171,18 @@ pub trait ConsoleCore: Send {
     }
     fn import_mapper_save(&mut self, _data: &[u8]) -> Result<(), CoreError> {
         Ok(())
+    }
+
+    // -- debugger (default: not supported) --
+    /// Read-only observer. `&self` guarantees non-invasive observation.
+    /// Returns `None` when no ROM is loaded or the core has no debugger.
+    fn debugger(&self) -> Option<Box<dyn debugger::Debugger + '_>> {
+        None
+    }
+    /// Execution control and memory editing. `None` when unsupported.
+    /// Observation via `debugger()` stays available independently.
+    fn debug_control(&mut self) -> Option<Box<dyn debugger::DebugControl + '_>> {
+        None
     }
 
     // -- identity --
