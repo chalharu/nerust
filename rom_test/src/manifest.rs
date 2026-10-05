@@ -97,6 +97,10 @@ pub struct RomCase {
     pub rom: String,
     #[serde(default)]
     pub perf: bool,
+    /// CI scope flag, honored by build.rs test generation.
+    /// Absent means in scope.
+    #[serde(default = "default_ci")]
+    pub ci: bool,
     #[serde(default)]
     pub sub_mapper_type: Option<u8>,
     #[serde(default)]
@@ -240,6 +244,10 @@ impl AudioExpectation {
         }
         Ok(())
     }
+}
+
+fn default_ci() -> bool {
+    true
 }
 
 pub fn default_manifest_path() -> PathBuf {
