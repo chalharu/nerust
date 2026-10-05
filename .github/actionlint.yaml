@@ -1,0 +1,8 @@
+# actionlint 1.7.10 does not recognise the self-repository `uses: $/...`
+# syntax (recommended by GitHub and required by zizmor's self-repository
+# check), reporting it as a `workflow-call` format error. This ignore targets
+# only that false positive; every other workflow-call finding still fires.
+paths:
+  .github/workflows/**/*.yml:
+    ignore:
+      - 'reusable workflow call "\$\/.+" at "uses" is not following the format'
