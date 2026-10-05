@@ -199,7 +199,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Refresh Cargo.lock for stamped version
         run: |
           # The version stamp changes workspace path-package versions, which
@@ -271,7 +271,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Refresh Cargo.lock for stamped version
         run: |
           # The version stamp changes workspace path-package versions, which
@@ -334,7 +334,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
           targets: aarch64-apple-darwin
       - name: Refresh Cargo.lock for stamped version
         run: |
@@ -411,7 +411,7 @@ jobs:
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           targets: aarch64-linux-android
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Refresh Cargo.lock for stamped version
         run: |
           # The version stamp changes workspace path-package versions, which
