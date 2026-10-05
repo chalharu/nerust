@@ -116,7 +116,6 @@ pub(crate) fn dispatch(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8)
     }
 }
 
-
 fn soft_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     let boot_from_ewram = bus.read8(0x03007FFA) != 0;
     for addr in (0x03007E00..0x03008000).step_by(4) {
@@ -269,7 +268,6 @@ fn vblank_intr_wait(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     regs.set_r(1, 1);
     intr_wait(regs, bus);
 }
-
 
 /// exactly $0047/$0052 from TIMER0 (started at freq/1 just before the SWI).
 /// The values below are the SWI-body charge; entry/exit overhead is added by

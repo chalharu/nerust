@@ -1,6 +1,4 @@
-use super::super::expand_arm::{
-    expand_arm, expand_arm_dp_reg, expand_arm_mul, expand_arm_single,
-};
+use super::super::expand_arm::{expand_arm, expand_arm_dp_reg, expand_arm_mul, expand_arm_single};
 use super::super::expand_thumb::{expand_thumb, expand_thumb_alu_rest};
 use super::{run_arm, run_thumb, test_bus};
 use crate::cpu::semantics::shifter::condition_passed;

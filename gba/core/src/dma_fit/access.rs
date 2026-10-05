@@ -1,5 +1,5 @@
-use super::edges::wait_vcount;
 use super::PARK_PC;
+use super::edges::wait_vcount;
 use crate::system::GbaSystem;
 
 /// Native replication of nba ram-access-timing single-access probes:

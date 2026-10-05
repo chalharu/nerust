@@ -1,7 +1,5 @@
-use super::super::apply_arm::{
-    apply_dp_reg, apply_psr, apply_swp, apply_trap_swi, apply_trap_und,
-};
 use super::super::apply::apply_mul;
+use super::super::apply_arm::{apply_dp_reg, apply_psr, apply_swp, apply_trap_swi, apply_trap_und};
 use super::{run_arm, run_thumb, test_bus};
 use crate::cpu_registers::CpuRegisters;
 

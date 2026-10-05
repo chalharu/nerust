@@ -1,6 +1,6 @@
-use super::hle_operation::HleBiosOperation;
 use super::compute::bios_arctan2_full;
-use super::{handle_swi, test_bus, SwiResult};
+use super::hle_operation::HleBiosOperation;
+use super::{SwiResult, handle_swi, test_bus};
 use crate::cpu_registers::CpuRegisters;
 
 #[test]
