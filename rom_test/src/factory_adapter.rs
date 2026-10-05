@@ -22,6 +22,7 @@ use nerust_nes_core::{
     console_core::NesConsoleCore,
     core_options::{CoreOptions, Mmc3IrqVariant as NesMmc3IrqVariant},
 };
+use nerust_nes_settings::{NesSettings, NesVideoFilter};
 
 use crate::{error::RomTestError, manifest::Mmc3IrqVariant};
 
@@ -29,6 +30,9 @@ use crate::{error::RomTestError, manifest::Mmc3IrqVariant};
 pub struct TestSystem {
     pub console: Box<dyn ConsoleCore>,
     pub gui_input: GuiInput,
+    /// Display palette from the factory. The filter is pinned to `None`
+    /// below, so these bytes equal the validation palette exactly.
+    pub palette: Box<[u32; 256]>,
 }
 
 /// Build a loaded NES console through `CoreFactory`.
@@ -52,10 +56,17 @@ pub fn open_nes_system(
         message,
     };
 
-    let system_config = factory
+    let mut system_config = factory
         .as_system_defaults()
         .and_then(|defaults| defaults.default_system_settings())
         .ok_or_else(|| construction("factory provides no default settings".to_string()))?;
+    // Pin the video filter to `None` for determinism: screenshots and
+    // palette bytes must not depend on GUI defaults. Loud failure keeps
+    // a future settings change from silently altering hashes.
+    let nes_settings = system_config
+        .downcast_mut::<NesSettings>()
+        .ok_or_else(|| construction("cannot pin NES video filter".to_string()))?;
+    nes_settings.video.filter = NesVideoFilter::None;
     let view = FactorySettingsView {
         language: Language::English,
         system_config: Some(system_config),
@@ -84,9 +95,18 @@ pub fn open_nes_system(
         .load(rom_bytes, &config)
         .map_err(|error| construction(format!("load: {error:?}")))?;
 
+    // Factory-owned display palette. The filter is pinned to `None`
+    // above, so these are the validation palette bytes exactly.
+    let palette: Box<[u32; 256]> = parts
+        .palette
+        .into_vec()
+        .try_into()
+        .map_err(|_| construction("factory palette is not 256 entries".to_string()))?;
+
     Ok(TestSystem {
         console: parts.core,
         gui_input: parts.gui_input,
+        palette,
     })
 }
 

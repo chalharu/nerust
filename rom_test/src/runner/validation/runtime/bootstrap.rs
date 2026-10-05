@@ -24,7 +24,7 @@ impl ValidationRuntime {
         )?;
 
         Ok(Self {
-            screen_buffer: validation_screen_buffer(),
+            screen_buffer: validation_screen_buffer(&system.palette[..]),
             system,
             mixer: HashingMixer::new(case.audio_sample_rate()),
             audio_sink: Vec::new(),
