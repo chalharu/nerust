@@ -1,7 +1,7 @@
 //! ARM micro-op execution: SWP/PSR/DP-register commits and traps.
 //! Leaf module: depends only on the op types, registers, bus, and
 //! the pure [`semantics`](crate::cpu::semantics) helpers.
-use crate::cpu::semantics::{barrel_shift, barrel_shift_register, update_nz};
+use crate::cpu::semantics::shifter::{barrel_shift, barrel_shift_register, update_nz};
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
