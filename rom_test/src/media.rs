@@ -5,30 +5,27 @@ use std::{
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core_traits::audio::{AudioBackend, StereoSample};
-use nerust_render_filters::FilterTypeExt;
-use nerust_render_traits::{FrameBuffer, PixelFormat, filter::FilterType};
+use nerust_render_traits::{FrameBuffer, PixelFormat};
 use png::{BitDepth, ColorType, Encoder};
 
 use super::error::RomTestError;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 
-pub(crate) fn validation_screen_buffer() -> FrameBuffer {
-    let mut palette = [0u32; 256];
-    let assets = FilterType::None.palette_console_video_assets();
-    let rgba8 = assets.palette_rgba8();
-    for (i, entry) in palette.iter_mut().enumerate().take(64) {
-        let pos = i * 4;
-        *entry = u32::from(rgba8[pos]) << 24
-            | u32::from(rgba8[pos + 1]) << 16
-            | u32::from(rgba8[pos + 2]) << 8
-            | u32::from(rgba8[pos + 3]);
-    }
+/// Validation frame buffer carrying the factory palette.
+///
+/// The palette is display metadata only: hashes cover indices, and PNG
+/// encoding derives RGBA from these same bytes. It must come from the
+/// factory (filter pinned to `None` at construction), never rebuilt here.
+pub(crate) fn validation_screen_buffer(palette: &[u32]) -> FrameBuffer {
+    let mut owned = [0u32; 256];
+    let n = palette.len().min(256);
+    owned[..n].copy_from_slice(&palette[..n]);
     let mut fb = FrameBuffer::with_capacity(
         256,
         240,
         PixelFormat::PaletteIndex {
-            palette: Box::new(palette),
+            palette: Box::new(owned),
         },
     );
     fb.resize(256, 240);
@@ -46,14 +43,11 @@ pub(crate) fn encode_screenshot_png(frame: &FrameBuffer) -> Result<Vec<u8>, RomT
     let h = frame.height();
     let src = frame.as_ref();
     let palette_rgba8 = match frame.palette_as_rgba8() {
-        Some(p) => p,
+        Some(palette) => palette,
         None => {
-            let assets = FilterType::None.palette_console_video_assets();
-            let src_pal = assets.palette_rgba8();
-            let mut out = [0u8; 256];
-            let n = src_pal.len().min(256);
-            out[..n].copy_from_slice(&src_pal[..n]);
-            out
+            return Err(RomTestError::InvalidManifest(
+                "screenshot buffer carries no palette".to_string(),
+            ));
         }
     };
     let mut rgba = Vec::with_capacity(w * h * 4);

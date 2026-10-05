@@ -6,8 +6,7 @@ use nerust_input_traits::{ControllerCollection, ControllerHub as _};
 use nerust_nes_core::{Core, rom_parse};
 use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
 use nerust_nes_factory::NesFactory;
-use nerust_render_filters::FilterTypeExt;
-use nerust_render_traits::{FrameBuffer, PixelFormat, filter::FilterType};
+use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
     error::RomTestError,
@@ -264,21 +263,14 @@ impl PerfRunner {
                 message: error.to_string(),
             }
         })?;
-        let mut palette = [0u32; 256];
-        let assets = FilterType::NtscComposite.palette_console_video_assets();
-        let rgba8 = assets.palette_rgba8();
-        for (i, entry) in palette.iter_mut().enumerate().take(64) {
-            let pos = i * 4;
-            *entry = u32::from(rgba8[pos]) << 24
-                | u32::from(rgba8[pos + 1]) << 16
-                | u32::from(rgba8[pos + 2]) << 8
-                | u32::from(rgba8[pos + 3]);
-        }
+        // Display-only palette: the benchmark hashes indices and never
+        // encodes PNGs, so a zeroed palette changes nothing observable.
+        // Real palette bytes come from the factory (see validation path).
         let mut screen = FrameBuffer::with_capacity(
             256,
             240,
             PixelFormat::PaletteIndex {
-                palette: Box::new(palette),
+                palette: Box::new([0u32; 256]),
             },
         );
         screen.resize(256, 240);

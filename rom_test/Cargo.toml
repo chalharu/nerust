@@ -12,7 +12,6 @@ clap.workspace = true
 crc.workspace = true
 nerust_core_traits.workspace = true
 nerust_input_traits.workspace = true
-nerust_render_filters.workspace = true
 nerust_render_traits.workspace = true
 png.workspace = true
 serde.workspace = true
