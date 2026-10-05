@@ -2,16 +2,15 @@ use super::super::apply_arm::{
     apply_dp_reg, apply_psr, apply_swp, apply_trap_swi, apply_trap_und,
 };
 use super::super::apply::apply_mul;
-use super::{run_arm, run_thumb};
+use super::{run_arm, run_thumb, test_bus};
 use crate::cpu_registers::CpuRegisters;
-use crate::memory::GbaMemoryBus;
 
 #[test]
 fn trap_swi_enters_svc_with_banked_lr() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_pc(0x08000008);
     let old_cpsr = regs.cpsr();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     // SWI 0xFF is unhandled -> SVC vector.
     assert_eq!(apply_trap_swi(&mut regs, &mut bus, 0xFF, false), 3);
     assert_eq!(regs.cpsr_mode(), 0x13);
@@ -24,7 +23,7 @@ fn trap_swi_enters_svc_with_banked_lr() {
 fn trap_swi_uses_hle_number() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_pc(0x08000008);
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     let expected = bus.bios_checksum();
     apply_trap_swi(&mut regs, &mut bus, 0x0D, false);
     assert_eq!(regs.r(0), expected);
@@ -37,7 +36,7 @@ fn trap_swi_thumb_returns_after_swi() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_cpsr(regs.cpsr() | (1 << 5));
     regs.set_pc(0x08000006);
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     apply_trap_swi(&mut regs, &mut bus, 0x0D, true);
     assert_eq!(regs.pc(), 0x08000004);
     assert!(regs.take_pc_written());
@@ -48,7 +47,7 @@ fn trap_und_enters_undefined_exception() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_pc(0x08000008);
     let old_cpsr = regs.cpsr();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     assert_eq!(apply_trap_und(&mut regs, false), 4);
     assert_eq!(regs.cpsr_mode(), 0x1B);
     assert_eq!(regs.spsr(), old_cpsr);
@@ -71,7 +70,7 @@ fn block_empty_thumb_transfers_pc_and_writes_back_0x40() {
     regs.set_cpsr(regs.cpsr() | (1 << 5));
     regs.set_pc(0x08000104);
     regs.set_r(0, 0x03000000);
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.write32(0x03000000, 0x08000201);
     // Empty LDMIA R0: loads PC, Rb += 0x40 (LSB ignored on
     // ARMv4T like POP {PC}).
@@ -86,7 +85,7 @@ fn block_empty_arm_stores_pc_and_loads_back() {
     regs.set_pc(0x08000000);
     regs.set_r(0, 0x03000200);
     regs.set_r(1, 0x03000200);
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     // Empty STMIA R0!: stores PC+4, R0 += 0x40.
     run_arm(&mut regs, &mut bus, 0xE8A0_0000);
     assert_eq!(bus.read32(0x03000200), 0x08000004);
@@ -120,7 +119,7 @@ fn psr_user_msr_cannot_change_control_field() {
 #[test]
 fn swp_exchanges_word_and_byte() {
     let mut regs = CpuRegisters::post_bios();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     bus.write32(0x03000000, 0x11223344);
     regs.set_r(0, 0x03000000);
     regs.set_r(1, 0xAABBCCDD);
@@ -137,7 +136,7 @@ fn swp_exchanges_word_and_byte() {
 #[test]
 fn mul_simple() {
     let mut regs = CpuRegisters::post_bios();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     regs.set_r(1, 3);
     regs.set_r(2, 4);
     regs.set_r(0, 0);
@@ -203,7 +202,7 @@ fn dp_register_shift_reads_pc_plus_12() {
 #[test]
 fn branch_forward() {
     let mut regs = CpuRegisters::post_bios();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     regs.set_pc(0x08000000);
     // Architectural PC is current instruction + 8.
     run_arm(&mut regs, &mut bus, 0xEA000002);
@@ -214,7 +213,7 @@ fn branch_forward() {
 fn thumb_branch_ranges() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_cpsr(regs.cpsr() | (1 << 5));
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     regs.set_pc(0x08003F08);
     run_thumb(&mut regs, &mut bus, 0xE317);
     assert_eq!(regs.pc(), 0x08004536);
@@ -226,7 +225,7 @@ fn thumb_branch_ranges() {
 #[test]
 fn load_store_immediate_roundtrip() {
     let mut regs = CpuRegisters::post_bios();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     regs.set_r(1, 0x02000000);
     regs.set_r(0, 0x12345678);
     run_arm(&mut regs, &mut bus, 0xE5810004); // STR R0, [R1, #4]
@@ -237,7 +236,7 @@ fn load_store_immediate_roundtrip() {
 #[test]
 fn halfword_load_store_roundtrip() {
     let mut regs = CpuRegisters::post_bios();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     regs.set_r(1, 0x02000000);
     regs.set_r(0, 0x1234);
     run_arm(&mut regs, &mut bus, 0xE1C100B0); // STRH R0, [R1]
@@ -249,7 +248,7 @@ fn halfword_load_store_roundtrip() {
 #[test]
 fn byte_imm_load_store_roundtrip() {
     let mut regs = CpuRegisters::post_bios();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     regs.set_r(1, 0x02000000);
     regs.set_r(0, 0xAB);
     run_thumb(&mut regs, &mut bus, 0x7008); // STRB R0, [R1]
@@ -261,7 +260,7 @@ fn byte_imm_load_store_roundtrip() {
 #[test]
 fn signed_loads_extend_sign() {
     let mut regs = CpuRegisters::post_bios();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     regs.set_r(1, 0x03000000);
     regs.set_r(2, 0);
     bus.write16(0x03000000, 0x80FF);
@@ -274,7 +273,7 @@ fn signed_loads_extend_sign() {
 #[test]
 fn block_roundtrip() {
     let mut regs = CpuRegisters::post_bios();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     regs.set_r(0, 0x02000000);
     regs.set_r(1, 0x11111111);
     regs.set_r(2, 0x22222222);
@@ -290,7 +289,7 @@ fn block_roundtrip() {
 #[test]
 fn block_unaligned_base() {
     let mut regs = CpuRegisters::post_bios();
-    let mut bus = GbaMemoryBus::new();
+    let mut bus = test_bus();
     let base = 0x02000100;
     regs.set_r(0, 32);
     regs.set_r(1, 64);

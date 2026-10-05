@@ -36,5 +36,10 @@ fn run_thumb(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) {
     run_ops(regs, bus, ops, pc, true);
 }
 
+/// Fresh bus for tests that only need default state.
+pub(super) fn test_bus() -> GbaMemoryBus {
+    GbaMemoryBus::new()
+}
+
 mod apply;
 mod expand;
