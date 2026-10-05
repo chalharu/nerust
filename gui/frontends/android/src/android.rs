@@ -37,7 +37,7 @@ use nerust_gui_shell::{
     session::{
         SessionError, SessionHandle,
         access::{FrontendSession, SettingsResult},
-        commands::{SessionCommand, SessionCommandOutcome},
+        commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
     },
 };
 use nerust_input_traits::{AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent};
@@ -159,32 +159,67 @@ pub(crate) fn run(
 }
 
 fn show_toast(app: &AndroidApp, message: &str) {
-    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
-    let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
-        let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
-        let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+    // Toast must be created/shown on the Java main thread; this function
+    // is called from the winit event-loop thread where it would otherwise
+    // fail silently (no Looper) and hide save/load failures from the user.
+    let callback_app = app.clone();
+    let message = message.to_string();
+    app.run_on_java_main_thread(Box::new(move || {
+        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
+        let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
+            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
 
-        let toast_class = env.find_class(jni_str!("android/widget/Toast"))?;
-        let text = env.new_string(message)?;
-        let toast = env.call_static_method(
-            &toast_class,
-            jni_str!("makeText"),
-            jni_sig!("(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;"),
-            &[
-                jni::objects::JValue::Object(&activity),
-                jni::objects::JValue::Object(text.as_ref()),
-                jni::objects::JValue::Int(0),
-            ],
-        )?;
-        let toast_obj = toast.l()?;
-        let _ = env.call_method(&toast_obj, jni_str!("show"), jni_sig!("()V"), &[]);
-        Ok(())
-    });
+            let toast_class = env.find_class(jni_str!("android/widget/Toast"))?;
+            let text = env.new_string(&message)?;
+            let toast = env.call_static_method(
+                &toast_class,
+                jni_str!("makeText"),
+                jni_sig!(
+                    "(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;"
+                ),
+                &[
+                    jni::objects::JValue::Object(&activity),
+                    jni::objects::JValue::Object(text.as_ref()),
+                    jni::objects::JValue::Int(0),
+                ],
+            )?;
+            let toast_obj = toast.l()?;
+            let _ = env.call_method(&toast_obj, jni_str!("show"), jni_sig!("()V"), &[]);
+            Ok(())
+        });
+    }));
+}
+
+/// User-facing text for a failed LoadState menu action. `None` (command
+/// itself errored) and genuinely-missing states share the familiar
+/// message; real failures name the cause (detail stays in logcat).
+fn load_failure_text(failure: Option<SlotOpFailure>) -> &'static str {
+    match failure {
+        None | Some(SlotOpFailure::Empty) | Some(SlotOpFailure::Missing) => "No save state to load",
+        Some(SlotOpFailure::Incompatible) => "Save state is incompatible",
+        Some(SlotOpFailure::Corrupt) => "Save state is corrupt",
+        Some(SlotOpFailure::Storage) => "Load failed: storage error",
+        Some(SlotOpFailure::Unavailable) => "Load failed",
+    }
+}
+
+/// User-facing text for a failed SaveState menu action.
+fn save_failure_text(failure: Option<SlotOpFailure>) -> &'static str {
+    match failure {
+        None | Some(SlotOpFailure::Unavailable) => "Save state failed",
+        Some(SlotOpFailure::Storage) => "Save failed: storage error",
+        Some(SlotOpFailure::Empty)
+        | Some(SlotOpFailure::Missing)
+        | Some(SlotOpFailure::Corrupt)
+        | Some(SlotOpFailure::Incompatible) => "Save state failed",
+    }
 }
 
 fn configure_controls_overlay(
     app: &AndroidApp,
     settings: &nerust_gui_settings::local::TouchOverlaySettings,
+    shoulders_visible: bool,
 ) {
     let visibility = match settings.visibility {
         nerust_gui_settings::local::TouchOverlayVisibility::Always => "always",
@@ -207,13 +242,14 @@ fn configure_controls_overlay(
             env.call_method(
                 &activity,
                 jni_str!("configureControlsOverlay"),
-                jni_sig!("(Ljava/lang/String;IIIZ)V"),
+                jni_sig!("(Ljava/lang/String;IIIZZ)V"),
                 &[
                     jni::objects::JValue::Object(visibility.as_ref()),
                     jni::objects::JValue::Int(opacity),
                     jni::objects::JValue::Int(scale),
                     jni::objects::JValue::Int(offset),
                     jni::objects::JValue::Bool(haptics),
+                    jni::objects::JValue::Bool(shoulders_visible),
                 ],
             )?;
             Ok(())
@@ -286,6 +322,35 @@ fn set_cartridge_rumble(app: &AndroidApp, intensity: u8) {
     }));
 }
 
+/// Push the current emulation FPS to the small Android overlay label.
+///
+/// Called at the 2Hz title-refresh cadence; `visible` is false when no ROM
+/// is loaded so Kotlin can hide the label instead of showing stale numbers.
+fn update_fps_overlay(app: &AndroidApp, fps: f32, visible: bool) {
+    let app = app.clone();
+    let callback_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
+        let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
+            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+            env.call_method(
+                &activity,
+                jni_str!("updateFpsOverlay"),
+                jni_sig!("(FZ)V"),
+                &[
+                    jni::objects::JValue::Float(fps),
+                    jni::objects::JValue::Bool(visible),
+                ],
+            )?;
+            Ok(())
+        });
+        if let Err(error) = result {
+            log::warn!("failed to update Android FPS overlay: {error:?}");
+        }
+    }));
+}
+
 #[derive(Debug)]
 struct TouchZone {
     control: TouchControl,
@@ -338,6 +403,16 @@ impl ProfileTouchOverlay {
         let action_top = dpad_center_y - action_size * 0.50;
         let center_width = base * 0.10 * scale;
         let center_height = base * 0.068 * scale;
+        // Shoulder strip above the D-Pad activation area and the center row.
+        // Must stay clear of both: dpad_activation starts at
+        // activation_top + dpad_radius, and the select/start row sits at
+        // center_top. Keep in sync with controlsLayout() in MainActivity.kt.
+        let shoulder_width = base * 0.20 * scale;
+        let shoulder_height = base * 0.08 * scale;
+        let shoulder_margin_x = width * 0.02;
+        let shoulder_top = control_top + base * 0.015 + vertical_offset;
+        let shoulder_left_x = shoulder_margin_x;
+        let shoulder_right_x = width - shoulder_margin_x - shoulder_width;
         let center_gap = base * 0.03;
         let center_row_width = center_width * 2.0 + center_gap;
         let center_left = (width - center_row_width) * 0.5;
@@ -365,6 +440,18 @@ impl ProfileTouchOverlay {
                 y: center_top,
                 width: center_width,
                 height: center_height,
+            },
+            TouchControlRole::LeftShoulder => TouchRect {
+                x: shoulder_left_x,
+                y: shoulder_top,
+                width: shoulder_width,
+                height: shoulder_height,
+            },
+            TouchControlRole::RightShoulder => TouchRect {
+                x: shoulder_right_x,
+                y: shoulder_top,
+                width: shoulder_width,
+                height: shoulder_height,
             },
             TouchControlRole::Start => TouchRect {
                 x: center_left + center_width + center_gap,
@@ -465,6 +552,7 @@ struct AndroidFrontend {
     pending_legacy_digest: Option<[u8; 32]>,
     last_peripheral_config: Option<(bool, bool, u8, RumbleTarget)>,
     last_rumble_intensity: Option<u8>,
+    last_fps_sent: Option<(bool, i32)>,
 }
 
 impl AndroidFrontend {
@@ -545,6 +633,7 @@ impl AndroidFrontend {
             pending_legacy_digest: None,
             last_peripheral_config: None,
             last_rumble_intensity: None,
+            last_fps_sent: None,
         };
         if frontend.lifecycle_restore_pending {
             log::info!(
@@ -847,6 +936,11 @@ impl AndroidFrontend {
                         self.rebuild_renderer(window);
                     }
                 }
+                // Push touch-overlay (and FPS-label) settings to the live
+                // chrome: without this the saved snapshot and the visible
+                // overlay diverge, so a changed opacity/scale/visibility
+                // looks "ignored" until the next ROM load or resize.
+                self.rebuild_overlay();
                 self.request_redraw();
                 // Settings changed – refresh cached settings for sync dialogs.
                 settings::update_cached_settings(&android_settings);
@@ -896,13 +990,27 @@ impl AndroidFrontend {
         self.renderer = None;
         self.overlay = None;
         self.reset_touch_tracking();
-        self.physical_pressed.clear();
+        self.release_physical_tracking();
         self.shell.needs_redraw = true;
     }
 
     fn reset_touch_tracking(&mut self) {
+        // Surface loss must not strand pressed buttons inside the
+        // emulator: release everything still tracked before forgetting
+        // it. A stranded extra bit breaks exact-equality key checks
+        // such as Pokemon Emerald's evolution cancel
+        // (heldKeys == B_BUTTON).
+        for (attachment, control) in self.active_touches.values() {
+            self.session
+                .apply_input_event(DigitalInputEvent::released(*attachment, *control));
+        }
         self.active_touches.clear();
-        self.floating_dpad = None;
+        if let Some(state) = self.floating_dpad.take() {
+            for (attachment, control) in state.targets {
+                self.session
+                    .apply_input_event(DigitalInputEvent::released(attachment, control));
+            }
+        }
         update_floating_dpad_visual(
             &self.app,
             false,
@@ -986,16 +1094,72 @@ impl AndroidFrontend {
                 self.request_redraw();
             }
             MenuAction::LoadState => {
-                if !self.load_active_slot() {
-                    show_toast(&self.app, "No save state to load");
+                let outcome = self
+                    .exec(SessionCommand::LoadActiveSlot)
+                    .unwrap_or_default();
+                if outcome.executed {
+                    match self.session.active_slot_id() {
+                        Some(slot_id) => {
+                            show_toast(&self.app, &format!("State loaded from slot {slot_id}"))
+                        }
+                        None => show_toast(&self.app, "State loaded"),
+                    }
+                } else {
+                    show_toast(&self.app, load_failure_text(outcome.slot_failure));
                 }
             }
             MenuAction::OpenRom => self.request_open_rom(),
             MenuAction::OpenSettings => self.request_settings_dialog(),
+            MenuAction::OrientationChanged => {
+                // Screen rotation: rebuild the touch overlay (hit zones)
+                // for the new window size even if winit did not deliver
+                // a Resized event. Idempotent with the Resized path.
+                self.rebuild_overlay();
+                self.request_redraw();
+            }
             MenuAction::Reset => self.reset(),
-            MenuAction::SaveState => self.save_active_slot(),
+            MenuAction::SaveState => {
+                let outcome = self
+                    .exec(SessionCommand::SaveActiveSlotOrNew)
+                    .unwrap_or_default();
+                if outcome.executed {
+                    match self.session.active_slot_id() {
+                        Some(slot_id) => {
+                            show_toast(&self.app, &format!("State saved to slot {slot_id}"));
+                        }
+                        None => show_toast(&self.app, "State saved"),
+                    }
+                } else {
+                    show_toast(&self.app, save_failure_text(outcome.slot_failure));
+                }
+            }
             MenuAction::TogglePause => self.toggle_pause(),
         }
+    }
+
+    fn control_for_physical_key(
+        &self,
+        key: AbstractKey,
+    ) -> Option<(AttachmentId, DigitalControlId)> {
+        let role = match key {
+            AbstractKey::Button1 => TouchControlRole::FaceButton1,
+            AbstractKey::Button2 => TouchControlRole::FaceButton2,
+            AbstractKey::Button5 => TouchControlRole::LeftShoulder,
+            AbstractKey::Button6 => TouchControlRole::RightShoulder,
+            AbstractKey::Start => TouchControlRole::Start,
+            AbstractKey::Select => TouchControlRole::Select,
+            AbstractKey::DpadUp => TouchControlRole::DpadUp,
+            AbstractKey::DpadDown => TouchControlRole::DpadDown,
+            AbstractKey::DpadLeft => TouchControlRole::DpadLeft,
+            AbstractKey::DpadRight => TouchControlRole::DpadRight,
+            _ => return None,
+        };
+        let model = self.session.touch_overlay_model(self.overlay_revision);
+        model
+            .controls
+            .into_iter()
+            .find(|control| control.role == role)
+            .map(|control| (control.attachment_id, control.control_id))
     }
 
     fn apply_physical_controller_input(&mut self, device_id: i32, key: AbstractKey, pressed: bool) {
@@ -1011,31 +1175,26 @@ impl AndroidFrontend {
             .physical_pressed
             .iter()
             .any(|(_, pressed_key)| *pressed_key == key);
-        let role = match key {
-            AbstractKey::Button1 => TouchControlRole::FaceButton1,
-            AbstractKey::Button2 => TouchControlRole::FaceButton2,
-            AbstractKey::Start => TouchControlRole::Start,
-            AbstractKey::Select => TouchControlRole::Select,
-            AbstractKey::DpadUp => TouchControlRole::DpadUp,
-            AbstractKey::DpadDown => TouchControlRole::DpadDown,
-            AbstractKey::DpadLeft => TouchControlRole::DpadLeft,
-            AbstractKey::DpadRight => TouchControlRole::DpadRight,
-            _ => return,
-        };
-        let model = self.session.touch_overlay_model(self.overlay_revision);
-        let Some(control) = model
-            .controls
-            .into_iter()
-            .find(|control| control.role == role)
-        else {
+        let Some((attachment, control)) = self.control_for_physical_key(key) else {
             return;
         };
         let event = if effective_pressed {
-            DigitalInputEvent::pressed(control.attachment_id, control.control_id)
+            DigitalInputEvent::pressed(attachment, control)
         } else {
-            DigitalInputEvent::released(control.attachment_id, control.control_id)
+            DigitalInputEvent::released(attachment, control)
         };
         self.session.apply_input_event(event);
+    }
+
+    /// Release every physically held button before forgetting it, so a
+    /// surface reset cannot strand pressed bits inside the emulator.
+    fn release_physical_tracking(&mut self) {
+        for (_, key) in std::mem::take(&mut self.physical_pressed) {
+            if let Some((attachment, control)) = self.control_for_physical_key(key) {
+                self.session
+                    .apply_input_event(DigitalInputEvent::released(attachment, control));
+            }
+        }
     }
 
     fn ensure_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
@@ -1328,6 +1487,10 @@ impl AndroidFrontend {
                     self.lifecycle_auto_paused = false;
                     log::info!("try_resume_foreground: resumed session after lifecycle pause");
                 }
+                // The OS may have killed the audio stream while
+                // backgrounded regardless of pause state; re-acquire it
+                // (idempotent, silent when already playing).
+                self.session.restart_audio();
                 log::info!("try_resume_foreground: attempt {attempt} succeeded");
                 self.request_redraw();
             }
@@ -1352,6 +1515,14 @@ impl AndroidFrontend {
         let overlay_settings = &self.session.settings_snapshot().local.touch_overlay;
         self.overlay_revision = self.overlay_revision.wrapping_add(1);
         let model = self.session.touch_overlay_model(self.overlay_revision);
+        // Shoulder zones are drawn only for systems that have them
+        // (GBA); GBC/NES profiles expose no shoulder controls.
+        let shoulders_visible = model.controls.iter().any(|control| {
+            matches!(
+                control.role,
+                TouchControlRole::LeftShoulder | TouchControlRole::RightShoulder
+            )
+        });
         self.overlay = if overlay_settings.visibility
             == nerust_gui_settings::local::TouchOverlayVisibility::Hidden
         {
@@ -1365,7 +1536,7 @@ impl AndroidFrontend {
                 overlay_settings.vertical_offset_percent,
             ))
         };
-        configure_controls_overlay(&self.app, overlay_settings);
+        configure_controls_overlay(&self.app, overlay_settings, shoulders_visible);
     }
 
     fn render(&mut self) {
@@ -1410,10 +1581,25 @@ impl AndroidFrontend {
     }
 
     fn maybe_refresh_title(&mut self, now: Instant) {
-        if self.shell.should_refresh_title(now)
-            && let Some(window) = self.window.as_ref()
-        {
-            window.set_title(&self.session.window_title());
+        if self.shell.should_refresh_title(now) {
+            if let Some(window) = self.window.as_ref() {
+                window.set_title(&self.session.window_title());
+            }
+            self.sync_fps_overlay();
+        }
+    }
+
+    /// Forward the emulation FPS to the Android overlay label at 2Hz.
+    ///
+    /// Sends only on visibility change or >= 0.1 FPS drift so the Java main
+    /// thread is not spammed with identical runnables.
+    fn sync_fps_overlay(&mut self) {
+        let metrics = self.session.metrics();
+        let visible = metrics.loaded && !metrics.paused;
+        let fps_tenth = (metrics.emulation_fps * 10.0).round() as i32;
+        if self.last_fps_sent != Some((visible, fps_tenth)) {
+            update_fps_overlay(&self.app, fps_tenth as f32 / 10.0, visible);
+            self.last_fps_sent = Some((visible, fps_tenth));
         }
     }
 
@@ -1663,8 +1849,10 @@ impl FrontendSession for AndroidFrontend {
         self.exec(SessionCommand::TogglePause);
     }
 
-    fn save_active_slot(&mut self) {
-        self.exec(SessionCommand::SaveActiveSlotOrNew);
+    fn save_active_slot(&mut self) -> bool {
+        self.exec(SessionCommand::SaveActiveSlotOrNew)
+            .unwrap_or_default()
+            .executed
     }
 
     fn load_active_slot(&mut self) -> bool {

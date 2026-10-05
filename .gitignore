@@ -9,3 +9,7 @@
 .vscode/ipch
 **/*.*~
 **/#*.*#
+
+# GBA ROM test byproducts (regenerated on every run; refs/ stays tracked)
+roms/gba/diffs/
+roms/gba/screenshots/

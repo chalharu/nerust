@@ -1,3 +1,4 @@
+pub mod dynamic_rate;
 pub mod resampler;
 
 use std::f32;
