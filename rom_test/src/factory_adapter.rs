@@ -18,9 +18,12 @@ use nerust_core_traits::{
     },
 };
 use nerust_input_traits::{GuiInput, InputAssignments};
-use nerust_nes_core::{console_core::NesConsoleCore, core_options::CoreOptions};
+use nerust_nes_core::{
+    console_core::NesConsoleCore,
+    core_options::{CoreOptions, Mmc3IrqVariant as NesMmc3IrqVariant},
+};
 
-use crate::error::RomTestError;
+use crate::{error::RomTestError, manifest::Mmc3IrqVariant};
 
 /// A loaded console plus its input writer, ready for headless driving.
 pub struct TestSystem {
@@ -41,7 +44,7 @@ pub fn open_nes_system(
     factory: &dyn CoreFactory,
     case_id: &str,
     rom_bytes: &[u8],
-    options: CoreOptions,
+    mmc3_irq_variant: Option<Mmc3IrqVariant>,
     audio_sample_rate: u32,
 ) -> Result<TestSystem, RomTestError> {
     let construction = |message: String| RomTestError::CoreConstruction {
@@ -71,7 +74,7 @@ pub fn open_nes_system(
         region: None,
         bios_paths: HashMap::new(),
         controllers: HashMap::new(),
-        core_options: Some(Box::new(options)),
+        core_options: Some(Box::new(core_options_for(mmc3_irq_variant))),
         // The console stamps this into its resampler. It must match the
         // mixer's rate: the old direct path sampled `audio.sample_rate()`.
         audio_sample_rate: Some(audio_sample_rate),
@@ -85,6 +88,17 @@ pub fn open_nes_system(
         console: parts.core,
         gui_input: parts.gui_input,
     })
+}
+
+/// Build concrete NES options from the manifest-schema variant.
+/// The single place that maps test schema types to core types.
+pub(crate) fn core_options_for(mmc3_irq_variant: Option<Mmc3IrqVariant>) -> CoreOptions {
+    CoreOptions {
+        mmc3_irq_variant: mmc3_irq_variant.map(|variant| match variant {
+            Mmc3IrqVariant::Sharp => NesMmc3IrqVariant::Sharp,
+            Mmc3IrqVariant::Nec => NesMmc3IrqVariant::Nec,
+        }),
+    }
 }
 
 /// Clone the P1 profile onto P2. The suite drives both pads (88 pad2

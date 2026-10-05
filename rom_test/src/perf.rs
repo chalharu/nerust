@@ -5,6 +5,7 @@ use nerust_core_traits::audio::{AudioBackend, StereoSample};
 use nerust_input_traits::{ControllerCollection, ControllerHub as _};
 use nerust_nes_core::{Core, rom_parse};
 use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
+use nerust_nes_factory::NesFactory;
 use nerust_render_filters::FilterTypeExt;
 use nerust_render_traits::{FrameBuffer, PixelFormat, filter::FilterType};
 
@@ -78,6 +79,7 @@ fn run() -> Result<(), String> {
     let mut roms = Vec::with_capacity(cases.len());
     for case in &cases {
         match validate_case(
+            &NesFactory,
             case,
             ValidationOptions {
                 capture_screenshots: false,
@@ -255,13 +257,13 @@ impl PerfRunner {
                 case_id: case.id.clone(),
                 message: error.to_string(),
             })?;
-        let core =
-            Core::new_with_options(cartridge_data, case.core_options()).map_err(|error| {
-                RomTestError::CoreConstruction {
-                    case_id: case.id.clone(),
-                    message: error.to_string(),
-                }
-            })?;
+        let options = crate::factory_adapter::core_options_for(case.mmc3_irq_variant);
+        let core = Core::new_with_options(cartridge_data, options).map_err(|error| {
+            RomTestError::CoreConstruction {
+                case_id: case.id.clone(),
+                message: error.to_string(),
+            }
+        })?;
         let mut palette = [0u32; 256];
         let assets = FilterType::NtscComposite.palette_console_video_assets();
         let rgba8 = assets.palette_rgba8();

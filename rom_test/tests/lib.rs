@@ -1,5 +1,6 @@
 use std::sync::OnceLock;
 
+use nerust_nes_factory::NesFactory;
 use nerust_rom_test::{
     manifest::{RomManifest, load_default_manifest},
     results::{CaseOutcome, ValidationOptions},
@@ -26,6 +27,7 @@ fn run_generated_manifest_case(case_id: &str) {
         .case(case_id)
         .unwrap_or_else(|| panic!("ROM case `{case_id}` should exist in the manifest"));
     let outcome = validate_case(
+        &NesFactory,
         case,
         ValidationOptions {
             capture_screenshots: false,

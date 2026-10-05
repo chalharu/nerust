@@ -18,13 +18,14 @@ pub(in crate::runner) struct ValidationRunner {
 
 impl ValidationRunner {
     pub(in crate::runner) fn new(
+        factory: &dyn nerust_core_traits::factory::CoreFactory,
         case: &RomCase,
         rom_bytes: &[u8],
         options: ValidationOptions,
     ) -> Result<Self, RomTestError> {
         Ok(Self {
             case_id: case.id.clone(),
-            runtime: ValidationRuntime::new(case, rom_bytes)?,
+            runtime: ValidationRuntime::new(factory, case, rom_bytes)?,
             artifacts: ValidationArtifacts::default(),
             options,
         })

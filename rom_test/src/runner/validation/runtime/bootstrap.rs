@@ -1,4 +1,4 @@
-use nerust_nes_factory::NesFactory;
+use nerust_core_traits::factory::CoreFactory;
 
 use super::ValidationRuntime;
 use crate::{
@@ -11,14 +11,15 @@ use crate::{
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn new(
+        factory: &dyn CoreFactory,
         case: &RomCase,
         rom_bytes: &[u8],
     ) -> Result<Self, RomTestError> {
         let system = factory_adapter::open_nes_system(
-            &NesFactory,
+            factory,
             &case.id,
             rom_bytes,
-            case.core_options(),
+            case.mmc3_irq_variant,
             case.audio_sample_rate(),
         )?;
 
