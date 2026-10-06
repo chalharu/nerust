@@ -580,7 +580,7 @@ cases:
     category: mapper
     description: "Verifies MMC6 submapper 1 behavior via a test-harness NES 2.0 override on the original iNES ROM. On real MMC6 hardware the ROM's legacy $6000 result byte is open bus, so this case checks for an open-bus zero there and validates the final MMC6 pass screen."
     rom: nes-test-roms/mmc3_test/6-MMC6.nes
-    options: ["submapper=1"]
+    options: ["--submapper", "1"]
     events:
       - {frame: 420, action: check_memory, address: "0x6000", value: "0x00", open_bus: true}
       - {frame: 420, action: check_screen, hash: "0x5BEF4682CA6BF8FB"}

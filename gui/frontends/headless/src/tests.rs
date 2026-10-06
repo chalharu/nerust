@@ -4,10 +4,7 @@ use super::{
     error::RomTestError,
     events::{ControllerPad, PadState, RomAssertion, RomEvent, RomEventKind},
     harness::{CaseHarness, drive_case},
-    manifest::{
-        RomCase, RomCategory, RomManifest, apply_case_rom_overrides, default_manifest_path,
-        load_default_manifest,
-    },
+    manifest::{RomCase, RomCategory, RomManifest, default_manifest_path, load_default_manifest},
 };
 
 #[test]
@@ -20,7 +17,7 @@ cases:
     description: Best first-pass CPU validation ROM.
     rom: nes-test-roms/other/nestest.nes
     perf: true
-    options: ["--mmc3-irq-variant", "nec", "submapper=4"]
+    options: ["--mmc3-irq-variant", "nec", "--submapper", "4"]
     expected_audio:
       sample_rate: 192000
       samples: 287270
@@ -40,7 +37,8 @@ cases:
         vec![
             "--mmc3-irq-variant".to_string(),
             "nec".to_string(),
-            "submapper=4".to_string()
+            "--submapper".to_string(),
+            "4".to_string()
         ]
     );
 }
@@ -257,7 +255,8 @@ fn rom_case_builds_core_options() {
         options: vec![
             "--mmc3-irq-variant".to_string(),
             "nec".to_string(),
-            "submapper=4".to_string(),
+            "--submapper".to_string(),
+            "4".to_string(),
         ],
         events: vec![RomEvent {
             frame: 1,
@@ -273,13 +272,18 @@ fn rom_case_builds_core_options() {
         vec![
             "--mmc3-irq-variant".to_string(),
             "nec".to_string(),
-            "submapper=4".to_string()
+            "--submapper".to_string(),
+            "4".to_string()
         ]
     );
 }
 
 #[test]
-fn rom_case_rejects_submapper_values_outside_nes20_range() {
+fn rom_case_passes_submapper_range_check_to_load_time() {
+    // Option validity belongs to the factory/core that defines the
+    // flags: the manifest passes options through untouched, and the
+    // out-of-range value fails loudly at load through `CartridgeData`
+    // validation (covered by `nes_core` unit tests).
     let mut manifest = serde_saphyr::from_str::<RomManifest>(
         r#"
 cases:
@@ -287,7 +291,7 @@ cases:
     category: cpu
     description: Best first-pass CPU validation ROM.
     rom: nes-test-roms/other/nestest.nes
-    options: ["submapper=16"]
+    options: ["--submapper", "16"]
     events:
       - { frame: 1, action: check_screen, hash: "0x1" }
 "#,
@@ -295,65 +299,5 @@ cases:
     .expect("manifest should parse");
     manifest.resolve_paths(&default_manifest_path());
 
-    assert!(matches!(
-        manifest.validate(),
-        Err(RomTestError::InvalidManifest(message))
-            if message.contains("submapper")
-    ));
-}
-
-#[test]
-fn submapper_override_promotes_rom_header_in_memory() {
-    let case = RomCase {
-        id: "mapper.override".to_string(),
-        category: RomCategory::Mapper,
-        description: "Override regression.".to_string(),
-        rom: "mapper/override.nes".to_string(),
-        perf: false,
-        options: vec!["submapper=1".to_string()],
-        events: vec![RomEvent {
-            frame: 1,
-            kind: RomEventKind::CheckScreen { hash: 1 },
-        }],
-        expected_audio: None,
-        ci: true,
-        resolved_rom_path: PathBuf::new(),
-    };
-    let rom_bytes = vec![
-        0x4E, 0x45, 0x53, 0x1A, 0x02, 0x01, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00,
-    ];
-
-    let overridden = apply_case_rom_overrides(&case, rom_bytes).expect("override should work");
-
-    assert_eq!(overridden[7], 0x08);
-    assert_eq!(overridden[8], 0x10);
-}
-
-#[test]
-fn submapper_override_clears_ines_prg_ram_bits_when_promoting_to_nes20() {
-    let case = RomCase {
-        id: "mapper.override".to_string(),
-        category: RomCategory::Mapper,
-        description: "Override regression.".to_string(),
-        rom: "mapper/override.nes".to_string(),
-        perf: false,
-        options: vec!["submapper=1".to_string()],
-        events: vec![RomEvent {
-            frame: 1,
-            kind: RomEventKind::CheckScreen { hash: 1 },
-        }],
-        expected_audio: None,
-        ci: true,
-        resolved_rom_path: PathBuf::new(),
-    };
-    let rom_bytes = vec![
-        0x4E, 0x45, 0x53, 0x1A, 0x02, 0x01, 0x41, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00,
-    ];
-
-    let overridden = apply_case_rom_overrides(&case, rom_bytes).expect("override should work");
-
-    assert_eq!(overridden[7], 0x08);
-    assert_eq!(overridden[8], 0x10);
+    manifest.validate().expect("options pass through");
 }

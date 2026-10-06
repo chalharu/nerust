@@ -62,16 +62,14 @@ pub fn open_headless_system(
     let view = factory
         .headless_view()
         .map_err(|error| construction(format!("headless view: {error:?}")))?;
-    // Case options split in the manifest: schema argv parses through
-    // the factory's own CLI schema (single-sourced flag spelling and
-    // value validation; clap rejects typos loudly), while harness ROM
-    // overrides never reach the core. Explicit options keep beating
-    // saved settings inside `resolve_load_request`, as with real
+    // Case options pass straight through to the factory CLI schema
+    // as argv (single-sourced flag spelling and value validation;
+    // clap rejects typos loudly). Explicit options keep beating saved
+    // settings inside `resolve_load_request`, as with real
     // command-line usage.
-    let (argv_options, _) = crate::manifest::split_case_options(case_id, &options)?;
-    let mut argv = Vec::with_capacity(argv_options.len() + 1);
+    let mut argv = Vec::with_capacity(options.len() + 1);
     argv.push("headless".to_string());
-    argv.extend(argv_options);
+    argv.extend(options);
     let load_options = {
         let schema = factory.load_options_schema();
         let matches = schema

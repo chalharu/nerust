@@ -12,6 +12,10 @@ pub(crate) fn try_from_with_options(
     data: CartridgeData,
     options: CoreOptions,
 ) -> Result<Box<dyn Cartridge>, CartridgeError> {
+    let data = match options.submapper {
+        Some(submapper) => data.with_sub_mapper_type(submapper)?,
+        None => data,
+    };
     let mut result = mapper::try_from(data, options.mmc3_irq_variant);
     if let Ok(ref mut r) = result {
         Cartridge::initialize(r.as_mut());

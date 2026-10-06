@@ -124,6 +124,7 @@ pub(crate) fn resolve_nes_load_request_inner(
     let explicit_val = options.mmc3_irq_variant.map(Mmc3IrqVariant::from);
     let core_opts = CoreOptions {
         mmc3_irq_variant: explicit_val.or(saved),
+        submapper: options.submapper,
     };
     Ok(ResolvedLoadRequest {
         options: core_opts.into(),
@@ -189,6 +190,7 @@ mod tests {
     fn nec_options() -> Box<dyn DynSystemLoadOptions> {
         CommandLineOptions {
             mmc3_irq_variant: Some(crate::Mmc3IrqVariant::Nec),
+            submapper: None,
         }
         .into()
     }
@@ -276,6 +278,7 @@ mod tests {
             &Language::SystemDefault,
             CommandLineOptions {
                 mmc3_irq_variant: Some(crate::Mmc3IrqVariant::Sharp),
+                submapper: Some(1),
             }
             .into(),
         )
@@ -283,12 +286,14 @@ mod tests {
 
         let core_opts = &resolved.options.downcast::<CoreOptions>().unwrap();
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Sharp));
+        assert_eq!(core_opts.submapper, Some(1));
 
         let resolved = resolve_nes_load_request_inner(
             &nes,
             &Language::SystemDefault,
             CommandLineOptions {
                 mmc3_irq_variant: Some(crate::Mmc3IrqVariant::Nec),
+                submapper: None,
             }
             .into(),
         )
