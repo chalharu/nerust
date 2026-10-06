@@ -6,7 +6,7 @@ use nerust_nes_factory::NesFactory;
 use crate::{
     error::RomTestError,
     events::{ButtonCode, Buttons, ControllerPad, PadState, RomAssertion},
-    factory_adapter::{TestSystem, open_nes_system},
+    factory_adapter::{TestSystem, open_headless_system},
     harness::{CaseHarness, apply_button_state, drive_case},
     manifest::{RomCase, load_default_manifest, read_rom},
     results::{CaseOutcome, ValidationOptions},
@@ -252,7 +252,7 @@ struct PerfRunner {
 
 impl PerfRunner {
     fn new(case: &RomCase, rom_bytes: &[u8]) -> Result<Self, RomTestError> {
-        let system = open_nes_system(
+        let system = open_headless_system(
             &NesFactory,
             &case.id,
             rom_bytes,
