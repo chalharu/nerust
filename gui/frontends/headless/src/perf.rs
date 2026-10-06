@@ -72,9 +72,12 @@ fn run() -> Result<(), String> {
     );
 
     let mut roms = Vec::with_capacity(cases.len());
+    // Construction selects the system once; everything downstream
+    // drives through `dyn CoreFactory`.
+    let factory = NesFactory::boxed();
     for case in &cases {
         match validate_case(
-            &NesFactory,
+            factory.as_ref(),
             case,
             ValidationOptions {
                 capture_screenshots: false,
@@ -114,7 +117,7 @@ fn run() -> Result<(), String> {
 
     for _ in 0..warmup_rounds {
         for (case, rom_bytes) in &roms {
-            let result = PerfRunner::new(case, rom_bytes)
+            let result = PerfRunner::new(factory.as_ref(), case, rom_bytes)
                 .map_err(|error| error.to_string())?
                 .run(case)
                 .map_err(|error| error.to_string())?;
@@ -130,7 +133,7 @@ fn run() -> Result<(), String> {
         for round in 0..rounds {
             let wall_started = Instant::now();
             let cpu_started_nanos = process_cpu_time_nanos()?;
-            let result = PerfRunner::new(case, rom_bytes)
+            let result = PerfRunner::new(factory.as_ref(), case, rom_bytes)
                 .map_err(|error| error.to_string())?
                 .run(case)
                 .map_err(|error| error.to_string())?;
@@ -248,9 +251,13 @@ struct PerfRunner {
 }
 
 impl PerfRunner {
-    fn new(case: &RomCase, rom_bytes: &[u8]) -> Result<Self, RomTestError> {
+    fn new(
+        factory: &dyn nerust_core_traits::factory::CoreFactory,
+        case: &RomCase,
+        rom_bytes: &[u8],
+    ) -> Result<Self, RomTestError> {
         let system = open_headless_system(
-            &NesFactory,
+            factory,
             &case.id,
             rom_bytes,
             case.options.clone(),
