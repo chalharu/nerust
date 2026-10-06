@@ -124,11 +124,14 @@ impl ValidationRunner {
         pad: ControllerPad,
         button: ButtonCode,
         state: PadState,
-    ) {
-        self.runtime.apply_standard_controller(pad, button, state);
+    ) -> Result<(), RomTestError> {
+        self.runtime.apply_standard_controller(pad, button, state)
     }
 
-    pub(in crate::runner::validation) fn set_microphone(&mut self, state: PadState) {
-        self.runtime.set_microphone(state);
+    pub(in crate::runner::validation) fn set_microphone(
+        &mut self,
+        state: PadState,
+    ) -> Result<(), RomTestError> {
+        self.runtime.set_microphone(state)
     }
 }

@@ -21,16 +21,12 @@ thiserror.workspace = true
 
 # NES system support. Optional so the harness core stays system-agnostic;
 # GBC/GBA adapters will follow the same pattern. Build with `--features nes`.
-nerust_nes_core = { workspace = true, optional = true }
-nerust_nes_device = { workspace = true, optional = true }
 nerust_nes_factory = { workspace = true, optional = true }
 
 [features]
 default = []
 nes = [
-    "dep:nerust_nes_core",
     "dep:nerust_nes_factory",
-    "dep:nerust_nes_device",
 ]
 
 [[bin]]
