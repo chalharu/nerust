@@ -332,6 +332,9 @@ fn handle_load(
 ) -> bool {
     cmd.config.audio_sample_rate = Some(audio.sample_rate());
     let result = core.load(&cmd.rom, &cmd.config);
+    if result.is_ok() && cmd.start_paused {
+        core.set_paused(true);
+    }
     filter.reset();
     let loaded = result.is_ok();
     let _ = cmd.reply.send(result);
@@ -668,6 +671,7 @@ mod tests {
                     core_options: None,
                     audio_sample_rate: None,
                 },
+                start_paused: false,
                 reply: tx,
             })))
             .expect("load send");
@@ -696,6 +700,52 @@ mod tests {
             step(&thread, StepUnit::Instruction),
             Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
         );
+    }
+
+    #[test]
+    fn paused_load_runs_no_free_frames() {
+        let fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0u32; 256]),
+            },
+        )));
+        let thread = EmuThread::spawn(
+            Box::new(FakeCore {
+                paused: false,
+                loaded: false,
+                stepped_frames: 0,
+                mem: std::array::from_fn(|i| i as u8),
+            }),
+            Arc::clone(&fb),
+            Arc::new(AtomicBool::new(false)),
+            Box::new([0u32; 256]),
+            Box::new(SilentBackend),
+        );
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::Load(Box::new(LoadCommand {
+                rom: vec![0u8; 16],
+                config: CoreConfig {
+                    region: None,
+                    bios_paths: HashMap::new(),
+                    controllers: HashMap::new(),
+                    core_options: None,
+                    audio_sample_rate: None,
+                },
+                start_paused: true,
+                reply: tx,
+            })))
+            .expect("load send");
+        rx.recv().expect("load reply").expect("load ok");
+        // Settle past several timer quanta: a free-running core would
+        // have advanced; a paused one stays at zero.
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        assert_eq!(thread.frame_count(), 0);
+        // And stepping still works afterwards.
+        assert!(step(&thread, StepUnit::Frame).is_ok());
+        assert_eq!(thread.frame_count(), 1);
     }
 
     #[test]

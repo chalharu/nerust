@@ -1,9 +1,9 @@
 use nerust_core_traits::audio::AudioBackend;
+use nerust_nes_core::debugger::{SPACE_PPU_VRAM, SPACE_WORK_RAM};
 
 use super::ValidationRuntime;
 use crate::{
     error::RomTestError,
-    factory_adapter,
     media::{encode_screenshot_png, screen_hash},
 };
 
@@ -20,39 +20,45 @@ impl ValidationRuntime {
         self.mixer.checksum()
     }
 
-    pub(in crate::runner::validation) fn screen_hash(&self) -> u64 {
-        screen_hash(&self.screen_buffer)
+    pub(in crate::runner::validation) fn screen_hash(&mut self) -> u64 {
+        screen_hash(self.system.screen_buffer())
     }
 
     pub(in crate::runner::validation) fn capture_screenshot_png(
-        &self,
+        &mut self,
     ) -> Result<Vec<u8>, RomTestError> {
-        encode_screenshot_png(&self.screen_buffer)
+        encode_screenshot_png(self.system.screen_buffer())
     }
 
-    /// Work-RAM byte through the generic debugger path.
+    /// Work-RAM byte through the thread inspect path.
     ///
-    /// `space_containing` returning `None` is structurally impossible
-    /// to mis-resolve: callers still treat `None` as out-of-range,
-    /// exactly like the old concrete peek.
-    pub(in crate::runner::validation) fn peek_work_ram(&self, address: usize) -> Option<u8> {
-        let addr = u32::try_from(address).ok()?;
-        let debugger = self.system.console.debugger()?;
-        let space = debugger.space_containing(addr)?;
-        debugger.read(space, addr, 1).map(|value| value as u8)
+    /// Space ids are imported (not duplicated) so a table reorder breaks
+    /// compilation instead of silently mis-resolving. Callers map `None`
+    /// to out-of-range errors, exactly like the old concrete peek.
+    pub(in crate::runner::validation) fn peek_work_ram(
+        &self,
+        address: usize,
+    ) -> Result<Option<u8>, RomTestError> {
+        let Some(addr) = u32::try_from(address).ok() else {
+            return Ok(None);
+        };
+        self.system.read_byte(SPACE_WORK_RAM, addr)
     }
 
     pub(in crate::runner::validation) fn peek_cartridge_ram(
         &self,
         address: usize,
-    ) -> Option<(u8, bool)> {
-        factory_adapter::peek_cartridge_ram(&*self.system.console, address)
+    ) -> Result<Option<(u8, bool)>, RomTestError> {
+        self.system.peek_cartridge_ram(address)
     }
 
-    pub(in crate::runner::validation) fn peek_ppu_vram(&self, address: usize) -> Option<u8> {
-        let addr = u32::try_from(address).ok()?;
-        let debugger = self.system.console.debugger()?;
-        let space = debugger.space_containing(addr)?;
-        debugger.read(space, addr, 1).map(|value| value as u8)
+    pub(in crate::runner::validation) fn peek_ppu_vram(
+        &self,
+        address: usize,
+    ) -> Result<Option<u8>, RomTestError> {
+        let Some(addr) = u32::try_from(address).ok() else {
+            return Ok(None);
+        };
+        self.system.read_byte(SPACE_PPU_VRAM, addr)
     }
 }

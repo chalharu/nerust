@@ -5,32 +5,12 @@ use std::{
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core_traits::audio::{AudioBackend, StereoSample};
-use nerust_render_traits::{FrameBuffer, PixelFormat};
+use nerust_render_traits::FrameBuffer;
 use png::{BitDepth, ColorType, Encoder};
 
 use super::error::RomTestError;
 
 const CRC64_LEGACY_ECMA: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
-
-/// Validation frame buffer carrying the factory palette.
-///
-/// The palette is display metadata only: hashes cover indices, and PNG
-/// encoding derives RGBA from these same bytes. It must come from the
-/// factory (filter pinned to `None` at construction), never rebuilt here.
-pub(crate) fn validation_screen_buffer(palette: &[u32]) -> FrameBuffer {
-    let mut owned = [0u32; 256];
-    let n = palette.len().min(256);
-    owned[..n].copy_from_slice(&palette[..n]);
-    let mut fb = FrameBuffer::with_capacity(
-        256,
-        240,
-        PixelFormat::PaletteIndex {
-            palette: Box::new(owned),
-        },
-    );
-    fb.resize(256, 240);
-    fb
-}
 
 pub(crate) fn screen_hash(frame: &FrameBuffer) -> u64 {
     let mut hasher = Crc64Hasher::new();

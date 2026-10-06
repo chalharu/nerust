@@ -38,7 +38,7 @@ impl ValidationRunner {
         let totals = drive_case(case, &mut self)?;
         Ok(self
             .artifacts
-            .finish(case, &self.runtime, totals, self.options))
+            .finish(case, &mut self.runtime, totals, self.options))
     }
 
     pub(in crate::runner::validation) fn run_frame(&mut self) -> Result<(), RomTestError> {
@@ -56,7 +56,7 @@ impl ValidationRunner {
     ) -> Result<(), RomTestError> {
         self.artifacts.record_screen_assert(
             &self.case_id,
-            &self.runtime,
+            &mut self.runtime,
             self.options,
             frame,
             expected_hash,
@@ -115,8 +115,8 @@ impl ValidationRunner {
         )
     }
 
-    pub(in crate::runner::validation) fn reset_runtime(&mut self) {
-        self.runtime.reset();
+    pub(in crate::runner::validation) fn reset_runtime(&mut self) -> Result<(), RomTestError> {
+        self.runtime.reset()
     }
 
     pub(in crate::runner::validation) fn apply_standard_controller(

@@ -105,6 +105,10 @@ pub struct LoadCommand {
     pub rom: Vec<u8>,
     pub config: CoreConfig,
     pub reply: Sender<Result<(), CoreError>>,
+    /// Start paused: no free-run frame executes between load and the
+    /// first command. Headless drivers need this for deterministic
+    /// frame zero; interactive sessions leave it false.
+    pub start_paused: bool,
 }
 
 /// Boxed payload for `EmuCommand::LoadState` / `EmuCommand::ImportMapperSave`.

@@ -3432,6 +3432,7 @@ dependencies = [
  "clap",
  "crc",
  "nerust_core_traits",
+ "nerust_gui_shell",
  "nerust_input_traits",
  "nerust_nes_core",
  "nerust_nes_device",
