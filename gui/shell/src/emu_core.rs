@@ -9,7 +9,10 @@ use std::{
 
 use nerust_core_traits::{
     CoreConfig, CoreOptions, EmuCommand, LoadCommand, StateDataCommand,
-    debugger::{DebuggerError, InspectError, InspectRequest, InspectResult, MemoryWrite, StepUnit},
+    debugger::{
+        DebuggerError, InspectError, InspectRequest, InspectResult, MemoryWrite, SpaceInfo,
+        StepUnit,
+    },
     factory::{CoreParts, load::MediaObject},
     identity::SystemIdentity,
 };
@@ -406,6 +409,17 @@ impl EmuCore {
                 tap,
                 reply: reply_tx,
             })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// Memory-space table snapshot through the emu thread. Empty when
+    /// idle or when the core exposes no debugger. Static metadata:
+    /// no pause gating required.
+    pub fn memory_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerSpaces { reply: reply_tx })
             .map_err(|_| OperationError::WorkerUnavailable)?;
         reply_rx.recv().map_err(|_| OperationError::NoReply)
     }

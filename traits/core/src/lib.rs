@@ -184,6 +184,13 @@ pub enum EmuCommand {
         addr: usize,
         reply: Sender<Option<(u8, bool)>>,
     },
+    /// Memory-space table snapshot. Static metadata: answered without
+    /// pause gating; empty when idle or when the core exposes no
+    /// debugger. Lets generic drivers resolve stable space keys
+    /// without naming system tables.
+    DebuggerSpaces {
+        reply: Sender<Vec<debugger::SpaceInfo>>,
+    },
 }
 
 // ---------------------------------------------------------------------------

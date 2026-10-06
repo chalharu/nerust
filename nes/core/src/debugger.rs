@@ -43,10 +43,8 @@ static NES_SPACES: [SpaceInfo; 2] = [
     },
 ];
 
-/// Validated NES memory-space table. The factory resolves headless
-/// space ids by stable `key` against this table, so a reorder can never
-/// silently mis-resolve: ids always come from the table itself.
-pub static NES_SPACE_TABLE: SpaceTable = SpaceTable::build(&NES_SPACES);
+/// Validated NES memory-space table.
+static NES_SPACE_TABLE: SpaceTable = SpaceTable::build(&NES_SPACES);
 
 /// Read-only NES observer.
 pub struct NesDebugger<'a> {

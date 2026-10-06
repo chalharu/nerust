@@ -1,13 +1,14 @@
-//! Single seam to concrete NES construction and session-layer driving.
+//! Single seam to system construction and session-layer driving.
 //!
 //! The generic validation harness drives [`TestSystem`], which owns the
-//! session execution engine ([`EmuCore`]) built from factory parts. The
-//! only NES-concrete name here is the factory itself (plus its test
-//! support types): option mapping, space ids, and pad layouts all live
-//! in `nes_factory`. The thread does the stepping, inspecting, and audio
-//! tapping; this module translates test intent into session calls.
+//! session execution engine ([`EmuCore`]) built from factory parts. This
+//! module names no system-concrete types: [`open_nes_system`] takes
+//! `&dyn CoreFactory`, and all system knowledge below is harness-owned
+//! *data* (the `TEST_*` tables) resolved through generic trait calls.
+//! Production code carries no test support.
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     sync::{Arc, Mutex},
 };
@@ -16,21 +17,50 @@ use nerust_core_traits::{
     CoreConfig,
     audio::{AudioBackend, StereoSample},
     debugger::{InspectRequest, SpaceId, StepUnit},
-    factory::CoreFactory,
+    factory::{
+        CoreFactory,
+        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
+    },
 };
 use nerust_gui_shell::emu_core::EmuCore;
-use nerust_input_traits::{GuiInput, InputAssignments, InputValue};
-use nerust_nes_factory::{Mmc3IrqVariant as FactoryMmc3Variant, NesFactory, TestPadLayout};
+use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments, InputValue};
 use nerust_render_traits::FrameBuffer;
 
 use crate::{error::RomTestError, manifest::Mmc3IrqVariant};
+
+/// NES headless test profile. System knowledge owned by the harness as
+/// data: stable ids from the factory's settings/input descriptors.
+/// Any drift fails loudly at open; nothing here can silently
+/// mis-resolve.
+const TEST_MMC3_FIELD: &str = "core.mmc3_irq_variant";
+const TEST_MMC3_SHARP: &str = "sharp";
+const TEST_MMC3_NEC: &str = "nec";
+const TEST_SPACE_WRAM_KEY: &str = "wram";
+const TEST_SPACE_PPU_VRAM_KEY: &str = "ppu_vram";
+const TEST_ATTACH_P1: &str = "nes.attachment.player1";
+const TEST_ATTACH_P2: &str = "nes.attachment.player2";
+const TEST_MIC_CONTROL: &str = "famicom.microphone";
+/// Suite bit order per pad: A B Select Start Up Down Left Right.
+const TEST_PAD_BUTTONS: [&str; 8] = [
+    "nes.control.a",
+    "nes.control.b",
+    "nes.control.select",
+    "nes.control.start",
+    "nes.control.up",
+    "nes.control.down",
+    "nes.control.left",
+    "nes.control.right",
+];
 
 /// A loaded NES system ready for headless driving: session-owned
 /// execution plus input writer and nominal-audio tap.
 pub struct TestSystem {
     emu: EmuCore,
     gui_input: GuiInput,
-    pad_layout: TestPadLayout,
+    pad_fields: [[Option<usize>; 8]; 2],
+    mic_field: Option<usize>,
+    work_ram: SpaceId,
+    ppu_vram: SpaceId,
     tap: Arc<Mutex<Vec<StereoSample>>>,
 }
 
@@ -45,9 +75,9 @@ pub struct TestSystem {
 ///   the microphone, which the factory default (P2 unassigned) lacks.
 /// * Audio goes to a null backend stamped at the case rate; nominal
 ///   samples are tapped per stepped frame, never rate-controlled.
-/// * Test options (`mmc3_irq_variant`, …) resolve inside the factory
-///   (`resolve_load_request`); the adapter only translates its own
-///   schema enum to the factory's (entry-point glue).
+/// * Test options (`mmc3_irq_variant`, …) apply through the generic
+///   settings-choice port; the adapter only translates its own schema
+///   enum to choice strings.
 /// * After paused load the thread is silent until the first step, so
 ///   stepped frames start from a deterministic power-on frame zero.
 pub fn open_nes_system(
@@ -62,9 +92,24 @@ pub fn open_nes_system(
         message,
     };
 
-    let view = factory
+    let mut view = factory
         .headless_view()
         .map_err(|error| construction(format!("headless view: {error:?}")))?;
+    if let Some(choice) = mmc3_irq_variant.map(|variant| match variant {
+        Mmc3IrqVariant::Sharp => TEST_MMC3_SHARP,
+        Mmc3IrqVariant::Nec => TEST_MMC3_NEC,
+    }) {
+        factory
+            .apply_settings_choice(
+                &mut view,
+                &SystemSettingsFieldId(Cow::Borrowed(TEST_MMC3_FIELD)),
+                &SystemSettingsChoiceId(Cow::Borrowed(choice)),
+            )
+            .map_err(|error| construction(format!("apply test option: {error:?}")))?;
+    }
+    let resolved = factory
+        .resolve_load_request(&view, factory.default_load_options())
+        .map_err(|error| construction(format!("resolve options: {error:?}")))?;
 
     let base = factory.input_system_factory().default_assignments();
     let assignments = duplicate_p1_to_p2(&base)
@@ -75,16 +120,6 @@ pub fn open_nes_system(
         .create_core_and_adapter_with_assignments(&view, speaker, &assignments)
         .map_err(|error| construction(format!("create_core: {error:?}")))?;
 
-    let resolved = factory
-        .resolve_load_request(
-            &view,
-            NesFactory::headless_load_options(mmc3_irq_variant.map(|variant| match variant {
-                Mmc3IrqVariant::Sharp => FactoryMmc3Variant::Sharp,
-                Mmc3IrqVariant::Nec => FactoryMmc3Variant::Nec,
-            })),
-        )
-        .map_err(|error| construction(format!("resolve options: {error:?}")))?;
-
     let config = CoreConfig {
         region: None,
         bios_paths: HashMap::new(),
@@ -93,8 +128,6 @@ pub fn open_nes_system(
         audio_sample_rate: None,
     };
     let (emu, gui_input, field_map, _) = EmuCore::from_parts(parts);
-    let pad_layout = NesFactory::test_pad_layout(&field_map)
-        .map_err(|error| construction(format!("test pad layout: {error:?}")))?;
     // Paused load: power-on state survives to frame zero (no free-run
     // frames, no compensating reset that would destroy it).
     emu.load_paused(
@@ -102,6 +135,44 @@ pub fn open_nes_system(
         config.core_options,
     )
     .map_err(|error| construction(format!("load: {error:?}")))?;
+
+    // Resolve test ids through generic ports: space keys against the
+    // thread's table snapshot, pad bits against the factory field map.
+    let spaces = emu
+        .memory_spaces()
+        .map_err(|error| construction(format!("memory spaces: {error:?}")))?;
+    let lookup_space = |key: &'static str| {
+        spaces
+            .iter()
+            .find(|info| info.key == key)
+            .map(|info| info.id)
+            .ok_or_else(|| construction(format!("memory space missing: {key}")))
+    };
+    let lookup_field = |attachment: &'static str, control: &'static str| {
+        field_map
+            .get(&(
+                AttachmentId::new(attachment),
+                DigitalControlId::new(control),
+            ))
+            .copied()
+    };
+    let missing_field = |attachment: &'static str, control: &'static str| {
+        construction(format!("test input field missing: {attachment}/{control}"))
+    };
+    let mut pad_fields = [[None; 8]; 2];
+    for (pad, attachment) in [TEST_ATTACH_P1, TEST_ATTACH_P2].into_iter().enumerate() {
+        for (bit, control) in TEST_PAD_BUTTONS.into_iter().enumerate() {
+            // Pad 2 has no Select/Start buttons; the suite drives those
+            // bits as no-ops (the device masks them too).
+            let optional = pad == 1 && (bit == 2 || bit == 3);
+            pad_fields[pad][bit] = match lookup_field(attachment, control) {
+                Some(field) => Some(field),
+                None if optional => None,
+                None => return Err(missing_field(attachment, control)),
+            };
+        }
+    }
+
     let tap = Arc::new(Mutex::new(Vec::new()));
     emu.tap_nominal_audio(Arc::clone(&tap))
         .map_err(|error| construction(format!("tap: {error:?}")))?;
@@ -109,7 +180,13 @@ pub fn open_nes_system(
     Ok(TestSystem {
         emu,
         gui_input,
-        pad_layout,
+        pad_fields,
+        mic_field: Some(
+            lookup_field(TEST_ATTACH_P2, TEST_MIC_CONTROL)
+                .ok_or_else(|| missing_field(TEST_ATTACH_P2, TEST_MIC_CONTROL))?,
+        ),
+        work_ram: lookup_space(TEST_SPACE_WRAM_KEY)?,
+        ppu_vram: lookup_space(TEST_SPACE_PPU_VRAM_KEY)?,
         tap,
     })
 }
@@ -130,13 +207,13 @@ impl TestSystem {
     /// Publish absolute pad state for the next frame.
     ///
     /// Bits follow the suite convention (A B Select Start Up Down
-    /// Left Right per pad); the factory owns the bit-to-field layout.
-    /// Unknown hardware bits are skipped, but a field write failure is
-    /// a loud error — never a silent no-op.
+    /// Left Right per pad); fields resolve at open against the factory
+    /// field map. Unknown hardware bits are skipped, but a field write
+    /// failure is a loud error — never a silent no-op.
     pub fn sync_input(&mut self, pad1: u8, pad2: u8, mic: bool) -> Result<(), RomTestError> {
         let seed = |this: &mut Self, pad: usize, bits: u8| -> Result<(), RomTestError> {
             for bit in 0..8 {
-                if let Some(field) = this.pad_layout.pad_fields[pad][bit] {
+                if let Some(field) = this.pad_fields[pad][bit] {
                     this.gui_input
                         .state
                         .set(field, InputValue::Digital(bits & (1 << bit) != 0))
@@ -147,7 +224,7 @@ impl TestSystem {
         };
         seed(self, 0, pad1)?;
         seed(self, 1, pad2)?;
-        if let Some(field) = self.pad_layout.mic_field {
+        if let Some(field) = self.mic_field {
             self.gui_input
                 .state
                 .set(field, InputValue::Digital(mic))
@@ -186,20 +263,15 @@ impl TestSystem {
 
     /// Read one byte from Work RAM through the thread inspect path.
     ///
-    /// The space id resolves by stable table key inside the factory,
+    /// Space ids resolve once at open from the thread's table snapshot,
     /// so a table reorder can never silently mis-resolve.
     pub fn read_work_ram_byte(&self, addr: u32) -> Result<Option<u8>, RomTestError> {
-        self.read_byte(self.space_for_key("wram")?, addr)
+        self.read_byte(self.work_ram, addr)
     }
 
     /// Read one byte from PPU VRAM through the thread inspect path.
     pub fn read_ppu_vram_byte(&self, addr: u32) -> Result<Option<u8>, RomTestError> {
-        self.read_byte(self.space_for_key("ppu_vram")?, addr)
-    }
-
-    fn space_for_key(&self, key: &'static str) -> Result<SpaceId, RomTestError> {
-        NesFactory::space_id_for_key(key)
-            .ok_or_else(|| RomTestError::EmuThread(format!("unknown memory space key: {key}")))
+        self.read_byte(self.ppu_vram, addr)
     }
 
     fn read_byte(&self, space: SpaceId, addr: u32) -> Result<Option<u8>, RomTestError> {
