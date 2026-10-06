@@ -292,6 +292,23 @@ impl TestSystem {
             .unwrap_or(MemoryRead::OpenBus))
     }
 
+    /// Read the live register list through the thread inspect path.
+    /// Same paused moment as a memory dump: the caller stepped first,
+    /// so names and values are frame-addressed. Empty rows keep the
+    /// response to registers only.
+    pub fn read_registers(&self) -> Result<Vec<(&'static str, u64)>, RomTestError> {
+        let inner = self
+            .emu
+            .inspect(InspectRequest {
+                space: None,
+                addr: None,
+                rows: 0,
+            })
+            .map_err(|error| RomTestError::EmuThread(format!("transport: {error:?}")))?
+            .map_err(|error| RomTestError::EmuThread(format!("inspect: {error:?}")))?;
+        Ok(inner.registers.to_vec())
+    }
+
     /// Reset emulation to a deterministic frame zero.
     pub fn reset(&self) -> Result<(), RomTestError> {
         self.emu

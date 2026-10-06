@@ -17,7 +17,10 @@ impl CaseHarness for ValidationRunner {
                 address,
                 value,
                 open_bus,
-            } => self.record_memory_assert(frame, usize::from(*address), *value, *open_bus),
+            } => self.record_memory_assert(frame, *address as usize, *value, *open_bus),
+            RomAssertion::Registers { registers } => {
+                self.record_registers_assert(frame, registers.clone())
+            }
         }
     }
 

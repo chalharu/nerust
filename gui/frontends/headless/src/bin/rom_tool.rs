@@ -227,6 +227,16 @@ fn print_outcome(outcome: &CaseOutcome) {
                     if check.passed() { "pass" } else { "fail" }
                 );
             }
+            for check in &validation.register_checks {
+                println!(
+                    "  register frame={} name={} expected=0x{:X} actual=0x{:X} status={}",
+                    check.frame,
+                    check.name,
+                    check.expected_value,
+                    check.actual_value,
+                    if check.passed() { "pass" } else { "fail" }
+                );
+            }
             println!(
                 "  audio sample_rate={} samples={} hash=0x{:016X}",
                 validation.audio.sample_rate, validation.audio.samples, validation.audio.hash

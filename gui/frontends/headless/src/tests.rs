@@ -140,6 +140,7 @@ fn drive_case_dispatches_frame_zero_events() {
                     self.events.push(format!("cart@{frame}"))
                 }
                 RomAssertion::Memory { .. } => self.events.push(format!("ram@{frame}")),
+                RomAssertion::Registers { .. } => self.events.push(format!("regs@{frame}")),
             }
             Ok(())
         }
@@ -300,4 +301,143 @@ cases:
     manifest.resolve_paths(&default_manifest_path());
 
     manifest.validate().expect("options pass through");
+}
+
+#[test]
+fn parse_manifest_with_registers_and_u32_addresses() {
+    let mut manifest = serde_saphyr::from_str::<RomManifest>(
+        r#"
+cases:
+  - id: cpu.registers
+    category: cpu
+    description: Register assertions and 32-bit addresses.
+    rom: nes-test-roms/other/nestest.nes
+    events:
+      - { frame: 5, action: check_registers, registers: {a: "0x00", pc: 32768} }
+      - { frame: 5, action: assert, kind: registers, registers: {x: "0x01"} }
+      - { frame: 5, action: check_memory, address: "0x02000001", value: "0x00" }
+      - { frame: 5, action: check_memory, address: "0x0301", value: "0x01" }
+"#,
+    )
+    .expect("manifest should parse");
+    manifest.resolve_paths(&default_manifest_path());
+    manifest.validate().expect("manifest should validate");
+
+    let events = &manifest.case("cpu.registers").unwrap().events;
+    match &events[0].kind {
+        RomEventKind::CheckRegisters { registers } => {
+            assert_eq!(registers.get("a"), Some(&0x00));
+            assert_eq!(registers.get("pc"), Some(&32768));
+        }
+        other => panic!("unexpected event kind: {other:?}"),
+    }
+    match &events[1].kind {
+        RomEventKind::Assert {
+            assertion: RomAssertion::Registers { registers },
+        } => {
+            assert_eq!(registers.get("x"), Some(&0x01));
+        }
+        other => panic!("unexpected event kind: {other:?}"),
+    }
+    match &events[2].kind {
+        RomEventKind::CheckMemory { address, .. } => {
+            assert_eq!(*address, 0x0200_0001);
+        }
+        other => panic!("unexpected event kind: {other:?}"),
+    }
+    // 16-bit values keep parsing: existing suites are unaffected.
+    match &events[3].kind {
+        RomEventKind::CheckMemory { address, .. } => {
+            assert_eq!(*address, 0x0301);
+        }
+        other => panic!("unexpected event kind: {other:?}"),
+    }
+}
+
+#[test]
+fn reject_manifest_with_out_of_range_u32_address() {
+    let result = serde_saphyr::from_str::<RomManifest>(
+        r#"
+cases:
+  - id: cpu.overflow
+    category: cpu
+    description: Address past u32 must fail loudly, never wrap.
+    rom: nes-test-roms/other/nestest.nes
+    events:
+      - { frame: 5, action: check_memory, address: "0x100000000", value: "0x00" }
+"#,
+    );
+    assert!(result.is_err(), "u32 overflow should not parse");
+}
+
+#[test]
+fn drive_case_dispatches_check_registers() {
+    struct Harness {
+        frame_counter: u64,
+        events: Vec<String>,
+    }
+
+    impl CaseHarness for Harness {
+        fn run_frame(&mut self) -> Result<(), RomTestError> {
+            self.frame_counter += 1;
+            Ok(())
+        }
+
+        fn frame_counter(&self) -> u64 {
+            self.frame_counter
+        }
+
+        fn on_assert(&mut self, frame: u64, assertion: &RomAssertion) -> Result<(), RomTestError> {
+            match assertion {
+                RomAssertion::Registers { registers } => self
+                    .events
+                    .push(format!("regs@{frame}:{}", registers.len())),
+                _ => self.events.push(format!("other@{frame}")),
+            }
+            Ok(())
+        }
+
+        fn on_reset(&mut self) -> Result<(), RomTestError> {
+            Ok(())
+        }
+
+        fn on_standard_controller(
+            &mut self,
+            _pad: ControllerPad,
+            _button: String,
+            _state: PadState,
+        ) -> Result<(), RomTestError> {
+            Ok(())
+        }
+    }
+
+    let mut registers = std::collections::BTreeMap::new();
+    registers.insert("a".to_string(), 0x00);
+    registers.insert("pc".to_string(), 0x8000);
+    let case = RomCase {
+        id: "regs".to_string(),
+        category: RomCategory::Cpu,
+        description: "Register dispatch regression.".to_string(),
+        rom: "nes-test-roms/other/nestest.nes".to_string(),
+        perf: false,
+        options: Vec::new(),
+        events: vec![RomEvent {
+            frame: 1,
+            kind: RomEventKind::CheckRegisters {
+                registers: registers.clone(),
+            },
+        }],
+        expected_audio: None,
+        ci: true,
+        resolved_rom_path: PathBuf::new(),
+    };
+    let mut harness = Harness {
+        frame_counter: 0,
+        events: Vec::new(),
+    };
+
+    let totals = drive_case(&case, &mut harness).expect("case should run");
+
+    assert_eq!(totals.frames, 1);
+    assert_eq!(harness.events, vec!["regs@1:2".to_string()]);
 }

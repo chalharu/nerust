@@ -72,7 +72,7 @@ impl ValidationArtifacts {
 
         self.memory.memory.checks.push(MemoryCheck {
             frame: expected.frame,
-            address: u16::try_from(expected.address).expect("assertion addresses are u16"),
+            address: u32::try_from(expected.address).expect("assertion addresses are u32"),
             expected_value: expected.expected_value,
             actual_value,
             expected_open_bus: expected.expected_open_bus,
