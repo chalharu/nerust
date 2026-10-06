@@ -100,12 +100,10 @@ pub struct RomCase {
     /// Absent means in scope.
     #[serde(default = "default_ci")]
     pub ci: bool,
-    /// Load-affecting options as raw strings. Entries starting with
-    /// `--` pass through to the factory CLI options schema as argv
-    /// (e.g. `"--mmc3-irq-variant", "nec"`); clap validates them there.
-    /// `submapper=N` stamps an NES 2.0 submapper into legacy iNES ROM
-    /// headers before load (harness ROM override, validated below).
-    /// Anything else is rejected loudly — never silently ignored.
+    /// Load-affecting options as raw strings, passed through to the
+    /// factory CLI options schema as argv (e.g. `"--mmc3-irq-variant",
+    /// "nec"`, `"--submapper", "1"`); clap validates them there.
+    /// Anything unknown is rejected loudly — never silently ignored.
     #[serde(default)]
     pub options: Vec<String>,
     pub events: Vec<RomEvent>,
@@ -134,9 +132,10 @@ impl RomCase {
                 self.id
             )));
         }
-        // Harness-domain option forms validate here; factory schema
-        // flags validate at open through clap.
-        split_case_options(&self.id, &self.options)?;
+        // Case options pass through to the factory CLI schema
+        // untouched; clap validates them at open.
+        // (No manifest-side validation: option validity belongs to
+        // the factory that defines the flags.)
         let rom_path = self.resolved_rom_path()?;
         if !rom_path.is_file() {
             return Err(RomTestError::InvalidManifest(format!(
@@ -269,69 +268,10 @@ pub fn load_default_manifest() -> Result<RomManifest, RomTestError> {
 
 pub fn read_rom(case: &RomCase) -> Result<Vec<u8>, RomTestError> {
     let rom_path = case.resolved_rom_path()?.to_path_buf();
-    let rom_bytes = fs::read(&rom_path).map_err(|source| RomTestError::ReadFile {
+    fs::read(&rom_path).map_err(|source| RomTestError::ReadFile {
         path: rom_path,
         source,
-    })?;
-
-    apply_case_rom_overrides(case, rom_bytes)
-}
-
-/// Split case options into factory schema argv and harness ROM
-/// overrides. `submapper=N` stamps an NES 2.0 submapper into legacy
-/// iNES headers (validated: 4-bit range, duplicate rejection);
-/// everything else passes through to the factory CLI schema, which
-/// rejects unknown flags loudly at open.
-pub(crate) fn split_case_options(
-    case_id: &str,
-    options: &[String],
-) -> Result<(Vec<String>, Option<u8>), RomTestError> {
-    let mut argv = Vec::with_capacity(options.len());
-    let mut sub_mapper = None;
-    for option in options {
-        if let Some(value) = option.strip_prefix("submapper=") {
-            if sub_mapper.is_some() {
-                return Err(RomTestError::InvalidManifest(format!(
-                    "ROM case `{case_id}` sets submapper twice"
-                )));
-            }
-            let parsed: u8 = value.parse().map_err(|_| {
-                RomTestError::InvalidManifest(format!(
-                    "ROM case `{case_id}` uses unsupported submapper `{value}`; NES 2.0 submappers must fit in 4 bits"
-                ))
-            })?;
-            if parsed > 0x0F {
-                return Err(RomTestError::InvalidManifest(format!(
-                    "ROM case `{case_id}` uses unsupported submapper {parsed}; NES 2.0 submappers must fit in 4 bits"
-                )));
-            }
-            sub_mapper = Some(parsed);
-        } else {
-            argv.push(option.clone());
-        }
-    }
-    Ok((argv, sub_mapper))
-}
-
-pub(crate) fn apply_case_rom_overrides(
-    case: &RomCase,
-    mut rom_bytes: Vec<u8>,
-) -> Result<Vec<u8>, RomTestError> {
-    let (_, submapper) = split_case_options(&case.id, &case.options)?;
-    if let Some(submapper) = submapper {
-        if rom_bytes.len() < 16 || &rom_bytes[..4] != b"NES\x1A" {
-            return Err(RomTestError::InvalidManifest(format!(
-                "ROM case `{}` cannot override submapper without a 16-byte iNES/NES 2.0 header",
-                case.id
-            )));
-        }
-
-        let was_nes20 = (rom_bytes[7] & 0x0C) == 0x08;
-        rom_bytes[7] = (rom_bytes[7] & 0xF3) | 0x08;
-        rom_bytes[8] = if was_nes20 { rom_bytes[8] & 0x0F } else { 0 } | (submapper << 4);
-    }
-
-    Ok(rom_bytes)
+    })
 }
 
 fn default_rom_root() -> PathBuf {

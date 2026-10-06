@@ -1688,6 +1688,7 @@ mod persistence_tests {
             nrom_test_data(),
             CoreOptions {
                 mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
+                submapper: None,
             },
         )
         .expect("source core should construct");
@@ -1699,6 +1700,7 @@ mod persistence_tests {
             nrom_test_data(),
             CoreOptions {
                 mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
+                submapper: None,
             },
         )
         .expect("target core should construct");

@@ -193,6 +193,11 @@ struct CommandLineOptions {
     /// Override mapper 4 MMC3 IRQ behavior
     #[clap(long, value_enum)]
     mmc3_irq_variant: Option<Mmc3IrqVariant>,
+    /// Override the ROM header submapper (legacy iNES ROMs whose
+    /// headers cannot name it). Validated against the NES 2.0 4-bit
+    /// range when the cartridge resolves.
+    #[clap(long)]
+    submapper: Option<u8>,
 }
 
 impl SystemLoadOptions for CommandLineOptions {}
