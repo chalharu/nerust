@@ -28,6 +28,15 @@ pub fn gba_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
 #[derive(Debug)]
 pub struct GbaFactory;
 
+impl GbaFactory {
+    /// Boxed `dyn CoreFactory` for generic drivers. Construction
+    /// selects the system once here; everything downstream drives
+    /// through `dyn CoreFactory` without naming this type.
+    pub fn boxed() -> Box<dyn CoreFactory> {
+        Box::new(Self)
+    }
+}
+
 impl CoreFactory for GbaFactory {
     fn system_id(&self) -> Box<dyn SystemId> {
         Box::new(nerust_gba_core::rom_identity::GbaSystemId)

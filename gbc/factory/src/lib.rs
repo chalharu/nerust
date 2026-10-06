@@ -28,6 +28,15 @@ pub fn gbc_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
 #[derive(Debug)]
 pub struct GbcFactory;
 
+impl GbcFactory {
+    /// Boxed `dyn CoreFactory` for generic drivers. Construction
+    /// selects the system once here; everything downstream drives
+    /// through `dyn CoreFactory` without naming this type.
+    pub fn boxed() -> Box<dyn CoreFactory> {
+        Box::new(Self)
+    }
+}
+
 impl CoreFactory for GbcFactory {
     fn system_id(&self) -> Box<dyn SystemId> {
         Box::new(nerust_gbc_core::rom_identity::GbcSystemId)
@@ -164,10 +173,19 @@ mod tests {
     }
 
     #[test]
+    fn probe_media_rejects_gba_rom() {
+        // First-match-wins routing depends on disjoint probes: a GBA
+        // ROM carries a different logo at the GB header offset, so the
+        // GB probe must refuse it (mirror of the GBA-side test).
+        let mut rom = vec![0; 0x4000];
+        nerust_gba_core::cartridge::header::finalize_test_gba_rom(&mut rom);
+        assert!(!GbcFactory.probe_media(&MediaObject::new(None, rom)));
+    }
+
+    #[test]
     fn reports_gb_and_gbc_file_extensions() {
         assert_eq!(GbcFactory.supported_extensions(), &["gb", "gbc"]);
     }
-
     #[test]
     fn default_input_attachment_id_matches_device_profile() {
         let factory = GbcFactory;

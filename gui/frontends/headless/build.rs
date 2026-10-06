@@ -31,12 +31,26 @@ fn main() {
     // truth, used both for generating the factory list below and for
     // eligibility judgment: without any system, no case is eligible,
     // so everything becomes `#[ignore]` instead of failing — the same
-    // judgment `validate` reports at runtime as ignored. Add GBC/GBA
-    // rows here; nothing else needs to learn new systems.
-    let systems: &[(&str, &str)] = &[(
-        "CARGO_FEATURE_NES",
-        "nerust_nes_factory::NesFactory::boxed()",
-    )];
+    // judgment `validate` reports at runtime as ignored.
+    //
+    // Order is first-match-wins in `open_headless_system`. Probes are
+    // disjoint by construction (iNES magic vs 48-byte GB logo vs
+    // 156-byte GBA logo, each exact-matched), so order carries no
+    // routing decision; NES stays first as the original system.
+    let systems: &[(&str, &str)] = &[
+        (
+            "CARGO_FEATURE_NES",
+            "nerust_nes_factory::NesFactory::boxed()",
+        ),
+        (
+            "CARGO_FEATURE_GBC",
+            "nerust_gbc_factory::GbcFactory::boxed()",
+        ),
+        (
+            "CARGO_FEATURE_GBA",
+            "nerust_gba_factory::GbaFactory::boxed()",
+        ),
+    ];
     let mut factory_items = String::new();
     let mut has_system = false;
     for (feature_env, construct) in systems {

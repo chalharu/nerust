@@ -18,14 +18,23 @@ serde.workspace = true
 serde-saphyr.workspace = true
 thiserror.workspace = true
 
-# NES system support. Optional so the harness core stays system-agnostic;
-# GBC/GBA adapters will follow the same pattern. Build with `--features nes`.
+# System support. Optional so the harness core stays system-agnostic;
+# each system follows the same pattern. Build with `--features nes`,
+# adding `gbc` / `gba` as those cores land their debugger surface.
 nerust_nes_factory = { workspace = true, optional = true }
+nerust_gbc_factory = { workspace = true, optional = true }
+nerust_gba_factory = { workspace = true, optional = true }
 
 [features]
 default = []
 nes = [
     "dep:nerust_nes_factory",
+]
+gbc = [
+    "dep:nerust_gbc_factory",
+]
+gba = [
+    "dep:nerust_gba_factory",
 ]
 
 [[bin]]
