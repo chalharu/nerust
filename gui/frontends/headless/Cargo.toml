@@ -24,7 +24,6 @@ thiserror.workspace = true
 nerust_nes_core = { workspace = true, optional = true }
 nerust_nes_device = { workspace = true, optional = true }
 nerust_nes_factory = { workspace = true, optional = true }
-nerust_nes_settings = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -32,7 +31,6 @@ nes = [
     "dep:nerust_nes_core",
     "dep:nerust_nes_factory",
     "dep:nerust_nes_device",
-    "dep:nerust_nes_settings",
 ]
 
 [[bin]]

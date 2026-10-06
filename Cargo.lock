@@ -3437,7 +3437,6 @@ dependencies = [
  "nerust_nes_core",
  "nerust_nes_device",
  "nerust_nes_factory",
- "nerust_nes_settings",
  "nerust_render_traits",
  "png",
  "serde",

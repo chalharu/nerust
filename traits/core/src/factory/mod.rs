@@ -113,6 +113,17 @@ pub trait CoreFactory: Send + Sync {
     fn as_system_defaults(&self) -> Option<&dyn SystemDefaults> {
         None
     }
+
+    /// Deterministic settings view for headless driving (tests,
+    /// benchmarks). Each system pins what determinism needs — typically
+    /// the video filter, so palette bytes never depend on GUI defaults.
+    ///
+    /// Defaults to `Err`: headless support is opt-in per system, and a
+    /// loud failure beats silently shifting defaults. Loud failure also
+    /// guards future settings changes from silently altering hashes.
+    fn headless_view(&self) -> Result<FactorySettingsView, FactoryError> {
+        Err(FactoryError::InvalidSettings)
+    }
 }
 
 /// System-specific GUI integration defaults.
