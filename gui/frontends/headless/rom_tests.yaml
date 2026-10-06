@@ -1850,3 +1850,1208 @@ cases:
     options: ["--gbc-hardware-model", "dmg"]
     events:
       - {frame: 1250, action: check_serial, bytes: "0x31312D6F7020612C28686C290A0A0A5061737365640A"}
+  - id: gbc.retrio.instr_timing
+    category: cpu
+    description: "Instruction timing verification (legacy crc EB56FABB)."
+    rom: gbc/retrio_gb-test-roms/instr_timing/instr_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 62, action: check_serial, bytes: "0x696E7374725F74696D696E670A0A0A5061737365640A"}
+  - id: gbc.retrio.mem_timing_read
+    category: cpu
+    description: "Memory read timing (legacy crc 7A15AF07)."
+    rom: gbc/retrio_gb-test-roms/mem_timing/individual/01-read_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 48, action: check_serial, bytes: "0x30312D726561645F74696D696E670A0A0A5061737365640A"}
+  - id: gbc.retrio.mem_timing_write
+    category: cpu
+    description: "Memory write timing (legacy crc E5881150)."
+    rom: gbc/retrio_gb-test-roms/mem_timing/individual/02-write_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 48, action: check_serial, bytes: "0x30322D77726974655F74696D696E670A0A0A5061737365640A"}
+  - id: gbc.retrio.mem_timing_modify
+    category: cpu
+    description: "Memory modify timing (legacy crc D2B4F231)."
+    rom: gbc/retrio_gb-test-roms/mem_timing/individual/03-modify_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 55, action: check_serial, bytes: "0x30332D6D6F646966795F74696D696E670A0A0A5061737365640A"}
+  - id: gbc.retrio.mem_timing_all
+    category: cpu
+    description: "Memory timing combined (legacy crc A2165D86)."
+    rom: gbc/retrio_gb-test-roms/mem_timing/mem_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 134, action: check_serial, bytes: "0x6D656D5F74696D696E670A0A30313A6F6B202030323A6F6B202030333A6F6B20200A0A50617373656420616C6C2074657374730A"}
+  - id: gbc.mooneye.stat_lyc_onoff.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — stat_lyc_onoff (STAT LYC comparison, LCD on/off) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/stat_lyc_onoff.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.stat_lyc_onoff
+    category: cpu
+    description: "Mooneye Test Suite — stat_lyc_onoff (STAT LYC comparison, LCD on/off) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/stat_lyc_onoff.gb
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.stat_irq_blocking.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — stat_irq_blocking (STAT interrupt line blocking) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/stat_irq_blocking.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.stat_irq_blocking
+    category: cpu
+    description: "Mooneye Test Suite — stat_irq_blocking (STAT interrupt line blocking) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/stat_irq_blocking.gb
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_1_2_timing_gs
+    category: cpu
+    description: "Mooneye Test Suite — ppu/intr_1_2_timing-GS (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/intr_1_2_timing-GS.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.hblank_ly_scx_timing_gs
+    category: cpu
+    description: "Mooneye Test Suite — ppu/hblank_ly_scx_timing-GS (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/hblank_ly_scx_timing-GS.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 84, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.lcdon_timing_gs
+    category: cpu
+    description: "Mooneye Test Suite — ppu/lcdon_timing-GS (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/lcdon_timing-GS.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 48, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.lcdon_write_timing_gs
+    category: cpu
+    description: "Mooneye Test Suite — ppu/lcdon_write_timing-GS (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/lcdon_write_timing-GS.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.vblank_stat_intr_gs
+    category: cpu
+    description: "Mooneye Test Suite — ppu/vblank_stat_intr-GS (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/vblank_stat_intr-GS.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.vblank_stat_intr_c.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — misc/ppu/vblank_stat_intr-C (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/misc/ppu/vblank_stat_intr-C.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.vblank_stat_intr_c
+    category: cpu
+    description: "Mooneye Test Suite — misc/ppu/vblank_stat_intr-C (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/misc/ppu/vblank_stat_intr-C.gb
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_2_mode3_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — intr_2_mode3_timing (mode 2 to mode 3 interrupt) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/intr_2_mode3_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_2_mode3_timing
+    category: cpu
+    description: "Mooneye Test Suite — intr_2_mode3_timing (mode 2 to mode 3 interrupt) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/intr_2_mode3_timing.gb
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_2_0_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — intr_2_0_timing (mode 2 to mode 0 interrupt) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/intr_2_0_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_2_0_timing
+    category: cpu
+    description: "Mooneye Test Suite — intr_2_0_timing (mode 2 to mode 0 interrupt) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/intr_2_0_timing.gb
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_2_mode0_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — intr_2_mode0_timing (mode 2 to mode 0 interrupt) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/intr_2_mode0_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_2_mode0_timing
+    category: cpu
+    description: "Mooneye Test Suite — intr_2_mode0_timing (mode 2 to mode 0 interrupt) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/intr_2_mode0_timing.gb
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_2_mode0_timing_sprites.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — intr_2_mode0_timing_sprites (mode 2 to mode 0 interrupt with sprites) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/intr_2_mode0_timing_sprites.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 433, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_2_mode0_timing_sprites
+    category: cpu
+    description: "Mooneye Test Suite — intr_2_mode0_timing_sprites (mode 2 to mode 0 interrupt with sprites) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/intr_2_mode0_timing_sprites.gb
+    events:
+      - {frame: 433, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_2_oam_ok_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — intr_2_oam_ok_timing (mode 2 to readable OAM) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/intr_2_oam_ok_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_2_oam_ok_timing
+    category: cpu
+    description: "Mooneye Test Suite — intr_2_oam_ok_timing (mode 2 to readable OAM) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ppu/intr_2_oam_ok_timing.gb
+    events:
+      - {frame: 34, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_regs_dmgabc
+    category: cpu
+    description: "Mooneye Test Suite — boot_regs-dmgABC (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/boot_regs-dmgABC.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_div_dmg0
+    category: cpu
+    description: "Mooneye Test Suite — boot_div-dmg0 (DIV during boot on DMG 0) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/boot_div-dmg0.gb
+    options: ["--gbc-hardware-model", "dmg0"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_div_dmgabcmgb
+    category: cpu
+    description: "Mooneye Test Suite — boot_div-dmgABCmgb (DIV during boot) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/boot_div-dmgABCmgb.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_hwio_dmg0
+    category: cpu
+    description: "Mooneye Test Suite — boot_hwio-dmg0 (HWIO during boot on DMG 0) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/boot_hwio-dmg0.gb
+    options: ["--gbc-hardware-model", "dmg0"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_hwio_dmgabcmgb
+    category: cpu
+    description: "Mooneye Test Suite — boot_hwio-dmgABCmgb (HWIO during boot) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/boot_hwio-dmgABCmgb.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_regs_dmg0
+    category: cpu
+    description: "Mooneye Test Suite — boot_regs-dmg0 (register values during boot) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/boot_regs-dmg0.gb
+    options: ["--gbc-hardware-model", "dmg0"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_sclk_align
+    category: cpu
+    description: "Mooneye Test Suite — serial/boot_sclk_align-dmgABCmgb (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/serial/boot_sclk_align-dmgABCmgb.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x000305080D1522"}
+  - id: gbc.mooneye.boot_div_cgbabcde.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — misc/boot_div-cgbABCDE (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/misc/boot_div-cgbABCDE.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_div_cgbabcde
+    category: cpu
+    description: "Mooneye Test Suite — misc/boot_div-cgbABCDE (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/misc/boot_div-cgbABCDE.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_hwio_c.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — misc/boot_hwio-C (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/misc/boot_hwio-C.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_hwio_c
+    category: cpu
+    description: "Mooneye Test Suite — misc/boot_hwio-C (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/misc/boot_hwio-C.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_regs_cgb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — misc/boot_regs-cgb (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/misc/boot_regs-cgb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.boot_regs_cgb
+    category: cpu
+    description: "Mooneye Test Suite — misc/boot_regs-cgb (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/misc/boot_regs-cgb.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.div_timing
+    category: cpu
+    description: "Mooneye Test Suite — div_timing (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/div_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.ei_sequence
+    category: cpu
+    description: "Mooneye Test Suite — ei_sequence (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ei_sequence.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.ei_timing
+    category: cpu
+    description: "Mooneye Test Suite — ei_timing (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ei_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.halt_ime0_ei
+    category: cpu
+    description: "Mooneye Test Suite — halt_ime0_ei (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/halt_ime0_ei.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.halt_ime1_timing
+    category: cpu
+    description: "Mooneye Test Suite — halt_ime1_timing (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/halt_ime1_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.halt_ime1_timing2_gs
+    category: cpu
+    description: "Mooneye Test Suite — halt_ime1_timing2-GS (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/halt_ime1_timing2-GS.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 148, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.di_timing_gs
+    category: cpu
+    description: "Mooneye Test Suite — di_timing-GS (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/di_timing-GS.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.if_ie_registers
+    category: cpu
+    description: "Mooneye Test Suite — if_ie_registers (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/if_ie_registers.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.halt_ime0_nointr_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — halt_ime0_nointr_timing (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/halt_ime0_nointr_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.halt_ime0_nointr_timing
+    category: cpu
+    description: "Mooneye Test Suite — halt_ime0_nointr_timing (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/halt_ime0_nointr_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.interrupts_ie_push.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — interrupts/ie_push (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/interrupts/ie_push.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.interrupts_ie_push
+    category: cpu
+    description: "Mooneye Test Suite — interrupts/ie_push (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/interrupts/ie_push.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.intr_timing
+    category: cpu
+    description: "Mooneye Test Suite — intr_timing (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/intr_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.pop_timing
+    category: cpu
+    description: "Mooneye Test Suite — pop_timing (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/pop_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.rapid_di_ei
+    category: cpu
+    description: "Mooneye Test Suite — rapid_di_ei (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/rapid_di_ei.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.reti_intr_timing
+    category: cpu
+    description: "Mooneye Test Suite — reti_intr_timing (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/reti_intr_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_512kb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_512kb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_512kb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_512kb
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_512kb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_512kb.gb
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_1mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_1Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_1Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_1mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_1Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_1Mb.gb
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_2mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_2Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_2Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_2mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_2Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_2Mb.gb
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_4mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_4Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_4Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_4mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_4Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_4Mb.gb
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_8mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_8Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_8Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_8mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_8Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_8Mb.gb
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_16mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_16Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_16Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_16mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_16Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_16Mb.gb
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_32mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_32Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_32Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_32mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_32Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_32Mb.gb
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_64mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_64Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_64Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc5_rom_64mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc5 rom_64Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_64Mb.gb
+    events:
+      - {frame: 219, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_bits_bank1.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 bits_bank1 (ROM bank bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_bank1.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 290, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_bits_bank1
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 bits_bank1 (ROM bank bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_bank1.gb
+    events:
+      - {frame: 290, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_bits_bank2.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 bits_bank2 (ROM bank bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_bank2.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 290, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_bits_bank2
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 bits_bank2 (ROM bank bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_bank2.gb
+    events:
+      - {frame: 290, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_bits_mode.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 bits_mode (banking mode bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_mode.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 290, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_bits_mode
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 bits_mode (banking mode bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_mode.gb
+    events:
+      - {frame: 290, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_bits_ramg.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 bits_ramg (RAM enable bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_ramg.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 575, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_bits_ramg
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 bits_ramg (RAM enable bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_ramg.gb
+    events:
+      - {frame: 575, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_ram_64kb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 ram_64kb (64 KiB RAM) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/ram_64kb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 148, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_ram_64kb
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 ram_64kb (64 KiB RAM) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/ram_64kb.gb
+    events:
+      - {frame: 148, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_ram_256kb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 ram_256kb (256 KiB RAM) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/ram_256kb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 148, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_ram_256kb
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 ram_256kb (256 KiB RAM) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/ram_256kb.gb
+    events:
+      - {frame: 148, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_512kb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_512kb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_512kb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_512kb
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_512kb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_512kb.gb
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_1mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_1Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_1Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_1mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_1Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_1Mb.gb
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_2mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_2Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_2Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_2mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_2Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_2Mb.gb
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_4mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_4Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_4Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_4mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_4Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_4Mb.gb
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_8mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_8Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_8Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_8mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_8Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_8Mb.gb
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_16mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_16Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_16Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_rom_16mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 rom_16Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_16Mb.gb
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_multicart_rom_8mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 multicart_rom_8Mb (multicart ROM) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/multicart_rom_8Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc1_multicart_rom_8mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc1 multicart_rom_8Mb (multicart ROM) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc1/multicart_rom_8Mb.gb
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_bits_ramg.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 bits_ramg (RAM enable bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/bits_ramg.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 575, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_bits_ramg
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 bits_ramg (RAM enable bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/bits_ramg.gb
+    events:
+      - {frame: 575, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_bits_romb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 bits_romb (ROM bank bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/bits_romb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 290, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_bits_romb
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 bits_romb (ROM bank bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/bits_romb.gb
+    events:
+      - {frame: 290, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_bits_unused.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 bits_unused (unused bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/bits_unused.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 290, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_bits_unused
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 bits_unused (unused bits) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/bits_unused.gb
+    events:
+      - {frame: 290, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_ram.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 ram (RAM banking) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/ram.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_ram
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 ram (RAM banking) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/ram.gb
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_rom_512kb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 rom_512kb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/rom_512kb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_rom_512kb
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 rom_512kb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/rom_512kb.gb
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_rom_1mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 rom_1Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/rom_1Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_rom_1mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 rom_1Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/rom_1Mb.gb
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_rom_2mb.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 rom_2Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/rom_2Mb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.mbc2_rom_2mb
+    category: cpu
+    description: "Mooneye Test Suite — mbc2 rom_2Mb (ROM bank switching) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/emulator-only/mbc2/rom_2Mb.gb
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.bits_mem_oam.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — bits/mem_oam (OAM memory) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/bits/mem_oam.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.bits_mem_oam
+    category: cpu
+    description: "Mooneye Test Suite — bits/mem_oam (OAM memory) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/bits/mem_oam.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.bits_reg_f.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — bits/reg_f (F register) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/bits/reg_f.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.bits_reg_f
+    category: cpu
+    description: "Mooneye Test Suite — bits/reg_f (F register) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/bits/reg_f.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.bits_unused_hwio_gs
+    category: cpu
+    description: "Mooneye Test Suite — bits/unused_hwio-GS (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/bits/unused_hwio-GS.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.bits_unused_hwio_c.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — misc/bits/unused_hwio-C (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/misc/bits/unused_hwio-C.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.bits_unused_hwio_c
+    category: cpu
+    description: "Mooneye Test Suite — misc/bits/unused_hwio-C (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/misc/bits/unused_hwio-C.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.instr_daa.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — instr/daa (DAA instruction) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/instr/daa.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 41, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.instr_daa
+    category: cpu
+    description: "Mooneye Test Suite — instr/daa (DAA instruction) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/instr/daa.gb
+    events:
+      - {frame: 41, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.oam_dma_basic.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — oam_dma/basic (OAM DMA) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/oam_dma/basic.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.oam_dma_basic
+    category: cpu
+    description: "Mooneye Test Suite — oam_dma/basic (OAM DMA) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/oam_dma/basic.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.oam_dma_reg_read.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — oam_dma/reg_read (DMA register readback) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/oam_dma/reg_read.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.oam_dma_reg_read
+    category: cpu
+    description: "Mooneye Test Suite — oam_dma/reg_read (DMA register readback) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/oam_dma/reg_read.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.oam_dma_start.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — oam_dma_start (DMA startup timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/oam_dma_start.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.oam_dma_start
+    category: cpu
+    description: "Mooneye Test Suite — oam_dma_start (DMA startup timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/oam_dma_start.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.oam_dma_sources_gs
+    category: cpu
+    description: "Mooneye Test Suite — oam_dma/sources-GS (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/oam_dma/sources-GS.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 77, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.oam_dma_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — oam_dma_timing (DMA transfer timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/oam_dma_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.oam_dma_timing
+    category: cpu
+    description: "Mooneye Test Suite — oam_dma_timing (DMA transfer timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/oam_dma_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.oam_dma_restart.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — oam_dma_restart (DMA restart timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/oam_dma_restart.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.oam_dma_restart
+    category: cpu
+    description: "Mooneye Test Suite — oam_dma_restart (DMA restart timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/oam_dma_restart.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_div_write.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/div_write (DIV register write) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/div_write.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 112, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_div_write
+    category: cpu
+    description: "Mooneye Test Suite — timer/div_write (DIV register write) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/div_write.gb
+    events:
+      - {frame: 112, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim00.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim00 (TIMA clock 4096Hz) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim00.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim00
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim00 (TIMA clock 4096Hz) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim00.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim01.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim01 (TIMA clock 262144Hz) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim01.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim01
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim01 (TIMA clock 262144Hz) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim01.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim10.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim10 (TIMA clock 65536Hz) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim10.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim10
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim10 (TIMA clock 65536Hz) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim10.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim11.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim11 (TIMA clock 16384Hz) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim11.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim11
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim11 (TIMA clock 16384Hz) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim11.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim00_div_trigger.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim00_div_trigger (DIV write falling-edge trigger) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim00_div_trigger.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim00_div_trigger
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim00_div_trigger (DIV write falling-edge trigger) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim00_div_trigger.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim01_div_trigger.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim01_div_trigger (DIV write falling-edge trigger) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim01_div_trigger.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim01_div_trigger
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim01_div_trigger (DIV write falling-edge trigger) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim01_div_trigger.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim10_div_trigger.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim10_div_trigger (DIV write falling-edge trigger) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim10_div_trigger.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim10_div_trigger
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim10_div_trigger (DIV write falling-edge trigger) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim10_div_trigger.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim11_div_trigger.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim11_div_trigger (DIV write falling-edge trigger) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim11_div_trigger.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tim11_div_trigger
+    category: cpu
+    description: "Mooneye Test Suite — timer/tim11_div_trigger (DIV write falling-edge trigger) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tim11_div_trigger.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tima_reload.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/tima_reload (TIMA 4-cycle reload delay) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tima_reload.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tima_reload
+    category: cpu
+    description: "Mooneye Test Suite — timer/tima_reload (TIMA 4-cycle reload delay) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tima_reload.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tima_write_reloading.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/tima_write_reloading (TIMA write during reload) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tima_write_reloading.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tima_write_reloading
+    category: cpu
+    description: "Mooneye Test Suite — timer/tima_write_reloading (TIMA write during reload) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tima_write_reloading.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tma_write_reloading.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/tma_write_reloading (TMA write during reload) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tma_write_reloading.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_tma_write_reloading
+    category: cpu
+    description: "Mooneye Test Suite — timer/tma_write_reloading (TMA write during reload) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/tma_write_reloading.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_rapid_toggle.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — timer/rapid_toggle (rapid TAC on/off toggling) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/rapid_toggle.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.timer_rapid_toggle
+    category: cpu
+    description: "Mooneye Test Suite — timer/rapid_toggle (rapid TAC on/off toggling) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/timer/rapid_toggle.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.call_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — call_timing (CALL instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/call_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.call_timing
+    category: cpu
+    description: "Mooneye Test Suite — call_timing (CALL instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/call_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.call_timing2.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — call_timing2 (CALL instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/call_timing2.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.call_timing2
+    category: cpu
+    description: "Mooneye Test Suite — call_timing2 (CALL instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/call_timing2.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.call_cc_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — call_cc_timing (conditional CALL timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/call_cc_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.call_cc_timing
+    category: cpu
+    description: "Mooneye Test Suite — call_cc_timing (conditional CALL timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/call_cc_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.call_cc_timing2.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — call_cc_timing2 (conditional CALL timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/call_cc_timing2.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.call_cc_timing2
+    category: cpu
+    description: "Mooneye Test Suite — call_cc_timing2 (conditional CALL timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/call_cc_timing2.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.jp_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — jp_timing (JP instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/jp_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.jp_timing
+    category: cpu
+    description: "Mooneye Test Suite — jp_timing (JP instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/jp_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.jp_cc_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — jp_cc_timing (conditional JP timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/jp_cc_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.jp_cc_timing
+    category: cpu
+    description: "Mooneye Test Suite — jp_cc_timing (conditional JP timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/jp_cc_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.ret_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — ret_timing (RET instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ret_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.ret_timing
+    category: cpu
+    description: "Mooneye Test Suite — ret_timing (RET instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ret_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.ret_cc_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — ret_cc_timing (conditional RET timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ret_cc_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.ret_cc_timing
+    category: cpu
+    description: "Mooneye Test Suite — ret_cc_timing (conditional RET timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ret_cc_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.reti_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — reti_timing (RETI instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/reti_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.reti_timing
+    category: cpu
+    description: "Mooneye Test Suite — reti_timing (RETI instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/reti_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.push_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — push_timing (PUSH instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/push_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.push_timing
+    category: cpu
+    description: "Mooneye Test Suite — push_timing (PUSH instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/push_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.rst_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — rst_timing (RST instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/rst_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.rst_timing
+    category: cpu
+    description: "Mooneye Test Suite — rst_timing (RST instruction timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/rst_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.add_sp_e_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — add_sp_e_timing (ADD SP,e timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/add_sp_e_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.add_sp_e_timing
+    category: cpu
+    description: "Mooneye Test Suite — add_sp_e_timing (ADD SP,e timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/add_sp_e_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.ld_hl_sp_e_timing.cgbc
+    category: cpu
+    description: "Mooneye Test Suite — ld_hl_sp_e_timing (LD HL,SP+e timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ld_hl_sp_e_timing.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mooneye.ld_hl_sp_e_timing
+    category: cpu
+    description: "Mooneye Test Suite — ld_hl_sp_e_timing (LD HL,SP+e timing) (legacy crc None)."
+    rom: gbc/Gekkio_mooneye-test-suite/acceptance/ld_hl_sp_e_timing.gb
+    events:
+      - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
