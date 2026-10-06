@@ -3,7 +3,7 @@ use super::{
 };
 use crate::{
     error::RomTestError,
-    events::{ButtonCode, ControllerPad, PadState},
+    events::{ControllerPad, PadState},
     harness::drive_case,
     manifest::RomCase,
     results::{CaseValidation, ValidationOptions},
@@ -122,16 +122,9 @@ impl ValidationRunner {
     pub(in crate::runner::validation) fn apply_standard_controller(
         &mut self,
         pad: ControllerPad,
-        button: ButtonCode,
+        button: String,
         state: PadState,
     ) -> Result<(), RomTestError> {
         self.runtime.apply_standard_controller(pad, button, state)
-    }
-
-    pub(in crate::runner::validation) fn set_microphone(
-        &mut self,
-        state: PadState,
-    ) -> Result<(), RomTestError> {
-        self.runtime.set_microphone(state)
     }
 }

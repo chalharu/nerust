@@ -6,8 +6,8 @@
 //! `&dyn CoreFactory`, and all system addressing resolves through
 //! pre-existing maps — the CLI options schema, the debugger space
 //! table, and the input field map. Production code carries no test
-//! support; the harness owns only its test-domain vocabulary (suite
-//! bit order, assertion spaces).
+//! support; the harness owns only its test-domain vocabulary (event
+//! actions, assertion kinds).
 
 use std::{
     collections::HashMap,
@@ -21,17 +21,17 @@ use nerust_core_traits::{
     factory::CoreFactory,
 };
 use nerust_gui_shell::emu_core::EmuCore;
-use nerust_input_traits::{AbstractKey, GuiInput, InputAssignments, InputValue};
+use nerust_input_traits::{GuiInput, InputAssignments, InputValue};
 use nerust_render_traits::FrameBuffer;
 
-use crate::{error::RomTestError, manifest::Mmc3IrqVariant};
+use crate::error::RomTestError;
 
 /// A loaded NES system ready for headless driving: session-owned
 /// execution plus input writer and nominal-audio tap.
 pub struct TestSystem {
     emu: EmuCore,
     gui_input: GuiInput,
-    pad_buttons: Vec<Vec<(AbstractKey, usize)>>,
+    pad_buttons: Vec<Vec<(&'static str, usize)>>,
     spaces: Vec<SpaceInfo>,
     tap: Arc<Mutex<Vec<StereoSample>>>,
 }
@@ -39,9 +39,8 @@ pub struct TestSystem {
 /// Build a loaded system through `CoreFactory` and wrap it in the
 /// session execution engine.
 ///
-/// * Settings come from the factory's headless view; test options
-///   (`mmc3_irq_variant`, …) parse through the factory's own CLI
-///   options schema, exactly like real command-line usage.
+/// * Settings come from the factory's headless view; case `options`
+///   parse through the factory's own CLI options schema.
 /// * Both player slots get the P1 profile: the suite drives pad2 and
 ///   the microphone, which the factory default (P2 unassigned) lacks.
 /// * Audio goes to a null backend stamped at the case rate; nominal
@@ -52,7 +51,7 @@ pub fn open_headless_system(
     factory: &dyn CoreFactory,
     case_id: &str,
     rom_bytes: &[u8],
-    mmc3_irq_variant: Option<Mmc3IrqVariant>,
+    options: Vec<String>,
     audio_sample_rate: u32,
 ) -> Result<TestSystem, RomTestError> {
     let construction = |message: String| RomTestError::CoreConstruction {
@@ -63,25 +62,25 @@ pub fn open_headless_system(
     let view = factory
         .headless_view()
         .map_err(|error| construction(format!("headless view: {error:?}")))?;
-    // Test options parse through the factory's own CLI schema, so the
-    // flag spelling and value validation stay single-sourced in the
-    // factory. Explicit options keep beating saved settings inside
-    // `resolve_load_request`, as with real command-line usage.
-    let load_options = match mmc3_irq_variant.map(|variant| match variant {
-        Mmc3IrqVariant::Sharp => "sharp",
-        Mmc3IrqVariant::Nec => "nec",
-    }) {
-        None => factory.default_load_options(),
-        Some(value) => {
-            let schema = factory.load_options_schema();
-            let matches = schema
-                .augment_args(clap::Command::new("headless"))
-                .try_get_matches_from(["headless", "--mmc3-irq-variant", value])
-                .map_err(|error| construction(format!("test option: {error}")))?;
-            schema
-                .arg_matches(&matches)
-                .map_err(|error| construction(format!("test option: {error}")))?
-        }
+    // Case options split in the manifest: schema argv parses through
+    // the factory's own CLI schema (single-sourced flag spelling and
+    // value validation; clap rejects typos loudly), while harness ROM
+    // overrides never reach the core. Explicit options keep beating
+    // saved settings inside `resolve_load_request`, as with real
+    // command-line usage.
+    let (argv_options, _) = crate::manifest::split_case_options(case_id, &options)?;
+    let mut argv = Vec::with_capacity(argv_options.len() + 1);
+    argv.push("headless".to_string());
+    argv.extend(argv_options);
+    let load_options = {
+        let schema = factory.load_options_schema();
+        let matches = schema
+            .augment_args(clap::Command::new("headless"))
+            .try_get_matches_from(argv)
+            .map_err(|error| construction(format!("test option: {error}")))?;
+        schema
+            .arg_matches(&matches)
+            .map_err(|error| construction(format!("test option: {error}")))?
     };
     let resolved = factory
         .resolve_load_request(&view, load_options)
@@ -118,13 +117,12 @@ pub fn open_headless_system(
     let spaces = emu
         .memory_spaces()
         .map_err(|error| construction(format!("memory spaces: {error:?}")))?;
-    // Pad buttons resolve through the slot profiles: every keyed
-    // control in the slot's group maps through the field map to a
-    // buffer field — the microphone included, as just another button.
+    // Pad buttons resolve through the slot profiles: every control in
+    // the slot's group maps through the field map to a buffer field —
+    // addressed by the control id string the profile itself exposes.
     // Absent from the group means no such hardware (a silent no-op
     // when driven, as the device masks it too); present but unmapped
-    // is loud drift. Unkeyed controls carry no logical identity and
-    // are skipped.
+    // is loud drift.
     let mut pad_buttons = Vec::with_capacity(assignments.slots.len());
     for (pad, (attachment, profile)) in assignments.slots.iter().enumerate() {
         let profile = profile
@@ -136,9 +134,6 @@ pub fn open_headless_system(
             .ok_or_else(|| construction(format!("slot {pad} has no control group")))?;
         let mut buttons = Vec::with_capacity(group.len());
         for info in group.iter() {
-            let Some(key) = info.abstract_key else {
-                continue;
-            };
             let field = field_map
                 .get(&(*attachment, info.id))
                 .copied()
@@ -148,7 +143,7 @@ pub fn open_headless_system(
                         info.id
                     ))
                 })?;
-            buttons.push((key, field));
+            buttons.push((info.id.as_str(), field));
         }
         pad_buttons.push(buttons);
     }
@@ -179,33 +174,46 @@ fn duplicate_p1_to_p2(base: &InputAssignments) -> Option<InputAssignments> {
 }
 
 impl TestSystem {
-    /// Drive one button for the next frame.
-    ///
-    /// Keys resolve at open through the slot profile groups; a key the
-    /// pad lacks is a silent no-op (no such hardware, as the device
-    /// masks it too). A field write failure is a loud error — never a
-    /// silent no-op.
+    /// Drive one button for the next frame, addressed by the control
+    /// id string the slot profile exposes (e.g. `"nes.control.a"`).
+    /// Unknown to every pad means a typo: loud error. Known but absent
+    /// from this pad means no such hardware: silent no-op, as the
+    /// device masks it too. A field write failure is always loud —
+    /// never a silent no-op.
     pub fn set_button(
         &mut self,
         pad: usize,
-        key: AbstractKey,
+        control: &str,
         pressed: bool,
     ) -> Result<(), RomTestError> {
-        let field = self
+        let buttons = self
             .pad_buttons
             .get(pad)
-            .ok_or_else(|| RomTestError::EmuThread(format!("no such pad: {pad}")))?
+            .ok_or_else(|| RomTestError::EmuThread(format!("no such pad: {pad}")))?;
+        if let Some(field) = buttons
             .iter()
-            .find(|(button, _)| *button == key)
-            .map(|(_, field)| *field);
-        if let Some(field) = field {
+            .find(|(id, _)| *id == control)
+            .map(|(_, field)| *field)
+        {
             self.gui_input
                 .state
                 .set(field, InputValue::Digital(pressed))
                 .map_err(|error| RomTestError::EmuThread(format!("seed input: {error}")))?;
             self.gui_input.publish();
+            return Ok(());
         }
-        Ok(())
+        let known = self
+            .pad_buttons
+            .iter()
+            .flatten()
+            .any(|(id, _)| *id == control);
+        if known {
+            Ok(())
+        } else {
+            Err(RomTestError::EmuThread(format!(
+                "unknown button: {control}"
+            )))
+        }
     }
 
     /// Advance exactly one frame. The reply is the barrier: it arrives

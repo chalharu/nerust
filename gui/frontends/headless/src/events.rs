@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use nerust_input_traits::AbstractKey;
-
 use super::{
     error::RomTestError,
     serde_helpers::{hex_u8, hex_u16, hex_u64},
@@ -120,10 +118,10 @@ pub enum RomEventKind {
     Reset,
     StandardController {
         pad: ControllerPad,
-        button: ButtonCode,
-        state: PadState,
-    },
-    Microphone {
+        /// Control id string as exposed by the slot profile group
+        /// (e.g. `"nes.control.a"`). Validated against the live groups
+        /// at open; unknown ids are loud errors, never guesses.
+        button: String,
         state: PadState,
     },
 }
@@ -155,9 +153,7 @@ impl RomEventKind {
                 value: *value,
                 open_bus: false,
             }),
-            RomEventKind::Reset
-            | RomEventKind::StandardController { .. }
-            | RomEventKind::Microphone { .. } => None,
+            RomEventKind::Reset | RomEventKind::StandardController { .. } => None,
         }
     }
 }
@@ -167,36 +163,6 @@ impl RomEventKind {
 pub enum ControllerPad {
     Pad1,
     Pad2,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ButtonCode {
-    A,
-    B,
-    SELECT,
-    START,
-    UP,
-    DOWN,
-    LEFT,
-    RIGHT,
-}
-
-impl ButtonCode {
-    /// System-agnostic logical key for this suite button. The suite's
-    /// own event vocabulary translated once, at the edge; resolution
-    /// to buffer fields runs through profile groups plus field map.
-    pub fn abstract_key(self) -> AbstractKey {
-        match self {
-            ButtonCode::A => AbstractKey::Button1,
-            ButtonCode::B => AbstractKey::Button2,
-            ButtonCode::SELECT => AbstractKey::Select,
-            ButtonCode::START => AbstractKey::Start,
-            ButtonCode::UP => AbstractKey::DpadUp,
-            ButtonCode::DOWN => AbstractKey::DpadDown,
-            ButtonCode::LEFT => AbstractKey::DpadLeft,
-            ButtonCode::RIGHT => AbstractKey::DpadRight,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

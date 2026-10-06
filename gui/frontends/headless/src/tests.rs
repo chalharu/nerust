@@ -1,13 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::manifest::Mmc3IrqVariant;
-
 use super::{
     error::RomTestError,
-    events::{
-        ButtonCode, ControllerPad, MemoryAssertionSpace, PadState, RomAssertion, RomEvent,
-        RomEventKind,
-    },
+    events::{ControllerPad, MemoryAssertionSpace, PadState, RomAssertion, RomEvent, RomEventKind},
     harness::{CaseHarness, drive_case},
     manifest::{
         RomCase, RomCategory, RomManifest, apply_case_rom_overrides, default_manifest_path,
@@ -25,8 +20,7 @@ cases:
     description: Best first-pass CPU validation ROM.
     rom: nes-test-roms/other/nestest.nes
     perf: true
-    sub_mapper_type: 4
-    mmc3_irq_variant: nec
+    options: ["--mmc3-irq-variant", "nec", "submapper=4"]
     expected_audio:
       sample_rate: 192000
       samples: 287270
@@ -34,7 +28,7 @@ cases:
     events:
       - { frame: 15, action: check_work_ram, address: "0x0301", value: "0x01" }
       - { frame: 15, action: check_screen, hash: "0x464033EFDAB11D8E" }
-      - { frame: 15, action: standard_controller, pad: pad1, button: START, state: pressed }
+      - { frame: 15, action: standard_controller, pad: pad1, button: nes.control.start, state: pressed }
 "#,
     )
     .expect("manifest should parse");
@@ -42,12 +36,12 @@ cases:
     manifest.validate().expect("manifest should validate");
     assert!(manifest.case("cpu.nestest").unwrap().perf);
     assert_eq!(
-        manifest.case("cpu.nestest").unwrap().sub_mapper_type,
-        Some(4)
-    );
-    assert_eq!(
-        manifest.case("cpu.nestest").unwrap().mmc3_irq_variant,
-        Some(Mmc3IrqVariant::Nec)
+        manifest.case("cpu.nestest").unwrap().options,
+        vec![
+            "--mmc3-irq-variant".to_string(),
+            "nec".to_string(),
+            "submapper=4".to_string()
+        ]
     );
 }
 
@@ -163,17 +157,11 @@ fn drive_case_dispatches_frame_zero_events() {
         fn on_standard_controller(
             &mut self,
             _pad: ControllerPad,
-            _button: ButtonCode,
+            _button: String,
             _state: PadState,
         ) -> Result<(), RomTestError> {
             self.events
                 .push(format!("controller@{}", self.frame_counter));
-            Ok(())
-        }
-
-        fn on_microphone(&mut self, _state: PadState) -> Result<(), RomTestError> {
-            self.events
-                .push(format!("microphone@{}", self.frame_counter));
             Ok(())
         }
     }
@@ -184,8 +172,7 @@ fn drive_case_dispatches_frame_zero_events() {
         description: "Frame-zero dispatch regression.".to_string(),
         rom: "nes-test-roms/other/nestest.nes".to_string(),
         perf: false,
-        sub_mapper_type: None,
-        mmc3_irq_variant: None,
+        options: Vec::new(),
         events: vec![
             RomEvent {
                 frame: 0,
@@ -195,13 +182,15 @@ fn drive_case_dispatches_frame_zero_events() {
                 frame: 0,
                 kind: RomEventKind::StandardController {
                     pad: ControllerPad::Pad1,
-                    button: ButtonCode::START,
+                    button: "nes.control.start".to_string(),
                     state: PadState::Pressed,
                 },
             },
             RomEvent {
                 frame: 0,
-                kind: RomEventKind::Microphone {
+                kind: RomEventKind::StandardController {
+                    pad: ControllerPad::Pad2,
+                    button: "famicom.microphone".to_string(),
                     state: PadState::Pressed,
                 },
             },
@@ -249,7 +238,7 @@ fn drive_case_dispatches_frame_zero_events() {
         vec![
             "reset@0".to_string(),
             "controller@0".to_string(),
-            "microphone@0".to_string(),
+            "controller@0".to_string(),
             "ram@1".to_string(),
             "cart@1".to_string(),
             "ppu@1".to_string(),
@@ -339,8 +328,11 @@ fn rom_case_builds_core_options() {
         description: "Option regression.".to_string(),
         rom: "mapper/option.nes".to_string(),
         perf: false,
-        sub_mapper_type: Some(4),
-        mmc3_irq_variant: Some(Mmc3IrqVariant::Nec),
+        options: vec![
+            "--mmc3-irq-variant".to_string(),
+            "nec".to_string(),
+            "submapper=4".to_string(),
+        ],
         events: vec![RomEvent {
             frame: 1,
             kind: RomEventKind::CheckScreen { hash: 1 },
@@ -350,8 +342,14 @@ fn rom_case_builds_core_options() {
         resolved_rom_path: PathBuf::new(),
     };
 
-    assert_eq!(case.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
-    assert_eq!(case.sub_mapper_type, Some(4));
+    assert_eq!(
+        case.options,
+        vec![
+            "--mmc3-irq-variant".to_string(),
+            "nec".to_string(),
+            "submapper=4".to_string()
+        ]
+    );
 }
 
 #[test]
@@ -363,7 +361,7 @@ cases:
     category: cpu
     description: Best first-pass CPU validation ROM.
     rom: nes-test-roms/other/nestest.nes
-    sub_mapper_type: 16
+    options: ["submapper=16"]
     events:
       - { frame: 1, action: check_screen, hash: "0x1" }
 "#,
@@ -374,7 +372,7 @@ cases:
     assert!(matches!(
         manifest.validate(),
         Err(RomTestError::InvalidManifest(message))
-            if message.contains("sub_mapper_type")
+            if message.contains("submapper")
     ));
 }
 
@@ -386,8 +384,7 @@ fn submapper_override_promotes_rom_header_in_memory() {
         description: "Override regression.".to_string(),
         rom: "mapper/override.nes".to_string(),
         perf: false,
-        sub_mapper_type: Some(1),
-        mmc3_irq_variant: None,
+        options: vec!["submapper=1".to_string()],
         events: vec![RomEvent {
             frame: 1,
             kind: RomEventKind::CheckScreen { hash: 1 },
@@ -415,8 +412,7 @@ fn submapper_override_clears_ines_prg_ram_bits_when_promoting_to_nes20() {
         description: "Override regression.".to_string(),
         rom: "mapper/override.nes".to_string(),
         perf: false,
-        sub_mapper_type: Some(1),
-        mmc3_irq_variant: None,
+        options: vec!["submapper=1".to_string()],
         events: vec![RomEvent {
             frame: 1,
             kind: RomEventKind::CheckScreen { hash: 1 },
