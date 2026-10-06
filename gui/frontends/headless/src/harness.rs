@@ -1,6 +1,6 @@
 use super::{
     error::RomTestError,
-    events::{ButtonCode, ControllerPad, PadState, RomAssertion, RomEventKind},
+    events::{ControllerPad, PadState, RomAssertion, RomEventKind},
     manifest::RomCase,
     results::ExecutionTotals,
 };
@@ -13,10 +13,9 @@ pub trait CaseHarness {
     fn on_standard_controller(
         &mut self,
         pad: ControllerPad,
-        button: ButtonCode,
+        button: String,
         state: PadState,
     ) -> Result<(), RomTestError>;
-    fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError>;
 }
 
 pub fn drive_case<H: CaseHarness>(
@@ -51,15 +50,12 @@ fn dispatch_pending_events<H: CaseHarness>(
         if let Some(assertion) = event.kind.assertion() {
             harness.on_assert(event.frame, &assertion)?;
         } else {
-            match event.kind {
+            match &event.kind {
                 RomEventKind::Reset => {
                     harness.on_reset()?;
                 }
                 RomEventKind::StandardController { pad, button, state } => {
-                    harness.on_standard_controller(pad, button, state)?;
-                }
-                RomEventKind::Microphone { state } => {
-                    harness.on_microphone(state)?;
+                    harness.on_standard_controller(*pad, button.clone(), *state)?;
                 }
                 RomEventKind::Assert { .. }
                 | RomEventKind::CheckScreen { .. }

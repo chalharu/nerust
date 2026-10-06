@@ -13,7 +13,7 @@ impl ValidationRuntime {
             factory,
             &case.id,
             rom_bytes,
-            case.mmc3_irq_variant,
+            case.options.clone(),
             case.audio_sample_rate(),
         )?;
 

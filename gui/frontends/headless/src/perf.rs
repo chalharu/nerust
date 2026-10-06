@@ -1,12 +1,11 @@
 use std::time::{Duration, Instant};
 
 use clap::{Arg, ArgAction, Command};
-use nerust_input_traits::AbstractKey;
 use nerust_nes_factory::NesFactory;
 
 use crate::{
     error::RomTestError,
-    events::{ButtonCode, ControllerPad, PadState, RomAssertion},
+    events::{ControllerPad, PadState, RomAssertion},
     factory_adapter::{TestSystem, open_headless_system},
     harness::{CaseHarness, drive_case},
     manifest::{RomCase, load_default_manifest, read_rom},
@@ -254,7 +253,7 @@ impl PerfRunner {
             &NesFactory,
             &case.id,
             rom_bytes,
-            case.mmc3_irq_variant,
+            case.options.clone(),
             case.audio_sample_rate(),
         )?;
         Ok(Self {
@@ -305,22 +304,11 @@ impl CaseHarness for PerfRunner {
     fn on_standard_controller(
         &mut self,
         pad: ControllerPad,
-        button: ButtonCode,
+        button: String,
         state: PadState,
     ) -> Result<(), RomTestError> {
-        self.system.set_button(
-            pad_index(pad),
-            button.abstract_key(),
-            matches!(state, PadState::Pressed),
-        )
-    }
-
-    fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError> {
-        self.system.set_button(
-            pad_index(ControllerPad::Pad2),
-            AbstractKey::Button3,
-            matches!(state, PadState::Pressed),
-        )
+        self.system
+            .set_button(pad_index(pad), &button, matches!(state, PadState::Pressed))
     }
 }
 

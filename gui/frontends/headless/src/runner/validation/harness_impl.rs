@@ -46,13 +46,9 @@ impl CaseHarness for ValidationRunner {
     fn on_standard_controller(
         &mut self,
         pad: crate::events::ControllerPad,
-        button: crate::events::ButtonCode,
+        button: String,
         state: crate::events::PadState,
     ) -> Result<(), RomTestError> {
         self.apply_standard_controller(pad, button, state)
-    }
-
-    fn on_microphone(&mut self, state: crate::events::PadState) -> Result<(), RomTestError> {
-        self.set_microphone(state)
     }
 }
