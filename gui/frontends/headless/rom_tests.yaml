@@ -1780,3 +1780,73 @@ cases:
     options: ["--gbc-hardware-model", "dmg"]
     events:
       - {frame: 200, action: check_serial, bytes: "0x30312D7370656369616C0A0A0A5061737365640A"}
+  - id: gbc.retrio.cpu_instrs_02_interrupts
+    category: cpu
+    description: "GBC CPU interrupt handling (retrio): serial transcript must match exactly (DMG model)."
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/individual/02-interrupts.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 60, action: check_serial, bytes: "0x30322D696E74657272757074730A0A0A5061737365640A"}
+  - id: gbc.retrio.cpu_instrs_03_op_sp_hl
+    category: cpu
+    description: "GBC CPU op SP, HL (retrio): serial transcript must match exactly (DMG model)."
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/individual/03-op sp,hl.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 200, action: check_serial, bytes: "0x30332D6F702073702C686C0A0A0A5061737365640A"}
+  - id: gbc.retrio.cpu_instrs_04_op_r_imm
+    category: cpu
+    description: "GBC CPU op r, imm (retrio): serial transcript must match exactly (DMG model)."
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/individual/04-op r,imm.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 240, action: check_serial, bytes: "0x30342D6F7020722C696D6D0A0A0A5061737365640A"}
+  - id: gbc.retrio.cpu_instrs_05_op_rp
+    category: cpu
+    description: "GBC CPU op rp (retrio): serial transcript must match exactly (DMG model)."
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/individual/05-op rp.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 300, action: check_serial, bytes: "0x30352D6F702072700A0A0A5061737365640A"}
+  - id: gbc.retrio.cpu_instrs_06_ld_r_r
+    category: cpu
+    description: "GBC CPU ld r,r (retrio): serial transcript must match exactly (DMG model)."
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/individual/06-ld r,r.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 80, action: check_serial, bytes: "0x30362D6C6420722C720A0A0A5061737365640A"}
+  - id: gbc.retrio.cpu_instrs_07_jr_jp_call_ret_rst
+    category: cpu
+    description: "GBC CPU jr,jp,call,ret,rst (retrio): serial transcript must match exactly (DMG model)."
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/individual/07-jr,jp,call,ret,rst.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 100, action: check_serial, bytes: "0x30372D6A722C6A702C63616C6C2C7265742C7273740A0A0A5061737365640A"}
+  - id: gbc.retrio.cpu_instrs_08_misc_instrs
+    category: cpu
+    description: "GBC CPU misc instrs (retrio): serial transcript must match exactly (DMG model)."
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/individual/08-misc instrs.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 80, action: check_serial, bytes: "0x30382D6D69736320696E737472730A0A0A5061737365640A"}
+  - id: gbc.retrio.cpu_instrs_09_op_r_r
+    category: cpu
+    description: "GBC CPU op r,r (retrio): serial transcript must match exactly (DMG model)."
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/individual/09-op r,r.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 660, action: check_serial, bytes: "0x30392D6F7020722C720A0A0A5061737365640A"}
+  - id: gbc.retrio.cpu_instrs_10_bit_ops
+    category: cpu
+    description: "GBC CPU bit ops (retrio): serial transcript must match exactly (DMG model)."
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/individual/10-bit ops.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 1000, action: check_serial, bytes: "0x31302D626974206F70730A0A0A5061737365640A"}
+  - id: gbc.retrio.cpu_instrs_11_op_a_hl
+    category: cpu
+    description: "GBC CPU op a,(hl) (retrio): serial transcript must match exactly (DMG model)."
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/individual/11-op a,(hl).gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 1250, action: check_serial, bytes: "0x31312D6F7020612C28686C290A0A0A5061737365640A"}
