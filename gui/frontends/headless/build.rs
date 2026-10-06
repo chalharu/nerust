@@ -12,7 +12,6 @@ fn main() {
     println!("cargo::rerun-if-changed={}", manifest_path.display());
     // Re-run generation when the CI gate changes.
     println!("cargo::rerun-if-env-changed=NERUST_ROM_CI");
-    println!("cargo::rerun-if-env-changed=CARGO_FEATURE_NES");
 
     let manifest_source =
         fs::read_to_string(&manifest_path).expect("ROM test manifest should be readable");
@@ -41,6 +40,10 @@ fn main() {
     let mut factory_items = String::new();
     let mut has_system = false;
     for (feature_env, construct) in systems {
+        // Re-run when any system feature toggles, so the generated
+        // list and eligibility never go stale. Emitted from the table
+        // itself: adding a system touches nothing else.
+        println!("cargo::rerun-if-env-changed={feature_env}");
         if env::var(feature_env).is_ok() {
             has_system = true;
             writeln!(factory_items, "        {construct},").unwrap();
