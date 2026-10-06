@@ -18,7 +18,10 @@ use nerust_core_traits::{
     CoreConfig,
     audio::{AudioBackend, StereoSample},
     debugger::{InspectRequest, SpaceInfo, StepUnit},
-    factory::CoreFactory,
+    factory::{
+        CoreFactory,
+        settings::{FactorySettingsView, Language},
+    },
 };
 use nerust_gui_shell::emu_core::EmuCore;
 use nerust_input_traits::{GuiInput, InputAssignments, InputValue};
@@ -44,8 +47,10 @@ pub struct TestSystem {
 /// failure — [`RomTestError::NoMatchingSystem`], mapped to an ignored
 /// outcome upstream.
 ///
-/// * Settings come from the factory's headless view; case `options`
-///   parse through the factory's own CLI options schema.
+/// * Settings are factory defaults plus English, built here — not on
+///   `CoreFactory` — because only headless driving needs them:
+///   observed bytes never depend on presentation settings.
+///   Case `options` parse through the factory's own CLI options schema.
 /// * Both player slots get the P1 profile: the suite drives pad2 and
 ///   the microphone, which the factory default (P2 unassigned) lacks.
 /// * Audio goes to a null backend stamped at the case rate; nominal
@@ -72,9 +77,7 @@ pub fn open_headless_system(
             case_id: case_id.to_string(),
         })?;
 
-    let view = factory
-        .headless_view()
-        .map_err(|error| construction(format!("headless view: {error:?}")))?;
+    let view = headless_view(factory, case_id)?;
     // Case options pass straight through to the factory CLI schema
     // as argv (single-sourced flag spelling and value validation;
     // clap rejects typos loudly). Explicit options keep beating saved
@@ -166,6 +169,31 @@ pub fn open_headless_system(
         pad_buttons,
         spaces,
         tap,
+    })
+}
+
+/// Deterministic settings view: factory defaults plus English,
+/// independent of GUI/user state.
+///
+/// Lives in the headless frontend — not on `CoreFactory` — because it
+/// is test tooling, not production interface: GUI frontends never call
+/// it, and no system overrides it. Fails loudly when the factory
+/// exposes no system defaults, so a missing seed surfaces instead of
+/// silently shifting behavior.
+fn headless_view(
+    factory: &dyn CoreFactory,
+    case_id: &str,
+) -> Result<FactorySettingsView, RomTestError> {
+    let system_config = factory
+        .as_system_defaults()
+        .and_then(|defaults| defaults.default_system_settings())
+        .ok_or_else(|| RomTestError::CoreConstruction {
+            case_id: case_id.to_string(),
+            message: "factory exposes no system defaults".to_string(),
+        })?;
+    Ok(FactorySettingsView {
+        language: Language::English,
+        system_config: Some(system_config),
     })
 }
 
