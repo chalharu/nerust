@@ -3115,7 +3115,6 @@ version = "0.1.0-dev"
 dependencies = [
  "clap",
  "nerust_core_traits",
- "nerust_gba_core",
  "nerust_gbc_core",
  "nerust_gbc_device",
  "nerust_gbc_settings",
