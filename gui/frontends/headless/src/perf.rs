@@ -308,14 +308,7 @@ impl CaseHarness for PerfRunner {
         state: PadState,
     ) -> Result<(), RomTestError> {
         self.system
-            .set_button(pad_index(pad), &button, matches!(state, PadState::Pressed))
-    }
-}
-
-fn pad_index(pad: ControllerPad) -> usize {
-    match pad {
-        ControllerPad::Pad1 => 0,
-        ControllerPad::Pad2 => 1,
+            .set_button(pad.index(), &button, matches!(state, PadState::Pressed))
     }
 }
 

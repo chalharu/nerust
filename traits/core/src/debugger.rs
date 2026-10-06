@@ -390,19 +390,6 @@ pub trait DebugControl {
         width: u8,
         value: u64,
     ) -> Result<(), DebuggerError>;
-
-    /// Cartridge-RAM peek preserving bus state.
-    ///
-    /// Returns `(value, is_open_bus)`: `mask == 0x00` (nothing drove the
-    /// bus) reads as open bus, `mask == 0xFF` as mapped RAM. `None` when
-    /// the core has no cartridge space or cannot answer.
-    ///
-    /// This exists because the generic [`Debugger::read`] path carries
-    /// values only, while some suites also assert mapped-vs-open-bus
-    /// state. `None` by default; cores with cartridge RAM override this.
-    fn peek_cartridge_ram(&mut self, _addr: usize) -> Option<(u8, bool)> {
-        None
-    }
 }
 
 #[cfg(test)]

@@ -177,13 +177,6 @@ pub enum EmuCommand {
         tap: Arc<Mutex<Vec<audio::StereoSample>>>,
         reply: Sender<()>,
     },
-    /// Cartridge-RAM peek preserving bus state. Exists because the
-    /// generic inspect path carries values only; answered from the
-    /// control handle, which owns the needed borrows.
-    PeekCartridgeRam {
-        addr: usize,
-        reply: Sender<Option<(u8, bool)>>,
-    },
     /// Memory-space table snapshot. Static metadata: answered without
     /// pause gating; empty when idle or when the core exposes no
     /// debugger. Lets generic drivers resolve stable space keys

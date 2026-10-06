@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use super::{
     error::RomTestError,
-    events::{ControllerPad, MemoryAssertionSpace, PadState, RomAssertion, RomEvent, RomEventKind},
+    events::{ControllerPad, PadState, RomAssertion, RomEvent, RomEventKind},
     harness::{CaseHarness, drive_case},
     manifest::{
         RomCase, RomCategory, RomManifest, apply_case_rom_overrides, default_manifest_path,
@@ -26,7 +26,7 @@ cases:
       samples: 287270
       hash: "0x34BB3FFDF962043D"
     events:
-      - { frame: 15, action: check_work_ram, address: "0x0301", value: "0x01" }
+      - { frame: 15, action: check_memory, address: "0x0301", value: "0x01" }
       - { frame: 15, action: check_screen, hash: "0x464033EFDAB11D8E" }
       - { frame: 15, action: standard_controller, pad: pad1, button: nes.control.start, state: pressed }
 "#,
@@ -55,7 +55,7 @@ cases:
     description: Generic assertion parsing regression.
     rom: nes-test-roms/mmc3_test/6-MMC6.nes
     events:
-      - { frame: 15, action: assert, kind: memory, space: cartridge_ram, address: "0x6000", value: "0x00", open_bus: true }
+      - { frame: 15, action: assert, kind: memory, address: "0x6000", value: "0x00", open_bus: true }
       - { frame: 15, action: assert, kind: screen, hash: "0x464033EFDAB11D8E" }
 "#,
     )
@@ -67,13 +67,11 @@ cases:
         RomEventKind::Assert {
             assertion:
                 RomAssertion::Memory {
-                    space,
                     address,
                     value,
                     open_bus,
                 },
         } => {
-            assert_eq!(*space, MemoryAssertionSpace::CartridgeRam);
             assert_eq!(*address, 0x6000);
             assert_eq!(*value, 0x00);
             assert!(*open_bus);
@@ -140,11 +138,10 @@ fn drive_case_dispatches_frame_zero_events() {
         fn on_assert(&mut self, frame: u64, assertion: &RomAssertion) -> Result<(), RomTestError> {
             match assertion {
                 RomAssertion::Screen { .. } => self.events.push(format!("check@{frame}")),
-                RomAssertion::Memory { space, .. } => match space {
-                    MemoryAssertionSpace::WorkRam => self.events.push(format!("ram@{frame}")),
-                    MemoryAssertionSpace::CartridgeRam => self.events.push(format!("cart@{frame}")),
-                    MemoryAssertionSpace::PpuVram => self.events.push(format!("ppu@{frame}")),
-                },
+                RomAssertion::Memory { open_bus, .. } if *open_bus => {
+                    self.events.push(format!("cart@{frame}"))
+                }
+                RomAssertion::Memory { .. } => self.events.push(format!("ram@{frame}")),
             }
             Ok(())
         }
@@ -196,24 +193,26 @@ fn drive_case_dispatches_frame_zero_events() {
             },
             RomEvent {
                 frame: 1,
-                kind: RomEventKind::CheckWorkRam {
+                kind: RomEventKind::CheckMemory {
                     address: 0x0301,
                     value: 0x01,
-                },
-            },
-            RomEvent {
-                frame: 1,
-                kind: RomEventKind::CheckCartridgeRam {
-                    address: 0x6000,
-                    value: 0x00,
                     open_bus: false,
                 },
             },
             RomEvent {
                 frame: 1,
-                kind: RomEventKind::CheckPpuVram {
+                kind: RomEventKind::CheckMemory {
+                    address: 0x6000,
+                    value: 0x00,
+                    open_bus: true,
+                },
+            },
+            RomEvent {
+                frame: 1,
+                kind: RomEventKind::CheckMemory {
                     address: 0x2000,
                     value: 0x00,
+                    open_bus: false,
                 },
             },
             RomEvent {
@@ -241,83 +240,10 @@ fn drive_case_dispatches_frame_zero_events() {
             "controller@0".to_string(),
             "ram@1".to_string(),
             "cart@1".to_string(),
-            "ppu@1".to_string(),
+            "ram@1".to_string(),
             "check@1".to_string()
         ]
     );
-}
-
-#[test]
-fn check_work_ram_rejects_addresses_outside_cpu_work_ram() {
-    let event = RomEvent {
-        frame: 0,
-        kind: RomEventKind::CheckWorkRam {
-            address: 0x2000,
-            value: 0,
-        },
-    };
-
-    assert!(matches!(
-        event.validate("mapper.34_test_src.34_test_1"),
-        Err(RomTestError::InvalidManifest(message))
-            if message.contains("check_work_ram outside CPU work RAM")
-    ));
-}
-
-#[test]
-fn check_cartridge_ram_rejects_addresses_outside_cartridge_ram() {
-    let event = RomEvent {
-        frame: 0,
-        kind: RomEventKind::CheckCartridgeRam {
-            address: 0x5FFF,
-            value: 0,
-            open_bus: false,
-        },
-    };
-
-    assert!(matches!(
-        event.validate("mapper.mmc3_test.1-clocking"),
-        Err(RomTestError::InvalidManifest(message))
-            if message.contains("check_cartridge_ram outside cartridge RAM")
-    ));
-}
-
-#[test]
-fn check_ppu_vram_rejects_addresses_outside_nametable_space() {
-    let event = RomEvent {
-        frame: 0,
-        kind: RomEventKind::CheckPpuVram {
-            address: 0x1FFF,
-            value: 0,
-        },
-    };
-
-    assert!(matches!(
-        event.validate("mapper.mmc3bigchrram"),
-        Err(RomTestError::InvalidManifest(message))
-            if message.contains("check_ppu_vram outside PPU nametable/palette space")
-    ));
-}
-
-#[test]
-fn generic_memory_assert_rejects_open_bus_outside_cartridge_ram() {
-    let event = RomEvent {
-        frame: 0,
-        kind: RomEventKind::Assert {
-            assertion: RomAssertion::Memory {
-                space: MemoryAssertionSpace::WorkRam,
-                address: 0x0000,
-                value: 0,
-                open_bus: true,
-            },
-        },
-    };
-
-    assert!(matches!(
-        event.validate("mapper.generic_assert"),
-        Err(RomTestError::InvalidManifest(message))
-            if message.contains("open_bus with a non-cartridge memory assertion")
-    ));
 }
 
 #[test]

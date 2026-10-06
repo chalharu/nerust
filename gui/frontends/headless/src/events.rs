@@ -22,14 +22,6 @@ impl RomEvent {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryAssertionSpace {
-    WorkRam,
-    CartridgeRam,
-    PpuVram,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RomAssertion {
@@ -37,53 +29,32 @@ pub enum RomAssertion {
         #[serde(with = "hex_u64")]
         hash: u64,
     },
+    /// Plain memory assertion. The containing space resolves by
+    /// address against the debugger table snapshot at read time, so
+    /// new spaces need no schema change.
     Memory {
-        space: MemoryAssertionSpace,
         #[serde(with = "hex_u16")]
         address: u16,
         #[serde(with = "hex_u8")]
         value: u8,
+        /// Expect a floating bus instead of a mapped value. Only
+        /// meaningful where hardware can float (cartridge RAM); the
+        /// read resolves open-vs-mapped through the Spaces table.
         #[serde(default)]
         open_bus: bool,
     },
 }
-
 impl RomAssertion {
-    fn validate(&self, case_id: &str) -> Result<(), RomTestError> {
+    fn validate(&self, _case_id: &str) -> Result<(), RomTestError> {
         match self {
+            // Address coverage validates at read time against the live
+            // table snapshot; unmapped addresses fail loudly there
+            // with the same error kind.
             RomAssertion::Screen { .. } => Ok(()),
-            RomAssertion::Memory {
-                space,
-                address,
-                open_bus,
-                ..
-            } => match space {
-                MemoryAssertionSpace::WorkRam if *address > 0x1FFF => {
-                    Err(RomTestError::InvalidManifest(format!(
-                        "ROM case `{case_id}` uses check_work_ram outside CPU work RAM at address 0x{address:04X}"
-                    )))
-                }
-                MemoryAssertionSpace::CartridgeRam if !(0x6000..=0x7FFF).contains(address) => {
-                    Err(RomTestError::InvalidManifest(format!(
-                        "ROM case `{case_id}` uses check_cartridge_ram outside cartridge RAM at address 0x{address:04X}"
-                    )))
-                }
-                MemoryAssertionSpace::PpuVram if !(0x2000..=0x3FFF).contains(address) => {
-                    Err(RomTestError::InvalidManifest(format!(
-                        "ROM case `{case_id}` uses check_ppu_vram outside PPU nametable/palette space at address 0x{address:04X}"
-                    )))
-                }
-                MemoryAssertionSpace::WorkRam | MemoryAssertionSpace::PpuVram if *open_bus => {
-                    Err(RomTestError::InvalidManifest(format!(
-                        "ROM case `{case_id}` uses open_bus with a non-cartridge memory assertion at address 0x{address:04X}"
-                    )))
-                }
-                _ => Ok(()),
-            },
+            RomAssertion::Memory { .. } => Ok(()),
         }
     }
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum RomEventKind {
@@ -95,25 +66,13 @@ pub enum RomEventKind {
         #[serde(with = "hex_u64")]
         hash: u64,
     },
-    CheckWorkRam {
-        #[serde(with = "hex_u16")]
-        address: u16,
-        #[serde(with = "hex_u8")]
-        value: u8,
-    },
-    CheckCartridgeRam {
+    CheckMemory {
         #[serde(with = "hex_u16")]
         address: u16,
         #[serde(with = "hex_u8")]
         value: u8,
         #[serde(default)]
         open_bus: bool,
-    },
-    CheckPpuVram {
-        #[serde(with = "hex_u16")]
-        address: u16,
-        #[serde(with = "hex_u8")]
-        value: u8,
     },
     Reset,
     StandardController {
@@ -131,27 +90,14 @@ impl RomEventKind {
         match self {
             RomEventKind::Assert { assertion } => Some(assertion.clone()),
             RomEventKind::CheckScreen { hash } => Some(RomAssertion::Screen { hash: *hash }),
-            RomEventKind::CheckWorkRam { address, value } => Some(RomAssertion::Memory {
-                space: MemoryAssertionSpace::WorkRam,
-                address: *address,
-                value: *value,
-                open_bus: false,
-            }),
-            RomEventKind::CheckCartridgeRam {
+            RomEventKind::CheckMemory {
                 address,
                 value,
                 open_bus,
             } => Some(RomAssertion::Memory {
-                space: MemoryAssertionSpace::CartridgeRam,
                 address: *address,
                 value: *value,
                 open_bus: *open_bus,
-            }),
-            RomEventKind::CheckPpuVram { address, value } => Some(RomAssertion::Memory {
-                space: MemoryAssertionSpace::PpuVram,
-                address: *address,
-                value: *value,
-                open_bus: false,
             }),
             RomEventKind::Reset | RomEventKind::StandardController { .. } => None,
         }
@@ -163,6 +109,16 @@ impl RomEventKind {
 pub enum ControllerPad {
     Pad1,
     Pad2,
+}
+
+impl ControllerPad {
+    /// Slot index into the input assignments.
+    pub fn index(self) -> usize {
+        match self {
+            ControllerPad::Pad1 => 0,
+            ControllerPad::Pad2 => 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

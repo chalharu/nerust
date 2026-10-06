@@ -202,19 +202,9 @@ fn print_outcome(outcome: &CaseOutcome) {
                     if check.passed() { "pass" } else { "fail" }
                 );
             }
-            for check in &validation.work_ram_checks {
+            for check in &validation.memory_checks {
                 println!(
-                    "  work_ram frame={} address=0x{:04X} expected=0x{:02X} actual=0x{:02X} status={}",
-                    check.frame,
-                    check.address,
-                    check.expected_value,
-                    check.actual_value,
-                    if check.passed() { "pass" } else { "fail" }
-                );
-            }
-            for check in &validation.cartridge_ram_checks {
-                println!(
-                    "  cartridge frame={} address=0x{:04X} expected=0x{:02X} actual=0x{:02X} expected_bus={} actual_bus={} status={}",
+                    "  memory frame={} address=0x{:04X} expected=0x{:02X} actual=0x{:02X} expected_bus={} actual_bus={} status={}",
                     check.frame,
                     check.address,
                     check.expected_value,

@@ -42,21 +42,7 @@ impl ScreenCheck {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkRamCheck {
-    pub frame: u64,
-    pub address: u16,
-    pub expected_value: u8,
-    pub actual_value: u8,
-}
-
-impl WorkRamCheck {
-    pub fn passed(&self) -> bool {
-        self.expected_value == self.actual_value
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CartridgeRamCheck {
+pub struct MemoryCheck {
     pub frame: u64,
     pub address: u16,
     pub expected_value: u8,
@@ -65,24 +51,10 @@ pub struct CartridgeRamCheck {
     pub actual_open_bus: bool,
 }
 
-impl CartridgeRamCheck {
+impl MemoryCheck {
     pub fn passed(&self) -> bool {
         self.expected_open_bus == self.actual_open_bus
             && (self.expected_open_bus || self.expected_value == self.actual_value)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PpuVramCheck {
-    pub frame: u64,
-    pub address: u16,
-    pub expected_value: u8,
-    pub actual_value: u8,
-}
-
-impl PpuVramCheck {
-    pub fn passed(&self) -> bool {
-        self.expected_value == self.actual_value
     }
 }
 
@@ -103,9 +75,7 @@ pub struct CaseValidation {
     pub frames: u64,
     pub final_screen_hash: u64,
     pub screen_checks: Vec<ScreenCheck>,
-    pub work_ram_checks: Vec<WorkRamCheck>,
-    pub cartridge_ram_checks: Vec<CartridgeRamCheck>,
-    pub ppu_vram_checks: Vec<PpuVramCheck>,
+    pub memory_checks: Vec<MemoryCheck>,
     pub audio: AudioObservation,
     pub failures: Vec<String>,
 }

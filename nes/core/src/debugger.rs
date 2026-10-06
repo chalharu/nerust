@@ -22,8 +22,13 @@ pub const SPACE_WORK_RAM: SpaceId = SpaceId(0);
 /// CHR ($0000-$1FFF) is cartridge-dependent and intentionally excluded:
 /// it has no stable range in this table.
 pub const SPACE_PPU_VRAM: SpaceId = SpaceId(1);
+/// Cartridge PRG RAM ($6000-$7FFF). Reads go through the bus-state
+/// preserving peek: fully-driven bytes read as values, floating bytes
+/// read as open (None). Absent from older tables — resolvers must use
+/// the table itself, never positions.
+pub const SPACE_CARTRIDGE_RAM: SpaceId = SpaceId(2);
 
-static NES_SPACES: [SpaceInfo; 2] = [
+static NES_SPACES: [SpaceInfo; 3] = [
     SpaceInfo {
         id: SPACE_WORK_RAM,
         key: "wram",
@@ -39,6 +44,15 @@ static NES_SPACES: [SpaceInfo; 2] = [
         address_bits: 14,
         range: 0x2000..=0x3FFF,
         // No VRAM poke exists yet, so edits are refused for now.
+        access: SpaceAccess::ReadOnly,
+    },
+    SpaceInfo {
+        id: SPACE_CARTRIDGE_RAM,
+        key: "cartridge_ram",
+        name: "Cartridge RAM",
+        address_bits: 13,
+        range: 0x6000..=0x7FFF,
+        // Pokes target WRAM only; cartridge bytes are read-only here.
         access: SpaceAccess::ReadOnly,
     },
 ];
@@ -70,6 +84,16 @@ impl<'a> NesDebugger<'a> {
     fn read_vram_byte(&self, addr: u32) -> Option<u64> {
         self.core.peek_ppu_vram(addr as usize).map(u64::from)
     }
+
+    /// Cartridge byte with bus state: fully-driven reads as a value,
+    /// floating reads as open (None). `None` also covers absent RAM,
+    /// so callers distinguish open from unmapped through table
+    /// coverage, never through positions.
+    fn read_cartridge_byte(&self, addr: u32) -> Option<u64> {
+        self.core
+            .peek_cartridge_ram(addr as usize)
+            .and_then(|read| (read.mask == 0xFF).then(|| u64::from(read.data)))
+    }
 }
 
 impl Debugger for NesDebugger<'_> {
@@ -90,9 +114,10 @@ impl Debugger for NesDebugger<'_> {
         if !NES_SPACE_TABLE.covers(space, addr, width) {
             return None;
         }
-        // The table holds WorkRam and PpuVram; covers() already pinned
-        // the id, so dispatch on (space, width). A new space needs a
-        // new arm here; unknown ids cannot reach this point.
+        // The table holds WorkRam, PpuVram, and CartridgeRam;
+        // covers() already pinned the id, so dispatch on (space,
+        // width). A new space needs a new arm here; unknown ids cannot
+        // reach this point.
         match (space, width) {
             (SPACE_WORK_RAM, 1) => self.read_byte(addr),
             (SPACE_WORK_RAM, 2) => {
@@ -117,6 +142,19 @@ impl Debugger for NesDebugger<'_> {
                 let mut v = 0u64;
                 for i in 0..4 {
                     v |= self.read_vram_byte(addr + i)? << (8 * i);
+                }
+                Some(v)
+            }
+            (SPACE_CARTRIDGE_RAM, 1) => self.read_cartridge_byte(addr),
+            (SPACE_CARTRIDGE_RAM, 2) => {
+                let lo = self.read_cartridge_byte(addr)?;
+                let hi = self.read_cartridge_byte(addr + 1)?;
+                Some(lo | (hi << 8))
+            }
+            (SPACE_CARTRIDGE_RAM, 4) => {
+                let mut v = 0u64;
+                for i in 0..4 {
+                    v |= self.read_cartridge_byte(addr + i)? << (8 * i);
                 }
                 Some(v)
             }
@@ -206,12 +244,6 @@ impl DebugControl for NesDebugControl<'_> {
         }
         Ok(())
     }
-
-    fn peek_cartridge_ram(&mut self, addr: usize) -> Option<(u8, bool)> {
-        let core = self.console.core_mut().ok()?;
-        core.peek_cartridge_ram(addr)
-            .map(|read| (read.data, read.mask != 0xFF))
-    }
 }
 
 #[cfg(test)]
@@ -235,9 +267,10 @@ mod tests {
     fn nes_debugger_can_be_boxed() {
         let core = live_core();
         let boxed: Box<dyn Debugger + '_> = Box::new(NesDebugger::new(&core));
-        assert_eq!(boxed.spaces().len(), 2);
+        assert_eq!(boxed.spaces().len(), 3);
         assert_eq!(boxed.space_containing(0x0100), Some(SPACE_WORK_RAM));
         assert_eq!(boxed.space_containing(0x2000), Some(SPACE_PPU_VRAM));
+        assert_eq!(boxed.space_containing(0x6000), Some(SPACE_CARTRIDGE_RAM));
         assert_eq!(boxed.space_containing(0x1000), Some(SPACE_WORK_RAM));
         assert_eq!(boxed.space_containing(0x4000), None);
         // Registers: 6 entries in ascending name order (kernel contract).

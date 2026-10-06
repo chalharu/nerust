@@ -29,30 +29,15 @@ impl ValidationRuntime {
         encode_screenshot_png(self.system.screen_buffer())
     }
 
-    /// Work-RAM byte through the thread inspect path.
-    pub(in crate::runner::validation) fn peek_work_ram(
+    /// Memory read through the thread inspect path: mapped value,
+    /// open bus, or unmapped. The containing space resolves by
+    /// address; callers interpret the outcome.
+    pub(in crate::runner::validation) fn peek_memory(
         &self,
         address: usize,
-    ) -> Result<Option<u8>, RomTestError> {
+    ) -> Result<crate::factory_adapter::MemoryRead, RomTestError> {
         let Some(addr) = u32::try_from(address).ok() else {
-            return Ok(None);
-        };
-        self.system.read_memory_byte(addr)
-    }
-
-    pub(in crate::runner::validation) fn peek_cartridge_ram(
-        &self,
-        address: usize,
-    ) -> Result<Option<(u8, bool)>, RomTestError> {
-        self.system.peek_cartridge_ram(address)
-    }
-
-    pub(in crate::runner::validation) fn peek_ppu_vram(
-        &self,
-        address: usize,
-    ) -> Result<Option<u8>, RomTestError> {
-        let Some(addr) = u32::try_from(address).ok() else {
-            return Ok(None);
+            return Ok(crate::factory_adapter::MemoryRead::Unmapped);
         };
         self.system.read_memory_byte(addr)
     }

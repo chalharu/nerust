@@ -123,9 +123,6 @@ impl EmuThread {
                                 nominal_tap = Some(tap);
                                 let _ = reply.send(());
                             }
-                            EmuCommand::PeekCartridgeRam { reply, .. } => {
-                                let _ = reply.send(None);
-                            }
                             EmuCommand::DebuggerSpaces { reply, .. } => {
                                 let _ = reply.send(Vec::new());
                             }
@@ -248,14 +245,6 @@ impl EmuThread {
                         EmuCommand::TapNominalAudio { tap, reply } => {
                             nominal_tap = Some(tap);
                             let _ = reply.send(());
-                        }
-                        EmuCommand::PeekCartridgeRam { addr, reply } => {
-                            let result = match core.debug_control() {
-                                Some(mut control) => control.peek_cartridge_ram(addr),
-                                None => None,
-                            };
-                            // reply send failure: receiver dropped (timeout/abort) — expected
-                            let _ = reply.send(result);
                         }
                         EmuCommand::DebuggerSpaces { reply } => {
                             let result = match core.debugger() {
@@ -916,20 +905,5 @@ mod tests {
         // Take semantics: a second step overwrites, not appends.
         step(&thread, StepUnit::Frame).expect("step ok");
         assert_eq!(tap.lock().expect("tap lock").len(), 1);
-    }
-
-    #[test]
-    fn cartridge_peek_reports_none_without_space() {
-        let thread = spawn_loaded();
-        thread.send(EmuCommand::Pause).expect("pause send");
-        // The fake control keeps the trait default (no cartridge space).
-        let (tx, rx) = mpsc::channel();
-        thread
-            .send(EmuCommand::PeekCartridgeRam {
-                addr: 0x6000,
-                reply: tx,
-            })
-            .expect("peek send");
-        assert_eq!(rx.recv().expect("peek reply"), None);
     }
 }

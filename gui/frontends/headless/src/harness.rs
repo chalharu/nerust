@@ -59,9 +59,7 @@ fn dispatch_pending_events<H: CaseHarness>(
                 }
                 RomEventKind::Assert { .. }
                 | RomEventKind::CheckScreen { .. }
-                | RomEventKind::CheckWorkRam { .. }
-                | RomEventKind::CheckCartridgeRam { .. }
-                | RomEventKind::CheckPpuVram { .. } => unreachable!(),
+                | RomEventKind::CheckMemory { .. } => unreachable!(),
             }
         }
 

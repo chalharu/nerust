@@ -17,7 +17,7 @@ use std::{
 use nerust_core_traits::{
     CoreConfig,
     audio::{AudioBackend, StereoSample},
-    debugger::{InspectRequest, SpaceId, SpaceInfo, StepUnit},
+    debugger::{InspectRequest, SpaceInfo, StepUnit},
     factory::CoreFactory,
 };
 use nerust_gui_shell::emu_core::EmuCore;
@@ -173,6 +173,16 @@ fn duplicate_p1_to_p2(base: &InputAssignments) -> Option<InputAssignments> {
     Some(InputAssignments { slots })
 }
 
+/// One address read through the Spaces table: a mapped value, an
+/// open (floating) bus on covered-but-unreadable addresses, or an
+/// unmapped address covered by no space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryRead {
+    Mapped(u8),
+    OpenBus,
+    Unmapped,
+}
+
 impl TestSystem {
     /// Drive one button for the next frame, addressed by the control
     /// id string the slot profile exposes (e.g. `"nes.control.a"`).
@@ -243,23 +253,19 @@ impl TestSystem {
             .map_err(|error| RomTestError::EmuThread(format!("tap lock: {error}")))
     }
 
-    /// Read one byte through the thread inspect path. The containing
-    /// space resolves by address against the table snapshot (tables
-    /// forbid overlap, so the home is unique); an unmapped address is
-    /// a loud error, an unreadable one reads as absent.
-    pub fn read_memory_byte(&self, addr: u32) -> Result<Option<u8>, RomTestError> {
-        let space = self
+    /// Read one byte through the thread inspect path, resolved by
+    /// address against the table snapshot (tables forbid overlap, so
+    /// the home is unique). Covered-but-unreadable means open bus;
+    /// uncovered means unmapped — distinguished here, never guessed.
+    pub fn read_memory_byte(&self, addr: u32) -> Result<MemoryRead, RomTestError> {
+        let Some(space) = self
             .spaces
             .iter()
             .find(|info| info.range.contains(&addr))
             .map(|info| info.id)
-            .ok_or_else(|| {
-                RomTestError::EmuThread(format!("no memory space contains: {addr:#X}"))
-            })?;
-        self.read_byte(space, addr)
-    }
-
-    fn read_byte(&self, space: SpaceId, addr: u32) -> Result<Option<u8>, RomTestError> {
+        else {
+            return Ok(MemoryRead::Unmapped);
+        };
         let inner = self
             .emu
             .inspect(InspectRequest {
@@ -274,7 +280,8 @@ impl TestSystem {
             .rows
             .first()
             .filter(|row| row.valid > 0)
-            .map(|row| row.bytes[0]))
+            .map(|row| MemoryRead::Mapped(row.bytes[0]))
+            .unwrap_or(MemoryRead::OpenBus))
     }
 
     /// Reset emulation to a deterministic frame zero.
@@ -282,13 +289,6 @@ impl TestSystem {
         self.emu
             .reset()
             .map_err(|error| RomTestError::EmuThread(format!("reset: {error:?}")))
-    }
-
-    /// Cartridge-RAM peek preserving bus state (mapped vs open bus).
-    pub fn peek_cartridge_ram(&self, address: usize) -> Result<Option<(u8, bool)>, RomTestError> {
-        self.emu
-            .peek_cartridge_ram(address)
-            .map_err(|error| RomTestError::EmuThread(format!("transport: {error:?}")))
     }
 }
 

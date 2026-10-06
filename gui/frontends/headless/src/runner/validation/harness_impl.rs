@@ -1,9 +1,5 @@
 use super::runner::ValidationRunner;
-use crate::{
-    error::RomTestError,
-    events::{MemoryAssertionSpace, RomAssertion},
-    harness::CaseHarness,
-};
+use crate::{error::RomTestError, events::RomAssertion, harness::CaseHarness};
 
 impl CaseHarness for ValidationRunner {
     fn run_frame(&mut self) -> Result<(), RomTestError> {
@@ -18,24 +14,10 @@ impl CaseHarness for ValidationRunner {
         match assertion {
             RomAssertion::Screen { hash } => self.record_screen_assert(frame, *hash),
             RomAssertion::Memory {
-                space,
                 address,
                 value,
                 open_bus,
-            } => match space {
-                MemoryAssertionSpace::WorkRam => {
-                    self.record_work_ram_assert(frame, usize::from(*address), *value)
-                }
-                MemoryAssertionSpace::CartridgeRam => self.record_cartridge_ram_assert(
-                    frame,
-                    usize::from(*address),
-                    *value,
-                    *open_bus,
-                ),
-                MemoryAssertionSpace::PpuVram => {
-                    self.record_ppu_vram_assert(frame, usize::from(*address), *value)
-                }
-            },
+            } => self.record_memory_assert(frame, usize::from(*address), *value, *open_bus),
         }
     }
 
