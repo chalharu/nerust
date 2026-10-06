@@ -39,6 +39,11 @@ pub struct TestSystem {
 /// Build a loaded system through `CoreFactory` and wrap it in the
 /// session execution engine.
 ///
+/// The system is selected by ROM judgment: the first factory whose
+/// `probe_media` accepts the bytes wins. No match is eligibility, not
+/// failure — [`RomTestError::NoMatchingSystem`], mapped to an ignored
+/// outcome upstream.
+///
 /// * Settings come from the factory's headless view; case `options`
 ///   parse through the factory's own CLI options schema.
 /// * Both player slots get the P1 profile: the suite drives pad2 and
@@ -48,7 +53,7 @@ pub struct TestSystem {
 /// * After paused load the thread is silent until the first step, so
 ///   stepped frames start from a deterministic power-on frame zero.
 pub fn open_headless_system(
-    factory: &dyn CoreFactory,
+    factories: &[Box<dyn CoreFactory>],
     case_id: &str,
     rom_bytes: &[u8],
     options: Vec<String>,
@@ -58,6 +63,14 @@ pub fn open_headless_system(
         case_id: case_id.to_string(),
         message,
     };
+    let media = nerust_core_traits::factory::load::MediaObject::new(None, rom_bytes.to_vec());
+    let factory = factories
+        .iter()
+        .find(|factory| factory.probe_media(&media))
+        .map(|factory| factory.as_ref())
+        .ok_or_else(|| RomTestError::NoMatchingSystem {
+            case_id: case_id.to_string(),
+        })?;
 
     let view = factory
         .headless_view()
@@ -103,11 +116,8 @@ pub fn open_headless_system(
     let (emu, gui_input, field_map, _) = EmuCore::from_parts(parts);
     // Paused load: power-on state survives to frame zero (no free-run
     // frames, no compensating reset that would destroy it).
-    emu.load_paused(
-        &nerust_core_traits::factory::load::MediaObject::new(None, rom_bytes.to_vec()),
-        config.core_options,
-    )
-    .map_err(|error| construction(format!("load: {error:?}")))?;
+    emu.load_paused(&media, config.core_options)
+        .map_err(|error| construction(format!("load: {error:?}")))?;
 
     // Resolve test ids through the injected map: space roles against
     // the thread's table snapshot, pad bits against the field map.

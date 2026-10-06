@@ -30,6 +30,8 @@ pub enum RomTestError {
     InvalidManifest(String),
     #[error("failed to construct emulator core for {case_id}: {message}")]
     CoreConstruction { case_id: String, message: String },
+    #[error("no system factory accepts ROM for {case_id}")]
+    NoMatchingSystem { case_id: String },
     #[error("emu thread operation failed: {0}")]
     EmuThread(String),
     #[error("failed to encode screenshot: {0}")]

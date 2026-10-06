@@ -27,6 +27,10 @@ fn main() {
     // Anything else becomes `#[ignore]` instead of failing (P3:
     // sparse checkouts must skip, not fail).
     let ci_mode = env::var("NERUST_ROM_CI").is_ok_and(|value| !value.is_empty());
+    // System factories come from crate features (`nes`, …). Without
+    // any, no case is eligible: ignore everything instead of failing,
+    // the same judgment `validate` reports at runtime as ignored.
+    let has_system = env::var("CARGO_FEATURE_NES").is_ok();
 
     let mut generated = String::new();
     writeln!(
@@ -40,7 +44,9 @@ fn main() {
     for (index, case) in cases.iter().enumerate() {
         let rom_path = manifest_dir.join(&rom_root).join(&case.rom);
         let mut skip_reason: Option<String> = None;
-        if !rom_path.is_file() {
+        if !has_system {
+            skip_reason = Some("no system cores enabled".to_string());
+        } else if !rom_path.is_file() {
             skip_reason = Some(format!("ROM missing: {}", case.rom));
         } else if ci_mode && !case.ci {
             skip_reason = Some("not in CI scope (ci: false)".to_string());

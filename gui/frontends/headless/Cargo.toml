@@ -32,14 +32,11 @@ nes = [
 [[bin]]
 name = "rom_tool"
 path = "src/bin/rom_tool.rs"
-required-features = ["nes"]
 
 [[bin]]
 name = "perf"
 path = "src/bin/perf.rs"
-required-features = ["nes"]
 
 [[test]]
 name = "lib"
 path = "tests/lib.rs"
-required-features = ["nes"]

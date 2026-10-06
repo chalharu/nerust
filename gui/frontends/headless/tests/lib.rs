@@ -1,10 +1,10 @@
 use std::sync::OnceLock;
 
-use nerust_nes_factory::NesFactory;
 use nerust_rom_test::{
     manifest::{RomManifest, load_default_manifest},
     results::{CaseOutcome, ValidationOptions},
     runner::validate_case,
+    system_factories,
 };
 
 #[test]
@@ -26,9 +26,8 @@ fn run_generated_manifest_case(case_id: &str) {
     let case = manifest()
         .case(case_id)
         .unwrap_or_else(|| panic!("ROM case `{case_id}` should exist in the manifest"));
-    let factory = NesFactory::boxed();
     let outcome = validate_case(
-        factory.as_ref(),
+        factories(),
         case,
         ValidationOptions {
             capture_screenshots: false,
@@ -50,7 +49,22 @@ fn run_generated_manifest_case(case_id: &str) {
         } => {
             panic!("{case_id}: {message}");
         }
+        // No factory builds without system features, so generated
+        // tests carry compile-time #[ignore] there (see build.rs) and
+        // never reach this arm. A runtime skip with systems enabled
+        // means no ROM match: not a failure.
+        CaseOutcome::Skipped {
+            case_id, reason, ..
+        } => {
+            println!("ignored {case_id}: {reason}");
+        }
     }
+}
+
+fn factories() -> &'static Vec<Box<dyn nerust_core_traits::factory::CoreFactory>> {
+    static FACTORIES: OnceLock<Vec<Box<dyn nerust_core_traits::factory::CoreFactory>>> =
+        OnceLock::new();
+    FACTORIES.get_or_init(system_factories)
 }
 
 include!(concat!(env!("OUT_DIR"), "/generated_rom_manifest_tests.rs"));

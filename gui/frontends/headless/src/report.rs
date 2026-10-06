@@ -11,6 +11,7 @@ pub struct ReportSummary {
     pub report_path: PathBuf,
     pub passed: usize,
     pub failed: usize,
+    pub ignored: usize,
 }
 
 pub fn default_output_root() -> PathBuf {
@@ -34,7 +35,14 @@ pub fn write_html_report(
 
     let mut html = String::new();
     let passed = outcomes.iter().filter(|outcome| outcome.passed()).count();
-    let failed = outcomes.len().saturating_sub(passed);
+    let ignored = outcomes
+        .iter()
+        .filter(|outcome| outcome.is_skipped())
+        .count();
+    let failed = outcomes
+        .len()
+        .saturating_sub(passed)
+        .saturating_sub(ignored);
 
     write!(
         html,
@@ -59,11 +67,12 @@ pub fn write_html_report(
 
     write!(
         html,
-        "<h1>{}</h1><p>Total cases: {} / passed: <span class=\"pass\">{}</span> / failed: <span class=\"fail\">{}</span></p>",
+        "<h1>{}</h1><p>Total cases: {} / passed: <span class=\"pass\">{}</span> / failed: <span class=\"fail\">{}</span> / ignored: {}</p>",
         escape_html(title),
         outcomes.len(),
         passed,
-        failed
+        failed,
+        ignored
     )
     .unwrap();
 
@@ -244,6 +253,25 @@ pub fn write_html_report(
                 )
                 .unwrap();
             }
+            CaseOutcome::Skipped {
+                case_id,
+                description,
+                rom,
+                reason,
+                ..
+            } => {
+                write!(
+                    html,
+                    "<section class=\"case\"><h3>{}</h3><p>{}</p>\
+                     <p>Status: <span>IGNORED</span></p>\
+                     <p>ROM: <code>{}</code></p><p>{}</p></section>",
+                    escape_html(case_id),
+                    escape_html(description),
+                    escape_html(rom),
+                    escape_html(reason)
+                )
+                .unwrap();
+            }
         }
     }
 
@@ -258,6 +286,7 @@ pub fn write_html_report(
         report_path,
         passed,
         failed,
+        ignored,
     })
 }
 

@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use nerust_nes_factory::NesFactory;
 use nerust_rom_test::{
     manifest::{RomManifest, load_default_manifest, load_manifest},
     report::{default_output_root, write_html_report},
     results::{CaseOutcome, ValidationOptions},
     runner::validate_case,
+    system_factories,
 };
 
 pub fn main() {
@@ -118,9 +118,10 @@ fn run_command(
     };
     let total = cases.len();
     let mut outcomes = Vec::with_capacity(total);
-    // Construction selects the system once; everything downstream
-    // drives through `dyn CoreFactory`.
-    let factory = NesFactory::boxed();
+    // Construction selects the systems once; everything downstream
+    // drives through `dyn CoreFactory`. Empty without features: every
+    // case is then ignored, never failed.
+    let factories = system_factories();
     let mut current_category = None;
 
     println!(
@@ -144,7 +145,7 @@ fn run_command(
             case.description
         );
 
-        let outcome = validate_case(factory.as_ref(), case, options);
+        let outcome = validate_case(&factories, case, options);
         print_outcome(&outcome);
         outcomes.push(outcome);
     }
@@ -166,11 +167,12 @@ fn run_command(
     .map_err(|error| error.to_string())?;
 
     println!(
-        "report={} mode={} passed={} failed={}",
+        "report={} mode={} passed={} failed={} ignored={}",
         summary.report_path.display(),
         mode,
         summary.passed,
-        summary.failed
+        summary.failed,
+        summary.ignored
     );
 
     if fail_on_mismatch && summary.failed > 0 {
@@ -242,6 +244,19 @@ fn print_outcome(outcome: &CaseOutcome) {
         } => {
             println!(
                 "case={case_id} category={} status=error rom={rom} description={} message={message}",
+                category.label(),
+                description
+            );
+        }
+        CaseOutcome::Skipped {
+            case_id,
+            category,
+            description,
+            rom,
+            reason,
+        } => {
+            println!(
+                "case={case_id} category={} status=ignored rom={rom} description={} reason={reason}",
                 category.label(),
                 description
             );
