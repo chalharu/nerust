@@ -13,12 +13,12 @@ use nerust_core_traits::{
             DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
             SystemLoadOptions, SystemLoadOptionsSchema,
         },
-        settings::{FactorySettingsView, Language},
+        settings::FactorySettingsView,
     },
     identity::SystemId,
 };
 use nerust_input_traits::ControllerProfile;
-use nerust_nes_settings::{NesSettings, NesVideoFilter};
+use nerust_nes_settings::NesSettings;
 
 #[derive(Debug)]
 pub struct NesFactory;
@@ -108,22 +108,6 @@ impl CoreFactory for NesFactory {
 
     fn as_system_defaults(&self) -> Option<&dyn SystemDefaults> {
         Some(self)
-    }
-
-    fn headless_view(&self) -> Result<FactorySettingsView, FactoryError> {
-        let mut system_config = self
-            .as_system_defaults()
-            .and_then(|defaults| defaults.default_system_settings())
-            .ok_or(FactoryError::InvalidSettings)?;
-        system_config
-            .downcast_mut::<NesSettings>()
-            .ok_or(FactoryError::InvalidSettings)?
-            .video
-            .filter = NesVideoFilter::None;
-        Ok(FactorySettingsView {
-            language: Language::English,
-            system_config: Some(system_config),
-        })
     }
 }
 
