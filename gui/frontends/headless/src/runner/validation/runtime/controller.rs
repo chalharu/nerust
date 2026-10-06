@@ -10,7 +10,7 @@ impl ValidationRuntime {
         pad: ControllerPad,
         button: ButtonCode,
         state: PadState,
-    ) {
+    ) -> Result<(), crate::error::RomTestError> {
         let buttons = Buttons::from(button);
         match pad {
             ControllerPad::Pad1 => {
@@ -20,18 +20,21 @@ impl ValidationRuntime {
                 self.pad2 = apply_button_state(self.pad2, buttons, state);
             }
         }
-        self.sync_input();
+        self.sync_input()
     }
 
-    pub(in crate::runner::validation) fn set_microphone(&mut self, state: PadState) {
+    pub(in crate::runner::validation) fn set_microphone(
+        &mut self,
+        state: PadState,
+    ) -> Result<(), crate::error::RomTestError> {
         self.mic = matches!(state, PadState::Pressed);
-        self.sync_input();
+        self.sync_input()
     }
 
-    fn sync_input(&mut self) {
+    fn sync_input(&mut self) -> Result<(), crate::error::RomTestError> {
         // Absolute pad state published for the next frame. The console
         // picks it up in render_frame via EmuInput.
         self.system
-            .sync_input(self.pad1.bits(), self.pad2.bits(), self.mic);
+            .sync_input(self.pad1.bits(), self.pad2.bits(), self.mic)
     }
 }

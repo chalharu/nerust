@@ -2,10 +2,11 @@ mod builder;
 pub mod input_profiles;
 mod settings;
 
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use nerust_core_traits::{
     audio::AudioBackend,
+    debugger::SpaceId,
     factory::{
         CoreFactory, CoreParts, FactoryError, SystemDefaults,
         descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
@@ -18,7 +19,8 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_input_traits::{
-    Controller, ControllerCollection, ControllerProfile, EmuInput, GuiInput, ProfileId,
+    AttachmentId, Controller, ControllerCollection, ControllerProfile, DigitalControlId, EmuInput,
+    GuiInput, ProfileId,
 };
 use nerust_nes_settings::{NesSettings, NesVideoFilter};
 
@@ -151,6 +153,95 @@ impl CoreFactory for NesFactory {
     }
 }
 
+/// Headless-test support: system-owned answers so frontends never name
+/// core types or table positions.
+impl NesFactory {
+    /// Load options carrying a headless MMC3 override. The caller maps
+    /// its own schema enum to [`Mmc3IrqVariant`]; precedence
+    /// (explicit > saved setting) stays inside `resolve_load_request`.
+    pub fn headless_load_options(mmc3: Option<Mmc3IrqVariant>) -> Box<dyn DynSystemLoadOptions> {
+        CommandLineOptions {
+            mmc3_irq_variant: mmc3,
+        }
+        .into()
+    }
+
+    /// Space id resolved by stable table `key` (e.g. `"wram"`). Ids come
+    /// from the validated table itself, so a reorder can never silently
+    /// mis-resolve; unknown keys return `None` for a loud caller error.
+    pub fn space_id_for_key(key: &str) -> Option<SpaceId> {
+        nerust_nes_core::debugger::NES_SPACE_TABLE
+            .entries
+            .iter()
+            .find(|info| info.key == key)
+            .map(|info| info.id)
+    }
+
+    /// Bit-to-field layout for absolute pad seeding. Bits follow the
+    /// suite convention (A B Select Start Up Down Left Right per pad).
+    /// Pad 2 Select/Start stay `None`: `FamicomPadP2` hardware has no
+    /// such buttons. Any other missing field is a loud `Err`.
+    pub fn test_pad_layout(
+        field_map: &HashMap<(AttachmentId, DigitalControlId), usize>,
+    ) -> Result<TestPadLayout, FactoryError> {
+        const BUTTONS: [&str; 8] = [
+            "nes.control.a",
+            "nes.control.b",
+            "nes.control.select",
+            "nes.control.start",
+            "nes.control.up",
+            "nes.control.down",
+            "nes.control.left",
+            "nes.control.right",
+        ];
+        // Canonical source: `FamicomPadP1/P2::field_map`
+        // (`nes/device/src/famicom_set.rs`).
+        let lookup = |attachment: &'static str, control: &'static str| {
+            field_map
+                .get(&(
+                    AttachmentId::new(attachment),
+                    DigitalControlId::new(control),
+                ))
+                .copied()
+        };
+        let missing = |attachment: &'static str, control: &'static str| {
+            FactoryError::Create(format!("test input field missing: {attachment}/{control}"))
+        };
+        let mut pad_fields = [[None; 8]; 2];
+        for (pad, attachment) in ["nes.attachment.player1", "nes.attachment.player2"]
+            .into_iter()
+            .enumerate()
+        {
+            for (bit, control) in BUTTONS.into_iter().enumerate() {
+                // Pad 2 has no Select/Start buttons; the suite drives
+                // those bits as no-ops (the device masks them too).
+                let optional = pad == 1 && (bit == 2 || bit == 3);
+                pad_fields[pad][bit] = match lookup(attachment, control) {
+                    Some(field) => Some(field),
+                    None if optional => None,
+                    None => return Err(missing(attachment, control)),
+                };
+            }
+        }
+        let mic_field = Some(
+            lookup("nes.attachment.player2", "famicom.microphone")
+                .ok_or_else(|| missing("nes.attachment.player2", "famicom.microphone"))?,
+        );
+        Ok(TestPadLayout {
+            pad_fields,
+            mic_field,
+        })
+    }
+}
+
+/// Absolute pad-seeding layout; see [`NesFactory::test_pad_layout`].
+pub struct TestPadLayout {
+    /// `pad_fields[pad][bit]`; `None` = hardware has no such button.
+    pub pad_fields: [[Option<usize>; 8]; 2],
+    /// Microphone field.
+    pub mic_field: Option<usize>,
+}
+
 impl SystemDefaults for NesFactory {
     fn default_system_settings(&self) -> Option<Box<dyn nerust_settings_traits::SystemSettings>> {
         Some(Box::new(NesSettings::default()))
@@ -204,7 +295,7 @@ impl SystemLoadOptionsSchema for NesLoadOptionsSchema {
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
-enum Mmc3IrqVariant {
+pub enum Mmc3IrqVariant {
     Sharp,
     Nec,
 }

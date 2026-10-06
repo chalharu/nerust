@@ -1,16 +1,12 @@
 use std::time::{Duration, Instant};
 
 use clap::{Arg, ArgAction, Command};
-use nerust_core_traits::audio::{AudioBackend, StereoSample};
-use nerust_input_traits::{ControllerCollection, ControllerHub as _};
-use nerust_nes_core::{Core, rom_parse};
-use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
 use nerust_nes_factory::NesFactory;
-use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
     error::RomTestError,
     events::{ButtonCode, Buttons, ControllerPad, PadState, RomAssertion},
+    factory_adapter::{TestSystem, open_nes_system},
     harness::{CaseHarness, apply_button_state, drive_case},
     manifest::{RomCase, load_default_manifest, read_rom},
     results::{CaseOutcome, ValidationOptions},
@@ -236,12 +232,17 @@ impl Aggregate {
     }
 }
 
+/// Session-driven benchmark runner: the same `TestSystem` (paused
+/// load, stepped frames, factory-seeded input) as validation, so perf
+/// measures the shipped execution path instead of bypassing it.
+///
+/// Metric note: `steps` previously counted CPU steps from direct
+/// `Core::run_frame`; now each stepped frame counts one step. The
+/// measure includes the thread barrier per frame — representative of
+/// headless driving, not of raw core throughput.
 struct PerfRunner {
-    core: Core,
-    screen: FrameBuffer,
+    system: TestSystem,
     checksum: u64,
-    controller: ControllerCollection,
-    mixer: PerfMixer,
     frame_counter: u64,
     total_steps: u64,
     pad1: Buttons,
@@ -251,38 +252,16 @@ struct PerfRunner {
 
 impl PerfRunner {
     fn new(case: &RomCase, rom_bytes: &[u8]) -> Result<Self, RomTestError> {
-        let cartridge_data =
-            rom_parse::parse_rom(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
-                case_id: case.id.clone(),
-                message: error.to_string(),
-            })?;
-        let options = crate::factory_adapter::core_options_for(case.mmc3_irq_variant);
-        let core = Core::new_with_options(cartridge_data, options).map_err(|error| {
-            RomTestError::CoreConstruction {
-                case_id: case.id.clone(),
-                message: error.to_string(),
-            }
-        })?;
-        // Display-only palette: the benchmark hashes indices and never
-        // encodes PNGs, so a zeroed palette changes nothing observable.
-        // Real palette bytes come from the factory (see validation path).
-        let mut screen = FrameBuffer::with_capacity(
-            256,
-            240,
-            PixelFormat::PaletteIndex {
-                palette: Box::new([0u32; 256]),
-            },
-        );
-        screen.resize(256, 240);
+        let system = open_nes_system(
+            &NesFactory,
+            &case.id,
+            rom_bytes,
+            case.mmc3_irq_variant,
+            case.audio_sample_rate(),
+        )?;
         Ok(Self {
-            core,
-            screen,
+            system,
             checksum: 0,
-            controller: ControllerCollection::new(vec![
-                Box::new(FamicomPadP1::new()),
-                Box::new(FamicomPadP2::new()),
-            ]),
-            mixer: PerfMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             total_steps: 0,
             pad1: Buttons::empty(),
@@ -299,19 +278,22 @@ impl PerfRunner {
             final_marker: self.checksum,
         })
     }
+
+    fn sync_input(&mut self) -> Result<(), RomTestError> {
+        self.system
+            .sync_input(self.pad1.bits(), self.pad2.bits(), self.mic)
+    }
 }
 
 impl CaseHarness for PerfRunner {
     fn run_frame(&mut self) -> Result<(), RomTestError> {
-        let steps = self
-            .core
-            .run_frame(&mut self.screen, &mut self.controller, &mut self.mixer);
-        // Per-frame checksum: PPU が FrameBuffer に書き込んだ全ピクセルから計算
-        for &b in self.screen.as_ref() {
+        self.system.step_frame()?;
+        // Per-frame checksum over published palette bytes.
+        for &b in self.system.screen_buffer().as_ref() {
             self.checksum = self.checksum.wrapping_mul(31).wrapping_add(u64::from(b));
         }
         self.frame_counter += 1;
-        self.total_steps += steps;
+        self.total_steps += 1;
         Ok(())
     }
 
@@ -324,8 +306,7 @@ impl CaseHarness for PerfRunner {
     }
 
     fn on_reset(&mut self) -> Result<(), RomTestError> {
-        self.core.reset();
-        Ok(())
+        self.system.reset()
     }
 
     fn on_standard_controller(
@@ -343,16 +324,12 @@ impl CaseHarness for PerfRunner {
                 self.pad2 = apply_button_state(self.pad2, buttons, state);
             }
         }
-        self.controller
-            .sync_input(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
-        Ok(())
+        self.sync_input()
     }
 
     fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError> {
         self.mic = matches!(state, PadState::Pressed);
-        self.controller
-            .sync_input(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
-        Ok(())
+        self.sync_input()
     }
 }
 
@@ -361,26 +338,6 @@ struct PerfRunResult {
     frames: u64,
     steps: u64,
     final_marker: u64,
-}
-
-struct PerfMixer {
-    sample_rate: u32,
-}
-
-impl PerfMixer {
-    fn new(sample_rate: u32) -> Self {
-        Self { sample_rate }
-    }
-}
-
-impl AudioBackend for PerfMixer {
-    fn start(&mut self) {}
-    fn pause(&mut self) {}
-    fn push(&mut self, _data: StereoSample) {}
-
-    fn sample_rate(&self) -> u32 {
-        self.sample_rate
-    }
 }
 
 fn peak_rss_mib() -> Option<f64> {
