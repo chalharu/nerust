@@ -129,7 +129,11 @@ impl SpaceTable {
     pub fn covers(&self, id: SpaceId, addr: u32, width: u8) -> bool {
         match (self.get(id), width) {
             (Some(s), 1 | 2 | 4) => {
-                addr >= *s.range.start() && addr + (width as u32) - 1 <= *s.range.end()
+                // checked_add: addr near u32::MAX must be false, not panic.
+                match addr.checked_add(u32::from(width) - 1) {
+                    Some(end) => addr >= *s.range.start() && end <= *s.range.end(),
+                    None => false,
+                }
             }
             _ => false,
         }
@@ -432,6 +436,9 @@ mod tests {
         assert!(!table.covers(SpaceId(0), 0x0100, 3));
         assert!(!table.covers(SpaceId(9), 0x0100, 1));
         assert!(!SpaceTable::width_is_valid(0));
+        // Overflow edge: addr near u32::MAX is false, never panic.
+        assert!(!table.covers(SpaceId(0), 0xFFFF_FFFF, 4));
+        assert!(!table.covers(SpaceId(0), 0xFFFF_FFFF, 1));
     }
 
     #[test]
