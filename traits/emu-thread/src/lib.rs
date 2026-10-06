@@ -100,6 +100,9 @@ impl EmuThread {
 
             let mut timer = Timer::new();
             let mut loaded = false;
+            // Single parked command (see below): lets the paused loop
+            // block in `recv` instead of spinning on `try_recv`.
+            let mut pending: Option<EmuCommand> = None;
             loop {
                 // When idle (no ROM loaded), block on recv() to avoid busy-looping.
                 if !loaded {
@@ -135,7 +138,20 @@ impl EmuThread {
                     continue;
                 }
 
-                while let Ok(cmd) = cmd_rx.try_recv() {
+                // Park while paused with nothing pending: nothing renders
+                // here, so real-time pacing must not gate stepped frames
+                // (headless determinism runs flat-out, not at 60Hz), and
+                // the loop must not hot-spin on `try_recv`. The parked
+                // command is consumed by the drain below; disconnect
+                // exits, like the idle path.
+                if core.paused() && pending.is_none() {
+                    match cmd_rx.recv() {
+                        Ok(cmd) => pending = Some(cmd),
+                        Err(_) => return,
+                    }
+                }
+
+                while let Some(cmd) = pending.take().or_else(|| cmd_rx.try_recv().ok()) {
                     match cmd {
                         EmuCommand::Load(cmd) => {
                             loaded = handle_load(&mut *core, &mut *audio, &mut filter, *cmd);
@@ -273,10 +289,13 @@ impl EmuThread {
                         fr: &fr,
                         fc: &fc,
                     });
+                    // Pacing is a free-run concern only. Paused
+                    // iterations park above, so stepped frames are never
+                    // real-time-gated. fps freezes while paused (no frames
+                    // render); the metrics `paused` flag is authoritative.
+                    timer.wait();
+                    fps_c.store(timer.as_fps().to_bits(), Ordering::Relaxed);
                 }
-
-                timer.wait();
-                fps_c.store(timer.as_fps().to_bits(), Ordering::Relaxed);
             }
         });
 
