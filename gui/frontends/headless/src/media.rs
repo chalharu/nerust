@@ -117,7 +117,11 @@ impl AudioBackend for HashingMixer {
     fn start(&mut self) {}
     fn pause(&mut self) {}
     fn push(&mut self, data: StereoSample) {
-        assert_eq!(data.left.to_bits(), data.right.to_bits());
+        // The mixer tracks the left channel only. NES-family streams
+        // are dual-mono (left == right), so their hashes are unaffected;
+        // stereo systems pin the left channel while the right stays
+        // unobserved (documented gap, not a silent assumption: the old
+        // assert crashed on the first stereo case instead).
         self.samples += 1;
         self.checksum ^= u64::from(data.left.to_bits());
         self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);

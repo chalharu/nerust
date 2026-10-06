@@ -3055,3 +3055,273 @@ cases:
     rom: gbc/Gekkio_mooneye-test-suite/acceptance/ld_hl_sp_e_timing.gb
     events:
       - {frame: 30, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.retrio.oam_bug
+    category: cpu
+    description: "OAM corruption oam_bug (retrio): zero status byte in cartridge RAM (DMG model)."
+    ci: false
+    rom: gbc/retrio_gb-test-roms/oam_bug/oam_bug.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 2004, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.oam_bug_1
+    category: cpu
+    description: "OAM corruption oam_bug_1 (retrio): zero status byte in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/oam_bug/rom_singles/1-lcd_sync.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 66, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.oam_bug_2
+    category: cpu
+    description: "OAM corruption oam_bug_2 (retrio): zero status byte in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/oam_bug/rom_singles/2-causes.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 186, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.oam_bug_3
+    category: cpu
+    description: "OAM corruption oam_bug_3 (retrio): zero status byte in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/oam_bug/rom_singles/3-non_causes.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 186, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.oam_bug_4
+    category: cpu
+    description: "OAM corruption oam_bug_4 (retrio): zero status byte in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/oam_bug/rom_singles/4-scanline_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 114, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.oam_bug_5
+    category: cpu
+    description: "OAM corruption oam_bug_5 (retrio): zero status byte in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/oam_bug/rom_singles/5-timing_bug.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 114, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.oam_bug_6
+    category: cpu
+    description: "OAM corruption oam_bug_6 (retrio): zero status byte in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/oam_bug/rom_singles/6-timing_no_bug.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 170, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.oam_bug_7
+    category: cpu
+    description: "OAM corruption oam_bug_7 (retrio): zero status byte in cartridge RAM (DMG model)."
+    ci: false
+    rom: gbc/retrio_gb-test-roms/oam_bug/rom_singles/7-timing_effect.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 2243, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.oam_bug_8
+    category: cpu
+    description: "OAM corruption oam_bug_8 (retrio): zero status byte in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/oam_bug/rom_singles/8-instr_effect.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 648, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.mem_timing2_read
+    category: cpu
+    description: "Memory timing mem_timing2_read (retrio, mem_timing-2): result bytes in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/mem_timing-2/rom_singles/01-read_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 58, action: check_memory, address: "0xA015", value: "0x50"}
+      - {frame: 58, action: check_memory, address: "0xA01A", value: "0x64"}
+  - id: gbc.retrio.mem_timing2_write
+    category: cpu
+    description: "Memory timing mem_timing2_write (retrio, mem_timing-2): result bytes in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/mem_timing-2/rom_singles/02-write_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 58, action: check_memory, address: "0xA016", value: "0x50"}
+      - {frame: 58, action: check_memory, address: "0xA01B", value: "0x64"}
+  - id: gbc.retrio.mem_timing2_modify
+    category: cpu
+    description: "Memory timing mem_timing2_modify (retrio, mem_timing-2): result bytes in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/mem_timing-2/rom_singles/03-modify_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 66, action: check_memory, address: "0xA017", value: "0x50"}
+      - {frame: 66, action: check_memory, address: "0xA01C", value: "0x64"}
+  - id: gbc.retrio.mem_timing2_all
+    category: cpu
+    description: "Memory timing mem_timing2_all (retrio, mem_timing-2): result bytes in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/mem_timing-2/mem_timing.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 274, action: check_memory, address: "0xA027", value: "0x50"}
+      - {frame: 274, action: check_memory, address: "0xA02C", value: "0x64"}
+  - id: gbc.retrio.dmg_sound
+    category: cpu
+    description: "Sound hardware aggregate dmg_sound (retrio): zero status byte in cartridge RAM."
+    ci: false
+    rom: gbc/retrio_gb-test-roms/dmg_sound/dmg_sound.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 3599, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound
+    category: cpu
+    description: "Sound hardware aggregate cgb_sound (retrio): zero status byte in cartridge RAM."
+    ci: false
+    rom: gbc/retrio_gb-test-roms/cgb_sound/cgb_sound.gb
+    events:
+      - {frame: 3599, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_01_registers
+    category: cpu
+    description: "Sound subtest registers (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/01-registers.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 98, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_02_length_counter
+    category: cpu
+    description: "Sound subtest length_counter (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/02-len ctr.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 967, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_03_trigger
+    category: cpu
+    description: "Sound subtest trigger (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    ci: false
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/03-trigger.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 1765, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_04_sweep
+    category: cpu
+    description: "Sound subtest sweep (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/04-sweep.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 138, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_05_sweep_details
+    category: cpu
+    description: "Sound subtest sweep_details (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/05-sweep details.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 138, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_06_overflow_on_trigger
+    category: cpu
+    description: "Sound subtest overflow_on_trigger (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/06-overflow on trigger.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 106, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_07_length_sweep_period_sync
+    category: cpu
+    description: "Sound subtest length_sweep_period_sync (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/07-len sweep period sync.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 74, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_08_length_counter_during_power
+    category: cpu
+    description: "Sound subtest length_counter_during_power (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/08-len ctr during power.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 154, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_09_wave_read_while_on
+    category: cpu
+    description: "Sound subtest wave_read_while_on (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/09-wave read while on.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 74, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_10_wave_trigger_while_on
+    category: cpu
+    description: "Sound subtest wave_trigger_while_on (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/10-wave trigger while on.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 409, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_11_registers_after_power
+    category: cpu
+    description: "Sound subtest registers_after_power (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/11-regs after power.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 90, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.dmg_sound_12_wave
+    category: cpu
+    description: "Sound subtest wave (dmg_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/dmg_sound/rom_singles/12-wave write while on.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 409, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_01_registers
+    category: cpu
+    description: "Sound subtest registers (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/01-registers.gb
+    events:
+      - {frame: 98, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_02_length_counter
+    category: cpu
+    description: "Sound subtest length_counter (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/02-len ctr.gb
+    events:
+      - {frame: 967, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_03_trigger
+    category: cpu
+    description: "Sound subtest trigger (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    ci: false
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/03-trigger.gb
+    events:
+      - {frame: 1765, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_04_sweep
+    category: cpu
+    description: "Sound subtest sweep (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/04-sweep.gb
+    events:
+      - {frame: 138, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_05_sweep_details
+    category: cpu
+    description: "Sound subtest sweep_details (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/05-sweep details.gb
+    events:
+      - {frame: 138, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_06_overflow_on_trigger
+    category: cpu
+    description: "Sound subtest overflow_on_trigger (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/06-overflow on trigger.gb
+    events:
+      - {frame: 106, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_07_length_sweep_period_sync
+    category: cpu
+    description: "Sound subtest length_sweep_period_sync (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/07-len sweep period sync.gb
+    events:
+      - {frame: 74, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_08_length_counter_during_power
+    category: cpu
+    description: "Sound subtest length_counter_during_power (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/08-len ctr during power.gb
+    events:
+      - {frame: 266, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_09_wave_read_while_on
+    category: cpu
+    description: "Sound subtest wave_read_while_on (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/09-wave read while on.gb
+    events:
+      - {frame: 74, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_10_wave_trigger_while_on
+    category: cpu
+    description: "Sound subtest wave_trigger_while_on (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/10-wave trigger while on.gb
+    events:
+      - {frame: 409, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_11_registers_after_power
+    category: cpu
+    description: "Sound subtest registers_after_power (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/11-regs after power.gb
+    events:
+      - {frame: 106, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.cgb_sound_12_wave
+    category: cpu
+    description: "Sound subtest wave (cgb_sound, retrio): zero status byte expected in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/cgb_sound/rom_singles/12-wave.gb
+    events:
+      - {frame: 58, action: check_memory, address: "0xA000", value: "0x00"}
