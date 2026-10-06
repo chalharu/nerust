@@ -18,7 +18,7 @@ use nerust_core_traits::{
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput};
-use nerust_render_traits::{FrameBuffer, PixelFormat, VideoRenderProfile};
+use nerust_render_traits::{FrameBuffer, PixelFormat, VideoFrameFormat, VideoRenderProfile};
 
 use crate::session::commands::SlotOpFailure;
 
@@ -99,6 +99,12 @@ impl EmuCore {
 
     /// Wrap `CoreParts` (from a factory) into an `EmuCore`.
     /// Returns (EmuCore, GuiInput, field_map).
+    ///
+    /// Buffer geometry comes from the factory-declared render profile
+    /// (size + frame format), never per-system constants: indexed
+    /// systems carry their palette, direct-color systems (Rgba) carry
+    /// none. The thread slot is built identically so all three buffers
+    /// agree before the first swap.
     pub fn from_parts(
         parts: CoreParts,
     ) -> (
@@ -111,30 +117,28 @@ impl EmuCore {
         use std::sync::Mutex;
         let src_w = parts.render_profile.source_logical_size.width;
         let src_h = parts.render_profile.source_logical_size.height;
-        let pixel_format = PixelFormat::PaletteIndex {
-            palette: parts.palette.clone(),
+        let pixel_format = match parts.render_profile.frame_format {
+            VideoFrameFormat::Palette => PixelFormat::PaletteIndex {
+                palette: parts.palette.clone(),
+            },
+            VideoFrameFormat::Rgba => PixelFormat::Rgba,
         };
 
-        let shared_fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
-            src_w,
-            src_h,
-            pixel_format.clone(),
-        )));
-        if let Ok(mut guard) = shared_fb.lock() {
-            guard.resize(src_w, src_h);
-            guard.resize_data(src_w * src_h);
-        }
-
-        let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format);
-        disp_fb.resize(src_w, src_h);
-        disp_fb.resize_data(src_w * src_h);
+        let new_buffer = || {
+            let mut fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
+            fb.resize(src_w, src_h);
+            fb
+        };
+        let shared_fb = Arc::new(Mutex::new(new_buffer()));
+        let disp_fb = new_buffer();
+        let frame_slot = new_buffer();
 
         let frame_ready = Arc::new(AtomicBool::new(false));
         let emu = EmuThread::spawn(
             parts.core,
             Arc::clone(&shared_fb),
             Arc::clone(&frame_ready),
-            parts.palette,
+            frame_slot,
             parts.audio,
         );
         (

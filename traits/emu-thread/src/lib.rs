@@ -16,7 +16,7 @@ use nerust_core_traits::{
         MAX_DUMP_BYTES, MemoryDump, StepUnit,
     },
 };
-use nerust_render_traits::{FrameBuffer, PixelFormat};
+use nerust_render_traits::FrameBuffer;
 use nerust_sound_filter::dynamic_rate::DynamicRateFilter;
 use nerust_timer::Timer;
 use thiserror::Error;
@@ -63,25 +63,19 @@ impl fmt::Debug for EmuThread {
 impl EmuThread {
     /// `shared_fb` is swapped with the internal frame buffer after each render_frame.
     /// `frame_ready` signals ConsoleVideo that a new frame is available.
-    /// `palette` is the initial palette for the internal frame buffer (must match the renderer's palette).
+    /// `frame_slot` is the core's render target, built by the caller
+    /// from the factory-declared profile (size + frame format) — never
+    /// per-system constants here. `mem::swap` propagates its format
+    /// into `shared_fb` and onward, so all three buffers must agree
+    /// before the first swap; cores may still adjust it defensively.
     /// `audio` is session-owned: the thread pumps core-produced samples
     /// through the rate-control filter into it (transport separation:
     /// cores never see the backend).
-    ///
-    /// Frame-slot format contract (implicit — documented here because
-    /// every consumer depends on it): the slot starts 256x240
-    /// `PaletteIndex`, but cores may `set_format` it (GBC/GBA switch to
-    /// `Rgba`), and `mem::swap` propagates the winning format into
-    /// `shared_fb` and onward to display buffers. Consumers must
-    /// therefore handle both formats: `screen_hash` hashes raw bytes
-    /// (format-agnostic), `encode_screenshot_png` branches per format.
-    /// There is no pre-negotiation beyond `output_formats`; changing
-    /// this default requires auditing all three consumers.
     pub fn spawn(
         mut core: Box<dyn ConsoleCore + Send + 'static>,
         shared_fb: Arc<Mutex<FrameBuffer>>,
         frame_ready: Arc<AtomicBool>,
-        palette: Box<[u32]>,
+        frame_slot: FrameBuffer,
         mut audio: Box<dyn AudioBackend + Send + 'static>,
     ) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::sync_channel::<EmuCommand>(8);
@@ -94,9 +88,7 @@ impl EmuThread {
         let fps_c = Arc::clone(&fps);
         let fr = Arc::clone(&frame_ready);
         let thread = thread::spawn(move || {
-            let mut frame_slot =
-                FrameBuffer::with_capacity(256, 240, PixelFormat::PaletteIndex { palette });
-            frame_slot.resize(256, 240);
+            let mut frame_slot = frame_slot;
 
             // Session-owned audio transport: core-produced nominal samples
             // collect here, then stretch through the rate-control filter
@@ -490,6 +482,8 @@ mod tests {
 
     use super::*;
 
+    use nerust_render_traits::PixelFormat;
+
     struct SilentBackend;
 
     impl AudioBackend for SilentBackend {
@@ -682,7 +676,17 @@ mod tests {
             }),
             Arc::clone(&fb),
             Arc::new(AtomicBool::new(false)),
-            Box::new([0u32; 256]),
+            {
+                let mut slot = FrameBuffer::with_capacity(
+                    256,
+                    240,
+                    PixelFormat::PaletteIndex {
+                        palette: Box::new([0u32; 256]),
+                    },
+                );
+                slot.resize(256, 240);
+                slot
+            },
             Box::new(SilentBackend),
         );
         let (tx, rx) = mpsc::channel();
@@ -745,7 +749,17 @@ mod tests {
             }),
             Arc::clone(&fb),
             Arc::new(AtomicBool::new(false)),
-            Box::new([0u32; 256]),
+            {
+                let mut slot = FrameBuffer::with_capacity(
+                    256,
+                    240,
+                    PixelFormat::PaletteIndex {
+                        palette: Box::new([0u32; 256]),
+                    },
+                );
+                slot.resize(256, 240);
+                slot
+            },
             Box::new(SilentBackend),
         );
         let (tx, rx) = mpsc::channel();
