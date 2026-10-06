@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use nerust_input_traits::AbstractKey;
+
 use super::{
     error::RomTestError,
     serde_helpers::{hex_u8, hex_u16, hex_u64},
@@ -179,17 +181,20 @@ pub enum ButtonCode {
     RIGHT,
 }
 
-impl From<ButtonCode> for Buttons {
-    fn from(value: ButtonCode) -> Self {
-        match value {
-            ButtonCode::A => Buttons::A,
-            ButtonCode::B => Buttons::B,
-            ButtonCode::SELECT => Buttons::SELECT,
-            ButtonCode::START => Buttons::START,
-            ButtonCode::UP => Buttons::UP,
-            ButtonCode::DOWN => Buttons::DOWN,
-            ButtonCode::LEFT => Buttons::LEFT,
-            ButtonCode::RIGHT => Buttons::RIGHT,
+impl ButtonCode {
+    /// System-agnostic logical key for this suite button. The suite's
+    /// own event vocabulary translated once, at the edge; resolution
+    /// to buffer fields runs through profile groups plus field map.
+    pub fn abstract_key(self) -> AbstractKey {
+        match self {
+            ButtonCode::A => AbstractKey::Button1,
+            ButtonCode::B => AbstractKey::Button2,
+            ButtonCode::SELECT => AbstractKey::Select,
+            ButtonCode::START => AbstractKey::Start,
+            ButtonCode::UP => AbstractKey::DpadUp,
+            ButtonCode::DOWN => AbstractKey::DpadDown,
+            ButtonCode::LEFT => AbstractKey::DpadLeft,
+            ButtonCode::RIGHT => AbstractKey::DpadRight,
         }
     }
 }
@@ -199,26 +204,4 @@ impl From<ButtonCode> for Buttons {
 pub enum PadState {
     Pressed,
     Released,
-}
-
-bitflags::bitflags! {
-    #[derive(
-        serde::Serialize,
-        serde::Deserialize,
-        Debug,
-        Clone,
-        Copy,
-        PartialEq,
-        Eq,
-    )]
-    pub struct Buttons: u8 {
-        const A =      0b0000_0001;
-        const B =      0b0000_0010;
-        const SELECT = 0b0000_0100;
-        const START =  0b0000_1000;
-        const UP =     0b0001_0000;
-        const DOWN =   0b0010_0000;
-        const LEFT =   0b0100_0000;
-        const RIGHT =  0b1000_0000;
-    }
 }

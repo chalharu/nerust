@@ -1,8 +1,6 @@
 use super::ValidationRuntime;
-use crate::{
-    events::{ButtonCode, Buttons, ControllerPad, PadState},
-    harness::apply_button_state,
-};
+use crate::events::{ButtonCode, ControllerPad, PadState};
+use nerust_input_traits::AbstractKey;
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn apply_standard_controller(
@@ -11,30 +9,33 @@ impl ValidationRuntime {
         button: ButtonCode,
         state: PadState,
     ) -> Result<(), crate::error::RomTestError> {
-        let buttons = Buttons::from(button);
-        match pad {
-            ControllerPad::Pad1 => {
-                self.pad1 = apply_button_state(self.pad1, buttons, state);
-            }
-            ControllerPad::Pad2 => {
-                self.pad2 = apply_button_state(self.pad2, buttons, state);
-            }
-        }
-        self.sync_input()
+        // The console picks the published state up in render_frame via
+        // EmuInput. A button the pad lacks is a silent no-op (no such
+        // hardware); field failures stay loud inside `set_button`.
+        self.system.set_button(
+            pad_index(pad),
+            button.abstract_key(),
+            matches!(state, PadState::Pressed),
+        )
     }
 
     pub(in crate::runner::validation) fn set_microphone(
         &mut self,
         state: PadState,
     ) -> Result<(), crate::error::RomTestError> {
-        self.mic = matches!(state, PadState::Pressed);
-        self.sync_input()
+        // The microphone is just another button (pad 2, keyed like the
+        // rest through the slot profile group).
+        self.system.set_button(
+            pad_index(ControllerPad::Pad2),
+            AbstractKey::Button3,
+            matches!(state, PadState::Pressed),
+        )
     }
+}
 
-    fn sync_input(&mut self) -> Result<(), crate::error::RomTestError> {
-        // Absolute pad state published for the next frame. The console
-        // picks it up in render_frame via EmuInput.
-        self.system
-            .sync_input(self.pad1.bits(), self.pad2.bits(), self.mic)
+fn pad_index(pad: ControllerPad) -> usize {
+    match pad {
+        ControllerPad::Pad1 => 0,
+        ControllerPad::Pad2 => 1,
     }
 }

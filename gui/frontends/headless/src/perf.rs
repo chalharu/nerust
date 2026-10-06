@@ -1,13 +1,14 @@
 use std::time::{Duration, Instant};
 
 use clap::{Arg, ArgAction, Command};
+use nerust_input_traits::AbstractKey;
 use nerust_nes_factory::NesFactory;
 
 use crate::{
     error::RomTestError,
-    events::{ButtonCode, Buttons, ControllerPad, PadState, RomAssertion},
+    events::{ButtonCode, ControllerPad, PadState, RomAssertion},
     factory_adapter::{TestSystem, open_headless_system},
-    harness::{CaseHarness, apply_button_state, drive_case},
+    harness::{CaseHarness, drive_case},
     manifest::{RomCase, load_default_manifest, read_rom},
     results::{CaseOutcome, ValidationOptions},
     runner::validate_case,
@@ -245,9 +246,6 @@ struct PerfRunner {
     checksum: u64,
     frame_counter: u64,
     total_steps: u64,
-    pad1: Buttons,
-    pad2: Buttons,
-    mic: bool,
 }
 
 impl PerfRunner {
@@ -264,9 +262,6 @@ impl PerfRunner {
             checksum: 0,
             frame_counter: 0,
             total_steps: 0,
-            pad1: Buttons::empty(),
-            pad2: Buttons::empty(),
-            mic: false,
         })
     }
 
@@ -277,11 +272,6 @@ impl PerfRunner {
             steps: self.total_steps,
             final_marker: self.checksum,
         })
-    }
-
-    fn sync_input(&mut self) -> Result<(), RomTestError> {
-        self.system
-            .sync_input(self.pad1.bits(), self.pad2.bits(), self.mic)
     }
 }
 
@@ -318,21 +308,26 @@ impl CaseHarness for PerfRunner {
         button: ButtonCode,
         state: PadState,
     ) -> Result<(), RomTestError> {
-        let buttons = Buttons::from(button);
-        match pad {
-            ControllerPad::Pad1 => {
-                self.pad1 = apply_button_state(self.pad1, buttons, state);
-            }
-            ControllerPad::Pad2 => {
-                self.pad2 = apply_button_state(self.pad2, buttons, state);
-            }
-        }
-        self.sync_input()
+        self.system.set_button(
+            pad_index(pad),
+            button.abstract_key(),
+            matches!(state, PadState::Pressed),
+        )
     }
 
     fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError> {
-        self.mic = matches!(state, PadState::Pressed);
-        self.sync_input()
+        self.system.set_button(
+            pad_index(ControllerPad::Pad2),
+            AbstractKey::Button3,
+            matches!(state, PadState::Pressed),
+        )
+    }
+}
+
+fn pad_index(pad: ControllerPad) -> usize {
+    match pad {
+        ControllerPad::Pad1 => 0,
+        ControllerPad::Pad2 => 1,
     }
 }
 
