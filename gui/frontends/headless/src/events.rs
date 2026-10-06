@@ -24,6 +24,23 @@ impl RomEvent {
     }
 }
 
+/// Test-domain assertion vocabulary. New kinds need no schema
+/// migration for addresses/names (those resolve against live system
+/// state), but adding a variant is intentionally shotgun: every `match`
+/// below must handle it, so the compiler lists all touch points.
+///
+/// Extension checklist for kind N+1 (registers touched 14 files):
+/// `serde_helpers` codec → this enum + `RomEventKind` + `assertion()`
+/// → `harness.rs` dispatch → `TestSystem` read → `runtime/inspection`
+/// peek → `runner.rs` record → `harness_impl` arm → `artifacts/`
+/// module + wiring → `results.rs` check + `CaseValidation` field →
+/// `summary.rs` → `report.rs` → `bin/rom_tool.rs` → `tests.rs`
+/// (+ kernel/thread only if a new `EmuCommand` is needed).
+///
+/// Do NOT abstract this into a dispatcher registry until kind 4.
+/// Exhaustive matches fail at compile time when a variant is missed;
+/// a registry would fail at runtime instead. Revisit when a stateful
+/// kind (e.g. serial streams) breaks the snapshot-compare shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RomAssertion {

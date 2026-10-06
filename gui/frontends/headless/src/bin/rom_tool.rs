@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Instant};
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use nerust_rom_test::{
@@ -123,6 +123,9 @@ fn run_command(
     // case is then ignored, never failed.
     let factories = system_factories();
     let mut current_category = None;
+    // Wall-clock baseline for CI regression tracking (Phase 3 gates on
+    // this line; per-case perf stays in the `perf` binary).
+    let started = Instant::now();
 
     println!(
         "mode={mode} cases={total} output_dir={}",
@@ -167,12 +170,13 @@ fn run_command(
     .map_err(|error| error.to_string())?;
 
     println!(
-        "report={} mode={} passed={} failed={} ignored={}",
+        "report={} mode={} passed={} failed={} ignored={} elapsed_secs={:.1}",
         summary.report_path.display(),
         mode,
         summary.passed,
         summary.failed,
-        summary.ignored
+        summary.ignored,
+        started.elapsed().as_secs_f64(),
     );
 
     if fail_on_mismatch && summary.failed > 0 {
