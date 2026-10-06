@@ -4,14 +4,10 @@ use nerust_core_traits::audio::AudioBackend;
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn run_frame(&mut self) -> Result<(), RomTestError> {
-        self.audio_sink.clear();
-        self.system
-            .console
-            .render_frame(&mut self.screen_buffer, &mut self.audio_sink)
-            .map_err(|error| RomTestError::RenderFrame(error.to_string()))?;
-        // Forward production audio into the hashing mixer. The sample
+        self.system.step_frame()?;
+        // Forward tapped nominal samples into the hashing mixer. The
         // stream is identical to direct pushing, so hashes are unchanged.
-        for sample in self.audio_sink.drain(..) {
+        for sample in self.system.drain_audio()? {
             self.mixer.push(sample);
         }
         self.frame_counter += 1;
@@ -22,7 +18,7 @@ impl ValidationRuntime {
         self.frame_counter
     }
 
-    pub(in crate::runner::validation) fn reset(&mut self) {
-        self.system.console.reset();
+    pub(in crate::runner::validation) fn reset(&mut self) -> Result<(), RomTestError> {
+        self.system.reset()
     }
 }

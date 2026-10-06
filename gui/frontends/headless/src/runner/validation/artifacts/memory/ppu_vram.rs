@@ -19,7 +19,7 @@ impl ValidationArtifacts {
         address: usize,
         expected_value: u8,
     ) -> Result<(), RomTestError> {
-        let actual_value = runtime.peek_ppu_vram(address).ok_or_else(|| {
+        let actual_value = runtime.peek_ppu_vram(address)?.ok_or_else(|| {
             RomTestError::InvalidManifest(format!(
                 "ROM case `{case_id}` requested check_ppu_vram outside PPU nametable/palette space at address 0x{address:04X}",
             ))

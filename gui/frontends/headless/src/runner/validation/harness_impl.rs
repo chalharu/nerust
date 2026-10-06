@@ -40,8 +40,7 @@ impl CaseHarness for ValidationRunner {
     }
 
     fn on_reset(&mut self) -> Result<(), RomTestError> {
-        self.reset_runtime();
-        Ok(())
+        self.reset_runtime()
     }
 
     fn on_standard_controller(

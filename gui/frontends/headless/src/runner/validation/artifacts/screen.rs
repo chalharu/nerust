@@ -13,7 +13,7 @@ impl ValidationArtifacts {
     pub(in crate::runner::validation) fn record_screen_assert(
         &mut self,
         case_id: &str,
-        runtime: &ValidationRuntime,
+        runtime: &mut ValidationRuntime,
         options: ValidationOptions,
         frame: u64,
         expected_hash: u64,

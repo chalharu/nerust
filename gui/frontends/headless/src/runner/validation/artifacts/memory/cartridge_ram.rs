@@ -21,7 +21,7 @@ impl ValidationArtifacts {
         assertion: CartridgeRamAssertion,
     ) -> Result<(), RomTestError> {
         let (actual_value, actual_open_bus) = runtime
-            .peek_cartridge_ram(assertion.address)
+            .peek_cartridge_ram(assertion.address)?
             .ok_or_else(|| {
                 RomTestError::InvalidManifest(format!(
                     "ROM case `{case_id}` requested check_cartridge_ram outside cartridge RAM at address 0x{:04X}",

@@ -236,6 +236,26 @@ impl EmuCore {
         media: &MediaObject,
         core_options: Option<Box<dyn CoreOptions>>,
     ) -> Result<(), OperationError> {
+        self.load_inner(media, core_options, false)
+    }
+
+    /// Load and start paused: no free-run frame executes before the
+    /// first command. Headless drivers use this for deterministic
+    /// frame zero; interactive loads keep free-running.
+    pub fn load_paused(
+        &self,
+        media: &MediaObject,
+        core_options: Option<Box<dyn CoreOptions>>,
+    ) -> Result<(), OperationError> {
+        self.load_inner(media, core_options, true)
+    }
+
+    fn load_inner(
+        &self,
+        media: &MediaObject,
+        core_options: Option<Box<dyn CoreOptions>>,
+        start_paused: bool,
+    ) -> Result<(), OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::Load(Box::new(LoadCommand {
@@ -249,6 +269,7 @@ impl EmuCore {
                     // owned backend; None here just means "not yet known".
                     audio_sample_rate: None,
                 },
+                start_paused,
                 reply: reply_tx,
             })))
             .map_err(|_| OperationError::WorkerUnavailable)?;

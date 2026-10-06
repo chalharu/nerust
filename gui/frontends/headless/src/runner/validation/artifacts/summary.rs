@@ -8,7 +8,7 @@ impl ValidationArtifacts {
     pub(in crate::runner::validation) fn finish(
         mut self,
         case: &RomCase,
-        runtime: &ValidationRuntime,
+        runtime: &mut ValidationRuntime,
         totals: ExecutionTotals,
         options: ValidationOptions,
     ) -> CaseValidation {

@@ -19,7 +19,7 @@ impl ValidationArtifacts {
         address: usize,
         expected_value: u8,
     ) -> Result<(), RomTestError> {
-        let actual_value = runtime.peek_work_ram(address).ok_or_else(|| {
+        let actual_value = runtime.peek_work_ram(address)?.ok_or_else(|| {
             RomTestError::InvalidManifest(format!(
                 "ROM case `{case_id}` requested check_work_ram outside CPU work RAM at address 0x{address:04X}",
             ))
