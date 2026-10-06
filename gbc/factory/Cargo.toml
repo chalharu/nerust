@@ -15,8 +15,3 @@ nerust_gbc_settings.workspace = true
 nerust_input_traits.workspace = true
 nerust_render_traits.workspace = true
 nerust_settings_traits.workspace = true
-
-# Test-only: cross-probe rejection test builds a minimal GBA ROM
-# through the canonical finalizer instead of pasting 156 logo bytes.
-[dev-dependencies]
-nerust_gba_core.workspace = true
