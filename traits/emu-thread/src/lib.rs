@@ -126,6 +126,9 @@ impl EmuThread {
                             EmuCommand::PeekCartridgeRam { reply, .. } => {
                                 let _ = reply.send(None);
                             }
+                            EmuCommand::DebuggerSpaces { reply, .. } => {
+                                let _ = reply.send(Vec::new());
+                            }
                             _ => {}
                         },
                         Err(_) => return,
@@ -250,6 +253,14 @@ impl EmuThread {
                             let result = match core.debug_control() {
                                 Some(mut control) => control.peek_cartridge_ram(addr),
                                 None => None,
+                            };
+                            // reply send failure: receiver dropped (timeout/abort) — expected
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::DebuggerSpaces { reply } => {
+                            let result = match core.debugger() {
+                                Some(debugger) => debugger.spaces().to_vec(),
+                                None => Vec::new(),
                             };
                             // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = reply.send(result);

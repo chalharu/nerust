@@ -288,6 +288,9 @@ impl PerfRunner {
 impl CaseHarness for PerfRunner {
     fn run_frame(&mut self) -> Result<(), RomTestError> {
         self.system.step_frame()?;
+        // Discard tapped samples: perf hashes screens only. Without a
+        // drain the tap would grow unbounded over rounds x cases.
+        drop(self.system.drain_audio()?);
         // Per-frame checksum over published palette bytes.
         for &b in self.system.screen_buffer().as_ref() {
             self.checksum = self.checksum.wrapping_mul(31).wrapping_add(u64::from(b));
