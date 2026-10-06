@@ -67,6 +67,16 @@ impl EmuThread {
     /// `audio` is session-owned: the thread pumps core-produced samples
     /// through the rate-control filter into it (transport separation:
     /// cores never see the backend).
+    ///
+    /// Frame-slot format contract (implicit — documented here because
+    /// every consumer depends on it): the slot starts 256x240
+    /// `PaletteIndex`, but cores may `set_format` it (GBC/GBA switch to
+    /// `Rgba`), and `mem::swap` propagates the winning format into
+    /// `shared_fb` and onward to display buffers. Consumers must
+    /// therefore handle both formats: `screen_hash` hashes raw bytes
+    /// (format-agnostic), `encode_screenshot_png` branches per format.
+    /// There is no pre-negotiation beyond `output_formats`; changing
+    /// this default requires auditing all three consumers.
     pub fn spawn(
         mut core: Box<dyn ConsoleCore + Send + 'static>,
         shared_fb: Arc<Mutex<FrameBuffer>>,
