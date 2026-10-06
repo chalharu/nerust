@@ -202,17 +202,17 @@ impl EmuThread {
                             } else {
                                 match unit {
                                     StepUnit::Frame => {
-                                        render_one_frame(
-                                            &mut *core,
-                                            &mut frame_slot,
-                                            &mut audio_scratch,
-                                            &mut filter,
-                                            &mut *audio,
-                                            &nominal_tap,
-                                            &fb,
-                                            &fr,
-                                            &fc,
-                                        );
+                                        render_one_frame(FrameCtx {
+                                            core: &mut *core,
+                                            frame_slot: &mut frame_slot,
+                                            audio_scratch: &mut audio_scratch,
+                                            filter: &mut filter,
+                                            audio: &mut *audio,
+                                            nominal_tap: &nominal_tap,
+                                            fb: &fb,
+                                            fr: &fr,
+                                            fc: &fc,
+                                        });
                                         Ok(fc.load(Ordering::Relaxed))
                                     }
                                     StepUnit::Instruction => match core.debug_control() {
@@ -260,17 +260,17 @@ impl EmuThread {
 
                 if loaded && !core.paused() {
                     // render_frame only fails with NoRomLoaded (guarded by loaded flag)
-                    render_one_frame(
-                        &mut *core,
-                        &mut frame_slot,
-                        &mut audio_scratch,
-                        &mut filter,
-                        &mut *audio,
-                        &nominal_tap,
-                        &fb,
-                        &fr,
-                        &fc,
-                    );
+                    render_one_frame(FrameCtx {
+                        core: &mut *core,
+                        frame_slot: &mut frame_slot,
+                        audio_scratch: &mut audio_scratch,
+                        filter: &mut filter,
+                        audio: &mut *audio,
+                        nominal_tap: &nominal_tap,
+                        fb: &fb,
+                        fr: &fr,
+                        fc: &fc,
+                    });
                 }
 
                 timer.wait();
@@ -356,23 +356,37 @@ fn push_nominal_tap(tap: &Option<Arc<Mutex<Vec<StereoSample>>>>, samples: Vec<St
     }
 }
 
+/// Shared per-frame render state, threaded through the loop and the
+/// `Step(Frame)` path so both render identically.
+struct FrameCtx<'a> {
+    core: &'a mut dyn ConsoleCore,
+    frame_slot: &'a mut FrameBuffer,
+    audio_scratch: &'a mut Vec<StereoSample>,
+    filter: &'a mut DynamicRateFilter,
+    audio: &'a mut dyn AudioBackend,
+    nominal_tap: &'a Option<Arc<Mutex<Vec<StereoSample>>>>,
+    fb: &'a Arc<Mutex<FrameBuffer>>,
+    fr: &'a Arc<AtomicBool>,
+    fc: &'a Arc<AtomicU64>,
+}
+
 /// Run one frame through the standard path: render, audio transport,
 /// nominal tap, shared-buffer publish, and counter advance.
 ///
 /// Free-run iterations and `Step(Frame)` share this so stepped frames
 /// are indistinguishable from free ones.
-#[allow(clippy::too_many_arguments)]
-fn render_one_frame(
-    core: &mut dyn ConsoleCore,
-    frame_slot: &mut FrameBuffer,
-    audio_scratch: &mut Vec<StereoSample>,
-    filter: &mut DynamicRateFilter,
-    audio: &mut dyn AudioBackend,
-    nominal_tap: &Option<Arc<Mutex<Vec<StereoSample>>>>,
-    fb: &Arc<Mutex<FrameBuffer>>,
-    fr: &Arc<AtomicBool>,
-    fc: &Arc<AtomicU64>,
-) {
+fn render_one_frame(ctx: FrameCtx<'_>) {
+    let FrameCtx {
+        core,
+        frame_slot,
+        audio_scratch,
+        filter,
+        audio,
+        nominal_tap,
+        fb,
+        fr,
+        fc,
+    } = ctx;
     // render_frame only fails with NoRomLoaded (callers guard loaded).
     if core.render_frame(frame_slot, audio_scratch).is_ok() {
         filter.push_frame(audio_scratch, audio);

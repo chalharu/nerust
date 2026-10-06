@@ -1,5 +1,4 @@
 use nerust_core_traits::audio::AudioBackend;
-use nerust_nes_core::debugger::{SPACE_PPU_VRAM, SPACE_WORK_RAM};
 
 use super::ValidationRuntime;
 use crate::{
@@ -42,7 +41,7 @@ impl ValidationRuntime {
         let Some(addr) = u32::try_from(address).ok() else {
             return Ok(None);
         };
-        self.system.read_byte(SPACE_WORK_RAM, addr)
+        self.system.read_work_ram_byte(addr)
     }
 
     pub(in crate::runner::validation) fn peek_cartridge_ram(
@@ -59,6 +58,6 @@ impl ValidationRuntime {
         let Some(addr) = u32::try_from(address).ok() else {
             return Ok(None);
         };
-        self.system.read_byte(SPACE_PPU_VRAM, addr)
+        self.system.read_ppu_vram_byte(addr)
     }
 }

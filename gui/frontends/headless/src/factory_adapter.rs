@@ -3,9 +3,9 @@
 //! The generic validation harness drives [`TestSystem`], which owns the
 //! session execution engine ([`EmuCore`]) built from factory parts. No
 //! other `rom_test` module names NES-concrete types: `nes_core` appears
-//! only for option types, `nes_factory` / `nes_settings` only for
-//! construction. The thread does the stepping, inspecting, and audio
-//! tapping; this module translates test intent into session calls.
+//! only for option types, input layouts, and space ids. The thread does
+//! the stepping, inspecting, and audio tapping; this module translates
+//! test intent into session calls.
 
 use std::{
     collections::HashMap,
@@ -16,15 +16,12 @@ use nerust_core_traits::{
     CoreConfig,
     audio::{AudioBackend, StereoSample},
     debugger::{InspectRequest, SpaceId, StepUnit},
-    factory::{
-        CoreFactory,
-        settings::{FactorySettingsView, Language},
-    },
+    factory::CoreFactory,
 };
 use nerust_gui_shell::emu_core::EmuCore;
 use nerust_input_traits::{GuiInput, InputAssignments};
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant as NesMmc3IrqVariant};
-use nerust_nes_settings::{NesSettings, NesVideoFilter};
+use nerust_nes_core::debugger::{SPACE_PPU_VRAM, SPACE_WORK_RAM};
 use nerust_render_traits::FrameBuffer;
 
 use crate::{error::RomTestError, manifest::Mmc3IrqVariant};
@@ -50,8 +47,8 @@ pub struct TestSystem {
 ///   samples are tapped per stepped frame, never rate-controlled.
 /// * Test options (`mmc3_irq_variant`, …) travel in
 ///   `CoreConfig::core_options`, which the console downcasts.
-/// * After load the thread is paused and reset, so stepped frames start
-///   from a deterministic frame zero regardless of free-run races.
+/// * After paused load the thread is silent until the first step, so
+///   stepped frames start from a deterministic power-on frame zero.
 pub fn open_nes_system(
     factory: &dyn CoreFactory,
     case_id: &str,
@@ -64,18 +61,9 @@ pub fn open_nes_system(
         message,
     };
 
-    let mut system_config = factory
-        .as_system_defaults()
-        .and_then(|defaults| defaults.default_system_settings())
-        .ok_or_else(|| construction("factory provides no default settings".to_string()))?;
-    let nes_settings = system_config
-        .downcast_mut::<NesSettings>()
-        .ok_or_else(|| construction("cannot pin NES video filter".to_string()))?;
-    nes_settings.video.filter = NesVideoFilter::None;
-    let view = FactorySettingsView {
-        language: Language::English,
-        system_config: Some(system_config),
-    };
+    let view = factory
+        .headless_view()
+        .map_err(|error| construction(format!("headless view: {error:?}")))?;
 
     let base = factory.input_system_factory().default_assignments();
     let assignments = duplicate_p1_to_p2(&base)
@@ -178,8 +166,21 @@ impl TestSystem {
             .map_err(|error| RomTestError::EmuThread(format!("tap lock: {error}")))
     }
 
-    /// Read one byte through the thread inspect path.
-    pub fn read_byte(&self, space: SpaceId, addr: u32) -> Result<Option<u8>, RomTestError> {
+    /// Read one byte from Work RAM through the thread inspect path.
+    ///
+    /// The space id lives here (not in generic runner code) so a table
+    /// reorder breaks this module's compilation instead of silently
+    /// mis-resolving elsewhere.
+    pub fn read_work_ram_byte(&self, addr: u32) -> Result<Option<u8>, RomTestError> {
+        self.read_byte(SPACE_WORK_RAM, addr)
+    }
+
+    /// Read one byte from PPU VRAM through the thread inspect path.
+    pub fn read_ppu_vram_byte(&self, addr: u32) -> Result<Option<u8>, RomTestError> {
+        self.read_byte(SPACE_PPU_VRAM, addr)
+    }
+
+    fn read_byte(&self, space: SpaceId, addr: u32) -> Result<Option<u8>, RomTestError> {
         let inner = self
             .emu
             .inspect(InspectRequest {
