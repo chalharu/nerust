@@ -7261,3 +7261,1094 @@ cases:
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
       - {frame: 575, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gba.jsmolka_bios
+    category: cpu
+    description: "GBA jsmolka_bios (jsmolka): r12 first-failed number, zero means all pass."
+    rom: gba/jsmolka_gba-tests/bios/bios.gba
+    events:
+      - {frame: 17, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.jsmolka_dma_nes
+    category: cpu
+    description: "GBA jsmolka_dma_nes (jsmolka): r12 first-failed number, zero means all pass."
+    rom: gba/jsmolka_gba-tests/nes/nes.gba
+    events:
+      - {frame: 17, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.jsmolka_save_none
+    category: cpu
+    description: "GBA jsmolka_save_none (jsmolka): r12 first-failed number, zero means all pass."
+    rom: gba/jsmolka_gba-tests/save/none.gba
+    events:
+      - {frame: 12, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.jsmolka_save_sram
+    category: cpu
+    description: "GBA jsmolka_save_sram (jsmolka): r12 first-failed number, zero means all pass."
+    rom: gba/jsmolka_gba-tests/save/sram.gba
+    events:
+      - {frame: 12, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.jsmolka_save_flash64
+    category: cpu
+    description: "GBA jsmolka_save_flash64 (jsmolka): r12 first-failed number, zero means all pass."
+    rom: gba/jsmolka_gba-tests/save/flash64.gba
+    events:
+      - {frame: 113, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.jsmolka_save_flash128
+    category: cpu
+    description: "GBA jsmolka_save_flash128 (jsmolka): r12 first-failed number, zero means all pass."
+    rom: gba/jsmolka_gba-tests/save/flash128.gba
+    events:
+      - {frame: 113, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.jsmolka_ppu_hello
+    category: ppu
+    description: "GBA jsmolka_ppu_hello (jsmolka): screen hash."
+    rom: gba/jsmolka_gba-tests/ppu/hello.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0xF56508B9F48A9378"}
+  - id: gba.jsmolka_ppu_shades
+    category: ppu
+    description: "GBA jsmolka_ppu_shades (jsmolka): screen hash."
+    rom: gba/jsmolka_gba-tests/ppu/shades.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0xB4C87FB59F1E5385"}
+  - id: gba.jsmolka_ppu_stripes
+    category: ppu
+    description: "GBA jsmolka_ppu_stripes (jsmolka): screen hash."
+    rom: gba/jsmolka_gba-tests/ppu/stripes.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0x16CE37BBBAE71697"}
+  - id: gba.nba_dma_start_delay
+    category: cpu
+    description: "GBA nba_dma_start_delay (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/dma/start-delay/start-delay.gba
+    events:
+      - {frame: 23, action: check_memory, address: "0x030001C4", value: "0x01"}
+      - {frame: 23, action: check_memory, address: "0x030001C5", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030001C6", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030001C7", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030001C8", value: "0x01"}
+      - {frame: 23, action: check_memory, address: "0x030001C9", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030001CA", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030001CB", value: "0x00"}
+  - id: gba.nba_dma_latch
+    category: cpu
+    description: "GBA nba_dma_latch (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/dma/latch/latch.gba
+    events:
+      - {frame: 23, action: check_memory, address: "0x0300014C", value: "0x04"}
+      - {frame: 23, action: check_memory, address: "0x0300014D", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300014E", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300014F", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000150", value: "0x04"}
+      - {frame: 23, action: check_memory, address: "0x03000151", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000152", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000153", value: "0x00"}
+  - id: gba.nba_timer_reload
+    category: cpu
+    description: "GBA nba_timer_reload (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/timer/reload/reload.gba
+    events:
+      - {frame: 23, action: check_memory, address: "0x03000424", value: "0x07"}
+      - {frame: 23, action: check_memory, address: "0x03000425", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000426", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000427", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000428", value: "0x07"}
+      - {frame: 23, action: check_memory, address: "0x03000429", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300042A", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300042B", value: "0x00"}
+  - id: gba.nba_timer_start_stop
+    category: cpu
+    description: "GBA nba_timer_start_stop (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/timer/start-stop/start-stop.gba
+    events:
+      - {frame: 23, action: check_memory, address: "0x03000264", value: "0x02"}
+      - {frame: 23, action: check_memory, address: "0x03000265", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000266", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000267", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000268", value: "0x02"}
+      - {frame: 23, action: check_memory, address: "0x03000269", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300026A", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300026B", value: "0x00"}
+  - id: gba.nba_timer_tick_before_reload
+    category: cpu
+    description: "GBA nba_timer_tick_before_reload (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/timer/tick-before-reload/tick-before-reload.gba
+    events:
+      - {frame: 23, action: check_memory, address: "0x03000284", value: "0x02"}
+      - {frame: 23, action: check_memory, address: "0x03000285", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000286", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000287", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000288", value: "0x02"}
+      - {frame: 23, action: check_memory, address: "0x03000289", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300028A", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300028B", value: "0x00"}
+  - id: gba.nba_irq_delay
+    category: cpu
+    description: "GBA nba_irq_delay (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/irq/irq-delay/irq-delay.gba
+    events:
+      - {frame: 23, action: check_memory, address: "0x030003E8", value: "0x03"}
+      - {frame: 23, action: check_memory, address: "0x030003E9", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030003EA", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030003EB", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030003EC", value: "0x03"}
+      - {frame: 23, action: check_memory, address: "0x030003ED", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030003EE", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030003EF", value: "0x00"}
+  - id: gba.nba_ppu_vram_mirror
+    category: cpu
+    description: "GBA nba_ppu_vram_mirror (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/ppu/vram-mirror/vram-mirror.gba
+    events:
+      - {frame: 327, action: check_memory, address: "0x030003F4", value: "0x0A"}
+      - {frame: 327, action: check_memory, address: "0x030003F5", value: "0x00"}
+      - {frame: 327, action: check_memory, address: "0x030003F6", value: "0x00"}
+      - {frame: 327, action: check_memory, address: "0x030003F7", value: "0x00"}
+      - {frame: 327, action: check_memory, address: "0x030003F8", value: "0x0A"}
+      - {frame: 327, action: check_memory, address: "0x030003F9", value: "0x00"}
+      - {frame: 327, action: check_memory, address: "0x030003FA", value: "0x00"}
+      - {frame: 327, action: check_memory, address: "0x030003FB", value: "0x00"}
+  - id: gba.nba_dma_burst_into_tears
+    category: cpu
+    description: "GBA nba_dma_burst_into_tears (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/dma/burst-into-tears/burst-into-tears.gba
+    events:
+      - {frame: 23, action: check_memory, address: "0x03000234", value: "0x03"}
+      - {frame: 23, action: check_memory, address: "0x03000235", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000236", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000237", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x070003FE", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x070003FF", value: "0xEA"}
+      - {frame: 23, action: check_memory, address: "0x070003FC", value: "0x24"}
+      - {frame: 23, action: check_memory, address: "0x070003FD", value: "0xFF"}
+      - {frame: 23, action: check_memory, address: "0x03000238", value: "0x03"}
+      - {frame: 23, action: check_memory, address: "0x03000239", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300023A", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300023B", value: "0x00"}
+  - id: gba.nba_dma_force_nseq
+    category: cpu
+    description: "GBA nba_dma_force_nseq (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/dma/force-nseq-access/force-nseq-access.gba
+    events:
+      - {frame: 23, action: check_memory, address: "0x0300014C", value: "0x02"}
+      - {frame: 23, action: check_memory, address: "0x0300014D", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300014E", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x0300014F", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000150", value: "0x02"}
+      - {frame: 23, action: check_memory, address: "0x03000151", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000152", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000153", value: "0x00"}
+  - id: gba.nba_bus_128kb_boundary
+    category: cpu
+    description: "GBA nba_bus_128kb_boundary (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/bus/128kb-boundary/128kb-boundary.gba
+    events:
+      - {frame: 23, action: check_memory, address: "0x030003DC", value: "0x12"}
+      - {frame: 23, action: check_memory, address: "0x030003DD", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030003DE", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030003DF", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030003E0", value: "0x12"}
+      - {frame: 23, action: check_memory, address: "0x030003E1", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030003E2", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x030003E3", value: "0x00"}
+  - id: gba.nba_archive_irq_cancel_if
+    category: cpu
+    description: "GBA nba_archive_irq_cancel_if (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/archive/irq/cancel-irq-if/cancel-irq-if.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x44829770C7FAB6EC"}
+  - id: gba.nba_archive_irq_cancel_ime
+    category: cpu
+    description: "GBA nba_archive_irq_cancel_ime (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/archive/irq/cancel-irq-ime/cancel-irq-ime.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x842C535B96471502"}
+  - id: gba.nba_archive_ppu_basic_timing
+    category: cpu
+    description: "GBA nba_archive_ppu_basic_timing (nba-emu): end-state observation."
+    rom: gba/nba-emu_hw-test/archive/ppu/basic-timing/basic-timing.gba
+    events:
+      - {frame: 23, action: check_memory, address: "0x03000EA4", value: "0x06"}
+      - {frame: 23, action: check_memory, address: "0x03000EA5", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000EA6", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000EA7", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000EA8", value: "0x06"}
+      - {frame: 23, action: check_memory, address: "0x03000EA9", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000EAA", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x03000EAB", value: "0x00"}
+  - id: gba.armwrestler_arm_alu
+    category: cpu
+    description: "GBA armwrestler_arm_alu (armwrestler menu-driven): screen hash after scripted input."
+    rom: gba/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
+    events:
+      - {frame: 8, action: standard_controller, pad: pad1, button: gba.control.start, state: pressed}
+      - {frame: 12, action: standard_controller, pad: pad1, button: gba.control.start, state: released}
+      - {frame: 20, action: check_screen, hash: "0x665C57AD33AF388F"}
+  - id: gba.armwrestler_arm_alu_part2
+    category: cpu
+    description: "GBA armwrestler_arm_alu_part2 (armwrestler menu-driven): screen hash after scripted input."
+    rom: gba/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
+    events:
+      - {frame: 8, action: standard_controller, pad: pad1, button: gba.control.start, state: pressed}
+      - {frame: 12, action: standard_controller, pad: pad1, button: gba.control.start, state: released}
+      - {frame: 16, action: standard_controller, pad: pad1, button: gba.control.start, state: pressed}
+      - {frame: 20, action: standard_controller, pad: pad1, button: gba.control.start, state: released}
+      - {frame: 28, action: check_screen, hash: "0xC34AE96FC78A7CEF"}
+  - id: gba.armwrestler_arm_ldr_str
+    category: cpu
+    description: "GBA armwrestler_arm_ldr_str (armwrestler menu-driven): screen hash after scripted input."
+    rom: gba/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
+    events:
+      - {frame: 8, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 12, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 16, action: standard_controller, pad: pad1, button: gba.control.start, state: pressed}
+      - {frame: 20, action: standard_controller, pad: pad1, button: gba.control.start, state: released}
+      - {frame: 28, action: check_screen, hash: "0x4CC5056935CAB4B3"}
+  - id: gba.armwrestler_arm_ldr_str_part2
+    category: cpu
+    description: "GBA armwrestler_arm_ldr_str_part2 (armwrestler menu-driven): screen hash after scripted input."
+    rom: gba/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
+    events:
+      - {frame: 8, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 12, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 16, action: standard_controller, pad: pad1, button: gba.control.start, state: pressed}
+      - {frame: 20, action: standard_controller, pad: pad1, button: gba.control.start, state: released}
+      - {frame: 24, action: standard_controller, pad: pad1, button: gba.control.start, state: pressed}
+      - {frame: 28, action: standard_controller, pad: pad1, button: gba.control.start, state: released}
+      - {frame: 36, action: check_screen, hash: "0x6ABB29E69E623306"}
+  - id: gba.armwrestler_arm_ldm_stm
+    category: cpu
+    description: "GBA armwrestler_arm_ldm_stm (armwrestler menu-driven): screen hash after scripted input."
+    rom: gba/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
+    events:
+      - {frame: 8, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 12, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 16, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 20, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 24, action: standard_controller, pad: pad1, button: gba.control.start, state: pressed}
+      - {frame: 28, action: standard_controller, pad: pad1, button: gba.control.start, state: released}
+      - {frame: 36, action: check_screen, hash: "0x86E409156C69354B"}
+  - id: gba.armwrestler_thumb_alu
+    category: cpu
+    description: "GBA armwrestler_thumb_alu (armwrestler menu-driven): screen hash after scripted input."
+    rom: gba/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
+    events:
+      - {frame: 8, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 12, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 16, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 20, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 24, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 28, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 32, action: standard_controller, pad: pad1, button: gba.control.start, state: pressed}
+      - {frame: 36, action: standard_controller, pad: pad1, button: gba.control.start, state: released}
+      - {frame: 44, action: check_screen, hash: "0x5C3835E156FD4B2E"}
+  - id: gba.armwrestler_thumb_ldr_str
+    category: cpu
+    description: "GBA armwrestler_thumb_ldr_str (armwrestler menu-driven): screen hash after scripted input."
+    rom: gba/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
+    events:
+      - {frame: 8, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 12, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 16, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 20, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 24, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 28, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 32, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 36, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 40, action: standard_controller, pad: pad1, button: gba.control.start, state: pressed}
+      - {frame: 44, action: standard_controller, pad: pad1, button: gba.control.start, state: released}
+      - {frame: 52, action: check_screen, hash: "0xA0EFBAEBC3D2A66A"}
+  - id: gba.armwrestler_thumb_ldm_stm
+    category: cpu
+    description: "GBA armwrestler_thumb_ldm_stm (armwrestler menu-driven): screen hash after scripted input."
+    rom: gba/armwrestler-gba-fixed/armwrestler-gba-fixed.gba
+    events:
+      - {frame: 8, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 12, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 16, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 20, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 24, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 28, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 32, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 36, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 40, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 44, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 48, action: standard_controller, pad: pad1, button: gba.control.start, state: pressed}
+      - {frame: 52, action: standard_controller, pad: pad1, button: gba.control.start, state: released}
+      - {frame: 60, action: check_screen, hash: "0x9D86C3B575735F67"}
+  - id: gba.peterlemon_helloworld
+    category: ppu
+    description: "GBA PeterLemon_HelloWorld (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/HelloWorld/HelloWorld.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0x671BC5EF89E984FC"}
+  - id: gba.peterlemon_dctblockdecode
+    category: ppu
+    description: "GBA PeterLemon_DCTBlockDecode (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Compress/DCT/DCTBlockDecode/DCTBlockDecode.gba
+    events:
+      - {frame: 12, action: check_memory, address: "0x02000000", value: "0x7A"}
+      - {frame: 12, action: check_memory, address: "0x02000001", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x02000022", value: "0x3B"}
+      - {frame: 12, action: check_memory, address: "0x02000023", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x02000042", value: "0x31"}
+      - {frame: 12, action: check_memory, address: "0x02000043", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x0200007E", value: "0x7A"}
+      - {frame: 12, action: check_memory, address: "0x0200007F", value: "0x00"}
+      - {frame: 12, action: check_screen, hash: "0x9DFA3D9A2DF2402D"}
+  - id: gba.peterlemon_fastdctblockdecode
+    category: ppu
+    description: "GBA PeterLemon_FastDCTBlockDecode (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Compress/DCT/FastDCTBlockDecode/FastDCTBlockDecode.gba
+    events:
+      - {frame: 12, action: check_memory, address: "0x02000000", value: "0x7B"}
+      - {frame: 12, action: check_memory, address: "0x02000001", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x02000022", value: "0x3D"}
+      - {frame: 12, action: check_memory, address: "0x02000023", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x02000042", value: "0x32"}
+      - {frame: 12, action: check_memory, address: "0x02000043", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x0200007E", value: "0x7B"}
+      - {frame: 12, action: check_memory, address: "0x0200007F", value: "0x00"}
+      - {frame: 12, action: check_screen, hash: "0x9DFA3D9A2DF2402D"}
+  - id: gba.peterlemon_fastquantizationblockdecode
+    category: ppu
+    description: "GBA PeterLemon_FastQuantizationBlockDecode (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Compress/DCT/FastQuantizationBlockDecode/FastQuantizationBlockDecode.gba
+    events:
+      - {frame: 12, action: check_memory, address: "0x02000000", value: "0x03"}
+      - {frame: 12, action: check_memory, address: "0x02000001", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x02000022", value: "0xF3"}
+      - {frame: 12, action: check_memory, address: "0x02000023", value: "0xFF"}
+      - {frame: 12, action: check_memory, address: "0x02000042", value: "0xB2"}
+      - {frame: 12, action: check_memory, address: "0x02000043", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x0200007E", value: "0x06"}
+      - {frame: 12, action: check_memory, address: "0x0200007F", value: "0x00"}
+      - {frame: 12, action: check_screen, hash: "0x9DFA3D9A2DF2402D"}
+  - id: gba.peterlemon_huff8decode
+    category: ppu
+    description: "GBA PeterLemon_HUFF8Decode (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Compress/HUFFMAN/HUFF8Decode/HUFF8Decode.gba
+    events:
+      - {frame: 49, action: check_memory, address: "0x02000000", value: "0x0E"}
+      - {frame: 49, action: check_memory, address: "0x02000001", value: "0x4E"}
+      - {frame: 49, action: check_memory, address: "0x02000002", value: "0x71"}
+      - {frame: 49, action: check_memory, address: "0x02000003", value: "0x62"}
+      - {frame: 49, action: check_memory, address: "0x02000400", value: "0xE8"}
+      - {frame: 49, action: check_memory, address: "0x02000401", value: "0x14"}
+      - {frame: 49, action: check_memory, address: "0x02000402", value: "0x08"}
+      - {frame: 49, action: check_memory, address: "0x02000403", value: "0x19"}
+      - {frame: 49, action: check_memory, address: "0x02000800", value: "0xCC"}
+      - {frame: 49, action: check_memory, address: "0x02000801", value: "0x51"}
+      - {frame: 49, action: check_memory, address: "0x02000802", value: "0xCC"}
+      - {frame: 49, action: check_memory, address: "0x02000803", value: "0x4D"}
+      - {frame: 49, action: check_memory, address: "0x02000C00", value: "0x59"}
+      - {frame: 49, action: check_memory, address: "0x02000C01", value: "0x1A"}
+      - {frame: 49, action: check_memory, address: "0x02000C02", value: "0x58"}
+      - {frame: 49, action: check_memory, address: "0x02000C03", value: "0x1A"}
+      - {frame: 49, action: check_screen, hash: "0x9DFA3D9A2DF2402D"}
+  - id: gba.peterlemon_lz77decode
+    category: ppu
+    description: "GBA PeterLemon_LZ77Decode (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Compress/LZ77/LZ77Decode/LZ77Decode.gba
+    events:
+      - {frame: 113, action: check_memory, address: "0x02000000", value: "0x0E"}
+      - {frame: 113, action: check_memory, address: "0x02000001", value: "0x4E"}
+      - {frame: 113, action: check_memory, address: "0x02000002", value: "0x71"}
+      - {frame: 113, action: check_memory, address: "0x02000003", value: "0x62"}
+      - {frame: 113, action: check_memory, address: "0x02009600", value: "0x84"}
+      - {frame: 113, action: check_memory, address: "0x02009601", value: "0x08"}
+      - {frame: 113, action: check_memory, address: "0x02009602", value: "0xE9"}
+      - {frame: 113, action: check_memory, address: "0x02009603", value: "0x10"}
+      - {frame: 113, action: check_memory, address: "0x02012BFC", value: "0x54"}
+      - {frame: 113, action: check_memory, address: "0x02012BFD", value: "0x1A"}
+      - {frame: 113, action: check_memory, address: "0x02012BFE", value: "0x54"}
+      - {frame: 113, action: check_memory, address: "0x02012BFF", value: "0x1A"}
+      - {frame: 113, action: check_screen, hash: "0x9DFA3D9A2DF2402D"}
+  - id: gba.peterlemon_quantizationblockdecode
+    category: ppu
+    description: "GBA PeterLemon_QuantizationBlockDecode (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Compress/DCT/QuantizationBlockDecode/QuantizationBlockDecode.gba
+    events:
+      - {frame: 12, action: check_memory, address: "0x02000080", value: "0x60"}
+      - {frame: 12, action: check_memory, address: "0x02000081", value: "0x02"}
+      - {frame: 12, action: check_memory, address: "0x020000A2", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x020000A3", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x020000C2", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x020000C3", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x020000FE", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x020000FF", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x02000000", value: "0xEC"}
+      - {frame: 12, action: check_memory, address: "0x02000001", value: "0xFF"}
+      - {frame: 12, action: check_memory, address: "0x02000022", value: "0xE5"}
+      - {frame: 12, action: check_memory, address: "0x02000023", value: "0xFF"}
+      - {frame: 12, action: check_memory, address: "0x02000042", value: "0xA9"}
+      - {frame: 12, action: check_memory, address: "0x02000043", value: "0x00"}
+      - {frame: 12, action: check_memory, address: "0x0200007E", value: "0xFE"}
+      - {frame: 12, action: check_memory, address: "0x0200007F", value: "0xFF"}
+      - {frame: 12, action: check_screen, hash: "0x9DFA3D9A2DF2402D"}
+  - id: gba.peterlemon_soundbrrmonosingleshot
+    category: ppu
+    description: "GBA PeterLemon_SoundBRRMonoSingleShot (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Sound/BRR/SingleShot/MONO/SoundBRRMonoSingleShot.gba
+    events:
+      - {frame: 23, action: check_memory, address: "0x02000000", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000001", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000002", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000003", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000040", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000041", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000042", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000043", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000100", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000101", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000102", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000103", value: "0x00"}
+      - {frame: 23, action: check_memory, address: "0x02000400", value: "0xE9"}
+      - {frame: 23, action: check_memory, address: "0x02000401", value: "0xE8"}
+      - {frame: 23, action: check_memory, address: "0x02000402", value: "0xE7"}
+      - {frame: 23, action: check_memory, address: "0x02000403", value: "0xE7"}
+      - {frame: 23, action: check_screen, hash: "0x9DFA3D9A2DF2402D"}
+  - id: gba.peterlemon_soundpcmmono
+    category: ppu
+    description: "GBA PeterLemon_SoundPCMMono (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Sound/PCM/Mono/SoundPCMMono.gba
+    events:
+      - {frame: 12, action: check_memory, address: "0x040000C6", value: "0x40"}
+      - {frame: 12, action: check_memory, address: "0x040000C7", value: "0xB6"}
+      - {frame: 12, action: check_memory, address: "0x04000082", value: "0x04"}
+      - {frame: 12, action: check_memory, address: "0x04000083", value: "0x03"}
+      - {frame: 12, action: check_memory, address: "0x04000084", value: "0x80"}
+      - {frame: 12, action: check_screen, hash: "0x9DFA3D9A2DF2402D"}
+  - id: gba.peterlemon_soundpcmstereo
+    category: ppu
+    description: "GBA PeterLemon_SoundPCMStereo (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Sound/PCM/Stereo/SoundPCMStereo.gba
+    events:
+      - {frame: 12, action: check_memory, address: "0x040000C6", value: "0x40"}
+      - {frame: 12, action: check_memory, address: "0x040000C7", value: "0xB6"}
+      - {frame: 12, action: check_memory, address: "0x040000D2", value: "0x40"}
+      - {frame: 12, action: check_memory, address: "0x040000D3", value: "0xB6"}
+      - {frame: 12, action: check_memory, address: "0x04000082", value: "0x0C"}
+      - {frame: 12, action: check_memory, address: "0x04000083", value: "0x52"}
+      - {frame: 12, action: check_memory, address: "0x04000084", value: "0x80"}
+      - {frame: 12, action: check_screen, hash: "0x9DFA3D9A2DF2402D"}
+  - id: gba.peterlemon_biossoundbias
+    category: ppu
+    description: "GBA PeterLemon_BIOSSoundBias (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Sound/Bias/BIOSSoundBias.gba
+    events:
+      - {frame: 12, action: check_memory, address: "0x03000584", value: "0x47"}
+      - {frame: 12, action: check_memory, address: "0x03000585", value: "0x00"}
+      - {frame: 12, action: check_screen, hash: "0x6579B233ACBCD4CF"}
+  - id: gba.peterlemon_biossoundchannelclear
+    category: ppu
+    description: "GBA PeterLemon_BIOSSoundChannelClear (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Sound/ChannelClear/BIOSSoundChannelClear.gba
+    events:
+      - {frame: 12, action: check_memory, address: "0x03000468", value: "0x52"}
+      - {frame: 12, action: check_memory, address: "0x03000469", value: "0x00"}
+      - {frame: 12, action: check_screen, hash: "0xCD324E5680DE972E"}
+  - id: gba.peterlemon_biossounddriverinit
+    category: ppu
+    description: "GBA PeterLemon_BIOSSoundDriverInit (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Sound/DriverInit/BIOSSoundDriverInit.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0xE2DAD8A367521563"}
+  - id: gba.peterlemon_biossounddrivermain
+    category: ppu
+    description: "GBA PeterLemon_BIOSSoundDriverMain (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Sound/DriverMain/BIOSSoundDriverMain.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0xBAF1D7CF98FAA103"}
+  - id: gba.peterlemon_biossounddrivermode
+    category: ppu
+    description: "GBA PeterLemon_BIOSSoundDriverMode (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Sound/DriverMode/BIOSSoundDriverMode.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0x4AFA3F237F73FC74"}
+  - id: gba.peterlemon_biossounddrivervsync
+    category: ppu
+    description: "GBA PeterLemon_BIOSSoundDriverVSync (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Sound/DriverVSync/BIOSSoundDriverVSync.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0x4C6AA8E2C53C3857"}
+  - id: gba.peterlemon_biossoundgetjumplist
+    category: ppu
+    description: "GBA PeterLemon_BIOSSoundGetJumpList (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Sound/GetJumpList/BIOSSoundGetJumpList.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0xB17E9FA7F9A791C7"}
+  - id: gba.peterlemon_biosmidikey2freq
+    category: ppu
+    description: "GBA PeterLemon_BIOSMidiKey2Freq (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Sound/MidiKey2Freq/BIOSMidiKey2Freq.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0xCAC3431728B2FC8F"}
+  - id: gba.peterlemon_biosarctan
+    category: ppu
+    description: "GBA PeterLemon_BIOSARCTAN (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Arithmetic/ARCTAN/BIOSARCTAN.gba
+    events:
+      - {frame: 17, action: check_screen, hash: "0xB4B19FED4E2CA127"}
+  - id: gba.peterlemon_biosdiv
+    category: ppu
+    description: "GBA PeterLemon_BIOSDIV (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Arithmetic/DIV/BIOSDIV.gba
+    events:
+      - {frame: 17, action: check_screen, hash: "0x996AD01AC01CAF6D"}
+  - id: gba.peterlemon_bioschecksum
+    category: ppu
+    description: "GBA PeterLemon_BIOSCHECKSUM (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Misc/CHECKSUM/BIOSCHECKSUM.gba
+    events:
+      - {frame: 17, action: check_screen, hash: "0xF12A996DE4AE4277"}
+  - id: gba.peterlemon_biossqrt
+    category: ppu
+    description: "GBA PeterLemon_BIOSSQRT (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Arithmetic/SQRT/BIOSSQRT.gba
+    events:
+      - {frame: 17, action: check_screen, hash: "0x8007CA159E98F44B"}
+  - id: gba.peterlemon_biosbit1bpp
+    category: ppu
+    description: "GBA PeterLemon_BIOSBIT1BPP (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Decompress/BIT/1BPP/BIOSBIT1BPP.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x6047C03E40F362B9"}
+  - id: gba.peterlemon_biosbit2bpp
+    category: ppu
+    description: "GBA PeterLemon_BIOSBIT2BPP (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Decompress/BIT/2BPP/BIOSBIT2BPP.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x749B5F56ED50DAF9"}
+  - id: gba.peterlemon_biosbit4bpp
+    category: ppu
+    description: "GBA PeterLemon_BIOSBIT4BPP (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Decompress/BIT/4BPP/BIOSBIT4BPP.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x89B2A35A1DC51917"}
+  - id: gba.peterlemon_biosbit8bpp
+    category: ppu
+    description: "GBA PeterLemon_BIOSBIT8BPP (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Decompress/BIT/8BPP/BIOSBIT8BPP.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0xF64EC6A775B779F4"}
+  - id: gba.peterlemon_bioshuffman
+    category: ppu
+    description: "GBA PeterLemon_BIOSHUFFMAN (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Decompress/HUFFMAN/BIOSHUFFMAN.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x4383D4828F2CC0EE"}
+  - id: gba.peterlemon_bioslz77
+    category: ppu
+    description: "GBA PeterLemon_BIOSLZ77 (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Decompress/LZ77/BIOSLZ77.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x09A173D98A5AC23D"}
+  - id: gba.peterlemon_biosregisterramreset
+    category: ppu
+    description: "GBA PeterLemon_BIOSRegisterRamReset (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Reset/RegisterRam/BIOSRegisterRamReset.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x31B45B46171D2829"}
+  - id: gba.peterlemon_bioscpuset
+    category: ppu
+    description: "GBA PeterLemon_BIOSCPUSET (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/MemoryCopy/CPUSET/BIOSCPUSET.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0xB3E894CF1B8A99E9"}
+  - id: gba.peterlemon_bioscpufastset
+    category: ppu
+    description: "GBA PeterLemon_BIOSCPUFASTSET (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/MemoryCopy/CPUFASTSET/BIOSCPUFASTSET.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x1297D8A0F24DDF5B"}
+  - id: gba.peterlemon_biosrle
+    category: ppu
+    description: "GBA PeterLemon_BIOSRLE (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Decompress/RLE/BIOSRLE.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0xFB652695045E9425"}
+  - id: gba.peterlemon_biosdiff
+    category: ppu
+    description: "GBA PeterLemon_BIOSDIFF (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/Decompress/DIFF/BIOSDIFF.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x682D9F4A142933DA"}
+  - id: gba.peterlemon_biosbgaffineset
+    category: ppu
+    description: "GBA PeterLemon_BIOSBGAFFINESET (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/RotationScaling/BGAffineSet/BIOSBGAFFINESET.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x72BE66D60413BBCE"}
+  - id: gba.peterlemon_biosobjaffineset
+    category: ppu
+    description: "GBA PeterLemon_BIOSOBJAFFINESET (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/BIOS/RotationScaling/OBJAffineSet/BIOSOBJAFFINESET.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x33E553E9971F2979"}
+  - id: gba.peterlemon_bgmode0
+    category: ppu
+    description: "GBA PeterLemon_BGMode0 (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/LCD/BG/BGMode0/BGMode0.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0x369DAF61679DA003"}
+  - id: gba.peterlemon_bgmode7
+    category: ppu
+    description: "GBA PeterLemon_BGMode7 (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/LCD/BG/BGMode7/BGMode7.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0x21DAA475423BC629"}
+  - id: gba.peterlemon_bgrotzoommode3
+    category: ppu
+    description: "GBA PeterLemon_BGRotZoomMode3 (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/LCD/BG/BGRotZoomMode3/BGRotZoomMode3.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0x7D9F4655F1FE0B38"}
+  - id: gba.peterlemon_bgrotzoommode4
+    category: ppu
+    description: "GBA PeterLemon_BGRotZoomMode4 (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/LCD/BG/BGRotZoomMode4/BGRotZoomMode4.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0xC1EEE941C45E09F2"}
+  - id: gba.peterlemon_bgrotzoommode5
+    category: ppu
+    description: "GBA PeterLemon_BGRotZoomMode5 (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/LCD/BG/BGRotZoomMode5/BGRotZoomMode5.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0xA5167E5C99EC9896"}
+  - id: gba.peterlemon_objrotzoom4bpp
+    category: ppu
+    description: "GBA PeterLemon_OBJRotZoom4BPP (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/LCD/OBJ/OBJRotZoom4BPP/OBJRotZoom4BPP.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0xA1D6FF8A33BDF23E"}
+  - id: gba.peterlemon_objrotzoom8bpp
+    category: ppu
+    description: "GBA PeterLemon_OBJRotZoom8BPP (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/LCD/OBJ/OBJRotZoom8BPP/OBJRotZoom8BPP.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0xA1D6FF8A33BDF23E"}
+  - id: gba.peterlemon_grb12decode120x80
+    category: ppu
+    description: "GBA PeterLemon_GRB12Decode120x80 (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Video/GRB12Decode120x80/GRB12Decode120x80.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0xC51959690F25BED8"}
+  - id: gba.peterlemon_grb12decode
+    category: ppu
+    description: "GBA PeterLemon_GRB12Decode (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Video/GRB12Decode/GRB12Decode.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0xEBB6CA465C39BA67"}
+  - id: gba.peterlemon_grb15decode
+    category: ppu
+    description: "GBA PeterLemon_GRB15Decode (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Video/GRB15Decode/GRB15Decode.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0xA2D8C19C108CC7B5"}
+  - id: gba.peterlemon_i4decode
+    category: ppu
+    description: "GBA PeterLemon_I4Decode (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Video/I4Decode/I4Decode.gba
+    events:
+      - {frame: 23, action: check_screen, hash: "0x166FE7DD5CF57C5E"}
+  - id: gba.peterlemon_gravity
+    category: ppu
+    description: "GBA PeterLemon_Gravity (PeterLemon): end-state observation."
+    rom: gba/PeterLemon-GBA/Physics/2D/Gravity/Gravity.gba
+    events:
+      - {frame: 12, action: check_screen, hash: "0xD173143C060600A4"}
+  - id: gba.alyosha_stm_alu_imm
+    category: cpu
+    description: "GBA alyosha_STM_ALU_IMM (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/STM_ALU_IMM.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_cpu_bus_interaction
+    category: cpu
+    description: "GBA alyosha_DMA_CPU_Bus_Interaction (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Bus/DMA_CPU_Bus_Interaction.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_iwram_bus
+    category: cpu
+    description: "GBA alyosha_DMA_IWRAM_Bus (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Bus/DMA_IWRAM_Bus.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_oam_bus
+    category: cpu
+    description: "GBA alyosha_DMA_OAM_Bus (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Bus/DMA_OAM_Bus.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_outside_bios_bus
+    category: cpu
+    description: "GBA alyosha_DMA_Outside_Bios_Bus (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Bus/DMA_Outside_Bios_Bus.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_ldrsh_misaligned
+    category: cpu
+    description: "GBA alyosha_LDRSH_misaligned (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Bus/LDRSH_misaligned.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_unused_location_update_bus
+    category: cpu
+    description: "GBA alyosha_Unused_location_update_bus (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Bus/Unused_location_update_bus.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_mode_change
+    category: cpu
+    description: "GBA alyosha_DMA_Mode_Change (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/DMA/DMA_Mode_Change.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_halt_dma_irq
+    category: cpu
+    description: "GBA alyosha_Halt_DMA_IRQ (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Halt_DMA_IRQ.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_halt_dma_irq_read_oam
+    category: cpu
+    description: "GBA alyosha_Halt_DMA_IRQ_Read_OAM (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Halt_DMA_IRQ_Read_OAM.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_halt_irq
+    category: cpu
+    description: "GBA alyosha_Halt_IRQ (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Halt_IRQ.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_irq
+    category: cpu
+    description: "GBA alyosha_Internal_Cycle_DMA_IRQ (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_IRQ.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_irq_7
+    category: cpu
+    description: "GBA alyosha_Internal_Cycle_DMA_IRQ_7 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_IRQ_7.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_irq_br_pre
+    category: cpu
+    description: "GBA alyosha_Internal_Cycle_DMA_IRQ_Br_pre (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_IRQ_Br_pre.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_irq_st
+    category: cpu
+    description: "GBA alyosha_Internal_Cycle_DMA_IRQ_ST (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_IRQ_ST.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_irq_st_p3
+    category: cpu
+    description: "GBA alyosha_Internal_Cycle_DMA_IRQ_ST_p3 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_IRQ_ST_p3.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_irq_br
+    category: cpu
+    description: "GBA alyosha_Internal_Cycle_DMA_IRQ_br (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_IRQ_br.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_irq_br1_iwram
+    category: cpu
+    description: "GBA alyosha_Internal_Cycle_DMA_IRQ_br1_IWRAM (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_IRQ_br1_IWRAM.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_irq_ldr_iwram
+    category: cpu
+    description: "GBA alyosha_Internal_Cycle_DMA_IRQ_ldr_IWRAM (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_IRQ_ldr_IWRAM.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_irq_nop_iwram
+    category: cpu
+    description: "GBA alyosha_Internal_Cycle_DMA_IRQ_nop_IWRAM (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_IRQ_nop_IWRAM.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_mul_irq
+    category: cpu
+    description: "GBA alyosha_Internal_Cycle_DMA_MUL_IRQ (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_MUL_IRQ.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_ldm_alu
+    category: cpu
+    description: "GBA alyosha_LDM_ALU (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/LDM/LDM_ALU.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_ldm_alu_imm
+    category: cpu
+    description: "GBA alyosha_LDM_ALU_IMM (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/LDM/LDM_ALU_IMM.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_ldm_alu_store
+    category: cpu
+    description: "GBA alyosha_LDM_ALU_Store (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/LDM/LDM_ALU_Store.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_ldm_bx
+    category: cpu
+    description: "GBA alyosha_LDM_Bx (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/LDM/LDM_Bx.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_ldm_ld
+    category: cpu
+    description: "GBA alyosha_LDM_LD (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/LDM/LDM_LD.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_ldm_mul_ul_32
+    category: cpu
+    description: "GBA alyosha_LDM_MUL_UL_32 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/LDM/LDM_MUL_UL_32.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_ldm_mul_ul_sl
+    category: cpu
+    description: "GBA alyosha_LDM_MUL_UL_SL (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/LDM/LDM_MUL_UL_SL.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_ldm_swap
+    category: cpu
+    description: "GBA alyosha_LDM_Swap (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/LDM/LDM_Swap.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_serial_read_data
+    category: cpu
+    description: "GBA alyosha_serial_read_data (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Serial/serial_read_data.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_serial_time_start_bit
+    category: cpu
+    description: "GBA alyosha_serial_time_start_bit (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/Serial/serial_time_start_bit.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_coprocessor_14
+    category: cpu
+    description: "GBA alyosha_Coprocessor_14 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/arm/Coprocessor_14.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_arm
+    category: cpu
+    description: "GBA alyosha_arm (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/arm/arm.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_bios
+    category: cpu
+    description: "GBA alyosha_bios (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/bios/bios.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_fifo_dma_disable_3
+    category: cpu
+    description: "GBA alyosha_fifo_dma_disable_3 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/fifo_dma/fifo_dma_disable_3.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_fifo_dma_disable_5
+    category: cpu
+    description: "GBA alyosha_fifo_dma_disable_5 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/fifo_dma/fifo_dma_disable_5.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_bl_1
+    category: cpu
+    description: "GBA alyosha_BL_1 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/irq/BL_1.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_irq_sub_2
+    category: cpu
+    description: "GBA alyosha_IRQ_sub_2 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/irq/IRQ_sub_2.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_irq_sub_2_slow
+    category: cpu
+    description: "GBA alyosha_IRQ_sub_2_slow (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/irq/IRQ_sub_2_slow.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_halt_pc_4
+    category: cpu
+    description: "GBA alyosha_halt_pc_4 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/irq/halt_pc_4.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_pal_8_bit_writes
+    category: cpu
+    description: "GBA alyosha_PAL_8_bit_writes (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/memory/PAL_8_bit_writes.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_vram_8_bit_writes
+    category: cpu
+    description: "GBA alyosha_VRAM_8_bit_writes (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/memory/VRAM_8_bit_writes.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_memory
+    category: cpu
+    description: "GBA alyosha_memory (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/memory/memory.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_nes
+    category: cpu
+    description: "GBA alyosha_nes (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/nes/nes.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_sprite_disable_midline
+    category: cpu
+    description: "GBA alyosha_Sprite_Disable_Midline (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/ppu/Sprite_Disable_Midline.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_sprite_disable_on_vram_access
+    category: cpu
+    description: "GBA alyosha_Sprite_Disable_on_VRAM_Access (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/ppu/Sprite_Disable_on_VRAM_Access.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_hello
+    category: cpu
+    description: "GBA alyosha_hello (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/ppu/hello.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_shades
+    category: cpu
+    description: "GBA alyosha_shades (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/ppu/shades.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_start_up
+    category: cpu
+    description: "GBA alyosha_start_up (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/ppu/start_up.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_start_up_vbl_irq
+    category: cpu
+    description: "GBA alyosha_start_up_vbl_irq (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/ppu/start_up_vbl_irq.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_start_up_vbl_irq_halt
+    category: cpu
+    description: "GBA alyosha_start_up_vbl_irq_halt (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/ppu/start_up_vbl_irq_halt.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_stripes
+    category: cpu
+    description: "GBA alyosha_stripes (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/ppu/stripes.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_stripes_x_offset
+    category: cpu
+    description: "GBA alyosha_stripes_x_offset (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/ppu/stripes_x_offset.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_boundary_3
+    category: cpu
+    description: "GBA alyosha_prefetcher_boundary_3 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_boundary_3.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_branch_thumb_6
+    category: cpu
+    description: "GBA alyosha_prefetcher_branch_thumb_6 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_branch_thumb_6.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_flash128
+    category: cpu
+    description: "GBA alyosha_flash128 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/save/flash128.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_flash64
+    category: cpu
+    description: "GBA alyosha_flash64 (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/save/flash64.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_none
+    category: cpu
+    description: "GBA alyosha_none (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/save/none.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_sram
+    category: cpu
+    description: "GBA alyosha_sram (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/save/sram.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_pop_no_regs
+    category: cpu
+    description: "GBA alyosha_Pop_no_regs (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/thumb/Pop_no_regs.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_push_no_regs
+    category: cpu
+    description: "GBA alyosha_Push_no_regs (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/thumb/Push_no_regs.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_blx
+    category: cpu
+    description: "GBA alyosha_blx (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/thumb/blx.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_cpy
+    category: cpu
+    description: "GBA alyosha_cpy (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/thumb/cpy.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_thumb
+    category: cpu
+    description: "GBA alyosha_thumb (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/thumb/thumb.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_cpy_data_bios
+    category: cpu
+    description: "GBA alyosha_cpy_data_bios (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/timing/cpy_data_bios.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_long
+    category: cpu
+    description: "GBA alyosha_dma_long (alyosha): r12 first-failed number, zero means all pass."
+    rom: gba/alyosha_gba-tests/timing/dma_long.gba
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
