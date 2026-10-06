@@ -116,19 +116,6 @@ impl NesConsoleCore {
 
         Ok(cycles)
     }
-
-    /// Cartridge RAM peek that preserves bus state.
-    ///
-    /// Kept concrete on purpose: the generic debugger read path
-    /// carries values only, and cartridge assertions also compare
-    /// open-bus vs mapped-RAM state. Reached through the factory
-    /// adapter's downcast escape, never from generic harness code.
-    pub fn peek_cartridge_ram(
-        &self,
-        address: usize,
-    ) -> Option<nerust_input_traits::OpenBusReadResult> {
-        self.core.0.as_ref()?.peek_cartridge_ram(address)
-    }
 }
 
 impl ConsoleCore for NesConsoleCore {
