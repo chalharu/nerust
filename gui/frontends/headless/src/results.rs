@@ -96,6 +96,16 @@ pub enum CaseOutcome {
         rom: String,
         message: String,
     },
+    /// No factory accepts the ROM (no cores enabled, or no system
+    /// match). Eligibility, not failure: ignored in reports and
+    /// exits, never counted as failed.
+    Skipped {
+        case_id: String,
+        category: RomCategory,
+        description: String,
+        rom: String,
+        reason: String,
+    },
 }
 
 impl CaseOutcome {
@@ -103,6 +113,7 @@ impl CaseOutcome {
         match self {
             CaseOutcome::Completed(validation) => &validation.case_id,
             CaseOutcome::InternalError { case_id, .. } => case_id,
+            CaseOutcome::Skipped { case_id, .. } => case_id,
         }
     }
 
@@ -110,6 +121,7 @@ impl CaseOutcome {
         match self {
             CaseOutcome::Completed(validation) => validation.category,
             CaseOutcome::InternalError { category, .. } => *category,
+            CaseOutcome::Skipped { category, .. } => *category,
         }
     }
 
@@ -117,6 +129,11 @@ impl CaseOutcome {
         match self {
             CaseOutcome::Completed(validation) => validation.passed(),
             CaseOutcome::InternalError { .. } => false,
+            CaseOutcome::Skipped { .. } => false,
         }
+    }
+
+    pub fn is_skipped(&self) -> bool {
+        matches!(self, CaseOutcome::Skipped { .. })
     }
 }

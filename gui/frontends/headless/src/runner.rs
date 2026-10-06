@@ -7,9 +7,9 @@ use crate::{
 };
 
 pub fn validate_case(
-    factory: &dyn nerust_core_traits::factory::CoreFactory,
+    factories: &[Box<dyn nerust_core_traits::factory::CoreFactory>],
     case: &RomCase,
     options: ValidationOptions,
 ) -> CaseOutcome {
-    entry::validate_case(factory, case, options)
+    entry::validate_case(factories, case, options)
 }

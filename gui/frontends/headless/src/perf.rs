@@ -1,7 +1,6 @@
 use std::time::{Duration, Instant};
 
 use clap::{Arg, ArgAction, Command};
-use nerust_nes_factory::NesFactory;
 
 use crate::{
     error::RomTestError,
@@ -11,6 +10,7 @@ use crate::{
     manifest::{RomCase, load_default_manifest, read_rom},
     results::{CaseOutcome, ValidationOptions},
     runner::validate_case,
+    system_factories,
 };
 
 pub fn run_cli() {
@@ -72,12 +72,13 @@ fn run() -> Result<(), String> {
     );
 
     let mut roms = Vec::with_capacity(cases.len());
-    // Construction selects the system once; everything downstream
-    // drives through `dyn CoreFactory`.
-    let factory = NesFactory::boxed();
+    // Construction selects the systems once; everything downstream
+    // drives through `dyn CoreFactory`. Without systems every case is
+    // ignored and the suite ends empty but successful.
+    let factories = system_factories();
     for case in &cases {
         match validate_case(
-            factory.as_ref(),
+            &factories,
             case,
             ValidationOptions {
                 capture_screenshots: false,
@@ -106,6 +107,12 @@ fn run() -> Result<(), String> {
             } => {
                 return Err(format!("validation errored for {case_id}: {message}"));
             }
+            CaseOutcome::Skipped {
+                case_id, reason, ..
+            } => {
+                println!("ignored case={case_id} reason={reason}");
+                continue;
+            }
         }
 
         roms.push(
@@ -115,9 +122,14 @@ fn run() -> Result<(), String> {
         );
     }
 
+    if roms.is_empty() {
+        println!("perf-suite: no applicable cases, nothing to benchmark");
+        return Ok(());
+    }
+
     for _ in 0..warmup_rounds {
         for (case, rom_bytes) in &roms {
-            let result = PerfRunner::new(factory.as_ref(), case, rom_bytes)
+            let result = PerfRunner::new(&factories, case, rom_bytes)
                 .map_err(|error| error.to_string())?
                 .run(case)
                 .map_err(|error| error.to_string())?;
@@ -133,7 +145,7 @@ fn run() -> Result<(), String> {
         for round in 0..rounds {
             let wall_started = Instant::now();
             let cpu_started_nanos = process_cpu_time_nanos()?;
-            let result = PerfRunner::new(factory.as_ref(), case, rom_bytes)
+            let result = PerfRunner::new(&factories, case, rom_bytes)
                 .map_err(|error| error.to_string())?
                 .run(case)
                 .map_err(|error| error.to_string())?;
@@ -252,12 +264,12 @@ struct PerfRunner {
 
 impl PerfRunner {
     fn new(
-        factory: &dyn nerust_core_traits::factory::CoreFactory,
+        factories: &[Box<dyn nerust_core_traits::factory::CoreFactory>],
         case: &RomCase,
         rom_bytes: &[u8],
     ) -> Result<Self, RomTestError> {
         let system = open_headless_system(
-            factory,
+            factories,
             &case.id,
             rom_bytes,
             case.options.clone(),
