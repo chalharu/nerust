@@ -11,7 +11,7 @@ impl ValidationRuntime {
         case: &RomCase,
         rom_bytes: &[u8],
     ) -> Result<Self, RomTestError> {
-        let system = factory_adapter::open_nes_system(
+        let system = factory_adapter::open_headless_system(
             factory,
             &case.id,
             rom_bytes,

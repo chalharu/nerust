@@ -27,8 +27,10 @@ pub enum SpaceAccess {
 
 /// Static description of one address space.
 ///
-/// `key` is a stable identifier for logs and error display; it is never
-/// used for branching — branch on [`SpaceId`] instead.
+/// `key` is a stable identifier for logs and error display, and for
+/// resolving ids from snapshots at configuration time (open, not per
+/// frame). It is never used for per-frame branching — branch on
+/// [`SpaceId`] instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpaceInfo {
     pub id: SpaceId,

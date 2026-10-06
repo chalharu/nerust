@@ -2,13 +2,14 @@
 //!
 //! The generic validation harness drives [`TestSystem`], which owns the
 //! session execution engine ([`EmuCore`]) built from factory parts. This
-//! module names no system-concrete types: [`open_nes_system`] takes
-//! `&dyn CoreFactory`, and all system knowledge below is harness-owned
-//! *data* (the `TEST_*` tables) resolved through generic trait calls.
-//! Production code carries no test support.
+//! module names no system-concrete types: [`open_headless_system`] takes
+//! `&dyn CoreFactory`, and all system addressing resolves through
+//! pre-existing maps — the CLI options schema, the debugger space
+//! table, and the input field map. Production code carries no test
+//! support; the harness owns only its test-domain vocabulary (suite
+//! bit order, assertion spaces).
 
 use std::{
-    borrow::Cow,
     collections::HashMap,
     sync::{Arc, Mutex},
 };
@@ -17,39 +18,26 @@ use nerust_core_traits::{
     CoreConfig,
     audio::{AudioBackend, StereoSample},
     debugger::{InspectRequest, SpaceId, StepUnit},
-    factory::{
-        CoreFactory,
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
-    },
+    factory::CoreFactory,
 };
 use nerust_gui_shell::emu_core::EmuCore;
-use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments, InputValue};
+use nerust_input_traits::{AbstractKey, GuiInput, InputAssignments, InputValue};
 use nerust_render_traits::FrameBuffer;
 
 use crate::{error::RomTestError, manifest::Mmc3IrqVariant};
 
-/// NES headless test profile. System knowledge owned by the harness as
-/// data: stable ids from the factory's settings/input descriptors.
-/// Any drift fails loudly at open; nothing here can silently
-/// mis-resolve.
-const TEST_MMC3_FIELD: &str = "core.mmc3_irq_variant";
-const TEST_MMC3_SHARP: &str = "sharp";
-const TEST_MMC3_NEC: &str = "nec";
-const TEST_SPACE_WRAM_KEY: &str = "wram";
-const TEST_SPACE_PPU_VRAM_KEY: &str = "ppu_vram";
-const TEST_ATTACH_P1: &str = "nes.attachment.player1";
-const TEST_ATTACH_P2: &str = "nes.attachment.player2";
-const TEST_MIC_CONTROL: &str = "famicom.microphone";
-/// Suite bit order per pad: A B Select Start Up Down Left Right.
-const TEST_PAD_BUTTONS: [&str; 8] = [
-    "nes.control.a",
-    "nes.control.b",
-    "nes.control.select",
-    "nes.control.start",
-    "nes.control.up",
-    "nes.control.down",
-    "nes.control.left",
-    "nes.control.right",
+/// Suite pad bit order as system-agnostic logical keys: bit `i` of a
+/// pad byte drives the control keyed `SUITE_PAD_KEYS[i]` in the slot's
+/// profile group. Bit layouts are the suite's own event vocabulary.
+const SUITE_PAD_KEYS: [AbstractKey; 8] = [
+    AbstractKey::Button1,
+    AbstractKey::Button2,
+    AbstractKey::Select,
+    AbstractKey::Start,
+    AbstractKey::DpadUp,
+    AbstractKey::DpadDown,
+    AbstractKey::DpadLeft,
+    AbstractKey::DpadRight,
 ];
 
 /// A loaded NES system ready for headless driving: session-owned
@@ -64,23 +52,19 @@ pub struct TestSystem {
     tap: Arc<Mutex<Vec<StereoSample>>>,
 }
 
-/// Build a loaded NES system through `CoreFactory` and wrap it in the
+/// Build a loaded system through `CoreFactory` and wrap it in the
 /// session execution engine.
 ///
-/// * Settings come from the factory's own defaults with the video
-///   filter pinned to `None` (deterministic palette bytes; loud
-///   failure keeps a future settings change from silently altering
-///   screenshots).
+/// * Settings come from the factory's headless view; test options
+///   (`mmc3_irq_variant`, …) parse through the factory's own CLI
+///   options schema, exactly like real command-line usage.
 /// * Both player slots get the P1 profile: the suite drives pad2 and
 ///   the microphone, which the factory default (P2 unassigned) lacks.
 /// * Audio goes to a null backend stamped at the case rate; nominal
 ///   samples are tapped per stepped frame, never rate-controlled.
-/// * Test options (`mmc3_irq_variant`, …) apply through the generic
-///   settings-choice port; the adapter only translates its own schema
-///   enum to choice strings.
 /// * After paused load the thread is silent until the first step, so
 ///   stepped frames start from a deterministic power-on frame zero.
-pub fn open_nes_system(
+pub fn open_headless_system(
     factory: &dyn CoreFactory,
     case_id: &str,
     rom_bytes: &[u8],
@@ -92,23 +76,31 @@ pub fn open_nes_system(
         message,
     };
 
-    let mut view = factory
+    let view = factory
         .headless_view()
         .map_err(|error| construction(format!("headless view: {error:?}")))?;
-    if let Some(choice) = mmc3_irq_variant.map(|variant| match variant {
-        Mmc3IrqVariant::Sharp => TEST_MMC3_SHARP,
-        Mmc3IrqVariant::Nec => TEST_MMC3_NEC,
+    // Test options parse through the factory's own CLI schema, so the
+    // flag spelling and value validation stay single-sourced in the
+    // factory. Explicit options keep beating saved settings inside
+    // `resolve_load_request`, as with real command-line usage.
+    let load_options = match mmc3_irq_variant.map(|variant| match variant {
+        Mmc3IrqVariant::Sharp => "sharp",
+        Mmc3IrqVariant::Nec => "nec",
     }) {
-        factory
-            .apply_settings_choice(
-                &mut view,
-                &SystemSettingsFieldId(Cow::Borrowed(TEST_MMC3_FIELD)),
-                &SystemSettingsChoiceId(Cow::Borrowed(choice)),
-            )
-            .map_err(|error| construction(format!("apply test option: {error:?}")))?;
-    }
+        None => factory.default_load_options(),
+        Some(value) => {
+            let schema = factory.load_options_schema();
+            let matches = schema
+                .augment_args(clap::Command::new("headless"))
+                .try_get_matches_from(["headless", "--mmc3-irq-variant", value])
+                .map_err(|error| construction(format!("test option: {error}")))?;
+            schema
+                .arg_matches(&matches)
+                .map_err(|error| construction(format!("test option: {error}")))?
+        }
+    };
     let resolved = factory
-        .resolve_load_request(&view, factory.default_load_options())
+        .resolve_load_request(&view, load_options)
         .map_err(|error| construction(format!("resolve options: {error:?}")))?;
 
     let base = factory.input_system_factory().default_assignments();
@@ -136,42 +128,73 @@ pub fn open_nes_system(
     )
     .map_err(|error| construction(format!("load: {error:?}")))?;
 
-    // Resolve test ids through generic ports: space keys against the
-    // thread's table snapshot, pad bits against the factory field map.
+    // Resolve test ids through the injected map: space roles against
+    // the thread's table snapshot, pad bits against the field map.
+    // Ids always come from live system state, never from positions.
     let spaces = emu
         .memory_spaces()
         .map_err(|error| construction(format!("memory spaces: {error:?}")))?;
-    let lookup_space = |key: &'static str| {
+    // The space containing an address is unique (tables forbid
+    // overlap), so assertions resolve by address against the live
+    // snapshot — no role or key inventory needed.
+    let lookup_space = |addr: u32| {
         spaces
             .iter()
-            .find(|info| info.key == key)
+            .find(|info| info.range.contains(&addr))
             .map(|info| info.id)
-            .ok_or_else(|| construction(format!("memory space missing: {key}")))
+            .ok_or_else(|| construction(format!("no memory space contains: {addr:#X}")))
     };
-    let lookup_field = |attachment: &'static str, control: &'static str| {
-        field_map
-            .get(&(
-                AttachmentId::new(attachment),
-                DigitalControlId::new(control),
-            ))
-            .copied()
-    };
-    let missing_field = |attachment: &'static str, control: &'static str| {
-        construction(format!("test input field missing: {attachment}/{control}"))
-    };
+    // Pad bits resolve through the slot profiles: bit `i` drives the
+    // control keyed `SUITE_PAD_KEYS[i]` in the slot's group, and the
+    // field map turns that control into a buffer field. Absent from
+    // the group means no such hardware (a silent no-op, as the device
+    // masks it too); present but unmapped is loud drift.
     let mut pad_fields = [[None; 8]; 2];
-    for (pad, attachment) in [TEST_ATTACH_P1, TEST_ATTACH_P2].into_iter().enumerate() {
-        for (bit, control) in TEST_PAD_BUTTONS.into_iter().enumerate() {
-            // Pad 2 has no Select/Start buttons; the suite drives those
-            // bits as no-ops (the device masks them too).
-            let optional = pad == 1 && (bit == 2 || bit == 3);
-            pad_fields[pad][bit] = match lookup_field(attachment, control) {
-                Some(field) => Some(field),
-                None if optional => None,
-                None => return Err(missing_field(attachment, control)),
+    if assignments.slots.len() != pad_fields.len() {
+        return Err(construction("slot count exceeds pad capacity".to_string()));
+    }
+    let mut mic_candidates = Vec::new();
+    for (pad, (attachment, profile)) in assignments.slots.iter().enumerate() {
+        let profile = profile
+            .as_ref()
+            .ok_or_else(|| construction(format!("slot {pad} assigns no controller profile")))?;
+        let group = profile
+            .port_groups()
+            .get(pad)
+            .ok_or_else(|| construction(format!("slot {pad} has no control group")))?;
+        for (bit, key) in SUITE_PAD_KEYS.iter().enumerate() {
+            let control = match group.iter().find(|info| info.abstract_key == Some(*key)) {
+                None => continue,
+                Some(info) => info.id,
             };
+            pad_fields[pad][bit] = Some(
+                field_map
+                    .get(&(*attachment, control))
+                    .copied()
+                    .ok_or_else(|| {
+                        construction(format!("test input field missing: {attachment}/{control}"))
+                    })?,
+            );
+        }
+        for info in group.iter().filter(|info| info.abstract_key.is_none()) {
+            mic_candidates.push(field_map.get(&(*attachment, info.id)).copied().ok_or_else(
+                || {
+                    construction(format!(
+                        "test input field missing: {attachment}/{}",
+                        info.id
+                    ))
+                },
+            )?);
         }
     }
+    // Unbound controls (no system-agnostic key) are special hardware;
+    // exactly one is the microphone. Zero means none attached, more
+    // than one is ambiguous — both loud, never guessed.
+    let mic_field = match mic_candidates[..] {
+        [] => None,
+        [field] => Some(field),
+        _ => return Err(construction("ambiguous microphone controls".to_string())),
+    };
 
     let tap = Arc::new(Mutex::new(Vec::new()));
     emu.tap_nominal_audio(Arc::clone(&tap))
@@ -181,12 +204,12 @@ pub fn open_nes_system(
         emu,
         gui_input,
         pad_fields,
-        mic_field: Some(
-            lookup_field(TEST_ATTACH_P2, TEST_MIC_CONTROL)
-                .ok_or_else(|| missing_field(TEST_ATTACH_P2, TEST_MIC_CONTROL))?,
-        ),
-        work_ram: lookup_space(TEST_SPACE_WRAM_KEY)?,
-        ppu_vram: lookup_space(TEST_SPACE_PPU_VRAM_KEY)?,
+        mic_field,
+        // Pinned at open from the live snapshot: the suite's canonical
+        // representatives for each asserted space. Fail fast here
+        // rather than on the first assertion.
+        work_ram: lookup_space(0x0000)?,
+        ppu_vram: lookup_space(0x2000)?,
         tap,
     })
 }
