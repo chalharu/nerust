@@ -3018,6 +3018,125 @@ impl GbaMemoryBus {
         }
     }
 
+    /// Side-effect-free byte read for the debugger (`&self`: no wait
+    /// charging, no N/S-tracker progress, no latch stores, no FIFO
+    /// pops). Mirrors the `read_internal` decode lane-by-lane at
+    /// width 1, except:
+    ///
+    /// - I/O serves the audited pure subset only ([`Self::peek_io_byte`]).
+    /// - SRAM answers only with a battery-backed chip present
+    ///   (EEPROM / no-cartridge reads are `None`: honest open bus).
+    /// - Unmapped regions are `None`: the dynamic prefetch-latch open
+    ///   bus of the CPU path is deliberately not reproduced.
+    pub(crate) fn peek_byte(&self, addr: u32) -> Option<u8> {
+        let word = match addr {
+            0x00000000..=0x00003FFF => self.peek_bios(addr),
+            0x02000000..=0x02FFFFFF => self.read_ewram(addr, 1),
+            0x03000000..=0x03FFFFFF => self.read_iwram(addr, 1),
+            0x04000000..=0x04000803 => return self.peek_io_byte(addr),
+            0x05000000..=0x05FFFFFF => self.read_palette(addr, 1),
+            0x06000000..=0x06FFFFFF => self.read_vram(addr, 1),
+            0x07000000..=0x07FFFFFF => self.read_oam(addr, 1),
+            0x08000000..=0x0DFFFFFF => {
+                // On EEPROM cartridges the 0D window is the serial
+                // chip, not ROM (same split as the CPU path).
+                if self.is_eeprom() && addr >= 0x0D000000 {
+                    return Some(u8::from(self.cartridge.as_ref()?.eeprom_peek_bit()));
+                }
+                self.read_rom(addr, 1)
+            }
+            0x0E000000..=0x0FFFFFFF => {
+                if self.is_eeprom() {
+                    return None;
+                }
+                let cart = self.cartridge.as_ref()?;
+                cart.read_sram(addr, 1)
+            }
+            _ => return None,
+        };
+        Some((word & 0xFF) as u8)
+    }
+
+    /// BIOS read without the `&mut` guard wrapper: protected reads
+    /// serve the prefetch latch (a `&self` field read); only
+    /// unprotected reads touch the BIOS image.
+    fn peek_bios(&self, addr: u32) -> u32 {
+        if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
+            (self.bios_prefetch >> ((addr & 3) * 8)) & 0xFF
+        } else {
+            self.read_bios(addr, 1)
+        }
+    }
+
+    /// I/O byte read without engine side effects. Serves the pure
+    /// subset (PPU/APU/timer/key/IRQ fields, DMA CNT, constant holes,
+    /// mem-control); the stateful SIO block, write-only registers, and
+    /// gap lanes are `None`. Timer reads reuse the stamped cycle —
+    /// no re-stamp, no mutation.
+    fn peek_io_byte(&self, addr: u32) -> Option<u8> {
+        if is_mem_control(addr) {
+            return Some(((self.mem_control >> ((addr & 3) * 8)) & 0xFF) as u8);
+        }
+        // HALTCNT is write-only: reads see open bus, never a value.
+        if addr == 0x04000301 {
+            return None;
+        }
+        let half = self.peek_io_half(addr & !1)?;
+        Some(if addr & 1 == 1 {
+            ((half >> 8) & 0xFF) as u8
+        } else {
+            (half & 0xFF) as u8
+        })
+    }
+
+    /// Pure half of I/O reads at an even address. `None` where the CPU
+    /// path would consult transfer engines, FIFOs, or the dynamic
+    /// open-bus latch.
+    fn peek_io_half(&self, aligned: u32) -> Option<u16> {
+        match aligned {
+            0x04000000..=0x04000006 | 0x04000008..=0x0400000E | 0x04000048..=0x04000052 => {
+                self.ppu.read_register(aligned)
+            }
+            0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE => {
+                Some(self.dma.read(aligned).unwrap_or(0))
+            }
+            0x040000B8 | 0x040000C4 | 0x040000D0 | 0x040000DC => Some(0),
+            0x04000060 => Some(self.apu.sound1cnt_lo),
+            0x04000062 => Some(self.apu.sound1cnt_hi & 0xFFC0),
+            0x04000064 => Some(self.apu.sound1cnt_x & 0x4000),
+            0x04000068 => Some(self.apu.sound2cnt_lo & 0xFFC0),
+            0x0400006C => Some(self.apu.sound2cnt_hi & 0x4000),
+            0x04000070 => Some(self.apu.sound3cnt_lo),
+            0x04000072 => Some(self.apu.sound3cnt_hi & 0xE000),
+            0x04000074 => Some(self.apu.sound3cnt_x & 0x4000),
+            0x04000078 => Some(self.apu.sound4cnt_lo & 0xFF00),
+            0x0400007C => Some(self.apu.sound4cnt_hi),
+            0x04000080 => Some(self.apu.soundcnt_lo),
+            0x04000082 => Some(self.apu.soundcnt_hi),
+            0x04000084 => Some(self.apu.soundcnt_x_read()),
+            0x04000088 => Some(self.apu.soundbias),
+            0x04000090..=0x0400009E => Some(self.apu.wave_read(aligned)),
+            0x04000066 | 0x0400006A | 0x0400006E | 0x04000076 | 0x0400007A | 0x0400007E
+            | 0x04000086 | 0x0400008A => Some(0),
+            0x04000100..=0x0400010E => self.timers.read(aligned),
+            // SIO block (0x120-0x12A): UART latch clears and FIFO pops
+            // are engine effects — excluded wholesale.
+            0x04000124 | 0x04000126 => Some(0),
+            0x04000130 => Some(self.keyinput),
+            0x04000132 => Some(self.keycnt),
+            0x04000134 => Some(self.read_rcnt()),
+            0x04000140 => Some(self.joycnt),
+            0x04000150 | 0x04000152 | 0x04000154 | 0x04000156 | 0x04000158 => Some(0),
+            0x04000200 => Some(self.ie),
+            0x04000202 => Some(self.sif),
+            0x04000204 => Some(self.wait_cnt),
+            0x04000208 => Some(self.ime as u16),
+            0x04000300 => Some(self.postflg as u16),
+            0x04000136 | 0x04000142 | 0x0400015A | 0x04000206 | 0x0400020A | 0x04000302 => Some(0),
+            _ => None,
+        }
+    }
+
     fn read_bios_guarded(&mut self, addr: u32, width: u8) -> u32 {
         if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
             // A protected read returns the latched last BIOS-fetched opcode,

@@ -69,21 +69,25 @@ impl GbaConsoleCore {
     fn loaded_ref(&self) -> Result<&LoadedGba, CoreError> {
         self.loaded.as_ref().ok_or(CoreError::NoRomLoaded)
     }
-}
 
-impl ConsoleCore for GbaConsoleCore {
-    fn capabilities(&self) -> CoreCapabilities {
-        CoreCapabilities {
-            output_formats: vec![PixelFormat::Rgba],
-            video_signal: VideoSignalKind::Lcd,
-        }
-    }
-
-    fn render_frame(
+    /// Advance one frame, reporting the cycles the bus counted.
+    ///
+    /// Same path as the [`ConsoleCore::render_frame`] implementation;
+    /// the count that path discards is returned here for debugger
+    /// stepping.
+    pub(crate) fn render_frame_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
         audio_out: &mut Vec<StereoSample>,
-    ) -> Result<(), CoreError> {
+    ) -> Result<u64, CoreError> {
+        self.render_frame_inner(frame_slot, audio_out)
+    }
+
+    fn render_frame_inner(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<u64, CoreError> {
         self.emu_input.take();
         let input = self
             .emu_input
@@ -95,7 +99,7 @@ impl ConsoleCore for GbaConsoleCore {
         loaded.system.bus.set_keyinput(input);
         // Run one LCD frame (228 lines * 1232 cycles), batched to the
         // frame end. Bit-identical to per-cycle stepping.
-        loaded.system.step_batch(280_896);
+        let (cycles, _) = loaded.system.step_batch(280_896);
         // Nominal-rate audio production only: the caller (session layer)
         // owns transport through the rate-control filter to the backend.
         let rate = self.sample_rate;
@@ -119,7 +123,23 @@ impl ConsoleCore for GbaConsoleCore {
             let dst_offset = y * stride;
             dst[dst_offset..dst_offset + 240 * 4].copy_from_slice(src_bytes);
         }
-        Ok(())
+        Ok(cycles)
+    }
+}
+impl ConsoleCore for GbaConsoleCore {
+    fn capabilities(&self) -> CoreCapabilities {
+        CoreCapabilities {
+            output_formats: vec![PixelFormat::Rgba],
+            video_signal: VideoSignalKind::Lcd,
+        }
+    }
+
+    fn render_frame(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<(), CoreError> {
+        self.render_frame_inner(frame_slot, audio_out).map(|_| ())
     }
 
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
@@ -232,6 +252,19 @@ impl ConsoleCore for GbaConsoleCore {
             .clone()
             .into_system_identity()
             .map_err(|e| CoreError::Core(Box::new(std::io::Error::other(e))))
+    }
+
+    fn debugger(&self) -> Option<Box<dyn nerust_core_traits::debugger::Debugger + '_>> {
+        self.loaded
+            .as_ref()
+            .map(|loaded| Box::new(crate::debugger::GbaDebugger::new(&loaded.system)) as _)
+    }
+
+    fn debug_control(
+        &mut self,
+    ) -> Option<Box<dyn nerust_core_traits::debugger::DebugControl + '_>> {
+        self.loaded.as_mut()?;
+        Some(Box::new(crate::debugger::GbaDebugControl::new(self)) as _)
     }
 }
 
