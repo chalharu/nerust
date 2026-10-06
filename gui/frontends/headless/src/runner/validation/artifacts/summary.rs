@@ -45,9 +45,7 @@ impl ValidationArtifacts {
             frames: totals.frames,
             final_screen_hash,
             screen_checks: self.screen.screen_checks,
-            work_ram_checks: self.memory.work_ram.checks,
-            cartridge_ram_checks: self.memory.cartridge_ram.checks,
-            ppu_vram_checks: self.memory.ppu_vram.checks,
+            memory_checks: self.memory.memory.checks,
             audio,
             failures: self.failures,
         }

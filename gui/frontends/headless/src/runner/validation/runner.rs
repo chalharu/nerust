@@ -1,6 +1,4 @@
-use super::{
-    artifacts::ValidationArtifacts, assertions::CartridgeRamAssertion, runtime::ValidationRuntime,
-};
+use super::{artifacts::ValidationArtifacts, runtime::ValidationRuntime};
 use crate::{
     error::RomTestError,
     events::{ControllerPad, PadState},
@@ -63,55 +61,23 @@ impl ValidationRunner {
         )
     }
 
-    pub(in crate::runner::validation) fn record_work_ram_assert(
+    pub(in crate::runner::validation) fn record_memory_assert(
         &mut self,
         frame: u64,
         address: usize,
         expected_value: u8,
+        expected_open_bus: bool,
     ) -> Result<(), RomTestError> {
-        self.artifacts.record_work_ram_assert(
+        self.artifacts.record_memory_assert(
             &self.case_id,
             &self.runtime,
             self.options,
-            frame,
-            address,
-            expected_value,
-        )
-    }
-
-    pub(in crate::runner::validation) fn record_cartridge_ram_assert(
-        &mut self,
-        frame: u64,
-        address: usize,
-        expected_value: u8,
-        expect_open_bus: bool,
-    ) -> Result<(), RomTestError> {
-        self.artifacts.record_cartridge_ram_assert(
-            &self.case_id,
-            &self.runtime,
-            self.options,
-            CartridgeRamAssertion {
+            super::artifacts::memory::ExpectedMemory {
                 frame,
                 address,
                 expected_value,
-                expect_open_bus,
+                expected_open_bus,
             },
-        )
-    }
-
-    pub(in crate::runner::validation) fn record_ppu_vram_assert(
-        &mut self,
-        frame: u64,
-        address: usize,
-        expected_value: u8,
-    ) -> Result<(), RomTestError> {
-        self.artifacts.record_ppu_vram_assert(
-            &self.case_id,
-            &self.runtime,
-            self.options,
-            frame,
-            address,
-            expected_value,
         )
     }
 

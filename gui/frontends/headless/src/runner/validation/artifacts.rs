@@ -1,4 +1,4 @@
-mod memory;
+pub(super) mod memory;
 mod screen;
 mod summary;
 

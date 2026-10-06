@@ -188,38 +188,13 @@ pub fn write_html_report(
                     html.push_str("</tbody></table>");
                 }
 
-                if !validation.work_ram_checks.is_empty() {
+                if !validation.memory_checks.is_empty() {
                     html.push_str(
-                        "<h4>Work RAM checks</h4><table><thead><tr>\
-                         <th>Frame</th><th>Address</th><th>Expected</th><th>Actual</th><th>Status</th>\
-                         </tr></thead><tbody>",
-                    );
-                    for check in &validation.work_ram_checks {
-                        let status_class = if check.passed() { "pass" } else { "fail" };
-                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
-                        write!(
-                            html,
-                            "<tr><td>{}</td><td><code>0x{:04X}</code></td><td><code>0x{:02X}</code></td>\
-                             <td><code>0x{:02X}</code></td><td class=\"{}\">{}</td></tr>",
-                            check.frame,
-                            check.address,
-                            check.expected_value,
-                            check.actual_value,
-                            status_class,
-                            status_label
-                        )
-                        .unwrap();
-                    }
-                    html.push_str("</tbody></table>");
-                }
-
-                if !validation.cartridge_ram_checks.is_empty() {
-                    html.push_str(
-                        "<h4>Cartridge RAM checks</h4><table><thead><tr>\
+                        "<h4>Memory checks</h4><table><thead><tr>\
                          <th>Frame</th><th>Address</th><th>Expected</th><th>Actual</th><th>Expected bus</th><th>Actual bus</th><th>Status</th>\
                          </tr></thead><tbody>",
                     );
-                    for check in &validation.cartridge_ram_checks {
+                    for check in &validation.memory_checks {
                         let status_class = if check.passed() { "pass" } else { "fail" };
                         let status_label = if check.passed() { "PASS" } else { "FAIL" };
                         write!(
@@ -240,31 +215,6 @@ pub fn write_html_report(
                             } else {
                                 "mapped RAM"
                             },
-                            status_class,
-                            status_label
-                        )
-                        .unwrap();
-                    }
-                    html.push_str("</tbody></table>");
-                }
-
-                if !validation.ppu_vram_checks.is_empty() {
-                    html.push_str(
-                        "<h4>PPU VRAM checks</h4><table><thead><tr>\
-                         <th>Frame</th><th>Address</th><th>Expected</th><th>Actual</th><th>Status</th>\
-                         </tr></thead><tbody>",
-                    );
-                    for check in &validation.ppu_vram_checks {
-                        let status_class = if check.passed() { "pass" } else { "fail" };
-                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
-                        write!(
-                            html,
-                            "<tr><td>{}</td><td><code>0x{:04X}</code></td><td><code>0x{:02X}</code></td>\
-                             <td><code>0x{:02X}</code></td><td class=\"{}\">{}</td></tr>",
-                            check.frame,
-                            check.address,
-                            check.expected_value,
-                            check.actual_value,
                             status_class,
                             status_label
                         )

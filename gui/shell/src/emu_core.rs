@@ -424,19 +424,6 @@ impl EmuCore {
         reply_rx.recv().map_err(|_| OperationError::NoReply)
     }
 
-    /// Cartridge-RAM peek preserving bus state. `None` when idle or when
-    /// the core has no cartridge space.
-    pub fn peek_cartridge_ram(&self, addr: usize) -> Result<Option<(u8, bool)>, OperationError> {
-        let (reply_tx, reply_rx) = mpsc::channel();
-        self.emu
-            .send(EmuCommand::PeekCartridgeRam {
-                addr,
-                reply: reply_tx,
-            })
-            .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx.recv().map_err(|_| OperationError::NoReply)
-    }
-
     pub fn canonical_media_identity(&self) -> Option<SystemIdentity> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
