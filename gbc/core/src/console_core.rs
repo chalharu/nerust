@@ -111,21 +111,25 @@ impl GbcConsoleCore {
     fn loaded_mut(&mut self) -> Result<&mut LoadedGbc, CoreError> {
         self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)
     }
-}
 
-impl ConsoleCore for GbcConsoleCore {
-    fn capabilities(&self) -> CoreCapabilities {
-        CoreCapabilities {
-            output_formats: vec![PixelFormat::Rgba],
-            video_signal: VideoSignalKind::Lcd,
-        }
-    }
-
-    fn render_frame(
+    /// Advance one frame, reporting the T-cycles the bus counted.
+    ///
+    /// Same path as the [`ConsoleCore::render_frame`] implementation;
+    /// the count that path discards is returned here for debugger
+    /// stepping. One loop iteration is one T-cycle by construction.
+    pub(crate) fn render_frame_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
         audio_out: &mut Vec<StereoSample>,
-    ) -> Result<(), CoreError> {
+    ) -> Result<u64, CoreError> {
+        self.render_frame_inner(frame_slot, audio_out)
+    }
+
+    fn render_frame_inner(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<u64, CoreError> {
         self.emu_input.take();
         let input = self
             .emu_input
@@ -141,7 +145,9 @@ impl ConsoleCore for GbcConsoleCore {
         loaded.system.bus.set_joypad(input);
         // LCD-off games do not produce a PPU frame event; cap one frontend
         // frame to the hardware frame duration so the emulation thread stays live.
+        let mut cycles = 0u64;
         for _ in 0..70_224 {
+            cycles += 1;
             if loaded.system.bus.step_tcycle(&mut loaded.system.cpu) {
                 break;
             }
@@ -156,7 +162,24 @@ impl ConsoleCore for GbcConsoleCore {
         frame_slot.resize(160, 144);
         loaded.system.bus.render_frame(frame_slot);
         self.sync_rumble();
-        Ok(())
+        Ok(cycles)
+    }
+}
+
+impl ConsoleCore for GbcConsoleCore {
+    fn capabilities(&self) -> CoreCapabilities {
+        CoreCapabilities {
+            output_formats: vec![PixelFormat::Rgba],
+            video_signal: VideoSignalKind::Lcd,
+        }
+    }
+
+    fn render_frame(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<(), CoreError> {
+        self.render_frame_inner(frame_slot, audio_out).map(|_| ())
     }
 
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
@@ -259,6 +282,19 @@ impl ConsoleCore for GbcConsoleCore {
             .identity
             .into_system_identity()
             .map_err(|error| CoreError::Core(Box::new(error)))
+    }
+
+    fn debugger(&self) -> Option<Box<dyn nerust_core_traits::debugger::Debugger + '_>> {
+        self.loaded
+            .as_ref()
+            .map(|loaded| Box::new(crate::debugger::GbcDebugger::new(&loaded.system)) as _)
+    }
+
+    fn debug_control(
+        &mut self,
+    ) -> Option<Box<dyn nerust_core_traits::debugger::DebugControl + '_>> {
+        self.loaded.as_mut()?;
+        Some(Box::new(crate::debugger::GbcDebugControl::new(self)) as _)
     }
 }
 
