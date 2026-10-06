@@ -18,6 +18,21 @@ pub fn default_output_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../target/rom-tests")
 }
 
+/// Compact hex preview for serial bytes: full text when short,
+/// truncated with a length otherwise.
+pub fn hex_preview(bytes: &[u8]) -> String {
+    const PREVIEW: usize = 64;
+    let shown = &bytes[..bytes.len().min(PREVIEW)];
+    let mut text = String::with_capacity(shown.len() * 2);
+    for byte in shown {
+        text.push_str(&format!("{byte:02X}"));
+    }
+    if bytes.len() > PREVIEW {
+        text.push_str(&format!("…({} bytes)", bytes.len()));
+    }
+    text
+}
+
 pub fn write_html_report(
     output_dir: &Path,
     title: &str,
@@ -248,6 +263,29 @@ pub fn write_html_report(
                             check.name,
                             check.expected_value,
                             check.actual_value,
+                            status_class,
+                            status_label
+                        )
+                        .unwrap();
+                    }
+                    html.push_str("</tbody></table>");
+                }
+                if !validation.serial_checks.is_empty() {
+                    html.push_str(
+                        "<h4>Serial checks</h4><table><thead><tr>\
+                         <th>Frame</th><th>Expected</th><th>Actual</th><th>Status</th>\
+                         </tr></thead><tbody>",
+                    );
+                    for check in &validation.serial_checks {
+                        let status_class = if check.passed() { "pass" } else { "fail" };
+                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                        write!(
+                            html,
+                            "<tr><td>{}</td><td><code>{}</code></td>\
+                             <td><code>{}</code></td><td class=\"{}\">{}</td></tr>",
+                            check.frame,
+                            hex_preview(&check.expected_bytes),
+                            hex_preview(&check.actual_bytes),
                             status_class,
                             status_label
                         )

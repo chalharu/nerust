@@ -1773,3 +1773,10 @@ cases:
     rom: gba/jsmolka_gba-tests/memory/memory.gba
     events:
       - {frame: 10, action: check_registers, registers: {r12: "0x00"}}
+  - id: gbc.retrio.cpu_instrs_01_special
+    category: cpu
+    description: "GBC CPU special instructions (retrio): serial transcript must match exactly (DMG model)."
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/individual/01-special.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 200, action: check_serial, bytes: "0x30312D7370656369616C0A0A0A5061737365640A"}

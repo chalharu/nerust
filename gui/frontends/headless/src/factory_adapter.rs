@@ -37,6 +37,7 @@ pub struct TestSystem {
     pad_buttons: Vec<Vec<(&'static str, usize)>>,
     spaces: Vec<SpaceInfo>,
     tap: Arc<Mutex<Vec<StereoSample>>>,
+    serial_tap: Arc<Mutex<Vec<u8>>>,
 }
 
 /// Build a loaded system through `CoreFactory` and wrap it in the
@@ -162,6 +163,9 @@ pub fn open_headless_system(
     let tap = Arc::new(Mutex::new(Vec::new()));
     emu.tap_nominal_audio(Arc::clone(&tap))
         .map_err(|error| construction(format!("tap: {error:?}")))?;
+    let serial_tap = Arc::new(Mutex::new(Vec::new()));
+    emu.tap_serial_output(Arc::clone(&serial_tap))
+        .map_err(|error| construction(format!("serial tap: {error:?}")))?;
 
     Ok(TestSystem {
         emu,
@@ -169,6 +173,7 @@ pub fn open_headless_system(
         pad_buttons,
         spaces,
         tap,
+        serial_tap,
     })
 }
 
@@ -287,6 +292,16 @@ impl TestSystem {
             .lock()
             .map(|mut guard| std::mem::take(&mut *guard))
             .map_err(|error| RomTestError::EmuThread(format!("tap lock: {error}")))
+    }
+
+    /// Drain the serial-output tap (this frame's fresh bytes only).
+    /// Accumulation is the caller's job: the tap holds the latest
+    /// frame's delta, mirroring the audio tap.
+    pub fn drain_serial(&self) -> Result<Vec<u8>, RomTestError> {
+        self.serial_tap
+            .lock()
+            .map(|mut guard| std::mem::take(&mut *guard))
+            .map_err(|error| RomTestError::EmuThread(format!("serial tap lock: {error}")))
     }
 
     /// Read one byte through the thread inspect path, resolved by

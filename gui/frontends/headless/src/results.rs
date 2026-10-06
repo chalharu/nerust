@@ -73,6 +73,19 @@ impl RegisterCheck {
 }
 
 #[derive(Debug, Clone)]
+pub struct SerialCheck {
+    pub frame: u64,
+    pub expected_bytes: Vec<u8>,
+    pub actual_bytes: Vec<u8>,
+}
+
+impl SerialCheck {
+    pub fn passed(&self) -> bool {
+        self.expected_bytes == self.actual_bytes
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct AudioObservation {
     pub sample_rate: u32,
     pub samples: u64,
@@ -91,6 +104,7 @@ pub struct CaseValidation {
     pub screen_checks: Vec<ScreenCheck>,
     pub memory_checks: Vec<MemoryCheck>,
     pub register_checks: Vec<RegisterCheck>,
+    pub serial_checks: Vec<SerialCheck>,
     pub audio: AudioObservation,
     pub failures: Vec<String>,
 }

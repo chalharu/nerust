@@ -49,4 +49,10 @@ impl ValidationRuntime {
     ) -> Result<Vec<(&'static str, u64)>, RomTestError> {
         self.system.read_registers()
     }
+
+    /// Cumulative serial bytes transmitted since power-on (or the last
+    /// reset). Grows only; cores without a serial port stay empty.
+    pub(in crate::runner::validation) fn peek_serial(&self) -> &[u8] {
+        &self.serial
+    }
 }

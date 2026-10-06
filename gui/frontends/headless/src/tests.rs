@@ -141,6 +141,7 @@ fn drive_case_dispatches_frame_zero_events() {
                 }
                 RomAssertion::Memory { .. } => self.events.push(format!("ram@{frame}")),
                 RomAssertion::Registers { .. } => self.events.push(format!("regs@{frame}")),
+                RomAssertion::Serial { .. } => self.events.push(format!("serial@{frame}")),
             }
             Ok(())
         }
@@ -440,4 +441,124 @@ fn drive_case_dispatches_check_registers() {
 
     assert_eq!(totals.frames, 1);
     assert_eq!(harness.events, vec!["regs@1:2".to_string()]);
+}
+
+#[test]
+fn parse_manifest_with_serial_bytes() {
+    let mut manifest = serde_saphyr::from_str::<RomManifest>(
+        r#"
+cases:
+  - id: cpu.serial
+    category: cpu
+    description: Serial-output assertions.
+    rom: nes-test-roms/other/nestest.nes
+    events:
+      - { frame: 5, action: check_serial, bytes: "0x506173736564" }
+      - { frame: 5, action: assert, kind: serial, bytes: "0x506173736564" }
+"#,
+    )
+    .expect("manifest should parse");
+    manifest.resolve_paths(&default_manifest_path());
+    manifest.validate().expect("manifest should validate");
+
+    let events = &manifest.case("cpu.serial").unwrap().events;
+    match &events[0].kind {
+        RomEventKind::CheckSerial { bytes } => {
+            assert_eq!(bytes, b"Passed");
+        }
+        other => panic!("unexpected event kind: {other:?}"),
+    }
+    match &events[1].kind {
+        RomEventKind::Assert {
+            assertion: RomAssertion::Serial { bytes },
+        } => {
+            assert_eq!(bytes, b"Passed");
+        }
+        other => panic!("unexpected event kind: {other:?}"),
+    }
+}
+
+#[test]
+fn reject_manifest_with_odd_hex_bytes() {
+    let result = serde_saphyr::from_str::<RomManifest>(
+        r#"
+cases:
+  - id: cpu.serial_bad
+    category: cpu
+    description: Odd hex digit counts must fail loudly, never pad.
+    rom: nes-test-roms/other/nestest.nes
+    events:
+      - { frame: 5, action: check_serial, bytes: "0x123" }
+"#,
+    );
+    assert!(result.is_err(), "odd hex bytes should not parse");
+}
+
+#[test]
+fn drive_case_dispatches_check_serial() {
+    struct Harness {
+        frame_counter: u64,
+        events: Vec<String>,
+    }
+
+    impl CaseHarness for Harness {
+        fn run_frame(&mut self) -> Result<(), RomTestError> {
+            self.frame_counter += 1;
+            Ok(())
+        }
+
+        fn frame_counter(&self) -> u64 {
+            self.frame_counter
+        }
+
+        fn on_assert(&mut self, frame: u64, assertion: &RomAssertion) -> Result<(), RomTestError> {
+            match assertion {
+                RomAssertion::Serial { bytes } => {
+                    self.events.push(format!("serial@{frame}:{}", bytes.len()))
+                }
+                _ => self.events.push(format!("other@{frame}")),
+            }
+            Ok(())
+        }
+
+        fn on_reset(&mut self) -> Result<(), RomTestError> {
+            Ok(())
+        }
+
+        fn on_standard_controller(
+            &mut self,
+            _pad: ControllerPad,
+            _button: String,
+            _state: PadState,
+        ) -> Result<(), RomTestError> {
+            Ok(())
+        }
+    }
+
+    let case = RomCase {
+        id: "serial".to_string(),
+        category: RomCategory::Cpu,
+        description: "Serial dispatch regression.".to_string(),
+        rom: "nes-test-roms/other/nestest.nes".to_string(),
+        perf: false,
+        options: Vec::new(),
+        events: vec![RomEvent {
+            frame: 1,
+            kind: RomEventKind::CheckSerial {
+                bytes: b"Passed".to_vec(),
+            },
+        }],
+        expected_audio: None,
+        ci: true,
+        resolved_rom_path: PathBuf::new(),
+    };
+    let mut harness = Harness {
+        frame_counter: 0,
+        events: Vec::new(),
+    };
+
+    let totals = drive_case(&case, &mut harness).expect("case should run");
+
+    assert_eq!(totals.frames, 1);
+    assert_eq!(harness.events, vec!["serial@1:6".to_string()]);
 }

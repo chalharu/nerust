@@ -285,3 +285,75 @@ pub(super) mod hex_u64_map {
         }
     }
 }
+
+/// Serial expectation bytes as one `0x`-prefixed hex string
+/// (`bytes: "0x506173736564"`). Test ROMs emit text over the link, so
+/// exact bytes stay debuggable; hashes would hide the verdict.
+pub(super) mod hex_bytes {
+    use serde::{Deserializer, Serializer};
+
+    use super::*;
+
+    pub fn serialize<S>(value: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut text = String::with_capacity(2 + value.len() * 2);
+        text.push_str("0x");
+        for byte in value {
+            text.push_str(&format!("{byte:02X}"));
+        }
+        serializer.serialize_str(&text)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_str(HexBytesVisitor)
+    }
+
+    struct HexBytesVisitor;
+
+    impl<'de> Visitor<'de> for HexBytesVisitor {
+        type Value = Vec<u8>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a hexadecimal string like 0x50617373")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            parse_hex_bytes(value).map_err(E::custom)
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            parse_hex_bytes(&value).map_err(E::custom)
+        }
+    }
+}
+
+pub(super) fn parse_hex_bytes(value: &str) -> Result<Vec<u8>, String> {
+    let trimmed = value.trim().replace('_', "");
+    let digits = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .ok_or_else(|| format!("invalid hexadecimal bytes `{value}`: missing 0x prefix"))?;
+    if digits.len() % 2 != 0 {
+        return Err(format!(
+            "invalid hexadecimal bytes `{value}`: odd digit count"
+        ));
+    }
+    (0..digits.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&digits[i..i + 2], 16)
+                .map_err(|error| format!("invalid hexadecimal bytes `{value}`: {error}"))
+        })
+        .collect()
+}
