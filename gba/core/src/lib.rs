@@ -6,6 +6,7 @@ pub mod core_options;
 pub mod cpu;
 pub mod cpu_pipeline;
 pub mod cpu_registers;
+pub mod debugger;
 pub mod dma;
 #[cfg(test)]
 mod dma_fit;
