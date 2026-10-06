@@ -14,7 +14,7 @@ use crate::{audio::AudioBackend, identity::SystemId};
 use self::{
     descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
     load::{DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest},
-    settings::FactorySettingsView,
+    settings::{FactorySettingsView, Language},
 };
 
 #[derive(Debug, Error)]
@@ -115,14 +115,23 @@ pub trait CoreFactory: Send + Sync {
     }
 
     /// Deterministic settings view for headless driving (tests,
-    /// benchmarks). Each system pins what determinism needs — typically
-    /// the video filter, so palette bytes never depend on GUI defaults.
+    /// benchmarks). Uniform across systems: factory defaults plus
+    /// English, independent of GUI/user state. No per-system override
+    /// is needed: observed bytes (screen indices, memory, audio) never
+    /// depend on presentation settings — only report artifacts (PNG
+    /// palette) do, and those are never compared.
     ///
-    /// Defaults to `Err`: headless support is opt-in per system, and a
-    /// loud failure beats silently shifting defaults. Loud failure also
-    /// guards future settings changes from silently altering hashes.
+    /// Fails loudly when the factory exposes no system defaults, so a
+    /// missing seed surfaces instead of silently shifting behavior.
     fn headless_view(&self) -> Result<FactorySettingsView, FactoryError> {
-        Err(FactoryError::InvalidSettings)
+        let system_config = self
+            .as_system_defaults()
+            .and_then(|defaults| defaults.default_system_settings())
+            .ok_or(FactoryError::InvalidSettings)?;
+        Ok(FactorySettingsView {
+            language: Language::English,
+            system_config: Some(system_config),
+        })
     }
 }
 

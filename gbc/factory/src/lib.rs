@@ -139,6 +139,14 @@ mod tests {
     }
 
     #[test]
+    fn headless_view_uses_defaults_without_override() {
+        // Generic trait provision: no per-system code needed.
+        let factory = GbcFactory;
+        let view = factory.headless_view().expect("defaults exist");
+        assert!(view.system_config.is_some());
+    }
+
+    #[test]
     fn resolve_label_returns_none_for_unknown_id() {
         let factory = GbcFactory;
         assert_eq!(factory.resolve_label("any.id", "en"), None);
