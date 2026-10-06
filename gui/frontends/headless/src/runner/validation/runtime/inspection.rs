@@ -41,4 +41,12 @@ impl ValidationRuntime {
         };
         self.system.read_memory_byte(addr)
     }
+
+    /// Live register list through the thread inspect path, in the
+    /// debugger's ascending-name order.
+    pub(in crate::runner::validation) fn peek_registers(
+        &self,
+    ) -> Result<Vec<(&'static str, u64)>, RomTestError> {
+        self.system.read_registers()
+    }
 }

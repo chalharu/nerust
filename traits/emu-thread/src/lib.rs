@@ -455,6 +455,7 @@ fn inspect_memory(
             rows: rows.into(),
         },
         panels: debugger.panels().into(),
+        registers: debugger.registers().to_vec().into(),
         captured_at_frame: frame,
     })
 }

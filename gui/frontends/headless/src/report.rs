@@ -231,6 +231,30 @@ pub fn write_html_report(
                     }
                     html.push_str("</tbody></table>");
                 }
+                if !validation.register_checks.is_empty() {
+                    html.push_str(
+                        "<h4>Register checks</h4><table><thead><tr>\
+                         <th>Frame</th><th>Register</th><th>Expected</th><th>Actual</th><th>Status</th>\
+                         </tr></thead><tbody>",
+                    );
+                    for check in &validation.register_checks {
+                        let status_class = if check.passed() { "pass" } else { "fail" };
+                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                        write!(
+                            html,
+                            "<tr><td>{}</td><td><code>{}</code></td><td><code>0x{:X}</code></td>\
+                             <td><code>0x{:X}</code></td><td class=\"{}\">{}</td></tr>",
+                            check.frame,
+                            check.name,
+                            check.expected_value,
+                            check.actual_value,
+                            status_class,
+                            status_label
+                        )
+                        .unwrap();
+                    }
+                    html.push_str("</tbody></table>");
+                }
 
                 html.push_str("</section>");
             }

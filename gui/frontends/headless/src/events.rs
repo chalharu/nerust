@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::{
     error::RomTestError,
-    serde_helpers::{hex_u8, hex_u16, hex_u64},
+    serde_helpers::{hex_u8, hex_u32, hex_u64, hex_u64_map},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,10 +33,11 @@ pub enum RomAssertion {
     },
     /// Plain memory assertion. The containing space resolves by
     /// address against the debugger table snapshot at read time, so
-    /// new spaces need no schema change.
+    /// new spaces need no schema change. 32-bit: GBA-class buses
+    /// need the full range; 16-bit systems simply never use the top.
     Memory {
-        #[serde(with = "hex_u16")]
-        address: u16,
+        #[serde(with = "hex_u32")]
+        address: u32,
         #[serde(with = "hex_u8")]
         value: u8,
         /// Expect a floating bus instead of a mapped value. Only
@@ -42,6 +45,13 @@ pub enum RomAssertion {
         /// read resolves open-vs-mapped through the Spaces table.
         #[serde(default)]
         open_bus: bool,
+    },
+    /// Register assertion. Names resolve against the debugger's live
+    /// register list at read time, so new registers need no schema
+    /// change. Only listed registers compare; extras are ignored.
+    Registers {
+        #[serde(with = "hex_u64_map")]
+        registers: BTreeMap<String, u64>,
     },
 }
 impl RomAssertion {
@@ -52,6 +62,9 @@ impl RomAssertion {
             // with the same error kind.
             RomAssertion::Screen { .. } => Ok(()),
             RomAssertion::Memory { .. } => Ok(()),
+            // Register name coverage validates at read time against
+            // the live register list; unknown names fail loudly there.
+            RomAssertion::Registers { .. } => Ok(()),
         }
     }
 }
@@ -67,12 +80,16 @@ pub enum RomEventKind {
         hash: u64,
     },
     CheckMemory {
-        #[serde(with = "hex_u16")]
-        address: u16,
+        #[serde(with = "hex_u32")]
+        address: u32,
         #[serde(with = "hex_u8")]
         value: u8,
         #[serde(default)]
         open_bus: bool,
+    },
+    CheckRegisters {
+        #[serde(with = "hex_u64_map")]
+        registers: BTreeMap<String, u64>,
     },
     Reset,
     StandardController {
@@ -98,6 +115,9 @@ impl RomEventKind {
                 address: *address,
                 value: *value,
                 open_bus: *open_bus,
+            }),
+            RomEventKind::CheckRegisters { registers } => Some(RomAssertion::Registers {
+                registers: registers.clone(),
             }),
             RomEventKind::Reset | RomEventKind::StandardController { .. } => None,
         }

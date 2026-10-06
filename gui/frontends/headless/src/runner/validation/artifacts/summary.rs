@@ -46,6 +46,7 @@ impl ValidationArtifacts {
             final_screen_hash,
             screen_checks: self.screen.screen_checks,
             memory_checks: self.memory.memory.checks,
+            register_checks: self.registers.registers.checks,
             audio,
             failures: self.failures,
         }

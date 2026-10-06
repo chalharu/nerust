@@ -277,6 +277,9 @@ pub struct ExecutionInfo {
 pub struct InspectResult {
     pub dump: MemoryDump,
     pub panels: Arc<[DebugPanel]>,
+    /// Register snapshot at capture, same paused moment as the dump.
+    /// Names follow `Debugger::registers` (ascending order).
+    pub registers: Arc<[(&'static str, u64)]>,
     /// Frame number at capture, for UI staleness judgment.
     pub captured_at_frame: u64,
 }

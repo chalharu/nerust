@@ -81,6 +81,19 @@ impl ValidationRunner {
         )
     }
 
+    pub(in crate::runner::validation) fn record_registers_assert(
+        &mut self,
+        frame: u64,
+        registers: std::collections::BTreeMap<String, u64>,
+    ) -> Result<(), RomTestError> {
+        self.artifacts.record_registers_assert(
+            &self.case_id,
+            &self.runtime,
+            self.options,
+            super::artifacts::registers::ExpectedRegisters { frame, registers },
+        )
+    }
+
     pub(in crate::runner::validation) fn reset_runtime(&mut self) -> Result<(), RomTestError> {
         self.runtime.reset()
     }

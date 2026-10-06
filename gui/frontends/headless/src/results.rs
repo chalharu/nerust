@@ -44,7 +44,7 @@ impl ScreenCheck {
 #[derive(Debug, Clone)]
 pub struct MemoryCheck {
     pub frame: u64,
-    pub address: u16,
+    pub address: u32,
     pub expected_value: u8,
     pub actual_value: u8,
     pub expected_open_bus: bool,
@@ -55,6 +55,20 @@ impl MemoryCheck {
     pub fn passed(&self) -> bool {
         self.expected_open_bus == self.actual_open_bus
             && (self.expected_open_bus || self.expected_value == self.actual_value)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RegisterCheck {
+    pub frame: u64,
+    pub name: String,
+    pub expected_value: u64,
+    pub actual_value: u64,
+}
+
+impl RegisterCheck {
+    pub fn passed(&self) -> bool {
+        self.expected_value == self.actual_value
     }
 }
 
@@ -76,6 +90,7 @@ pub struct CaseValidation {
     pub final_screen_hash: u64,
     pub screen_checks: Vec<ScreenCheck>,
     pub memory_checks: Vec<MemoryCheck>,
+    pub register_checks: Vec<RegisterCheck>,
     pub audio: AudioObservation,
     pub failures: Vec<String>,
 }
