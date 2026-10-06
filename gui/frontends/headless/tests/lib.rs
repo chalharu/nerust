@@ -26,8 +26,9 @@ fn run_generated_manifest_case(case_id: &str) {
     let case = manifest()
         .case(case_id)
         .unwrap_or_else(|| panic!("ROM case `{case_id}` should exist in the manifest"));
+    let factory = NesFactory::boxed();
     let outcome = validate_case(
-        &NesFactory,
+        factory.as_ref(),
         case,
         ValidationOptions {
             capture_screenshots: false,

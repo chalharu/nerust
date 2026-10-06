@@ -118,6 +118,9 @@ fn run_command(
     };
     let total = cases.len();
     let mut outcomes = Vec::with_capacity(total);
+    // Construction selects the system once; everything downstream
+    // drives through `dyn CoreFactory`.
+    let factory = NesFactory::boxed();
     let mut current_category = None;
 
     println!(
@@ -141,7 +144,7 @@ fn run_command(
             case.description
         );
 
-        let outcome = validate_case(&NesFactory, case, options);
+        let outcome = validate_case(factory.as_ref(), case, options);
         print_outcome(&outcome);
         outcomes.push(outcome);
     }
