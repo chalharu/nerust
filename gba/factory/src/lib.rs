@@ -128,7 +128,7 @@ impl SystemLoadOptionsSchema for GbaLoadOptionsSchema {
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::factory::{CoreFactory, SystemDefaults};
+    use nerust_core_traits::factory::SystemDefaults;
 
     use super::*;
 
@@ -137,14 +137,6 @@ mod tests {
         let factory = GbaFactory;
         let settings = factory.default_system_settings();
         assert!(settings.is_some());
-    }
-
-    #[test]
-    fn headless_view_uses_defaults_without_override() {
-        // Generic trait provision: no per-system code needed.
-        let factory = GbaFactory;
-        let view = factory.headless_view().expect("defaults exist");
-        assert!(view.system_config.is_some());
     }
 
     #[test]

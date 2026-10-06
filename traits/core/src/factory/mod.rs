@@ -14,7 +14,7 @@ use crate::{audio::AudioBackend, identity::SystemId};
 use self::{
     descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
     load::{DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest},
-    settings::{FactorySettingsView, Language},
+    settings::FactorySettingsView,
 };
 
 #[derive(Debug, Error)]
@@ -112,26 +112,6 @@ pub trait CoreFactory: Send + Sync {
     /// (ISP separation — GUI integration methods live on `SystemDefaults`).
     fn as_system_defaults(&self) -> Option<&dyn SystemDefaults> {
         None
-    }
-
-    /// Deterministic settings view for headless driving (tests,
-    /// benchmarks). Uniform across systems: factory defaults plus
-    /// English, independent of GUI/user state. No per-system override
-    /// is needed: observed bytes (screen indices, memory, audio) never
-    /// depend on presentation settings — only report artifacts (PNG
-    /// palette) do, and those are never compared.
-    ///
-    /// Fails loudly when the factory exposes no system defaults, so a
-    /// missing seed surfaces instead of silently shifting behavior.
-    fn headless_view(&self) -> Result<FactorySettingsView, FactoryError> {
-        let system_config = self
-            .as_system_defaults()
-            .and_then(|defaults| defaults.default_system_settings())
-            .ok_or(FactoryError::InvalidSettings)?;
-        Ok(FactorySettingsView {
-            language: Language::English,
-            system_config: Some(system_config),
-        })
     }
 }
 
