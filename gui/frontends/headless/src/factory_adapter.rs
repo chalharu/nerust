@@ -313,3 +313,19 @@ impl AudioBackend for NullAudioBackend {
         self.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_factories_yield_no_matching_system() {
+        // Eligibility without any system: no ROM read, no thread, no
+        // emulation — the probe loop over zero factories decides.
+        match open_headless_system(&[], "case", b"NES\x1Ajunk", Vec::new(), 48_000) {
+            Err(RomTestError::NoMatchingSystem { .. }) => {}
+            Err(error) => panic!("unexpected error: {error:?}"),
+            Ok(_) => panic!("empty factories must not open a system"),
+        }
+    }
+}
