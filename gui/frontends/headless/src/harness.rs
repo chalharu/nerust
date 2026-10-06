@@ -60,7 +60,8 @@ fn dispatch_pending_events<H: CaseHarness>(
                 RomEventKind::Assert { .. }
                 | RomEventKind::CheckScreen { .. }
                 | RomEventKind::CheckMemory { .. }
-                | RomEventKind::CheckRegisters { .. } => unreachable!(),
+                | RomEventKind::CheckRegisters { .. }
+                | RomEventKind::CheckSerial { .. } => unreachable!(),
             }
         }
 

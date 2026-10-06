@@ -417,6 +417,20 @@ impl EmuCore {
         reply_rx.recv().map_err(|_| OperationError::NoReply)
     }
 
+    /// Install a serial-output tap: every rendered frame moves the
+    /// core's freshly transmitted bytes into `tap`. Headless capture
+    /// only.
+    pub fn tap_serial_output(&self, tap: Arc<Mutex<Vec<u8>>>) -> Result<(), OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::TapSerialOutput {
+                tap,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
     /// Memory-space table snapshot through the emu thread. Empty when
     /// idle or when the core exposes no debugger. Static metadata:
     /// no pause gating required.

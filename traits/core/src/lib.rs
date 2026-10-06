@@ -177,6 +177,14 @@ pub enum EmuCommand {
         tap: Arc<Mutex<Vec<audio::StereoSample>>>,
         reply: Sender<()>,
     },
+    /// Install a serial-output tap: every rendered frame moves the
+    /// core's freshly transmitted bytes into `tap` (overwriting the
+    /// previous frame's delta; accumulation is the reader's job).
+    /// Headless capture only.
+    TapSerialOutput {
+        tap: Arc<Mutex<Vec<u8>>>,
+        reply: Sender<()>,
+    },
     /// Memory-space table snapshot. Static metadata: answered without
     /// pause gating; empty when idle or when the core exposes no
     /// debugger. Lets generic drivers resolve stable space keys
@@ -234,6 +242,15 @@ pub trait ConsoleCore: Send + Downcast {
     /// Observation via `debugger()` stays available independently.
     fn debug_control(&mut self) -> Option<Box<dyn debugger::DebugControl + '_>> {
         None
+    }
+
+    // -- serial output (default: no serial port) --
+    /// Drain bytes the core transmitted since the last call (link-cable
+    /// serial and equivalents). The session layer calls this once per
+    /// rendered frame; accumulation is the reader's job. Empty by
+    /// default: cores without an observable serial port stay silent.
+    fn take_serial_bytes(&mut self) -> Vec<u8> {
+        Vec::new()
     }
 
     // -- identity --

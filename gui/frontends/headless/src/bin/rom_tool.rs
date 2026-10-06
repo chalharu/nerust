@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Instant};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use nerust_rom_test::{
     manifest::{RomManifest, load_default_manifest, load_manifest},
-    report::{default_output_root, write_html_report},
+    report::{default_output_root, hex_preview, write_html_report},
     results::{CaseOutcome, ValidationOptions},
     runner::validate_case,
     system_factories,
@@ -238,6 +238,15 @@ fn print_outcome(outcome: &CaseOutcome) {
                     check.name,
                     check.expected_value,
                     check.actual_value,
+                    if check.passed() { "pass" } else { "fail" }
+                );
+            }
+            for check in &validation.serial_checks {
+                println!(
+                    "  serial frame={} expected={} actual={} status={}",
+                    check.frame,
+                    hex_preview(&check.expected_bytes),
+                    hex_preview(&check.actual_bytes),
                     if check.passed() { "pass" } else { "fail" }
                 );
             }

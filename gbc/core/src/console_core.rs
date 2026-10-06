@@ -296,6 +296,13 @@ impl ConsoleCore for GbcConsoleCore {
         self.loaded.as_mut()?;
         Some(Box::new(crate::debugger::GbcDebugControl::new(self)) as _)
     }
+
+    fn take_serial_bytes(&mut self) -> Vec<u8> {
+        self.loaded
+            .as_mut()
+            .map(|loaded| loaded.system.bus.take_serial_output())
+            .unwrap_or_default()
+    }
 }
 
 #[cfg(test)]

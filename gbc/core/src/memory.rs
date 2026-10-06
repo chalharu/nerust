@@ -715,6 +715,11 @@ impl GbcMemoryBus {
         self.serial.output()
     }
 
+    /// Drain transmitted serial characters for the session layer.
+    pub fn take_serial_output(&mut self) -> Vec<u8> {
+        self.serial.take_output()
+    }
+
     pub fn sync_cartridge_rtc(&mut self, now: SystemTime) {
         self.cartridge.sync_rtc(now);
     }

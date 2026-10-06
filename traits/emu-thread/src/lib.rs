@@ -97,6 +97,7 @@ impl EmuThread {
             let mut audio_scratch: Vec<nerust_core_traits::audio::StereoSample> = Vec::new();
             let mut nominal_tap: Option<Arc<Mutex<Vec<nerust_core_traits::audio::StereoSample>>>> =
                 None;
+            let mut serial_tap: Option<Arc<Mutex<Vec<u8>>>> = None;
 
             let mut timer = Timer::new();
             let mut loaded = false;
@@ -126,6 +127,10 @@ impl EmuThread {
                             }
                             EmuCommand::TapNominalAudio { tap, reply } => {
                                 nominal_tap = Some(tap);
+                                let _ = reply.send(());
+                            }
+                            EmuCommand::TapSerialOutput { tap, reply } => {
+                                serial_tap = Some(tap);
                                 let _ = reply.send(());
                             }
                             EmuCommand::DebuggerSpaces { reply, .. } => {
@@ -227,6 +232,7 @@ impl EmuThread {
                                             filter: &mut filter,
                                             audio: &mut *audio,
                                             nominal_tap: &nominal_tap,
+                                            serial_tap: &serial_tap,
                                             fb: &fb,
                                             fr: &fr,
                                             fc: &fc,
@@ -264,6 +270,10 @@ impl EmuThread {
                             nominal_tap = Some(tap);
                             let _ = reply.send(());
                         }
+                        EmuCommand::TapSerialOutput { tap, reply } => {
+                            serial_tap = Some(tap);
+                            let _ = reply.send(());
+                        }
                         EmuCommand::DebuggerSpaces { reply } => {
                             let result = match core.debugger() {
                                 Some(debugger) => debugger.spaces().to_vec(),
@@ -285,6 +295,7 @@ impl EmuThread {
                         filter: &mut filter,
                         audio: &mut *audio,
                         nominal_tap: &nominal_tap,
+                        serial_tap: &serial_tap,
                         fb: &fb,
                         fr: &fr,
                         fc: &fc,
@@ -377,6 +388,22 @@ fn push_nominal_tap(tap: &Option<Arc<Mutex<Vec<StereoSample>>>>, samples: Vec<St
     }
 }
 
+/// Overwrite a serial-output tap with one frame's fresh bytes, when
+/// a tap is installed and the frame transmitted any. The tap always
+/// holds the latest frame's delta only; accumulation is the reader's
+/// job — mirroring the nominal-audio tap.
+fn push_serial_tap(tap: &Option<Arc<Mutex<Vec<u8>>>>, bytes: Vec<u8>) {
+    if bytes.is_empty() {
+        return;
+    }
+    if let Some(tap) = tap
+        && let Ok(mut guard) = tap.lock()
+    {
+        guard.clear();
+        guard.extend_from_slice(&bytes);
+    }
+}
+
 /// Shared per-frame render state, threaded through the loop and the
 /// `Step(Frame)` path so both render identically.
 struct FrameCtx<'a> {
@@ -386,6 +413,7 @@ struct FrameCtx<'a> {
     filter: &'a mut DynamicRateFilter,
     audio: &'a mut dyn AudioBackend,
     nominal_tap: &'a Option<Arc<Mutex<Vec<StereoSample>>>>,
+    serial_tap: &'a Option<Arc<Mutex<Vec<u8>>>>,
     fb: &'a Arc<Mutex<FrameBuffer>>,
     fr: &'a Arc<AtomicBool>,
     fc: &'a Arc<AtomicU64>,
@@ -404,6 +432,7 @@ fn render_one_frame(ctx: FrameCtx<'_>) {
         filter,
         audio,
         nominal_tap,
+        serial_tap,
         fb,
         fr,
         fc,
@@ -415,6 +444,11 @@ fn render_one_frame(ctx: FrameCtx<'_>) {
         // interactive frames do not.
         if nominal_tap.is_some() {
             push_nominal_tap(nominal_tap, audio_scratch.clone());
+        }
+        // Drain only with a tap installed: untapped cores keep their
+        // serial buffer (bounded by the ROM's own output).
+        if serial_tap.is_some() {
+            push_serial_tap(serial_tap, core.take_serial_bytes());
         }
         fc.fetch_add(1, Ordering::Relaxed);
         if let Ok(mut guard) = fb.lock() {
@@ -631,6 +665,11 @@ mod tests {
             audio_out.clear();
             audio_out.push(StereoSample::new(2.0, 2.0));
             Ok(())
+        }
+
+        fn take_serial_bytes(&mut self) -> Vec<u8> {
+            // One deterministic byte per frame for the tap test below.
+            vec![0x55]
         }
 
         fn load(&mut self, _rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
@@ -946,6 +985,28 @@ mod tests {
             *tap.lock().expect("tap lock"),
             vec![StereoSample::new(2.0, 2.0)]
         );
+        // Take semantics: a second step overwrites, not appends.
+        step(&thread, StepUnit::Frame).expect("step ok");
+        assert_eq!(tap.lock().expect("tap lock").len(), 1);
+    }
+
+    #[test]
+    fn serial_tap_collects_stepped_frame_bytes() {
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Pause).expect("pause send");
+        let tap = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::TapSerialOutput {
+                tap: Arc::clone(&tap),
+                reply: tx,
+            })
+            .expect("tap send");
+        rx.recv().expect("tap ack");
+        step(&thread, StepUnit::Frame).expect("step ok");
+        // The fake core transmits one byte per frame; the tap holds
+        // the latest stepped frame's delta only.
+        assert_eq!(*tap.lock().expect("tap lock"), vec![0x55]);
         // Take semantics: a second step overwrites, not appends.
         step(&thread, StepUnit::Frame).expect("step ok");
         assert_eq!(tap.lock().expect("tap lock").len(), 1);
