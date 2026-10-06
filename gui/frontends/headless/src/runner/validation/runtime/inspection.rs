@@ -30,10 +30,6 @@ impl ValidationRuntime {
     }
 
     /// Work-RAM byte through the thread inspect path.
-    ///
-    /// Space ids are imported (not duplicated) so a table reorder breaks
-    /// compilation instead of silently mis-resolving. Callers map `None`
-    /// to out-of-range errors, exactly like the old concrete peek.
     pub(in crate::runner::validation) fn peek_work_ram(
         &self,
         address: usize,
@@ -41,7 +37,7 @@ impl ValidationRuntime {
         let Some(addr) = u32::try_from(address).ok() else {
             return Ok(None);
         };
-        self.system.read_work_ram_byte(addr)
+        self.system.read_memory_byte(addr)
     }
 
     pub(in crate::runner::validation) fn peek_cartridge_ram(
@@ -58,6 +54,6 @@ impl ValidationRuntime {
         let Some(addr) = u32::try_from(address).ok() else {
             return Ok(None);
         };
-        self.system.read_ppu_vram_byte(addr)
+        self.system.read_memory_byte(addr)
     }
 }

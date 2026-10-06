@@ -17,7 +17,7 @@ use std::{
 use nerust_core_traits::{
     CoreConfig,
     audio::{AudioBackend, StereoSample},
-    debugger::{InspectRequest, SpaceId, StepUnit},
+    debugger::{InspectRequest, SpaceId, SpaceInfo, StepUnit},
     factory::CoreFactory,
 };
 use nerust_gui_shell::emu_core::EmuCore;
@@ -26,29 +26,13 @@ use nerust_render_traits::FrameBuffer;
 
 use crate::{error::RomTestError, manifest::Mmc3IrqVariant};
 
-/// Suite pad bit order as system-agnostic logical keys: bit `i` of a
-/// pad byte drives the control keyed `SUITE_PAD_KEYS[i]` in the slot's
-/// profile group. Bit layouts are the suite's own event vocabulary.
-const SUITE_PAD_KEYS: [AbstractKey; 8] = [
-    AbstractKey::Button1,
-    AbstractKey::Button2,
-    AbstractKey::Select,
-    AbstractKey::Start,
-    AbstractKey::DpadUp,
-    AbstractKey::DpadDown,
-    AbstractKey::DpadLeft,
-    AbstractKey::DpadRight,
-];
-
 /// A loaded NES system ready for headless driving: session-owned
 /// execution plus input writer and nominal-audio tap.
 pub struct TestSystem {
     emu: EmuCore,
     gui_input: GuiInput,
-    pad_fields: [[Option<usize>; 8]; 2],
-    mic_field: Option<usize>,
-    work_ram: SpaceId,
-    ppu_vram: SpaceId,
+    pad_buttons: Vec<Vec<(AbstractKey, usize)>>,
+    spaces: Vec<SpaceInfo>,
     tap: Arc<Mutex<Vec<StereoSample>>>,
 }
 
@@ -134,26 +118,14 @@ pub fn open_headless_system(
     let spaces = emu
         .memory_spaces()
         .map_err(|error| construction(format!("memory spaces: {error:?}")))?;
-    // The space containing an address is unique (tables forbid
-    // overlap), so assertions resolve by address against the live
-    // snapshot — no role or key inventory needed.
-    let lookup_space = |addr: u32| {
-        spaces
-            .iter()
-            .find(|info| info.range.contains(&addr))
-            .map(|info| info.id)
-            .ok_or_else(|| construction(format!("no memory space contains: {addr:#X}")))
-    };
-    // Pad bits resolve through the slot profiles: bit `i` drives the
-    // control keyed `SUITE_PAD_KEYS[i]` in the slot's group, and the
-    // field map turns that control into a buffer field. Absent from
-    // the group means no such hardware (a silent no-op, as the device
-    // masks it too); present but unmapped is loud drift.
-    let mut pad_fields = [[None; 8]; 2];
-    if assignments.slots.len() != pad_fields.len() {
-        return Err(construction("slot count exceeds pad capacity".to_string()));
-    }
-    let mut mic_candidates = Vec::new();
+    // Pad buttons resolve through the slot profiles: every keyed
+    // control in the slot's group maps through the field map to a
+    // buffer field — the microphone included, as just another button.
+    // Absent from the group means no such hardware (a silent no-op
+    // when driven, as the device masks it too); present but unmapped
+    // is loud drift. Unkeyed controls carry no logical identity and
+    // are skipped.
+    let mut pad_buttons = Vec::with_capacity(assignments.slots.len());
     for (pad, (attachment, profile)) in assignments.slots.iter().enumerate() {
         let profile = profile
             .as_ref()
@@ -162,39 +134,24 @@ pub fn open_headless_system(
             .port_groups()
             .get(pad)
             .ok_or_else(|| construction(format!("slot {pad} has no control group")))?;
-        for (bit, key) in SUITE_PAD_KEYS.iter().enumerate() {
-            let control = match group.iter().find(|info| info.abstract_key == Some(*key)) {
-                None => continue,
-                Some(info) => info.id,
+        let mut buttons = Vec::with_capacity(group.len());
+        for info in group.iter() {
+            let Some(key) = info.abstract_key else {
+                continue;
             };
-            pad_fields[pad][bit] = Some(
-                field_map
-                    .get(&(*attachment, control))
-                    .copied()
-                    .ok_or_else(|| {
-                        construction(format!("test input field missing: {attachment}/{control}"))
-                    })?,
-            );
-        }
-        for info in group.iter().filter(|info| info.abstract_key.is_none()) {
-            mic_candidates.push(field_map.get(&(*attachment, info.id)).copied().ok_or_else(
-                || {
+            let field = field_map
+                .get(&(*attachment, info.id))
+                .copied()
+                .ok_or_else(|| {
                     construction(format!(
                         "test input field missing: {attachment}/{}",
                         info.id
                     ))
-                },
-            )?);
+                })?;
+            buttons.push((key, field));
         }
+        pad_buttons.push(buttons);
     }
-    // Unbound controls (no system-agnostic key) are special hardware;
-    // exactly one is the microphone. Zero means none attached, more
-    // than one is ambiguous — both loud, never guessed.
-    let mic_field = match mic_candidates[..] {
-        [] => None,
-        [field] => Some(field),
-        _ => return Err(construction("ambiguous microphone controls".to_string())),
-    };
 
     let tap = Arc::new(Mutex::new(Vec::new()));
     emu.tap_nominal_audio(Arc::clone(&tap))
@@ -203,13 +160,8 @@ pub fn open_headless_system(
     Ok(TestSystem {
         emu,
         gui_input,
-        pad_fields,
-        mic_field,
-        // Pinned at open from the live snapshot: the suite's canonical
-        // representatives for each asserted space. Fail fast here
-        // rather than on the first assertion.
-        work_ram: lookup_space(0x0000)?,
-        ppu_vram: lookup_space(0x2000)?,
+        pad_buttons,
+        spaces,
         tap,
     })
 }
@@ -227,33 +179,32 @@ fn duplicate_p1_to_p2(base: &InputAssignments) -> Option<InputAssignments> {
 }
 
 impl TestSystem {
-    /// Publish absolute pad state for the next frame.
+    /// Drive one button for the next frame.
     ///
-    /// Bits follow the suite convention (A B Select Start Up Down
-    /// Left Right per pad); fields resolve at open against the factory
-    /// field map. Unknown hardware bits are skipped, but a field write
-    /// failure is a loud error — never a silent no-op.
-    pub fn sync_input(&mut self, pad1: u8, pad2: u8, mic: bool) -> Result<(), RomTestError> {
-        let seed = |this: &mut Self, pad: usize, bits: u8| -> Result<(), RomTestError> {
-            for bit in 0..8 {
-                if let Some(field) = this.pad_fields[pad][bit] {
-                    this.gui_input
-                        .state
-                        .set(field, InputValue::Digital(bits & (1 << bit) != 0))
-                        .map_err(|error| RomTestError::EmuThread(format!("seed input: {error}")))?;
-                }
-            }
-            Ok(())
-        };
-        seed(self, 0, pad1)?;
-        seed(self, 1, pad2)?;
-        if let Some(field) = self.mic_field {
+    /// Keys resolve at open through the slot profile groups; a key the
+    /// pad lacks is a silent no-op (no such hardware, as the device
+    /// masks it too). A field write failure is a loud error — never a
+    /// silent no-op.
+    pub fn set_button(
+        &mut self,
+        pad: usize,
+        key: AbstractKey,
+        pressed: bool,
+    ) -> Result<(), RomTestError> {
+        let field = self
+            .pad_buttons
+            .get(pad)
+            .ok_or_else(|| RomTestError::EmuThread(format!("no such pad: {pad}")))?
+            .iter()
+            .find(|(button, _)| *button == key)
+            .map(|(_, field)| *field);
+        if let Some(field) = field {
             self.gui_input
                 .state
-                .set(field, InputValue::Digital(mic))
+                .set(field, InputValue::Digital(pressed))
                 .map_err(|error| RomTestError::EmuThread(format!("seed input: {error}")))?;
+            self.gui_input.publish();
         }
-        self.gui_input.publish();
         Ok(())
     }
 
@@ -284,17 +235,20 @@ impl TestSystem {
             .map_err(|error| RomTestError::EmuThread(format!("tap lock: {error}")))
     }
 
-    /// Read one byte from Work RAM through the thread inspect path.
-    ///
-    /// Space ids resolve once at open from the thread's table snapshot,
-    /// so a table reorder can never silently mis-resolve.
-    pub fn read_work_ram_byte(&self, addr: u32) -> Result<Option<u8>, RomTestError> {
-        self.read_byte(self.work_ram, addr)
-    }
-
-    /// Read one byte from PPU VRAM through the thread inspect path.
-    pub fn read_ppu_vram_byte(&self, addr: u32) -> Result<Option<u8>, RomTestError> {
-        self.read_byte(self.ppu_vram, addr)
+    /// Read one byte through the thread inspect path. The containing
+    /// space resolves by address against the table snapshot (tables
+    /// forbid overlap, so the home is unique); an unmapped address is
+    /// a loud error, an unreadable one reads as absent.
+    pub fn read_memory_byte(&self, addr: u32) -> Result<Option<u8>, RomTestError> {
+        let space = self
+            .spaces
+            .iter()
+            .find(|info| info.range.contains(&addr))
+            .map(|info| info.id)
+            .ok_or_else(|| {
+                RomTestError::EmuThread(format!("no memory space contains: {addr:#X}"))
+            })?;
+        self.read_byte(space, addr)
     }
 
     fn read_byte(&self, space: SpaceId, addr: u32) -> Result<Option<u8>, RomTestError> {

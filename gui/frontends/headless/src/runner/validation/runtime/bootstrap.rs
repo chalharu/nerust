@@ -1,9 +1,7 @@
 use nerust_core_traits::factory::CoreFactory;
 
 use super::ValidationRuntime;
-use crate::{
-    error::RomTestError, events::Buttons, factory_adapter, manifest::RomCase, media::HashingMixer,
-};
+use crate::{error::RomTestError, factory_adapter, manifest::RomCase, media::HashingMixer};
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn new(
@@ -23,9 +21,6 @@ impl ValidationRuntime {
             system,
             mixer: HashingMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
-            pad1: Buttons::empty(),
-            pad2: Buttons::empty(),
-            mic: false,
         })
     }
 }

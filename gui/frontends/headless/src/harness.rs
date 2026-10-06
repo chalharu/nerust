@@ -4,7 +4,6 @@ use super::{
     manifest::RomCase,
     results::ExecutionTotals,
 };
-use crate::events::Buttons;
 
 pub trait CaseHarness {
     fn run_frame(&mut self) -> Result<(), RomTestError>;
@@ -37,13 +36,6 @@ pub fn drive_case<H: CaseHarness>(
     Ok(ExecutionTotals {
         frames: harness.frame_counter(),
     })
-}
-
-pub(crate) fn apply_button_state(current: Buttons, button: Buttons, state: PadState) -> Buttons {
-    match state {
-        PadState::Pressed => current | button,
-        PadState::Released => current & !button,
-    }
 }
 
 fn dispatch_pending_events<H: CaseHarness>(
