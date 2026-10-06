@@ -1727,3 +1727,49 @@ cases:
     rom: nes-test-roms/vbl_nmi_timing/7.nmi_timing.nes
     events:
       - {frame: 140, action: check_screen, hash: "0x47D4DAE682D8F8D0"}
+  - id: gbc.acid2.dmg
+    category: ppu
+    description: "GBC visual baseline: dmg-acid2 still image hash after boot settle (DMG model)."
+    rom: gbc/mattcurrie_dmg-acid2/dmg-acid2.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 60, action: check_screen, hash: "0x39D1C28A94611BBE"}
+      - {frame: 120, action: check_screen, hash: "0x39D1C28A94611BBE"}
+  - id: gbc.acid2.cgb
+    category: ppu
+    description: "GBC visual baseline: cgb-acid2 still image hash after boot settle (default CGB model)."
+    rom: gbc/mattcurrie_cgb-acid2/cgb-acid2.gbc
+    events:
+      - {frame: 60, action: check_screen, hash: "0x29878B35C9519605"}
+      - {frame: 120, action: check_screen, hash: "0x29878B35C9519605"}
+  - id: gbc.retrio.halt_bug
+    category: cpu
+    description: "GBC HALT bug behavior (retrio): zero status byte in cartridge RAM (DMG model)."
+    rom: gbc/retrio_gb-test-roms/halt_bug.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 200, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gbc.retrio.interrupt_time
+    category: cpu
+    description: "GBC interrupt handling time (retrio): zero status byte in cartridge RAM."
+    rom: gbc/retrio_gb-test-roms/interrupt_time/interrupt_time.gb
+    events:
+      - {frame: 80, action: check_memory, address: "0xA000", value: "0x00"}
+  - id: gba.jsmolka.arm
+    category: cpu
+    description: "GBA ARM instruction aggregate (jsmolka): r12 holds the first failed test number, zero means all pass."
+    rom: gba/jsmolka_gba-tests/arm/arm.gba
+    events:
+      - {frame: 10, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.jsmolka.thumb
+    category: cpu
+    description: "GBA Thumb instruction aggregate (jsmolka): r7 holds the first failed test number, zero means all pass."
+    rom: gba/jsmolka_gba-tests/thumb/thumb.gba
+    events:
+      - {frame: 10, action: check_registers, registers: {r7: "0x00"}}
+  - id: gba.jsmolka.memory
+    category: cpu
+    description: "GBA memory access aggregate (jsmolka): r12 holds the first failed test number, zero means all pass."
+    rom: gba/jsmolka_gba-tests/memory/memory.gba
+    events:
+      - {frame: 10, action: check_registers, registers: {r12: "0x00"}}
