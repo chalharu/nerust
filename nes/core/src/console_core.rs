@@ -1,13 +1,15 @@
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
     audio::{AudioBackend, StereoSample},
+    debugger::{DebugControl, DebuggerError, SpaceAccess, SpaceId, SpaceTable, StepUnit},
     identity::SystemIdentity,
 };
 use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
-    Core, cartridge_rom::CartridgeData, core_options::CoreOptions, input_types::NesInputBuffer,
+    Core, cartridge_rom::CartridgeData, core_options::CoreOptions, debugger::NES_SPACE_TABLE,
+    input_types::NesInputBuffer,
 };
 
 /// `Core` は `pub(crate)` な `Cartridge` trait (`Box<dyn Cartridge>`) を含む。
@@ -213,7 +215,82 @@ impl ConsoleCore for NesConsoleCore {
         &mut self,
     ) -> Option<Box<dyn nerust_core_traits::debugger::DebugControl + '_>> {
         self.core.0.as_mut()?;
-        Some(Box::new(crate::debugger::NesDebugControl::new(self)) as _)
+        Some(Box::new(NesDebugControl::new(self)) as _)
+    }
+}
+
+/// NES execution control and memory editing.
+///
+/// Holds the console (not just the core): frame stepping reuses the
+/// exact `render_frame` path and reports the cycles it counted.
+/// Scratch buffers are display-irrelevant (zeroed palette); stepped
+/// frames are not published to any shared framebuffer here.
+pub struct NesDebugControl<'a> {
+    console: &'a mut NesConsoleCore,
+    frame_slot: FrameBuffer,
+    audio_sink: Vec<StereoSample>,
+}
+
+impl<'a> NesDebugControl<'a> {
+    pub fn new(console: &'a mut NesConsoleCore) -> Self {
+        let mut frame_slot = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0u32; 256]),
+            },
+        );
+        frame_slot.resize(256, 240);
+        Self {
+            console,
+            frame_slot,
+            audio_sink: Vec::new(),
+        }
+    }
+}
+
+impl DebugControl for NesDebugControl<'_> {
+    fn step(&mut self, unit: StepUnit) -> Result<u64, DebuggerError> {
+        match unit {
+            StepUnit::Frame => self
+                .console
+                .render_frame_cycles(&mut self.frame_slot, &mut self.audio_sink)
+                .map_err(|_| DebuggerError::Unsupported),
+            // Instruction stepping is a required debug capability, but
+            // needs an instruction-boundary API in the CPU core first.
+            StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
+        }
+    }
+
+    fn write_memory(
+        &mut self,
+        space: SpaceId,
+        addr: u32,
+        width: u8,
+        value: u64,
+    ) -> Result<(), DebuggerError> {
+        // Validation order matters: bad width first, so "width 0 with
+        // unknown SpaceId" does not mask as UnknownSpace.
+        if !SpaceTable::width_is_valid(width) {
+            return Err(DebuggerError::BadWidth(width));
+        }
+        let info = NES_SPACE_TABLE
+            .get(space)
+            .ok_or(DebuggerError::UnknownSpace(space))?;
+        if !NES_SPACE_TABLE.covers(space, addr, width) {
+            return Err(DebuggerError::UnmappedAddress { space, addr });
+        }
+        if info.access == SpaceAccess::ReadOnly {
+            return Err(DebuggerError::ReadOnlySpace(space));
+        }
+        let core = self
+            .console
+            .core_mut()
+            .map_err(|_| DebuggerError::Unsupported)?;
+        for i in 0..width as u32 {
+            core.poke_work_ram((addr + i) as usize, (value >> (8 * i)) as u8);
+        }
+        Ok(())
     }
 }
 
@@ -224,12 +301,18 @@ mod tests {
         sync::{Arc, Mutex, atomic::AtomicBool},
     };
 
-    use nerust_core_traits::CoreConfig;
-    use nerust_input_traits::{Controller, EmuInput, OpenBusReadResult, Port};
+    use nerust_core_traits::{CoreConfig, debugger::Debugger as _};
+    use nerust_input_traits::{
+        Controller, ControllerCollection, EmuInput, OpenBusReadResult, Port,
+    };
     use nerust_render_traits::PixelFormat;
 
     use super::*;
-    use crate::input_types::NesInputBuffer;
+    use crate::{
+        debugger::{NesDebugger, SPACE_WORK_RAM},
+        input_types::NesInputBuffer,
+        nrom_test_data,
+    };
 
     fn test_emu_input() -> EmuInput {
         use nerust_input_traits::InputStateBuffer;
@@ -357,5 +440,68 @@ mod tests {
             );
         }
         assert!(loaded.debug_control().is_some());
+    }
+
+    #[test]
+    fn nes_write_read_roundtrip_is_little_endian() {
+        let mut console = NesConsoleCore::new(
+            nrom_test_data(),
+            ControllerCollection::new(vec![]),
+            test_emu_input(),
+        )
+        .expect("console");
+        {
+            let mut control = NesDebugControl::new(&mut console);
+            control
+                .write_memory(SPACE_WORK_RAM, 0x0100, 2, 0xBEEF)
+                .expect("WRAM write");
+        }
+        let core = console.core_ref().expect("loaded");
+        let debugger = NesDebugger::new(core);
+        assert_eq!(debugger.read(SPACE_WORK_RAM, 0x0100, 2), Some(0xBEEF));
+        assert_eq!(debugger.read(SPACE_WORK_RAM, 0x0100, 1), Some(0xEF));
+        assert_eq!(debugger.read(SPACE_WORK_RAM, 0x0101, 1), Some(0xBE));
+    }
+
+    #[test]
+    fn nes_control_can_be_boxed_and_rejects_in_order() {
+        let mut console = NesConsoleCore::new(
+            nrom_test_data(),
+            ControllerCollection::new(vec![]),
+            test_emu_input(),
+        )
+        .expect("console");
+        let mut boxed: Box<dyn DebugControl + '_> = Box::new(NesDebugControl::new(&mut console));
+        // BadWidth first: width 0 with unknown SpaceId is still BadWidth.
+        assert_eq!(
+            boxed.write_memory(SpaceId(9), 0x0100, 0, 0),
+            Err(DebuggerError::BadWidth(0))
+        );
+        assert_eq!(
+            boxed.write_memory(SpaceId(9), 0x0100, 1, 0),
+            Err(DebuggerError::UnknownSpace(SpaceId(9)))
+        );
+        assert_eq!(
+            boxed.write_memory(SPACE_WORK_RAM, 0x2000, 1, 0),
+            Err(DebuggerError::UnmappedAddress {
+                space: SPACE_WORK_RAM,
+                addr: 0x2000
+            })
+        );
+        assert_eq!(
+            boxed.write_memory(SPACE_WORK_RAM, 0x1FFF, 2, 0),
+            Err(DebuggerError::UnmappedAddress {
+                space: SPACE_WORK_RAM,
+                addr: 0x1FFF
+            })
+        );
+        // Step has no cycle-accounted entry point yet: explicit, not silent.
+        assert_eq!(
+            boxed.step(StepUnit::Instruction),
+            Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
+        );
+        // Frame stepping reuses the render path and reports real cycles.
+        let cycles = boxed.step(StepUnit::Frame).expect("frame step");
+        assert!(cycles > 0);
     }
 }

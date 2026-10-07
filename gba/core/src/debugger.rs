@@ -40,16 +40,9 @@
 //!   semantics deliberately do not apply: the debugger shows physical
 //!   contents.
 
-use nerust_core_traits::{
-    audio::StereoSample,
-    debugger::{
-        DebugControl, Debugger, DebuggerError, SpaceAccess, SpaceId, SpaceInfo, SpaceTable,
-        StepUnit,
-    },
-};
-use nerust_render_traits::{FrameBuffer, PixelFormat};
+use nerust_core_traits::debugger::{Debugger, SpaceAccess, SpaceId, SpaceInfo, SpaceTable};
 
-use crate::{console_core::GbaConsoleCore, system::GbaSystem};
+use crate::system::GbaSystem;
 
 /// Whole decoded bus (`0x00000000..=0x0FFFFFFF`). The only GBA space.
 /// Above `0x0FFFFFFF` stays `Unmapped` (loud manifest error).
@@ -65,7 +58,7 @@ static GBA_SPACES: [SpaceInfo; 1] = [SpaceInfo {
 }];
 
 /// Validated GBA memory-space table.
-static GBA_SPACE_TABLE: SpaceTable = SpaceTable::build(&GBA_SPACES);
+pub(crate) static GBA_SPACE_TABLE: SpaceTable = SpaceTable::build(&GBA_SPACES);
 
 /// Read-only GBA observer.
 ///
@@ -135,82 +128,11 @@ impl Debugger for GbaDebugger<'_> {
     }
 }
 
-/// GBA execution control.
-///
-/// Holds the console: frame stepping reuses the exact `render_frame`
-/// path and reports the cycles it counted. The scratch buffer is
-/// display-irrelevant; stepped frames are not published to any shared
-/// framebuffer here. The space is read-only in phase 1, so every
-/// in-range write is refused as `ReadOnlySpace`.
-pub struct GbaDebugControl<'a> {
-    console: &'a mut GbaConsoleCore,
-    frame_slot: FrameBuffer,
-    audio_sink: Vec<StereoSample>,
-}
-
-impl<'a> GbaDebugControl<'a> {
-    pub fn new(console: &'a mut GbaConsoleCore) -> Self {
-        let mut frame_slot = FrameBuffer::with_capacity(240, 160, PixelFormat::Rgba);
-        frame_slot.resize(240, 160);
-        Self {
-            console,
-            frame_slot,
-            audio_sink: Vec::new(),
-        }
-    }
-}
-
-impl DebugControl for GbaDebugControl<'_> {
-    fn step(&mut self, unit: StepUnit) -> Result<u64, DebuggerError> {
-        match unit {
-            StepUnit::Frame => self
-                .console
-                .render_frame_cycles(&mut self.frame_slot, &mut self.audio_sink)
-                .map_err(|_| DebuggerError::Unsupported),
-            StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
-        }
-    }
-
-    fn write_memory(
-        &mut self,
-        space: SpaceId,
-        addr: u32,
-        width: u8,
-        _value: u64,
-    ) -> Result<(), DebuggerError> {
-        // Validation order matters: bad width first, so "width 0 with
-        // unknown SpaceId" does not mask as UnknownSpace.
-        if !SpaceTable::width_is_valid(width) {
-            return Err(DebuggerError::BadWidth(width));
-        }
-        let info = GBA_SPACE_TABLE
-            .get(space)
-            .ok_or(DebuggerError::UnknownSpace(space))?;
-        if !GBA_SPACE_TABLE.covers(space, addr, width) {
-            return Err(DebuggerError::UnmappedAddress { space, addr });
-        }
-        if info.access == SpaceAccess::ReadOnly {
-            return Err(DebuggerError::ReadOnlySpace(space));
-        }
-        Err(DebuggerError::ReadOnlySpace(space))
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex, atomic::AtomicBool},
-    };
-
-    use nerust_core_traits::{
-        ConsoleCore as _, CoreConfig,
-        debugger::{DebugControl, Debugger, DebuggerError, StepUnit, validate_spaces},
-    };
-    use nerust_input_traits::{EmuInput, InputStateBuffer};
+    use nerust_core_traits::debugger::{Debugger, validate_spaces};
 
     use super::*;
-    use crate::input_types::GbaInputBuffer;
 
     #[test]
     fn gba_spaces_validate() {
@@ -239,33 +161,6 @@ mod tests {
         assert!(!GBA_SPACE_TABLE.covers(SPACE_MEMORY, 0xFFFFFFFF, 4));
         assert!(!GBA_SPACE_TABLE.covers(SpaceId(1), 0x02000000, 1));
         assert!(!GBA_SPACE_TABLE.covers(SPACE_MEMORY, 0x02000000, 0));
-    }
-
-    fn test_emu_input() -> EmuInput {
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-            Arc::new(Mutex::new(Box::<GbaInputBuffer>::default()));
-        EmuInput::new(
-            shared,
-            Arc::new(AtomicBool::new(false)),
-            Box::new(|| Box::<GbaInputBuffer>::default()),
-        )
-    }
-
-    fn load_console() -> GbaConsoleCore {
-        let mut console = GbaConsoleCore::new(test_emu_input());
-        console
-            .load(
-                &rom(),
-                &CoreConfig {
-                    region: None,
-                    bios_paths: HashMap::new(),
-                    controllers: HashMap::new(),
-                    core_options: None,
-                    audio_sample_rate: None,
-                },
-            )
-            .expect("test ROM loads");
-        console
     }
 
     fn rom() -> Vec<u8> {
@@ -315,56 +210,5 @@ mod tests {
         assert_eq!(boxed.read(SPACE_MEMORY, 0x02000000, 0), None);
         assert_eq!(boxed.read(SPACE_MEMORY, 0x02000000, 3), None);
         assert_eq!(boxed.read(SpaceId(9), 0x02000000, 1), None);
-    }
-
-    #[test]
-    fn gba_control_can_be_boxed_and_rejects_in_order() {
-        let mut console = load_console();
-        let mut boxed: Box<dyn DebugControl + '_> = Box::new(GbaDebugControl::new(&mut console));
-        // BadWidth first: width 0 with unknown SpaceId is still BadWidth.
-        assert_eq!(
-            boxed.write_memory(SpaceId(9), 0x02000000, 0, 0),
-            Err(DebuggerError::BadWidth(0))
-        );
-        assert_eq!(
-            boxed.write_memory(SpaceId(9), 0x02000000, 1, 0),
-            Err(DebuggerError::UnknownSpace(SpaceId(9)))
-        );
-        assert_eq!(
-            boxed.write_memory(SPACE_MEMORY, 0x10000000, 1, 0),
-            Err(DebuggerError::UnmappedAddress {
-                space: SPACE_MEMORY,
-                addr: 0x10000000
-            })
-        );
-        // Phase 1 is read-only.
-        assert_eq!(
-            boxed.write_memory(SPACE_MEMORY, 0x02000000, 1, 0),
-            Err(DebuggerError::ReadOnlySpace(SPACE_MEMORY))
-        );
-        // No instruction stepping yet: explicit, not silent.
-        assert_eq!(
-            boxed.step(StepUnit::Instruction),
-            Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
-        );
-        // Frame stepping reuses the render path and reports real cycles.
-        let cycles = boxed.step(StepUnit::Frame).expect("frame step");
-        assert!(cycles > 0);
-        assert!(cycles <= 280_896);
-    }
-
-    #[test]
-    fn gba_debugger_wiring_follows_load_state() {
-        let mut empty = GbaConsoleCore::new(test_emu_input());
-        assert!(empty.debugger().is_none());
-        assert!(empty.debug_control().is_none());
-
-        let mut loaded = load_console();
-        assert!(loaded.debugger().is_some());
-        assert!(loaded.debug_control().is_some());
-
-        loaded.unload();
-        assert!(loaded.debugger().is_none());
-        assert!(loaded.debug_control().is_none());
     }
 }
