@@ -170,11 +170,12 @@ fn run_command(
     .map_err(|error| error.to_string())?;
 
     println!(
-        "report={} mode={} passed={} failed={} ignored={} elapsed_secs={:.1}",
+        "report={} mode={} passed={} failed={} expected-fail={} ignored={} elapsed_secs={:.1}",
         summary.report_path.display(),
         mode,
         summary.passed,
         summary.failed,
+        summary.expected_failed,
         summary.ignored,
         started.elapsed().as_secs_f64(),
     );
@@ -204,11 +205,18 @@ fn print_outcome(outcome: &CaseOutcome, full_bytes: bool) {
     }
     match outcome {
         CaseOutcome::Completed(validation) => {
+            let status = if validation.passed() {
+                "pass"
+            } else if validation.is_expected_failure() {
+                "expected-fail"
+            } else {
+                "fail"
+            };
             println!(
                 "case={} category={} status={} frames={} final_hash=0x{:016X}",
                 outcome.case_id(),
                 validation.category.label(),
-                if validation.passed() { "pass" } else { "fail" },
+                status,
                 validation.frames,
                 validation.final_screen_hash
             );

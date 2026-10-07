@@ -100,6 +100,14 @@ pub struct RomCase {
     /// Absent means in scope.
     #[serde(default = "default_ci")]
     pub ci: bool,
+    /// Tracked red: the case is expected to fail its assertions until
+    /// an emulator fix graduates it. Mismatches are tolerated and
+    /// reported distinctly; a run with NO mismatches is stale and
+    /// fails loudly (graduate by dropping this flag). Infra errors
+    /// are never tolerated. Mirrors the legacy `expected_failures`
+    /// boxes, including their no-rot rule.
+    #[serde(default)]
+    pub expected_failure: bool,
     /// Load-affecting options as raw strings, passed through to the
     /// factory CLI options schema as argv (e.g. `"--mmc3-irq-variant",
     /// "nec"`, `"--submapper", "1"`); clap validates them there.

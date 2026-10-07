@@ -37,6 +37,13 @@ fn run_generated_manifest_case(case_id: &str) {
 
     match outcome {
         CaseOutcome::Completed(validation) if validation.passed() => {}
+        CaseOutcome::Completed(validation) if validation.is_expected_failure() => {
+            println!(
+                "{}: tracked expected failure ({} mismatch lines)",
+                validation.case_id,
+                validation.failures.len()
+            );
+        }
         CaseOutcome::Completed(validation) => {
             panic!(
                 "{}:\n{}",
