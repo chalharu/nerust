@@ -13,7 +13,7 @@ pub(super) fn validate_case(
     match read_rom(case).and_then(|rom_bytes| {
         ValidationRunner::new(factories, case, &rom_bytes, options)?.run_case(case)
     }) {
-        Ok(validation) => CaseOutcome::Completed(validation),
+        Ok(validation) => CaseOutcome::Completed(Box::new(validation)),
         Err(RomTestError::NoMatchingSystem { case_id }) => CaseOutcome::Skipped {
             case_id,
             category: case.category,
