@@ -9716,30 +9716,6 @@ cases:
     expected_failure: true
     events:
       - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.oam_write_dmgc.expected
-    category: ppu
-    description: "[tracked-fail] AGE oam-write-dmgC (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
-    rom: gbc/c-sp_age-test-roms/artifacts/oam/oam-write-dmgC.gb
-    options: ["--gbc-hardware-model", "dmg"]
-    expected_failure: true
-    events:
-      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.stat_mode_window_dmgc.expected
-    category: ppu
-    description: "[tracked-fail] AGE stat-mode-window-dmgC (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
-    rom: gbc/c-sp_age-test-roms/artifacts/stat-mode-window/stat-mode-window-dmgC.gb
-    options: ["--gbc-hardware-model", "dmg"]
-    expected_failure: true
-    events:
-      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.vram_read_dmgc.expected
-    category: ppu
-    description: "[tracked-fail] AGE vram-read-dmgC (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
-    rom: gbc/c-sp_age-test-roms/artifacts/vram/vram-read-dmgC.gb
-    options: ["--gbc-hardware-model", "dmg"]
-    expected_failure: true
-    events:
-      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
   - id: gbc.age.stat_int_dmgc_cgbbce.dmg.expected
     category: ppu
     description: "[tracked-fail] AGE stat-int (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
