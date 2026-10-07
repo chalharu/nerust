@@ -38,12 +38,10 @@ Each upstream is imported as a squashed Git subtree under `repo/` where build is
 
 ## Usage
 
-Test ROMs are executed via the `nerust_gba_rom_test` crate (`gba/rom_test/`). The manifest `gba/rom_test/rom_tests.yaml` defines `rom_root: ../../roms/gba` and suites `jsmolka_gba-tests`, `alyosha_gba-tests`, `nba-emu_hw-test`, `armwrestler-gba-fixed`, `PeterLemon-GBA` and `mgba-suite` (if built). Run with:
+Test ROMs are executed via the unified headless harness (`nerust_rom_test`, manifest `gui/frontends/headless/rom_tests.yaml` with `rom_root: ../../roms/gba`). Run with:
 
 ```sh
-cargo run -p nerust_gba_rom_test
-cargo run -p nerust_gba_rom_test -- jsmolka_bios
-cargo run -p nerust_gba_rom_test -- nba_haltcnt
+cargo test -p nerust_rom_test --features gba
 ```
 
 Each test loads the ROM via `GbaSystem::from_test_rom`, steps `cycles` T-cycles, and verifies the expected register/memory signature.

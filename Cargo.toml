@@ -12,13 +12,11 @@ members = [
   "gba/core",
   "gba/device",
   "gba/factory",
-  "gba/rom_test",
   "gba/settings",
   "gbc/core",
   "gbc/device",
   "gbc/factory",
   "gbc/settings",
-  "gbc/rom_test",
   "keyboard",
   "nes/controller",
   "nes/core",
@@ -168,7 +166,6 @@ nerust_emu_thread = { path = "traits/emu-thread" }
 nerust_gba_core = { path = "gba/core" }
 nerust_gba_device = { path = "gba/device" }
 nerust_gba_factory = { path = "gba/factory" }
-nerust_gba_rom_test = { path = "gba/rom_test" }
 nerust_gba_settings = { path = "gba/settings" }
 nerust_gbc_core = { path = "gbc/core" }
 nerust_gbc_device = { path = "gbc/device" }

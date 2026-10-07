@@ -93,7 +93,7 @@ jobs:
               --features tao,wgpu --archive-file artifacts/tao.tar.zst
           else
             cargo llvm-cov nextest-archive --workspace --exclude nerust_rom_test \
-              --exclude nerust_gbc_rom_test --exclude nerust_gbc_core \
+              --exclude nerust_gbc_core \
               --exclude nerust_nes_core --no-default-features --features gtk,opengl,nes \
               --archive-file artifacts/gtk.tar.zst
           fi
