@@ -158,7 +158,7 @@ impl CaseValidation {
 
 #[derive(Debug, Clone)]
 pub enum CaseOutcome {
-    Completed(CaseValidation),
+    Completed(Box<CaseValidation>),
     InternalError {
         case_id: String,
         category: RomCategory,
