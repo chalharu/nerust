@@ -167,6 +167,21 @@ impl RomCase {
                 self.id
             )));
         }
+        // Contradictory flag combinations fail fast instead of
+        // silently degrading: pending never executes (flag inert),
+        // and the perf gate hard-errors on non-passing validation.
+        if self.pending_reason.is_some() && self.expected_failure {
+            return Err(RomTestError::InvalidManifest(format!(
+                "ROM case `{}` combines pending_reason with expected_failure (pick one)",
+                self.id
+            )));
+        }
+        if self.perf && self.expected_failure {
+            return Err(RomTestError::InvalidManifest(format!(
+                "ROM case `{}` combines perf with expected_failure (perf gate rejects non-passing validation)",
+                self.id
+            )));
+        }
 
         let mut last_frame = 0_u64;
         for (index, event) in self.events.iter().enumerate() {
