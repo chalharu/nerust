@@ -8595,44 +8595,1553 @@ cases:
       - {frame: 87, action: standard_controller, pad: pad1, button: gba.control.a, state: released}
       - {frame: 89, action: check_serial, channel: "mgba-log", bytes: "0x47616D6520426F7920416476616E636520546573742053756974650A3D3D3D0A424547494E3A2053494F2074696D696E672074657374730A53494F2074696D696E6720746573743A204D756C74692F392E366B0A534B49505045443A204D756C74692F392E366B0A53494F2074696D696E6720746573743A204D756C74692F33382E346B0A534B49505045443A204D756C74692F33382E346B0A53494F2074696D696E6720746573743A204D756C74692F35372E366B0A534B49505045443A204D756C74692F35372E366B0A53494F2074696D696E6720746573743A204D756C74692F3131352E326B0A534B49505045443A204D756C74692F3131352E326B0A53494F2074696D696E6720746573743A204E6F726D616C382F3235366B0A504153533A204E6F726D616C382F3235366B0A53494F2074696D696E6720746573743A204E6F726D616C382F324D0A504153533A204E6F726D616C382F324D0A53494F2074696D696E6720746573743A204E6F726D616C33322F3235366B0A504153533A204E6F726D616C33322F3235366B0A53494F2074696D696E6720746573743A204E6F726D616C33322F324D0A504153533A204E6F726D616C33322F324D0A454E443A20342F340A"}
   - id: gbc.age.lcd_align_ly_cgbbc.cgbc
-    category: cpu
+    category: ppu
     description: "AGE lcd-align-ly (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
     rom: gbc/c-sp_age-test-roms/artifacts/lcd-align-ly/lcd-align-ly-cgbBC.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
       - {frame: 500, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
   - id: gbc.age.ly_ncmbc.cgbc
-    category: cpu
+    category: ppu
     description: "AGE ly (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
     rom: gbc/c-sp_age-test-roms/artifacts/ly/ly-ncmBC.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
       - {frame: 40, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
   - id: gbc.age.oam_read_ncmbc.cgbc
-    category: cpu
+    category: ppu
     description: "AGE oam-read (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
     rom: gbc/c-sp_age-test-roms/artifacts/oam/oam-read-ncmBC.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
       - {frame: 100, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
   - id: gbc.age.spsw_interrupts_cgbbc.cgbc
-    category: cpu
+    category: ppu
     description: "AGE spsw-interrupts (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
     rom: gbc/c-sp_age-test-roms/artifacts/speed-switch/caution/spsw-interrupts-cgbBC.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
       - {frame: 30, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
   - id: gbc.age.spsw_tima_cgbbc.cgbc
-    category: cpu
+    category: ppu
     description: "AGE spsw-tima (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
     rom: gbc/c-sp_age-test-roms/artifacts/speed-switch/spsw-tima-cgbBC.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
       - {frame: 100, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
   - id: gbc.age.stat_mode_ncmbc.cgbc
-    category: cpu
+    category: ppu
     description: "AGE stat-mode (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
     rom: gbc/c-sp_age-test-roms/artifacts/stat-mode/stat-mode-ncmBC.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
       - {frame: 100, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.gbmicro.halt_op_dupe_delay.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest halt_op_dupe_delay: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/halt_op_dupe_delay.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_di_timing_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_di_timing_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_di_timing_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_if_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_if_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_if_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_l0.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_l0: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_l0.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_l1.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_l1: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_l1.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_l2.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_l2: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_l2.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx0.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx0: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx0.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx0_if_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx0_if_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx0_if_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx0_if_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx0_if_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx0_if_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx0_if_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx0_if_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx0_if_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx1_if_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx1_if_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx1_if_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx1_if_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx1_if_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx1_if_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx1_if_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx1_if_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx1_if_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx1_nops_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx1_nops_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx1_nops_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx2_if_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx2_if_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx2_if_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx2_if_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx2_if_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx2_if_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx2_if_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx2_if_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx2_if_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx2_nops_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx2_nops_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx2_nops_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx3_if_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx3_if_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx3_if_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx3_if_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx3_if_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx3_if_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx3_if_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx3_if_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx3_if_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx3_nops_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx3_nops_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx3_nops_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx4.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx4: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx4.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx4_if_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx4_if_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx4_if_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx4_if_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx4_if_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx4_if_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx4_if_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx4_if_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx4_if_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx4_nops_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx4_nops_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx4_nops_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx5_if_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx5_if_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx5_if_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx5_if_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx5_if_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx5_if_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx5_if_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx5_if_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx5_if_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx5_nops_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx5_nops_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx5_nops_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx6_if_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx6_if_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx6_if_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx6_if_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx6_if_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx6_if_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx6_if_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx6_if_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx6_if_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx6_nops_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx6_nops_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx6_nops_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx7.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx7: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx7.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx7_if_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx7_if_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx7_if_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx7_if_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx7_if_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx7_if_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx7_if_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx7_if_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx7_if_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_int_scx7_nops_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_int_scx7_nops_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_int_scx7_nops_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_scx3_if_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_scx3_if_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_scx3_if_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_scx3_if_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_scx3_if_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_scx3_if_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_scx3_if_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_scx3_if_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_scx3_if_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.hblank_scx3_int_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest hblank_scx3_int_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/hblank_scx3_int_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_halt_scx0.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_halt_scx0: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_halt_scx0.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_halt_scx1.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_halt_scx1: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_halt_scx1.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_halt_scx2.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_halt_scx2: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_halt_scx2.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_halt_scx3.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_halt_scx3: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_halt_scx3.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_halt_scx4.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_halt_scx4: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_halt_scx4.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_halt_scx5.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_halt_scx5: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_halt_scx5.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_halt_scx6.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_halt_scx6: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_halt_scx6.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_halt_scx7.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_halt_scx7: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_halt_scx7.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_incs_scx0.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_incs_scx0: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_incs_scx0.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_incs_scx1.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_incs_scx1: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_incs_scx1.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_incs_scx2.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_incs_scx2: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_incs_scx2.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_incs_scx3.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_incs_scx3: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_incs_scx3.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_incs_scx4.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_incs_scx4: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_incs_scx4.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_incs_scx5.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_incs_scx5: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_incs_scx5.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_incs_scx6.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_incs_scx6: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_incs_scx6.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_incs_scx7.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_incs_scx7: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_incs_scx7.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_nops_scx0.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_nops_scx0: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_nops_scx0.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_nops_scx1.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_nops_scx1: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_nops_scx1.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_nops_scx2.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_nops_scx2: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_nops_scx2.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_nops_scx3.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_nops_scx3: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_nops_scx3.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_nops_scx4.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_nops_scx4: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_nops_scx4.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_nops_scx5.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_nops_scx5: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_nops_scx5.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_nops_scx6.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_nops_scx6: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_nops_scx6.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_hblank_nops_scx7.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_hblank_nops_scx7: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_hblank_nops_scx7.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_oam_halt.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_oam_halt: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_oam_halt.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_oam_incs.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_oam_incs: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_oam_incs.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.int_oam_nops.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest int_oam_nops: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/int_oam_nops.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.lcdon_to_if_oam_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest lcdon_to_if_oam_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/lcdon_to_if_oam_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.lcdon_to_oam_int_l0.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest lcdon_to_oam_int_l0: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/lcdon_to_oam_int_l0.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.lcdon_to_oam_int_l1.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest lcdon_to_oam_int_l1: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/lcdon_to_oam_int_l1.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.lcdon_to_oam_int_l2.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest lcdon_to_oam_int_l2: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/lcdon_to_oam_int_l2.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.lcdon_to_stat1_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest lcdon_to_stat1_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/lcdon_to_stat1_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.lcdon_to_stat1_d.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest lcdon_to_stat1_d: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/lcdon_to_stat1_d.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_144_oam_int_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_144_oam_int_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_144_oam_int_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_144_oam_int_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_144_oam_int_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_144_oam_int_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_144_oam_int_d.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_144_oam_int_d: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_144_oam_int_d.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_153_ly_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_153_ly_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_153_ly_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_153_ly_d.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_153_ly_d: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_153_ly_d.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_153_lyc0_int_inc_sled.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_153_lyc0_int_inc_sled: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_153_lyc0_int_inc_sled.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_153_lyc0_stat_timing_d.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_153_lyc0_stat_timing_d: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_153_lyc0_stat_timing_d.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_153_lyc0_stat_timing_e.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_153_lyc0_stat_timing_e: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_153_lyc0_stat_timing_e.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_153_lyc0_stat_timing_f.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_153_lyc0_stat_timing_f: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_153_lyc0_stat_timing_f.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_153_lyc153_stat_timing_c.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_153_lyc153_stat_timing_c: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_153_lyc153_stat_timing_c.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_153_lyc153_stat_timing_d.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_153_lyc153_stat_timing_d: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_153_lyc153_stat_timing_d.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_153_lyc_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_153_lyc_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_153_lyc_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_153_lyc_int_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_153_lyc_int_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_153_lyc_int_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.line_65_ly.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest line_65_ly: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/line_65_ly.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.oam_int_halt_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest oam_int_halt_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/oam_int_halt_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.oam_int_halt_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest oam_int_halt_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/oam_int_halt_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.oam_int_if_edge_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest oam_int_if_edge_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/oam_int_if_edge_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.oam_int_if_edge_d.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest oam_int_if_edge_d: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/oam_int_if_edge_d.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.oam_int_if_level_d.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest oam_int_if_level_d: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/oam_int_if_level_d.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.oam_int_inc_sled.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest oam_int_inc_sled: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/oam_int_inc_sled.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.oam_int_nops_a.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest oam_int_nops_a: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/oam_int_nops_a.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.oam_int_nops_b.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest oam_int_nops_b: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/oam_int_nops_b.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_ly_119.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_ly_119: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_ly_119.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_ly_233.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_ly_233: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_ly_233.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_oam_000.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_oam_000: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_oam_000.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_oam_005.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_oam_005: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_oam_005.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_oam_069.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_oam_069: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_oam_069.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_oam_119.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_oam_119: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_oam_119.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_oam_183.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_oam_183: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_oam_183.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_oam_233.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_oam_233: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_oam_233.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_stat_000.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_stat_000: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_stat_000.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_stat_005.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_stat_005: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_stat_005.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_stat_006.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_stat_006: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_stat_006.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_stat_026.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_stat_026: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_stat_026.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_stat_069.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_stat_069: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_stat_069.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_stat_119.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_stat_119: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_stat_119.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_stat_120.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_stat_120: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_stat_120.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_stat_140.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_stat_140: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_stat_140.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_stat_183.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_stat_183: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_stat_183.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_stat_234.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_stat_234: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_stat_234.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_vram_025.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_vram_025: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_vram_025.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_vram_069.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_vram_069: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_vram_069.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_vram_139.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_vram_139: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_vram_139.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.poweron_vram_183.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest poweron_vram_183: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/poweron_vram_183.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.gbmicro.stat_write_glitch_l154_d.expected
+    category: cpu
+    description: "[tracked-fail] GBMicrotest stat_write_glitch_l154_d: FF82 status must read 0x01 (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/aappleby_gbmicrotest/repo/bin/stat_write_glitch_l154_d.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 30, action: check_memory, address: "0xFF82", value: "0x01"}
+  - id: gbc.age.oam_write_dmgc.dmg.expected
+    category: ppu
+    description: "[tracked-fail] AGE oam-write (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/c-sp_age-test-roms/artifacts/oam/oam-write-dmgC.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.stat_mode_window_dmgc.dmg.expected
+    category: ppu
+    description: "[tracked-fail] AGE stat-mode-window (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/c-sp_age-test-roms/artifacts/stat-mode-window/stat-mode-window-dmgC.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.vram_read_dmgc.dmg.expected
+    category: ppu
+    description: "[tracked-fail] AGE vram-read (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/c-sp_age-test-roms/artifacts/vram/vram-read-dmgC.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.halt_m0_interrupt_dmgc_cgbbce.dmg.expected
+    category: ppu
+    description: "[tracked-fail] AGE halt-m0-interrupt (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/c-sp_age-test-roms/artifacts/halt/halt-m0-interrupt-dmgC-cgbBCE.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.ly_dmgc_cgbbc.dmg.expected
+    category: ppu
+    description: "[tracked-fail] AGE ly (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/c-sp_age-test-roms/artifacts/ly/ly-dmgC-cgbBC.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.stat_int_dmgc_cgbbce.dmg.expected
+    category: ppu
+    description: "[tracked-fail] AGE stat-int (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/c-sp_age-test-roms/artifacts/stat-interrupt/stat-int-dmgC-cgbBCE.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.stat_mode_sprites_dmgc_cgbbce.dmg.expected
+    category: ppu
+    description: "[tracked-fail] AGE stat-mode-sprites (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/c-sp_age-test-roms/artifacts/stat-mode-sprites/stat-mode-sprites-dmgC-cgbBCE.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.oam_read_dmgc_cgbbc.dmg.expected
+    category: ppu
+    description: "[tracked-fail] AGE oam-read (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/c-sp_age-test-roms/artifacts/oam/oam-read-dmgC-cgbBC.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gba.alyosha_bl_irq.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_BL_IRQ (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/BL_IRQ.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_bl_irq_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_BL_IRQ_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/BL_IRQ_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_bl_irq_3.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_BL_IRQ_3 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/BL_IRQ_3.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_bl_irq_r14.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_BL_IRQ_R14 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/BL_IRQ_R14.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_rom_fixed.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_DMA_ROM_Fixed (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/DMA/DMA_ROM_Fixed.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_pause_timing_rom_to_iwram.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_DMA_pause_timing_ROM_to_IWRAM (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/DMA/DMA_pause_timing_ROM_to_IWRAM.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_pause_timing_end_1.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_DMA_pause_timing_end_1 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/DMA/DMA_pause_timing_end_1.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_pause_timing_end_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_DMA_pause_timing_end_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/DMA/DMA_pause_timing_end_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_pause_timing_end_3.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_DMA_pause_timing_end_3 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/DMA/DMA_pause_timing_end_3.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_pause_timing_end_4.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_DMA_pause_timing_end_4 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/DMA/DMA_pause_timing_end_4.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_pause_timing_mid_1.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_DMA_pause_timing_mid_1 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/DMA/DMA_pause_timing_mid_1.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_pause_timing_mid_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_DMA_pause_timing_mid_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/DMA/DMA_pause_timing_mid_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_ie.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_IE (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/IE.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_if.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_IF (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/IF.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_if_timer.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_IF_Timer (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/IF_Timer.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_irq_sub.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_IRQ_sub (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/IRQ_sub.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_irq_sub_slow.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_IRQ_sub_slow (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/IRQ_sub_slow.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_irq_br_pre_tim.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_Internal_Cycle_DMA_IRQ_Br_pre_tim (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_IRQ_Br_pre_tim.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_mul.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_Internal_Cycle_DMA_Mul (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_Mul.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_internal_cycle_dma_tim_br_pre.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_Internal_Cycle_DMA_TIM_Br_pre (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/Interactions/Internal_Cycle_DMA_TIM_Br_pre.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_sprite_last_vram_access.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_Sprite_Last_VRAM_Access (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/ppu/Sprite_Last_VRAM_Access.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_sprite_last_vram_access_free.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_Sprite_Last_VRAM_Access_Free (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/ppu/Sprite_Last_VRAM_Access_Free.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_bounday_test_1.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_bounday_test_1 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/bounday_test_1.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_dma_from_bios.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_dma_from_bios (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/timing/dma_from_bios.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_fifo.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_fifo (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/fifo_dma/fifo.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_fifo_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_fifo_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/fifo_dma/fifo_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_fifo_3.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_fifo_3 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/fifo_dma/fifo_3.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_fifo_4.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_fifo_4 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/fifo_dma/fifo_4.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_fifo_5.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_fifo_5 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/fifo_dma/fifo_5.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_fifo_6.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_fifo_6 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/fifo_dma/fifo_6.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_fifo_dma_disable_4.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_fifo_dma_disable_4 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/fifo_dma/fifo_dma_disable_4.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_halt_pc.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_halt_pc (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/halt_pc.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_halt_pc_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_halt_pc_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/halt_pc_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_halt_pc_3.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_halt_pc_3 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/irq/halt_pc_3.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetch_enable.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetch_enable (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/timing/prefetch_enable.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetch_enable_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetch_enable_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/timing/prefetch_enable_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_boundary_1.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_boundary_1 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_boundary_1.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_boundary_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_boundary_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_boundary_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_boundary_4.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_boundary_4 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_boundary_4.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_branch_thumb.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_branch_thumb (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_branch_thumb.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_branch_thumb_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_branch_thumb_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_branch_thumb_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_branch_thumb_3.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_branch_thumb_3 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_branch_thumb_3.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_branch_thumb_4.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_branch_thumb_4 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_branch_thumb_4.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_branch_thumb_5.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_branch_thumb_5 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_branch_thumb_5.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_branch_thumb_arm.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_branch_thumb_arm (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_branch_thumb_arm.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_branch_thumb_arm_3.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_branch_thumb_arm_3 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_branch_thumb_arm_3.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_branch_thumb_arm_4.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_branch_thumb_arm_4 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_branch_thumb_arm_4.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_dma.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_dma (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_dma.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_full_arm.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_full_arm (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_full_arm.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_full_arm_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_full_arm_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_full_arm_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_prefetcher_full_thumb.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_prefetcher_full_thumb (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/prefetcher/prefetcher_full_thumb.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_psr.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_psr (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/psr/psr.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_serial_time.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_serial_time (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/Serial/serial_time.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_serial_time_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_serial_time_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/Serial/serial_time_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_serial_time_2m.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_serial_time_2M (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/Serial/serial_time_2M.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_serial_time_2m_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_serial_time_2M_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/Serial/serial_time_2M_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_serial_time_2m_3.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_serial_time_2M_3 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/Serial/serial_time_2M_3.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_serial_time_3.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_serial_time_3 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/Serial/serial_time_3.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_serial_time_start_bit_2.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_serial_time_start_bit_2 (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/Serial/serial_time_start_bit_2.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_start_up_vbl.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_start_up_vbl (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/ppu/start_up_vbl.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_timer.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_timer (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/timer/timer.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_timer_disable.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_timer_disable (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/timer/timer_disable.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.alyosha_timer_reset.expected
+    category: cpu
+    description: "[tracked-fail] GBA alyosha_timer_reset (alyosha): r12 first-failed number must be zero (currently fails; see legacy expected_failures)."
+    rom: gba/alyosha_gba-tests/timer/timer_reset.gba
+    expected_failure: true
+    events:
+      - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gba.nba_haltcnt.expected
+    category: cpu
+    description: "[tracked-fail] GBA nba_haltcnt: halt counters must read 6 (currently fails; legacy expected-failure: HLE phases need HW anchoring)."
+    rom: gba/nba-emu_hw-test/haltcnt/haltcnt.gba
+    expected_failure: true
+    events:
+      - {frame: 11, action: check_memory, address: "0x030004EC", value: "0x06"}
+      - {frame: 11, action: check_memory, address: "0x030004ED", value: "0x00"}
+      - {frame: 11, action: check_memory, address: "0x030004EE", value: "0x00"}
+      - {frame: 11, action: check_memory, address: "0x030004EF", value: "0x00"}
+      - {frame: 11, action: check_memory, address: "0x030004F0", value: "0x06"}
+      - {frame: 11, action: check_memory, address: "0x030004F1", value: "0x00"}
+      - {frame: 11, action: check_memory, address: "0x030004F2", value: "0x00"}
+      - {frame: 11, action: check_memory, address: "0x030004F3", value: "0x00"}
+  - id: gba.nba_archive_ppu_exact_timing.expected
+    category: cpu
+    description: "[tracked-fail] GBA nba_archive_ppu_exact_timing: counters must read 7 (currently 6/7; DMA3-XFER stays out)."
+    rom: gba/nba-emu_hw-test/archive/ppu/exact-timing/exact-timing.gba
+    expected_failure: true
+    events:
+      - {frame: 72, action: check_memory, address: "0x0300062C", value: "0x07"}
+      - {frame: 72, action: check_memory, address: "0x0300062D", value: "0x00"}
+      - {frame: 72, action: check_memory, address: "0x0300062E", value: "0x00"}
+      - {frame: 72, action: check_memory, address: "0x0300062F", value: "0x00"}
+      - {frame: 72, action: check_memory, address: "0x03000630", value: "0x07"}
+      - {frame: 72, action: check_memory, address: "0x03000631", value: "0x00"}
+      - {frame: 72, action: check_memory, address: "0x03000632", value: "0x00"}
+      - {frame: 72, action: check_memory, address: "0x03000633", value: "0x00"}

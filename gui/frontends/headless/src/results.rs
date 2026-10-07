@@ -108,11 +108,22 @@ pub struct CaseValidation {
     pub serial_checks: Vec<SerialCheck>,
     pub audio: AudioObservation,
     pub failures: Vec<String>,
+    pub expected_failure: bool,
+    /// No-rot flag: an expected-failure case whose assertions all
+    /// passed. Set at finish; always fails CI (graduate by dropping
+    /// `expected_failure`, never by keeping it).
+    pub stale_expected_failure: bool,
 }
 
 impl CaseValidation {
     pub fn passed(&self) -> bool {
         self.failures.is_empty()
+    }
+
+    /// Tracked red: flagged expected-failure with actual mismatches,
+    /// and not stale. Tolerated by CI (distinct from pass).
+    pub fn is_expected_failure(&self) -> bool {
+        self.expected_failure && !self.stale_expected_failure && !self.failures.is_empty()
     }
 }
 
@@ -165,5 +176,12 @@ impl CaseOutcome {
 
     pub fn is_skipped(&self) -> bool {
         matches!(self, CaseOutcome::Skipped { .. })
+    }
+
+    pub fn is_expected_failure(&self) -> bool {
+        match self {
+            CaseOutcome::Completed(validation) => validation.is_expected_failure(),
+            _ => false,
+        }
     }
 }

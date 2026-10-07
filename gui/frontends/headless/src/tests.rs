@@ -222,6 +222,7 @@ fn drive_case_dispatches_frame_zero_events() {
         ],
         expected_audio: None,
         ci: true,
+        expected_failure: false,
         resolved_rom_path: PathBuf::new(),
     };
     let mut harness = Harness {
@@ -266,6 +267,7 @@ fn rom_case_builds_core_options() {
         }],
         expected_audio: None,
         ci: true,
+        expected_failure: false,
         resolved_rom_path: PathBuf::new(),
     };
 
@@ -430,6 +432,7 @@ fn drive_case_dispatches_check_registers() {
         }],
         expected_audio: None,
         ci: true,
+        expected_failure: false,
         resolved_rom_path: PathBuf::new(),
     };
     let mut harness = Harness {
@@ -554,6 +557,7 @@ fn drive_case_dispatches_check_serial() {
         }],
         expected_audio: None,
         ci: true,
+        expected_failure: false,
         resolved_rom_path: PathBuf::new(),
     };
     let mut harness = Harness {

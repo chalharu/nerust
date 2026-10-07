@@ -12,6 +12,7 @@ pub struct ReportSummary {
     pub passed: usize,
     pub failed: usize,
     pub ignored: usize,
+    pub expected_failed: usize,
 }
 
 pub fn default_output_root() -> PathBuf {
@@ -54,10 +55,15 @@ pub fn write_html_report(
         .iter()
         .filter(|outcome| outcome.is_skipped())
         .count();
+    let expected_failed = outcomes
+        .iter()
+        .filter(|outcome| outcome.is_expected_failure())
+        .count();
     let failed = outcomes
         .len()
         .saturating_sub(passed)
-        .saturating_sub(ignored);
+        .saturating_sub(ignored)
+        .saturating_sub(expected_failed);
 
     write!(
         html,
@@ -71,6 +77,7 @@ pub fn write_html_report(
          th{{background:#1f2937;text-align:left;}}\
          .pass{{color:#10b981;font-weight:700;}}\
          .fail{{color:#f87171;font-weight:700;}}\
+         .expected{{color:#fbbf24;font-weight:700;}}\
          .case{{margin-bottom:2rem;padding:1rem;border:1px solid #374151;border-radius:0.5rem;background:#0f172a;}}\
          .thumb{{max-width:256px;height:auto;border:1px solid #374151;background:#000;}}\
          code{{white-space:nowrap;}}\
@@ -82,11 +89,12 @@ pub fn write_html_report(
 
     write!(
         html,
-        "<h1>{}</h1><p>Total cases: {} / passed: <span class=\"pass\">{}</span> / failed: <span class=\"fail\">{}</span> / ignored: {}</p>",
+        "<h1>{}</h1><p>Total cases: {} / passed: <span class=\"pass\">{}</span> / failed: <span class=\"fail\">{}</span> / expected-fail: <span class=\"expected\">{}</span> / ignored: {}</p>",
         escape_html(title),
         outcomes.len(),
         passed,
         failed,
+        expected_failed,
         ignored
     )
     .unwrap();
@@ -106,8 +114,13 @@ pub fn write_html_report(
 
         match outcome {
             CaseOutcome::Completed(validation) => {
-                let status_class = if validation.passed() { "pass" } else { "fail" };
-                let status_label = if validation.passed() { "PASS" } else { "FAIL" };
+                let (status_class, status_label) = if validation.passed() {
+                    ("pass", "PASS")
+                } else if validation.is_expected_failure() {
+                    ("expected", "EXPECTED FAIL")
+                } else {
+                    ("fail", "FAIL")
+                };
                 write!(
                     html,
                     "<section class=\"case\"><h3>{}</h3><p>{}</p>\
@@ -351,6 +364,7 @@ pub fn write_html_report(
         passed,
         failed,
         ignored,
+        expected_failed,
     })
 }
 
