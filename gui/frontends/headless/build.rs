@@ -101,7 +101,7 @@ fn main() {
         match skip_reason {
             Some(reason) => writeln!(
                 generated,
-                "#[test]\n#[ignore = \"{reason}\"]\nfn {name}() {{\n    run_generated_manifest_case({:?});\n}}\n",
+                "#[test]\n#[ignore = {reason:?}]\nfn {name}() {{\n    run_generated_manifest_case({:?});\n}}\n",
                 case.id,
             )
             .unwrap(),

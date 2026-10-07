@@ -10,6 +10,15 @@ pub(super) fn validate_case(
     case: &RomCase,
     options: ValidationOptions,
 ) -> CaseOutcome {
+    if let Some(reason) = &case.pending_reason {
+        return CaseOutcome::Skipped {
+            case_id: case.id.clone(),
+            category: case.category,
+            description: case.description.clone(),
+            rom: case.rom.clone(),
+            reason: format!("pending: {reason}"),
+        };
+    }
     match read_rom(case).and_then(|rom_bytes| {
         ValidationRunner::new(factories, case, &rom_bytes, options)?.run_case(case)
     }) {

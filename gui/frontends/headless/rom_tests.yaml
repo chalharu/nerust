@@ -10193,3 +10193,198 @@ cases:
       - {frame: 45, action: standard_controller, pad: pad1, button: gba.control.a, state: pressed}
       - {frame: 48, action: standard_controller, pad: pad1, button: gba.control.a, state: released}
       - {frame: 144, action: check_log, channel: "mgba-log", end: "END: 935/936", fail_prefix: "FAIL: ", allowed_fail: ["10b, 0x0012 16xs 1d 1i"]}
+  - id: gba.nba_archive_irq_cancel_ie
+    category: cpu
+    description: "GBA nba_archive_irq_cancel_ie (nba-emu): pending."
+    rom: gba/nba-emu_hw-test/archive/irq/cancel-irq-ie/cancel-irq-ie.gba
+    pending_reason: "1-tick race-boundary rows documented; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.nba_archive_ppu_mode2
+    category: cpu
+    description: "GBA nba_archive_ppu_mode2 (nba-emu): pending."
+    rom: gba/nba-emu_hw-test/archive/ppu/mode2/mode2.gba
+    pending_reason: "photo refs fail on dimensions first (4000x3000 vs 240x160); reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.nba_archive_ppu_mode3
+    category: cpu
+    description: "GBA nba_archive_ppu_mode3 (nba-emu): pending."
+    rom: gba/nba-emu_hw-test/archive/ppu/mode3/mode3.gba
+    pending_reason: "photo refs fail on dimensions first (4000x3000 vs 240x160); reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.nba_archive_ppu_mode4
+    category: cpu
+    description: "GBA nba_archive_ppu_mode4 (nba-emu): pending."
+    rom: gba/nba-emu_hw-test/archive/ppu/mode4/mode4.gba
+    pending_reason: "affine reference-state failure; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.nba_ppu_bgpd
+    category: cpu
+    description: "GBA nba_ppu_bgpd (nba-emu): pending."
+    rom: gba/nba-emu_hw-test/ppu/bgpd/bgpd.gba
+    pending_reason: "reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.nba_ppu_bgx
+    category: cpu
+    description: "GBA nba_ppu_bgx (nba-emu): pending."
+    rom: gba/nba-emu_hw-test/ppu/bgx/bgx.gba
+    pending_reason: "reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.nba_ppu_dispcnt_latch
+    category: cpu
+    description: "GBA nba_ppu_dispcnt_latch (nba-emu): pending."
+    rom: gba/nba-emu_hw-test/ppu/dispcnt-latch/dispcnt-latch.gba
+    pending_reason: "reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.nba_ppu_greenswap
+    category: cpu
+    description: "GBA nba_ppu_greenswap (nba-emu): pending."
+    rom: gba/nba-emu_hw-test/ppu/greenswap/greenswap.gba
+    pending_reason: "reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.nba_ppu_sprite_hmosaic
+    category: cpu
+    description: "GBA nba_ppu_sprite_hmosaic (nba-emu): pending."
+    rom: gba/nba-emu_hw-test/ppu/sprite-hmosaic/sprite-hmosaic.gba
+    pending_reason: "reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.nba_ppu_status_irq_dma
+    category: cpu
+    description: "GBA nba_ppu_status_irq_dma (nba-emu): pending."
+    rom: gba/nba-emu_hw-test/ppu/status-irq-dma/status-irq-dma.gba
+    pending_reason: "interactive B-press gates; no headless playbook yet (needs input scripting + result protocol)"
+  - id: gba.nba_ppu_ram_access_timing
+    category: cpu
+    description: "GBA nba_ppu_ram_access_timing (nba-emu): pending."
+    rom: gba/nba-emu_hw-test/ppu/ram-access-timing/ram-access-timing.gba
+    pending_reason: "interactive menu UI; no headless playbook yet (needs input scripting + result protocol)"
+  - id: gba.peterlemon_3dengine
+    category: ppu
+    description: "GBA peterlemon_3dengine (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/3DEngine/3DEngine.gba
+    pending_reason: "reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_acceleration
+    category: ppu
+    description: "GBA peterlemon_acceleration (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Physics/2D/Acceleration/Acceleration.gba
+    pending_reason: "interacted refs; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_bgrotzoommode2
+    category: ppu
+    description: "GBA peterlemon_bgrotzoommode2 (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/LCD/BG/BGRotZoomMode2/BGRotZoomMode2.gba
+    pending_reason: "affine reference-state failure; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_bigbuckbunny
+    category: ppu
+    description: "GBA peterlemon_bigbuckbunny (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Video/BigBuckBunny/BigBuckBunny.gba
+    pending_reason: "refs are unmapped-moment screenshots; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_cylindermap
+    category: ppu
+    description: "GBA peterlemon_cylindermap (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/CylinderMap/CylinderMap.gba
+    pending_reason: "reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_devotimeoutforfun
+    category: ppu
+    description: "GBA peterlemon_devotimeoutforfun (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Video/Devo-TimeOutForFun/Devo-TimeOutForFun.gba
+    pending_reason: "refs are unmapped-moment screenshots; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_fastline
+    category: ppu
+    description: "GBA peterlemon_fastline (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/FastLine/FastLine.gba
+    pending_reason: "reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_fastlineclip
+    category: ppu
+    description: "GBA peterlemon_fastlineclip (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/FastLineClip/FastLineClip.gba
+    pending_reason: "reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_grb12lzdiffrlevideo
+    category: ppu
+    description: "GBA peterlemon_grb12lzdiffrlevideo (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Video/GRB12LZDIFFRLEVideo/GRB12LZDIFFRLEVideo.gba
+    pending_reason: "refs are unmapped-moment screenshots; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_grb12lzipsvideo
+    category: ppu
+    description: "GBA peterlemon_grb12lzipsvideo (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Video/GRB12LZIPSVideo/GRB12LZIPSVideo.gba
+    pending_reason: "refs are unmapped-moment screenshots; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_grb12lzvideo
+    category: ppu
+    description: "GBA peterlemon_grb12lzvideo (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Video/GRB12LZVideo/GRB12LZVideo.gba
+    pending_reason: "refs are unmapped-moment screenshots; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_grb15lzipsvideo
+    category: ppu
+    description: "GBA peterlemon_grb15lzipsvideo (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Video/GRB15LZIPSVideo/GRB15LZIPSVideo.gba
+    pending_reason: "refs are unmapped-moment screenshots; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_grb15lzvideo
+    category: ppu
+    description: "GBA peterlemon_grb15lzvideo (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Video/GRB15LZVideo/GRB15LZVideo.gba
+    pending_reason: "refs are unmapped-moment screenshots; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_rickroll
+    category: ppu
+    description: "GBA peterlemon_rickroll (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Video/Rickroll/Rick RPG Adventure [U].gba
+    pending_reason: "refs are unmapped-moment screenshots; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_timers
+    category: cpu
+    description: "GBA peterlemon_timers (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Timers/Timers.gba
+    pending_reason: "inconsistent ref (never fit timers to it); needs verdict redesign"
+  - id: gba.peterlemon_touhoubadapple
+    category: ppu
+    description: "GBA peterlemon_touhoubadapple (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Video/Touhou-BadApple!/Touhou-BadApple!.gba
+    pending_reason: "refs are unmapped-moment screenshots; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gba.peterlemon_velocity
+    category: ppu
+    description: "GBA peterlemon_velocity (PeterLemon): pending."
+    rom: gba/PeterLemon-GBA/Physics/2D/Velocity/Velocity.gba
+    pending_reason: "interacted refs; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gbc.age.m3_bg_bgp
+    category: ppu
+    description: "AGE m3_bg_bgp: pending."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-bgp/m3-bg-bgp.gb
+    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+  - id: gbc.age.m3_bg_lcdc
+    category: ppu
+    description: "AGE m3_bg_lcdc: pending."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-lcdc/m3-bg-lcdc.gb
+    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+  - id: gbc.age.m3_bg_lcdc_ds
+    category: ppu
+    description: "AGE m3_bg_lcdc_ds: pending."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-lcdc/m3-bg-lcdc-ds.gb
+    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+  - id: gbc.age.m3_bg_lcdc_nocgb
+    category: ppu
+    description: "AGE m3_bg_lcdc_nocgb: pending."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-lcdc/m3-bg-lcdc-nocgb.gb
+    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+  - id: gbc.age.m3_bg_scx
+    category: ppu
+    description: "AGE m3_bg_scx: pending."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-scx/m3-bg-scx.gb
+    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+  - id: gbc.age.m3_bg_scx_ds
+    category: ppu
+    description: "AGE m3_bg_scx_ds: pending."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-scx/m3-bg-scx-ds.gb
+    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+  - id: gbc.age.m3_bg_scx_nocgb
+    category: ppu
+    description: "AGE m3_bg_scx_nocgb: pending."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-scx/m3-bg-scx-nocgb.gb
+    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+  - id: gba.alyosha_fifo_dma_disable_jam
+    category: cpu
+    description: "GBA alyosha_fifo_dma_disable_jam: pending."
+    rom: gba/alyosha_gba-tests/unsafe/fifo_dma_disable_jam.gba
+    pending_reason: "legacy-excluded unsafe ROM; needs safety review before execution"
+  - id: gba.alyosha_fifo_dma_disable_jam_2
+    category: cpu
+    description: "GBA alyosha_fifo_dma_disable_jam_2: pending."
+    rom: gba/alyosha_gba-tests/unsafe/fifo_dma_disable_jam_2.gba
+    pending_reason: "legacy-excluded unsafe ROM; needs safety review before execution"
+  - id: gba.alyosha_prefetcher_branch_thumb_arm_2
+    category: cpu
+    description: "GBA alyosha_prefetcher_branch_thumb_arm_2: pending."
+    rom: gba/alyosha_gba-tests/unsafe/prefetcher_branch_thumb_arm_2.gba
+    pending_reason: "legacy-excluded unsafe ROM; needs safety review before execution"
+  - id: gba.alyosha_unsafe
+    category: cpu
+    description: "GBA alyosha_unsafe: pending."
+    rom: gba/alyosha_gba-tests/unsafe/unsafe.gba
+    pending_reason: "legacy-excluded unsafe ROM; needs safety review before execution"
