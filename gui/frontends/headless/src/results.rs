@@ -87,6 +87,24 @@ impl SerialCheck {
 }
 
 #[derive(Debug, Clone)]
+pub struct LogCheck {
+    pub frame: u64,
+    pub channel: String,
+    pub expected_end: String,
+    pub end_found: bool,
+    pub allowed_fail: Vec<String>,
+    pub fail_names: Vec<String>,
+    pub missing_allowed: Vec<String>,
+    pub unexpected_fail: Vec<String>,
+}
+
+impl LogCheck {
+    pub fn passed(&self) -> bool {
+        self.end_found && self.missing_allowed.is_empty() && self.unexpected_fail.is_empty()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct AudioObservation {
     pub sample_rate: u32,
     pub samples: u64,
@@ -106,24 +124,35 @@ pub struct CaseValidation {
     pub memory_checks: Vec<MemoryCheck>,
     pub register_checks: Vec<RegisterCheck>,
     pub serial_checks: Vec<SerialCheck>,
+    pub log_checks: Vec<LogCheck>,
     pub audio: AudioObservation,
     pub failures: Vec<String>,
     pub expected_failure: bool,
-    /// No-rot flag: an expected-failure case whose assertions all
-    /// passed. Set at finish; always fails CI (graduate by dropping
-    /// `expected_failure`, never by keeping it).
-    pub stale_expected_failure: bool,
+    /// Graduation prompts. NEVER tolerated (not even under
+    /// `expected_failure`): a tracked item that needs human action
+    /// must stay loud. Covers both stale directions — a flagged case
+    /// with no mismatches, and allow-listed names that no longer fail.
+    pub stale_notes: Vec<String>,
 }
 
 impl CaseValidation {
     pub fn passed(&self) -> bool {
-        self.failures.is_empty()
+        self.failures.is_empty() && self.stale_notes.is_empty()
     }
 
     /// Tracked red: flagged expected-failure with actual mismatches,
-    /// and not stale. Tolerated by CI (distinct from pass).
+    /// no pending graduation prompts, and no never-seen-before log
+    /// failures. Tolerated by CI (distinct from pass). Unknown log
+    /// FAIL names stay hard even under the flag (legacy per-name
+    /// precision: new breakage must be loud).
     pub fn is_expected_failure(&self) -> bool {
-        self.expected_failure && !self.stale_expected_failure && !self.failures.is_empty()
+        self.expected_failure
+            && self.stale_notes.is_empty()
+            && !self.failures.is_empty()
+            && self
+                .log_checks
+                .iter()
+                .all(|check| check.unexpected_fail.is_empty())
     }
 }
 

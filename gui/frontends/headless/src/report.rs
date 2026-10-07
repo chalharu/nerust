@@ -160,6 +160,36 @@ pub fn write_html_report(
                     }
                     html.push_str("</ul>");
                 }
+                if !validation.stale_notes.is_empty() {
+                    html.push_str("<h4>Stale (graduate!)</h4><ul>");
+                    for note in &validation.stale_notes {
+                        write!(html, "<li>{}</li>", escape_html(note)).unwrap();
+                    }
+                    html.push_str("</ul>");
+                }
+                if !validation.log_checks.is_empty() {
+                    html.push_str(
+                        "<h4>Log checks</h4><table><thead><tr>                         <th>Frame</th><th>Channel</th><th>End</th><th>Fail names</th><th>Missing allowed</th><th>Unexpected</th><th>Status</th>                         </tr></thead><tbody>",
+                    );
+                    for check in &validation.log_checks {
+                        let status_class = if check.passed() { "pass" } else { "fail" };
+                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                        write!(
+                            html,
+                            "<tr><td>{}</td><td><code>{}</code></td>                             <td><code>{}</code></td><td><code>{}</code></td>                             <td><code>{}</code></td><td><code>{}</code></td>                             <td class=\"{}\">{}</td></tr>",
+                            check.frame,
+                            escape_html(&check.channel),
+                            escape_html(&check.expected_end),
+                            escape_html(&check.fail_names.join(", ")),
+                            escape_html(&check.missing_allowed.join(", ")),
+                            escape_html(&check.unexpected_fail.join(", ")),
+                            status_class,
+                            status_label
+                        )
+                        .unwrap();
+                    }
+                    html.push_str("</tbody></table>");
+                }
 
                 if !validation.screen_checks.is_empty() {
                     html.push_str(

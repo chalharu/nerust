@@ -31,7 +31,6 @@ fn default_serial_channel() -> String {
     "serial".to_string()
 }
 
-/// Test-domain assertion vocabulary. New kinds need no schema
 /// migration for addresses/names (those resolve against live system
 /// state), but adding a variant is intentionally shotgun: every `match`
 /// below must handle it, so the compiler lists all touch points.
@@ -57,6 +56,12 @@ fn default_serial_channel() -> String {
 /// streams without a new variant: still snapshot-shaped, still the
 /// same dispatch. The trigger remains reserved for a genuinely new
 /// (non-snapshot) kind.
+///
+/// 2026-10 update 2: line-set log evaluation DID become kind 5, as a
+/// `Log` variant reusing the same dispatch shape (`assertion()`
+/// mapping, same `on_assert` path). Cumulative-transcript set
+/// evaluation is snapshot family, so still no dispatcher registry;
+/// the trigger stays reserved for a genuinely non-snapshot kind.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RomAssertion {
@@ -100,9 +105,31 @@ pub enum RomAssertion {
         #[serde(with = "hex_bytes")]
         bytes: Vec<u8>,
     },
+    /// Log-line assertion. Evaluates the cumulative
+    /// newline-delimited text on `channel` at a frame: the exact
+    /// `end` marker line must be present (completion proof; it
+    /// carries the pass/total counts), and the set of `fail_prefix`-led
+    /// test names must equal `allowed_fail` exactly. Unknown failures
+    /// fail; allowed names that no longer fail are stale (always
+    /// hard — a fix must never stay silent under a tolerance flag).
+    ///
+    /// The line format is DATA, not code: `fail_prefix`/`end` come
+    /// from the manifest (cf. legacy `SuiteLogVerify`), so no suite's
+    /// printf dialect lives in generic code. Detail lines
+    /// (actual-vs-expected values) are evidence only, never matched:
+    /// pinning wrong values would be pinning bad output. PASS lines
+    /// are not enumerated; the exact `end` line guards count drift.
+    Log {
+        #[serde(default = "default_serial_channel")]
+        channel: String,
+        end: String,
+        fail_prefix: String,
+        #[serde(default)]
+        allowed_fail: Vec<String>,
+    },
 }
 impl RomAssertion {
-    fn validate(&self, _case_id: &str) -> Result<(), RomTestError> {
+    fn validate(&self, case_id: &str) -> Result<(), RomTestError> {
         match self {
             // Address coverage validates at read time against the live
             // table snapshot; unmapped addresses fail loudly there
@@ -115,6 +142,19 @@ impl RomAssertion {
             // Byte content compares at read time against the cumulative
             // tap; no names or addresses to pre-validate.
             RomAssertion::Serial { .. } => Ok(()),
+            // Line-set shape validates structurally: end marker and
+            // fail prefix must be non-empty (an empty prefix would
+            // match every line; an empty end marker proves nothing).
+            RomAssertion::Log {
+                end, fail_prefix, ..
+            } => {
+                if end.is_empty() || fail_prefix.is_empty() {
+                    return Err(RomTestError::InvalidManifest(format!(
+                        "{case_id}: check_log needs non-empty end and fail_prefix"
+                    )));
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -147,6 +187,14 @@ pub enum RomEventKind {
         #[serde(with = "hex_bytes")]
         bytes: Vec<u8>,
     },
+    CheckLog {
+        #[serde(default = "default_serial_channel")]
+        channel: String,
+        end: String,
+        fail_prefix: String,
+        #[serde(default)]
+        allowed_fail: Vec<String>,
+    },
     Reset,
     StandardController {
         pad: ControllerPad,
@@ -178,6 +226,17 @@ impl RomEventKind {
             RomEventKind::CheckSerial { channel, bytes } => Some(RomAssertion::Serial {
                 channel: channel.clone(),
                 bytes: bytes.clone(),
+            }),
+            RomEventKind::CheckLog {
+                channel,
+                end,
+                fail_prefix,
+                allowed_fail,
+            } => Some(RomAssertion::Log {
+                channel: channel.clone(),
+                end: end.clone(),
+                fail_prefix: fail_prefix.clone(),
+                allowed_fail: allowed_fail.clone(),
             }),
             RomEventKind::Reset | RomEventKind::StandardController { .. } => None,
         }

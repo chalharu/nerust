@@ -10145,3 +10145,51 @@ cases:
       - {frame: 72, action: check_memory, address: "0x03000631", value: "0x00"}
       - {frame: 72, action: check_memory, address: "0x03000632", value: "0x00"}
       - {frame: 72, action: check_memory, address: "0x03000633", value: "0x00"}
+  - id: gba.mgba_suite_misc_edge
+    category: cpu
+    description: "[tracked-fail] mgba suite Misc edge case tests (menu entry 12, DOWN x12 + A): log must end END: 7/12 with only the 5 boxed failures. Graduate: on fix, drop allowed_fail then convert to check_serial exact."
+    rom: gba/mgba-suite/suite.gba
+    expected_failure: true
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 33, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 35, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 38, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 40, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 43, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 45, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 48, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 50, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 53, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 55, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 58, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 60, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 63, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 65, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 68, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 70, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 73, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 75, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 78, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 80, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 83, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 85, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 88, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 90, action: standard_controller, pad: pad1, button: gba.control.a, state: pressed}
+      - {frame: 93, action: standard_controller, pad: pad1, button: gba.control.a, state: released}
+      - {frame: 98, action: check_log, channel: "mgba-log", end: "END: 7/12", fail_prefix: "FAIL: ", allowed_fail: ["DMA Prefetch Break", "H-blank bit start Hblank", "H-blank bit start Flip 1", "H-blank bit start Flip 2", "H-blank bit start Flip 3"]}
+  - id: gba.mgba_suite_timers
+    category: cpu
+    description: "[tracked-fail] mgba suite Timer count-up tests (menu entry 3, DOWN x3 + A): log must end END: 935/936 with only the boxed failure. Graduate: on fix, drop allowed_fail then convert to check_serial exact."
+    rom: gba/mgba-suite/suite.gba
+    expected_failure: true
+    events:
+      - {frame: 30, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 33, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 35, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 38, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 40, action: standard_controller, pad: pad1, button: gba.control.down, state: pressed}
+      - {frame: 43, action: standard_controller, pad: pad1, button: gba.control.down, state: released}
+      - {frame: 45, action: standard_controller, pad: pad1, button: gba.control.a, state: pressed}
+      - {frame: 48, action: standard_controller, pad: pad1, button: gba.control.a, state: released}
+      - {frame: 144, action: check_log, channel: "mgba-log", end: "END: 935/936", fail_prefix: "FAIL: ", allowed_fail: ["10b, 0x0012 16xs 1d 1i"]}
