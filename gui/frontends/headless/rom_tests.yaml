@@ -8360,3 +8360,23 @@ cases:
     options: ["--gbc-hardware-model", "dmg"]
     events:
       - {frame: 4278, action: check_serial, bytes: "0x6370755F696E737472730A0A30313A6F6B202030323A6F6B202030333A6F6B202030343A6F6B202030353A6F6B202030363A6F6B202030373A6F6B202030383A6F6B202030393A6F6B202031303A6F6B202031313A6F6B20200A0A50617373656420616C6C2074657374730A"}
+  - id: gbc.mealybug.mbc3_rtc.dmg
+    category: cpu
+    description: "Mealybug MBC3 real-time clock (dmg): serial transcript must match exactly."
+    rom: gbc/mattcurrie_mealybug-tearoom-tests/mbc3_rtc.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 1500, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mealybug.mbc3_rtc.cgbc
+    category: cpu
+    description: "Mealybug MBC3 real-time clock (cgbc): serial transcript must match exactly."
+    rom: gbc/mattcurrie_mealybug-tearoom-tests/mbc3_rtc.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 1500, action: check_serial, bytes: "0x0305080D1522"}
+  - id: gbc.mealybug.mbc3_rtc
+    category: cpu
+    description: "Mealybug MBC3 real-time clock (default model): serial transcript must match exactly."
+    rom: gbc/mattcurrie_mealybug-tearoom-tests/mbc3_rtc.gb
+    events:
+      - {frame: 1500, action: check_serial, bytes: "0x0305080D1522"}
