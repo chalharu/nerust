@@ -1733,15 +1733,13 @@ cases:
     rom: gbc/mattcurrie_dmg-acid2/dmg-acid2.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 60, action: check_screen, hash: "0x39D1C28A94611BBE"}
-      - {frame: 120, action: check_screen, hash: "0x39D1C28A94611BBE"}
+      - {frame: 10, action: check_screen, hash: "0x39D1C28A94611BBE"}
   - id: gbc.acid2.cgb
     category: ppu
     description: "GBC visual baseline: cgb-acid2 still image hash after boot settle (default CGB model)."
     rom: gbc/mattcurrie_cgb-acid2/cgb-acid2.gbc
     events:
-      - {frame: 60, action: check_screen, hash: "0x29878B35C9519605"}
-      - {frame: 120, action: check_screen, hash: "0x29878B35C9519605"}
+      - {frame: 15, action: check_screen, hash: "0x29878B35C9519605"}
   - id: gbc.retrio.halt_bug
     category: cpu
     description: "GBC HALT bug behavior (retrio): zero status byte in cartridge RAM (DMG model)."
@@ -6512,167 +6510,167 @@ cases:
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m2_win_en_toggle.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x295D9224C341BDCB"}
+      - {frame: 6, action: check_screen, hash: "0x295D9224C341BDCB"}
   - id: gbc.mealybug.m2_win_en_toggle.cgbc
     category: ppu
     description: "Mealybug m2_win_en_toggle: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m2_win_en_toggle.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x998F481BDD01159D"}
+      - {frame: 6, action: check_screen, hash: "0x998F481BDD01159D"}
   - id: gbc.mealybug.m2_win_en_toggle
     category: ppu
     description: "Mealybug m2_win_en_toggle: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m2_win_en_toggle.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x998F481BDD01159D"}
+      - {frame: 6, action: check_screen, hash: "0x998F481BDD01159D"}
   - id: gbc.mealybug.m3_bgp_change.dmg
     category: ppu
     description: "Mealybug m3_bgp_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_bgp_change.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x47235CF6C8F18DE9"}
+      - {frame: 3, action: check_screen, hash: "0x47235CF6C8F18DE9"}
   - id: gbc.mealybug.m3_bgp_change.cgbc
     category: ppu
     description: "Mealybug m3_bgp_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_bgp_change.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x86AA18E9DA0B323E"}
+      - {frame: 2, action: check_screen, hash: "0x86AA18E9DA0B323E"}
   - id: gbc.mealybug.m3_bgp_change
     category: ppu
     description: "Mealybug m3_bgp_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_bgp_change.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x4DBD3BE3C41DEEE5"}
+      - {frame: 2, action: check_screen, hash: "0x4DBD3BE3C41DEEE5"}
   - id: gbc.mealybug.m3_bgp_change_sprites.dmg
     category: ppu
     description: "Mealybug m3_bgp_change_sprites: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_bgp_change_sprites.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0xB971F7F8A90DC17A"}
+      - {frame: 4, action: check_screen, hash: "0xB971F7F8A90DC17A"}
   - id: gbc.mealybug.m3_bgp_change_sprites.cgbc
     category: ppu
     description: "Mealybug m3_bgp_change_sprites: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_bgp_change_sprites.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x0D6A3C749BA8817C"}
+      - {frame: 4, action: check_screen, hash: "0x0D6A3C749BA8817C"}
   - id: gbc.mealybug.m3_bgp_change_sprites
     category: ppu
     description: "Mealybug m3_bgp_change_sprites: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_bgp_change_sprites.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x9C1376512FCEBB08"}
+      - {frame: 4, action: check_screen, hash: "0x9C1376512FCEBB08"}
   - id: gbc.mealybug.m3_lcdc_bg_en_change.dmg
     category: ppu
     description: "Mealybug m3_lcdc_bg_en_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_en_change.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x79B3D457072D399C"}
+      - {frame: 5, action: check_screen, hash: "0x79B3D457072D399C"}
   - id: gbc.mealybug.m3_lcdc_bg_en_change.cgbc
     category: ppu
     description: "Mealybug m3_lcdc_bg_en_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_en_change.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x3C6868ABC12ED17F"}
+      - {frame: 4, action: check_screen, hash: "0x3C6868ABC12ED17F"}
   - id: gbc.mealybug.m3_lcdc_bg_en_change
     category: ppu
     description: "Mealybug m3_lcdc_bg_en_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_en_change.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x3C6868ABC12ED17F"}
+      - {frame: 4, action: check_screen, hash: "0x3C6868ABC12ED17F"}
   - id: gbc.mealybug.m3_lcdc_bg_en_change2
     category: ppu
     description: "Mealybug m3_lcdc_bg_en_change2: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_en_change2.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x7BE4CC057F08A3D9"}
+      - {frame: 7, action: check_screen, hash: "0x7BE4CC057F08A3D9"}
   - id: gbc.mealybug.m3_lcdc_bg_map_change.dmg
     category: ppu
     description: "Mealybug m3_lcdc_bg_map_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_map_change.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0xA1567889B2786E2F"}
+      - {frame: 4, action: check_screen, hash: "0xA1567889B2786E2F"}
   - id: gbc.mealybug.m3_lcdc_bg_map_change.cgbc
     category: ppu
     description: "Mealybug m3_lcdc_bg_map_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_map_change.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0xCE4D3352A00613A8"}
+      - {frame: 3, action: check_screen, hash: "0xCE4D3352A00613A8"}
   - id: gbc.mealybug.m3_lcdc_bg_map_change
     category: ppu
     description: "Mealybug m3_lcdc_bg_map_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_map_change.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0xCE4D3352A00613A8"}
+      - {frame: 3, action: check_screen, hash: "0xCE4D3352A00613A8"}
   - id: gbc.mealybug.m3_lcdc_bg_map_change2
     category: ppu
     description: "Mealybug m3_lcdc_bg_map_change2: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_map_change2.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0xC08463892764E627"}
+      - {frame: 7, action: check_screen, hash: "0xC08463892764E627"}
   - id: gbc.mealybug.m3_lcdc_obj_en_change.dmg
     category: ppu
     description: "Mealybug m3_lcdc_obj_en_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_en_change.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x17F61E420D0619F5"}
+      - {frame: 2, action: check_screen, hash: "0x17F61E420D0619F5"}
   - id: gbc.mealybug.m3_lcdc_obj_en_change.cgbc
     category: ppu
     description: "Mealybug m3_lcdc_obj_en_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_en_change.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x5AFC37100DAD04E6"}
+      - {frame: 2, action: check_screen, hash: "0x5AFC37100DAD04E6"}
   - id: gbc.mealybug.m3_lcdc_obj_en_change
     category: ppu
     description: "Mealybug m3_lcdc_obj_en_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_en_change.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x5AFC37100DAD04E6"}
+      - {frame: 2, action: check_screen, hash: "0x5AFC37100DAD04E6"}
   - id: gbc.mealybug.m3_lcdc_obj_en_change_variant.dmg
     category: ppu
     description: "Mealybug m3_lcdc_obj_en_change_variant: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_en_change_variant.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x8AEA2DF52F2284DA"}
+      - {frame: 4, action: check_screen, hash: "0x8AEA2DF52F2284DA"}
   - id: gbc.mealybug.m3_lcdc_obj_en_change_variant.cgbc
     category: ppu
     description: "Mealybug m3_lcdc_obj_en_change_variant: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_en_change_variant.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0xBF4906DE489F9E04"}
+      - {frame: 4, action: check_screen, hash: "0xBF4906DE489F9E04"}
   - id: gbc.mealybug.m3_lcdc_obj_en_change_variant
     category: ppu
     description: "Mealybug m3_lcdc_obj_en_change_variant: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_en_change_variant.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0xFA62B68C1B8E210D"}
+      - {frame: 4, action: check_screen, hash: "0xFA62B68C1B8E210D"}
   - id: gbc.mealybug.m3_lcdc_obj_size_change.cgbc
     category: ppu
     description: "Mealybug m3_lcdc_obj_size_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0xCD7400456377459E"}
+      - {frame: 4, action: check_screen, hash: "0xCD7400456377459E"}
   - id: gbc.mealybug.m3_lcdc_obj_size_change
     category: ppu
     description: "Mealybug m3_lcdc_obj_size_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0xCD7400456377459E"}
+      - {frame: 4, action: check_screen, hash: "0xCD7400456377459E"}
   - id: gbc.mealybug.m3_lcdc_obj_size_change.dmg.expected
     category: ppu
     description: "[tracked-fail] Mealybug m3_lcdc_obj_size_change (DMG): screen must match upstream DMG-blob reference (currently differs; see legacy expected_failures)."
@@ -6687,13 +6685,13 @@ cases:
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change_scx.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x032C0C91BF3A4990"}
+      - {frame: 4, action: check_screen, hash: "0x032C0C91BF3A4990"}
   - id: gbc.mealybug.m3_lcdc_obj_size_change_scx
     category: ppu
     description: "Mealybug m3_lcdc_obj_size_change_scx: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change_scx.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x032C0C91BF3A4990"}
+      - {frame: 4, action: check_screen, hash: "0x032C0C91BF3A4990"}
   - id: gbc.mealybug.m3_lcdc_obj_size_change_scx.dmg.expected
     category: ppu
     description: "[tracked-fail] Mealybug m3_lcdc_obj_size_change_scx (DMG): screen must match upstream DMG-blob reference (currently differs; see legacy expected_failures)."
@@ -6707,7 +6705,7 @@ cases:
     description: "Mealybug m3_lcdc_tile_sel_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_change.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x3119D058AD63944B"}
+      - {frame: 3, action: check_screen, hash: "0x3119D058AD63944B"}
   - id: gbc.mealybug.m3_lcdc_tile_sel_change.dmg.expected
     category: ppu
     description: "[tracked-fail] Mealybug m3_lcdc_tile_sel_change (DMG): screen must match upstream DMG-blob reference (currently differs; see legacy expected_failures)."
@@ -6730,13 +6728,13 @@ cases:
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_change2.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x4434B8601903D127"}
+      - {frame: 7, action: check_screen, hash: "0x4434B8601903D127"}
   - id: gbc.mealybug.m3_lcdc_tile_sel_win_change
     category: ppu
     description: "Mealybug m3_lcdc_tile_sel_win_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_win_change.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x27DC48584C83B0F2"}
+      - {frame: 3, action: check_screen, hash: "0x27DC48584C83B0F2"}
   - id: gbc.mealybug.m3_lcdc_tile_sel_win_change.dmg.expected
     category: ppu
     description: "[tracked-fail] Mealybug m3_lcdc_tile_sel_win_change (DMG): screen must match upstream DMG-blob reference (currently differs; see legacy expected_failures)."
@@ -6759,128 +6757,128 @@ cases:
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_win_change2.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x583B2F2EF0D3C40D"}
+      - {frame: 7, action: check_screen, hash: "0x583B2F2EF0D3C40D"}
   - id: gbc.mealybug.m3_lcdc_win_en_change_multiple.dmg
     category: ppu
     description: "Mealybug m3_lcdc_win_en_change_multiple: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_en_change_multiple.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x0712BF0F84FEF19F"}
+      - {frame: 6, action: check_screen, hash: "0x0712BF0F84FEF19F"}
   - id: gbc.mealybug.m3_lcdc_win_en_change_multiple.cgbc
     category: ppu
     description: "Mealybug m3_lcdc_win_en_change_multiple: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_en_change_multiple.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x5E2E2E1E4F9788FB"}
+      - {frame: 6, action: check_screen, hash: "0x5E2E2E1E4F9788FB"}
   - id: gbc.mealybug.m3_lcdc_win_en_change_multiple
     category: ppu
     description: "Mealybug m3_lcdc_win_en_change_multiple: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_en_change_multiple.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x5E2E2E1E4F9788FB"}
+      - {frame: 6, action: check_screen, hash: "0x5E2E2E1E4F9788FB"}
   - id: gbc.mealybug.m3_lcdc_win_en_change_multiple_wx
     category: ppu
     description: "Mealybug m3_lcdc_win_en_change_multiple_wx: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_en_change_multiple_wx.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x5ED8D2326D11372D"}
+      - {frame: 4, action: check_screen, hash: "0x5ED8D2326D11372D"}
   - id: gbc.mealybug.m3_lcdc_win_map_change.dmg
     category: ppu
     description: "Mealybug m3_lcdc_win_map_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_map_change.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x00F0B8C460A81E00"}
+      - {frame: 4, action: check_screen, hash: "0x00F0B8C460A81E00"}
   - id: gbc.mealybug.m3_lcdc_win_map_change.cgbc
     category: ppu
     description: "Mealybug m3_lcdc_win_map_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_map_change.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x93DF7A8727993341"}
+      - {frame: 3, action: check_screen, hash: "0x93DF7A8727993341"}
   - id: gbc.mealybug.m3_lcdc_win_map_change
     category: ppu
     description: "Mealybug m3_lcdc_win_map_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_map_change.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x93DF7A8727993341"}
+      - {frame: 3, action: check_screen, hash: "0x93DF7A8727993341"}
   - id: gbc.mealybug.m3_lcdc_win_map_change2
     category: ppu
     description: "Mealybug m3_lcdc_win_map_change2: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_map_change2.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x1D0B5A6795286AAC"}
+      - {frame: 7, action: check_screen, hash: "0x1D0B5A6795286AAC"}
   - id: gbc.mealybug.m3_obp0_change.dmg
     category: ppu
     description: "Mealybug m3_obp0_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_obp0_change.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x8BD862A22C860D75"}
+      - {frame: 2, action: check_screen, hash: "0x8BD862A22C860D75"}
   - id: gbc.mealybug.m3_obp0_change.cgbc
     category: ppu
     description: "Mealybug m3_obp0_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_obp0_change.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x50FFDF2329D00489"}
+      - {frame: 2, action: check_screen, hash: "0x50FFDF2329D00489"}
   - id: gbc.mealybug.m3_obp0_change
     category: ppu
     description: "Mealybug m3_obp0_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_obp0_change.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x81B7327DF54140DD"}
+      - {frame: 2, action: check_screen, hash: "0x81B7327DF54140DD"}
   - id: gbc.mealybug.m3_scx_high_5_bits.dmg
     category: ppu
     description: "Mealybug m3_scx_high_5_bits: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scx_high_5_bits.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x7657C9D70459E3ED"}
+      - {frame: 4, action: check_screen, hash: "0x7657C9D70459E3ED"}
   - id: gbc.mealybug.m3_scx_high_5_bits.cgbc
     category: ppu
     description: "Mealybug m3_scx_high_5_bits: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scx_high_5_bits.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0xEF61C248089C27A8"}
+      - {frame: 4, action: check_screen, hash: "0xEF61C248089C27A8"}
   - id: gbc.mealybug.m3_scx_high_5_bits
     category: ppu
     description: "Mealybug m3_scx_high_5_bits: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scx_high_5_bits.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0xEF61C248089C27A8"}
+      - {frame: 4, action: check_screen, hash: "0xEF61C248089C27A8"}
   - id: gbc.mealybug.m3_scx_high_5_bits_change2
     category: ppu
     description: "Mealybug m3_scx_high_5_bits_change2: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scx_high_5_bits_change2.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x7E3ADD55CD74FF56"}
+      - {frame: 7, action: check_screen, hash: "0x7E3ADD55CD74FF56"}
   - id: gbc.mealybug.m3_scx_low_3_bits.dmg
     category: ppu
     description: "Mealybug m3_scx_low_3_bits: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scx_low_3_bits.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x96995E2D6C01339C"}
+      - {frame: 3, action: check_screen, hash: "0x96995E2D6C01339C"}
   - id: gbc.mealybug.m3_scx_low_3_bits.cgbc
     category: ppu
     description: "Mealybug m3_scx_low_3_bits: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scx_low_3_bits.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x96995E2D6C01339C"}
+      - {frame: 3, action: check_screen, hash: "0x96995E2D6C01339C"}
   - id: gbc.mealybug.m3_scx_low_3_bits
     category: ppu
     description: "Mealybug m3_scx_low_3_bits: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scx_low_3_bits.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x96995E2D6C01339C"}
+      - {frame: 3, action: check_screen, hash: "0x96995E2D6C01339C"}
   - id: gbc.mealybug.m3_scy_change.cgbc
     category: ppu
     description: "[tracked-fail] Mealybug m3_scy_change (CGB-C): screen must match upstream CPU CGB C reference (currently differs; see legacy expected_failures)."
@@ -6894,7 +6892,7 @@ cases:
     description: "Mealybug m3_scy_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scy_change.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x08B6EAAEB639DA8D"}
+      - {frame: 5, action: check_screen, hash: "0x08B6EAAEB639DA8D"}
   - id: gbc.mealybug.m3_scy_change.dmg.expected
     category: ppu
     description: "[tracked-fail] Mealybug m3_scy_change (DMG): screen must match upstream DMG-blob reference (currently differs; see legacy expected_failures)."
@@ -6909,102 +6907,102 @@ cases:
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scy_change2.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0xB59866B387D2CCE8"}
+      - {frame: 7, action: check_screen, hash: "0xB59866B387D2CCE8"}
   - id: gbc.mealybug.m3_window_timing.dmg
     category: ppu
     description: "Mealybug m3_window_timing: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_window_timing.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x9EE4877767292E54"}
+      - {frame: 4, action: check_screen, hash: "0x9EE4877767292E54"}
   - id: gbc.mealybug.m3_window_timing.cgbc
     category: ppu
     description: "Mealybug m3_window_timing: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_window_timing.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0xE0C38851B4C55D1A"}
+      - {frame: 4, action: check_screen, hash: "0xE0C38851B4C55D1A"}
   - id: gbc.mealybug.m3_window_timing
     category: ppu
     description: "Mealybug m3_window_timing: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_window_timing.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x9EE4877767292E54"}
+      - {frame: 4, action: check_screen, hash: "0x9EE4877767292E54"}
   - id: gbc.mealybug.m3_window_timing_wx_0.dmg
     category: ppu
     description: "Mealybug m3_window_timing_wx_0: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_window_timing_wx_0.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x9EC0036B2D933FAC"}
+      - {frame: 4, action: check_screen, hash: "0x9EC0036B2D933FAC"}
   - id: gbc.mealybug.m3_window_timing_wx_0.cgbc
     category: ppu
     description: "Mealybug m3_window_timing_wx_0: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_window_timing_wx_0.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x1AD1DEC1B42C9AD6"}
+      - {frame: 4, action: check_screen, hash: "0x1AD1DEC1B42C9AD6"}
   - id: gbc.mealybug.m3_window_timing_wx_0
     category: ppu
     description: "Mealybug m3_window_timing_wx_0: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_window_timing_wx_0.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x9EC0036B2D933FAC"}
+      - {frame: 4, action: check_screen, hash: "0x9EC0036B2D933FAC"}
   - id: gbc.mealybug.m3_wx_4_change
     category: ppu
     description: "Mealybug m3_wx_4_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_wx_4_change.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x3793DF425B20CDD0"}
+      - {frame: 5, action: check_screen, hash: "0x3793DF425B20CDD0"}
   - id: gbc.mealybug.m3_wx_4_change_sprites.dmg
     category: ppu
     description: "Mealybug m3_wx_4_change_sprites: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_wx_4_change_sprites.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0xB9E86B9DC4360F55"}
+      - {frame: 6, action: check_screen, hash: "0xB9E86B9DC4360F55"}
   - id: gbc.mealybug.m3_wx_4_change_sprites.cgbc
     category: ppu
     description: "Mealybug m3_wx_4_change_sprites: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_wx_4_change_sprites.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x23884F54CAFE721D"}
+      - {frame: 6, action: check_screen, hash: "0x23884F54CAFE721D"}
   - id: gbc.mealybug.m3_wx_4_change_sprites
     category: ppu
     description: "Mealybug m3_wx_4_change_sprites: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_wx_4_change_sprites.gb
     events:
-      - {frame: 20, action: check_screen, hash: "0x23884F54CAFE721D"}
+      - {frame: 6, action: check_screen, hash: "0x23884F54CAFE721D"}
   - id: gbc.mealybug.m3_wx_5_change
     category: ppu
     description: "Mealybug m3_wx_5_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_wx_5_change.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x5FFDF76CBC40443A"}
+      - {frame: 5, action: check_screen, hash: "0x5FFDF76CBC40443A"}
   - id: gbc.mealybug.m3_wx_6_change
     category: ppu
     description: "Mealybug m3_wx_6_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_wx_6_change.gb
     options: ["--gbc-hardware-model", "dmg"]
     events:
-      - {frame: 20, action: check_screen, hash: "0x3372848322DEB3DE"}
+      - {frame: 5, action: check_screen, hash: "0x3372848322DEB3DE"}
   - id: gbc.acid2.dmg_cgbc
     category: ppu
     description: "dmg-acid2 under CGB-C: still image hash."
     rom: gbc/mattcurrie_dmg-acid2/dmg-acid2.gb
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 60, action: check_screen, hash: "0xA53844367F6A41E4"}
+      - {frame: 10, action: check_screen, hash: "0xA53844367F6A41E4"}
   - id: gbc.acid2.dmg_agb
     category: ppu
     description: "dmg-acid2 under AGB: still image hash."
     rom: gbc/mattcurrie_dmg-acid2/dmg-acid2.gb
     options: ["--gbc-hardware-model", "agb"]
     events:
-      - {frame: 60, action: check_screen, hash: "0xA53844367F6A41E4"}
+      - {frame: 10, action: check_screen, hash: "0xA53844367F6A41E4"}
   - id: gbc.acid2.dmg_cgbd
     category: ppu
     description: "dmg-acid2 under CGB-D: still image hash (matches upstream reference-cgb.png)."
@@ -7018,14 +7016,14 @@ cases:
     rom: gbc/mattcurrie_cgb-acid2/cgb-acid2.gbc
     options: ["--gbc-hardware-model", "cgb_c"]
     events:
-      - {frame: 60, action: check_screen, hash: "0x29878B35C9519605"}
+      - {frame: 15, action: check_screen, hash: "0x29878B35C9519605"}
   - id: gbc.acid2.cgb_agb
     category: ppu
     description: "cgb-acid2 under AGB: still image hash."
     rom: gbc/mattcurrie_cgb-acid2/cgb-acid2.gbc
     options: ["--gbc-hardware-model", "agb"]
     events:
-      - {frame: 60, action: check_screen, hash: "0x29878B35C9519605"}
+      - {frame: 15, action: check_screen, hash: "0x29878B35C9519605"}
   - id: gbc.age.oam_write_ncmbce.cgbc
     category: ppu
     description: "AGE oam-write-ncmBCE: registers settle to the pass tuple."
