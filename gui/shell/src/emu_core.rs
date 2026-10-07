@@ -417,13 +417,18 @@ impl EmuCore {
         reply_rx.recv().map_err(|_| OperationError::NoReply)
     }
 
-    /// Install a serial-output tap: every rendered frame moves the
-    /// core's freshly transmitted bytes into `tap`. Headless capture
-    /// only.
-    pub fn tap_serial_output(&self, tap: Arc<Mutex<Vec<u8>>>) -> Result<(), OperationError> {
+    /// Install a guest-output tap for one channel: every rendered
+    /// frame moves the core's freshly produced bytes for that channel
+    /// into `tap`. Headless capture only.
+    pub fn tap_serial_output(
+        &self,
+        channel: &str,
+        tap: Arc<Mutex<Vec<u8>>>,
+    ) -> Result<(), OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::TapSerialOutput {
+                channel: channel.to_string(),
                 tap,
                 reply: reply_tx,
             })
@@ -438,6 +443,16 @@ impl EmuCore {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::DebuggerSpaces { reply: reply_tx })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// Guest-output channel names through the emu thread. Empty when
+    /// idle. Static metadata: answered without pause gating.
+    pub fn output_channels(&self) -> Result<Vec<String>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::OutputChannels { reply: reply_tx })
             .map_err(|_| OperationError::WorkerUnavailable)?;
         reply_rx.recv().map_err(|_| OperationError::NoReply)
     }

@@ -10,10 +10,15 @@ impl ValidationRuntime {
         for sample in self.system.drain_audio()? {
             self.mixer.push(sample);
         }
-        // Accumulate fresh serial bytes into the cumulative log.
-        // Drained every frame so multi-frame gaps between asserts lose
-        // nothing (the tap holds the latest delta only).
-        self.serial.extend(self.system.drain_serial()?);
+        // Accumulate fresh bytes per channel into the cumulative
+        // logs. Drained every frame so multi-frame gaps between
+        // asserts lose nothing (each tap holds the latest delta only).
+        for channel in self.system.channel_names().to_vec() {
+            self.serial
+                .entry(channel.clone())
+                .or_default()
+                .extend(self.system.drain_channel(&channel)?);
+        }
         self.frame_counter += 1;
         Ok(())
     }
@@ -24,10 +29,12 @@ impl ValidationRuntime {
 
     pub(in crate::runner::validation) fn reset(&mut self) -> Result<(), RomTestError> {
         self.system.reset()?;
-        // The core rebuilds its serial buffer on reset; drop the tap's
-        // pre-reset delta and the cumulative log together so post-reset
-        // asserts observe a fresh stream.
-        drop(self.system.drain_serial()?);
+        // The core rebuilds its buffers on reset; drop every tap's
+        // pre-reset delta and the cumulative logs together so
+        // post-reset asserts observe fresh streams.
+        for channel in self.system.channel_names().to_vec() {
+            drop(self.system.drain_channel(&channel)?);
+        }
         self.serial.clear();
         Ok(())
     }

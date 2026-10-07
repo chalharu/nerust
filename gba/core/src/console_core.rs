@@ -266,6 +266,36 @@ impl ConsoleCore for GbaConsoleCore {
         self.loaded.as_mut()?;
         Some(Box::new(crate::debugger::GbaDebugControl::new(self)) as _)
     }
+
+    fn output_channels(&self) -> Vec<String> {
+        // The suite-log sink only exists with the test-harness
+        // feature; production builds expose no channels.
+        #[cfg(feature = "mgba-debug-log")]
+        if self.loaded.is_some() {
+            return vec!["mgba-log".to_string()];
+        }
+        Vec::new()
+    }
+
+    fn take_channel_bytes(&mut self, channel: &str) -> Vec<u8> {
+        // Single tested implementation of the commit protocol lives
+        // in the bus (buffer/NUL/enable): flatten committed lines to
+        // newline-delimited bytes. Levels never matched anything
+        // (legacy matched text only), so they stay behind.
+        #[cfg(feature = "mgba-debug-log")]
+        if channel == "mgba-log"
+            && let Some(loaded) = self.loaded.as_mut()
+        {
+            let mut out = Vec::new();
+            for log in loaded.system.bus.drain_mgba_debug_logs() {
+                out.extend_from_slice(log.text.as_bytes());
+                out.push(b'\n');
+            }
+            return out;
+        }
+        let _ = channel;
+        Vec::new()
+    }
 }
 
 #[cfg(test)]

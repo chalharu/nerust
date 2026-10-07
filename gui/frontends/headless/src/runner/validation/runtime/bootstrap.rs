@@ -18,7 +18,7 @@ impl ValidationRuntime {
         Ok(Self {
             system,
             mixer: HashingMixer::new(case.audio_sample_rate()),
-            serial: Vec::new(),
+            serial: std::collections::HashMap::new(),
             frame_counter: 0,
         })
     }

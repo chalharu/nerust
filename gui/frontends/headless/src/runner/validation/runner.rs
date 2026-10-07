@@ -97,13 +97,18 @@ impl ValidationRunner {
     pub(in crate::runner::validation) fn record_serial_assert(
         &mut self,
         frame: u64,
+        channel: String,
         bytes: Vec<u8>,
     ) -> Result<(), RomTestError> {
         self.artifacts.record_serial_assert(
             &self.case_id,
             &self.runtime,
             self.options,
-            super::artifacts::serial::ExpectedSerial { frame, bytes },
+            super::artifacts::serial::ExpectedSerial {
+                frame,
+                channel,
+                bytes,
+            },
         )
     }
 

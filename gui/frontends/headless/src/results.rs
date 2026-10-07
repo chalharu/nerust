@@ -75,6 +75,7 @@ impl RegisterCheck {
 #[derive(Debug, Clone)]
 pub struct SerialCheck {
     pub frame: u64,
+    pub channel: String,
     pub expected_bytes: Vec<u8>,
     pub actual_bytes: Vec<u8>,
 }

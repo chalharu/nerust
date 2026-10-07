@@ -254,8 +254,9 @@ fn print_outcome(outcome: &CaseOutcome, full_bytes: bool) {
             }
             for check in &validation.serial_checks {
                 println!(
-                    "  serial frame={} expected={} actual={} status={}",
+                    "  serial frame={} channel={} expected={} actual={} status={}",
                     check.frame,
+                    check.channel,
                     serial_text(&check.expected_bytes, full_bytes),
                     serial_text(&check.actual_bytes, full_bytes),
                     if check.passed() { "pass" } else { "fail" }
