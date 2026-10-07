@@ -6673,6 +6673,14 @@ cases:
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change.gb
     events:
       - {frame: 20, action: check_screen, hash: "0xCD7400456377459E"}
+  - id: gbc.mealybug.m3_lcdc_obj_size_change.dmg.expected
+    category: ppu
+    description: "[tracked-fail] Mealybug m3_lcdc_obj_size_change (DMG): screen must match upstream DMG-blob reference (currently differs; see legacy expected_failures)."
+    rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 20, action: check_screen, hash: "0x6F0577EA9866009A"}
   - id: gbc.mealybug.m3_lcdc_obj_size_change_scx.cgbc
     category: ppu
     description: "Mealybug m3_lcdc_obj_size_change_scx: screen hash."
@@ -6686,10 +6694,34 @@ cases:
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change_scx.gb
     events:
       - {frame: 20, action: check_screen, hash: "0x032C0C91BF3A4990"}
+  - id: gbc.mealybug.m3_lcdc_obj_size_change_scx.dmg.expected
+    category: ppu
+    description: "[tracked-fail] Mealybug m3_lcdc_obj_size_change_scx (DMG): screen must match upstream DMG-blob reference (currently differs; see legacy expected_failures)."
+    rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change_scx.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 20, action: check_screen, hash: "0xEFBD13C875A906DE"}
   - id: gbc.mealybug.m3_lcdc_tile_sel_change
     category: ppu
     description: "Mealybug m3_lcdc_tile_sel_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_change.gb
+    events:
+      - {frame: 20, action: check_screen, hash: "0x3119D058AD63944B"}
+  - id: gbc.mealybug.m3_lcdc_tile_sel_change.dmg.expected
+    category: ppu
+    description: "[tracked-fail] Mealybug m3_lcdc_tile_sel_change (DMG): screen must match upstream DMG-blob reference (currently differs; see legacy expected_failures)."
+    rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_change.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 20, action: check_screen, hash: "0xA85716B78FB82BA3"}
+  - id: gbc.mealybug.m3_lcdc_tile_sel_change.cgbc.expected
+    category: ppu
+    description: "[tracked-fail] Mealybug m3_lcdc_tile_sel_change (CGB-C): screen must match upstream CPU CGB C reference (currently differs; see legacy expected_failures)."
+    rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_change.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    expected_failure: true
     events:
       - {frame: 20, action: check_screen, hash: "0x3119D058AD63944B"}
   - id: gbc.mealybug.m3_lcdc_tile_sel_change2
@@ -6703,6 +6735,22 @@ cases:
     category: ppu
     description: "Mealybug m3_lcdc_tile_sel_win_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_win_change.gb
+    events:
+      - {frame: 20, action: check_screen, hash: "0x27DC48584C83B0F2"}
+  - id: gbc.mealybug.m3_lcdc_tile_sel_win_change.dmg.expected
+    category: ppu
+    description: "[tracked-fail] Mealybug m3_lcdc_tile_sel_win_change (DMG): screen must match upstream DMG-blob reference (currently differs; see legacy expected_failures)."
+    rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_win_change.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 20, action: check_screen, hash: "0xC0723D05598EBE34"}
+  - id: gbc.mealybug.m3_lcdc_tile_sel_win_change.cgbc.expected
+    category: ppu
+    description: "[tracked-fail] Mealybug m3_lcdc_tile_sel_win_change (CGB-C): screen must match upstream CPU CGB C reference (currently differs; see legacy expected_failures)."
+    rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_win_change.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    expected_failure: true
     events:
       - {frame: 20, action: check_screen, hash: "0x27DC48584C83B0F2"}
   - id: gbc.mealybug.m3_lcdc_tile_sel_win_change2
@@ -6835,17 +6883,26 @@ cases:
       - {frame: 20, action: check_screen, hash: "0x96995E2D6C01339C"}
   - id: gbc.mealybug.m3_scy_change.cgbc
     category: ppu
-    description: "Mealybug m3_scy_change: screen hash."
+    description: "[tracked-fail] Mealybug m3_scy_change (CGB-C): screen must match upstream CPU CGB C reference (currently differs; see legacy expected_failures)."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scy_change.gb
     options: ["--gbc-hardware-model", "cgb_c"]
+    expected_failure: true
     events:
-      - {frame: 20, action: check_screen, hash: "0x4B6919B3068FBB51"}
+      - {frame: 20, action: check_screen, hash: "0xA90DB150A4E27B26"}
   - id: gbc.mealybug.m3_scy_change
     category: ppu
     description: "Mealybug m3_scy_change: screen hash."
     rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scy_change.gb
     events:
       - {frame: 20, action: check_screen, hash: "0x08B6EAAEB639DA8D"}
+  - id: gbc.mealybug.m3_scy_change.dmg.expected
+    category: ppu
+    description: "[tracked-fail] Mealybug m3_scy_change (DMG): screen must match upstream DMG-blob reference (currently differs; see legacy expected_failures)."
+    rom: gbc/mattcurrie_mealybug-tearoom-tests/m3_scy_change.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 20, action: check_screen, hash: "0xDAD332E15B2D7830"}
   - id: gbc.mealybug.m3_scy_change2
     category: ppu
     description: "Mealybug m3_scy_change2: screen hash."
@@ -6946,6 +7003,13 @@ cases:
     description: "dmg-acid2 under AGB: still image hash."
     rom: gbc/mattcurrie_dmg-acid2/dmg-acid2.gb
     options: ["--gbc-hardware-model", "agb"]
+    events:
+      - {frame: 60, action: check_screen, hash: "0xA53844367F6A41E4"}
+  - id: gbc.acid2.dmg_cgbd
+    category: ppu
+    description: "dmg-acid2 under CGB-D: still image hash (matches upstream reference-cgb.png)."
+    rom: gbc/mattcurrie_dmg-acid2/dmg-acid2.gb
+    options: ["--gbc-hardware-model", "cgb_d"]
     events:
       - {frame: 60, action: check_screen, hash: "0xA53844367F6A41E4"}
   - id: gbc.acid2.cgb_cgbc
@@ -9652,6 +9716,30 @@ cases:
     expected_failure: true
     events:
       - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.oam_write_dmgc.expected
+    category: ppu
+    description: "[tracked-fail] AGE oam-write-dmgC (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/c-sp_age-test-roms/artifacts/oam/oam-write-dmgC.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.stat_mode_window_dmgc.expected
+    category: ppu
+    description: "[tracked-fail] AGE stat-mode-window-dmgC (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/c-sp_age-test-roms/artifacts/stat-mode-window/stat-mode-window-dmgC.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.vram_read_dmgc.expected
+    category: ppu
+    description: "[tracked-fail] AGE vram-read-dmgC (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
+    rom: gbc/c-sp_age-test-roms/artifacts/vram/vram-read-dmgC.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    expected_failure: true
+    events:
+      - {frame: 460, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
   - id: gbc.age.stat_int_dmgc_cgbbce.dmg.expected
     category: ppu
     description: "[tracked-fail] AGE stat-int (dmg): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold (currently fails; see accuracy_expected_failures.txt)."
@@ -10333,6 +10421,62 @@ cases:
     description: "GBA peterlemon_velocity (PeterLemon): pending."
     rom: gba/PeterLemon-GBA/Physics/2D/Velocity/Velocity.gba
     pending_reason: "interacted refs; reference-image verdict only in legacy runner; needs emulator accuracy fix + green pin (no hash-domain expectation available)"
+  - id: gbc.age.m3_bg_bgp.dmg
+    category: ppu
+    description: "AGE m3-bg-bgp (DMG): screen matches upstream reference m3-bg-bgp-dmgC.png."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-bgp/m3-bg-bgp.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 7, action: check_screen, hash: "0x04328C7D0141F0DD"}
+  - id: gbc.age.m3_bg_bgp.cgbc
+    category: ppu
+    description: "AGE m3-bg-bgp (CGB-C): screen matches upstream reference m3-bg-bgp-ncmBC.png."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-bgp/m3-bg-bgp.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 7, action: check_screen, hash: "0x375F503B6F42F363"}
+  - id: gbc.age.m3_bg_lcdc.cgbc
+    category: ppu
+    description: "AGE m3-bg-lcdc (CGB-C): screen matches upstream reference m3-bg-lcdc-cgbBCE.png."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-lcdc/m3-bg-lcdc.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 7, action: check_screen, hash: "0xCC119BA7F4A69BD7"}
+  - id: gbc.age.m3_bg_lcdc_ds.cgbc
+    category: ppu
+    description: "AGE m3-bg-lcdc-ds (CGB-C): screen matches upstream reference m3-bg-lcdc-ds-cgbBCE.png."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-lcdc/m3-bg-lcdc-ds.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 8, action: check_screen, hash: "0xE5C61D46B609750C"}
+  - id: gbc.age.m3_bg_lcdc_nocgb.cgbc
+    category: ppu
+    description: "AGE m3-bg-lcdc-nocgb (CGB-C): screen matches upstream reference m3-bg-lcdc-nocgb-ncmBCE.png."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-lcdc/m3-bg-lcdc-nocgb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 7, action: check_screen, hash: "0x666A400A32EBBA61"}
+  - id: gbc.age.m3_bg_scx.cgbc
+    category: ppu
+    description: "AGE m3-bg-scx (CGB-C): screen matches upstream reference m3-bg-scx-cgbBCE.png."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-scx/m3-bg-scx.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 7, action: check_screen, hash: "0xB0184FDF173C42BF"}
+  - id: gbc.age.m3_bg_scx_ds.cgbc
+    category: ppu
+    description: "AGE m3-bg-scx-ds (CGB-C): screen matches upstream reference m3-bg-scx-ds-cgbBCE.png."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-scx/m3-bg-scx-ds.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 8, action: check_screen, hash: "0xB0184FDF173C42BF"}
+  - id: gbc.age.m3_bg_scx_nocgb.cgbc
+    category: ppu
+    description: "AGE m3-bg-scx-nocgb (CGB-C): screen matches upstream reference m3-bg-scx-nocgb-ncmBCE.png."
+    rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-scx/m3-bg-scx-nocgb.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 7, action: check_screen, hash: "0xB00D9236FCC885FD"}
   - id: gbc.age.m3_bg_bgp
     category: ppu
     description: "AGE m3_bg_bgp: pending."
