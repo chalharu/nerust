@@ -125,16 +125,7 @@ jobs:
         include:
           - variant: tao
             shard: 1
-            total: 4
-          - variant: tao
-            shard: 2
-            total: 4
-          - variant: tao
-            shard: 3
-            total: 4
-          - variant: tao
-            shard: 4
-            total: 4
+            total: 1
           - variant: gtk
             shard: 1
             total: 2
