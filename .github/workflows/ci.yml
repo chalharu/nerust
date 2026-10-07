@@ -50,6 +50,8 @@ jobs:
           cargo test --locked -p nerust_render_traits --lib --quiet
           cargo test --locked -p nerust_render_filters --lib --quiet
           cargo test --locked -p nerust_timer --lib --quiet
+      - name: Headless harness unit tests
+        run: cargo test --locked -p nerust_rom_test --lib --quiet
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -58,6 +60,70 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+  rom-tests:
+    name: ROM tests (${{ matrix.system }}, nextest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: nes
+            filter: "all() - test(_gbc_) - test(_gba_)"
+          - system: gbc
+            filter: "test(_gbc_)"
+          - system: gba
+            filter: "test(_gba_)"
+    env:
+      NERUST_ROM_CI: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: 1.99.0
+      - name: Restore Cargo registry and build cache
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-romtests-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-romtests-
+      - name: Restore nextest binary
+        id: nextest-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-0.9.143
+      - name: Install nextest
+        if: steps.nextest-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-nextest --locked --version 0.9.143
+      - name: ROM tests (${{ matrix.system }})
+        run: |
+          cargo nextest run --locked -p nerust_rom_test --test lib \
+            --features nes,gbc,gba -E "${{ matrix.filter }}"
+      - name: Save Cargo registry and build cache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+      - name: Save nextest binary
+        if: github.event_name == 'push' && steps.nextest-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-0.9.143
   test-root:
     name: Test root package (Tao)
     runs-on: ubuntu-latest
@@ -104,6 +170,10 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
   build-tao:
     name: Build Tao (Linux x86_64)
+    # Release builds are validated on pull requests by release-artifacts
+    # (Tao) and the SonarCloud test archives (Tao/GTK); keep this job for
+    # push-to-master verification only.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -148,6 +218,9 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
   build-gtk:
     name: Build GTK (Linux x86_64)
+    # Same as build-tao: pull requests are covered by release-artifacts
+    # and the SonarCloud archives.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
