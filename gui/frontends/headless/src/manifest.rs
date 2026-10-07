@@ -108,12 +108,21 @@ pub struct RomCase {
     /// boxes, including their no-rot rule.
     #[serde(default)]
     pub expected_failure: bool,
+    /// Pending registration: the case is known future work with no
+    /// assertions yet (unassertable verdict domain, missing playbook,
+    /// or safety review outstanding). Pending cases never execute:
+    /// they resolve to `Skipped` with this reason, visible in reports
+    /// but never passing, never failing. Graduate by replacing this
+    /// with real events. The ROM must still exist (binding check).
+    #[serde(default)]
+    pub pending_reason: Option<String>,
     /// Load-affecting options as raw strings, passed through to the
     /// factory CLI options schema as argv (e.g. `"--mmc3-irq-variant",
     /// "nec"`, `"--submapper", "1"`); clap validates them there.
     /// Anything unknown is rejected loudly — never silently ignored.
     #[serde(default)]
     pub options: Vec<String>,
+    #[serde(default)]
     pub events: Vec<RomEvent>,
     #[serde(default)]
     pub expected_audio: Option<AudioExpectation>,
@@ -152,7 +161,7 @@ impl RomCase {
                 rom_path.display()
             )));
         }
-        if self.events.is_empty() {
+        if self.events.is_empty() && self.pending_reason.is_none() {
             return Err(RomTestError::InvalidManifest(format!(
                 "ROM case `{}` must define at least one event",
                 self.id
