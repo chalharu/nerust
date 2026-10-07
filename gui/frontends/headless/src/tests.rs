@@ -142,6 +142,7 @@ fn drive_case_dispatches_frame_zero_events() {
                 RomAssertion::Memory { .. } => self.events.push(format!("ram@{frame}")),
                 RomAssertion::Registers { .. } => self.events.push(format!("regs@{frame}")),
                 RomAssertion::Serial { .. } => self.events.push(format!("serial@{frame}")),
+                RomAssertion::Log { .. } => self.events.push(format!("log@{frame}")),
             }
             Ok(())
         }

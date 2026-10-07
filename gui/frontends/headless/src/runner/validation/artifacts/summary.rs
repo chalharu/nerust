@@ -39,11 +39,11 @@ impl ValidationArtifacts {
 
         // No-rot rule: a tracked red that now passes must graduate.
         // Only meaningful when expectations were checked (capture
-        // records no mismatches by design).
-        let stale_expected_failure =
-            case.expected_failure && options.check_expectations && self.failures.is_empty();
-        if stale_expected_failure {
-            self.failures.push(format!(
+        // records no mismatches by design). Stale prompts bypass
+        // tolerance unconditionally: a fix must never stay silent.
+        let mut stale_notes = std::mem::take(&mut self.stale_pending);
+        if case.expected_failure && options.check_expectations && self.failures.is_empty() {
+            stale_notes.push(format!(
                 "{}: expected failure went stale (now passing — graduate it by dropping expected_failure)",
                 case.id
             ));
@@ -60,10 +60,11 @@ impl ValidationArtifacts {
             memory_checks: self.memory.memory.checks,
             register_checks: self.registers.registers.checks,
             serial_checks: self.serial.serial.checks,
+            log_checks: self.log.log.checks,
             audio,
             failures: self.failures,
             expected_failure: case.expected_failure,
-            stale_expected_failure,
+            stale_notes,
         }
     }
 }

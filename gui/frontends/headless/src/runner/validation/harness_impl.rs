@@ -24,6 +24,18 @@ impl CaseHarness for ValidationRunner {
             RomAssertion::Serial { channel, bytes } => {
                 self.record_serial_assert(frame, channel.clone(), bytes.clone())
             }
+            RomAssertion::Log {
+                channel,
+                end,
+                fail_prefix,
+                allowed_fail,
+            } => self.record_log_assert(
+                frame,
+                channel.clone(),
+                end.clone(),
+                fail_prefix.clone(),
+                allowed_fail.clone(),
+            ),
         }
     }
 

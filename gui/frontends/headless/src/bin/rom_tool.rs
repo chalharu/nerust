@@ -274,8 +274,23 @@ fn print_outcome(outcome: &CaseOutcome, full_bytes: bool) {
                 "  audio sample_rate={} samples={} hash=0x{:016X}",
                 validation.audio.sample_rate, validation.audio.samples, validation.audio.hash
             );
+            for check in &validation.log_checks {
+                println!(
+                    "  log frame={} channel={} end={} fails=[{}] missing=[{}] unexpected=[{}] status={}",
+                    check.frame,
+                    check.channel,
+                    check.expected_end,
+                    check.fail_names.join(", "),
+                    check.missing_allowed.join(", "),
+                    check.unexpected_fail.join(", "),
+                    if check.passed() { "pass" } else { "fail" }
+                );
+            }
             for failure in &validation.failures {
                 println!("  failure={failure}");
+            }
+            for note in &validation.stale_notes {
+                println!("  stale={note}");
             }
         }
         CaseOutcome::InternalError {

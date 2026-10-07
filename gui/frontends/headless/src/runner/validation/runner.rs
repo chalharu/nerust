@@ -112,6 +112,28 @@ impl ValidationRunner {
         )
     }
 
+    pub(in crate::runner::validation) fn record_log_assert(
+        &mut self,
+        frame: u64,
+        channel: String,
+        end: String,
+        fail_prefix: String,
+        allowed_fail: Vec<String>,
+    ) -> Result<(), RomTestError> {
+        self.artifacts.record_log_assert(
+            &self.case_id,
+            &self.runtime,
+            self.options,
+            super::artifacts::log::ExpectedLog {
+                frame,
+                channel,
+                end,
+                fail_prefix,
+                allowed_fail,
+            },
+        )
+    }
+
     pub(in crate::runner::validation) fn reset_runtime(&mut self) -> Result<(), RomTestError> {
         self.runtime.reset()
     }
