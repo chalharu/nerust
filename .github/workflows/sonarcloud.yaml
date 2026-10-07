@@ -187,6 +187,51 @@ jobs:
           name: lcov-${{ matrix.variant }}-${{ matrix.shard }}
           path: coverage/*.info
           retention-days: 1
+  rom-tests:
+    name: ROM tests (${{ matrix.system }}, nextest)
+    needs: prepare-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: nes
+            filter: "all() - test(_gbc_) - test(_gba_)"
+          - system: gbc
+            filter: "test(_gbc_)"
+          - system: gba
+            filter: "test(_gba_)"
+    container:
+      image: ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ needs.prepare-image.outputs.image_tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      NERUST_ROM_CI: "1"
+      CARGO_TERM_COLOR: always
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-all-crates: "true"
+          workspaces: |
+            . -> target
+      # Plain correctness gate (no llvm-cov): 1300+ instrumented
+      # integration runs would 2-3x the time for coverage noise.
+      # Unit coverage stays in test-coverage; the rom_test package
+      # itself is excluded from those archives by design.
+      - name: ROM tests (${{ matrix.system }})
+        run: |
+          export LIBCUBEB_SYS_USE_PKG_CONFIG=1
+          cargo nextest run --locked -p nerust_rom_test --test lib \
+            --features nes,gbc,gba -E "${{ matrix.filter }}"
   sonarcloud:
     name: SonarCloud
     needs: test-coverage
