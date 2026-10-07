@@ -6680,7 +6680,7 @@ cases:
     options: ["--gbc-hardware-model", "dmg"]
     expected_failure: true
     events:
-      - {frame: 20, action: check_screen, hash: "0x6F0577EA9866009A"}
+      - {frame: 4, action: check_screen, hash: "0x6F0577EA9866009A"}
   - id: gbc.mealybug.m3_lcdc_obj_size_change_scx.cgbc
     category: ppu
     description: "Mealybug m3_lcdc_obj_size_change_scx: screen hash."
@@ -6701,7 +6701,7 @@ cases:
     options: ["--gbc-hardware-model", "dmg"]
     expected_failure: true
     events:
-      - {frame: 20, action: check_screen, hash: "0xEFBD13C875A906DE"}
+      - {frame: 4, action: check_screen, hash: "0xEFBD13C875A906DE"}
   - id: gbc.mealybug.m3_lcdc_tile_sel_change
     category: ppu
     description: "Mealybug m3_lcdc_tile_sel_change: screen hash."
@@ -6715,7 +6715,7 @@ cases:
     options: ["--gbc-hardware-model", "dmg"]
     expected_failure: true
     events:
-      - {frame: 20, action: check_screen, hash: "0xA85716B78FB82BA3"}
+      - {frame: 4, action: check_screen, hash: "0xA85716B78FB82BA3"}
   - id: gbc.mealybug.m3_lcdc_tile_sel_change.cgbc.expected
     category: ppu
     description: "[tracked-fail] Mealybug m3_lcdc_tile_sel_change (CGB-C): screen must match upstream CPU CGB C reference (currently differs; see legacy expected_failures)."
@@ -6723,7 +6723,7 @@ cases:
     options: ["--gbc-hardware-model", "cgb_c"]
     expected_failure: true
     events:
-      - {frame: 20, action: check_screen, hash: "0x3119D058AD63944B"}
+      - {frame: 3, action: check_screen, hash: "0x3119D058AD63944B"}
   - id: gbc.mealybug.m3_lcdc_tile_sel_change2
     category: ppu
     description: "Mealybug m3_lcdc_tile_sel_change2: screen hash."
@@ -6744,7 +6744,7 @@ cases:
     options: ["--gbc-hardware-model", "dmg"]
     expected_failure: true
     events:
-      - {frame: 20, action: check_screen, hash: "0xC0723D05598EBE34"}
+      - {frame: 4, action: check_screen, hash: "0xC0723D05598EBE34"}
   - id: gbc.mealybug.m3_lcdc_tile_sel_win_change.cgbc.expected
     category: ppu
     description: "[tracked-fail] Mealybug m3_lcdc_tile_sel_win_change (CGB-C): screen must match upstream CPU CGB C reference (currently differs; see legacy expected_failures)."
@@ -6752,7 +6752,7 @@ cases:
     options: ["--gbc-hardware-model", "cgb_c"]
     expected_failure: true
     events:
-      - {frame: 20, action: check_screen, hash: "0x27DC48584C83B0F2"}
+      - {frame: 3, action: check_screen, hash: "0x27DC48584C83B0F2"}
   - id: gbc.mealybug.m3_lcdc_tile_sel_win_change2
     category: ppu
     description: "Mealybug m3_lcdc_tile_sel_win_change2: screen hash."
@@ -6888,7 +6888,7 @@ cases:
     options: ["--gbc-hardware-model", "cgb_c"]
     expected_failure: true
     events:
-      - {frame: 20, action: check_screen, hash: "0xA90DB150A4E27B26"}
+      - {frame: 5, action: check_screen, hash: "0xA90DB150A4E27B26"}
   - id: gbc.mealybug.m3_scy_change
     category: ppu
     description: "Mealybug m3_scy_change: screen hash."
@@ -6902,7 +6902,7 @@ cases:
     options: ["--gbc-hardware-model", "dmg"]
     expected_failure: true
     events:
-      - {frame: 20, action: check_screen, hash: "0xDAD332E15B2D7830"}
+      - {frame: 5, action: check_screen, hash: "0xDAD332E15B2D7830"}
   - id: gbc.mealybug.m3_scy_change2
     category: ppu
     description: "Mealybug m3_scy_change2: screen hash."
@@ -7011,7 +7011,7 @@ cases:
     rom: gbc/mattcurrie_dmg-acid2/dmg-acid2.gb
     options: ["--gbc-hardware-model", "cgb_d"]
     events:
-      - {frame: 60, action: check_screen, hash: "0xA53844367F6A41E4"}
+      - {frame: 10, action: check_screen, hash: "0xA53844367F6A41E4"}
   - id: gbc.acid2.cgb_cgbc
     category: ppu
     description: "cgb-acid2 under CGB-C: still image hash."
