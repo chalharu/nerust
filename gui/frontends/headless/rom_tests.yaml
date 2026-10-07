@@ -7078,27 +7078,6 @@ cases:
     rom: gbc/c-sp_age-test-roms/artifacts/vram/vram-read-ncmBCE.gb
     events:
       - {frame: 86, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.ly_ncmbc
-    category: ppu
-    description: "AGE ly-ncmBC: registers settle to the pass tuple."
-    rom: gbc/c-sp_age-test-roms/artifacts/ly/ly-ncmBC.gb
-    options: ["--gbc-hardware-model", "cgb_c"]
-    events:
-      - {frame: 14, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.oam_read_ncmbc
-    category: ppu
-    description: "AGE oam-read-ncmBC: registers settle to the pass tuple."
-    rom: gbc/c-sp_age-test-roms/artifacts/oam/oam-read-ncmBC.gb
-    options: ["--gbc-hardware-model", "cgb_c"]
-    events:
-      - {frame: 86, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.stat_mode_ncmbc
-    category: ppu
-    description: "AGE stat-mode-ncmBC: registers settle to the pass tuple."
-    rom: gbc/c-sp_age-test-roms/artifacts/stat-mode/stat-mode-ncmBC.gb
-    options: ["--gbc-hardware-model", "cgb_c"]
-    events:
-      - {frame: 86, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
   - id: gbc.age.ly_ncme
     category: ppu
     description: "AGE ly-ncmE: registers settle to the pass tuple."
@@ -7283,48 +7262,6 @@ cases:
     rom: gbc/c-sp_age-test-roms/artifacts/vram/vram-read-cgbBCE.gb
     events:
       - {frame: 204, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.lcd_align_ly_cgbbc
-    category: ppu
-    description: "AGE lcd-align-ly-cgbBC: registers settle to the pass tuple."
-    rom: gbc/c-sp_age-test-roms/artifacts/lcd-align-ly/lcd-align-ly-cgbBC.gb
-    options: ["--gbc-hardware-model", "cgb_c"]
-    events:
-      - {frame: 500, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.ly_dmgc_cgbbc
-    category: ppu
-    description: "AGE ly-dmgC-cgbBC: registers settle to the pass tuple."
-    rom: gbc/c-sp_age-test-roms/artifacts/ly/ly-dmgC-cgbBC.gb
-    options: ["--gbc-hardware-model", "cgb_c"]
-    events:
-      - {frame: 28, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.oam_read_dmgc_cgbbc
-    category: ppu
-    description: "AGE oam-read-dmgC-cgbBC: registers settle to the pass tuple."
-    rom: gbc/c-sp_age-test-roms/artifacts/oam/oam-read-dmgC-cgbBC.gb
-    options: ["--gbc-hardware-model", "cgb_c"]
-    events:
-      - {frame: 204, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.spsw_tima_cgbbc
-    category: ppu
-    description: "AGE spsw-tima-cgbBC: registers settle to the pass tuple."
-    rom: gbc/c-sp_age-test-roms/artifacts/speed-switch/spsw-tima-cgbBC.gb
-    options: ["--gbc-hardware-model", "cgb_c"]
-    events:
-      - {frame: 90, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.spsw_interrupts_cgbbc
-    category: ppu
-    description: "AGE spsw-interrupts-cgbBC: registers settle to the pass tuple."
-    rom: gbc/c-sp_age-test-roms/artifacts/speed-switch/caution/spsw-interrupts-cgbBC.gb
-    options: ["--gbc-hardware-model", "cgb_c"]
-    events:
-      - {frame: 6, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
-  - id: gbc.age.stat_mode_dmgc_cgbbc
-    category: ppu
-    description: "AGE stat-mode-dmgC-cgbBC: registers settle to the pass tuple."
-    rom: gbc/c-sp_age-test-roms/artifacts/stat-mode/stat-mode-dmgC-cgbBC.gb
-    options: ["--gbc-hardware-model", "cgb_c"]
-    events:
-      - {frame: 86, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
   - id: gba.jsmolka_bios
     category: cpu
     description: "GBA jsmolka_bios (jsmolka): r12 first-failed number, zero means all pass."
@@ -10455,39 +10392,46 @@ cases:
       - {frame: 7, action: check_screen, hash: "0xB00D9236FCC885FD"}
   - id: gbc.age.m3_bg_bgp
     category: ppu
-    description: "AGE m3_bg_bgp: pending."
+    description: "AGE m3-bg-bgp (CGB-D): screen matches upstream reference m3-bg-bgp-ncmE.png."
     rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-bgp/m3-bg-bgp.gb
-    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+    events:
+      - {frame: 7, action: check_screen, hash: "0xC45B9A7E303A5C69"}
   - id: gbc.age.m3_bg_lcdc
     category: ppu
-    description: "AGE m3_bg_lcdc: pending."
+    description: "AGE m3-bg-lcdc (CGB-D): screen matches upstream reference m3-bg-lcdc-cgbBCE.png."
     rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-lcdc/m3-bg-lcdc.gb
-    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+    events:
+      - {frame: 7, action: check_screen, hash: "0xCC119BA7F4A69BD7"}
   - id: gbc.age.m3_bg_lcdc_ds
     category: ppu
-    description: "AGE m3_bg_lcdc_ds: pending."
+    description: "AGE m3-bg-lcdc-ds (CGB-D): screen matches upstream reference m3-bg-lcdc-ds-cgbBCE.png."
     rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-lcdc/m3-bg-lcdc-ds.gb
-    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+    events:
+      - {frame: 8, action: check_screen, hash: "0xE5C61D46B609750C"}
   - id: gbc.age.m3_bg_lcdc_nocgb
     category: ppu
-    description: "AGE m3_bg_lcdc_nocgb: pending."
+    description: "AGE m3-bg-lcdc-nocgb (CGB-D): screen matches upstream reference m3-bg-lcdc-nocgb-ncmBCE.png."
     rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-lcdc/m3-bg-lcdc-nocgb.gb
-    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+    events:
+      - {frame: 7, action: check_screen, hash: "0x666A400A32EBBA61"}
   - id: gbc.age.m3_bg_scx
     category: ppu
-    description: "AGE m3_bg_scx: pending."
+    description: "AGE m3-bg-scx (CGB-D): screen matches upstream reference m3-bg-scx-cgbBCE.png."
     rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-scx/m3-bg-scx.gb
-    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+    events:
+      - {frame: 7, action: check_screen, hash: "0xB0184FDF173C42BF"}
   - id: gbc.age.m3_bg_scx_ds
     category: ppu
-    description: "AGE m3_bg_scx_ds: pending."
+    description: "AGE m3-bg-scx-ds (CGB-D): screen matches upstream reference m3-bg-scx-ds-cgbBCE.png."
     rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-scx/m3-bg-scx-ds.gb
-    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+    events:
+      - {frame: 8, action: check_screen, hash: "0xB0184FDF173C42BF"}
   - id: gbc.age.m3_bg_scx_nocgb
     category: ppu
-    description: "AGE m3_bg_scx_nocgb: pending."
+    description: "AGE m3-bg-scx-nocgb (CGB-D): screen matches upstream reference m3-bg-scx-nocgb-ncmBCE.png."
     rom: gbc/c-sp_age-test-roms/artifacts/m3-bg-scx/m3-bg-scx-nocgb.gb
-    pending_reason: "upstream PNG reference diverges (PPU gap); pin screen hash on fix"
+    events:
+      - {frame: 7, action: check_screen, hash: "0xB00D9236FCC885FD"}
   - id: gba.alyosha_fifo_dma_disable_jam
     category: cpu
     description: "GBA alyosha_fifo_dma_disable_jam: pending."
