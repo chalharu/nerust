@@ -48,18 +48,11 @@ jobs:
           push: true
           tags: ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ steps.set-tag.outputs.tag }}
           provenance: false
-  build-tests:
-    name: Build tests (${{ matrix.variant }})
+  build-rom-tests:
+    name: Build ROM tests
     needs: prepare-image
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          - tao
-          - gtk
-          - rom
     container:
       image: ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ needs.prepare-image.outputs.image_tag }}
       credentials:
@@ -89,49 +82,24 @@ jobs:
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
           mkdir -p artifacts
-          if [ "${{ matrix.variant }}" = "tao" ]; then
-            cargo llvm-cov nextest-archive --workspace --exclude nerust_rom_test \
-              --features tao,wgpu --archive-file artifacts/tao.tar.zst
-          elif [ "${{ matrix.variant }}" = "gtk" ]; then
-            cargo llvm-cov nextest-archive --workspace --exclude nerust_rom_test \
-              --exclude nerust_gbc_core \
-              --exclude nerust_nes_core --no-default-features --features gtk,opengl,nes \
-              --archive-file artifacts/gtk.tar.zst
-          else
-            # Single headless-harness build (all three systems, CI subset).
-            # NERUST_ROM_CI is read by build.rs at compile time, so it must
-            # be set here, not at run time.
-            export NERUST_ROM_CI=1
-            cargo llvm-cov nextest-archive -p nerust_rom_test \
-              --features nes,gbc,gba --archive-file artifacts/rom.tar.zst
-          fi
+          # Single headless-harness build (all three systems, CI subset).
+          # NERUST_ROM_CI is read by build.rs at compile time, so it must
+          # be set here, not at run time.
+          export NERUST_ROM_CI=1
+          cargo llvm-cov nextest-archive -p nerust_rom_test \
+            --features nes,gbc,gba --archive-file artifacts/rom.tar.zst
       - name: Upload test archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: test-archive-${{ matrix.variant }}
-          path: artifacts/${{ matrix.variant }}.tar.zst
+          name: test-archive-rom
+          path: artifacts/rom.tar.zst
           compression-level: 0
           retention-days: 1
-  test-coverage:
-    name: Test coverage (${{ matrix.variant }}, ${{ matrix.shard }}/${{ matrix.total }})
-    needs:
-      - prepare-image
-      - build-tests
+  coverage-tao:
+    name: Test coverage (tao)
+    needs: prepare-image
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - variant: tao
-            shard: 1
-            total: 1
-          - variant: gtk
-            shard: 1
-            total: 2
-          - variant: gtk
-            shard: 2
-            total: 2
     container:
       image: ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ needs.prepare-image.outputs.image_tag }}
       credentials:
@@ -149,27 +117,21 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Download test archive
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          name: test-archive-${{ matrix.variant }}
-          path: artifacts
-      - name: Generate coverage report
+          cache-all-crates: "true"
+          workspaces: |
+            . -> target
+            . -> target/llvm-cov-target
+      - name: Build and run tests with coverage
         run: |
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
           mkdir -p coverage target/llvm-cov-target
-          if [ "${{ matrix.variant }}" = "gtk" ]; then
-            xvfb-run cargo llvm-cov nextest --no-report \
-              --archive-file artifacts/${{ matrix.variant }}.tar.zst \
-              --partition slice:${{ matrix.shard }}/${{ matrix.total }}
-          else
-            cargo llvm-cov nextest --no-report \
-              --archive-file artifacts/${{ matrix.variant }}.tar.zst \
-              --partition slice:${{ matrix.shard }}/${{ matrix.total }}
-          fi
+          cargo llvm-cov nextest --no-report --workspace --exclude nerust_rom_test \
+            --features tao,wgpu
           cargo llvm-cov report \
-            --nextest-archive-file artifacts/${{ matrix.variant }}.tar.zst \
             --no-default-ignore-filename-regex \
             --lcov --output-path coverage/raw.info
           workspace_root="${PWD%/}/"
@@ -177,20 +139,74 @@ jobs:
             /^SF:/ { include = index($0, prefix) == 1 }
             include { print }
             /^end_of_record$/ { include = 0 }
-          ' coverage/raw.info > coverage/lcov-${{ matrix.variant }}-${{ matrix.shard }}.info
+          ' coverage/raw.info > coverage/lcov-tao.info
           rm coverage/raw.info
           sed -i "s#^SF:${workspace_root}#SF:#" coverage/*.info
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: lcov-${{ matrix.variant }}-${{ matrix.shard }}
+          name: lcov-tao
+          path: coverage/*.info
+          retention-days: 1
+  coverage-gtk:
+    name: Test coverage (gtk)
+    needs: prepare-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ needs.prepare-image.outputs.image_tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+      CARGO_TERM_COLOR: always
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-all-crates: "true"
+          workspaces: |
+            . -> target
+            . -> target/llvm-cov-target
+      - name: Build and run tests with coverage
+        run: |
+          export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
+          export LIBCUBEB_SYS_USE_PKG_CONFIG=1
+          mkdir -p coverage target/llvm-cov-target
+          xvfb-run cargo llvm-cov nextest --no-report --workspace \
+            --exclude nerust_rom_test --exclude nerust_gbc_core \
+            --exclude nerust_nes_core --no-default-features --features gtk,opengl,nes
+          cargo llvm-cov report \
+            --no-default-ignore-filename-regex \
+            --lcov --output-path coverage/raw.info
+          workspace_root="${PWD%/}/"
+          awk -v prefix="SF:${workspace_root}" '
+            /^SF:/ { include = index($0, prefix) == 1 }
+            include { print }
+            /^end_of_record$/ { include = 0 }
+          ' coverage/raw.info > coverage/lcov-gtk.info
+          rm coverage/raw.info
+          sed -i "s#^SF:${workspace_root}#SF:#" coverage/*.info
+      - name: Upload coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lcov-gtk
           path: coverage/*.info
           retention-days: 1
   rom-tests:
     name: ROM tests (nextest ${{ matrix.shard }}/${{ matrix.total }})
     needs:
       - prepare-image
-      - build-tests
+      - build-rom-tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -253,7 +269,8 @@ jobs:
   sonarcloud:
     name: SonarCloud
     needs:
-      - test-coverage
+      - coverage-tao
+      - coverage-gtk
       - rom-tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
