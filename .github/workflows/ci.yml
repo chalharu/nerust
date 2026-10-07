@@ -8,9 +8,8 @@ env:
   RUSTFLAGS: "-D warnings"
 jobs:
   # Fast static checks. Unit, root, and ROM test execution lives in
-  # sonarcloud.yaml (nextest, sharded); this job keeps only what the
-  # coverage archives deliberately exclude: formatting, lints, and the
-  # headless harness self-checks.
+  # sonarcloud.yaml (nextest, sharded); this job keeps only formatting
+  # and lints.
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -43,8 +42,6 @@ jobs:
             -p nerust_nes_core -p nerust_persistence \
             -p nerust_gba_core \
             -p nerust_gba_factory -p nerust_gba_device -p nerust_gba_settings
-      - name: Headless harness unit tests
-        run: cargo test --locked -p nerust_rom_test --lib --quiet
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
