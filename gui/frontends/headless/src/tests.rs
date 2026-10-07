@@ -463,15 +463,17 @@ cases:
 
     let events = &manifest.case("cpu.serial").unwrap().events;
     match &events[0].kind {
-        RomEventKind::CheckSerial { bytes } => {
+        RomEventKind::CheckSerial { channel, bytes } => {
+            assert_eq!(channel, "serial");
             assert_eq!(bytes, b"Passed");
         }
         other => panic!("unexpected event kind: {other:?}"),
     }
     match &events[1].kind {
         RomEventKind::Assert {
-            assertion: RomAssertion::Serial { bytes },
+            assertion: RomAssertion::Serial { channel, bytes },
         } => {
+            assert_eq!(channel, "serial");
             assert_eq!(bytes, b"Passed");
         }
         other => panic!("unexpected event kind: {other:?}"),
@@ -513,7 +515,8 @@ fn drive_case_dispatches_check_serial() {
 
         fn on_assert(&mut self, frame: u64, assertion: &RomAssertion) -> Result<(), RomTestError> {
             match assertion {
-                RomAssertion::Serial { bytes } => {
+                RomAssertion::Serial { channel, bytes } => {
+                    assert_eq!(channel, "serial");
                     self.events.push(format!("serial@{frame}:{}", bytes.len()))
                 }
                 _ => self.events.push(format!("other@{frame}")),
@@ -545,6 +548,7 @@ fn drive_case_dispatches_check_serial() {
         events: vec![RomEvent {
             frame: 1,
             kind: RomEventKind::CheckSerial {
+                channel: "serial".to_string(),
                 bytes: b"Passed".to_vec(),
             },
         }],

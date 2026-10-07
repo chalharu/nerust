@@ -50,9 +50,19 @@ impl ValidationRuntime {
         self.system.read_registers()
     }
 
-    /// Cumulative serial bytes transmitted since power-on (or the last
-    /// reset). Grows only; cores without a serial port stay empty.
-    pub(in crate::runner::validation) fn peek_serial(&self) -> &[u8] {
-        &self.serial
+    /// Cumulative bytes produced on one channel since power-on (or
+    /// the last reset). Grows only; unknown channels fail loudly
+    /// (read-time validation against the drained set, like
+    /// registers/spaces) — never silently empty.
+    pub(in crate::runner::validation) fn peek_serial(
+        &self,
+        channel: &str,
+    ) -> Result<&[u8], RomTestError> {
+        self.serial.get(channel).map(Vec::as_slice).ok_or_else(|| {
+            crate::error::RomTestError::EmuThread(format!(
+                "unknown output channel `{channel}` (drained {:?})",
+                self.serial.keys().collect::<Vec<_>>()
+            ))
+        })
     }
 }

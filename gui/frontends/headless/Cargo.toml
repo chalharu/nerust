@@ -35,6 +35,7 @@ gbc = [
 ]
 gba = [
     "dep:nerust_gba_factory",
+    "nerust_gba_factory/mgba-debug-log",
 ]
 
 [[bin]]

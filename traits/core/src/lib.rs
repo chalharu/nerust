@@ -177,11 +177,13 @@ pub enum EmuCommand {
         tap: Arc<Mutex<Vec<audio::StereoSample>>>,
         reply: Sender<()>,
     },
-    /// Install a serial-output tap: every rendered frame moves the
-    /// core's freshly transmitted bytes into `tap` (overwriting the
-    /// previous frame's delta; accumulation is the reader's job).
-    /// Headless capture only.
+    /// Install a guest-output tap for one named channel (see
+    /// `ConsoleCore::output_channels`): every rendered frame moves the
+    /// core's freshly produced bytes for that channel into `tap`
+    /// (overwriting the previous frame's delta; accumulation is the
+    /// reader's job). Headless capture only.
     TapSerialOutput {
+        channel: String,
         tap: Arc<Mutex<Vec<u8>>>,
         reply: Sender<()>,
     },
@@ -191,6 +193,12 @@ pub enum EmuCommand {
     /// without naming system tables.
     DebuggerSpaces {
         reply: Sender<Vec<debugger::SpaceInfo>>,
+    },
+    /// Guest-output channel names. Static metadata: answered without
+    /// pause gating; empty when idle. Lets generic drivers install one
+    /// tap per channel without naming system channels.
+    OutputChannels {
+        reply: Sender<Vec<String>>,
     },
 }
 
@@ -244,12 +252,26 @@ pub trait ConsoleCore: Send + Downcast {
         None
     }
 
-    // -- serial output (default: no serial port) --
-    /// Drain bytes the core transmitted since the last call (link-cable
-    /// serial and equivalents). The session layer calls this once per
-    /// rendered frame; accumulation is the reader's job. Empty by
-    /// default: cores without an observable serial port stay silent.
-    fn take_serial_bytes(&mut self) -> Vec<u8> {
+    // -- guest output channels (default: none) --
+    /// Names of the guest-output byte channels this core produces
+    /// (e.g. a link-cable serial stream, a guest debug-log sink).
+    /// Static topology: names are core-defined, data (manifests) may
+    /// reference them, generic drivers never invent them.
+    ///
+    /// Override PAIR checklist: `output_channels` and
+    /// `take_channel_bytes` must be overridden together. Listing a
+    /// channel without draining it (or vice versa) fails loudly at
+    /// read time, never at compile time, so keep the pair in sync.
+    fn output_channels(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Drain bytes the core produced on `channel` since the last call.
+    /// The session layer calls this once per rendered frame per tapped
+    /// channel; accumulation is the reader's job. Line-oriented sinks
+    /// flatten to newline-delimited bytes here (levels/prefixes are
+    /// the assert side's concern, if ever needed). Empty by default and
+    /// for unknown channels: cores stay silent unless they produce.
+    fn take_channel_bytes(&mut self, _channel: &str) -> Vec<u8> {
         Vec::new()
     }
 

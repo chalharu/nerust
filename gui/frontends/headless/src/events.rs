@@ -24,6 +24,13 @@ impl RomEvent {
     }
 }
 
+/// Default output channel: the link-cable serial stream. Keeps the
+/// 1057 existing serial pins working untouched; log-sink cases name
+/// their channel explicitly.
+fn default_serial_channel() -> String {
+    "serial".to_string()
+}
+
 /// Test-domain assertion vocabulary. New kinds need no schema
 /// migration for addresses/names (those resolve against live system
 /// state), but adding a variant is intentionally shotgun: every `match`
@@ -44,6 +51,12 @@ impl RomEvent {
 /// a registry would fail at runtime instead. Serial (kind 4) still
 /// fits snapshot-compare — cumulative bytes at a frame are a snapshot
 /// — so the revisit trigger moves to the next stateful kind.
+///
+/// 2026-10 update: a second output channel (a guest debug-log sink)
+/// did NOT become kind 5. A channel key on `Serial` covers named byte
+/// streams without a new variant: still snapshot-shaped, still the
+/// same dispatch. The trigger remains reserved for a genuinely new
+/// (non-snapshot) kind.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RomAssertion {
@@ -74,12 +87,16 @@ pub enum RomAssertion {
         registers: BTreeMap<String, u64>,
     },
     /// Serial-output assertion. Compares the cumulative bytes the
-    /// core transmitted since power-on, exactly. Streams are stateful
-    /// but cumulative-at-a-frame is still a snapshot, so no new
-    /// dispatch shape was needed. Cores without a serial port stay
-    /// silent (empty); asserting non-empty bytes there fails like any
-    /// other mismatch.
+    /// core produced on one named output channel since power-on,
+    /// exactly. Streams are stateful but cumulative-at-a-frame is
+    /// still a snapshot, so no new dispatch shape was needed. The
+    /// channel is core-defined (e.g. `"serial"`, `"debug-log"`) and
+    /// validated at read time against the live channel list; cores
+    /// producing nothing on it stay silent (empty), and asserting
+    /// non-empty bytes there fails like any other mismatch.
     Serial {
+        #[serde(default = "default_serial_channel")]
+        channel: String,
         #[serde(with = "hex_bytes")]
         bytes: Vec<u8>,
     },
@@ -125,6 +142,8 @@ pub enum RomEventKind {
         registers: BTreeMap<String, u64>,
     },
     CheckSerial {
+        #[serde(default = "default_serial_channel")]
+        channel: String,
         #[serde(with = "hex_bytes")]
         bytes: Vec<u8>,
     },
@@ -156,7 +175,8 @@ impl RomEventKind {
             RomEventKind::CheckRegisters { registers } => Some(RomAssertion::Registers {
                 registers: registers.clone(),
             }),
-            RomEventKind::CheckSerial { bytes } => Some(RomAssertion::Serial {
+            RomEventKind::CheckSerial { channel, bytes } => Some(RomAssertion::Serial {
+                channel: channel.clone(),
                 bytes: bytes.clone(),
             }),
             RomEventKind::Reset | RomEventKind::StandardController { .. } => None,

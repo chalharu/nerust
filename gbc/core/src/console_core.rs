@@ -297,7 +297,14 @@ impl ConsoleCore for GbcConsoleCore {
         Some(Box::new(crate::debugger::GbcDebugControl::new(self)) as _)
     }
 
-    fn take_serial_bytes(&mut self) -> Vec<u8> {
+    fn output_channels(&self) -> Vec<String> {
+        vec!["serial".to_string()]
+    }
+
+    fn take_channel_bytes(&mut self, channel: &str) -> Vec<u8> {
+        if channel != "serial" {
+            return Vec::new();
+        }
         self.loaded
             .as_mut()
             .map(|loaded| loaded.system.bus.take_serial_output())

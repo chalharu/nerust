@@ -273,7 +273,7 @@ pub fn write_html_report(
                 if !validation.serial_checks.is_empty() {
                     html.push_str(
                         "<h4>Serial checks</h4><table><thead><tr>\
-                         <th>Frame</th><th>Expected</th><th>Actual</th><th>Status</th>\
+                         <th>Frame</th><th>Channel</th><th>Expected</th><th>Actual</th><th>Status</th>\
                          </tr></thead><tbody>",
                     );
                     for check in &validation.serial_checks {
@@ -282,8 +282,10 @@ pub fn write_html_report(
                         write!(
                             html,
                             "<tr><td>{}</td><td><code>{}</code></td>\
-                             <td><code>{}</code></td><td class=\"{}\">{}</td></tr>",
+                             <td><code>{}</code></td><td><code>{}</code></td>\
+                             <td class=\"{}\">{}</td></tr>",
                             check.frame,
+                            check.channel,
                             hex_preview(&check.expected_bytes),
                             hex_preview(&check.actual_bytes),
                             status_class,

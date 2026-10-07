@@ -15,9 +15,11 @@ pub(in crate::runner::validation::artifacts) struct SerialCheckArtifacts {
 }
 
 /// Expected serial observation for one assertion: the cumulative
-/// bytes transmitted since power-on (or the last reset), exactly.
+/// bytes produced on one channel since power-on (or the last reset),
+/// exactly.
 pub(in crate::runner::validation) struct ExpectedSerial {
     pub(in crate::runner::validation) frame: u64,
+    pub(in crate::runner::validation) channel: String,
     pub(in crate::runner::validation) bytes: Vec<u8>,
 }
 
@@ -29,17 +31,19 @@ impl ValidationArtifacts {
         options: ValidationOptions,
         expected: ExpectedSerial,
     ) -> Result<(), RomTestError> {
-        let actual = runtime.peek_serial();
+        let actual = runtime.peek_serial(&expected.channel)?;
         if options.check_expectations && actual != expected.bytes.as_slice() {
             self.failures.push(format!(
-                "{case_id}: serial mismatch at frame {} (expected {}, actual {})",
+                "{case_id}: serial mismatch at frame {} channel `{}` (expected {}, actual {})",
                 expected.frame,
+                expected.channel,
                 describe_bytes(&expected.bytes),
                 describe_bytes(actual),
             ));
         }
         self.serial.serial.checks.push(SerialCheck {
             frame: expected.frame,
+            channel: expected.channel,
             expected_bytes: expected.bytes,
             actual_bytes: actual.to_vec(),
         });

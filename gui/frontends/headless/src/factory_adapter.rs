@@ -37,7 +37,8 @@ pub struct TestSystem {
     pad_buttons: Vec<Vec<(&'static str, usize)>>,
     spaces: Vec<SpaceInfo>,
     tap: Arc<Mutex<Vec<StereoSample>>>,
-    serial_tap: Arc<Mutex<Vec<u8>>>,
+    channels: Vec<String>,
+    serial_taps: std::collections::HashMap<String, Arc<Mutex<Vec<u8>>>>,
 }
 
 /// Build a loaded system through `CoreFactory` and wrap it in the
@@ -163,9 +164,19 @@ pub fn open_headless_system(
     let tap = Arc::new(Mutex::new(Vec::new()));
     emu.tap_nominal_audio(Arc::clone(&tap))
         .map_err(|error| construction(format!("tap: {error:?}")))?;
-    let serial_tap = Arc::new(Mutex::new(Vec::new()));
-    emu.tap_serial_output(Arc::clone(&serial_tap))
-        .map_err(|error| construction(format!("serial tap: {error:?}")))?;
+    // Core-driven taps: one per channel the core lists, installed
+    // without reading case data (open loads ROMs, never validates
+    // tests). Unknown yaml channels fail at read time, never here.
+    let channels = emu
+        .output_channels()
+        .map_err(|error| construction(format!("channels: {error:?}")))?;
+    let mut serial_taps = std::collections::HashMap::new();
+    for channel in &channels {
+        let serial_tap = Arc::new(Mutex::new(Vec::new()));
+        emu.tap_serial_output(channel, Arc::clone(&serial_tap))
+            .map_err(|error| construction(format!("serial tap: {error:?}")))?;
+        serial_taps.insert(channel.clone(), serial_tap);
+    }
 
     Ok(TestSystem {
         emu,
@@ -173,7 +184,8 @@ pub fn open_headless_system(
         pad_buttons,
         spaces,
         tap,
-        serial_tap,
+        channels,
+        serial_taps,
     })
 }
 
@@ -294,12 +306,24 @@ impl TestSystem {
             .map_err(|error| RomTestError::EmuThread(format!("tap lock: {error}")))
     }
 
-    /// Drain the serial-output tap (this frame's fresh bytes only).
+    /// Channel names the core listed at open (possibly none).
+    pub fn channel_names(&self) -> &[String] {
+        &self.channels
+    }
+
+    /// Drain one channel tap (this frame's fresh bytes only).
     /// Accumulation is the caller's job: the tap holds the latest
-    /// frame's delta, mirroring the audio tap.
-    pub fn drain_serial(&self) -> Result<Vec<u8>, RomTestError> {
-        self.serial_tap
-            .lock()
+    /// frame's delta, mirroring the audio tap. Unknown channels fail
+    /// loudly here (read-time validation, like registers/spaces) —
+    /// never silently empty.
+    pub fn drain_channel(&self, channel: &str) -> Result<Vec<u8>, RomTestError> {
+        let tap = self.serial_taps.get(channel).ok_or_else(|| {
+            RomTestError::EmuThread(format!(
+                "unknown output channel `{channel}` (core lists {:?})",
+                self.channels
+            ))
+        })?;
+        tap.lock()
             .map(|mut guard| std::mem::take(&mut *guard))
             .map_err(|error| RomTestError::EmuThread(format!("serial tap lock: {error}")))
     }
