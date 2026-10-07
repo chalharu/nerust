@@ -149,7 +149,7 @@ fn run_command(
         );
 
         let outcome = validate_case(&factories, case, options);
-        print_outcome(&outcome);
+        print_outcome(&outcome, !options.check_expectations);
         outcomes.push(outcome);
     }
 
@@ -190,7 +190,18 @@ fn run_command(
     Ok(())
 }
 
-fn print_outcome(outcome: &CaseOutcome) {
+fn print_outcome(outcome: &CaseOutcome, full_bytes: bool) {
+    // In capture mode the console is machine-consumed for pinning:
+    // print full serial bytes (a truncated preview once caused a
+    // complete suite to be misread as stalled). Validate mode keeps
+    // the compact preview.
+    fn serial_text(bytes: &[u8], full: bool) -> String {
+        if full {
+            bytes.iter().map(|b| format!("{b:02X}")).collect()
+        } else {
+            hex_preview(bytes)
+        }
+    }
     match outcome {
         CaseOutcome::Completed(validation) => {
             println!(
@@ -245,8 +256,8 @@ fn print_outcome(outcome: &CaseOutcome) {
                 println!(
                     "  serial frame={} expected={} actual={} status={}",
                     check.frame,
-                    hex_preview(&check.expected_bytes),
-                    hex_preview(&check.actual_bytes),
+                    serial_text(&check.expected_bytes, full_bytes),
+                    serial_text(&check.actual_bytes, full_bytes),
                     if check.passed() { "pass" } else { "fail" }
                 );
             }

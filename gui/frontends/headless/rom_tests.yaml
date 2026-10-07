@@ -8352,3 +8352,11 @@ cases:
     rom: gba/alyosha_gba-tests/timing/dma_long.gba
     events:
       - {frame: 23, action: check_registers, registers: {r12: "0x00"}}
+  - id: gbc.retrio.cpu_instrs_all
+    category: cpu
+    description: "CPU instrs combined suite, all 11 subtests (retrio): full serial transcript (DMG model)."
+    ci: false
+    rom: gbc/retrio_gb-test-roms/cpu_instrs/cpu_instrs.gb
+    options: ["--gbc-hardware-model", "dmg"]
+    events:
+      - {frame: 4278, action: check_serial, bytes: "0x6370755F696E737472730A0A30313A6F6B202030323A6F6B202030333A6F6B202030343A6F6B202030353A6F6B202030363A6F6B202030373A6F6B202030383A6F6B202030393A6F6B202031303A6F6B202031313A6F6B20200A0A50617373656420616C6C2074657374730A"}
