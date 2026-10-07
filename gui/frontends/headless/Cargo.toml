@@ -27,16 +27,9 @@ nerust_gba_factory = { workspace = true, optional = true }
 
 [features]
 default = []
-nes = [
-    "dep:nerust_nes_factory",
-]
-gbc = [
-    "dep:nerust_gbc_factory",
-]
-gba = [
-    "dep:nerust_gba_factory",
-    "nerust_gba_factory/mgba-debug-log",
-]
+nes = ["dep:nerust_nes_factory"]
+gbc = ["dep:nerust_gbc_factory"]
+gba = ["dep:nerust_gba_factory", "nerust_gba_factory/mgba-debug-log"]
 
 [[bin]]
 name = "rom_tool"

@@ -191,7 +191,7 @@ pub(super) mod hex_u64_map {
 
     use serde::{Deserializer, Serializer};
 
-    use super::*;
+    use super::{Visitor, de, fmt, parse_hex_u64};
 
     pub fn serialize<S>(value: &BTreeMap<String, u64>, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -292,7 +292,7 @@ pub(super) mod hex_u64_map {
 pub(super) mod hex_bytes {
     use serde::{Deserializer, Serializer};
 
-    use super::*;
+    use super::{Visitor, de, fmt, parse_hex_bytes};
 
     pub fn serialize<S>(value: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
     where

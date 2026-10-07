@@ -160,6 +160,18 @@ fn take_current(current: &mut Option<RomCaseSpec>, cases: &mut Vec<RomCaseSpec>)
     }
 }
 
+fn test_name(index: usize, case_id: &str) -> String {
+    let mut name = format!("rom_case_{index:04}_");
+    for character in case_id.chars() {
+        if character.is_ascii_alphanumeric() {
+            name.push(character.to_ascii_lowercase());
+        } else {
+            name.push('_');
+        }
+    }
+    name
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,16 +196,4 @@ mod tests {
         assert!(!cases[1].ci);
         assert_eq!(cases[1].rom, "b.nes");
     }
-}
-
-fn test_name(index: usize, case_id: &str) -> String {
-    let mut name = format!("rom_case_{index:04}_");
-    for character in case_id.chars() {
-        if character.is_ascii_alphanumeric() {
-            name.push(character.to_ascii_lowercase());
-        } else {
-            name.push('_');
-        }
-    }
-    name
 }
