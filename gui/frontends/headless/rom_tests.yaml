@@ -8594,3 +8594,45 @@ cases:
       - {frame: 85, action: standard_controller, pad: pad1, button: gba.control.a, state: pressed}
       - {frame: 87, action: standard_controller, pad: pad1, button: gba.control.a, state: released}
       - {frame: 89, action: check_serial, channel: "mgba-log", bytes: "0x47616D6520426F7920416476616E636520546573742053756974650A3D3D3D0A424547494E3A2053494F2074696D696E672074657374730A53494F2074696D696E6720746573743A204D756C74692F392E366B0A534B49505045443A204D756C74692F392E366B0A53494F2074696D696E6720746573743A204D756C74692F33382E346B0A534B49505045443A204D756C74692F33382E346B0A53494F2074696D696E6720746573743A204D756C74692F35372E366B0A534B49505045443A204D756C74692F35372E366B0A53494F2074696D696E6720746573743A204D756C74692F3131352E326B0A534B49505045443A204D756C74692F3131352E326B0A53494F2074696D696E6720746573743A204E6F726D616C382F3235366B0A504153533A204E6F726D616C382F3235366B0A53494F2074696D696E6720746573743A204E6F726D616C382F324D0A504153533A204E6F726D616C382F324D0A53494F2074696D696E6720746573743A204E6F726D616C33322F3235366B0A504153533A204E6F726D616C33322F3235366B0A53494F2074696D696E6720746573743A204E6F726D616C33322F324D0A504153533A204E6F726D616C33322F324D0A454E443A20342F340A"}
+  - id: gbc.age.lcd_align_ly_cgbbc.cgbc
+    category: cpu
+    description: "AGE lcd-align-ly (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
+    rom: gbc/c-sp_age-test-roms/artifacts/lcd-align-ly/lcd-align-ly-cgbBC.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 500, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.ly_ncmbc.cgbc
+    category: cpu
+    description: "AGE ly (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
+    rom: gbc/c-sp_age-test-roms/artifacts/ly/ly-ncmBC.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 40, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.oam_read_ncmbc.cgbc
+    category: cpu
+    description: "AGE oam-read (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
+    rom: gbc/c-sp_age-test-roms/artifacts/oam/oam-read-ncmBC.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 100, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.spsw_interrupts_cgbbc.cgbc
+    category: cpu
+    description: "AGE spsw-interrupts (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
+    rom: gbc/c-sp_age-test-roms/artifacts/speed-switch/caution/spsw-interrupts-cgbBC.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 30, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.spsw_tima_cgbbc.cgbc
+    category: cpu
+    description: "AGE spsw-tima (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
+    rom: gbc/c-sp_age-test-roms/artifacts/speed-switch/spsw-tima-cgbBC.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 100, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
+  - id: gbc.age.stat_mode_ncmbc.cgbc
+    category: cpu
+    description: "AGE stat-mode (cgb_c): register signature B,C,D,E,H,L=3,5,8,13,21,34 must hold exactly."
+    rom: gbc/c-sp_age-test-roms/artifacts/stat-mode/stat-mode-ncmBC.gb
+    options: ["--gbc-hardware-model", "cgb_c"]
+    events:
+      - {frame: 100, action: check_registers, registers: {b: "0x03", c: "0x05", d: "0x08", e: "0x0D", h: "0x15", l: "0x22"}}
