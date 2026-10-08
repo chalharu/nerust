@@ -154,7 +154,7 @@ pub fn pattern_images(core: &Core) -> Vec<DebugImage> {
                 },
                 width: 128,
                 height: 128,
-                format: ImageFormat::Indexed2bpp,
+                format: ImageFormat::Indexed { bits_per_pixel: 2 },
                 palette: palette.clone(),
                 pixels,
             }

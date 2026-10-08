@@ -249,8 +249,8 @@ pub enum CellValue {
 }
 
 /// SPIKE-ONLY (spike/debugger-ui-prototype-3). One system image.
-/// `pixels` are row-major indices into `palette` (2 bits used when
-/// `format` is indexed-2bpp); the frontend blits mechanically.
+/// `pixels` are row-major, one byte per pixel. For indexed formats the
+/// byte is a palette index (< 2^bpp); the frontend blits mechanically.
 /// Deleted with the spike branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DebugImage {
@@ -265,8 +265,13 @@ pub struct DebugImage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
-    /// 2 bits per pixel, values 0-3 into a 4-entry palette.
-    Indexed2bpp,
+    /// Indexed pixels, `bits_per_pixel` in { 1, 2, 4, 8 }.
+    /// Palette length is exactly `1 << bits_per_pixel`.
+    /// Covers NES/GBC 2bpp tiles and GBA 4bpp/8bpp surfaces.
+    Indexed { bits_per_pixel: u8 },
+    /// Direct 24-bit pixels; `pixels` holds 3 bytes per pixel and
+    /// `palette` is empty. Covers GBA bitmap modes.
+    Rgb8,
 }
 
 // ---------------------------------------------------------------------------

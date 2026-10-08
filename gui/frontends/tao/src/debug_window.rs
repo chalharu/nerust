@@ -37,14 +37,26 @@ use crate::tao_conversions::{default_font, tao_modifiers_to_iced};
 
 /// Mechanical blit: indexed pixels through the palette to RGBA.
 /// No system knowledge: widths and palette come from the descriptor.
+/// Direct RGB images pass pixels through with full alpha.
 fn image_rgba(image: &DebugImage) -> Vec<u8> {
-    assert_eq!(image.format, ImageFormat::Indexed2bpp);
-    let mut out = Vec::with_capacity(image.pixels.len() * 4);
-    for &px in &image.pixels {
-        let rgb = image.palette.get(px as usize).copied().unwrap_or([0, 0, 0]);
-        out.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 0xFF]);
+    match image.format {
+        ImageFormat::Indexed { .. } => {
+            let mut out = Vec::with_capacity(image.pixels.len() * 4);
+            for &px in &image.pixels {
+                let rgb = image.palette.get(px as usize).copied().unwrap_or([0, 0, 0]);
+                out.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 0xFF]);
+            }
+            out
+        }
+        ImageFormat::Rgb8 => {
+            let mut out = Vec::with_capacity(image.pixels.len() / 3 * 4);
+            let (chunks, _) = image.pixels.as_chunks::<3>();
+            for rgb in chunks {
+                out.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 0xFF]);
+            }
+            out
+        }
     }
-    out
 }
 
 #[derive(Debug, Clone)]
@@ -459,11 +471,25 @@ mod tests {
             label_id: "t",
             width: 2,
             height: 1,
-            format: ImageFormat::Indexed2bpp,
+            format: ImageFormat::Indexed { bits_per_pixel: 2 },
             palette: vec![[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]],
             pixels: vec![0, 3],
         };
         assert_eq!(image_rgba(&image), vec![1, 2, 3, 0xFF, 10, 11, 12, 0xFF]);
+    }
+
+    #[test]
+    fn rgba_passes_direct_rgb_through() {
+        let image = DebugImage {
+            id: "t",
+            label_id: "t",
+            width: 2,
+            height: 1,
+            format: ImageFormat::Rgb8,
+            palette: Vec::new(),
+            pixels: vec![1, 2, 3, 4, 5, 6],
+        };
+        assert_eq!(image_rgba(&image), vec![1, 2, 3, 0xFF, 4, 5, 6, 0xFF]);
     }
 
     #[test]

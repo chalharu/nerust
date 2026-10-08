@@ -70,7 +70,7 @@ fn spike_images_return_two_indexed_views() {
     assert_eq!(images.len(), 2);
     for image in &images {
         assert_eq!((image.width, image.height), (128, 128));
-        assert_eq!(image.format, ImageFormat::Indexed2bpp);
+        assert_eq!(image.format, ImageFormat::Indexed { bits_per_pixel: 2 });
         assert_eq!(image.pixels.len(), 128 * 128);
         assert_eq!(image.palette.len(), 4);
         assert!(image.pixels.iter().all(|&p| p < 4));
