@@ -266,11 +266,72 @@ jobs:
           name: lcov-rom-${{ matrix.shard }}
           path: coverage/*.info
           retention-days: 1
+  coverage-bins:
+    name: Test coverage (bins)
+    needs: prepare-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ needs.prepare-image.outputs.image_tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+      CARGO_TERM_COLOR: always
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-all-crates: "true"
+          workspaces: |
+            . -> target
+            . -> target/llvm-cov-target
+      # CLI binaries never execute under nextest, so their lines stay
+      # uncovered without this. One tiny NES case exercises the
+      # list/validate/report/perf paths in seconds.
+      - name: Run binaries with coverage
+        run: |
+          export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
+          export LIBCUBEB_SYS_USE_PKG_CONFIG=1
+          mkdir -p coverage target/llvm-cov-target
+          cargo llvm-cov run --no-report -p nerust_rom_test --features nes \
+            --bin rom_tool -- list --case apu.len_ctr
+          cargo llvm-cov run --no-report -p nerust_rom_test --features nes \
+            --bin rom_tool -- validate --case apu.len_ctr
+          cargo llvm-cov run --no-report -p nerust_rom_test --features nes \
+            --bin perf -- --rounds 1 --warmup-rounds 0 --case apu.len_ctr
+          cargo llvm-cov report \
+            --no-default-ignore-filename-regex \
+            --lcov --output-path coverage/raw.info
+          workspace_root="${PWD%/}/"
+          awk -v prefix="SF:${workspace_root}" '
+            /^SF:/ { include = index($0, prefix) == 1 }
+            include { print }
+            /^end_of_record$/ { include = 0 }
+          ' coverage/raw.info > coverage/lcov-bins.info
+          rm coverage/raw.info
+          sed -i "s#^SF:${workspace_root}#SF:#" coverage/*.info
+      - name: Upload coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lcov-bins
+          path: coverage/*.info
+          retention-days: 1
   sonarcloud:
     name: SonarCloud
     needs:
       - coverage-tao
       - coverage-gtk
+      - coverage-bins
       - rom-tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
