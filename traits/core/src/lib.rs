@@ -162,6 +162,12 @@ pub enum EmuCommand {
         req: debugger::InspectRequest,
         reply: Sender<Result<debugger::InspectResult, debugger::InspectError>>,
     },
+    /// SPIKE-ONLY (spike/debugger-ui-prototype-3). On-demand image
+    /// inspection (pattern tables). Pause-gated like inspect.
+    /// Deleted with the spike branch.
+    DebuggerImages {
+        reply: Sender<Result<Vec<debugger::DebugImage>, debugger::InspectError>>,
+    },
     /// Memory edit through the control path. Deliberately pause-ungated:
     /// `DebuggerError` has no not-paused variant by design (§5.2), so
     /// deterministic callers pause first and racing writes interleave

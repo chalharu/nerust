@@ -26,7 +26,7 @@ use nerust_settings_core::i18n::{UiText, text};
 use rfd::FileDialog;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
-    event::{ElementState, KeyEvent},
+    event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoopWindowTarget},
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
@@ -50,6 +50,8 @@ pub(crate) struct HostState {
     app_menu: AppMenu,
     shell: NativeShellState,
     pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
+    /// SPIKE-ONLY (spike/debugger-ui-prototype-3). Deleted with the spike branch.
+    pub(crate) debug_window: Option<crate::debug_window::DebugWindowHandle>,
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
@@ -85,6 +87,7 @@ impl HostState {
             app_menu,
             shell: NativeShellState::new(),
             settings_window: None,
+            debug_window: None,
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
@@ -170,6 +173,59 @@ impl HostState {
             .is_some_and(|h| h.window.id() == window_id)
     }
 
+    /// SPIKE-ONLY (spike/debugger-ui-prototype-3). Deleted with the spike branch.
+    pub(crate) fn is_debug_window(&self, window_id: WindowId) -> bool {
+        self.debug_window
+            .as_ref()
+            .is_some_and(|h| h.window.id() == window_id)
+    }
+
+    /// SPIKE-ONLY. Opens the throwaway image window.
+    pub(crate) fn open_debug_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+        if self.debug_window.is_some() {
+            return;
+        }
+        match crate::debug_window::DebugWindowHandle::new(event_loop) {
+            Some(handle) => self.debug_window = Some(handle),
+            None => log::error!("spike: failed to open debug window"),
+        }
+    }
+
+    /// SPIKE-ONLY. Routes a tao event to the debug window with session access.
+    pub(crate) fn debug_window_event(&mut self, event: WindowEvent, window_id: WindowId) {
+        if !self.is_debug_window(window_id) {
+            return;
+        }
+        let host = self;
+        if let Some(handle) = host.debug_window.as_mut() {
+            match &event {
+                WindowEvent::Resized(size) => handle.resize(size.width, size.height),
+                WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                    handle.set_scale_factor(*scale_factor as f32);
+                }
+                _ => {}
+            }
+            handle.update_modifiers_from_tao_event(&event);
+            handle.handle_tao_event(event, &mut host.session);
+            handle.window.request_redraw();
+            if handle.should_close_now() {
+                host.debug_window.take();
+            }
+        }
+    }
+
+    /// SPIKE-ONLY instrumentation for headless runs.
+    pub(crate) fn debug_refresh(&mut self) {
+        let Self {
+            debug_window,
+            session,
+            ..
+        } = self;
+        if let Some(handle) = debug_window.as_mut() {
+            handle.refresh_now(session);
+        }
+    }
+
     pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
         self.window
             .as_ref()
@@ -217,6 +273,11 @@ impl HostState {
             }
             MenuCommand::Settings => {
                 self.open_settings_window(event_loop);
+                HostAction::None
+            }
+            // SPIKE-ONLY (spike/debugger-ui-prototype-3).
+            MenuCommand::Debug => {
+                self.open_debug_window(event_loop);
                 HostAction::None
             }
             MenuCommand::Session(command) => {

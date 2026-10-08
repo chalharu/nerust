@@ -348,6 +348,30 @@ impl SessionHandle {
         self.emu_core.as_ref().map(|c| c.render_profile())
     }
 
+    /// SPIKE-ONLY (spike/debugger-ui-prototype-3). Deleted with the spike branch.
+    pub fn spike_images(
+        &self,
+    ) -> Result<
+        Result<
+            Vec<nerust_core_traits::debugger::DebugImage>,
+            nerust_core_traits::debugger::InspectError,
+        >,
+        nerust_emu_thread::OperationError,
+    > {
+        match self.emu_core.as_ref() {
+            Some(core) => core.debug_images(),
+            None => Err(nerust_emu_thread::OperationError::WorkerUnavailable),
+        }
+    }
+
+    /// SPIKE-ONLY (spike/debugger-ui-prototype-3). Deleted with the spike branch.
+    pub fn spike_pause(&self) -> Result<(), nerust_emu_thread::OperationError> {
+        match self.emu_core.as_ref() {
+            Some(core) => core.pause(),
+            None => Err(nerust_emu_thread::OperationError::WorkerUnavailable),
+        }
+    }
+
     pub fn swap_frame_buffer(&mut self) {
         if let Some(ref mut gui_input) = self.gui_input {
             gui_input.publish();
@@ -569,5 +593,8 @@ pub(crate) mod test_util {
     }
 }
 
+/// SPIKE-ONLY (spike/debugger-ui-prototype-3). Deleted with the spike branch.
+#[cfg(test)]
+mod spike_image_tests;
 #[cfg(test)]
 mod tests;

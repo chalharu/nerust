@@ -123,6 +123,11 @@ impl EmuThread {
                                 let _ =
                                     reply.send(Err(InspectError::Core(DebuggerError::Unsupported)));
                             }
+                            // SPIKE-ONLY (spike/debugger-ui-prototype-3).
+                            EmuCommand::DebuggerImages { reply } => {
+                                let _ =
+                                    reply.send(Err(InspectError::Core(DebuggerError::Unsupported)));
+                            }
                             EmuCommand::WriteMemory { reply, .. } => {
                                 let _ = reply.send(Err(DebuggerError::Unsupported));
                             }
@@ -260,6 +265,18 @@ impl EmuThread {
                             let frame = fc.load(Ordering::Relaxed);
                             let result = inspect_memory(&*core, &req, frame);
                             // reply send failure: receiver dropped (timeout/abort) — expected
+                            let _ = reply.send(result);
+                        }
+                        // SPIKE-ONLY (spike/debugger-ui-prototype-3).
+                        EmuCommand::DebuggerImages { reply } => {
+                            let result = if !core.paused() {
+                                Err(InspectError::NotPaused)
+                            } else {
+                                match core.debugger() {
+                                    Some(dbg) => Ok(dbg.images()),
+                                    None => Err(InspectError::Core(DebuggerError::Unsupported)),
+                                }
+                            };
                             let _ = reply.send(result);
                         }
                         EmuCommand::WriteMemory { req, reply } => {

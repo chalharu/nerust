@@ -25,4 +25,6 @@ nerust_settings_traits.workspace = true
 [dev-dependencies]
 clap.workspace = true
 nerust_core_traits.workspace = true
+# SPIKE-ONLY (spike/debugger-ui-prototype-3). Deleted with the spike branch.
+nerust_nes_factory.workspace = true
 nerust_nes_settings.workspace = true

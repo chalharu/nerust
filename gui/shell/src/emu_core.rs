@@ -385,6 +385,19 @@ impl EmuCore {
         reply_rx.recv().map_err(|_| OperationError::NoReply)
     }
 
+    /// SPIKE-ONLY (spike/debugger-ui-prototype-3). On-demand image
+    /// inspection through the emu thread. Deleted with the spike branch.
+    pub fn debug_images(
+        &self,
+    ) -> Result<Result<Vec<nerust_core_traits::debugger::DebugImage>, InspectError>, OperationError>
+    {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerImages { reply: reply_tx })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
     /// Memory edit through the emu thread. Pause-ungated by design;
     /// deterministic callers pause first.
     pub fn write_memory(

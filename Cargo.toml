@@ -154,6 +154,9 @@ iced = { default-features = false, features = [
   "tiny-skia",
   "wayland",
   "x11",
+  # SPIKE-ONLY (spike/debugger-ui-prototype-3): image widget for the
+  # pattern-table viewer. Deleted with the spike branch.
+  "image",
 ], version = "=0.14.0" }
 iced_tiny_skia = { version = "=0.14.1" }
 iced_winit = { version = "=0.14.1" }

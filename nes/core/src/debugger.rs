@@ -7,7 +7,7 @@
 use std::cell::OnceCell;
 
 use nerust_core_traits::debugger::{
-    DebugPanel, Debugger, SpaceAccess, SpaceId, SpaceInfo, SpaceTable,
+    DebugImage, DebugPanel, Debugger, SpaceAccess, SpaceId, SpaceInfo, SpaceTable,
 };
 
 use crate::Core;
@@ -166,6 +166,12 @@ impl Debugger for NesDebugger<'_> {
             .get_or_init(|| Vec::from(self.core.cpu_registers()))
     }
 
+    /// SPIKE-ONLY (spike/debugger-ui-prototype-3). Pattern-table images
+    /// via the spike producer. Deleted with the spike branch.
+    fn images(&self) -> Vec<DebugImage> {
+        crate::spike_pattern::pattern_images(self.core)
+    }
+
     fn panels(&self) -> Vec<DebugPanel> {
         Vec::new()
     }
@@ -186,6 +192,22 @@ mod tests {
     fn nes_spaces_validate() {
         NES_SPACE_TABLE.validate().expect("NES spaces valid");
         assert_eq!(validate_spaces(&NES_SPACES), Ok(()));
+    }
+
+    /// SPIKE-ONLY: pattern images against the live NROM core (zero CHR).
+    #[test]
+    fn spike_pattern_images_smoke() {
+        let core = live_core();
+        let dbg = NesDebugger::new(&core);
+        let images = dbg.images();
+        assert_eq!(images.len(), 2);
+        for image in &images {
+            assert_eq!((image.width, image.height), (128, 128));
+            assert_eq!(image.pixels.len(), 128 * 128);
+            assert_eq!(image.palette.len(), 4);
+        }
+        // Zero CHR decodes all-blank: shape valid, content empty.
+        assert!(images.iter().all(|i| i.pixels.iter().all(|&p| p == 0)));
     }
 
     #[test]

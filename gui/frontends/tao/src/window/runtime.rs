@@ -94,6 +94,12 @@ impl WindowRuntime {
             Event::NewEvents(StartCause::Init) => {
                 self.host.ensure_window(event_loop);
                 self.recreate_renderer();
+                // SPIKE-ONLY instrumentation (spike/debugger-ui-prototype-3).
+                if std::env::var("NERUST_SPIKE_DEBUG").is_ok() {
+                    self.host.pause_session();
+                    self.host.open_debug_window(event_loop);
+                    self.host.debug_refresh();
+                }
                 *control_flow = ControlFlow::Wait;
             }
             Event::WindowEvent {
@@ -159,9 +165,21 @@ impl WindowRuntime {
                     self.host.request_redraw();
                 }
             }
+            Event::WindowEvent {
+                event, window_id, ..
+            } if self.host.is_debug_window(window_id) => {
+                // SPIKE-ONLY debug window event path.
+                self.host.debug_window_event(event, window_id);
+            }
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
             Event::RedrawRequested(window_id) if self.host.is_settings_window(window_id) => {
                 if let Some(handle) = self.host.settings_window.as_mut() {
+                    handle.render();
+                }
+            }
+            Event::RedrawRequested(window_id) if self.host.is_debug_window(window_id) => {
+                // SPIKE-ONLY.
+                if let Some(handle) = self.host.debug_window.as_mut() {
                     handle.render();
                 }
             }

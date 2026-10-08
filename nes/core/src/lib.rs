@@ -23,6 +23,8 @@ mod ppu_memory_access;
 pub(crate) mod rom_format;
 pub mod rom_identity;
 pub mod rom_parse;
+/// SPIKE-ONLY (spike/debugger-ui-prototype-3). Deleted with the spike branch.
+pub mod spike_pattern;
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core_traits::audio::{AudioBackend, StereoSample};
@@ -266,6 +268,18 @@ impl Core {
     pub fn peek_cartridge_ram(&self, address: usize) -> Option<OpenBusReadResult> {
         if (0x6000..=0x7FFF).contains(&address) {
             Some(self.cartridge.read(address))
+        } else {
+            None
+        }
+    }
+
+    /// SPIKE-ONLY (spike/debugger-ui-prototype-3). Non-invasive CHR byte
+    /// read ($0000-$1FFF) for the pattern-table viewer: `&self` via the
+    /// side-effect-free character path (no PPU-triggered bank switch
+    /// is observable through this method). Deleted with the spike branch.
+    pub fn peek_chr_byte(&self, address: usize) -> Option<OpenBusReadResult> {
+        if address <= 0x1FFF {
+            Some(self.cartridge.read_character(address))
         } else {
             None
         }

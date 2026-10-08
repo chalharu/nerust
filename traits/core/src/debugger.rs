@@ -196,6 +196,14 @@ pub trait Debugger {
     fn panels(&self) -> Vec<DebugPanel> {
         Vec::new()
     }
+
+    /// SPIKE-ONLY (spike/debugger-ui-prototype-3). System images
+    /// (pattern tables, nametables). Empty by default; cores with
+    /// image views override it. Deleted with the spike branch: the
+    /// production shape is decided from spike findings.
+    fn images(&self) -> Vec<DebugImage> {
+        Vec::new()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +246,27 @@ pub enum CellValue {
     Text(String),
     U64(u64),
     Bool(bool),
+}
+
+/// SPIKE-ONLY (spike/debugger-ui-prototype-3). One system image.
+/// `pixels` are row-major indices into `palette` (2 bits used when
+/// `format` is indexed-2bpp); the frontend blits mechanically.
+/// Deleted with the spike branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugImage {
+    pub id: &'static str,
+    pub label_id: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub format: ImageFormat,
+    pub palette: Vec<[u8; 3]>,
+    pub pixels: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    /// 2 bits per pixel, values 0-3 into a 4-entry palette.
+    Indexed2bpp,
 }
 
 // ---------------------------------------------------------------------------

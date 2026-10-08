@@ -7,6 +7,8 @@ use tao::window::Window as TaoWindow;
 pub(crate) enum MenuCommand {
     Open,
     Settings,
+    /// SPIKE-ONLY (spike/debugger-ui-prototype-3). Deleted with the spike branch.
+    Debug,
     Session(SessionCommand),
     Quit,
 }
@@ -108,6 +110,8 @@ pub(crate) mod imp {
 
             let open = MenuItem::new("Open ROM...", true, None);
             let settings = MenuItem::new("Settings...", true, None);
+            // SPIKE-ONLY (spike/debugger-ui-prototype-3).
+            let spike_debug = MenuItem::new("Pattern tables (spike)", true, None);
             let pause = MenuItem::new("Pause", true, None);
             let resume = MenuItem::new("Resume", false, None);
             let reset = MenuItem::new("Reset", true, None);
@@ -118,6 +122,8 @@ pub(crate) mod imp {
 
             let open_id = open.id().clone();
             let settings_id = settings.id().clone();
+            // SPIKE-ONLY.
+            let spike_debug_id = spike_debug.id().clone();
             let pause_id = pause.id().clone();
             let resume_id = resume.id().clone();
             let reset_id = reset.id().clone();
@@ -130,6 +136,8 @@ pub(crate) mod imp {
 
             file_menu.append(&open).unwrap();
             file_menu.append(&settings).unwrap();
+            // SPIKE-ONLY.
+            file_menu.append(&spike_debug).unwrap();
             file_menu.append(&quit).unwrap();
             state_menu.append(&create_slot).unwrap();
             state_menu.append(&save_active).unwrap();
@@ -151,6 +159,9 @@ pub(crate) mod imp {
                     Some(MenuCommand::Open)
                 } else if event.id() == &settings_id {
                     Some(MenuCommand::Settings)
+                // SPIKE-ONLY.
+                } else if event.id() == &spike_debug_id {
+                    Some(MenuCommand::Debug)
                 } else if event.id() == &pause_id {
                     Some(MenuCommand::Session(SessionCommand::Pause))
                 } else if event.id() == &resume_id {
