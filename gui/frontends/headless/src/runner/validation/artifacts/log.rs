@@ -1,4 +1,6 @@
-use super::{super::runtime::ValidationRuntime, ValidationArtifacts};
+use std::collections::HashMap;
+
+use super::{ValidationArtifacts, peek_serial};
 use crate::{
     error::RomTestError,
     results::{LogCheck, ValidationOptions},
@@ -52,11 +54,11 @@ impl ValidationArtifacts {
     pub(in crate::runner::validation) fn record_log_assert(
         &mut self,
         case_id: &str,
-        runtime: &ValidationRuntime,
+        serial: &HashMap<String, Vec<u8>>,
         options: ValidationOptions,
         expected: ExpectedLog,
     ) -> Result<(), RomTestError> {
-        let actual = runtime.peek_serial(&expected.channel)?;
+        let actual = peek_serial(serial, &expected.channel)?;
         let lines = split_lines(actual);
         let end_found = lines.iter().any(|line| line == &expected.end);
         let names = fail_names(&lines, &expected.fail_prefix);

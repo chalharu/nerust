@@ -1,6 +1,8 @@
-use super::{super::runtime::ValidationRuntime, ValidationArtifacts};
+use super::ValidationArtifacts;
 use crate::{
     error::RomTestError,
+    factory_adapter::FrameObserve,
+    media::{encode_screenshot_png, screen_hash},
     results::{ScreenCheck, ValidationOptions},
 };
 
@@ -13,12 +15,12 @@ impl ValidationArtifacts {
     pub(in crate::runner::validation) fn record_screen_assert(
         &mut self,
         case_id: &str,
-        runtime: &mut ValidationRuntime,
+        mut observe: FrameObserve,
         options: ValidationOptions,
         frame: u64,
         expected_hash: u64,
     ) -> Result<(), RomTestError> {
-        let actual_hash = runtime.screen_hash();
+        let actual_hash = screen_hash(observe.screen_buffer());
         if options.check_expectations && actual_hash != expected_hash {
             self.failures.push(format!(
                 "{case_id}: screen hash mismatch at frame {frame} (expected 0x{expected_hash:016X}, actual 0x{actual_hash:016X})",
@@ -26,7 +28,7 @@ impl ValidationArtifacts {
         }
 
         let screenshot_png = if options.capture_screenshots {
-            Some(runtime.capture_screenshot_png()?)
+            Some(encode_screenshot_png(observe.screen_buffer())?)
         } else {
             None
         };

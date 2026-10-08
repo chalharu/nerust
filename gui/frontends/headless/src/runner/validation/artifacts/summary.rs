@@ -1,6 +1,8 @@
-use super::{super::runtime::ValidationRuntime, ValidationArtifacts};
+use super::{AudioSnapshot, ValidationArtifacts};
 use crate::{
+    factory_adapter::FrameObserve,
     manifest::RomCase,
+    media::screen_hash,
     results::{AudioObservation, CaseValidation, ExecutionTotals, ValidationOptions},
 };
 
@@ -8,16 +10,17 @@ impl ValidationArtifacts {
     pub(in crate::runner::validation) fn finish(
         mut self,
         case: &RomCase,
-        runtime: &mut ValidationRuntime,
+        mut observe: FrameObserve,
+        audio: AudioSnapshot,
         totals: ExecutionTotals,
         options: ValidationOptions,
         system: &'static str,
     ) -> CaseValidation {
-        let final_screen_hash = runtime.screen_hash();
+        let final_screen_hash = screen_hash(observe.screen_buffer());
         let audio = AudioObservation {
-            sample_rate: runtime.audio_sample_rate(),
-            samples: runtime.audio_samples(),
-            hash: runtime.audio_hash(),
+            sample_rate: audio.sample_rate,
+            samples: audio.samples,
+            hash: audio.hash,
             expected: case.expected_audio.clone(),
         };
 

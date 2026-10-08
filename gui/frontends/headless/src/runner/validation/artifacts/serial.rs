@@ -1,4 +1,6 @@
-use super::{super::runtime::ValidationRuntime, ValidationArtifacts};
+use std::collections::HashMap;
+
+use super::{ValidationArtifacts, peek_serial};
 use crate::{
     error::RomTestError,
     results::{SerialCheck, ValidationOptions},
@@ -27,11 +29,11 @@ impl ValidationArtifacts {
     pub(in crate::runner::validation) fn record_serial_assert(
         &mut self,
         case_id: &str,
-        runtime: &ValidationRuntime,
+        serial: &HashMap<String, Vec<u8>>,
         options: ValidationOptions,
         expected: ExpectedSerial,
     ) -> Result<(), RomTestError> {
-        let actual = runtime.peek_serial(&expected.channel)?;
+        let actual = peek_serial(serial, &expected.channel)?;
         if options.check_expectations && actual != expected.bytes.as_slice() {
             self.failures.push(format!(
                 "{case_id}: serial mismatch at frame {} channel `{}` (expected {}, actual {})",
