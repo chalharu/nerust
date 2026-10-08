@@ -518,6 +518,124 @@ impl RomLoadTarget for SessionHandle {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SPIKE (iteration 4, DO NOT MERGE): write-path UX probes and the shared
+// text formatter consumed by both the tao and GTK spike windows.
+// Proves one toolkit-independent ViewModel output renders identically.
+// Deleted with the spike branch; learnings go to the prototype plan.
+// ---------------------------------------------------------------------------
+
+/// SPIKE: format one inspect dump as plain hex text (shared tao/GTK output).
+pub fn spike_format_dump(dump: &nerust_core_traits::debugger::MemoryDump) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    for row in dump.rows.iter() {
+        let _ = write!(out, "{:04X}:", row.addr);
+        for i in 0..row.valid {
+            let _ = write!(out, " {:02X}", row.bytes[i as usize]);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+impl SessionHandle {
+    /// SPIKE: pause the running core (write-path precondition).
+    pub fn spike_pause(&self) -> String {
+        match self.emu_core.as_ref() {
+            Some(core) => match core.pause() {
+                Ok(()) => "paused".to_string(),
+                Err(e) => format!("pause failed: {e:?}"),
+            },
+            None => "no core".to_string(),
+        }
+    }
+
+    /// SPIKE: read `rows` of `space` at `addr` as shared-format text.
+    pub fn spike_read_text(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+        addr: u32,
+        rows: u16,
+    ) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        let req = nerust_core_traits::debugger::InspectRequest {
+            space: Some(space),
+            addr: Some(addr),
+            rows,
+        };
+        match core.inspect(req) {
+            Ok(Ok(result)) => spike_format_dump(&result.dump),
+            Ok(Err(e)) => format!("inspect failed: {e:?}"),
+            Err(e) => format!("thread failed: {e:?}"),
+        }
+    }
+
+    /// SPIKE: list memory spaces generically (no per-system naming).
+    pub fn spike_memory_spaces(&self) -> Vec<nerust_core_traits::debugger::SpaceInfo> {
+        match self.emu_core.as_ref() {
+            Some(core) => core.memory_spaces().unwrap_or_default(),
+            None => Vec::new(),
+        }
+    }
+
+    /// SPIKE: two-step-confirmed write; returns the result line for display.
+    /// Failure text (`ReadOnlySpace`, `BadWidth`, out-of-range) is the
+    /// failure-display probe of iteration 4.
+    pub fn spike_write_memory(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+        addr: u32,
+        width: u8,
+        value: u64,
+    ) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        let req = nerust_core_traits::debugger::MemoryWrite {
+            space,
+            addr,
+            width,
+            value,
+        };
+        match core.write_memory(req) {
+            Ok(Ok(())) => format!("wrote {value:02X} to {addr:04X} (width {width})"),
+            Ok(Err(e)) => format!("write refused: {e:?}"),
+            Err(e) => format!("thread failed: {e:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod spike_tests {
+    use std::sync::Arc;
+
+    use nerust_core_traits::debugger::{DUMP_ROW_BYTES, HexRow, MemoryDump, SpaceId};
+
+    use super::spike_format_dump;
+
+    #[test]
+    fn spike_format_dump_exact_text() {
+        let mut bytes = [0u8; DUMP_ROW_BYTES];
+        bytes[0] = 0xAB;
+        bytes[1] = 0xCD;
+        let dump = MemoryDump {
+            space: SpaceId(0),
+            base: 0,
+            rows: Arc::new([HexRow {
+                addr: 0x0010,
+                valid: 2,
+                bytes,
+            }]),
+        };
+        assert_eq!(spike_format_dump(&dump), "0010: AB CD\n");
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test_util {
     use std::sync::Arc;

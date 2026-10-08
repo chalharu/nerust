@@ -2,6 +2,8 @@ mod gdk_raw;
 pub mod mapping;
 mod preferences;
 mod renderer;
+/// SPIKE (iteration 4, DO NOT MERGE).
+pub(crate) mod spike_write;
 mod surface;
 mod window;
 
@@ -351,6 +353,10 @@ pub(crate) fn build_menu_model(
     emulation_menu.append(Some(text(language, UiText::Pause)), Some("win.pause"));
     emulation_menu.append(Some(text(language, UiText::Resume)), Some("win.resume"));
     emulation_menu.append_submenu(Some(text(language, UiText::SaveStates)), state_menu);
+    // SPIKE (iteration 4, DO NOT MERGE): env-gated throwaway entry.
+    if std::env::var("NERUST_SPIKE_DEBUG").is_ok() {
+        emulation_menu.append(Some("Memory write (spike)"), Some("win.spike-write"));
+    }
 
     let help_menu = gio::Menu::new();
     help_menu.append(Some(text(language, UiText::About)), Some("app.about"));
@@ -391,6 +397,23 @@ pub fn run(ctx: FrontendContext, _options: RunOptions) {
         let current_window = current_window.clone();
         let _ = app.connect_activate(move |app| {
             let window = ensure_window(app, &gpu_factory, &state, &current_window);
+            // SPIKE (iteration 4, DO NOT MERGE): env-gated auto-load +
+            // probe window (Xvfb capture needs no driving). Deferred to
+            // idle: loading before the window is realized segfaults.
+            if std::env::var("NERUST_SPIKE_DEBUG").is_ok() {
+                let app = app.clone();
+                let state = state.clone();
+                let window = window.clone();
+                glib::idle_add_local_once(move || {
+                    if let Ok(rom) = std::env::var("NERUST_SPIKE_ROM") {
+                        state.borrow_mut().load_path(std::path::Path::new(&rom));
+                        window.update_actions();
+                    }
+                    if state.borrow().loaded() {
+                        crate::spike_write::open_spike_window(&state, &app);
+                    }
+                });
+            }
             window.window().present();
         });
     }

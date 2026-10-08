@@ -50,6 +50,9 @@ pub(crate) struct HostState {
     app_menu: AppMenu,
     shell: NativeShellState,
     pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
+    // SPIKE (iteration 4, DO NOT MERGE): write-probe window + target space.
+    pub(crate) spike_write_window: Option<crate::spike_write_window::SpikeWriteWindowHandle>,
+    pub(crate) spike_space: Option<nerust_core_traits::debugger::SpaceId>,
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
@@ -85,6 +88,8 @@ impl HostState {
             app_menu,
             shell: NativeShellState::new(),
             settings_window: None,
+            spike_write_window: None,
+            spike_space: None,
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
@@ -170,6 +175,12 @@ impl HostState {
             .is_some_and(|h| h.window.id() == window_id)
     }
 
+    pub(crate) fn is_spike_write_window(&self, window_id: WindowId) -> bool {
+        self.spike_write_window
+            .as_ref()
+            .is_some_and(|h| h.window.id() == window_id)
+    }
+
     pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
         self.window
             .as_ref()
@@ -217,6 +228,13 @@ impl HostState {
             }
             MenuCommand::Settings => {
                 self.open_settings_window(event_loop);
+                HostAction::None
+            }
+            // SPIKE (iteration 4, DO NOT MERGE).
+            MenuCommand::SpikeWrite => {
+                self.open_spike_write_window(event_loop);
+                self.sync_menu_state();
+                self.refresh_window_title();
                 HostAction::None
             }
             MenuCommand::Session(command) => {
@@ -464,6 +482,87 @@ impl HostState {
                     self.resume();
                 } else {
                     self.sync_menu_state();
+                }
+            }
+        }
+    }
+
+    // SPIKE (iteration 4, DO NOT MERGE): auto-open the probe window when
+    // env-gated and a ROM is already loaded (Xvfb capture needs no driving).
+    pub(crate) fn auto_open_spike(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+        if std::env::var("NERUST_SPIKE_DEBUG").is_err() || !self.session.loaded() {
+            return;
+        }
+        self.open_spike_write_window(event_loop);
+    }
+    // Pauses first (write path is pause-gated by contract), resolves the
+    // first ReadWrite space generically, and opens the confirm-UX window.
+    fn open_spike_write_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+        if self.spike_write_window.is_some() {
+            return;
+        }
+        let pause_line = self.session.spike_pause();
+        let space = self
+            .session
+            .spike_memory_spaces()
+            .into_iter()
+            .find(|s| s.access == nerust_core_traits::debugger::SpaceAccess::ReadWrite);
+        let Some(space) = space else {
+            log::warn!("spike write: no ReadWrite space ({pause_line})");
+            return;
+        };
+        let start = *space.range.start();
+        let dump = self.session.spike_read_text(space.id, start, 16);
+        match crate::spike_write_window::SpikeWriteWindowHandle::new(dump, event_loop) {
+            Some(handle) => {
+                self.spike_write_window = Some(handle);
+                self.spike_space = Some(space.id);
+            }
+            None => log::error!("failed to open spike write window"),
+        }
+    }
+
+    /// SPIKE: drain program requests, run them against the session, and
+    /// push typed replies back into the window.
+    pub(crate) fn drain_spike_requests(&mut self) {
+        use crate::spike_write_window::{SpikeReply, SpikeRequest};
+        let space = match self.spike_space {
+            Some(space) => space,
+            None => return,
+        };
+        let requests = match self.spike_write_window.as_ref() {
+            Some(handle) => handle.take_requests(),
+            None => return,
+        };
+        for request in requests {
+            match request {
+                SpikeRequest::Refresh => {
+                    let start = self
+                        .session
+                        .spike_memory_spaces()
+                        .into_iter()
+                        .find(|s| s.id == space)
+                        .map(|s| *s.range.start())
+                        .unwrap_or(0);
+                    let dump = self.session.spike_read_text(space, start, 16);
+                    if let Some(handle) = self.spike_write_window.as_mut() {
+                        handle.push_reply(SpikeReply::Dump(dump));
+                    }
+                }
+                SpikeRequest::Write { addr, width, value } => {
+                    let line = self.session.spike_write_memory(space, addr, width, value);
+                    if let Some(handle) = self.spike_write_window.as_mut() {
+                        handle.push_reply(SpikeReply::WriteResult(line));
+                        let start = self
+                            .session
+                            .spike_memory_spaces()
+                            .into_iter()
+                            .find(|s| s.id == space)
+                            .map(|s| *s.range.start())
+                            .unwrap_or(0);
+                        let dump = self.session.spike_read_text(space, start, 16);
+                        handle.push_reply(SpikeReply::Dump(dump));
+                    }
                 }
             }
         }

@@ -301,6 +301,20 @@ impl WindowExtend for Window {
         }
         window.add_action(&settings_action);
 
+        // SPIKE (iteration 4, DO NOT MERGE): env-gated throwaway entry.
+        if std::env::var("NERUST_SPIKE_DEBUG").is_ok() {
+            let spike_write_action = gio::SimpleAction::new("spike-write", None);
+            {
+                let result = result.clone();
+                let _ = spike_write_action.connect_activate(move |_, _| {
+                    let state = result.state();
+                    let app = result.application();
+                    crate::spike_write::open_spike_window(&state, &app);
+                });
+            }
+            window.add_action(&spike_write_action);
+        }
+
         {
             let result = result.clone();
             let _ = glib::timeout_add_local(TITLE_UPDATE_INTERVAL, move || {
