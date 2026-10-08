@@ -303,11 +303,11 @@ jobs:
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
           mkdir -p coverage target/llvm-cov-target
-          cargo llvm-cov run --no-report -p nerust_rom_test --features nes \
+          cargo llvm-cov run --no-report -p nerust_rom_tool --features nes \
             --bin rom_tool -- list --case apu.len_ctr
-          cargo llvm-cov run --no-report -p nerust_rom_test --features nes \
+          cargo llvm-cov run --no-report -p nerust_rom_tool --features nes \
             --bin rom_tool -- validate --case apu.len_ctr
-          cargo llvm-cov run --no-report -p nerust_rom_test --features nes \
+          cargo llvm-cov run --no-report -p nerust_rom_tool --features nes \
             --bin perf -- --rounds 1 --warmup-rounds 0 --case apu.len_ctr
           cargo llvm-cov report \
             --no-default-ignore-filename-regex \

@@ -31,14 +31,6 @@ nes = ["dep:nerust_nes_factory"]
 gbc = ["dep:nerust_gbc_factory"]
 gba = ["dep:nerust_gba_factory", "nerust_gba_factory/mgba-debug-log"]
 
-[[bin]]
-name = "rom_tool"
-path = "src/bin/rom_tool.rs"
-
-[[bin]]
-name = "perf"
-path = "src/bin/perf.rs"
-
 [[test]]
 name = "lib"
 path = "tests/lib.rs"

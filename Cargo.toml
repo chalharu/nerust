@@ -3,6 +3,7 @@ default-members = [".", "nes/core", "gbc/core", "gba/core"]
 members = [
   "gui/frontends/android",
   "gui/frontends/gtk",
+  "gui/frontends/rom_tool",
   "gui/frontends/tao",
   "gui/run-options",
   "gui/runtime",
@@ -192,6 +193,7 @@ nerust_render_softbuffer = { path = "render/softbuffer" }
 nerust_render_traits = { path = "render/traits" }
 nerust_render_wgpu = { path = "render/wgpu" }
 nerust_rom_test = { path = "gui/frontends/headless" }
+nerust_rom_tool = { path = "gui/frontends/rom_tool" }
 nerust_run_options = { path = "gui/run-options" }
 nerust_serialize = { path = "serialize" }
 nerust_settings_core = { path = "settings/core" }

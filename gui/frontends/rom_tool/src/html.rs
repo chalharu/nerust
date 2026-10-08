@@ -5,9 +5,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use super::{Report, ReportRenderer, hex_preview, suite_name};
-use crate::{
+use super::hex_preview;
+use nerust_rom_test::{
     error::RomTestError,
+    report::{Report, ReportRenderer, suite_name},
     results::{
         CaseOutcome, CaseValidation, LogCheck, MemoryCheck, RegisterCheck, ScreenCheck, SerialCheck,
     },
@@ -595,9 +596,9 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
-    use crate::{
+    use nerust_rom_test::{
         manifest::{AudioExpectation, RomCategory},
-        report::{ReportRenderer, summarize},
+        report::{Report, ReportRenderer, summarize},
         results::{
             AudioObservation, CaseOutcome, CaseValidation, LogCheck, MemoryCheck, RegisterCheck,
             ScreenCheck, SerialCheck,
@@ -686,7 +687,7 @@ mod tests {
     ) -> PathBuf {
         let renderer = HtmlReportRenderer;
         let summary = summarize(outcomes);
-        let report = crate::report::Report {
+        let report = Report {
             title,
             summary: &summary,
             started_at: std::time::UNIX_EPOCH,

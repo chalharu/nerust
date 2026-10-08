@@ -28,6 +28,8 @@
 //! - All sub-reads are `&self` with no mutation (audited: APU, PPU,
 //!   serial, timer, interrupts, joypad).
 
+use std::cell::OnceCell;
+
 use nerust_core_traits::debugger::{Debugger, SpaceAccess, SpaceId, SpaceInfo, SpaceTable};
 
 use crate::system::GbcSystem;
@@ -50,32 +52,38 @@ pub(crate) static GBC_SPACE_TABLE: SpaceTable = SpaceTable::build(&GBC_SPACES);
 /// Read-only GBC observer.
 ///
 /// Built per use (built, read, dropped); `registers()` borrows a buffer
-/// filled once in `new`. In phase 1 every decoded address is driven —
+/// filled lazily on first use. In phase 1 every decoded address is driven —
 /// there are no floating reads — so `read` is `Some` for the whole
 /// range and `None` only outside it.
 pub struct GbcDebugger<'a> {
     system: &'a GbcSystem,
-    regs: Vec<(&'static str, u64)>,
+    /// Lazily filled on first `registers()`: screen/memory-only
+    /// asserts never pay for register collection.
+    regs: OnceCell<Vec<(&'static str, u64)>>,
 }
 
 impl<'a> GbcDebugger<'a> {
     pub fn new(system: &'a GbcSystem) -> Self {
-        let regs = system.cpu.registers();
         Self {
             system,
-            regs: Vec::from([
-                ("a", u64::from(regs.a())),
-                ("b", u64::from(regs.b())),
-                ("c", u64::from(regs.c())),
-                ("d", u64::from(regs.d())),
-                ("e", u64::from(regs.e())),
-                ("f", u64::from(regs.f())),
-                ("h", u64::from(regs.h())),
-                ("l", u64::from(regs.l())),
-                ("pc", u64::from(regs.pc())),
-                ("sp", u64::from(regs.sp())),
-            ]),
+            regs: OnceCell::new(),
         }
+    }
+
+    fn snapshot_registers(&self) -> Vec<(&'static str, u64)> {
+        let regs = self.system.cpu.registers();
+        Vec::from([
+            ("a", u64::from(regs.a())),
+            ("b", u64::from(regs.b())),
+            ("c", u64::from(regs.c())),
+            ("d", u64::from(regs.d())),
+            ("e", u64::from(regs.e())),
+            ("f", u64::from(regs.f())),
+            ("h", u64::from(regs.h())),
+            ("l", u64::from(regs.l())),
+            ("pc", u64::from(regs.pc())),
+            ("sp", u64::from(regs.sp())),
+        ])
     }
 
     fn read_byte(&self, addr: u32) -> Option<u64> {
@@ -111,7 +119,7 @@ impl Debugger for GbcDebugger<'_> {
     }
 
     fn registers(&self) -> &[(&'static str, u64)] {
-        &self.regs
+        self.regs.get_or_init(|| self.snapshot_registers())
     }
 }
 

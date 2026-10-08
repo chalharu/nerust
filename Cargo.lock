@@ -3350,6 +3350,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_rom_tool"
+version = "0.1.0-dev"
+dependencies = [
+ "clap",
+ "nerust_core_traits",
+ "nerust_rom_test",
+]
+
+[[package]]
 name = "nerust_run_options"
 version = "0.1.0-dev"
 
