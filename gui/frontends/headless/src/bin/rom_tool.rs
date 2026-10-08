@@ -3,7 +3,9 @@ use std::{path::PathBuf, time::Instant};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use nerust_rom_test::{
     manifest::{RomManifest, load_default_manifest, load_manifest},
-    report::{default_output_root, hex_preview, write_html_report},
+    report::{
+        ReportRenderer, default_output_root, hex_preview, html::HtmlReportRenderer, summarize,
+    },
     results::{CaseOutcome, ValidationOptions},
     runner::validate_case,
     system_factories,
@@ -158,20 +160,23 @@ fn run_command(
         output_dir.display(),
         mode
     );
-    let summary = write_html_report(
-        &output_dir,
-        if fail_on_mismatch {
-            "ROM validation report"
-        } else {
-            "ROM capture report"
-        },
-        &outcomes,
-    )
-    .map_err(|error| error.to_string())?;
+    let summary = summarize(&outcomes);
+    let report_path = HtmlReportRenderer
+        .render(
+            if fail_on_mismatch {
+                "ROM validation report"
+            } else {
+                "ROM capture report"
+            },
+            &summary,
+            &outcomes,
+            &output_dir,
+        )
+        .map_err(|error| error.to_string())?;
 
     println!(
         "report={} mode={} passed={} failed={} expected-fail={} ignored={} elapsed_secs={:.1}",
-        summary.report_path.display(),
+        report_path.display(),
         mode,
         summary.passed,
         summary.failed,
@@ -184,7 +189,7 @@ fn run_command(
         return Err(format!(
             "{} ROM case(s) failed validation; see {}",
             summary.failed,
-            summary.report_path.display()
+            report_path.display()
         ));
     }
 
