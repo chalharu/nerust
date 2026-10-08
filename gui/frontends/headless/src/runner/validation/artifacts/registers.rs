@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
-use super::{super::runtime::ValidationRuntime, ValidationArtifacts};
+use super::ValidationArtifacts;
 use crate::{
     error::RomTestError,
+    factory_adapter::SystemInspector,
     results::{RegisterCheck, ValidationOptions},
 };
 
@@ -28,11 +29,11 @@ impl ValidationArtifacts {
     pub(in crate::runner::validation) fn record_registers_assert(
         &mut self,
         case_id: &str,
-        runtime: &ValidationRuntime,
+        inspector: &SystemInspector,
         options: ValidationOptions,
         expected: ExpectedRegisters,
     ) -> Result<(), RomTestError> {
-        let actual = runtime.peek_registers()?;
+        let actual = inspector.read_registers()?;
         for (name, expected_value) in &expected.registers {
             let Some((_, actual_value)) = actual.iter().find(|(n, _)| *n == name) else {
                 return Err(RomTestError::InvalidManifest(format!(

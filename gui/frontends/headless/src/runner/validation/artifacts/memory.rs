@@ -1,7 +1,7 @@
-use super::{super::runtime::ValidationRuntime, ValidationArtifacts};
+use super::ValidationArtifacts;
 use crate::{
     error::RomTestError,
-    factory_adapter::MemoryRead,
+    factory_adapter::{MemoryRead, SystemInspector},
     results::{MemoryCheck, ValidationOptions},
 };
 
@@ -28,11 +28,17 @@ impl ValidationArtifacts {
     pub(in crate::runner::validation) fn record_memory_assert(
         &mut self,
         case_id: &str,
-        runtime: &ValidationRuntime,
+        inspector: &SystemInspector,
         options: ValidationOptions,
         expected: ExpectedMemory,
     ) -> Result<(), RomTestError> {
-        let (actual_value, actual_open_bus) = match runtime.peek_memory(expected.address)? {
+        // Out-of-range addresses never reach the bus: unmapped, like
+        // an uncovered address. The `Unmapped` arm below reports it.
+        let read = match u32::try_from(expected.address).ok() {
+            Some(addr) => inspector.read_memory_byte(addr)?,
+            None => MemoryRead::Unmapped,
+        };
+        let (actual_value, actual_open_bus) = match read {
             MemoryRead::Mapped(value) => (value, false),
             // No meaningful value on a floating bus; the bus state
             // itself is the observation.

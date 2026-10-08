@@ -34,10 +34,16 @@ impl ValidationRunner {
         case: &RomCase,
     ) -> Result<CaseValidation, RomTestError> {
         let system = self.runtime.system_name();
+        let audio = self.runtime.audio_snapshot();
         let totals = drive_case(case, &mut self)?;
-        Ok(self
-            .artifacts
-            .finish(case, &mut self.runtime, totals, self.options, system))
+        Ok(self.artifacts.finish(
+            case,
+            self.runtime.observe(),
+            audio,
+            totals,
+            self.options,
+            system,
+        ))
     }
 
     pub(in crate::runner::validation) fn run_frame(&mut self) -> Result<(), RomTestError> {
@@ -55,7 +61,7 @@ impl ValidationRunner {
     ) -> Result<(), RomTestError> {
         self.artifacts.record_screen_assert(
             &self.case_id,
-            &mut self.runtime,
+            self.runtime.observe(),
             self.options,
             frame,
             expected_hash,
@@ -71,7 +77,7 @@ impl ValidationRunner {
     ) -> Result<(), RomTestError> {
         self.artifacts.record_memory_assert(
             &self.case_id,
-            &self.runtime,
+            &self.runtime.inspect(),
             self.options,
             super::artifacts::memory::ExpectedMemory {
                 frame,
@@ -89,7 +95,7 @@ impl ValidationRunner {
     ) -> Result<(), RomTestError> {
         self.artifacts.record_registers_assert(
             &self.case_id,
-            &self.runtime,
+            &self.runtime.inspect(),
             self.options,
             super::artifacts::registers::ExpectedRegisters { frame, registers },
         )
@@ -103,7 +109,7 @@ impl ValidationRunner {
     ) -> Result<(), RomTestError> {
         self.artifacts.record_serial_assert(
             &self.case_id,
-            &self.runtime,
+            self.runtime.serial_logs(),
             self.options,
             super::artifacts::serial::ExpectedSerial {
                 frame,
@@ -123,7 +129,7 @@ impl ValidationRunner {
     ) -> Result<(), RomTestError> {
         self.artifacts.record_log_assert(
             &self.case_id,
-            &self.runtime,
+            self.runtime.serial_logs(),
             self.options,
             super::artifacts::log::ExpectedLog {
                 frame,
