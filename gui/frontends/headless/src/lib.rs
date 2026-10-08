@@ -1,6 +1,11 @@
 pub mod error;
 pub mod events;
-pub mod factory_adapter;
+// Sealed module: frontends use the re-exports below, never the
+// internals. Narrows the engine's public surface to the open-system
+// seam (`TestSystem`, `open_headless_system`); everything else
+// (`MemoryRead`, pad plumbing) stays crate-private by construction.
+mod factory_adapter;
+pub use factory_adapter::{TestSystem, open_headless_system};
 pub mod harness;
 pub mod manifest;
 mod media;
