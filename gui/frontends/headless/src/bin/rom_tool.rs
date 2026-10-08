@@ -4,7 +4,8 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use nerust_rom_test::{
     manifest::{RomManifest, load_default_manifest, load_manifest},
     report::{
-        ReportRenderer, default_output_root, hex_preview, html::HtmlReportRenderer, summarize,
+        Report, ReportRenderer, default_output_root, hex_preview, html::HtmlReportRenderer,
+        summarize,
     },
     results::{CaseOutcome, ValidationOptions},
     runner::validate_case,
@@ -161,15 +162,19 @@ fn run_command(
         mode
     );
     let summary = summarize(&outcomes);
+    let started_at = std::time::SystemTime::now();
     let report_path = HtmlReportRenderer
         .render(
-            if fail_on_mismatch {
-                "ROM validation report"
-            } else {
-                "ROM capture report"
+            &Report {
+                title: if fail_on_mismatch {
+                    "ROM validation report"
+                } else {
+                    "ROM capture report"
+                },
+                summary: &summary,
+                started_at,
+                outcomes: &outcomes,
             },
-            &summary,
-            &outcomes,
             &output_dir,
         )
         .map_err(|error| error.to_string())?;

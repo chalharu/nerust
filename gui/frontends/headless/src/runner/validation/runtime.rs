@@ -13,3 +13,9 @@ pub(super) struct ValidationRuntime {
     serial: HashMap<String, Vec<u8>>,
     frame_counter: u64,
 }
+
+impl ValidationRuntime {
+    pub(in crate::runner::validation) fn system_name(&self) -> &'static str {
+        self.system.system_name()
+    }
+}

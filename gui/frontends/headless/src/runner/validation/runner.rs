@@ -33,10 +33,11 @@ impl ValidationRunner {
         mut self,
         case: &RomCase,
     ) -> Result<CaseValidation, RomTestError> {
+        let system = self.runtime.system_name();
         let totals = drive_case(case, &mut self)?;
         Ok(self
             .artifacts
-            .finish(case, &mut self.runtime, totals, self.options))
+            .finish(case, &mut self.runtime, totals, self.options, system))
     }
 
     pub(in crate::runner::validation) fn run_frame(&mut self) -> Result<(), RomTestError> {
