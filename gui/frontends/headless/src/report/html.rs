@@ -4,68 +4,35 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{error::RomTestError, results::CaseOutcome};
+use super::{ReportRenderer, ReportSummary, hex_preview};
+use crate::{error::RomTestError, results::CaseOutcome};
 
-#[derive(Debug, Clone)]
-pub struct ReportSummary {
-    pub report_path: PathBuf,
-    pub passed: usize,
-    pub failed: usize,
-    pub ignored: usize,
-    pub expected_failed: usize,
-}
+/// HTML report renderer: one `index.html` plus per-frame screenshots.
+/// The only [`ReportRenderer`] today; new formats (JSON, markdown)
+/// implement the trait without touching data generation.
+pub struct HtmlReportRenderer;
 
-pub fn default_output_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../target/rom-tests")
-}
+impl ReportRenderer for HtmlReportRenderer {
+    fn render(
+        &self,
+        title: &str,
+        summary: &ReportSummary,
+        outcomes: &[CaseOutcome],
+        output_dir: &Path,
+    ) -> Result<PathBuf, RomTestError> {
+        fs::create_dir_all(output_dir).map_err(|source| RomTestError::CreateDirectory {
+            path: output_dir.to_path_buf(),
+            source,
+        })?;
+        let screenshots_dir = output_dir.join("screenshots");
+        fs::create_dir_all(&screenshots_dir).map_err(|source| RomTestError::CreateDirectory {
+            path: screenshots_dir.clone(),
+            source,
+        })?;
 
-/// Compact hex preview for serial bytes: full text when short,
-/// truncated with a length otherwise.
-pub fn hex_preview(bytes: &[u8]) -> String {
-    const PREVIEW: usize = 64;
-    let shown = &bytes[..bytes.len().min(PREVIEW)];
-    let mut text = String::with_capacity(shown.len() * 2);
-    for byte in shown {
-        text.push_str(&format!("{byte:02X}"));
-    }
-    if bytes.len() > PREVIEW {
-        text.push_str(&format!("…({} bytes)", bytes.len()));
-    }
-    text
-}
+        let mut html = String::new();
 
-pub fn write_html_report(
-    output_dir: &Path,
-    title: &str,
-    outcomes: &[CaseOutcome],
-) -> Result<ReportSummary, RomTestError> {
-    fs::create_dir_all(output_dir).map_err(|source| RomTestError::CreateDirectory {
-        path: output_dir.to_path_buf(),
-        source,
-    })?;
-    let screenshots_dir = output_dir.join("screenshots");
-    fs::create_dir_all(&screenshots_dir).map_err(|source| RomTestError::CreateDirectory {
-        path: screenshots_dir.clone(),
-        source,
-    })?;
-
-    let mut html = String::new();
-    let passed = outcomes.iter().filter(|outcome| outcome.passed()).count();
-    let ignored = outcomes
-        .iter()
-        .filter(|outcome| outcome.is_skipped())
-        .count();
-    let expected_failed = outcomes
-        .iter()
-        .filter(|outcome| outcome.is_expected_failure())
-        .count();
-    let failed = outcomes
-        .len()
-        .saturating_sub(passed)
-        .saturating_sub(ignored)
-        .saturating_sub(expected_failed);
-
-    write!(
+        write!(
         html,
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{}</title>\
          <style>\
@@ -87,94 +54,96 @@ pub fn write_html_report(
     )
     .unwrap();
 
-    write!(
+        write!(
         html,
         "<h1>{}</h1><p>Total cases: {} / passed: <span class=\"pass\">{}</span> / failed: <span class=\"fail\">{}</span> / expected-fail: <span class=\"expected\">{}</span> / ignored: {}</p>",
         escape_html(title),
         outcomes.len(),
-        passed,
-        failed,
-        expected_failed,
-        ignored
+        summary.passed,
+        summary.failed,
+        summary.expected_failed,
+        summary.ignored
     )
     .unwrap();
 
-    let mut current_category = None;
-    for outcome in outcomes {
-        let category = outcome.category();
-        if current_category != Some(category) {
-            current_category = Some(category);
-            write!(
-                html,
-                "<h2 class=\"category\">{}</h2>",
-                escape_html(category.label())
-            )
-            .unwrap();
-        }
-
-        match outcome {
-            CaseOutcome::Completed(validation) => {
-                let (status_class, status_label) = if validation.passed() {
-                    ("pass", "PASS")
-                } else if validation.is_expected_failure() {
-                    ("expected", "EXPECTED FAIL")
-                } else {
-                    ("fail", "FAIL")
-                };
+        let mut current_category = None;
+        for outcome in outcomes {
+            let category = outcome.category();
+            if current_category != Some(category) {
+                current_category = Some(category);
                 write!(
                     html,
-                    "<section class=\"case\"><h3>{}</h3><p>{}</p>\
+                    "<h2 class=\"category\">{}</h2>",
+                    escape_html(category.label())
+                )
+                .unwrap();
+            }
+
+            match outcome {
+                CaseOutcome::Completed(validation) => {
+                    let (status_class, status_label) = if validation.passed() {
+                        ("pass", "PASS")
+                    } else if validation.is_expected_failure() {
+                        ("expected", "EXPECTED FAIL")
+                    } else {
+                        ("fail", "FAIL")
+                    };
+                    write!(
+                        html,
+                        "<section class=\"case\"><h3>{}</h3><p>{}</p>\
                      <p>Status: <span class=\"{}\">{}</span></p>\
                      <p>ROM: <code>{}</code></p>\
                      <p>Frames: {} / Final screen hash: <code>0x{:016X}</code></p>",
-                    escape_html(&validation.case_id),
-                    escape_html(&validation.description),
-                    status_class,
-                    status_label,
-                    escape_html(&validation.rom),
-                    validation.frames,
-                    validation.final_screen_hash
-                )
-                .unwrap();
+                        escape_html(&validation.case_id),
+                        escape_html(&validation.description),
+                        status_class,
+                        status_label,
+                        escape_html(&validation.rom),
+                        validation.frames,
+                        validation.final_screen_hash
+                    )
+                    .unwrap();
 
-                write!(
-                    html,
-                    "<p>Audio ({} Hz): samples=<code>{}</code> hash=<code>0x{:016X}</code>",
-                    validation.audio.sample_rate, validation.audio.samples, validation.audio.hash
-                )
-                .unwrap();
-                if let Some(expected) = &validation.audio.expected {
                     write!(
+                        html,
+                        "<p>Audio ({} Hz): samples=<code>{}</code> hash=<code>0x{:016X}</code>",
+                        validation.audio.sample_rate,
+                        validation.audio.samples,
+                        validation.audio.hash
+                    )
+                    .unwrap();
+                    if let Some(expected) = &validation.audio.expected {
+                        write!(
                         html,
                         " expected samples=<code>{}</code> expected hash=<code>0x{:016X}</code>",
                         expected.samples, expected.hash
                     )
                     .unwrap();
-                }
-                html.push_str("</p>");
+                    }
+                    html.push_str("</p>");
 
-                if !validation.failures.is_empty() {
-                    html.push_str("<h4>Failures</h4><ul>");
-                    for failure in &validation.failures {
-                        write!(html, "<li>{}</li>", escape_html(failure)).unwrap();
+                    if !validation.failures.is_empty() {
+                        html.push_str("<h4>Failures</h4><ul>");
+                        for failure in &validation.failures {
+                            write!(html, "<li>{}</li>", escape_html(failure)).unwrap();
+                        }
+                        html.push_str("</ul>");
                     }
-                    html.push_str("</ul>");
-                }
-                if !validation.stale_notes.is_empty() {
-                    html.push_str("<h4>Stale (graduate!)</h4><ul>");
-                    for note in &validation.stale_notes {
-                        write!(html, "<li>{}</li>", escape_html(note)).unwrap();
+                    if !validation.stale_notes.is_empty() {
+                        html.push_str("<h4>Stale (graduate!)</h4><ul>");
+                        for note in &validation.stale_notes {
+                            write!(html, "<li>{}</li>", escape_html(note)).unwrap();
+                        }
+                        html.push_str("</ul>");
                     }
-                    html.push_str("</ul>");
-                }
-                if !validation.log_checks.is_empty() {
-                    html.push_str(
+                    if !validation.log_checks.is_empty() {
+                        html.push_str(
                         "<h4>Log checks</h4><table><thead><tr>                         <th>Frame</th><th>Channel</th><th>End</th><th>Fail names</th><th>Missing allowed</th><th>Unexpected</th><th>Status</th>                         </tr></thead><tbody>",
                     );
-                    for check in &validation.log_checks {
-                        let status_class = if check.passed() { "pass" } else { "fail" };
-                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
-                        write!(
+                        for check in &validation.log_checks {
+                            let status_class = if check.passed() { "pass" } else { "fail" };
+                            let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                            write!(
                             html,
                             "<tr><td>{}</td><td><code>{}</code></td>                             <td><code>{}</code></td><td><code>{}</code></td>                             <td><code>{}</code></td><td><code>{}</code></td>                             <td class=\"{}\">{}</td></tr>",
                             check.frame,
@@ -187,46 +156,46 @@ pub fn write_html_report(
                             status_label
                         )
                         .unwrap();
+                        }
+                        html.push_str("</tbody></table>");
                     }
-                    html.push_str("</tbody></table>");
-                }
 
-                if !validation.screen_checks.is_empty() {
-                    html.push_str(
+                    if !validation.screen_checks.is_empty() {
+                        html.push_str(
                         "<h4>Screen checks</h4><table><thead><tr>\
                          <th>Frame</th><th>Expected</th><th>Actual</th><th>Status</th><th>Screenshot</th>\
                          </tr></thead><tbody>",
                     );
-                    for (index, check) in validation.screen_checks.iter().enumerate() {
-                        let screenshot_rel = if let Some(bytes) = &check.screenshot_png {
-                            let relative = format!(
-                                "screenshots/{}/frame-{:06}-{:02}.png",
-                                sanitize_for_path(&validation.case_id),
-                                check.frame,
-                                index + 1
-                            );
-                            let absolute = output_dir.join(&relative);
-                            if let Some(parent) = absolute.parent() {
-                                fs::create_dir_all(parent).map_err(|source| {
-                                    RomTestError::CreateDirectory {
-                                        path: parent.to_path_buf(),
+                        for (index, check) in validation.screen_checks.iter().enumerate() {
+                            let screenshot_rel = if let Some(bytes) = &check.screenshot_png {
+                                let relative = format!(
+                                    "screenshots/{}/frame-{:06}-{:02}.png",
+                                    sanitize_for_path(&validation.case_id),
+                                    check.frame,
+                                    index + 1
+                                );
+                                let absolute = output_dir.join(&relative);
+                                if let Some(parent) = absolute.parent() {
+                                    fs::create_dir_all(parent).map_err(|source| {
+                                        RomTestError::CreateDirectory {
+                                            path: parent.to_path_buf(),
+                                            source,
+                                        }
+                                    })?;
+                                }
+                                fs::write(&absolute, bytes).map_err(|source| {
+                                    RomTestError::WriteFile {
+                                        path: absolute.clone(),
                                         source,
                                     }
                                 })?;
-                            }
-                            fs::write(&absolute, bytes).map_err(|source| {
-                                RomTestError::WriteFile {
-                                    path: absolute.clone(),
-                                    source,
-                                }
-                            })?;
-                            Some(relative)
-                        } else {
-                            None
-                        };
-                        let status_class = if check.passed() { "pass" } else { "fail" };
-                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
-                        write!(
+                                Some(relative)
+                            } else {
+                                None
+                            };
+                            let status_class = if check.passed() { "pass" } else { "fail" };
+                            let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                            write!(
                             html,
                             "<tr><td>{}</td><td><code>0x{:016X}</code></td><td><code>0x{:016X}</code></td>\
                              <td class=\"{}\">{}</td><td>",
@@ -237,8 +206,8 @@ pub fn write_html_report(
                             status_label
                         )
                         .unwrap();
-                        if let Some(relative) = screenshot_rel {
-                            write!(
+                            if let Some(relative) = screenshot_rel {
+                                write!(
                                 html,
                                 "<a href=\"{}\"><img class=\"thumb\" src=\"{}\" alt=\"{} frame {}\"></a>",
                                 escape_html(&relative),
@@ -247,24 +216,24 @@ pub fn write_html_report(
                                 check.frame
                             )
                             .unwrap();
-                        } else {
-                            html.push('—');
+                            } else {
+                                html.push('—');
+                            }
+                            html.push_str("</td></tr>");
                         }
-                        html.push_str("</td></tr>");
+                        html.push_str("</tbody></table>");
                     }
-                    html.push_str("</tbody></table>");
-                }
 
-                if !validation.memory_checks.is_empty() {
-                    html.push_str(
+                    if !validation.memory_checks.is_empty() {
+                        html.push_str(
                         "<h4>Memory checks</h4><table><thead><tr>\
                          <th>Frame</th><th>Address</th><th>Expected</th><th>Actual</th><th>Expected bus</th><th>Actual bus</th><th>Status</th>\
                          </tr></thead><tbody>",
                     );
-                    for check in &validation.memory_checks {
-                        let status_class = if check.passed() { "pass" } else { "fail" };
-                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
-                        write!(
+                        for check in &validation.memory_checks {
+                            let status_class = if check.passed() { "pass" } else { "fail" };
+                            let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                            write!(
                             html,
                             "<tr><td>{}</td><td><code>0x{:04X}</code></td><td><code>0x{:02X}</code></td>\
                              <td><code>0x{:02X}</code></td><td>{}</td><td>{}</td><td class=\"{}\">{}</td></tr>",
@@ -286,19 +255,19 @@ pub fn write_html_report(
                             status_label
                         )
                         .unwrap();
+                        }
+                        html.push_str("</tbody></table>");
                     }
-                    html.push_str("</tbody></table>");
-                }
-                if !validation.register_checks.is_empty() {
-                    html.push_str(
+                    if !validation.register_checks.is_empty() {
+                        html.push_str(
                         "<h4>Register checks</h4><table><thead><tr>\
                          <th>Frame</th><th>Register</th><th>Expected</th><th>Actual</th><th>Status</th>\
                          </tr></thead><tbody>",
                     );
-                    for check in &validation.register_checks {
-                        let status_class = if check.passed() { "pass" } else { "fail" };
-                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
-                        write!(
+                        for check in &validation.register_checks {
+                            let status_class = if check.passed() { "pass" } else { "fail" };
+                            let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                            write!(
                             html,
                             "<tr><td>{}</td><td><code>{}</code></td><td><code>0x{:X}</code></td>\
                              <td><code>0x{:X}</code></td><td class=\"{}\">{}</td></tr>",
@@ -310,92 +279,87 @@ pub fn write_html_report(
                             status_label
                         )
                         .unwrap();
+                        }
+                        html.push_str("</tbody></table>");
                     }
-                    html.push_str("</tbody></table>");
-                }
-                if !validation.serial_checks.is_empty() {
-                    html.push_str(
+                    if !validation.serial_checks.is_empty() {
+                        html.push_str(
                         "<h4>Serial checks</h4><table><thead><tr>\
                          <th>Frame</th><th>Channel</th><th>Expected</th><th>Actual</th><th>Status</th>\
                          </tr></thead><tbody>",
                     );
-                    for check in &validation.serial_checks {
-                        let status_class = if check.passed() { "pass" } else { "fail" };
-                        let status_label = if check.passed() { "PASS" } else { "FAIL" };
-                        write!(
-                            html,
-                            "<tr><td>{}</td><td><code>{}</code></td>\
+                        for check in &validation.serial_checks {
+                            let status_class = if check.passed() { "pass" } else { "fail" };
+                            let status_label = if check.passed() { "PASS" } else { "FAIL" };
+                            write!(
+                                html,
+                                "<tr><td>{}</td><td><code>{}</code></td>\
                              <td><code>{}</code></td><td><code>{}</code></td>\
                              <td class=\"{}\">{}</td></tr>",
-                            check.frame,
-                            check.channel,
-                            hex_preview(&check.expected_bytes),
-                            hex_preview(&check.actual_bytes),
-                            status_class,
-                            status_label
-                        )
-                        .unwrap();
+                                check.frame,
+                                check.channel,
+                                hex_preview(&check.expected_bytes),
+                                hex_preview(&check.actual_bytes),
+                                status_class,
+                                status_label
+                            )
+                            .unwrap();
+                        }
+                        html.push_str("</tbody></table>");
                     }
-                    html.push_str("</tbody></table>");
-                }
 
-                html.push_str("</section>");
-            }
-            CaseOutcome::InternalError {
-                case_id,
-                description,
-                rom,
-                message,
-                ..
-            } => {
-                write!(
-                    html,
-                    "<section class=\"case\"><h3>{}</h3><p>{}</p>\
+                    html.push_str("</section>");
+                }
+                CaseOutcome::InternalError {
+                    case_id,
+                    description,
+                    rom,
+                    message,
+                    ..
+                } => {
+                    write!(
+                        html,
+                        "<section class=\"case\"><h3>{}</h3><p>{}</p>\
                      <p>Status: <span class=\"fail\">ERROR</span></p>\
                      <p>ROM: <code>{}</code></p><p>{}</p></section>",
-                    escape_html(case_id),
-                    escape_html(description),
-                    escape_html(rom),
-                    escape_html(message)
-                )
-                .unwrap();
-            }
-            CaseOutcome::Skipped {
-                case_id,
-                description,
-                rom,
-                reason,
-                ..
-            } => {
-                write!(
-                    html,
-                    "<section class=\"case\"><h3>{}</h3><p>{}</p>\
+                        escape_html(case_id),
+                        escape_html(description),
+                        escape_html(rom),
+                        escape_html(message)
+                    )
+                    .unwrap();
+                }
+                CaseOutcome::Skipped {
+                    case_id,
+                    description,
+                    rom,
+                    reason,
+                    ..
+                } => {
+                    write!(
+                        html,
+                        "<section class=\"case\"><h3>{}</h3><p>{}</p>\
                      <p>Status: <span>IGNORED</span></p>\
                      <p>ROM: <code>{}</code></p><p>{}</p></section>",
-                    escape_html(case_id),
-                    escape_html(description),
-                    escape_html(rom),
-                    escape_html(reason)
-                )
-                .unwrap();
+                        escape_html(case_id),
+                        escape_html(description),
+                        escape_html(rom),
+                        escape_html(reason)
+                    )
+                    .unwrap();
+                }
             }
         }
+
+        html.push_str("</body></html>");
+        let report_path = output_dir.join("index.html");
+        fs::write(&report_path, html).map_err(|source| RomTestError::WriteFile {
+            path: report_path.clone(),
+            source,
+        })?;
+
+        Ok(report_path)
     }
-
-    html.push_str("</body></html>");
-    let report_path = output_dir.join("index.html");
-    fs::write(&report_path, html).map_err(|source| RomTestError::WriteFile {
-        path: report_path.clone(),
-        source,
-    })?;
-
-    Ok(ReportSummary {
-        report_path,
-        passed,
-        failed,
-        ignored,
-        expected_failed,
-    })
 }
 
 fn escape_html(value: &str) -> String {
@@ -426,6 +390,7 @@ mod tests {
     use super::*;
     use crate::{
         manifest::{AudioExpectation, RomCategory},
+        report::{ReportRenderer, summarize},
         results::{
             AudioObservation, CaseOutcome, CaseValidation, LogCheck, MemoryCheck, RegisterCheck,
             ScreenCheck, SerialCheck,
@@ -505,22 +470,12 @@ mod tests {
         }))
     }
 
-    #[test]
-    fn hex_preview_covers_empty_short_and_long() {
-        assert_eq!(hex_preview(&[]), "");
-        assert_eq!(hex_preview(b"Pass"), "50617373");
-        let exact = vec![0xAB; 64];
-        assert_eq!(hex_preview(&exact).len(), 128);
-        assert!(!hex_preview(&exact).contains("bytes)"));
-        let long = vec![0xAB; 65];
-        let preview = hex_preview(&long);
-        assert!(preview.starts_with(&"AB".repeat(64)));
-        assert!(preview.ends_with("…(65 bytes)"));
-    }
-
-    #[test]
-    fn default_output_root_points_at_target_rom_tests() {
-        assert!(default_output_root().ends_with("target/rom-tests"));
+    fn render_html(dir: &std::path::Path, title: &str, outcomes: &[CaseOutcome]) -> PathBuf {
+        let renderer = HtmlReportRenderer;
+        let summary = summarize(outcomes);
+        renderer
+            .render(title, &summary, outcomes, dir)
+            .expect("report writes")
     }
 
     #[test]
@@ -543,12 +498,13 @@ mod tests {
                 reason: "not in CI".to_string(),
             },
         ];
-        let summary = write_html_report(&dir, "Title <&>", &outcomes).expect("report writes");
+        let summary = summarize(&outcomes);
+        let report_path = render_html(&dir, "Title <&>", &outcomes);
         assert_eq!(summary.passed, 1);
         assert_eq!(summary.failed, 1);
         assert_eq!(summary.ignored, 1);
         assert_eq!(summary.expected_failed, 0);
-        let html = fs::read_to_string(&summary.report_path).expect("report readable");
+        let html = fs::read_to_string(&report_path).expect("report readable");
         assert!(html.contains("Title &lt;&amp;&gt;"));
         assert!(html.contains("boom &amp; bust"));
         assert!(html.contains("IGNORED"));
@@ -575,19 +531,16 @@ mod tests {
         stale.failures.push("mismatch".to_string());
         stale.expected_failure = true;
         stale.stale_notes.push("graduate me".to_string());
-        let summary = write_html_report(
-            &dir,
-            "t",
-            &[
-                CaseOutcome::Completed(Box::new(tracked)),
-                CaseOutcome::Completed(Box::new(stale)),
-            ],
-        )
-        .expect("report writes");
+        let outcomes = [
+            CaseOutcome::Completed(Box::new(tracked)),
+            CaseOutcome::Completed(Box::new(stale)),
+        ];
+        let summary = summarize(&outcomes);
+        let report_path = render_html(&dir, "t", &outcomes);
         assert_eq!(summary.passed, 0);
         assert_eq!(summary.failed, 1);
         assert_eq!(summary.expected_failed, 1);
-        let html = fs::read_to_string(&summary.report_path).expect("report readable");
+        let html = fs::read_to_string(&report_path).expect("report readable");
         assert!(html.contains("EXPECTED FAIL"));
         assert!(html.contains("Stale (graduate!)"));
     }
