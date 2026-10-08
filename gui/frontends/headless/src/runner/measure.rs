@@ -23,6 +23,10 @@ pub struct MeasureOutcome {
 /// discarding audio. Asserts are inputs here, not checks: measurement
 /// observes the shipped execution path, including pad/input dispatch
 /// and reset handling, exactly as validation drives it.
+///
+/// Metric note: `steps` counts one stepped frame per step. The measure
+/// includes the thread barrier per frame — representative of headless
+/// driving, not of raw core throughput.
 pub fn measure_case(
     factories: &[Box<dyn nerust_core_traits::factory::CoreFactory>],
     case: &RomCase,

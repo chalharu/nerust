@@ -273,11 +273,6 @@ impl Aggregate {
 /// validation): one driving site, two harness modes. This binary owns
 /// only CLI parsing, round timing, and result printing, so stepping
 /// semantics cannot drift between perf and validation.
-///
-/// Metric note: `steps` counts one stepped frame per step. The measure
-/// includes the thread barrier per frame — representative of headless
-/// driving, not of raw core throughput.
-
 fn peak_rss_mib() -> Option<f64> {
     #[cfg(target_os = "linux")]
     {
