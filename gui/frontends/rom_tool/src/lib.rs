@@ -1,9 +1,7 @@
 //! ROM tooling frontend: CLI presentation over the harness engine.
 //!
-//! The engine (`nerust_rom_test`) owns driving, data, and the
-//! [`nerust_rom_test::report::ReportRenderer`] boundary. This crate owns
-//! everything presentation: the `rom_tool` / `perf` binaries, the HTML
-//! renderer, and console formatting helpers.
+//! The engine owns driving, data, and rendering boundaries; this crate
+//! owns presentation (binaries, HTML renderer, console formatting).
 
 use std::path::{Path, PathBuf};
 

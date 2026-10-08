@@ -13,15 +13,9 @@ impl ValidationRuntime {
         for sample in observe.drain_audio()? {
             self.mixer.push(sample);
         }
-        // Accumulate fresh bytes per channel into the cumulative
-        // logs. Drained every frame so multi-frame gaps between
-        // asserts lose nothing (each tap holds the latest delta only).
-        // Keys were pre-registered at open, so `get_mut` needs no key
-        // clone; the channel list itself is a borrowed snapshot, so no
-        // per-frame re-query either. The per-frame `Vec` from `drain_*`
-        // is likewise negligible (measured ~1µs against ~140µs+ of
-        // framebuffer hashing alone, before core emulation), so no
-        // `drain_into` streaming API is warranted.
+        // Drained every frame (taps hold the latest delta only).
+        // Keys were pre-registered at open (`get_mut`, no clones);
+        // the channel list is a borrowed open-time snapshot.
         for channel in observe.channel_names() {
             let log = self.serial.get_mut(channel).ok_or_else(|| {
                 RomTestError::EmuThread(format!(

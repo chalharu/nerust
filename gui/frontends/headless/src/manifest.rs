@@ -100,20 +100,14 @@ pub struct RomCase {
     /// Absent means in scope.
     #[serde(default = "default_ci")]
     pub ci: bool,
-    /// Tracked red: the case is expected to fail its assertions until
-    /// an emulator fix graduates it. Mismatches are tolerated and
-    /// reported distinctly; a run with NO mismatches is stale and
-    /// fails loudly (graduate by dropping this flag). Infra errors
-    /// are never tolerated. Mirrors the legacy `expected_failures`
-    /// boxes, including their no-rot rule.
+    /// Tracked red: mismatches are tolerated and reported distinctly;
+    /// a run with NO mismatches is stale and fails loudly (graduate by
+    /// dropping this flag). Infra errors are never tolerated.
     #[serde(default)]
     pub expected_failure: bool,
-    /// Pending registration: the case is known future work with no
-    /// assertions yet (unassertable verdict domain, missing playbook,
-    /// or safety review outstanding). Pending cases never execute:
-    /// they resolve to `Skipped` with this reason, visible in reports
-    /// but never passing, never failing. Graduate by replacing this
-    /// with real events. The ROM must still exist (binding check).
+    /// Pending registration: known future work with no assertions yet.
+    /// Pending cases never execute (resolve to `Skipped`). Graduate by
+    /// replacing this with real events. The ROM must still exist.
     #[serde(default)]
     pub pending_reason: Option<String>,
     /// Load-affecting options as raw strings, passed through to the
