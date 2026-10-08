@@ -34,8 +34,10 @@ impl ValidationRunner {
         case: &RomCase,
     ) -> Result<CaseValidation, RomTestError> {
         let system = self.runtime.system_name();
-        let audio = self.runtime.audio_snapshot();
         let totals = drive_case(case, &mut self)?;
+        // Snapshot AFTER the drive: the mixer accumulates during
+        // `run_frame`, so snapshotting before would pin empty audio.
+        let audio = self.runtime.audio_snapshot();
         Ok(self.artifacts.finish(
             case,
             self.runtime.observe(),
