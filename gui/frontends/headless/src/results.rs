@@ -118,6 +118,12 @@ pub struct CaseValidation {
     pub category: RomCategory,
     pub description: String,
     pub rom: String,
+    /// Accepting factory's display name (e.g. `"NES"`). Recorded at
+    /// open: reports group by system without guessing from ROM bytes.
+    pub system: &'static str,
+    /// Wall-clock time for open + drive, stamped by entry after the
+    /// run. Zero only when constructed outside the runner (tests).
+    pub elapsed: std::time::Duration,
     pub frames: u64,
     pub final_screen_hash: u64,
     pub screen_checks: Vec<ScreenCheck>,

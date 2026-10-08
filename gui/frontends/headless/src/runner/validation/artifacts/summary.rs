@@ -11,6 +11,7 @@ impl ValidationArtifacts {
         runtime: &mut ValidationRuntime,
         totals: ExecutionTotals,
         options: ValidationOptions,
+        system: &'static str,
     ) -> CaseValidation {
         let final_screen_hash = runtime.screen_hash();
         let audio = AudioObservation {
@@ -54,6 +55,10 @@ impl ValidationArtifacts {
             category: case.category,
             description: case.description.clone(),
             rom: case.rom.clone(),
+            system,
+            // Entry stamps the wall-clock elapsed after the run;
+            // finish only sees drive totals, never wall time.
+            elapsed: std::time::Duration::ZERO,
             frames: totals.frames,
             final_screen_hash,
             screen_checks: self.screen.screen_checks,

@@ -39,6 +39,9 @@ pub struct TestSystem {
     tap: Arc<Mutex<Vec<StereoSample>>>,
     channels: Vec<String>,
     serial_taps: std::collections::HashMap<String, Arc<Mutex<Vec<u8>>>>,
+    /// Accepting factory's [`CoreFactory::display_name`]: the only
+    /// honest system label (ROM probing decides, never the harness).
+    system: &'static str,
 }
 
 /// Build a loaded system through `CoreFactory` and wrap it in the
@@ -186,6 +189,7 @@ pub fn open_headless_system(
         tap,
         channels,
         serial_taps,
+        system: factory.display_name(),
     })
 }
 
@@ -237,6 +241,12 @@ pub enum MemoryRead {
 }
 
 impl TestSystem {
+    /// Accepting factory's display name (e.g. `"NES"`). Recorded at
+    /// open so reports never guess the system from ROM bytes.
+    pub fn system_name(&self) -> &'static str {
+        self.system
+    }
+
     /// Drive one button for the next frame, addressed by the control
     /// id string the slot profile exposes (e.g. `"nes.control.a"`).
     /// Unknown to every pad means a typo: loud error. Known but absent

@@ -20,7 +20,13 @@ pub(super) fn validate_case(
         };
     }
     match read_rom(case).and_then(|rom_bytes| {
-        ValidationRunner::new(factories, case, &rom_bytes, options)?.run_case(case)
+        let started = std::time::Instant::now();
+        ValidationRunner::new(factories, case, &rom_bytes, options)
+            .and_then(|runner| runner.run_case(case))
+            .map(|mut validation| {
+                validation.elapsed = started.elapsed();
+                validation
+            })
     }) {
         Ok(validation) => CaseOutcome::Completed(Box::new(validation)),
         Err(RomTestError::NoMatchingSystem { case_id }) => CaseOutcome::Skipped {
