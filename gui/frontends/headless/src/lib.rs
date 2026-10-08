@@ -1,11 +1,9 @@
 pub mod error;
 pub mod events;
-// Sealed module: frontends use the re-exports below, never the
-// internals. Narrows the engine's public surface to the open-system
-// seam (`TestSystem`, `open_headless_system`); everything else
-// (`MemoryRead`, pad plumbing) stays crate-private by construction.
-mod factory_adapter;
-pub use factory_adapter::{TestSystem, open_headless_system};
+// Canonical engine seam: frontends reach the open system through this
+// module's path only (no re-export aliases). Items the frontend never
+// touches are `pub(crate)` at their definition site.
+pub mod factory_adapter;
 pub mod harness;
 pub mod manifest;
 mod media;

@@ -3,12 +3,11 @@ use std::time::{Duration, Instant};
 use clap::{Arg, ArgAction, Command};
 
 use nerust_rom_test::{
-    TestSystem,
     error::RomTestError,
     events::{ControllerPad, PadState, RomAssertion},
+    factory_adapter::{TestSystem, open_headless_system},
     harness::{CaseHarness, drive_case},
     manifest::{RomCase, load_default_manifest, read_rom},
-    open_headless_system,
     results::{CaseOutcome, ValidationOptions},
     runner::validate_case,
     system_factories,
