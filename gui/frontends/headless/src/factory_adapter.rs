@@ -1,13 +1,9 @@
 //! Single seam to system construction and session-layer driving.
 //!
 //! The generic validation harness drives [`TestSystem`], which owns the
-//! session execution engine ([`EmuCore`]) built from factory parts. This
-//! module names no system-concrete types: [`open_headless_system`] takes
-//! `&dyn CoreFactory`, and all system addressing resolves through
-//! pre-existing maps — the CLI options schema, the debugger space
-//! table, and the input field map. Production code carries no test
-//! support; the harness owns only its test-domain vocabulary (event
-//! actions, assertion kinds).
+//! session execution engine ([`EmuCore`]) built from factory parts.
+//! System addressing resolves through pre-existing maps only
+//! (CLI options schema, debugger space table, input field map).
 
 use std::{
     collections::HashMap,
@@ -68,18 +64,9 @@ pub(crate) fn open_case_system(
 /// The system is selected by ROM judgment: the first factory whose
 /// `probe_media` accepts the bytes wins. No match is eligibility, not
 /// failure — [`RomTestError::NoMatchingSystem`], mapped to an ignored
-/// outcome upstream.
-///
-/// * Settings are factory defaults plus English, built here — not on
-///   `CoreFactory` — because only headless driving needs them:
-///   observed bytes never depend on presentation settings.
-///   Case `options` parse through the factory's own CLI options schema.
-/// * Both player slots get the P1 profile: the suite drives pad2 and
-///   the microphone, which the factory default (P2 unassigned) lacks.
-/// * Audio goes to a null backend stamped at the case rate; nominal
-///   samples are tapped per stepped frame, never rate-controlled.
-/// * After paused load the thread is silent until the first step, so
-///   stepped frames start from a deterministic power-on frame zero.
+/// outcome upstream. Settings are factory defaults plus English;
+/// both player slots get the P1 profile; audio taps nominal samples
+/// per stepped frame; load is paused so power-on survives to frame zero.
 pub(crate) fn open_headless_system(
     factories: &[Box<dyn CoreFactory>],
     case_id: &str,
@@ -151,12 +138,9 @@ pub(crate) fn open_headless_system(
     let spaces = emu
         .memory_spaces()
         .map_err(|error| construction(format!("memory spaces: {error:?}")))?;
-    // Pad buttons resolve through the slot profiles: every control in
-    // the slot's group maps through the field map to a buffer field —
-    // addressed by the control id string the profile itself exposes.
-    // Absent from the group means no such hardware (a silent no-op
-    // when driven, as the device masks it too); present but unmapped
-    // is loud drift.
+    // Pad buttons resolve through the slot profiles to buffer fields.
+    // Absent from the group means no such hardware (silent no-op);
+    // present but unmapped is loud drift.
     let mut pad_buttons = Vec::with_capacity(assignments.slots.len());
     for (pad, (attachment, profile)) in assignments.slots.iter().enumerate() {
         let profile = profile
@@ -212,13 +196,8 @@ pub(crate) fn open_headless_system(
 }
 
 /// Deterministic settings view: factory defaults plus English,
-/// independent of GUI/user state.
-///
-/// Lives in the headless frontend — not on `CoreFactory` — because it
-/// is test tooling, not production interface: GUI frontends never call
-/// it, and no system overrides it. Fails loudly when the factory
-/// exposes no system defaults, so a missing seed surfaces instead of
-/// silently shifting behavior.
+/// independent of GUI/user state. Test tooling, not production
+/// interface — fails loudly when the factory exposes no defaults.
 fn headless_view(
     factory: &dyn CoreFactory,
     case_id: &str,
@@ -312,11 +291,9 @@ pub(crate) struct SystemControl<'a> {
 
 impl SystemControl<'_> {
     /// Drive one button for the next frame, addressed by the control
-    /// id string the slot profile exposes (e.g. `"nes.control.a"`).
-    /// Unknown to every pad means a typo: loud error. Known but absent
-    /// from this pad means no such hardware: silent no-op, as the
-    /// device masks it too. A field write failure is always loud —
-    /// never a silent no-op.
+    /// id string the slot profile exposes. Unknown to every pad is a
+    /// loud typo error; known but absent from this pad is a silent
+    /// no-op (no such hardware); field failures are always loud.
     pub fn set_button(
         &mut self,
         pad: usize,

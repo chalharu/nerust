@@ -34,34 +34,7 @@ fn default_serial_channel() -> String {
 /// migration for addresses/names (those resolve against live system
 /// state), but adding a variant is intentionally shotgun: every `match`
 /// below must handle it, so the compiler lists all touch points.
-///
-/// Extension checklist for kind N+1 (serial touched the same
-/// 14 files as registers):
-/// `serde_helpers` codec → this enum + `RomEventKind` + `assertion()`
-/// → `harness.rs` dispatch → `TestSystem` read → `runtime/inspection`
-/// peek → `runner.rs` record → `harness_impl` arm → `artifacts/`
-/// module + wiring → `results.rs` check + `CaseValidation` field →
-/// `summary.rs` → `report.rs` → `bin/rom_tool.rs` → `tests.rs`
-/// (+ kernel/thread only if a new `EmuCommand` is needed — serial did:
-/// `TapSerialOutput`, mirroring the audio tap).
-///
 /// Do NOT abstract this into a dispatcher registry until kind 5.
-/// Exhaustive matches fail at compile time when a variant is missed;
-/// a registry would fail at runtime instead. Serial (kind 4) still
-/// fits snapshot-compare — cumulative bytes at a frame are a snapshot
-/// — so the revisit trigger moves to the next stateful kind.
-///
-/// 2026-10 update: a second output channel (a guest debug-log sink)
-/// did NOT become kind 5. A channel key on `Serial` covers named byte
-/// streams without a new variant: still snapshot-shaped, still the
-/// same dispatch. The trigger remains reserved for a genuinely new
-/// (non-snapshot) kind.
-///
-/// 2026-10 update 2: line-set log evaluation DID become kind 5, as a
-/// `Log` variant reusing the same dispatch shape (`assertion()`
-/// mapping, same `on_assert` path). Cumulative-transcript set
-/// evaluation is snapshot family, so still no dispatcher registry;
-/// the trigger stays reserved for a genuinely non-snapshot kind.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RomAssertion {
@@ -93,32 +66,18 @@ pub enum RomAssertion {
     },
     /// Serial-output assertion. Compares the cumulative bytes the
     /// core produced on one named output channel since power-on,
-    /// exactly. Streams are stateful but cumulative-at-a-frame is
-    /// still a snapshot, so no new dispatch shape was needed. The
-    /// channel is core-defined (e.g. `"serial"`, `"debug-log"`) and
-    /// validated at read time against the live channel list; cores
-    /// producing nothing on it stay silent (empty), and asserting
-    /// non-empty bytes there fails like any other mismatch.
+    /// exactly. The channel is core-defined and validated at read
+    /// time against the live channel list.
     Serial {
         #[serde(default = "default_serial_channel")]
         channel: String,
         #[serde(with = "hex_bytes")]
         bytes: Vec<u8>,
     },
-    /// Log-line assertion. Evaluates the cumulative
-    /// newline-delimited text on `channel` at a frame: the exact
-    /// `end` marker line must be present (completion proof; it
-    /// carries the pass/total counts), and the set of `fail_prefix`-led
-    /// test names must equal `allowed_fail` exactly. Unknown failures
-    /// fail; allowed names that no longer fail are stale (always
-    /// hard — a fix must never stay silent under a tolerance flag).
-    ///
-    /// The line format is DATA, not code: `fail_prefix`/`end` come
-    /// from the manifest (cf. legacy `SuiteLogVerify`), so no suite's
-    /// printf dialect lives in generic code. Detail lines
-    /// (actual-vs-expected values) are evidence only, never matched:
-    /// pinning wrong values would be pinning bad output. PASS lines
-    /// are not enumerated; the exact `end` line guards count drift.
+    /// Log-line assertion. The cumulative newline-delimited text on
+    /// `channel` must contain the exact `end` marker line, and the
+    /// `fail_prefix`-led test-name set must equal `allowed_fail`
+    /// exactly. Unknown failures fail; stale allowances always fail.
     Log {
         #[serde(default = "default_serial_channel")]
         channel: String,
