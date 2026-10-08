@@ -55,13 +55,7 @@ impl MeasureRuntime {
         rom_bytes: &[u8],
     ) -> Result<Self, RomTestError> {
         Ok(Self {
-            system: factory_adapter::open_headless_system(
-                factories,
-                &case.id,
-                rom_bytes,
-                case.options.clone(),
-                case.audio_sample_rate(),
-            )?,
+            system: factory_adapter::open_case_system(factories, case, rom_bytes)?,
             checksum: 0,
             frame_counter: 0,
             steps: 0,

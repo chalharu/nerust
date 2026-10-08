@@ -27,7 +27,7 @@ use nerust_gui_shell::emu_core::EmuCore;
 use nerust_input_traits::{GuiInput, InputAssignments, InputValue};
 use nerust_render_traits::FrameBuffer;
 
-use crate::error::RomTestError;
+use crate::{error::RomTestError, manifest::RomCase};
 
 /// A loaded NES system ready for headless driving: session-owned
 /// execution plus input writer and nominal-audio tap.
@@ -42,6 +42,24 @@ pub(crate) struct TestSystem {
     /// Accepting factory's [`CoreFactory::display_name`]: the only
     /// honest system label (ROM probing decides, never the harness).
     system: &'static str,
+}
+
+/// Single construction site: every harness mode (validation,
+/// measure) opens its session here, so case-to-system plumbing
+/// (`options`, sample rate) cannot drift between modes. Driving
+/// stays unified in `drive_case`; construction stays unified here.
+pub(crate) fn open_case_system(
+    factories: &[Box<dyn CoreFactory>],
+    case: &RomCase,
+    rom_bytes: &[u8],
+) -> Result<TestSystem, RomTestError> {
+    open_headless_system(
+        factories,
+        &case.id,
+        rom_bytes,
+        case.options.clone(),
+        case.audio_sample_rate(),
+    )
 }
 
 /// Build a loaded system through `CoreFactory` and wrap it in the
