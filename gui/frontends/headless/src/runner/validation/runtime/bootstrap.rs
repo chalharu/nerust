@@ -7,13 +7,7 @@ impl ValidationRuntime {
         case: &RomCase,
         rom_bytes: &[u8],
     ) -> Result<Self, RomTestError> {
-        let mut system = factory_adapter::open_headless_system(
-            factories,
-            &case.id,
-            rom_bytes,
-            case.options.clone(),
-            case.audio_sample_rate(),
-        )?;
+        let mut system = factory_adapter::open_case_system(factories, case, rom_bytes)?;
         // Pre-register every open-time channel as a cumulative-log
         // key: the set is fixed at open, so per-frame accumulation
         // uses `get_mut` with zero key clones instead of `entry`.
