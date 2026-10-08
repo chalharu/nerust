@@ -281,6 +281,15 @@ impl Aggregate {
 /// load, stepped frames, factory-seeded input) as validation, so perf
 /// measures the shipped execution path instead of bypassing it.
 ///
+/// Deliberately drives `TestSystem` directly instead of going through
+/// `drive_case`/`CaseHarness`: a benchmark owns its frame loop (fixed
+/// round count, checksum accumulation, no asserts) and the harness
+/// callback shape (`on_assert`, event dispatch) would add dispatch
+/// overhead to exactly what is being measured. The trade-off is a
+/// second driving site — keep its stepping semantics (`step_frame`
+/// per frame, pads via `set_button`) identical to validation, and
+/// reunify if the harness ever gains a measure mode.
+///
 /// Metric note: `steps` previously counted CPU steps from direct
 /// `Core::run_frame`; now each stepped frame counts one step. The
 /// measure includes the thread barrier per frame — representative of
