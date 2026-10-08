@@ -31,7 +31,7 @@ use crate::error::RomTestError;
 
 /// A loaded NES system ready for headless driving: session-owned
 /// execution plus input writer and nominal-audio tap.
-pub struct TestSystem {
+pub(crate) struct TestSystem {
     emu: EmuCore,
     gui_input: GuiInput,
     pad_buttons: Vec<Vec<(&'static str, usize)>>,
@@ -62,7 +62,7 @@ pub struct TestSystem {
 ///   samples are tapped per stepped frame, never rate-controlled.
 /// * After paused load the thread is silent until the first step, so
 ///   stepped frames start from a deterministic power-on frame zero.
-pub fn open_headless_system(
+pub(crate) fn open_headless_system(
     factories: &[Box<dyn CoreFactory>],
     case_id: &str,
     rom_bytes: &[u8],
@@ -247,6 +247,52 @@ impl TestSystem {
         self.system
     }
 
+    /// Driving capability: stepping, input, reset. Sees neither taps,
+    /// spaces, nor channels — enforced by construction (only these
+    /// fields cross the boundary). Control and observe views each
+    /// need `&mut` (input publish, framebuffer swap), so they are
+    /// sequential, never simultaneous; inspection is fully shared.
+    pub(crate) fn control(&mut self) -> SystemControl<'_> {
+        SystemControl {
+            emu: &self.emu,
+            gui_input: &mut self.gui_input,
+            pad_buttons: &self.pad_buttons,
+        }
+    }
+
+    /// Per-frame observation: screen, audio, channel taps. Sees no
+    /// input and no spaces — only what a frame publishes.
+    pub(crate) fn observe(&mut self) -> FrameObserve<'_> {
+        FrameObserve {
+            emu: &mut self.emu,
+            tap: &self.tap,
+            channels: &self.channels,
+            serial_taps: &self.serial_taps,
+        }
+    }
+
+    /// Point inspection: memory and registers through the paused
+    /// thread. Fully shared — inspection never mutates session state,
+    /// so holders can coexist with each other (but not with a live
+    /// control/observe borrow).
+    pub(crate) fn inspect(&self) -> SystemInspector<'_> {
+        SystemInspector {
+            emu: &self.emu,
+            spaces: &self.spaces,
+        }
+    }
+}
+
+/// Driving capability: stepping, input, reset. Owns no session state
+/// beyond its three fields; in particular it cannot read taps, spaces,
+/// or channels, so driving code provably cannot observe.
+pub(crate) struct SystemControl<'a> {
+    emu: &'a EmuCore,
+    gui_input: &'a mut GuiInput,
+    pad_buttons: &'a [Vec<(&'static str, usize)>],
+}
+
+impl SystemControl<'_> {
     /// Drive one button for the next frame, addressed by the control
     /// id string the slot profile exposes (e.g. `"nes.control.a"`).
     /// Unknown to every pad means a typo: loud error. Known but absent
@@ -299,6 +345,25 @@ impl TestSystem {
         Ok(())
     }
 
+    /// Reset emulation to a deterministic frame zero.
+    pub fn reset(&self) -> Result<(), RomTestError> {
+        self.emu
+            .reset()
+            .map_err(|error| RomTestError::EmuThread(format!("reset: {error:?}")))
+    }
+}
+
+/// Per-frame observation: screen, audio, channel taps. Cannot drive
+/// input or reset, and cannot resolve spaces — observation code
+/// provably cannot steer the session it measures.
+pub(crate) struct FrameObserve<'a> {
+    emu: &'a mut EmuCore,
+    tap: &'a Mutex<Vec<StereoSample>>,
+    channels: &'a [String],
+    serial_taps: &'a HashMap<String, Arc<Mutex<Vec<u8>>>>,
+}
+
+impl FrameObserve<'_> {
     /// Latest published frame, read from the shared display buffer.
     /// Swaps first: stepped frames land in the shared buffer, and only
     /// the swap moves them to the display side. Valid after a step: the
@@ -316,9 +381,10 @@ impl TestSystem {
             .map_err(|error| RomTestError::EmuThread(format!("tap lock: {error}")))
     }
 
-    /// Channel names the core listed at open (possibly none).
-    pub(crate) fn channel_names(&self) -> &[String] {
-        &self.channels
+    /// Channel names the core listed at open (possibly none). A
+    /// borrowed snapshot — iterating it costs nothing per frame.
+    pub fn channel_names(&self) -> &[String] {
+        self.channels
     }
 
     /// Drain one channel tap (this frame's fresh bytes only).
@@ -326,7 +392,7 @@ impl TestSystem {
     /// frame's delta, mirroring the audio tap. Unknown channels fail
     /// loudly here (read-time validation, like registers/spaces) —
     /// never silently empty.
-    pub(crate) fn drain_channel(&self, channel: &str) -> Result<Vec<u8>, RomTestError> {
+    pub fn drain_channel(&self, channel: &str) -> Result<Vec<u8>, RomTestError> {
         let tap = self.serial_taps.get(channel).ok_or_else(|| {
             RomTestError::EmuThread(format!(
                 "unknown output channel `{channel}` (core lists {:?})",
@@ -337,12 +403,21 @@ impl TestSystem {
             .map(|mut guard| std::mem::take(&mut *guard))
             .map_err(|error| RomTestError::EmuThread(format!("serial tap lock: {error}")))
     }
+}
 
+/// Point inspection: memory and registers through the paused thread.
+/// Shared borrow throughout — inspection observes but never steers.
+pub(crate) struct SystemInspector<'a> {
+    emu: &'a EmuCore,
+    spaces: &'a [SpaceInfo],
+}
+
+impl SystemInspector<'_> {
     /// Read one byte through the thread inspect path, resolved by
     /// address against the table snapshot (tables forbid overlap, so
     /// the home is unique). Covered-but-unreadable means open bus;
     /// uncovered means unmapped — distinguished here, never guessed.
-    pub(crate) fn read_memory_byte(&self, addr: u32) -> Result<MemoryRead, RomTestError> {
+    pub fn read_memory_byte(&self, addr: u32) -> Result<MemoryRead, RomTestError> {
         let Some(space) = self
             .spaces
             .iter()
@@ -373,7 +448,7 @@ impl TestSystem {
     /// Same paused moment as a memory dump: the caller stepped first,
     /// so names and values are frame-addressed. Empty rows keep the
     /// response to registers only.
-    pub(crate) fn read_registers(&self) -> Result<Vec<(&'static str, u64)>, RomTestError> {
+    pub fn read_registers(&self) -> Result<Vec<(&'static str, u64)>, RomTestError> {
         let inner = self
             .emu
             .inspect(InspectRequest {
@@ -384,13 +459,6 @@ impl TestSystem {
             .map_err(|error| RomTestError::EmuThread(format!("transport: {error:?}")))?
             .map_err(|error| RomTestError::EmuThread(format!("inspect: {error:?}")))?;
         Ok(inner.registers.to_vec())
-    }
-
-    /// Reset emulation to a deterministic frame zero.
-    pub fn reset(&self) -> Result<(), RomTestError> {
-        self.emu
-            .reset()
-            .map_err(|error| RomTestError::EmuThread(format!("reset: {error:?}")))
     }
 }
 

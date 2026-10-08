@@ -3,13 +3,9 @@ use std::time::{Duration, Instant};
 use clap::{Arg, ArgAction, Command};
 
 use nerust_rom_test::{
-    error::RomTestError,
-    events::{ControllerPad, PadState, RomAssertion},
-    factory_adapter::{TestSystem, open_headless_system},
-    harness::{CaseHarness, drive_case},
-    manifest::{RomCase, load_default_manifest, read_rom},
+    manifest::{load_default_manifest, read_rom},
     results::{CaseOutcome, ValidationOptions},
-    runner::validate_case,
+    runner::{measure_case, validate_case},
     system_factories,
 };
 
@@ -159,10 +155,8 @@ fn run() -> Result<(), String> {
 
     for _ in 0..warmup_rounds {
         for (case, rom_bytes) in &roms {
-            let result = PerfRunner::new(&factories, case, rom_bytes)
-                .map_err(|error| error.to_string())?
-                .run(case)
-                .map_err(|error| error.to_string())?;
+            let result =
+                measure_case(&factories, case, rom_bytes).map_err(|error| error.to_string())?;
             std::hint::black_box(result.final_marker);
         }
     }
@@ -175,10 +169,8 @@ fn run() -> Result<(), String> {
         for round in 0..rounds {
             let wall_started = Instant::now();
             let cpu_started_nanos = process_cpu_time_nanos()?;
-            let result = PerfRunner::new(&factories, case, rom_bytes)
-                .map_err(|error| error.to_string())?
-                .run(case)
-                .map_err(|error| error.to_string())?;
+            let result =
+                measure_case(&factories, case, rom_bytes).map_err(|error| error.to_string())?;
             let wall_duration_secs = wall_started.elapsed().as_secs_f64();
             let cpu_duration_secs =
                 Duration::from_nanos(process_cpu_time_nanos()?.saturating_sub(cpu_started_nanos))
@@ -277,105 +269,14 @@ impl Aggregate {
     }
 }
 
-/// Session-driven benchmark runner: the same `TestSystem` (paused
-/// load, stepped frames, factory-seeded input) as validation, so perf
-/// measures the shipped execution path instead of bypassing it.
+/// Benchmark driving lives in the engine (`measure_case`, next to
+/// validation): one driving site, two harness modes. This binary owns
+/// only CLI parsing, round timing, and result printing, so stepping
+/// semantics cannot drift between perf and validation.
 ///
-/// Deliberately drives `TestSystem` directly instead of going through
-/// `drive_case`/`CaseHarness`: a benchmark owns its frame loop (fixed
-/// round count, checksum accumulation, no asserts) and the harness
-/// callback shape (`on_assert`, event dispatch) would add dispatch
-/// overhead to exactly what is being measured. The trade-off is a
-/// second driving site — keep its stepping semantics (`step_frame`
-/// per frame, pads via `set_button`) identical to validation, and
-/// reunify if the harness ever gains a measure mode.
-///
-/// Metric note: `steps` previously counted CPU steps from direct
-/// `Core::run_frame`; now each stepped frame counts one step. The
-/// measure includes the thread barrier per frame — representative of
-/// headless driving, not of raw core throughput.
-struct PerfRunner {
-    system: TestSystem,
-    checksum: u64,
-    frame_counter: u64,
-    total_steps: u64,
-}
-
-impl PerfRunner {
-    fn new(
-        factories: &[Box<dyn nerust_core_traits::factory::CoreFactory>],
-        case: &RomCase,
-        rom_bytes: &[u8],
-    ) -> Result<Self, RomTestError> {
-        let system = open_headless_system(
-            factories,
-            &case.id,
-            rom_bytes,
-            case.options.clone(),
-            case.audio_sample_rate(),
-        )?;
-        Ok(Self {
-            system,
-            checksum: 0,
-            frame_counter: 0,
-            total_steps: 0,
-        })
-    }
-
-    fn run(mut self, case: &RomCase) -> Result<PerfRunResult, RomTestError> {
-        let totals = drive_case(case, &mut self)?;
-        Ok(PerfRunResult {
-            frames: totals.frames,
-            steps: self.total_steps,
-            final_marker: self.checksum,
-        })
-    }
-}
-
-impl CaseHarness for PerfRunner {
-    fn run_frame(&mut self) -> Result<(), RomTestError> {
-        self.system.step_frame()?;
-        // Discard tapped samples: perf hashes screens only. Without a
-        // drain the tap would grow unbounded over rounds x cases.
-        drop(self.system.drain_audio()?);
-        // Per-frame checksum over published palette bytes.
-        for &b in self.system.screen_buffer().as_ref() {
-            self.checksum = self.checksum.wrapping_mul(31).wrapping_add(u64::from(b));
-        }
-        self.frame_counter += 1;
-        self.total_steps += 1;
-        Ok(())
-    }
-
-    fn frame_counter(&self) -> u64 {
-        self.frame_counter
-    }
-
-    fn on_assert(&mut self, _frame: u64, _assertion: &RomAssertion) -> Result<(), RomTestError> {
-        Ok(())
-    }
-
-    fn on_reset(&mut self) -> Result<(), RomTestError> {
-        self.system.reset()
-    }
-
-    fn on_standard_controller(
-        &mut self,
-        pad: ControllerPad,
-        button: String,
-        state: PadState,
-    ) -> Result<(), RomTestError> {
-        self.system
-            .set_button(pad.index(), &button, matches!(state, PadState::Pressed))
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct PerfRunResult {
-    frames: u64,
-    steps: u64,
-    final_marker: u64,
-}
+/// Metric note: `steps` counts one stepped frame per step. The measure
+/// includes the thread barrier per frame — representative of headless
+/// driving, not of raw core throughput.
 
 fn peak_rss_mib() -> Option<f64> {
     #[cfg(target_os = "linux")]
