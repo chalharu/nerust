@@ -668,9 +668,7 @@ mod tests {
             );
             core.render_frame(&mut frame, &mut Vec::new()).unwrap();
             let state = core.save_state().unwrap();
-            // Recorded for the Phase 12 rewind fixed-MAX decision. The
-            // assert is a sanity ceiling only (RAM images ≈ 420KB).
-            eprintln!("payload {name}: {} bytes", state.len());
+            // Sanity ceiling only (RAM images ≈ 420KB).
             assert!(
                 state.len() < 2 * 1024 * 1024,
                 "payload {name} too large: {}",

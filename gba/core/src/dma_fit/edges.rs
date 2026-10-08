@@ -37,11 +37,6 @@ fn run_time_fn(fn_addr: u32, arg: u32) -> u16 {
     for _ in 0..200 {
         system.bus.tick();
     }
-    eprintln!(
-        "pre-jump pc={:#x} vcount={}",
-        system.cpu.registers().pc(),
-        system.bus.read16(0x04000006)
-    );
     {
         let rom = std::fs::read(ROM_128KB).expect("test rom present");
         let blob = &rom[ROM_SPAN_START..ROM_SPAN_END];
@@ -53,7 +48,6 @@ fn run_time_fn(fn_addr: u32, arg: u32) -> u16 {
     system.cpu.registers_mut().set_r(0, fn_addr);
     system.cpu.registers_mut().set_r(1, arg);
     system.cpu.registers_mut().set_r(14, TRAP);
-    eprintln!("start pc={:#x}", system.cpu.registers().pc());
     for _ in 0..100000 {
         if system.cpu.registers().pc() == (TRAP & !1) + 4 {
             break;
