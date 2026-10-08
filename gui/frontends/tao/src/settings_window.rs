@@ -383,7 +383,9 @@ impl SettingsWindowHandle {
 /// Convert Tao WindowEvent to iced Event, updating cursor/modifiers/should_close.
 /// Returns Some(event) for events that should be forwarded to handle_event(),
 /// None for events that are fully handled here (CursorLeft, CloseRequested, etc.).
-fn convert_tao_window_event(
+/// Shared with the spike debug window: cursor / modifiers / close-request
+/// handling is identical for any iced window.
+pub(crate) fn convert_tao_window_event(
     event: tao::event::WindowEvent,
     cursor: &mut mouse::Cursor,
     scale_factor: f32,

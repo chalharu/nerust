@@ -5,6 +5,9 @@ pub mod lifecycle;
 pub mod persistence;
 #[cfg(test)]
 mod persistence_test;
+/// SPIKE-ONLY. Deleted with the spike branch.
+#[cfg(test)]
+mod spike_debug_tests;
 pub mod title;
 
 use std::{
@@ -14,6 +17,7 @@ use std::{
 
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
+    debugger::{InspectError, InspectRequest, InspectResult, SpaceInfo, StepUnit},
     factory::{
         CoreFactory, FactoryError,
         load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
@@ -346,6 +350,50 @@ impl SessionHandle {
 
     pub fn render_profile(&self) -> Option<&VideoRenderProfile> {
         self.emu_core.as_ref().map(|c| c.render_profile())
+    }
+
+    /// SPIKE-ONLY throwaway accessors for the debugger UI prototype.
+    /// Deleted with the spike branch. Production access must go through
+    /// the designed `DebuggerViewModel` path, not these passthroughs.
+    pub fn spike_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError> {
+        match self.emu_core.as_ref() {
+            Some(core) => core.memory_spaces(),
+            None => Err(OperationError::WorkerUnavailable),
+        }
+    }
+
+    pub fn spike_inspect(
+        &self,
+        req: InspectRequest,
+    ) -> Result<Result<InspectResult, InspectError>, OperationError> {
+        match self.emu_core.as_ref() {
+            Some(core) => core.inspect(req),
+            None => Err(OperationError::WorkerUnavailable),
+        }
+    }
+
+    pub fn spike_step(
+        &self,
+        unit: StepUnit,
+    ) -> Result<Result<u64, nerust_core_traits::debugger::DebuggerError>, OperationError> {
+        match self.emu_core.as_ref() {
+            Some(core) => core.step(unit),
+            None => Err(OperationError::WorkerUnavailable),
+        }
+    }
+
+    pub fn spike_pause(&self) -> Result<(), OperationError> {
+        match self.emu_core.as_ref() {
+            Some(core) => core.pause(),
+            None => Err(OperationError::WorkerUnavailable),
+        }
+    }
+
+    pub fn spike_resume(&self) -> Result<(), OperationError> {
+        match self.emu_core.as_ref() {
+            Some(core) => core.resume(),
+            None => Err(OperationError::WorkerUnavailable),
+        }
     }
 
     pub fn swap_frame_buffer(&mut self) {

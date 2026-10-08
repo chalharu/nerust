@@ -1,4 +1,6 @@
 mod app_menu;
+/// SPIKE-ONLY throwaway debugger UI prototype. Deleted with the spike branch.
+pub(crate) mod debug_window;
 pub(crate) mod settings;
 pub mod settings_window;
 mod tao_conversions;
