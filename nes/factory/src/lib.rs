@@ -17,13 +17,20 @@ use nerust_core_traits::{
     },
     identity::SystemId,
 };
-use nerust_input_traits::{
-    Controller, ControllerCollection, ControllerProfile, EmuInput, GuiInput, ProfileId,
-};
+use nerust_input_traits::ControllerProfile;
 use nerust_nes_settings::NesSettings;
 
 #[derive(Debug)]
 pub struct NesFactory;
+
+impl NesFactory {
+    /// Boxed `dyn CoreFactory` for generic drivers. Construction
+    /// selects the system once here; everything downstream drives
+    /// through `dyn CoreFactory` without naming this type.
+    pub fn boxed() -> Box<dyn CoreFactory> {
+        Box::new(Self)
+    }
+}
 
 impl CoreFactory for NesFactory {
     fn system_id(&self) -> Box<dyn SystemId> {
@@ -44,38 +51,7 @@ impl CoreFactory for NesFactory {
         speaker: Box<dyn AudioBackend>,
         assignments: &nerust_input_traits::InputAssignments,
     ) -> Result<CoreParts, FactoryError> {
-        let input_factory: &dyn nerust_input_traits::InputSystemFactory = self;
-        // Build controller devices per occupied port.
-        let mut devices: Vec<Box<dyn Controller + Send>> = Vec::new();
-        for (_, ctrl_opt) in &assignments.slots {
-            let profile = match ctrl_opt {
-                Some(p) => p,
-                None => continue,
-            };
-            let pid = profile.profile_id();
-            if pid == ProfileId::new("nes.famicom") {
-                devices.push(Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new()));
-                devices.push(Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()));
-            } else if pid == ProfileId::new("nes.standard_pad") {
-                devices.push(Box::new(nerust_nes_device::standard_pad::StandardPad::new(
-                    0x1F,
-                )));
-            }
-        }
-        let controller_collection = ControllerCollection::new(devices);
-        let resources = input_factory
-            .create_split(&controller_collection)
-            .map_err(|e| FactoryError::Create(e.to_string()))?;
-        let gui_input = GuiInput::from_split(&resources.split);
-        let emu_input = EmuInput::from_split(&resources.split);
-        builder::create_core_and_adapter(
-            view,
-            speaker,
-            gui_input,
-            emu_input,
-            resources.field_map,
-            controller_collection,
-        )
+        builder::create_core_and_adapter_with_assignments(view, speaker, assignments, self)
     }
 
     fn probe_media(&self, media: &MediaObject) -> bool {
@@ -177,6 +153,11 @@ struct CommandLineOptions {
     /// Override mapper 4 MMC3 IRQ behavior
     #[clap(long, value_enum)]
     mmc3_irq_variant: Option<Mmc3IrqVariant>,
+    /// Override the ROM header submapper (legacy iNES ROMs whose
+    /// headers cannot name it). Validated against the NES 2.0 4-bit
+    /// range when the cartridge resolves.
+    #[clap(long)]
+    submapper: Option<u8>,
 }
 
 impl SystemLoadOptions for CommandLineOptions {}

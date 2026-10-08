@@ -309,9 +309,18 @@ impl GbcMemoryBus {
     }
 
     /// Read observable state for diagnostics without CPU bus access locks.
+    ///
+    /// The debugger backend: VRAM bypasses the mode-3 lock and OAM
+    /// bypasses the mode-2/3 block (observation must not depend on the
+    /// PPU mode at pause time). The remaining regions delegate to
+    /// `read`, whose only lock (OAM DMA) covers exactly the two
+    /// bypassed ranges — so this whole function is lock-free.
     pub fn debug_read(&self, addr: u16) -> u8 {
         match addr {
             0x8000..=0x9FFF => self.ppu.debug_read_vram(addr),
+            0xFE00..=0xFE9F => self.ppu.debug_read_oam((addr & 0xFF) as u8),
+            0xC000..=0xDFFF => self.wram[self.wram_offset(addr)],
+            0xE000..=0xFDFF => self.wram[self.wram_offset(addr - 0x2000)],
             _ => self.read(addr),
         }
     }
@@ -704,6 +713,11 @@ impl GbcMemoryBus {
 
     pub fn serial_output(&self) -> &[u8] {
         self.serial.output()
+    }
+
+    /// Drain transmitted serial characters for the session layer.
+    pub fn take_serial_output(&mut self) -> Vec<u8> {
+        self.serial.take_output()
     }
 
     pub fn sync_cartridge_rtc(&mut self, now: SystemTime) {

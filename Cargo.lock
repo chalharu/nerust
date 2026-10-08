@@ -344,12 +344,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "byteorder-lite"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
-
-[[package]]
 name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1848,12 +1842,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glob"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
-
-[[package]]
 name = "glow"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2466,21 +2454,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "image"
-version = "0.25.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
-dependencies = [
- "bytemuck",
- "byteorder-lite",
- "moxcms",
- "num-traits",
- "png",
- "zune-core",
- "zune-jpeg",
-]
-
-[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2497,25 +2470,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4f0c30c76f2f4ccee3fe55a2435f691ca00c0e4bd87abe4f4a851b1d4dac39b"
 dependencies = [
  "rustversion",
-]
-
-[[package]]
-name = "is-docker"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "928bae27f42bc99b60d9ac7334e3a21d10ad8f1835a4e12ec3ec0464765ed1b3"
-dependencies = [
- "once_cell",
-]
-
-[[package]]
-name = "is-wsl"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "173609498df190136aa7dea1a91db051746d339e18476eed5ca40521f02d7aa5"
-dependencies = [
- "is-docker",
- "once_cell",
 ]
 
 [[package]]
@@ -2816,16 +2770,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "moxcms"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
-dependencies = [
- "num-traits",
- "pxfm",
-]
-
-[[package]]
 name = "muda"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3051,25 +2995,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_gba_rom_test"
-version = "0.1.0-dev"
-dependencies = [
- "clap",
- "crc",
- "glob",
- "image",
- "nerust_gba_core",
- "nerust_render_traits",
- "open",
- "png",
- "serde",
- "serde-saphyr",
- "serde_json",
- "sha2",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "nerust_gba_settings"
 version = "0.1.0-dev"
 dependencies = [
@@ -3121,25 +3046,6 @@ dependencies = [
  "nerust_input_traits",
  "nerust_render_traits",
  "nerust_settings_traits",
-]
-
-[[package]]
-name = "nerust_gbc_rom_test"
-version = "0.1.0-dev"
-dependencies = [
- "clap",
- "crc",
- "glob",
- "nerust_gbc_core",
- "nerust_input_traits",
- "nerust_render_traits",
- "open",
- "png",
- "serde",
- "serde-saphyr",
- "serde_json",
- "sha2",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3428,19 +3334,28 @@ dependencies = [
 name = "nerust_rom_test"
 version = "0.1.0-dev"
 dependencies = [
- "bitflags 2.13.2",
  "clap",
  "crc",
  "nerust_core_traits",
+ "nerust_gba_factory",
+ "nerust_gbc_factory",
+ "nerust_gui_shell",
  "nerust_input_traits",
- "nerust_nes_core",
- "nerust_nes_device",
- "nerust_render_filters",
+ "nerust_nes_factory",
  "nerust_render_traits",
  "png",
  "serde",
  "serde-saphyr",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nerust_rom_tool"
+version = "0.1.0-dev"
+dependencies = [
+ "clap",
+ "nerust_core_traits",
+ "nerust_rom_test",
 ]
 
 [[package]]
@@ -4050,16 +3965,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "open"
-version = "5.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa576c76302b7b808eecc68061e67336c47833ef9d22caa74dda10fa9675eebc"
-dependencies = [
- "is-wsl",
- "libc",
-]
-
-[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4365,12 +4270,6 @@ name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
-
-[[package]]
-name = "pxfm"
-version = "0.1.30"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "quick-xml"
@@ -6619,19 +6518,4 @@ dependencies = [
  "crc32fast",
  "log",
  "simd-adler32",
-]
-
-[[package]]
-name = "zune-core"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d56377fd46368984a170bc5aac5567e52ca5da874caa60bea39fcbca78fb658b"
-
-[[package]]
-name = "zune-jpeg"
-version = "0.5.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
-dependencies = [
- "zune-core",
 ]

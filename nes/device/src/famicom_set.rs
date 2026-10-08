@@ -271,7 +271,10 @@ impl ControllerProfile for FamicomSetProfile {
                 id: DigitalControlId::new("famicom.microphone"),
                 label: "Microphone",
                 kind: Digital,
-                abstract_key: None,
+                // Third button of the pad, after A and B: the suite
+                // drives it through pad-2 button 3, never through
+                // Select/Start (which stay hardware-less no-ops).
+                abstract_key: Some(AbstractKey::Button3),
             },
             ControlInfo {
                 id: DigitalControlId::new("nes.control.up"),

@@ -48,6 +48,11 @@ Each upstream is imported as a squashed Git subtree under its `repo/` directory.
 
 ## Usage
 
-Test ROMs are executed via Rust integration tests in `rom_test/`.
+Test ROMs are executed via the unified headless harness (`nerust_rom_test`,
+manifest `gui/frontends/headless/rom_tests.yaml`). Run with:
+
+```sh
+cargo test -p nerust_rom_test --features gbc
+```
 Each test loads the ROM, runs it through the emulator, and checks
 for expected output (e.g., serial port messages, memory checksums).

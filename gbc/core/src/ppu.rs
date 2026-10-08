@@ -1163,6 +1163,12 @@ impl GbcPpu {
         self.oam[addr as usize]
     }
 
+    /// OAM contents without the mode-2/3 read block. Debugger-only:
+    /// observation must not depend on the PPU mode at pause time.
+    pub fn debug_read_oam(&self, addr: u8) -> u8 {
+        self.oam[addr as usize]
+    }
+
     fn oam_read_blocked(&self) -> bool {
         if !self.cgb_mode {
             return self.ly < VBLANK_START && self.mode_clock <= self.mode3_end_clock();
