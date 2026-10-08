@@ -418,3 +418,177 @@ fn sanitize_for_path(value: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+    use crate::{
+        manifest::{AudioExpectation, RomCategory},
+        results::{
+            AudioObservation, CaseOutcome, CaseValidation, LogCheck, MemoryCheck, RegisterCheck,
+            ScreenCheck, SerialCheck,
+        },
+    };
+
+    static REPORT_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "nerust-report-test-{}-{}-{}",
+            std::process::id(),
+            REPORT_SEQ.fetch_add(1, Ordering::SeqCst),
+            name
+        ));
+        fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    fn passing_case(id: &str) -> CaseOutcome {
+        CaseOutcome::Completed(Box::new(CaseValidation {
+            case_id: id.to_string(),
+            category: RomCategory::Cpu,
+            description: format!("{id} description"),
+            rom: format!("{id}.nes"),
+            frames: 10,
+            final_screen_hash: 0x1234,
+            screen_checks: vec![ScreenCheck {
+                frame: 10,
+                expected_hash: 0x1234,
+                actual_hash: 0x1234,
+                screenshot_png: Some(vec![0x89, 0x50, 0x4E, 0x47]),
+            }],
+            memory_checks: vec![MemoryCheck {
+                frame: 10,
+                address: 0x0200,
+                expected_value: 0x42,
+                actual_value: 0x42,
+                expected_open_bus: false,
+                actual_open_bus: false,
+            }],
+            register_checks: vec![RegisterCheck {
+                frame: 10,
+                name: "a".to_string(),
+                expected_value: 1,
+                actual_value: 1,
+            }],
+            serial_checks: vec![SerialCheck {
+                frame: 10,
+                channel: "serial".to_string(),
+                expected_bytes: vec![0x50],
+                actual_bytes: vec![0x50],
+            }],
+            log_checks: vec![LogCheck {
+                frame: 10,
+                channel: "serial".to_string(),
+                expected_end: "END".to_string(),
+                end_found: true,
+                allowed_fail: Vec::new(),
+                fail_names: Vec::new(),
+                missing_allowed: Vec::new(),
+                unexpected_fail: Vec::new(),
+            }],
+            audio: AudioObservation {
+                sample_rate: 44100,
+                samples: 100,
+                hash: 0xABCD,
+                expected: Some(AudioExpectation {
+                    sample_rate: 44100,
+                    samples: 100,
+                    hash: 0xABCD,
+                }),
+            },
+            failures: Vec::new(),
+            expected_failure: false,
+            stale_notes: Vec::new(),
+        }))
+    }
+
+    #[test]
+    fn hex_preview_covers_empty_short_and_long() {
+        assert_eq!(hex_preview(&[]), "");
+        assert_eq!(hex_preview(b"Pass"), "50617373");
+        let exact = vec![0xAB; 64];
+        assert_eq!(hex_preview(&exact).len(), 128);
+        assert!(!hex_preview(&exact).contains("bytes)"));
+        let long = vec![0xAB; 65];
+        let preview = hex_preview(&long);
+        assert!(preview.starts_with(&"AB".repeat(64)));
+        assert!(preview.ends_with("…(65 bytes)"));
+    }
+
+    #[test]
+    fn default_output_root_points_at_target_rom_tests() {
+        assert!(default_output_root().ends_with("target/rom-tests"));
+    }
+
+    #[test]
+    fn html_report_counts_and_escapes() {
+        let dir = scratch_dir("counts");
+        let outcomes = vec![
+            passing_case("nes.pass"),
+            CaseOutcome::InternalError {
+                case_id: "nes.broken".to_string(),
+                category: RomCategory::Ppu,
+                description: "broken <desc>".to_string(),
+                rom: "broken.nes".to_string(),
+                message: "boom & bust".to_string(),
+            },
+            CaseOutcome::Skipped {
+                case_id: "nes.skip".to_string(),
+                category: RomCategory::Apu,
+                description: "skip".to_string(),
+                rom: "skip.nes".to_string(),
+                reason: "not in CI".to_string(),
+            },
+        ];
+        let summary = write_html_report(&dir, "Title <&>", &outcomes).expect("report writes");
+        assert_eq!(summary.passed, 1);
+        assert_eq!(summary.failed, 1);
+        assert_eq!(summary.ignored, 1);
+        assert_eq!(summary.expected_failed, 0);
+        let html = fs::read_to_string(&summary.report_path).expect("report readable");
+        assert!(html.contains("Title &lt;&amp;&gt;"));
+        assert!(html.contains("boom &amp; bust"));
+        assert!(html.contains("IGNORED"));
+        // Screenshot bytes land under the sanitized case directory.
+        assert!(
+            dir.join("screenshots/nes_pass/frame-000010-01.png")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn html_report_marks_expected_failures() {
+        let dir = scratch_dir("expected");
+        let mut tracked = match passing_case("nes.tracked") {
+            CaseOutcome::Completed(validation) => *validation,
+            _ => unreachable!(),
+        };
+        tracked.failures.push("mismatch".to_string());
+        tracked.expected_failure = true;
+        let mut stale = match passing_case("nes.stale") {
+            CaseOutcome::Completed(validation) => *validation,
+            _ => unreachable!(),
+        };
+        stale.failures.push("mismatch".to_string());
+        stale.expected_failure = true;
+        stale.stale_notes.push("graduate me".to_string());
+        let summary = write_html_report(
+            &dir,
+            "t",
+            &[
+                CaseOutcome::Completed(Box::new(tracked)),
+                CaseOutcome::Completed(Box::new(stale)),
+            ],
+        )
+        .expect("report writes");
+        assert_eq!(summary.passed, 0);
+        assert_eq!(summary.failed, 1);
+        assert_eq!(summary.expected_failed, 1);
+        let html = fs::read_to_string(&summary.report_path).expect("report readable");
+        assert!(html.contains("EXPECTED FAIL"));
+        assert!(html.contains("Stale (graduate!)"));
+    }
+}

@@ -373,3 +373,20 @@ fn process_cpu_time_nanos() -> Result<u64, String> {
         Err("CPU time measurement is only supported on Linux".to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_sensors_report_on_linux() {
+        if cfg!(target_os = "linux") {
+            let mib = peak_rss_mib().expect("VmHWM readable");
+            assert!(mib > 0.0);
+            process_cpu_time_nanos().expect("schedstat readable");
+        } else {
+            assert_eq!(peak_rss_mib(), None);
+            assert!(process_cpu_time_nanos().is_err());
+        }
+    }
+}
