@@ -309,6 +309,14 @@ impl Core {
         self.memory.peek_work_ram(address)
     }
 
+    pub(crate) fn register(&self) -> &Register {
+        &self.register
+    }
+
+    pub(crate) fn poke_work_ram(&mut self, address: usize, value: u8) {
+        self.memory.poke_work_ram(address, value)
+    }
+
     fn set_cpu_state(&mut self, state: CpuStatesEnum) {
         self.internal_stat.state = state;
         self.cpu_stepfunc = cpu_stepfunc(state);

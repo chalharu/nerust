@@ -15,3 +15,8 @@ nerust_gba_settings.workspace = true
 nerust_input_traits.workspace = true
 nerust_render_traits.workspace = true
 nerust_settings_traits.workspace = true
+
+[features]
+# Test-harness log sink (mgba suite ROMs). Off by default; the
+# headless ROM-test harness opts in. Production frontends never do.
+mgba-debug-log = ["nerust_gba_core/mgba-debug-log"]

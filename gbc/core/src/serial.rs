@@ -92,6 +92,13 @@ impl Serial {
     pub fn output(&self) -> &[u8] {
         &self.output
     }
+
+    /// Drain transmitted characters, leaving the buffer empty. The
+    /// session layer calls this once per rendered frame; accumulation
+    /// is the reader's job.
+    pub fn take_output(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.output)
+    }
 }
 
 impl Default for Serial {
@@ -129,6 +136,19 @@ mod tests {
         assert!(s.step());
         assert_eq!(s.read_sc() & 0x80, 0x00);
         assert_eq!(s.output(), &[0x55]);
+    }
+
+    #[test]
+    fn take_output_drains_leaving_empty_buffer() {
+        let mut s = Serial::new();
+        s.write_sb(0x41);
+        s.write_sc(0x81);
+        for _ in 0..1012 {
+            s.step();
+        }
+        assert_eq!(s.take_output(), vec![0x41]);
+        assert!(s.take_output().is_empty());
+        assert!(s.output().is_empty());
     }
 
     #[test]

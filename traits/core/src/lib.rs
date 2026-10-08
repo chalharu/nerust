@@ -1,11 +1,17 @@
 pub mod audio;
+pub mod debugger;
 pub mod factory;
 pub mod identity;
 pub mod peripheral;
 pub mod save_state;
 pub mod touch;
 
-use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::mpsc::Sender};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    path::PathBuf,
+    sync::{Arc, Mutex, mpsc::Sender},
+};
 
 use downcast_rs::Downcast;
 use dyn_clone::DynClone;
@@ -99,6 +105,10 @@ pub struct LoadCommand {
     pub rom: Vec<u8>,
     pub config: CoreConfig,
     pub reply: Sender<Result<(), CoreError>>,
+    /// Start paused: no free-run frame executes between load and the
+    /// first command. Headless drivers need this for deterministic
+    /// frame zero; interactive sessions leave it false.
+    pub start_paused: bool,
 }
 
 /// Boxed payload for `EmuCommand::LoadState` / `EmuCommand::ImportMapperSave`.
@@ -132,13 +142,71 @@ pub enum EmuCommand {
     Identity {
         reply: Sender<Result<identity::SystemIdentity, CoreError>>,
     },
+    /// Advance execution by one unit. Processed synchronously when the
+    /// command is drained, so receipt is the frame barrier: each reply
+    /// corresponds to exactly one executed step. Callers pause first
+    /// for determinism; stepping while running races free-run.
+    ///
+    /// The success value is the frame counter after the stepped frame
+    /// (barrier position), not a cycle count: the thread renders the
+    /// frame itself so pixels, tap, and swap stay on the shared path.
+    /// Cycle counts remain available through `DebugControl::step`
+    /// for direct-console drivers.
+    Step {
+        unit: debugger::StepUnit,
+        reply: Sender<Result<u64, debugger::DebuggerError>>,
+    },
+    /// On-demand memory/panel inspection. Requires pause (§5.1): reading
+    /// while running cannot guarantee the values match the displayed frame.
+    DebuggerInspect {
+        req: debugger::InspectRequest,
+        reply: Sender<Result<debugger::InspectResult, debugger::InspectError>>,
+    },
+    /// Memory edit through the control path. Deliberately pause-ungated:
+    /// `DebuggerError` has no not-paused variant by design (§5.2), so
+    /// deterministic callers pause first and racing writes interleave
+    /// with free-run by contract.
+    WriteMemory {
+        req: debugger::MemoryWrite,
+        reply: Sender<Result<(), debugger::DebuggerError>>,
+    },
+    /// Install a nominal-audio tap: every rendered frame clones its
+    /// caller-buffer samples into `tap`. Headless capture only; the
+    /// session audio transport is unaffected.
+    TapNominalAudio {
+        tap: Arc<Mutex<Vec<audio::StereoSample>>>,
+        reply: Sender<()>,
+    },
+    /// Install a guest-output tap for one named channel (see
+    /// `ConsoleCore::output_channels`): every rendered frame moves the
+    /// core's freshly produced bytes for that channel into `tap`
+    /// (overwriting the previous frame's delta; accumulation is the
+    /// reader's job). Headless capture only.
+    TapSerialOutput {
+        channel: String,
+        tap: Arc<Mutex<Vec<u8>>>,
+        reply: Sender<()>,
+    },
+    /// Memory-space table snapshot. Static metadata: answered without
+    /// pause gating; empty when idle or when the core exposes no
+    /// debugger. Lets generic drivers resolve stable space keys
+    /// without naming system tables.
+    DebuggerSpaces {
+        reply: Sender<Vec<debugger::SpaceInfo>>,
+    },
+    /// Guest-output channel names. Static metadata: answered without
+    /// pause gating; empty when idle. Lets generic drivers install one
+    /// tap per channel without naming system channels.
+    OutputChannels {
+        reply: Sender<Vec<String>>,
+    },
 }
 
 // ---------------------------------------------------------------------------
 // ConsoleCore trait
 // ---------------------------------------------------------------------------
 
-pub trait ConsoleCore: Send {
+pub trait ConsoleCore: Send + Downcast {
     // -- video + audio production --
     fn capabilities(&self) -> CoreCapabilities;
     /// Run one frame: video into `frame_slot`, nominal-rate audio into
@@ -172,6 +240,41 @@ pub trait ConsoleCore: Send {
         Ok(())
     }
 
+    // -- debugger (default: not supported) --
+    /// Read-only observer. `&self` guarantees non-invasive observation.
+    /// Returns `None` when no ROM is loaded or the core has no debugger.
+    fn debugger(&self) -> Option<Box<dyn debugger::Debugger + '_>> {
+        None
+    }
+    /// Execution control and memory editing. `None` when unsupported.
+    /// Observation via `debugger()` stays available independently.
+    fn debug_control(&mut self) -> Option<Box<dyn debugger::DebugControl + '_>> {
+        None
+    }
+
+    // -- guest output channels (default: none) --
+    /// Names of the guest-output byte channels this core produces
+    /// (e.g. a link-cable serial stream, a guest debug-log sink).
+    /// Static topology: names are core-defined, data (manifests) may
+    /// reference them, generic drivers never invent them.
+    ///
+    /// Override PAIR checklist: `output_channels` and
+    /// `take_channel_bytes` must be overridden together. Listing a
+    /// channel without draining it (or vice versa) fails loudly at
+    /// read time, never at compile time, so keep the pair in sync.
+    fn output_channels(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Drain bytes the core produced on `channel` since the last call.
+    /// The session layer calls this once per rendered frame per tapped
+    /// channel; accumulation is the reader's job. Line-oriented sinks
+    /// flatten to newline-delimited bytes here (levels/prefixes are
+    /// the assert side's concern, if ever needed). Empty by default and
+    /// for unknown channels: cores stay silent unless they produce.
+    fn take_channel_bytes(&mut self, _channel: &str) -> Vec<u8> {
+        Vec::new()
+    }
+
     // -- identity --
     fn identity(&self) -> Result<identity::SystemIdentity, CoreError> {
         Err(CoreError::NoRomLoaded)
@@ -203,6 +306,7 @@ pub trait ConsoleCore: Send {
 pub trait CoreOptions: Debug + DynClone + Downcast + Send {}
 
 downcast_rs::impl_downcast!(CoreOptions);
+downcast_rs::impl_downcast!(ConsoleCore);
 dyn_clone::clone_trait_object!(CoreOptions);
 
 impl<T: CoreOptions> From<T> for Box<dyn CoreOptions> {

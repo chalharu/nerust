@@ -81,6 +81,17 @@ impl CartridgeData {
         self.sub_mapper_type
     }
 
+    /// Override the header submapper with an explicit user/test
+    /// choice. Validated exactly like parsed data.
+    pub(crate) fn with_sub_mapper_type(
+        mut self,
+        sub_mapper_type: u8,
+    ) -> Result<Self, CartridgeError> {
+        self.sub_mapper_type = sub_mapper_type;
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn read_prog_rom(&self, index: usize) -> u8 {
         self.prog_rom[index]
     }

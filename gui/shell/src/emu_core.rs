@@ -9,12 +9,16 @@ use std::{
 
 use nerust_core_traits::{
     CoreConfig, CoreOptions, EmuCommand, LoadCommand, StateDataCommand,
+    debugger::{
+        DebuggerError, InspectError, InspectRequest, InspectResult, MemoryWrite, SpaceInfo,
+        StepUnit,
+    },
     factory::{CoreParts, load::MediaObject},
     identity::SystemIdentity,
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput};
-use nerust_render_traits::{FrameBuffer, PixelFormat, VideoRenderProfile};
+use nerust_render_traits::{FrameBuffer, PixelFormat, VideoFrameFormat, VideoRenderProfile};
 
 use crate::session::commands::SlotOpFailure;
 
@@ -95,6 +99,12 @@ impl EmuCore {
 
     /// Wrap `CoreParts` (from a factory) into an `EmuCore`.
     /// Returns (EmuCore, GuiInput, field_map).
+    ///
+    /// Buffer geometry comes from the factory-declared render profile
+    /// (size + frame format), never per-system constants: indexed
+    /// systems carry their palette, direct-color systems (Rgba) carry
+    /// none. The thread slot is built identically so all three buffers
+    /// agree before the first swap.
     pub fn from_parts(
         parts: CoreParts,
     ) -> (
@@ -107,30 +117,28 @@ impl EmuCore {
         use std::sync::Mutex;
         let src_w = parts.render_profile.source_logical_size.width;
         let src_h = parts.render_profile.source_logical_size.height;
-        let pixel_format = PixelFormat::PaletteIndex {
-            palette: parts.palette.clone(),
+        let pixel_format = match parts.render_profile.frame_format {
+            VideoFrameFormat::Palette => PixelFormat::PaletteIndex {
+                palette: parts.palette.clone(),
+            },
+            VideoFrameFormat::Rgba => PixelFormat::Rgba,
         };
 
-        let shared_fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
-            src_w,
-            src_h,
-            pixel_format.clone(),
-        )));
-        if let Ok(mut guard) = shared_fb.lock() {
-            guard.resize(src_w, src_h);
-            guard.resize_data(src_w * src_h);
-        }
-
-        let mut disp_fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format);
-        disp_fb.resize(src_w, src_h);
-        disp_fb.resize_data(src_w * src_h);
+        let new_buffer = || {
+            let mut fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
+            fb.resize(src_w, src_h);
+            fb
+        };
+        let shared_fb = Arc::new(Mutex::new(new_buffer()));
+        let disp_fb = new_buffer();
+        let frame_slot = new_buffer();
 
         let frame_ready = Arc::new(AtomicBool::new(false));
         let emu = EmuThread::spawn(
             parts.core,
             Arc::clone(&shared_fb),
             Arc::clone(&frame_ready),
-            parts.palette,
+            frame_slot,
             parts.audio,
         );
         (
@@ -235,6 +243,26 @@ impl EmuCore {
         media: &MediaObject,
         core_options: Option<Box<dyn CoreOptions>>,
     ) -> Result<(), OperationError> {
+        self.load_inner(media, core_options, false)
+    }
+
+    /// Load and start paused: no free-run frame executes before the
+    /// first command. Headless drivers use this for deterministic
+    /// frame zero; interactive loads keep free-running.
+    pub fn load_paused(
+        &self,
+        media: &MediaObject,
+        core_options: Option<Box<dyn CoreOptions>>,
+    ) -> Result<(), OperationError> {
+        self.load_inner(media, core_options, true)
+    }
+
+    fn load_inner(
+        &self,
+        media: &MediaObject,
+        core_options: Option<Box<dyn CoreOptions>>,
+        start_paused: bool,
+    ) -> Result<(), OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::Load(Box::new(LoadCommand {
@@ -248,6 +276,7 @@ impl EmuCore {
                     // owned backend; None here just means "not yet known".
                     audio_sample_rate: None,
                 },
+                start_paused,
                 reply: reply_tx,
             })))
             .map_err(|_| OperationError::WorkerUnavailable)?;
@@ -324,6 +353,108 @@ impl EmuCore {
     /// Generate a preview frame from the EmuThread's shared frame buffer.
     pub fn generate_preview(&self) -> Option<crate::state::PreviewFrame> {
         crate::state::generate_preview(&self.emu)
+    }
+
+    /// Advance execution by one unit. The reply is the barrier: it arrives
+    /// after exactly one step. Returns thread errors outer, domain step
+    /// errors inner.
+    pub fn step(&self, unit: StepUnit) -> Result<Result<u64, DebuggerError>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::Step {
+                unit,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// On-demand inspect through the emu thread. Returns thread errors
+    /// outer, inspect errors (including `NotPaused`) inner.
+    pub fn inspect(
+        &self,
+        req: InspectRequest,
+    ) -> Result<Result<InspectResult, InspectError>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerInspect {
+                req,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// Memory edit through the emu thread. Pause-ungated by design;
+    /// deterministic callers pause first.
+    pub fn write_memory(
+        &self,
+        req: MemoryWrite,
+    ) -> Result<Result<(), DebuggerError>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::WriteMemory {
+                req,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// Install a nominal-audio tap: every rendered frame clones its
+    /// caller-buffer samples into `tap`. Headless capture only.
+    pub fn tap_nominal_audio(
+        &self,
+        tap: Arc<Mutex<Vec<nerust_core_traits::audio::StereoSample>>>,
+    ) -> Result<(), OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::TapNominalAudio {
+                tap,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// Install a guest-output tap for one channel: every rendered
+    /// frame moves the core's freshly produced bytes for that channel
+    /// into `tap`. Headless capture only.
+    pub fn tap_serial_output(
+        &self,
+        channel: &str,
+        tap: Arc<Mutex<Vec<u8>>>,
+    ) -> Result<(), OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::TapSerialOutput {
+                channel: channel.to_string(),
+                tap,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// Memory-space table snapshot through the emu thread. Empty when
+    /// idle or when the core exposes no debugger. Static metadata:
+    /// no pause gating required.
+    pub fn memory_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerSpaces { reply: reply_tx })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// Guest-output channel names through the emu thread. Empty when
+    /// idle. Static metadata: answered without pause gating.
+    pub fn output_channels(&self) -> Result<Vec<String>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::OutputChannels { reply: reply_tx })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
     }
 
     pub fn canonical_media_identity(&self) -> Option<SystemIdentity> {

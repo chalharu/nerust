@@ -18,6 +18,7 @@ pub mod cpu_core;
 pub(crate) mod cpu_opcodes;
 #[allow(dead_code)]
 pub mod cpu_registers;
+pub mod debugger;
 #[allow(dead_code)]
 pub(crate) mod dma;
 #[allow(dead_code)]

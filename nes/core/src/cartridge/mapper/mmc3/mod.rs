@@ -392,4 +392,14 @@ mod tests {
         assert_eq!(mapper.shared.irq_counter(), 0);
         assert!(interrupt.get_irq(IrqSource::EXTERNAL));
     }
+
+    #[test]
+    fn submapper_override_applies_before_mapper_resolution() {
+        let overridden = test_data(0)
+            .with_sub_mapper_type(1)
+            .expect("valid submapper override");
+        assert_eq!(overridden.sub_mapper_type(), 1);
+        super::try_from(overridden, None).expect("MMC6 resolves from override");
+        assert!(test_data(0).with_sub_mapper_type(16).is_err());
+    }
 }

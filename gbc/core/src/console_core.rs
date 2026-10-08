@@ -3,6 +3,7 @@ use std::{sync::Arc, time::SystemTime};
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
     audio::StereoSample,
+    debugger::{DebugControl, DebuggerError, SpaceAccess, SpaceId, SpaceTable, StepUnit},
     identity::SystemIdentity,
     peripheral::{
         AccelerometerInputPort, RumbleOutputPort, RumbleState, accelerometer_channel,
@@ -14,7 +15,8 @@ use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
     cartridge_descriptor::detect_cartridge, core_options::GbcCoreOptions,
-    input_types::GbcInputBuffer, persistence, rom_identity::GbcRomIdentity, system::GbcSystem,
+    debugger::GBC_SPACE_TABLE, input_types::GbcInputBuffer, persistence,
+    rom_identity::GbcRomIdentity, system::GbcSystem,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -111,21 +113,25 @@ impl GbcConsoleCore {
     fn loaded_mut(&mut self) -> Result<&mut LoadedGbc, CoreError> {
         self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)
     }
-}
 
-impl ConsoleCore for GbcConsoleCore {
-    fn capabilities(&self) -> CoreCapabilities {
-        CoreCapabilities {
-            output_formats: vec![PixelFormat::Rgba],
-            video_signal: VideoSignalKind::Lcd,
-        }
-    }
-
-    fn render_frame(
+    /// Advance one frame, reporting the T-cycles the bus counted.
+    ///
+    /// Same path as the [`ConsoleCore::render_frame`] implementation;
+    /// the count that path discards is returned here for debugger
+    /// stepping. One loop iteration is one T-cycle by construction.
+    pub(crate) fn render_frame_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
         audio_out: &mut Vec<StereoSample>,
-    ) -> Result<(), CoreError> {
+    ) -> Result<u64, CoreError> {
+        self.render_frame_inner(frame_slot, audio_out)
+    }
+
+    fn render_frame_inner(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<u64, CoreError> {
         self.emu_input.take();
         let input = self
             .emu_input
@@ -141,7 +147,9 @@ impl ConsoleCore for GbcConsoleCore {
         loaded.system.bus.set_joypad(input);
         // LCD-off games do not produce a PPU frame event; cap one frontend
         // frame to the hardware frame duration so the emulation thread stays live.
+        let mut cycles = 0u64;
         for _ in 0..70_224 {
+            cycles += 1;
             if loaded.system.bus.step_tcycle(&mut loaded.system.cpu) {
                 break;
             }
@@ -156,7 +164,24 @@ impl ConsoleCore for GbcConsoleCore {
         frame_slot.resize(160, 144);
         loaded.system.bus.render_frame(frame_slot);
         self.sync_rumble();
-        Ok(())
+        Ok(cycles)
+    }
+}
+
+impl ConsoleCore for GbcConsoleCore {
+    fn capabilities(&self) -> CoreCapabilities {
+        CoreCapabilities {
+            output_formats: vec![PixelFormat::Rgba],
+            video_signal: VideoSignalKind::Lcd,
+        }
+    }
+
+    fn render_frame(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<(), CoreError> {
+        self.render_frame_inner(frame_slot, audio_out).map(|_| ())
     }
 
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
@@ -260,6 +285,94 @@ impl ConsoleCore for GbcConsoleCore {
             .into_system_identity()
             .map_err(|error| CoreError::Core(Box::new(error)))
     }
+
+    fn debugger(&self) -> Option<Box<dyn nerust_core_traits::debugger::Debugger + '_>> {
+        self.loaded
+            .as_ref()
+            .map(|loaded| Box::new(crate::debugger::GbcDebugger::new(&loaded.system)) as _)
+    }
+
+    fn debug_control(
+        &mut self,
+    ) -> Option<Box<dyn nerust_core_traits::debugger::DebugControl + '_>> {
+        self.loaded.as_mut()?;
+        Some(Box::new(GbcDebugControl::new(self)) as _)
+    }
+
+    fn output_channels(&self) -> Vec<String> {
+        vec!["serial".to_string()]
+    }
+
+    fn take_channel_bytes(&mut self, channel: &str) -> Vec<u8> {
+        if channel != "serial" {
+            return Vec::new();
+        }
+        self.loaded
+            .as_mut()
+            .map(|loaded| loaded.system.bus.take_serial_output())
+            .unwrap_or_default()
+    }
+}
+
+/// GBC execution control.
+///
+/// Holds the console: frame stepping reuses the exact `render_frame`
+/// path and reports the T-cycles it counted. The scratch buffer is
+/// display-irrelevant; stepped frames are not published to any shared
+/// framebuffer here. All spaces are read-only in phase 1, so every
+/// in-range write is refused as `ReadOnlySpace`.
+pub struct GbcDebugControl<'a> {
+    console: &'a mut GbcConsoleCore,
+    frame_slot: FrameBuffer,
+    audio_sink: Vec<StereoSample>,
+}
+
+impl<'a> GbcDebugControl<'a> {
+    pub fn new(console: &'a mut GbcConsoleCore) -> Self {
+        let mut frame_slot = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+        frame_slot.resize(160, 144);
+        Self {
+            console,
+            frame_slot,
+            audio_sink: Vec::new(),
+        }
+    }
+}
+
+impl DebugControl for GbcDebugControl<'_> {
+    fn step(&mut self, unit: StepUnit) -> Result<u64, DebuggerError> {
+        match unit {
+            StepUnit::Frame => self
+                .console
+                .render_frame_cycles(&mut self.frame_slot, &mut self.audio_sink)
+                .map_err(|_| DebuggerError::Unsupported),
+            StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
+        }
+    }
+
+    fn write_memory(
+        &mut self,
+        space: SpaceId,
+        addr: u32,
+        width: u8,
+        _value: u64,
+    ) -> Result<(), DebuggerError> {
+        // Validation order matters: bad width first, so "width 0 with
+        // unknown SpaceId" does not mask as UnknownSpace.
+        if !SpaceTable::width_is_valid(width) {
+            return Err(DebuggerError::BadWidth(width));
+        }
+        let info = GBC_SPACE_TABLE
+            .get(space)
+            .ok_or(DebuggerError::UnknownSpace(space))?;
+        if !GBC_SPACE_TABLE.covers(space, addr, width) {
+            return Err(DebuggerError::UnmappedAddress { space, addr });
+        }
+        if info.access == SpaceAccess::ReadOnly {
+            return Err(DebuggerError::ReadOnlySpace(space));
+        }
+        Err(DebuggerError::ReadOnlySpace(space))
+    }
 }
 
 #[cfg(test)]
@@ -276,6 +389,7 @@ mod tests {
     use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 
     use super::*;
+    use crate::debugger::SPACE_MEMORY;
 
     #[derive(Debug, Clone)]
     struct OtherOptions;
@@ -508,5 +622,57 @@ mod tests {
         assert_eq!(rumble_handle.snapshot().state, RumbleState::FULL);
         core.unload();
         assert_eq!(rumble_handle.snapshot().state, RumbleState::OFF);
+    }
+
+    #[test]
+    fn gbc_control_can_be_boxed_and_rejects_in_order() {
+        let mut console = GbcConsoleCore::new_empty(input());
+        console.load(&rom(), &config()).expect("test ROM loads");
+        let mut boxed: Box<dyn DebugControl + '_> = Box::new(GbcDebugControl::new(&mut console));
+        // BadWidth first: width 0 with unknown SpaceId is still BadWidth.
+        assert_eq!(
+            boxed.write_memory(SpaceId(9), 0xC000, 0, 0),
+            Err(DebuggerError::BadWidth(0))
+        );
+        assert_eq!(
+            boxed.write_memory(SpaceId(9), 0xC000, 1, 0),
+            Err(DebuggerError::UnknownSpace(SpaceId(9)))
+        );
+        assert_eq!(
+            boxed.write_memory(SPACE_MEMORY, 0x10000, 1, 0),
+            Err(DebuggerError::UnmappedAddress {
+                space: SPACE_MEMORY,
+                addr: 0x10000
+            })
+        );
+        // Phase 1 is read-only: even WRAM refuses.
+        assert_eq!(
+            boxed.write_memory(SPACE_MEMORY, 0xC000, 1, 0),
+            Err(DebuggerError::ReadOnlySpace(SPACE_MEMORY))
+        );
+        // No instruction stepping yet: explicit, not silent.
+        assert_eq!(
+            boxed.step(StepUnit::Instruction),
+            Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
+        );
+        // Frame stepping reuses the render path and reports real cycles.
+        let cycles = boxed.step(StepUnit::Frame).expect("frame step");
+        assert!(cycles > 0);
+        assert!(cycles <= 70_224);
+    }
+
+    #[test]
+    fn gbc_debugger_wiring_follows_load_state() {
+        let mut empty = GbcConsoleCore::new_empty(input());
+        assert!(empty.debugger().is_none());
+        assert!(empty.debug_control().is_none());
+
+        empty.load(&rom(), &config()).expect("test ROM loads");
+        assert!(empty.debugger().is_some());
+        assert!(empty.debug_control().is_some());
+
+        empty.unload();
+        assert!(empty.debugger().is_none());
+        assert!(empty.debug_control().is_none());
     }
 }

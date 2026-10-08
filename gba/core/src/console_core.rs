@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::StereoSample,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
+    audio::StereoSample,
+    debugger::{DebugControl, DebuggerError, SpaceAccess, SpaceId, SpaceTable, StepUnit},
     identity::SystemIdentity,
 };
 use nerust_input_traits::EmuInput;
@@ -9,6 +11,7 @@ use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
     core_options::GbaCoreOptions,
+    debugger::GBA_SPACE_TABLE,
     input_types::GbaInputBuffer,
     persistence::{
         export_machine_state, export_mapper_save, import_machine_state, import_mapper_save,
@@ -69,21 +72,25 @@ impl GbaConsoleCore {
     fn loaded_ref(&self) -> Result<&LoadedGba, CoreError> {
         self.loaded.as_ref().ok_or(CoreError::NoRomLoaded)
     }
-}
 
-impl ConsoleCore for GbaConsoleCore {
-    fn capabilities(&self) -> CoreCapabilities {
-        CoreCapabilities {
-            output_formats: vec![PixelFormat::Rgba],
-            video_signal: VideoSignalKind::Lcd,
-        }
-    }
-
-    fn render_frame(
+    /// Advance one frame, reporting the cycles the bus counted.
+    ///
+    /// Same path as the [`ConsoleCore::render_frame`] implementation;
+    /// the count that path discards is returned here for debugger
+    /// stepping.
+    pub(crate) fn render_frame_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
         audio_out: &mut Vec<StereoSample>,
-    ) -> Result<(), CoreError> {
+    ) -> Result<u64, CoreError> {
+        self.render_frame_inner(frame_slot, audio_out)
+    }
+
+    fn render_frame_inner(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<u64, CoreError> {
         self.emu_input.take();
         let input = self
             .emu_input
@@ -95,7 +102,7 @@ impl ConsoleCore for GbaConsoleCore {
         loaded.system.bus.set_keyinput(input);
         // Run one LCD frame (228 lines * 1232 cycles), batched to the
         // frame end. Bit-identical to per-cycle stepping.
-        loaded.system.step_batch(280_896);
+        let (cycles, _) = loaded.system.step_batch(280_896);
         // Nominal-rate audio production only: the caller (session layer)
         // owns transport through the rate-control filter to the backend.
         let rate = self.sample_rate;
@@ -119,7 +126,23 @@ impl ConsoleCore for GbaConsoleCore {
             let dst_offset = y * stride;
             dst[dst_offset..dst_offset + 240 * 4].copy_from_slice(src_bytes);
         }
-        Ok(())
+        Ok(cycles)
+    }
+}
+impl ConsoleCore for GbaConsoleCore {
+    fn capabilities(&self) -> CoreCapabilities {
+        CoreCapabilities {
+            output_formats: vec![PixelFormat::Rgba],
+            video_signal: VideoSignalKind::Lcd,
+        }
+    }
+
+    fn render_frame(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<(), CoreError> {
+        self.render_frame_inner(frame_slot, audio_out).map(|_| ())
     }
 
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
@@ -233,6 +256,110 @@ impl ConsoleCore for GbaConsoleCore {
             .into_system_identity()
             .map_err(|e| CoreError::Core(Box::new(std::io::Error::other(e))))
     }
+
+    fn debugger(&self) -> Option<Box<dyn nerust_core_traits::debugger::Debugger + '_>> {
+        self.loaded
+            .as_ref()
+            .map(|loaded| Box::new(crate::debugger::GbaDebugger::new(&loaded.system)) as _)
+    }
+
+    fn debug_control(
+        &mut self,
+    ) -> Option<Box<dyn nerust_core_traits::debugger::DebugControl + '_>> {
+        self.loaded.as_mut()?;
+        Some(Box::new(GbaDebugControl::new(self)) as _)
+    }
+
+    fn output_channels(&self) -> Vec<String> {
+        // The suite-log sink only exists with the test-harness
+        // feature; production builds expose no channels.
+        #[cfg(feature = "mgba-debug-log")]
+        if self.loaded.is_some() {
+            return vec!["mgba-log".to_string()];
+        }
+        Vec::new()
+    }
+
+    fn take_channel_bytes(&mut self, channel: &str) -> Vec<u8> {
+        // Single tested implementation of the commit protocol lives
+        // in the bus (buffer/NUL/enable): flatten committed lines to
+        // newline-delimited bytes. Levels never matched anything
+        // (legacy matched text only), so they stay behind.
+        #[cfg(feature = "mgba-debug-log")]
+        if channel == "mgba-log"
+            && let Some(loaded) = self.loaded.as_mut()
+        {
+            let mut out = Vec::new();
+            for log in loaded.system.bus.drain_mgba_debug_logs() {
+                out.extend_from_slice(log.text.as_bytes());
+                out.push(b'\n');
+            }
+            return out;
+        }
+        let _ = channel;
+        Vec::new()
+    }
+}
+
+/// GBA execution control.
+///
+/// Holds the console: frame stepping reuses the exact `render_frame`
+/// path and reports the cycles it counted. The scratch buffer is
+/// display-irrelevant; stepped frames are not published to any shared
+/// framebuffer here. The space is read-only in phase 1, so every
+/// in-range write is refused as `ReadOnlySpace`.
+pub struct GbaDebugControl<'a> {
+    console: &'a mut GbaConsoleCore,
+    frame_slot: FrameBuffer,
+    audio_sink: Vec<StereoSample>,
+}
+
+impl<'a> GbaDebugControl<'a> {
+    pub fn new(console: &'a mut GbaConsoleCore) -> Self {
+        let mut frame_slot = FrameBuffer::with_capacity(240, 160, PixelFormat::Rgba);
+        frame_slot.resize(240, 160);
+        Self {
+            console,
+            frame_slot,
+            audio_sink: Vec::new(),
+        }
+    }
+}
+
+impl DebugControl for GbaDebugControl<'_> {
+    fn step(&mut self, unit: StepUnit) -> Result<u64, DebuggerError> {
+        match unit {
+            StepUnit::Frame => self
+                .console
+                .render_frame_cycles(&mut self.frame_slot, &mut self.audio_sink)
+                .map_err(|_| DebuggerError::Unsupported),
+            StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
+        }
+    }
+
+    fn write_memory(
+        &mut self,
+        space: SpaceId,
+        addr: u32,
+        width: u8,
+        _value: u64,
+    ) -> Result<(), DebuggerError> {
+        // Validation order matters: bad width first, so "width 0 with
+        // unknown SpaceId" does not mask as UnknownSpace.
+        if !SpaceTable::width_is_valid(width) {
+            return Err(DebuggerError::BadWidth(width));
+        }
+        let info = GBA_SPACE_TABLE
+            .get(space)
+            .ok_or(DebuggerError::UnknownSpace(space))?;
+        if !GBA_SPACE_TABLE.covers(space, addr, width) {
+            return Err(DebuggerError::UnmappedAddress { space, addr });
+        }
+        if info.access == SpaceAccess::ReadOnly {
+            return Err(DebuggerError::ReadOnlySpace(space));
+        }
+        Err(DebuggerError::ReadOnlySpace(space))
+    }
 }
 
 #[cfg(test)]
@@ -246,7 +373,7 @@ mod tests {
     use nerust_input_traits::{EmuInput, InputStateBuffer};
 
     use super::*;
-    use crate::input_types::GbaInputBuffer;
+    use crate::{debugger::SPACE_MEMORY, input_types::GbaInputBuffer};
 
     fn test_emu_input() -> EmuInput {
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
@@ -256,6 +383,23 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
             Box::new(|| Box::<GbaInputBuffer>::default()),
         )
+    }
+
+    fn load_console() -> GbaConsoleCore {
+        let mut console = GbaConsoleCore::new(test_emu_input());
+        console
+            .load(
+                &rom(),
+                &CoreConfig {
+                    region: None,
+                    bios_paths: HashMap::new(),
+                    controllers: HashMap::new(),
+                    core_options: None,
+                    audio_sample_rate: None,
+                },
+            )
+            .expect("test ROM loads");
+        console
     }
 
     fn rom() -> Vec<u8> {
@@ -729,5 +873,56 @@ mod tests {
         // One LCD frame yields ~800 device samples at 48kHz.
         assert!((700..900).contains(&audio.len()), "len={}", audio.len());
         assert!(audio.iter().all(|s| s.left.is_finite()));
+    }
+
+    #[test]
+    fn gba_control_can_be_boxed_and_rejects_in_order() {
+        let mut console = load_console();
+        let mut boxed: Box<dyn DebugControl + '_> = Box::new(GbaDebugControl::new(&mut console));
+        // BadWidth first: width 0 with unknown SpaceId is still BadWidth.
+        assert_eq!(
+            boxed.write_memory(SpaceId(9), 0x02000000, 0, 0),
+            Err(DebuggerError::BadWidth(0))
+        );
+        assert_eq!(
+            boxed.write_memory(SpaceId(9), 0x02000000, 1, 0),
+            Err(DebuggerError::UnknownSpace(SpaceId(9)))
+        );
+        assert_eq!(
+            boxed.write_memory(SPACE_MEMORY, 0x10000000, 1, 0),
+            Err(DebuggerError::UnmappedAddress {
+                space: SPACE_MEMORY,
+                addr: 0x10000000
+            })
+        );
+        // Phase 1 is read-only.
+        assert_eq!(
+            boxed.write_memory(SPACE_MEMORY, 0x02000000, 1, 0),
+            Err(DebuggerError::ReadOnlySpace(SPACE_MEMORY))
+        );
+        // No instruction stepping yet: explicit, not silent.
+        assert_eq!(
+            boxed.step(StepUnit::Instruction),
+            Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
+        );
+        // Frame stepping reuses the render path and reports real cycles.
+        let cycles = boxed.step(StepUnit::Frame).expect("frame step");
+        assert!(cycles > 0);
+        assert!(cycles <= 280_896);
+    }
+
+    #[test]
+    fn gba_debugger_wiring_follows_load_state() {
+        let mut empty = GbaConsoleCore::new(test_emu_input());
+        assert!(empty.debugger().is_none());
+        assert!(empty.debug_control().is_none());
+
+        let mut loaded = load_console();
+        assert!(loaded.debugger().is_some());
+        assert!(loaded.debug_control().is_some());
+
+        loaded.unload();
+        assert!(loaded.debugger().is_none());
+        assert!(loaded.debug_control().is_none());
     }
 }

@@ -1,0 +1,36 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "nerust_rom_test"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+clap.workspace = true
+crc.workspace = true
+nerust_core_traits.workspace = true
+nerust_gui_shell.workspace = true
+nerust_input_traits.workspace = true
+nerust_render_traits.workspace = true
+png.workspace = true
+serde.workspace = true
+serde-saphyr.workspace = true
+thiserror.workspace = true
+
+# System support. Optional so the harness core stays system-agnostic;
+# each system follows the same pattern. Build with `--features nes`,
+# adding `gbc` / `gba` as those cores land their debugger surface.
+nerust_nes_factory = { workspace = true, optional = true }
+nerust_gbc_factory = { workspace = true, optional = true }
+nerust_gba_factory = { workspace = true, optional = true }
+
+[features]
+default = []
+nes = ["dep:nerust_nes_factory"]
+gbc = ["dep:nerust_gbc_factory"]
+gba = ["dep:nerust_gba_factory", "nerust_gba_factory/mgba-debug-log"]
+
+[[test]]
+name = "lib"
+path = "tests/lib.rs"
