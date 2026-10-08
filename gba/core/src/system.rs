@@ -495,8 +495,8 @@ mod tests {
     }
 
     /// Run explicitly with `cargo test -p nerust_gba_core --release
-    /// myst_frame_benchmark -- --ignored --nocapture`. Keep timing out of
-    /// assertions; the per-frame signatures allow before/after comparison.
+    /// myst_frame_benchmark -- --ignored`. Deterministic ROM check over
+    /// 12 frames; keep timing out of assertions.
     #[test]
     #[ignore = "requires the optional PeterLemon Myst ROM"]
     fn myst_frame_benchmark() {
@@ -506,12 +506,8 @@ mod tests {
         );
         let rom = std::fs::read(path).expect("Myst.gba not found");
         let mut system = GbaSystem::from_test_rom(rom).expect("invalid Myst ROM");
-        let frames = std::env::var("GBA_BENCH_FRAMES")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(12);
-        let started = std::time::Instant::now();
-        for frame in 0..frames {
+        const FRAMES: usize = 12;
+        for frame in 0..FRAMES {
             let (cycles, complete) = system.step_batch(280_896);
             assert!(complete && cycles == 280_896);
             let hash = system.frame_buffer().iter().fold(0u64, |acc, &pixel| {
@@ -532,15 +528,6 @@ mod tests {
                 assert_eq!(system.cpu.registers().pc(), *pc, "frame {frame} PC");
                 assert_eq!(hash, *expected_hash, "frame {frame} framebuffer");
             }
-            println!(
-                "frame={frame} pc={:#010x} hash={hash:016x}",
-                system.cpu.registers().pc()
-            );
         }
-        println!(
-            "Myst: {frames} frames in {:?}, {:.2} fps",
-            started.elapsed(),
-            frames as f64 / started.elapsed().as_secs_f64()
-        );
     }
 }
