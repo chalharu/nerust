@@ -4,6 +4,8 @@
 //! (built, read, dropped); `registers()` borrows a buffer filled once in
 //! `new`, since `RefCell` cannot hand out borrows (E0515).
 
+use std::cell::OnceCell;
+
 use nerust_core_traits::debugger::{
     DebugPanel, Debugger, SpaceAccess, SpaceId, SpaceInfo, SpaceTable,
 };
@@ -58,17 +60,19 @@ pub(crate) static NES_SPACE_TABLE: SpaceTable = SpaceTable::build(&NES_SPACES);
 /// Read-only NES observer.
 pub struct NesDebugger<'a> {
     core: &'a Core,
-    /// `registers()` backing buffer. Filled once in `new`: the observer
+    /// `registers()` backing buffer, filled on first use. The observer
     /// is a snapshot, and must not go stale mid-frame, so callers
     /// rebuild it per use instead of holding it across frames.
-    regs: Vec<(&'static str, u64)>,
+    /// Laziness is pay-for-what-you-use: screen/memory-only asserts
+    /// never pay for register collection.
+    regs: OnceCell<Vec<(&'static str, u64)>>,
 }
 
 impl<'a> NesDebugger<'a> {
     pub fn new(core: &'a Core) -> Self {
         Self {
             core,
-            regs: Vec::from(core.cpu_registers()),
+            regs: OnceCell::new(),
         }
     }
 
@@ -158,7 +162,8 @@ impl Debugger for NesDebugger<'_> {
     }
 
     fn registers(&self) -> &[(&'static str, u64)] {
-        &self.regs
+        self.regs
+            .get_or_init(|| Vec::from(self.core.cpu_registers()))
     }
 
     fn panels(&self) -> Vec<DebugPanel> {

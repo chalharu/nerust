@@ -1,16 +1,14 @@
 use std::{path::PathBuf, time::Instant};
 
-use clap::{Arg, ArgAction, ArgMatches, Command};
+use clap::{Arg, ArgAction, Command};
 use nerust_rom_test::{
     manifest::{RomManifest, load_default_manifest, load_manifest},
-    report::{
-        Report, ReportRenderer, default_output_root, hex_preview, html::HtmlReportRenderer,
-        summarize,
-    },
+    report::{Report, ReportRenderer, summarize},
     results::{CaseOutcome, ValidationOptions},
     runner::validate_case,
     system_factories,
 };
+use nerust_rom_tool::{default_output_root, hex_preview, html::HtmlReportRenderer};
 
 pub fn main() {
     if let Err(message) = run() {
@@ -20,6 +18,72 @@ pub fn main() {
 }
 
 fn run() -> Result<(), String> {
+    let args = parse_args(std::env::args())?;
+    let manifest = match args.manifest_path {
+        Some(manifest_path) => load_manifest(&manifest_path).map_err(|error| error.to_string())?,
+        None => load_default_manifest().map_err(|error| error.to_string())?,
+    };
+
+    match args.subcommand {
+        Subcommand::Validate => run_command(
+            &manifest,
+            &args.case_ids,
+            args.perf_only,
+            ValidationOptions::report(),
+            output_dir_for("validate"),
+            true,
+        ),
+        Subcommand::Capture => run_command(
+            &manifest,
+            &args.case_ids,
+            args.perf_only,
+            ValidationOptions::capturing(),
+            output_dir_for("capture"),
+            false,
+        ),
+        Subcommand::List => {
+            let mut current_category = None;
+            for case in manifest
+                .select(&args.case_ids, args.perf_only)
+                .map_err(|error| error.to_string())?
+            {
+                if current_category != Some(case.category) {
+                    current_category = Some(case.category);
+                    println!("[{}]", case.category.label());
+                }
+                println!(
+                    "{} rom={} perf={} description={}",
+                    case.id, case.rom, case.perf, case.description
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Parsed `rom_tool` invocation. Kept separate from [`run`] so argument
+/// handling is unit-testable without a manifest or ROMs: `run` only
+/// executes an already-parsed invocation.
+#[derive(Debug, PartialEq)]
+struct ToolArgs {
+    manifest_path: Option<PathBuf>,
+    case_ids: Vec<String>,
+    perf_only: bool,
+    subcommand: Subcommand,
+}
+
+#[derive(Debug, PartialEq)]
+enum Subcommand {
+    Validate,
+    Capture,
+    List,
+}
+
+fn parse_args<I, S>(args: I) -> Result<ToolArgs, String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<std::ffi::OsString> + Clone,
+{
     let matches = Command::new("rom_tool")
         .about("ROM test validation and capture tooling backed by rom_test/rom_tests.yaml")
         .arg(
@@ -50,57 +114,25 @@ fn run() -> Result<(), String> {
                 .about("Capture actual hashes and screenshots without asserting"),
         )
         .subcommand(Command::new("list").about("List configured ROM cases"))
-        .get_matches();
+        .try_get_matches_from(args)
+        .map_err(|error| error.to_string())?;
 
-    let manifest = matches
-        .get_one::<String>("manifest")
-        .map(PathBuf::from)
-        .map_or_else(
-            || load_default_manifest().map_err(|error| error.to_string()),
-            |manifest_path| load_manifest(&manifest_path).map_err(|error| error.to_string()),
-        )?;
-    let case_ids = matches
-        .get_many::<String>("case")
-        .map(|values| values.cloned().collect::<Vec<_>>())
-        .unwrap_or_default();
-    let perf_only = matches.get_flag("perf-only");
+    let subcommand = match matches.subcommand_name() {
+        Some("validate") => Subcommand::Validate,
+        Some("capture") => Subcommand::Capture,
+        Some("list") => Subcommand::List,
+        _ => return Err("subcommand required: validate, capture, or list".to_string()),
+    };
 
-    match matches.subcommand() {
-        Some(("validate", subcommand_matches)) => run_command(
-            &manifest,
-            &case_ids,
-            perf_only,
-            ValidationOptions::report(),
-            output_dir_for(subcommand_matches, "validate"),
-            true,
-        ),
-        Some(("capture", subcommand_matches)) => run_command(
-            &manifest,
-            &case_ids,
-            perf_only,
-            ValidationOptions::capturing(),
-            output_dir_for(subcommand_matches, "capture"),
-            false,
-        ),
-        Some(("list", _)) => {
-            let mut current_category = None;
-            for case in manifest
-                .select(&case_ids, perf_only)
-                .map_err(|error| error.to_string())?
-            {
-                if current_category != Some(case.category) {
-                    current_category = Some(case.category);
-                    println!("[{}]", case.category.label());
-                }
-                println!(
-                    "{} rom={} perf={} description={}",
-                    case.id, case.rom, case.perf, case.description
-                );
-            }
-            Ok(())
-        }
-        _ => Err("subcommand required: validate, capture, or list".to_string()),
-    }
+    Ok(ToolArgs {
+        manifest_path: matches.get_one::<String>("manifest").map(PathBuf::from),
+        case_ids: matches
+            .get_many::<String>("case")
+            .map(|values| values.cloned().collect::<Vec<_>>())
+            .unwrap_or_default(),
+        perf_only: matches.get_flag("perf-only"),
+        subcommand,
+    })
 }
 
 fn run_command(
@@ -332,6 +364,46 @@ fn print_outcome(outcome: &CaseOutcome, full_bytes: bool) {
     }
 }
 
-fn output_dir_for(_matches: &ArgMatches, name: &str) -> PathBuf {
+fn output_dir_for(name: &str) -> PathBuf {
     default_output_root().join(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_args_dispatches_subcommands() {
+        let validate = parse_args(["rom_tool", "validate"]).expect("validate");
+        assert_eq!(validate.subcommand, Subcommand::Validate);
+        assert_eq!(validate.manifest_path, None);
+        assert!(validate.case_ids.is_empty());
+        assert!(!validate.perf_only);
+
+        let capture = parse_args([
+            "rom_tool",
+            "--manifest",
+            "custom.yaml",
+            "--case",
+            "a",
+            "--case",
+            "b",
+            "--perf-only",
+            "capture",
+        ])
+        .expect("capture");
+        assert_eq!(capture.subcommand, Subcommand::Capture);
+        assert_eq!(capture.manifest_path, Some(PathBuf::from("custom.yaml")));
+        assert_eq!(capture.case_ids, vec!["a".to_string(), "b".to_string()]);
+        assert!(capture.perf_only);
+
+        let list = parse_args(["rom_tool", "list"]).expect("list");
+        assert_eq!(list.subcommand, Subcommand::List);
+    }
+
+    #[test]
+    fn parse_args_requires_a_subcommand() {
+        assert!(parse_args(["rom_tool"]).is_err());
+        assert!(parse_args(["rom_tool", "bogus"]).is_err());
+    }
 }

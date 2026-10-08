@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Arg, ArgAction, Command};
 
-use crate::{
+use nerust_rom_test::{
     error::RomTestError,
     events::{ControllerPad, PadState, RomAssertion},
     factory_adapter::{TestSystem, open_headless_system},
@@ -20,7 +20,21 @@ pub fn run_cli() {
     }
 }
 
-fn run() -> Result<(), String> {
+/// Parsed `perf` invocation. Kept separate from [`run`] so argument
+/// handling is unit-testable without touching ROMs or the runner:
+/// `run` only executes an already-validated config.
+#[derive(Debug, PartialEq)]
+struct PerfArgs {
+    rounds: usize,
+    warmup_rounds: usize,
+    case_ids: Vec<String>,
+}
+
+fn parse_args<I, S>(args: I) -> Result<PerfArgs, String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<std::ffi::OsString> + Clone,
+{
     let matches = Command::new("perf")
         .about("Benchmark perf-enabled ROM test cases from rom_test/rom_tests.yaml")
         .arg(Arg::new("rounds").long("rounds").value_name("N"))
@@ -35,7 +49,8 @@ fn run() -> Result<(), String> {
                 .value_name("ID")
                 .action(ArgAction::Append),
         )
-        .get_matches();
+        .try_get_matches_from(args)
+        .map_err(|error| error.to_string())?;
 
     let rounds = matches
         .get_one::<String>("rounds")
@@ -58,6 +73,21 @@ fn run() -> Result<(), String> {
         .get_many::<String>("case")
         .map(|values| values.cloned().collect::<Vec<_>>())
         .unwrap_or_default();
+
+    Ok(PerfArgs {
+        rounds,
+        warmup_rounds,
+        case_ids,
+    })
+}
+
+fn run() -> Result<(), String> {
+    let args = parse_args(std::env::args())?;
+    let PerfArgs {
+        rounds,
+        warmup_rounds,
+        case_ids,
+    } = args;
 
     let manifest = load_default_manifest().map_err(|error| error.to_string())?;
     let cases = manifest
@@ -388,5 +418,44 @@ mod tests {
             assert_eq!(peak_rss_mib(), None);
             assert!(process_cpu_time_nanos().is_err());
         }
+    }
+
+    #[test]
+    fn parse_args_defaults_and_overrides() {
+        assert_eq!(
+            parse_args(["perf"]).expect("defaults"),
+            PerfArgs {
+                rounds: 5,
+                warmup_rounds: 1,
+                case_ids: Vec::new(),
+            }
+        );
+        assert_eq!(
+            parse_args([
+                "perf",
+                "--rounds",
+                "2",
+                "--warmup-rounds",
+                "0",
+                "--case",
+                "a",
+                "--case",
+                "b"
+            ])
+            .expect("overrides"),
+            PerfArgs {
+                rounds: 2,
+                warmup_rounds: 0,
+                case_ids: vec!["a".to_string(), "b".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn parse_args_rejects_bad_rounds() {
+        assert!(parse_args(["perf", "--rounds", "0"]).is_err());
+        assert!(parse_args(["perf", "--rounds", "many"]).is_err());
+        assert!(parse_args(["perf", "--warmup-rounds", "many"]).is_err());
+        assert!(parse_args(["perf", "--bogus"]).is_err());
     }
 }

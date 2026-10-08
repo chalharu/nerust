@@ -40,6 +40,8 @@
 //!   semantics deliberately do not apply: the debugger shows physical
 //!   contents.
 
+use std::cell::OnceCell;
+
 use nerust_core_traits::debugger::{Debugger, SpaceAccess, SpaceId, SpaceInfo, SpaceTable};
 
 use crate::system::GbaSystem;
@@ -75,12 +77,21 @@ pub(crate) static GBA_SPACE_TABLE: SpaceTable = SpaceTable::build(&GBA_SPACES);
 /// deterministic at a fixed pause point all the same.
 pub struct GbaDebugger<'a> {
     system: &'a GbaSystem,
-    regs: Vec<(&'static str, u64)>,
+    /// Lazily filled on first `registers()`: screen/memory-only
+    /// asserts never pay for register collection.
+    regs: OnceCell<Vec<(&'static str, u64)>>,
 }
 
 impl<'a> GbaDebugger<'a> {
     pub fn new(system: &'a GbaSystem) -> Self {
-        let regs = system.cpu.registers();
+        Self {
+            system,
+            regs: OnceCell::new(),
+        }
+    }
+
+    fn snapshot_registers(&self) -> Vec<(&'static str, u64)> {
+        let regs = self.system.cpu.registers();
         let mut out = Vec::with_capacity(18);
         out.push(("cpsr", u64::from(regs.cpsr())));
         // Leak-free static names: the index selects a literal, so no
@@ -92,7 +103,7 @@ impl<'a> GbaDebugger<'a> {
         for (i, name) in NAMES.iter().enumerate() {
             out.push((*name, u64::from(regs.r(i))));
         }
-        Self { system, regs: out }
+        out
     }
 }
 
@@ -124,7 +135,7 @@ impl Debugger for GbaDebugger<'_> {
     }
 
     fn registers(&self) -> &[(&'static str, u64)] {
-        &self.regs
+        self.regs.get_or_init(|| self.snapshot_registers())
     }
 }
 

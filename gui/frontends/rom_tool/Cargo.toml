@@ -1,0 +1,30 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "nerust_rom_tool"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+clap.workspace = true
+nerust_core_traits.workspace = true
+nerust_rom_test.workspace = true
+
+# System support, forwarded to the harness engine: the CLI binaries
+# drive real systems, so they need the same optional factories.
+# Build with `--features nes`, adding `gbc` / `gba` as needed.
+
+[features]
+default = []
+nes = ["nerust_rom_test/nes"]
+gbc = ["nerust_rom_test/gbc"]
+gba = ["nerust_rom_test/gba"]
+
+[[bin]]
+name = "rom_tool"
+path = "src/bin/rom_tool.rs"
+
+[[bin]]
+name = "perf"
+path = "src/bin/perf.rs"
