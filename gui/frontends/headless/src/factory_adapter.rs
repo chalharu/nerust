@@ -234,7 +234,7 @@ fn duplicate_p1_to_p2(base: &InputAssignments) -> Option<InputAssignments> {
 /// open (floating) bus on covered-but-unreadable addresses, or an
 /// unmapped address covered by no space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemoryRead {
+pub(crate) enum MemoryRead {
     Mapped(u8),
     OpenBus,
     Unmapped,
@@ -317,7 +317,7 @@ impl TestSystem {
     }
 
     /// Channel names the core listed at open (possibly none).
-    pub fn channel_names(&self) -> &[String] {
+    pub(crate) fn channel_names(&self) -> &[String] {
         &self.channels
     }
 
@@ -326,7 +326,7 @@ impl TestSystem {
     /// frame's delta, mirroring the audio tap. Unknown channels fail
     /// loudly here (read-time validation, like registers/spaces) —
     /// never silently empty.
-    pub fn drain_channel(&self, channel: &str) -> Result<Vec<u8>, RomTestError> {
+    pub(crate) fn drain_channel(&self, channel: &str) -> Result<Vec<u8>, RomTestError> {
         let tap = self.serial_taps.get(channel).ok_or_else(|| {
             RomTestError::EmuThread(format!(
                 "unknown output channel `{channel}` (core lists {:?})",
@@ -342,7 +342,7 @@ impl TestSystem {
     /// address against the table snapshot (tables forbid overlap, so
     /// the home is unique). Covered-but-unreadable means open bus;
     /// uncovered means unmapped — distinguished here, never guessed.
-    pub fn read_memory_byte(&self, addr: u32) -> Result<MemoryRead, RomTestError> {
+    pub(crate) fn read_memory_byte(&self, addr: u32) -> Result<MemoryRead, RomTestError> {
         let Some(space) = self
             .spaces
             .iter()
@@ -373,7 +373,7 @@ impl TestSystem {
     /// Same paused moment as a memory dump: the caller stepped first,
     /// so names and values are frame-addressed. Empty rows keep the
     /// response to registers only.
-    pub fn read_registers(&self) -> Result<Vec<(&'static str, u64)>, RomTestError> {
+    pub(crate) fn read_registers(&self) -> Result<Vec<(&'static str, u64)>, RomTestError> {
         let inner = self
             .emu
             .inspect(InspectRequest {
