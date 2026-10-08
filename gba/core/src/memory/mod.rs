@@ -22,31 +22,6 @@ fn thumb_next_is_datamover(next: u16) -> bool {
     }
 }
 
-/// Trace flags, read once from the environment and cached process-wide.
-/// `std::env::var` costs a lock + allocation per call (~100ns), which is
-/// prohibitive inside per-cycle hot paths (DMA steps, timer register
-/// accesses) that fire tens of thousands of times per frame.
-fn dtrace_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("GBA_DTRACE").is_ok())
-}
-
-fn ttrace_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("GBA_TTRACE").is_ok())
-}
-
-/// Tick-skip escape hatch (perf A/B and exactness bisection): set
-/// `GBA_NO_SKIP` to force every tick through the full per-cycle path.
-/// Read once per bus (ROM load), not per tick: the old process-wide
-/// `OnceLock` cost an atomic load on every one of the ~280k ticks/frame.
-/// A process-lifetime env change takes effect at the next load, which no
-/// test or frontend relies on.
-#[inline]
-fn tick_skip_for_new_bus() -> bool {
-    std::env::var("GBA_NO_SKIP").is_err()
-}
-
 const BIOS_SIZE: usize = 0x4000;
 const EWRAM_SIZE: usize = 0x40000;
 const IWRAM_SIZE: usize = 0x8000;
@@ -307,11 +282,6 @@ pub struct GbaMemoryBus {
     /// (plus the full-tick exit, which covers every in-tick mutation).
     /// Same contract: 0 is always valid, never stale-long.
     dma_device_quiet: u64,
-    /// Cached `GBA_NO_SKIP` escape hatch (see `tick_skip_for_new_bus`):
-    /// a plain field read replaces the per-tick `OnceLock` atomic load.
-    /// Pure perf hint, excluded from wire state by design (re-read at
-    /// every load; behavior is identical within a process lifetime).
-    tick_skip: bool,
     /// Test-ROM log sink behind the `mgba-debug-log` cargo feature. No
     /// hardware counterpart exists: zero waits, no prefetch/N-S side effects.
     #[cfg(feature = "mgba-debug-log")]
@@ -705,7 +675,6 @@ impl GbaMemoryBus {
             eeprom_burst_open: false,
             bus_quiet: 0,
             dma_device_quiet: 0,
-            tick_skip: tick_skip_for_new_bus(),
             #[cfg(feature = "mgba-debug-log")]
             mgba_debug_enable: false,
             #[cfg(feature = "mgba-debug-log")]
@@ -1166,10 +1135,10 @@ impl GbaMemoryBus {
         // horizon it was recomputed from, and only due entries mutate
         // pipeline state), so running it would only re-peek empty or
         // future queues. Skipped.
-        if self.tick_skip && self.bus_quiet > 0 {
+        if self.bus_quiet > 0 {
             return self.tick_quiet_span();
         }
-        if self.tick_skip && self.dma.is_active() && self.dma_fast_allowance() > 0 {
+        if self.dma.is_active() && self.dma_fast_allowance() > 0 {
             return self.tick_dma_fast();
         }
         self.tick_full()
@@ -1509,19 +1478,6 @@ impl GbaMemoryBus {
         let Some(transfer) = self.dma.step(self.wait_cnt, &mut stall) else {
             return;
         };
-        if dtrace_enabled() {
-            let snap = snapshot.get_or_insert_with(build);
-            eprintln!(
-                "DMA{} t={} vc={} cyc={} src={:#010X} dst={:#010X} w={}",
-                transfer.channel,
-                self.current_tcycle,
-                snap.vcount,
-                snap.cycle,
-                transfer.data_source,
-                transfer.destination,
-                transfer.width
-            );
-        }
         // Open-bus PC tag: snapshot the in-flight instruction's bus PC
         // (`current_pc` is already the architectural PC, so the
         // read-side compare below is a plain 2/4 difference).
@@ -3835,12 +3791,7 @@ impl GbaMemoryBus {
     /// Timer/SIO/key/joy/IRQ half of I/O reads.
     fn read_io_high(&mut self, aligned: u32) -> IoRead {
         let val = match aligned {
-            0x04000100..=0x0400010E => {
-                if ttrace_enabled() && aligned == 0x04000100 {
-                    eprintln!("T tmread @{}", self.current_tcycle);
-                }
-                self.timers.read(aligned).unwrap_or(0)
-            }
+            0x04000100..=0x0400010E => self.timers.read(aligned).unwrap_or(0),
             0x04000120 | 0x04000122 | 0x04000128 | 0x0400012A => self.read_io_sio(aligned),
             // SIOMULTI2/3 (and SIOMULTI0/1 outside Normal-32) are receive
             // registers: 0 with no transfer (suite table; writes ignored).
@@ -4296,9 +4247,6 @@ impl GbaMemoryBus {
         match aligned {
             0x040000B0..=0x040000DE => self.write_io_dma(aligned, v16),
             0x04000100..=0x0400010E => {
-                if ttrace_enabled() && aligned == 0x04000102 && v16 & 0x80 != 0 {
-                    eprintln!("T start @{}", self.current_tcycle);
-                }
                 self.timers.write(aligned, v16);
             }
             0x04000128 => self.write_siocnt(v16),
@@ -4352,16 +4300,6 @@ impl GbaMemoryBus {
 
     /// DMA control writes plus Immediate CNT_H arming retime.
     fn write_io_dma(&mut self, aligned: u32, v16: u16) {
-        if ttrace_enabled()
-            && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
-            && v16 & 0x8000 != 0
-        {
-            eprintln!(
-                "T dmaen ch{} @{}",
-                (aligned - 0x040000B0) / 12,
-                self.current_tcycle
-            );
-        }
         self.dma.write(aligned, v16);
         // Immediate CNT_H arming with prefetch on starts one tick
         // sooner (pending 4->3): prefetch overlaps the enabling
