@@ -7,18 +7,27 @@ impl ValidationRuntime {
         case: &RomCase,
         rom_bytes: &[u8],
     ) -> Result<Self, RomTestError> {
-        let system = factory_adapter::open_headless_system(
+        let mut system = factory_adapter::open_headless_system(
             factories,
             &case.id,
             rom_bytes,
             case.options.clone(),
             case.audio_sample_rate(),
         )?;
+        // Pre-register every open-time channel as a cumulative-log
+        // key: the set is fixed at open, so per-frame accumulation
+        // uses `get_mut` with zero key clones instead of `entry`.
+        let serial = system
+            .observe()
+            .channel_names()
+            .iter()
+            .map(|channel| (channel.clone(), Vec::new()))
+            .collect();
 
         Ok(Self {
             system,
             mixer: HashingMixer::new(case.audio_sample_rate()),
-            serial: std::collections::HashMap::new(),
+            serial,
             frame_counter: 0,
         })
     }

@@ -20,13 +20,13 @@ impl ValidationRuntime {
     }
 
     pub(in crate::runner::validation) fn screen_hash(&mut self) -> u64 {
-        screen_hash(self.system.screen_buffer())
+        screen_hash(self.system.observe().screen_buffer())
     }
 
     pub(in crate::runner::validation) fn capture_screenshot_png(
         &mut self,
     ) -> Result<Vec<u8>, RomTestError> {
-        encode_screenshot_png(self.system.screen_buffer())
+        encode_screenshot_png(self.system.observe().screen_buffer())
     }
 
     /// Memory read through the thread inspect path: mapped value,
@@ -39,7 +39,7 @@ impl ValidationRuntime {
         let Some(addr) = u32::try_from(address).ok() else {
             return Ok(crate::factory_adapter::MemoryRead::Unmapped);
         };
-        self.system.read_memory_byte(addr)
+        self.system.inspect().read_memory_byte(addr)
     }
 
     /// Live register list through the thread inspect path, in the
@@ -47,7 +47,7 @@ impl ValidationRuntime {
     pub(in crate::runner::validation) fn peek_registers(
         &self,
     ) -> Result<Vec<(&'static str, u64)>, RomTestError> {
-        self.system.read_registers()
+        self.system.inspect().read_registers()
     }
 
     /// Cumulative bytes produced on one channel since power-on (or

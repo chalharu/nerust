@@ -1,9 +1,11 @@
 pub mod error;
 pub mod events;
-// Canonical engine seam: frontends reach the open system through this
-// module's path only (no re-export aliases). Items the frontend never
-// touches are `pub(crate)` at their definition site.
-pub mod factory_adapter;
+// Canonical engine seam, crate-private: frontends drive systems only
+// through `runner::{validate_case, measure_case}` behavior — never by
+// holding a system handle. All construction/driving vocabulary lives
+// behind this boundary; role views (`SystemControl`, `FrameObserve`,
+// `SystemInspector`) are `pub(crate)` by the same rule.
+mod factory_adapter;
 pub mod harness;
 pub mod manifest;
 mod media;

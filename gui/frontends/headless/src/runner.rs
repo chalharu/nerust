@@ -1,4 +1,5 @@
 mod entry;
+mod measure;
 mod validation;
 
 use crate::{
@@ -13,3 +14,5 @@ pub fn validate_case(
 ) -> CaseOutcome {
     entry::validate_case(factories, case, options)
 }
+
+pub use measure::{MeasureOutcome, measure_case};
