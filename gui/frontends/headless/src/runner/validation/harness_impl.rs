@@ -11,6 +11,12 @@ impl CaseHarness for ValidationRunner {
     }
 
     fn on_assert(&mut self, frame: u64, assertion: &RomAssertion) -> Result<(), RomTestError> {
+        // Intentionally exhaustive (no wildcard arm): the compiler is
+        // the extension checklist — a new `RomAssertion` variant fails
+        // to build until it is handled here. Do not replace this with
+        // a registry/dispatch table; closed-domain exhaustiveness is
+        // the design (silent pass-through of unknown kinds is worse
+        // than a build break).
         match assertion {
             RomAssertion::Screen { hash } => self.record_screen_assert(frame, *hash),
             RomAssertion::Memory {
