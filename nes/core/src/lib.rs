@@ -25,6 +25,8 @@ pub mod rom_identity;
 pub mod rom_parse;
 // SPIKE (iteration 6, DO NOT MERGE).
 pub(crate) mod spike_disasm6502;
+// SPIKE (iteration 8, DO NOT MERGE).
+pub mod spike_pattern;
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core_traits::audio::{AudioBackend, StereoSample};
@@ -244,6 +246,11 @@ impl Core {
         self.cpu.peek_work_ram(address)
     }
 
+    // SPIKE (iteration 8, DO NOT MERGE): PPU register peek for panels.
+    pub(crate) fn peek_ppu_debug_regs(&self) -> crate::ppu::PpuDebugRegs {
+        self.ppu.peek_debug_regs()
+    }
+
     pub(crate) fn poke_work_ram(&mut self, address: usize, value: u8) {
         self.cpu.poke_work_ram(address, value)
     }
@@ -319,6 +326,17 @@ impl Core {
 
     pub fn peek_ppu_vram(&self, address: usize) -> Option<u8> {
         self.ppu.peek_vram(address, self.cartridge.as_ref())
+    }
+
+    // SPIKE (iteration 8, DO NOT MERGE): non-invasive CHR byte read
+    // ($0000-$1FFF) for the pattern-table viewer: `&self` via the
+    // side-effect-free character path. Deleted with the spike branch.
+    pub fn peek_chr_byte(&self, address: usize) -> Option<OpenBusReadResult> {
+        if address <= 0x1FFF {
+            Some(self.cartridge.read_character(address))
+        } else {
+            None
+        }
     }
 
     pub fn rom_identity(&self) -> RomIdentity {

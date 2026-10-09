@@ -7,7 +7,8 @@
 use std::cell::OnceCell;
 
 use nerust_core_traits::debugger::{
-    DebugPanel, Debugger, DisasmLine, SpaceAccess, SpaceId, SpaceInfo, SpaceTable,
+    CellValue, ColumnKind, DebugImage, DebugPanel, Debugger, DisasmLine, PanelColumn, PanelRow,
+    SpaceAccess, SpaceId, SpaceInfo, SpaceTable,
 };
 
 use crate::Core;
@@ -199,7 +200,86 @@ impl Debugger for NesDebugger<'_> {
     }
 
     fn panels(&self) -> Vec<DebugPanel> {
-        Vec::new()
+        // SPIKE (iteration 8, DO NOT MERGE): PPU-state panels for the
+        // Table pane. One panel per value kind (Bool/Hex/Dec):
+        // ColumnKind is column-wide and CellValue has no empty
+        // variant, so a single mixed panel cannot express this
+        // content. Deleted with the spike branch.
+        let regs = self.core.peek_ppu_debug_regs();
+        let flag = |key: &'static str, set: bool| PanelRow {
+            key,
+            cells: vec![CellValue::Bool(set)],
+        };
+        let flags = DebugPanel {
+            id: "ppu-flags",
+            label_id: "PPU flags",
+            columns: &[PanelColumn {
+                id: "flag",
+                label_id: "Flag",
+                kind: ColumnKind::Bool,
+            }],
+            rows: vec![
+                flag("nmi_output", regs.control & 0x80 != 0),
+                flag("sprite_size_16", regs.control & 0x20 != 0),
+                flag("background_table_high", regs.control & 0x10 != 0),
+                flag("sprite_table_high", regs.control & 0x08 != 0),
+                flag("show_background", regs.mask & 0x08 != 0),
+                flag("show_sprites", regs.mask & 0x10 != 0),
+                flag("grayscale", regs.mask & 0x01 != 0),
+                flag("sprite_zero_hit", regs.sprite_zero_hit),
+                flag("sprite_overflow", regs.sprite_overflow),
+                flag("nmi_occurred", regs.nmi_occurred),
+            ],
+        };
+        let hex = DebugPanel {
+            id: "ppu-regs",
+            label_id: "PPU registers",
+            columns: &[PanelColumn {
+                id: "value",
+                label_id: "Value",
+                kind: ColumnKind::Hex { digits: 2 },
+            }],
+            rows: vec![
+                PanelRow {
+                    key: "PPUCTRL",
+                    cells: vec![CellValue::U64(u64::from(regs.control))],
+                },
+                PanelRow {
+                    key: "PPUMASK",
+                    cells: vec![CellValue::U64(u64::from(regs.mask))],
+                },
+                PanelRow {
+                    key: "OAMADDR",
+                    cells: vec![CellValue::U64(u64::from(regs.oam_address))],
+                },
+            ],
+        };
+        let counters = DebugPanel {
+            id: "ppu-pos",
+            label_id: "PPU position",
+            columns: &[PanelColumn {
+                id: "value",
+                label_id: "Value",
+                kind: ColumnKind::Dec,
+            }],
+            rows: vec![
+                PanelRow {
+                    key: "scanline",
+                    cells: vec![CellValue::U64(u64::from(regs.scanline))],
+                },
+                PanelRow {
+                    key: "cycle",
+                    cells: vec![CellValue::U64(u64::from(regs.cycle))],
+                },
+            ],
+        };
+        vec![flags, hex, counters]
+    }
+
+    // SPIKE (iteration 8, DO NOT MERGE): pattern-table images via the
+    // spike producer. Deleted with the spike branch.
+    fn images(&self) -> Vec<DebugImage> {
+        crate::spike_pattern::pattern_images(self.core)
     }
 
     // SPIKE (iteration 6, DO NOT MERGE): 6502 disassembly over PRG ROM.
@@ -289,6 +369,35 @@ mod tests {
 
     fn live_core() -> Core {
         Core::new(nrom_test_data()).expect("NROM test cartridge")
+    }
+
+    // SPIKE (iteration 8, DO NOT MERGE): panels and images against
+    // the live NROM core. Deleted with the spike branch.
+    #[test]
+    fn spike_panels_have_three_kinds() {
+        let core = live_core();
+        let dbg = NesDebugger::new(&core);
+        let panels = dbg.panels();
+        assert_eq!(panels.len(), 3);
+        assert_eq!(panels[0].id, "ppu-flags");
+        assert_eq!(panels[1].id, "ppu-regs");
+        assert_eq!(panels[2].id, "ppu-pos");
+        assert_eq!(panels[0].rows.len(), 10);
+    }
+
+    #[test]
+    fn spike_pattern_images_smoke() {
+        let core = live_core();
+        let dbg = NesDebugger::new(&core);
+        let images = dbg.images();
+        assert_eq!(images.len(), 2);
+        for image in &images {
+            assert_eq!((image.width, image.height), (128, 128));
+            assert_eq!(image.pixels.len(), 128 * 128);
+            assert_eq!(image.palette.len(), 4);
+        }
+        // Zero CHR decodes all-blank: shape valid, content empty.
+        assert!(images.iter().all(|i| i.pixels.iter().all(|&p| p == 0)));
     }
 
     #[test]

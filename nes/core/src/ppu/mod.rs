@@ -527,6 +527,20 @@ impl From<u8> for Control {
     }
 }
 
+// SPIKE (iteration 8, DO NOT MERGE): exact inverse of `From<u8>` for
+// the Table pane. Deleted with the spike branch.
+impl Control {
+    pub(crate) fn to_byte(&self) -> u8 {
+        (self.name_table & 3)
+            | u8::from(self.increment) << 2
+            | u8::from(self.sprite_table) << 3
+            | u8::from(self.background_table) << 4
+            | u8::from(self.sprite_size) << 5
+            | u8::from(self.master_slave) << 6
+            | u8::from(self.nmi_output) << 7
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct Mask {
     grayscale: bool,
@@ -578,6 +592,36 @@ impl From<u8> for Mask {
             blue_tint: value & 0x80 != 0,
         }
     }
+}
+
+// SPIKE (iteration 8, DO NOT MERGE): exact inverse of `From<u8>` for
+// the Table pane. Deleted with the spike branch.
+impl Mask {
+    pub(crate) fn to_byte(&self) -> u8 {
+        u8::from(self.grayscale)
+            | u8::from(self.show_left_background) << 1
+            | u8::from(self.show_left_sprites) << 2
+            | u8::from(self.show_background) << 3
+            | u8::from(self.show_sprites) << 4
+            | u8::from(self.red_tint) << 5
+            | u8::from(self.green_tint) << 6
+            | u8::from(self.blue_tint) << 7
+    }
+}
+
+// SPIKE (iteration 8, DO NOT MERGE): snapshot for the Table pane.
+// Raw register bytes (exact inverse of the typed decoders) plus
+// decoded status flags, all side-effect free. Deleted with the spike.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PpuDebugRegs {
+    pub control: u8,
+    pub mask: u8,
+    pub oam_address: u8,
+    pub scanline: u16,
+    pub cycle: u16,
+    pub sprite_overflow: bool,
+    pub sprite_zero_hit: bool,
+    pub nmi_occurred: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -658,6 +702,23 @@ pub(crate) struct Core {
 }
 
 impl Core {
+    // SPIKE (iteration 8, DO NOT MERGE): non-invasive register peek
+    // for the Table pane. `read_register` has side effects (clears
+    // nmi_occurred and write_toggle), so panels must not use it.
+    // Deleted with the spike branch.
+    pub(crate) fn peek_debug_regs(&self) -> PpuDebugRegs {
+        PpuDebugRegs {
+            control: self.control.to_byte(),
+            mask: self.mask.to_byte(),
+            oam_address: self.oam_address_low,
+            scanline: self.scan_line,
+            cycle: self.cycle,
+            sprite_overflow: self.status.sprite_overflow,
+            sprite_zero_hit: self.status.sprite_zero_hit,
+            nmi_occurred: self.status.nmi_occurred,
+        }
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             vram: [0; 2048],

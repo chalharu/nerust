@@ -288,6 +288,20 @@ impl EmuThread {
                             };
                             let _ = reply.send(result);
                         }
+                        // SPIKE (iteration 8, DO NOT MERGE).
+                        EmuCommand::DebuggerImages { reply } => {
+                            let result = match core.debugger() {
+                                Some(debugger) => {
+                                    if core.paused() {
+                                        Ok(debugger.images())
+                                    } else {
+                                        Err(DebuggerError::Unsupported)
+                                    }
+                                }
+                                None => Err(DebuggerError::Unsupported),
+                            };
+                            let _ = reply.send(result);
+                        }
                         EmuCommand::TapNominalAudio { tap, reply } => {
                             nominal_tap = Some(tap);
                             let _ = reply.send(());

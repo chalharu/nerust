@@ -124,7 +124,15 @@ impl WindowRuntime {
                     self.host.sync_fullscreen_default_from_window();
                     self.host.request_redraw();
                 }
-                WindowEvent::KeyboardInput { event, .. } => self.host.on_keyboard_input(event),
+                WindowEvent::KeyboardInput { event, .. } => {
+                    self.host.on_keyboard_input(event);
+                    // SPIKE (iteration 8, DO NOT MERGE): F4 opens the
+                    // debugger probe (hardcoded; settings-schema
+                    // shortcuts are production surface).
+                    if self.host.take_spike_open_request() {
+                        self.host.open_spike_debug_window(event_loop);
+                    }
+                }
                 _ => (),
             },
             Event::WindowEvent {

@@ -197,6 +197,14 @@ pub trait Debugger {
         Vec::new()
     }
 
+    // SPIKE (iteration 8, DO NOT MERGE): system images (pattern
+    // tables). Empty by default; cores with image views override it.
+    // Deleted with the spike branch: the production shape is decided
+    // from spike findings.
+    fn images(&self) -> Vec<DebugImage> {
+        Vec::new()
+    }
+
     // SPIKE (iteration 6, DO NOT MERGE): disassembly rows. Default is
     // empty; cores with a disassembler override. Deleted with the spike.
     fn disassemble(&self, _addr: u32, _count: u16) -> Vec<DisasmLine> {
@@ -265,6 +273,26 @@ pub enum CellValue {
     Text(String),
     U64(u64),
     Bool(bool),
+}
+
+// SPIKE (iteration 8, DO NOT MERGE): one system image. `pixels` are
+// row-major indices into `palette`; the frontend blits mechanically.
+// Deleted with the spike branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugImage {
+    pub id: &'static str,
+    pub label_id: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub format: ImageFormat,
+    pub palette: Vec<[u8; 3]>,
+    pub pixels: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    /// 2 bits per pixel, values 0-3 into a 4-entry palette.
+    Indexed2bpp,
 }
 
 // ---------------------------------------------------------------------------

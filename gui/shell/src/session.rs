@@ -582,7 +582,7 @@ pub fn spike_format_dump(dump: &nerust_core_traits::debugger::MemoryDump) -> Str
     use std::fmt::Write as _;
     let mut out = String::new();
     for row in dump.rows.iter() {
-        let _ = write!(out, "{:04X}:", row.addr);
+        let _ = write!(out, "{:08X}:", row.addr);
         for i in 0..row.valid {
             let _ = write!(out, " {:02X}", row.bytes[i as usize]);
         }
@@ -597,7 +597,7 @@ pub fn spike_format_disasm(rows: &[nerust_core_traits::debugger::DisasmLine]) ->
     let mut out = String::new();
     for row in rows {
         let mark = if row.is_pc { '>' } else { ' ' };
-        let _ = write!(out, "{mark}{:04X}: ", row.addr);
+        let _ = write!(out, "{mark}{:08X}: ", row.addr);
         for i in 0..row.len {
             let _ = write!(out, "{:02X} ", row.bytes[i as usize]);
         }
@@ -758,6 +758,178 @@ impl SessionHandle {
             Ok(Err(e)) => format!("step failed: {e:?}"),
             Err(e) => format!("thread failed: {e:?}"),
         }
+    }
+
+    /// SPIKE (iteration 8): panels as `== label ==` / `key: value`
+    /// text (generic DebugPanel rendering, no per-system branches).
+    pub fn spike_panels_text(&self) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        let req = nerust_core_traits::debugger::InspectRequest {
+            space: None,
+            addr: None,
+            rows: 0,
+        };
+        let result = match core.inspect(req) {
+            Ok(Ok(result)) => result,
+            Ok(Err(e)) => return format!("inspect failed: {e:?}"),
+            Err(e) => return format!("thread failed: {e:?}"),
+        };
+        if result.panels.is_empty() {
+            return "(no panels)".to_string();
+        }
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        for panel in result.panels.iter() {
+            let _ = writeln!(out, "== {} ==", panel.label_id);
+            for row in panel.rows.iter() {
+                let _ = write!(out, "{}:", row.key);
+                for (cell, col) in row.cells.iter().zip(panel.columns.iter()) {
+                    let _ = write!(out, " {}", spike_format_cell(cell, col.kind));
+                }
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// SPIKE (iteration 8): blitted system images as
+    /// (label, width, height, rgba). The blit is mechanical (no system
+    /// knowledge): indexed pixels through the descriptor palette.
+    #[allow(clippy::type_complexity)]
+    pub fn spike_images_rgba(&self) -> Result<Vec<(String, u32, u32, Vec<u8>)>, String> {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return Err("no core".to_string()),
+        };
+        let images = match core.debug_images() {
+            Ok(Ok(images)) => images,
+            Ok(Err(e)) => return Err(format!("images failed: {e:?}")),
+            Err(e) => return Err(format!("thread failed: {e:?}")),
+        };
+        Ok(images
+            .into_iter()
+            .map(|image| {
+                use nerust_core_traits::debugger::ImageFormat;
+                let mut rgba = Vec::with_capacity(image.pixels.len() * 4);
+                for &px in &image.pixels {
+                    let rgb = match image.format {
+                        ImageFormat::Indexed2bpp => {
+                            image.palette.get(px as usize).copied().unwrap_or([0, 0, 0])
+                        }
+                    };
+                    rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 0xFF]);
+                }
+                (image.label_id.to_string(), image.width, image.height, rgba)
+            })
+            .collect())
+    }
+
+    /// SPIKE (iteration 8): two-step-confirmed write; returns the
+    /// result line for display. Failure text (`ReadOnlySpace`,
+    /// `BadWidth`, out-of-range) is the loud-failure probe.
+    pub fn spike_write_memory(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+        addr: u32,
+        width: u8,
+        value: u64,
+    ) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        let req = nerust_core_traits::debugger::MemoryWrite {
+            space,
+            addr,
+            width,
+            value,
+        };
+        match core.write_memory(req) {
+            Ok(Ok(())) => format!("wrote {value:02X} to {addr:08X} (width {width})"),
+            Ok(Err(e)) => format!("write refused: {e:?}"),
+            Err(e) => format!("thread failed: {e:?}"),
+        }
+    }
+
+    /// SPIKE (iteration 8): single-byte read for the edit confirm
+    /// row (old-value display).
+    pub fn spike_read_byte(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+        addr: u32,
+    ) -> Option<u8> {
+        let core = self.emu_core.as_ref()?;
+        let req = nerust_core_traits::debugger::InspectRequest {
+            space: Some(space),
+            addr: Some(addr),
+            rows: 1,
+        };
+        let result = core.inspect(req).ok()?.ok()?;
+        let row = result.dump.rows.first()?;
+        if row.valid == 0 { None } else { Some(row.bytes[0]) }
+    }
+
+    /// SPIKE (iteration 8): dump rows as (addr, text) for row-select
+    /// buttons. Same bytes as `spike_read_text`, one string per row.
+    pub fn spike_dump_rows(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+        addr: u32,
+    ) -> Vec<(u32, String)> {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return Vec::new(),
+        };
+        let req = nerust_core_traits::debugger::InspectRequest {
+            space: Some(space),
+            addr: Some(addr),
+            rows: 12,
+        };
+        let result = match core.inspect(req) {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) | Err(_) => return Vec::new(),
+        };
+        use std::fmt::Write as _;
+        result
+            .dump
+            .rows
+            .iter()
+            .map(|row| {
+                let mut text = format!("{:08X}:", row.addr);
+                for i in 0..row.valid {
+                    let _ = write!(text, " {:02X}", row.bytes[i as usize]);
+                }
+                (row.addr, text)
+            })
+            .collect()
+    }
+}
+
+/// SPIKE (iteration 8): format one cell by its column kind (shared
+/// tao output). Deleted with the spike branch.
+pub fn spike_format_cell(
+    cell: &nerust_core_traits::debugger::CellValue,
+    kind: nerust_core_traits::debugger::ColumnKind,
+) -> String {
+    use nerust_core_traits::debugger::{CellValue, ColumnKind};
+    match (cell, kind) {
+        (CellValue::Text(s), _) => s.clone(),
+        (CellValue::U64(v), ColumnKind::Hex { digits }) => {
+            format!("{:01$X}", v, digits as usize)
+        }
+        (CellValue::U64(v), ColumnKind::Dec) => format!("{v}"),
+        (CellValue::U64(v), _) => format!("{v}"),
+        (CellValue::Bool(b), ColumnKind::Bool) => {
+            if *b {
+                "yes".to_string()
+            } else {
+                "no".to_string()
+            }
+        }
+        (CellValue::Bool(b), _) => format!("{b}"),
     }
 }
 

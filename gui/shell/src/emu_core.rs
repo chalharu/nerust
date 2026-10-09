@@ -420,6 +420,19 @@ impl EmuCore {
         reply_rx.recv().map_err(|_| OperationError::NoReply)
     }
 
+    // SPIKE (iteration 8, DO NOT MERGE): system images through the
+    // emu thread. Pause-gated like disassembly.
+    pub fn debug_images(
+        &self,
+    ) -> Result<Result<Vec<nerust_core_traits::debugger::DebugImage>, DebuggerError>, OperationError>
+    {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerImages { reply: reply_tx })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
     /// Install a nominal-audio tap: every rendered frame clones its
     /// caller-buffer samples into `tap`. Headless capture only.
     pub fn tap_nominal_audio(

@@ -52,6 +52,8 @@ pub(crate) struct HostState {
     pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
     // SPIKE (iteration 6, DO NOT MERGE): debugger probe window.
     pub(crate) spike_debug_window: Option<crate::spike_debug_window::SpikeDebugWindowHandle>,
+    // SPIKE (iteration 8, DO NOT MERGE): F4 opener request flag.
+    spike_open_requested: bool,
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
@@ -88,6 +90,7 @@ impl HostState {
             shell: NativeShellState::new(),
             settings_window: None,
             spike_debug_window: None,
+            spike_open_requested: false,
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
@@ -180,6 +183,11 @@ impl HostState {
             .is_some_and(|h| h.window.id() == window_id)
     }
 
+    // SPIKE (iteration 8, DO NOT MERGE): consume the F4 opener flag.
+    pub(crate) fn take_spike_open_request(&mut self) -> bool {
+        std::mem::replace(&mut self.spike_open_requested, false)
+    }
+
     pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
         self.window
             .as_ref()
@@ -254,6 +262,17 @@ impl HostState {
 
     pub(crate) fn on_keyboard_input(&mut self, input: KeyEvent) {
         if self.settings_open {
+            return;
+        }
+        // SPIKE (iteration 8, DO NOT MERGE): hardcoded F4 opens the
+        // debugger probe. A settings-schema `ShortcutAction` addition
+        // is production surface and out of spike scope; F4 is free in
+        // the default bindings (F5-F8 slots, F11 fullscreen, Space
+        // pause). The runtime consumes `take_spike_open_request`.
+        if input.state == ElementState::Pressed
+            && input.physical_key == tao::keyboard::KeyCode::F4
+        {
+            self.spike_open_requested = true;
             return;
         }
         if let Some(pressed) = element_state_to_pressed(input.state)
@@ -489,7 +508,10 @@ impl HostState {
     // SPIKE (iteration 6, DO NOT MERGE): debugger probe lifecycle.
     // Pauses first (all three sections are pause-gated), then opens with
     // the first space selected. Space buttons re-read on selection.
-    fn open_spike_debug_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+    pub(crate) fn open_spike_debug_window(
+        &mut self,
+        event_loop: &EventLoopWindowTarget<UserEvent>,
+    ) {
         if self.spike_debug_window.is_some() {
             return;
         }
@@ -504,40 +526,50 @@ impl HostState {
             log::warn!("spike debugger: no spaces (no core)");
         }
         let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
-        let (regs, dump, disasm) = if spaces.is_empty() {
+        let (regs, dump_rows, disasm, panels, images) = if spaces.is_empty() {
             (
                 self.session.spike_registers_text(),
-                self.session
-                    .spike_read_text(nerust_core_traits::debugger::SpaceId(0), 0, 12),
+                Vec::new(),
                 self.session.spike_disasm_text(12),
+                self.session.spike_panels_text(),
+                Vec::new(),
             )
         } else {
             self.spike_debug_texts(spaces[0].0, mem_addr, None)
         };
         match crate::spike_debug_window::SpikeDebugWindowHandle::new(
-            regs, dump, disasm, spaces, mem_addr, event_loop,
+            regs, dump_rows, disasm, panels, images, spaces, mem_addr, event_loop,
         ) {
             Some(handle) => self.spike_debug_window = Some(handle),
             None => log::error!("failed to open spike debugger window"),
         }
     }
 
-    /// SPIKE: (regs, dump, disasm) triple for one space and address.
-    /// `dis_addr=None` follows the PC; `Some` pins disassembly there.
+    /// SPIKE: (regs, rows, disasm, panels, images) for one space and
+    /// address. `dis_addr=None` follows the PC; `Some` pins there.
+    #[allow(clippy::type_complexity)]
     fn spike_debug_texts(
         &self,
         space: nerust_core_traits::debugger::SpaceId,
         mem_addr: u32,
         dis_addr: Option<u32>,
-    ) -> (String, String, String) {
+    ) -> (
+        String,
+        Vec<(u32, String)>,
+        String,
+        String,
+        Vec<(String, u32, u32, Vec<u8>)>,
+    ) {
         let disasm = match dis_addr {
             Some(addr) => self.session.spike_disasm_at(addr, 12),
             None => self.session.spike_disasm_text(12),
         };
         (
             self.session.spike_registers_text(),
-            self.session.spike_read_text(space, mem_addr, 12),
+            self.session.spike_dump_rows(space, mem_addr),
             disasm,
+            self.session.spike_panels_text(),
+            self.session.spike_images_rgba().unwrap_or_default(),
         )
     }
 
@@ -566,7 +598,10 @@ impl HostState {
         let mut status = String::new();
         for request in &requests {
             let outcome = match request {
-                SpikeDebugRequest::Refresh | SpikeDebugRequest::MemNav => continue,
+                SpikeDebugRequest::Refresh
+                | SpikeDebugRequest::MemNav
+                | SpikeDebugRequest::EditSelect(_)
+                | SpikeDebugRequest::WriteConfirm => continue,
                 SpikeDebugRequest::Pause => self.session.spike_pause(),
                 SpikeDebugRequest::Resume => self.session.spike_resume(),
                 SpikeDebugRequest::TogglePause => {
@@ -580,6 +615,45 @@ impl HostState {
                 SpikeDebugRequest::StepInstr => self.session.spike_step_instruction(),
             };
             status = outcome;
+        }
+        // Row selection reads the old byte for the confirm row.
+        for request in &requests {
+            if let SpikeDebugRequest::EditSelect(addr) = request {
+                let handle = match self.spike_debug_window.as_ref() {
+                    Some(handle) => handle,
+                    None => return,
+                };
+                let space = handle.bridge.selected_space();
+                let old = space.and_then(|space| self.session.spike_read_byte(space, *addr));
+                let old_text = match old {
+                    Some(old) => format!("{old:02X}"),
+                    None => "??".to_string(),
+                };
+                handle.bridge.set_edit_selected(
+                    *addr,
+                    old,
+                    format!("selected {addr:08X} (was {old_text})"),
+                );
+            }
+        }
+        // Confirmed writes execute, then the single re-read below
+        // refreshes every pane including the edited row.
+        for request in &requests {
+            if *request == SpikeDebugRequest::WriteConfirm {
+                let handle = match self.spike_debug_window.as_ref() {
+                    Some(handle) => handle,
+                    None => return,
+                };
+                let space = handle.bridge.selected_space();
+                match (space, handle.bridge.take_pending_write()) {
+                    (Some(space), Some((addr, value))) => {
+                        status = self.session.spike_write_memory(space, addr, 1, value);
+                    }
+                    _ => {
+                        status = "nothing to write".to_string();
+                    }
+                }
+            }
         }
         let (space, mem_addr, dis_addr) = match self.spike_debug_window.as_ref() {
             Some(handle) => {
@@ -600,20 +674,18 @@ impl HostState {
                 "running".to_string()
             };
         }
-        let (regs, dump, disasm) = match space {
+        let (regs, dump_rows, disasm, panels, images) = match space {
             Some(space) => self.spike_debug_texts(space, mem_addr, dis_addr),
             None => (
                 self.session.spike_registers_text(),
-                self.session.spike_read_text(
-                    nerust_core_traits::debugger::SpaceId(0),
-                    mem_addr,
-                    12,
-                ),
+                Vec::new(),
                 self.session.spike_disasm_text(12),
+                self.session.spike_panels_text(),
+                Vec::new(),
             ),
         };
         if let Some(handle) = self.spike_debug_window.as_mut() {
-            handle.set_all(regs, dump, disasm, status);
+            handle.set_all(regs, dump_rows, disasm, panels, images, status);
         }
     }
 
