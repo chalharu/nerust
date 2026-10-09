@@ -712,4 +712,81 @@ impl SessionHandle {
             Err(e) => format!("thread failed: {e:?}"),
         }
     }
+
+    /// SPIKE: disassemble at an explicit address (free navigation).
+    pub fn spike_disasm_at(&self, addr: u32, count: u16) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        match core.disassemble(addr, count) {
+            Ok(Ok(rows)) if !rows.is_empty() => spike_format_disasm(&rows),
+            Ok(Ok(_)) => "(no disassembly)".to_string(),
+            Ok(Err(e)) => format!("disassemble failed: {e:?}"),
+            Err(e) => format!("thread failed: {e:?}"),
+        }
+    }
+
+    /// SPIKE: resume the paused core.
+    pub fn spike_resume(&self) -> String {
+        match self.emu_core.as_ref() {
+            Some(core) => match core.resume() {
+                Ok(()) => "resumed".to_string(),
+                Err(e) => format!("resume failed: {e:?}"),
+            },
+            None => "no core".to_string(),
+        }
+    }
+
+    /// SPIKE: step one frame (debug precondition: paused).
+    pub fn spike_step_frame(&self) -> String {
+        self.spike_step(nerust_core_traits::debugger::StepUnit::Frame)
+    }
+
+    /// SPIKE: step one instruction (debug precondition: paused).
+    pub fn spike_step_instruction(&self) -> String {
+        self.spike_step(nerust_core_traits::debugger::StepUnit::Instruction)
+    }
+
+    fn spike_step(&self, unit: nerust_core_traits::debugger::StepUnit) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        match core.step(unit) {
+            Ok(Ok(count)) => format!("stepped {count}"),
+            Ok(Err(e)) => format!("step failed: {e:?}"),
+            Err(e) => format!("thread failed: {e:?}"),
+        }
+    }
+}
+
+/// SPIKE: parse a hex address (`0010`, `0x0010`, `$0010`).
+pub fn spike_parse_hex_addr(raw: &str) -> Option<u32> {
+    let text = raw.trim();
+    let text = text
+        .strip_prefix("0x")
+        .or_else(|| text.strip_prefix("0X"))
+        .or_else(|| text.strip_prefix('$'))
+        .unwrap_or(text);
+    if text.is_empty() {
+        return None;
+    }
+    u32::from_str_radix(text, 16).ok()
+}
+
+// SPIKE (iteration 7, DO NOT MERGE): throwaway helper tests.
+#[cfg(test)]
+mod spike_nav_tests {
+    use super::spike_parse_hex_addr;
+
+    #[test]
+    fn spike_parse_hex_addr_accepts_plain_0x_and_dollar() {
+        assert_eq!(spike_parse_hex_addr("0010"), Some(0x10));
+        assert_eq!(spike_parse_hex_addr("0xC290"), Some(0xC290));
+        assert_eq!(spike_parse_hex_addr("$c290"), Some(0xC290));
+        assert_eq!(spike_parse_hex_addr("  8000  "), Some(0x8000));
+        assert_eq!(spike_parse_hex_addr(""), None);
+        assert_eq!(spike_parse_hex_addr("zz"), None);
+    }
 }

@@ -494,15 +494,16 @@ impl HostState {
             return;
         }
         let _ = self.session.spike_pause();
-        let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String)> = self
+        let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> = self
             .session
             .spike_memory_spaces()
             .into_iter()
-            .map(|s| (s.id, s.name.to_string()))
+            .map(|s| (s.id, s.name.to_string(), *s.range.start()))
             .collect();
         if spaces.is_empty() {
             log::warn!("spike debugger: no spaces (no core)");
         }
+        let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
         let (regs, dump, disasm) = if spaces.is_empty() {
             (
                 self.session.spike_registers_text(),
@@ -511,32 +512,32 @@ impl HostState {
                 self.session.spike_disasm_text(12),
             )
         } else {
-            self.spike_debug_texts(spaces[0].0)
+            self.spike_debug_texts(spaces[0].0, mem_addr, None)
         };
         match crate::spike_debug_window::SpikeDebugWindowHandle::new(
-            regs, dump, disasm, spaces, event_loop,
+            regs, dump, disasm, spaces, mem_addr, event_loop,
         ) {
             Some(handle) => self.spike_debug_window = Some(handle),
             None => log::error!("failed to open spike debugger window"),
         }
     }
 
-    /// SPIKE: (regs, dump, disasm) triple for one space.
+    /// SPIKE: (regs, dump, disasm) triple for one space and address.
+    /// `dis_addr=None` follows the PC; `Some` pins disassembly there.
     fn spike_debug_texts(
         &self,
         space: nerust_core_traits::debugger::SpaceId,
+        mem_addr: u32,
+        dis_addr: Option<u32>,
     ) -> (String, String, String) {
-        let start = self
-            .session
-            .spike_memory_spaces()
-            .into_iter()
-            .find(|s| s.id == space)
-            .map(|s| *s.range.start())
-            .unwrap_or(0);
+        let disasm = match dis_addr {
+            Some(addr) => self.session.spike_disasm_at(addr, 12),
+            None => self.session.spike_disasm_text(12),
+        };
         (
             self.session.spike_registers_text(),
-            self.session.spike_read_text(space, start, 12),
-            self.session.spike_disasm_text(12),
+            self.session.spike_read_text(space, mem_addr, 12),
+            disasm,
         )
     }
 
@@ -552,6 +553,7 @@ impl HostState {
     /// SPIKE: drain refresh requests and push fresh section texts back.
     pub(crate) fn drain_spike_debug_requests(&mut self) {
         use crate::spike_debug_window::SpikeDebugRequest;
+        use std::sync::atomic::Ordering;
         let requests = match self.spike_debug_window.as_ref() {
             Some(handle) => handle.take_requests(),
             None => return,
@@ -559,23 +561,59 @@ impl HostState {
         if requests.is_empty() {
             return;
         }
-        let space = match self
-            .spike_debug_window
-            .as_ref()
-            .and_then(|h| h.bridge.selected_space())
-        {
-            Some(space) => space,
-            None => return,
-        };
-        for request in requests {
-            match request {
-                SpikeDebugRequest::Refresh => {
-                    let (regs, dump, disasm) = self.spike_debug_texts(space);
-                    if let Some(handle) = self.spike_debug_window.as_mut() {
-                        handle.set_all(regs, dump, disasm);
+        // Execution requests run before the re-read so one drain both
+        // acts and refreshes. The status line reports the last outcome.
+        let mut status = String::new();
+        for request in &requests {
+            let outcome = match request {
+                SpikeDebugRequest::Refresh | SpikeDebugRequest::MemNav => continue,
+                SpikeDebugRequest::Pause => self.session.spike_pause(),
+                SpikeDebugRequest::Resume => self.session.spike_resume(),
+                SpikeDebugRequest::TogglePause => {
+                    if self.session.paused() {
+                        self.session.spike_resume()
+                    } else {
+                        self.session.spike_pause()
                     }
                 }
+                SpikeDebugRequest::StepFrame => self.session.spike_step_frame(),
+                SpikeDebugRequest::StepInstr => self.session.spike_step_instruction(),
+            };
+            status = outcome;
+        }
+        let (space, mem_addr, dis_addr) = match self.spike_debug_window.as_ref() {
+            Some(handle) => {
+                let mem_addr = *handle.bridge.mem_addr.lock().unwrap();
+                let dis_addr = if handle.bridge.follow_pc.load(Ordering::Acquire) {
+                    None
+                } else {
+                    Some(*handle.bridge.dis_addr.lock().unwrap())
+                };
+                (handle.bridge.selected_space(), mem_addr, dis_addr)
             }
+            None => return,
+        };
+        if status.is_empty() {
+            status = if self.session.paused() {
+                "paused".to_string()
+            } else {
+                "running".to_string()
+            };
+        }
+        let (regs, dump, disasm) = match space {
+            Some(space) => self.spike_debug_texts(space, mem_addr, dis_addr),
+            None => (
+                self.session.spike_registers_text(),
+                self.session.spike_read_text(
+                    nerust_core_traits::debugger::SpaceId(0),
+                    mem_addr,
+                    12,
+                ),
+                self.session.spike_disasm_text(12),
+            ),
+        };
+        if let Some(handle) = self.spike_debug_window.as_mut() {
+            handle.set_all(regs, dump, disasm, status);
         }
     }
 

@@ -1,7 +1,6 @@
-// SPIKE (iteration 6, DO NOT MERGE): debugger-window probe with three
-// generic sections (Registers, Memory with space selector, PC-centered
-// Disassembly). No per-system branches: spaces come from the static
-// table, the PC from the register list. Deleted with the branch.
+// SPIKE (iteration 7, DO NOT MERGE): debugger-window probe with execution
+// toolbar, memory navigation, space dropdown, and shortcut keys, stacked on
+// iteration 6. No per-system branches. Deleted with the branch.
 
 use std::sync::{
     Arc, Mutex,
@@ -35,6 +34,12 @@ use crate::{settings_window::convert_tao_window_event, tao_conversions::default_
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum SpikeDebugRequest {
     Refresh,
+    Pause,
+    Resume,
+    TogglePause,
+    StepFrame,
+    StepInstr,
+    MemNav,
 }
 
 /// Shared bridge between the iced program and the host drain point.
@@ -42,8 +47,14 @@ pub(crate) struct SpikeDebugBridge {
     pub(crate) regs: Mutex<String>,
     pub(crate) dump: Mutex<String>,
     pub(crate) disasm: Mutex<String>,
-    pub(crate) spaces: Vec<(SpaceId, String)>,
+    pub(crate) spaces: Vec<(SpaceId, String, u32)>,
     pub(crate) space_idx: Mutex<usize>,
+    pub(crate) mem_addr: Mutex<u32>,
+    pub(crate) mem_input: Mutex<String>,
+    pub(crate) dis_addr: Mutex<u32>,
+    pub(crate) dis_input: Mutex<String>,
+    pub(crate) follow_pc: AtomicBool,
+    pub(crate) status: Mutex<String>,
     pub(crate) outbox: Mutex<Vec<SpikeDebugRequest>>,
     pub(crate) view_invalidated: AtomicBool,
 }
@@ -53,7 +64,8 @@ impl SpikeDebugBridge {
         regs: String,
         dump: String,
         disasm: String,
-        spaces: Vec<(SpaceId, String)>,
+        spaces: Vec<(SpaceId, String, u32)>,
+        mem_addr: u32,
     ) -> Self {
         Self {
             regs: Mutex::new(regs),
@@ -61,6 +73,12 @@ impl SpikeDebugBridge {
             disasm: Mutex::new(disasm),
             spaces,
             space_idx: Mutex::new(0),
+            mem_addr: Mutex::new(mem_addr),
+            mem_input: Mutex::new(format!("{mem_addr:04X}")),
+            dis_addr: Mutex::new(0),
+            dis_input: Mutex::new(String::new()),
+            follow_pc: AtomicBool::new(true),
+            status: Mutex::new("paused".to_string()),
             outbox: Mutex::new(Vec::new()),
             view_invalidated: AtomicBool::new(false),
         }
@@ -68,25 +86,67 @@ impl SpikeDebugBridge {
 
     pub(crate) fn selected_space(&self) -> Option<SpaceId> {
         let idx = *self.space_idx.lock().unwrap();
-        self.spaces.get(idx).map(|(id, _)| *id)
+        self.spaces.get(idx).map(|(id, _, _)| *id)
     }
 
-    pub(crate) fn set_all(&self, regs: String, dump: String, disasm: String) {
+    pub(crate) fn selected_name(&self) -> Option<String> {
+        let idx = *self.space_idx.lock().unwrap();
+        self.spaces.get(idx).map(|(_, name, _)| name.clone())
+    }
+
+    fn step_space(&self, delta: i32) {
+        if self.spaces.is_empty() {
+            return;
+        }
+        let len = self.spaces.len() as i32;
+        let idx = *self.space_idx.lock().unwrap() as i32;
+        let next = (idx + delta).rem_euclid(len) as usize;
+        *self.space_idx.lock().unwrap() = next;
+        let start = self.spaces[next].2;
+        *self.mem_addr.lock().unwrap() = start;
+        *self.mem_input.lock().unwrap() = format!("{start:04X}");
+        self.push(SpikeDebugRequest::Refresh);
+    }
+
+    pub(crate) fn set_all(
+        &self,
+        regs: String,
+        dump: String,
+        disasm: String,
+        status: String,
+    ) {
         *self.regs.lock().unwrap() = regs;
         *self.dump.lock().unwrap() = dump;
         *self.disasm.lock().unwrap() = disasm;
+        *self.status.lock().unwrap() = status;
         self.view_invalidated.store(true, Ordering::Release);
     }
 
     pub(crate) fn take_requests(&self) -> Vec<SpikeDebugRequest> {
         std::mem::take(&mut *self.outbox.lock().unwrap())
     }
+
+    fn push(&self, request: SpikeDebugRequest) {
+        self.outbox.lock().unwrap().push(request);
+        self.view_invalidated.store(true, Ordering::Release);
+    }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) enum SpikeDebugMessage {
     RefreshPressed,
-    SpaceSelected(usize),
+    SpacePrev,
+    SpaceNext,
+    PausePressed,
+    ResumePressed,
+    StepFramePressed,
+    StepInstrPressed,
+    MemInputChanged(String),
+    MemGo,
+    MemPage(i32),
+    DisInputChanged(String),
+    DisGo,
+    FollowPcToggle,
 }
 
 pub(crate) struct SpikeDebugState {
@@ -130,28 +190,70 @@ impl Program for SpikeDebugProgram {
     }
 
     fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
+        use nerust_gui_shell::session::spike_parse_hex_addr;
+        let bridge = &state.bridge;
         match message {
-            SpikeDebugMessage::RefreshPressed => {
-                state
-                    .bridge
-                    .outbox
-                    .lock()
-                    .unwrap()
-                    .push(SpikeDebugRequest::Refresh);
+            SpikeDebugMessage::RefreshPressed => bridge.push(SpikeDebugRequest::Refresh),
+            SpikeDebugMessage::SpacePrev => bridge.step_space(-1),
+            SpikeDebugMessage::SpaceNext => bridge.step_space(1),
+            SpikeDebugMessage::PausePressed => bridge.push(SpikeDebugRequest::Pause),
+            SpikeDebugMessage::ResumePressed => bridge.push(SpikeDebugRequest::Resume),
+            SpikeDebugMessage::StepFramePressed => bridge.push(SpikeDebugRequest::StepFrame),
+            SpikeDebugMessage::StepInstrPressed => bridge.push(SpikeDebugRequest::StepInstr),
+            SpikeDebugMessage::MemInputChanged(text) => {
+                *bridge.mem_input.lock().unwrap() = text;
+                bridge.view_invalidated.store(true, Ordering::Release);
             }
-            SpikeDebugMessage::SpaceSelected(idx) => {
-                if idx < state.bridge.spaces.len() {
-                    *state.bridge.space_idx.lock().unwrap() = idx;
-                    state
-                        .bridge
-                        .outbox
-                        .lock()
-                        .unwrap()
-                        .push(SpikeDebugRequest::Refresh);
+            SpikeDebugMessage::MemGo => {
+                let input = bridge.mem_input.lock().unwrap().clone();
+                match spike_parse_hex_addr(&input) {
+                    Some(addr) => {
+                        *bridge.mem_addr.lock().unwrap() = addr;
+                        bridge.push(SpikeDebugRequest::MemNav);
+                    }
+                    None => {
+                        *bridge.status.lock().unwrap() =
+                            format!("parse failed: {input}");
+                        bridge.view_invalidated.store(true, Ordering::Release);
+                    }
                 }
             }
+            SpikeDebugMessage::MemPage(delta) => {
+                let addr = *bridge.mem_addr.lock().unwrap();
+                // Page = 12 rows of 16 bytes.
+                let next = if delta < 0 {
+                    addr.saturating_sub(192)
+                } else {
+                    addr.saturating_add(192)
+                };
+                *bridge.mem_addr.lock().unwrap() = next;
+                *bridge.mem_input.lock().unwrap() = format!("{next:04X}");
+                bridge.push(SpikeDebugRequest::MemNav);
+            }
+            SpikeDebugMessage::DisInputChanged(text) => {
+                *bridge.dis_input.lock().unwrap() = text;
+                bridge.view_invalidated.store(true, Ordering::Release);
+            }
+            SpikeDebugMessage::DisGo => {
+                let input = bridge.dis_input.lock().unwrap().clone();
+                match spike_parse_hex_addr(&input) {
+                    Some(addr) => {
+                        *bridge.dis_addr.lock().unwrap() = addr;
+                        bridge.follow_pc.store(false, Ordering::Release);
+                        bridge.push(SpikeDebugRequest::Refresh);
+                    }
+                    None => {
+                        *bridge.status.lock().unwrap() =
+                            format!("parse failed: {input}");
+                        bridge.view_invalidated.store(true, Ordering::Release);
+                    }
+                }
+            }
+            SpikeDebugMessage::FollowPcToggle => {
+                bridge.follow_pc.store(true, Ordering::Release);
+                bridge.push(SpikeDebugRequest::Refresh);
+            }
         }
-        state.bridge.view_invalidated.store(true, Ordering::Release);
         Task::none()
     }
 
@@ -160,31 +262,65 @@ impl Program for SpikeDebugProgram {
         state: &'a Self::State,
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
-        use iced::widget::{button, column, row, scrollable, text};
+        use iced::widget::{button, column, row, scrollable, text, text_input};
         let regs = state.bridge.regs.lock().unwrap().clone();
         let dump = state.bridge.dump.lock().unwrap().clone();
         let disasm = state.bridge.disasm.lock().unwrap().clone();
-        let selected = *state.bridge.space_idx.lock().unwrap();
-        let mut space_row = row![text("space")].spacing(8);
-        for (idx, (_, name)) in state.bridge.spaces.iter().enumerate() {
-            let label = if idx == selected {
-                format!("[{name}]")
+        let status = state.bridge.status.lock().unwrap().clone();
+        let mem_input = state.bridge.mem_input.lock().unwrap().clone();
+        let dis_input = state.bridge.dis_input.lock().unwrap().clone();
+        let follow_pc = state.bridge.follow_pc.load(Ordering::Acquire);
+        let toolbar = row![
+            button(text("Pause")).on_press(SpikeDebugMessage::PausePressed),
+            button(text("Resume")).on_press(SpikeDebugMessage::ResumePressed),
+            button(text("Step Frame")).on_press(SpikeDebugMessage::StepFramePressed),
+            button(text("Step Instr")).on_press(SpikeDebugMessage::StepInstrPressed),
+            text(status).size(14),
+        ]
+        .spacing(8);
+        let space_row = row![
+            text("space"),
+            button(text("Prev")).on_press(SpikeDebugMessage::SpacePrev),
+            text(state.bridge.selected_name().unwrap_or_default()).size(14),
+            button(text("Next")).on_press(SpikeDebugMessage::SpaceNext),
+        ]
+        .spacing(8);
+        let mem_nav = row![
+            button(text("Prev")).on_press(SpikeDebugMessage::MemPage(-1)),
+            button(text("Next")).on_press(SpikeDebugMessage::MemPage(1)),
+            text_input("addr hex", &mem_input)
+                .on_input(SpikeDebugMessage::MemInputChanged)
+                .on_submit(SpikeDebugMessage::MemGo)
+                .width(120),
+            button(text("Go")).on_press(SpikeDebugMessage::MemGo),
+        ]
+        .spacing(8);
+        let dis_nav = row![
+            text(if follow_pc {
+                "Disassembly (follow PC)"
             } else {
-                name.clone()
-            };
-            space_row =
-                space_row.push(button(text(label)).on_press(SpikeDebugMessage::SpaceSelected(idx)));
-        }
+                "Disassembly (fixed)"
+            }),
+            button(text("Follow PC")).on_press(SpikeDebugMessage::FollowPcToggle),
+            text_input("addr hex", &dis_input)
+                .on_input(SpikeDebugMessage::DisInputChanged)
+                .on_submit(SpikeDebugMessage::DisGo)
+                .width(120),
+            button(text("Go")).on_press(SpikeDebugMessage::DisGo),
+        ]
+        .spacing(8);
         column![
             text("SPIKE debugger probe (paused only)").size(18),
+            toolbar,
             text("Registers").size(16),
             text(regs).size(14).font(iced::Font::MONOSPACE),
             text("Memory").size(16),
             space_row,
+            mem_nav,
             scrollable(
                 column![
                     text(dump).size(14).font(iced::Font::MONOSPACE),
-                    text("Disassembly (PC-centered)").size(16),
+                    dis_nav,
                     text(disasm).size(14).font(iced::Font::MONOSPACE),
                 ]
                 .spacing(8),
@@ -194,6 +330,7 @@ impl Program for SpikeDebugProgram {
         ]
         .spacing(8)
         .padding(12)
+        .width(iced::Length::Fill)
         .into()
     }
 }
@@ -344,11 +481,14 @@ impl SpikeDebugWindowHandle {
         regs: String,
         dump: String,
         disasm: String,
-        spaces: Vec<(SpaceId, String)>,
+        spaces: Vec<(SpaceId, String, u32)>,
+        mem_addr: u32,
         event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
-        let bridge = Arc::new(SpikeDebugBridge::new(regs, dump, disasm, spaces));
+        let bridge = Arc::new(SpikeDebugBridge::new(
+            regs, dump, disasm, spaces, mem_addr,
+        ));
         let window = Arc::new(
             WindowBuilder::new()
                 .with_title("Debugger (spike)")
@@ -410,8 +550,14 @@ impl SpikeDebugWindowHandle {
         self.bridge.take_requests()
     }
 
-    pub(crate) fn set_all(&mut self, regs: String, dump: String, disasm: String) {
-        self.bridge.set_all(regs, dump, disasm);
+    pub(crate) fn set_all(
+        &mut self,
+        regs: String,
+        dump: String,
+        disasm: String,
+        status: String,
+    ) {
+        self.bridge.set_all(regs, dump, disasm, status);
         let bounds = Viewport::with_physical_size(
             Size::new(self.viewport_physical.0, self.viewport_physical.1),
             self.scale_factor,
@@ -423,6 +569,28 @@ impl SpikeDebugWindowHandle {
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
+        // SPIKE shortcuts on physical codes (F6 step frame, F7 step
+        // instruction, F9 pause/resume toggle). Physical codes avoid the
+        // logical-key mapping gap for named keys.
+        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            physical_key,
+            repeat: false,
+            ..
+        }) = &mapped
+        {
+            use iced::keyboard::key::{Code, Physical};
+            // NOTE: `physical_key` binds by reference through `&mapped`;
+            // dereference before matching or no arm ever hits.
+            let request = match *physical_key {
+                Physical::Code(Code::F6) => Some(SpikeDebugRequest::StepFrame),
+                Physical::Code(Code::F7) => Some(SpikeDebugRequest::StepInstr),
+                Physical::Code(Code::F9) => Some(SpikeDebugRequest::TogglePause),
+                _ => None,
+            };
+            if let Some(request) = request {
+                self.bridge.push(request);
+            }
+        }
         let mut messages = Vec::new();
         self.ui_state.ui_mut().update(
             &[mapped],
