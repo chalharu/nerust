@@ -1,8 +1,10 @@
-// SPIKE (iteration 8, DO NOT MERGE): integrated-window probe with PPU
-// panes (pattern images + register panels), in-window memory edit flow
-// (dump-row select -> value input -> confirm -> write), and the same
-// toolbar/nav as iteration 7. No per-system branches. Deleted with the
-// branch.
+// SPIKE (iteration 9, DO NOT MERGE): light-theme unification probe.
+// Same integrated window as iteration 8, restyled to the shared
+// control language (settings-window structure, M3/Fluent button
+// hierarchy): Light theme, secondary toolbar/nav, text-style dump
+// rows, primary Confirm, dropdown space selector, two-column
+// registers, settings spacing (12/16). No per-system branches.
+// Deleted with the branch.
 
 use std::sync::{
     Arc, Mutex,
@@ -118,21 +120,8 @@ impl SpikeDebugBridge {
         self.spaces.get(idx).map(|(_, name, _)| name.clone())
     }
 
-    fn step_space(&self, delta: i32) {
-        if self.spaces.is_empty() {
-            return;
-        }
-        let len = self.spaces.len() as i32;
-        let idx = *self.space_idx.lock().unwrap() as i32;
-        let next = (idx + delta).rem_euclid(len) as usize;
-        *self.space_idx.lock().unwrap() = next;
-        let start = self.spaces[next].2;
-        *self.mem_addr.lock().unwrap() = start;
-        *self.mem_input.lock().unwrap() = format!("{start:08X}");
-        // Selection belongs to the old space: clear it so the edit
-        // section never confirms against a stale address.
-        *self.edit.lock().unwrap() = SpikeEditState::default();
-        self.push(SpikeDebugRequest::Refresh);
+    pub(crate) fn space_names(&self) -> Vec<String> {
+        self.spaces.iter().map(|(_, name, _)| name.clone()).collect()
     }
 
     pub(crate) fn set_all(
@@ -150,6 +139,9 @@ impl SpikeDebugBridge {
         *self.panels.lock().unwrap() = panels;
         *self.images.lock().unwrap() = images;
         *self.status.lock().unwrap() = status;
+        // Pending writes die on any re-read: the confirm row must
+        // never offer a stale old value after step/refresh/space.
+        self.edit.lock().unwrap().pending = None;
         self.view_invalidated.store(true, Ordering::Release);
     }
 
@@ -183,8 +175,7 @@ impl SpikeDebugBridge {
 #[derive(Debug, Clone)]
 pub(crate) enum SpikeDebugMessage {
     RefreshPressed,
-    SpacePrev,
-    SpaceNext,
+    SpacePicked(String),
     PausePressed,
     ResumePressed,
     StepFramePressed,
@@ -221,6 +212,12 @@ impl Program for SpikeDebugProgram {
         "nerust_spike_debug"
     }
 
+    // SPIKE (iteration 9): Light instance theme so widget catalogs
+    // resolve light styles. `render` draws with the same theme.
+    fn theme(&self, _state: &Self::State, _window: iced::window::Id) -> Option<Self::Theme> {
+        Some(iced::Theme::Light)
+    }
+
     fn settings(&self) -> iced::Settings {
         iced::Settings {
             default_font: default_font(),
@@ -247,8 +244,17 @@ impl Program for SpikeDebugProgram {
         let bridge = &state.bridge;
         match message {
             SpikeDebugMessage::RefreshPressed => bridge.push(SpikeDebugRequest::Refresh),
-            SpikeDebugMessage::SpacePrev => bridge.step_space(-1),
-            SpikeDebugMessage::SpaceNext => bridge.step_space(1),
+            SpikeDebugMessage::SpacePicked(name) => {
+                let idx = bridge.spaces.iter().position(|(_, n, _)| *n == name);
+                if let Some(idx) = idx {
+                    *bridge.space_idx.lock().unwrap() = idx;
+                    let start = bridge.spaces[idx].2;
+                    *bridge.mem_addr.lock().unwrap() = start;
+                    *bridge.mem_input.lock().unwrap() = format!("{start:08X}");
+                    *bridge.edit.lock().unwrap() = SpikeEditState::default();
+                    bridge.push(SpikeDebugRequest::Refresh);
+                }
+            }
             SpikeDebugMessage::PausePressed => bridge.push(SpikeDebugRequest::Pause),
             SpikeDebugMessage::ResumePressed => bridge.push(SpikeDebugRequest::Resume),
             SpikeDebugMessage::StepFramePressed => bridge.push(SpikeDebugRequest::StepFrame),
@@ -345,7 +351,8 @@ impl Program for SpikeDebugProgram {
         state: &'a Self::State,
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
-        use iced::widget::{button, column, image, row, scrollable, text, text_input};
+        use iced::widget::{button, column, image, pick_list, row, scrollable, text, text_input};
+        use iced::Length;
         let regs = state.bridge.regs.lock().unwrap().clone();
         let dump_rows = state.bridge.dump_rows.lock().unwrap().clone();
         let disasm = state.bridge.disasm.lock().unwrap().clone();
@@ -356,35 +363,46 @@ impl Program for SpikeDebugProgram {
         let dis_input = state.bridge.dis_input.lock().unwrap().clone();
         let edit = state.bridge.edit.lock().unwrap().clone();
         let follow_pc = state.bridge.follow_pc.load(Ordering::Acquire);
+        // Button hierarchy (M3/Fluent): one primary per flow
+        // (Confirm), secondary for toolbar/nav, text for list rows
+        // and escape actions. Settings migrates to this language.
         let toolbar = row![
-            button(text("Pause")).on_press(SpikeDebugMessage::PausePressed),
-            button(text("Resume")).on_press(SpikeDebugMessage::ResumePressed),
-            button(text("Step Frame")).on_press(SpikeDebugMessage::StepFramePressed),
-            button(text("Step Instr")).on_press(SpikeDebugMessage::StepInstrPressed),
+            button(text("Pause")).style(button::secondary).on_press(SpikeDebugMessage::PausePressed),
+            button(text("Resume")).style(button::secondary).on_press(SpikeDebugMessage::ResumePressed),
+            button(text("Step Frame")).style(button::secondary).on_press(SpikeDebugMessage::StepFramePressed),
+            button(text("Step Instr")).style(button::secondary).on_press(SpikeDebugMessage::StepInstrPressed),
             text(status).size(14),
         ]
-        .spacing(8);
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+        // Settings form language: fixed label column + Fill control.
         let space_row = row![
-            text("space"),
-            button(text("Prev")).on_press(SpikeDebugMessage::SpacePrev),
-            text(state.bridge.selected_name().unwrap_or_default()).size(14),
-            button(text("Next")).on_press(SpikeDebugMessage::SpaceNext),
+            text("space").width(Length::Fixed(150.0)),
+            pick_list(
+                state.bridge.space_names(),
+                state.bridge.selected_name(),
+                SpikeDebugMessage::SpacePicked,
+            )
+            .width(Length::Fill),
         ]
-        .spacing(8);
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
         let mem_nav = row![
-            button(text("Prev")).on_press(SpikeDebugMessage::MemPage(-1)),
-            button(text("Next")).on_press(SpikeDebugMessage::MemPage(1)),
+            button(text("Prev")).style(button::secondary).on_press(SpikeDebugMessage::MemPage(-1)),
+            button(text("Next")).style(button::secondary).on_press(SpikeDebugMessage::MemPage(1)),
             text_input("addr hex", &mem_input)
                 .on_input(SpikeDebugMessage::MemInputChanged)
                 .on_submit(SpikeDebugMessage::MemGo)
                 .width(120),
-            button(text("Go")).on_press(SpikeDebugMessage::MemGo),
+            button(text("Go")).style(button::secondary).on_press(SpikeDebugMessage::MemGo),
         ]
-        .spacing(8);
-        // Dump rows are buttons OUTSIDE the scrollable (scrollable
-        // children never yield messages under manual UI driving).
-        // Row press selects the edit address; the host reads the old
-        // byte for the confirm row.
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+        // Dump rows are text-style buttons OUTSIDE the scrollable
+        // (scrollable children never yield messages under manual UI
+        // driving). Selected row inverts to secondary; the rest stay
+        // quiet so the list does not shout (M3: no high emphasis in
+        // lists). Compact padding keeps 12 rows affordable.
         let mut dump_col = column![].spacing(2);
         for (addr, line) in &dump_rows {
             let marker = if edit.selected == Some(*addr) {
@@ -392,39 +410,59 @@ impl Program for SpikeDebugProgram {
             } else {
                 "  "
             };
-            dump_col = dump_col.push(
-                button(text(format!("{marker}{line}")).size(14).font(iced::Font::MONOSPACE))
-                    .on_press(SpikeDebugMessage::RowSelected(*addr)),
-            );
+            let row_button = button(
+                text(format!("{marker}{line}")).size(14).font(iced::Font::MONOSPACE),
+            )
+            .padding([2, 8])
+            .on_press(SpikeDebugMessage::RowSelected(*addr));
+            dump_col = dump_col.push(if edit.selected == Some(*addr) {
+                row_button.style(button::secondary)
+            } else {
+                row_button.style(button::text)
+            });
         }
+        // Registers flow into two columns so tall lists (GBA: 17)
+        // cost half the height. Pure text split, no system branches.
+        let reg_lines: Vec<String> = regs.lines().map(str::to_string).collect();
+        let reg_mid = reg_lines.len().div_ceil(2);
+        let mut reg_left = column![].spacing(2);
+        for line in &reg_lines[..reg_mid.min(reg_lines.len())] {
+            reg_left = reg_left.push(text(line.clone()).size(14).font(iced::Font::MONOSPACE));
+        }
+        let mut reg_right = column![].spacing(2);
+        for line in &reg_lines[reg_mid.min(reg_lines.len())..] {
+            reg_right = reg_right.push(text(line.clone()).size(14).font(iced::Font::MONOSPACE));
+        }
+        let regs_view = row![reg_left, reg_right].spacing(16).width(Length::Fill);
         let old_text = match (edit.selected, edit.old) {
             (Some(addr), Some(old)) => format!("Edit {addr:08X} (was {old:02X})"),
             (Some(addr), None) => format!("Edit {addr:08X} (was ??)"),
             (None, _) => "Edit: select a dump row".to_string(),
         };
         let edit_row = row![
-            text(old_text).size(14),
+            text(old_text).size(14).width(Length::Fixed(300.0)),
             text_input("new hex byte", &edit.input)
                 .on_input(SpikeDebugMessage::EditInputChanged)
                 .on_submit(SpikeDebugMessage::EditWrite)
                 .width(120),
-            button(text("Write")).on_press(SpikeDebugMessage::EditWrite),
+            button(text("Write")).style(button::secondary).on_press(SpikeDebugMessage::EditWrite),
         ]
-        .spacing(8);
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
         let mut content = column![
             text("SPIKE debugger probe (paused only)").size(18),
             toolbar,
             text("Registers").size(16),
-            text(regs).size(14).font(iced::Font::MONOSPACE),
+            regs_view,
             text("Memory").size(16),
             space_row,
             mem_nav,
             dump_col,
             edit_row,
         ]
-        .spacing(8)
-        .padding(12)
-        .width(iced::Length::Fill);
+        .spacing(12)
+        .padding(16)
+        .width(Length::Fill);
         if let Some((addr, old, value)) = edit.pending {
             let old_text = match old {
                 Some(old) => format!("{old:02X}"),
@@ -433,27 +471,34 @@ impl Program for SpikeDebugProgram {
             content = content.push(
                 row![
                     text(format!("write {value:02X} to {addr:08X} (was {old_text})?")).size(14),
-                    button(text("Confirm")).on_press(SpikeDebugMessage::ConfirmWrite),
-                    button(text("Cancel")).on_press(SpikeDebugMessage::CancelWrite),
+                    button(text("Confirm")).style(button::primary).on_press(SpikeDebugMessage::ConfirmWrite),
+                    button(text("Cancel")).style(button::text).on_press(SpikeDebugMessage::CancelWrite),
                 ]
-                .spacing(8),
+                .spacing(12)
+                .align_y(iced::Alignment::Center),
             );
         }
+        let follow_button = button(text("Follow PC")).on_press(SpikeDebugMessage::FollowPcToggle);
         let dis_nav = row![
             text(if follow_pc {
                 "Disassembly (follow PC)"
             } else {
                 "Disassembly (fixed)"
             }),
-            button(text("Follow PC")).on_press(SpikeDebugMessage::FollowPcToggle),
+            if follow_pc {
+                follow_button.style(button::secondary)
+            } else {
+                follow_button.style(button::text)
+            },
             text_input("addr hex", &dis_input)
                 .on_input(SpikeDebugMessage::DisInputChanged)
                 .on_submit(SpikeDebugMessage::DisGo)
                 .width(120),
-            button(text("Go")).on_press(SpikeDebugMessage::DisGo),
+            button(text("Go")).style(button::secondary).on_press(SpikeDebugMessage::DisGo),
         ]
-        .spacing(8);
-        let mut ppu_col = column![text("PPU").size(16)].spacing(8);
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+        let mut ppu_col = column![text("PPU").size(16)].spacing(12);
         if images.is_empty() {
             ppu_col = ppu_col.push(text("(no images)").size(14));
         }
@@ -474,11 +519,13 @@ impl Program for SpikeDebugProgram {
                     text(disasm).size(14).font(iced::Font::MONOSPACE),
                     ppu_col,
                 ]
-                .spacing(8),
+                .spacing(12),
             )
             .height(iced::Length::Fill),
         );
-        content = content.push(button("Refresh").on_press(SpikeDebugMessage::RefreshPressed));
+        content = content.push(
+            button(text("Refresh")).style(button::secondary).on_press(SpikeDebugMessage::RefreshPressed),
+        );
         content.into()
     }
 }
@@ -643,7 +690,7 @@ impl SpikeDebugWindowHandle {
         let window = Arc::new(
             WindowBuilder::new()
                 .with_title("Debugger (spike)")
-                .with_inner_size(tao::dpi::LogicalSize::new(700.0, 1000.0))
+                .with_inner_size(tao::dpi::LogicalSize::new(700.0, 780.0))
                 .build(event_loop)
                 .map_err(|e| {
                     log::error!("failed to create spike debugger window: {e}");
@@ -769,7 +816,10 @@ impl SpikeDebugWindowHandle {
     }
 
     pub(crate) fn render(&mut self) {
-        let theme = iced::Theme::Dark;
+        // SPIKE (iteration 9): Light theme for OS light-theme
+        // nativeness. The production settings window migrates to the
+        // same shared language; this probe leads it.
+        let theme = iced::Theme::Light;
         let style = <iced::Theme as theme::Base>::base(&theme);
         let vp = Viewport::with_physical_size(
             Size::new(self.viewport_physical.0, self.viewport_physical.1),
@@ -793,7 +843,7 @@ impl SpikeDebugWindowHandle {
             },
             self.cursor,
         );
-        if let Err(e) = self.renderer.present(&vp, iced::Color::BLACK) {
+        if let Err(e) = self.renderer.present(&vp, style.background_color) {
             log::warn!("spike debugger render present failed: {e:?}");
         }
     }
