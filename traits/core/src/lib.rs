@@ -187,6 +187,14 @@ pub enum EmuCommand {
         tap: Arc<Mutex<Vec<u8>>>,
         reply: Sender<()>,
     },
+    // SPIKE (iteration 6, DO NOT MERGE): disassembly rows. Pause-gated
+    // like inspect: decoding while running cannot match a displayed PC.
+    // Deleted with the spike branch.
+    DebuggerDisassemble {
+        addr: u32,
+        count: u16,
+        reply: Sender<Result<Vec<debugger::DisasmLine>, debugger::DebuggerError>>,
+    },
     /// Memory-space table snapshot. Static metadata: answered without
     /// pause gating; empty when idle or when the core exposes no
     /// debugger. Lets generic drivers resolve stable space keys

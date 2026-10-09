@@ -196,6 +196,33 @@ pub trait Debugger {
     fn panels(&self) -> Vec<DebugPanel> {
         Vec::new()
     }
+
+    // SPIKE (iteration 6, DO NOT MERGE): disassembly rows. Default is
+    // empty; cores with a disassembler override. Deleted with the spike.
+    fn disassemble(&self, _addr: u32, _count: u16) -> Vec<DisasmLine> {
+        Vec::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Disassembly — one decoded instruction row (SPIKE, iteration 6)
+// ---------------------------------------------------------------------------
+
+/// SPIKE (iteration 6, DO NOT MERGE): a single disassembled instruction.
+/// `bytes` holds up to 3 instruction bytes, `len` the used prefix.
+/// Deleted with the spike branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisasmLine {
+    /// Instruction address.
+    pub addr: u32,
+    /// Raw instruction bytes (first `len` entries valid).
+    pub bytes: [u8; 3],
+    /// Instruction length in bytes (1-3).
+    pub len: u8,
+    /// Human-readable text, e.g. `JMP $C5F5`.
+    pub text: String,
+    /// True when this row holds the current PC.
+    pub is_pc: bool,
 }
 
 // ---------------------------------------------------------------------------

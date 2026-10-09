@@ -432,7 +432,8 @@ mod tests {
         .expect("console");
         {
             let debugger = loaded.debugger().expect("debugger");
-            assert_eq!(debugger.spaces().len(), 3);
+            // SPIKE (iteration 6): PRG ROM space added, table has 4 entries.
+            assert_eq!(debugger.spaces().len(), 4);
             assert!(
                 debugger
                     .read(crate::debugger::SPACE_WORK_RAM, 0, 1)

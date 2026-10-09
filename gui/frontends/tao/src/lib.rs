@@ -1,6 +1,7 @@
 mod app_menu;
 pub(crate) mod settings;
 pub mod settings_window;
+pub(crate) mod spike_debug_window;
 mod tao_conversions;
 pub mod window;
 

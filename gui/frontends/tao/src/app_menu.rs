@@ -8,6 +8,8 @@ pub(crate) enum MenuCommand {
     Open,
     Settings,
     Session(SessionCommand),
+    // SPIKE (iteration 6, DO NOT MERGE): env-gated debugger window.
+    SpikeDebug,
     Quit,
 }
 
@@ -74,6 +76,11 @@ pub(crate) mod imp {
         load_slot_menu: Submenu,
         delete_slot_menu: Submenu,
         dynamic_commands: Arc<RwLock<Vec<(MenuId, SessionCommand)>>>,
+        // SPIKE: present only when NERUST_SPIKE_DEBUG is set.
+        #[allow(dead_code)]
+        spike_debug: Option<MenuItem>,
+        #[allow(dead_code)]
+        spike_debug_id: Option<MenuId>,
     }
 
     impl AppMenu {
@@ -143,6 +150,17 @@ pub(crate) mod imp {
             emulation_menu.append(&reset).unwrap();
             emulation_menu.append(&state_menu).unwrap();
 
+            // SPIKE (iteration 6, DO NOT MERGE): env-gated throwaway entry.
+            let (spike_debug, spike_debug_id) = if std::env::var("NERUST_SPIKE_DEBUG").is_ok() {
+                let item = MenuItem::new("Debugger (spike)", true, None);
+                let id = item.id().clone();
+                emulation_menu.append(&item).unwrap();
+                (Some(item), Some(id))
+            } else {
+                (None, None)
+            };
+            let spike_debug_id_cmp = spike_debug_id.clone();
+
             menu_bar.append(&file_menu).unwrap();
             menu_bar.append(&emulation_menu).unwrap();
 
@@ -165,6 +183,11 @@ pub(crate) mod imp {
                     Some(MenuCommand::Session(SessionCommand::SaveActiveSlotOrNew))
                 } else if event.id() == &load_active_id {
                     Some(MenuCommand::Session(SessionCommand::LoadActiveSlot))
+                } else if spike_debug_id_cmp
+                    .as_ref()
+                    .is_some_and(|id| event.id() == id)
+                {
+                    Some(MenuCommand::SpikeDebug)
                 } else {
                     dynamic_commands_handler
                         .read()
@@ -198,6 +221,8 @@ pub(crate) mod imp {
                 load_slot_menu,
                 delete_slot_menu,
                 dynamic_commands,
+                spike_debug,
+                spike_debug_id,
             }
         }
 

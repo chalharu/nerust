@@ -571,3 +571,145 @@ pub(crate) mod test_util {
 
 #[cfg(test)]
 mod tests;
+
+// ---------------------------------------------------------------------------
+// SPIKE (iteration 6, DO NOT MERGE): debugger-window probes and shared
+// text formatters. Deleted with the spike branch.
+// ---------------------------------------------------------------------------
+
+/// SPIKE: format one inspect dump as plain hex text.
+pub fn spike_format_dump(dump: &nerust_core_traits::debugger::MemoryDump) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    for row in dump.rows.iter() {
+        let _ = write!(out, "{:04X}:", row.addr);
+        for i in 0..row.valid {
+            let _ = write!(out, " {:02X}", row.bytes[i as usize]);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// SPIKE: format disassembly rows; the PC row carries a `>` marker.
+pub fn spike_format_disasm(rows: &[nerust_core_traits::debugger::DisasmLine]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    for row in rows {
+        let mark = if row.is_pc { '>' } else { ' ' };
+        let _ = write!(out, "{mark}{:04X}: ", row.addr);
+        for i in 0..row.len {
+            let _ = write!(out, "{:02X} ", row.bytes[i as usize]);
+        }
+        for _ in row.len..3 {
+            out.push_str("   ");
+        }
+        out.push_str(&row.text);
+        out.push('\n');
+    }
+    out
+}
+
+impl SessionHandle {
+    /// SPIKE: pause the running core (debug precondition).
+    pub fn spike_pause(&self) -> String {
+        match self.emu_core.as_ref() {
+            Some(core) => match core.pause() {
+                Ok(()) => "paused".to_string(),
+                Err(e) => format!("pause failed: {e:?}"),
+            },
+            None => "no core".to_string(),
+        }
+    }
+
+    /// SPIKE: list memory spaces generically (no per-system naming).
+    pub fn spike_memory_spaces(&self) -> Vec<nerust_core_traits::debugger::SpaceInfo> {
+        match self.emu_core.as_ref() {
+            Some(core) => core.memory_spaces().unwrap_or_default(),
+            None => Vec::new(),
+        }
+    }
+
+    /// SPIKE: read `rows` of `space` at `addr` as shared-format text.
+    pub fn spike_read_text(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+        addr: u32,
+        rows: u16,
+    ) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        let req = nerust_core_traits::debugger::InspectRequest {
+            space: Some(space),
+            addr: Some(addr),
+            rows,
+        };
+        match core.inspect(req) {
+            Ok(Ok(result)) => spike_format_dump(&result.dump),
+            Ok(Err(e)) => format!("inspect failed: {e:?}"),
+            Err(e) => format!("thread failed: {e:?}"),
+        }
+    }
+
+    /// SPIKE: registers as `name: $xxxx` lines in kernel order.
+    pub fn spike_registers_text(&self) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        let req = nerust_core_traits::debugger::InspectRequest {
+            space: None,
+            addr: None,
+            rows: 0,
+        };
+        match core.inspect(req) {
+            Ok(Ok(result)) => {
+                use std::fmt::Write as _;
+                let mut out = String::new();
+                for (name, value) in result.registers.iter() {
+                    let _ = writeln!(out, "{name}: ${value:04X}");
+                }
+                out
+            }
+            Ok(Err(e)) => format!("inspect failed: {e:?}"),
+            Err(e) => format!("thread failed: {e:?}"),
+        }
+    }
+
+    /// SPIKE: current PC, if the register list carries one.
+    pub fn spike_pc(&self) -> Option<u32> {
+        let core = self.emu_core.as_ref()?;
+        let req = nerust_core_traits::debugger::InspectRequest {
+            space: None,
+            addr: None,
+            rows: 0,
+        };
+        let result = core.inspect(req).ok()?.ok()?;
+        result
+            .registers
+            .iter()
+            .find(|(name, _)| *name == "pc")
+            .map(|(_, v)| *v as u32)
+    }
+
+    /// SPIKE: disassembly window text, PC-centered when known.
+    /// No system-specific fallback address: without a PC there is no
+    /// generic anchor, so the window says so.
+    pub fn spike_disasm_text(&self, count: u16) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        let Some(addr) = self.spike_pc() else {
+            return "(no PC register)".to_string();
+        };
+        match core.disassemble(addr, count) {
+            Ok(Ok(rows)) if !rows.is_empty() => spike_format_disasm(&rows),
+            Ok(Ok(_)) => "(no disassembly)".to_string(),
+            Ok(Err(e)) => format!("disassemble failed: {e:?}"),
+            Err(e) => format!("thread failed: {e:?}"),
+        }
+    }
+}

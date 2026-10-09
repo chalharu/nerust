@@ -23,6 +23,8 @@ mod ppu_memory_access;
 pub(crate) mod rom_format;
 pub mod rom_identity;
 pub mod rom_parse;
+// SPIKE (iteration 6, DO NOT MERGE).
+pub(crate) mod spike_disasm6502;
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core_traits::audio::{AudioBackend, StereoSample};
@@ -269,6 +271,16 @@ impl Core {
         } else {
             None
         }
+    }
+
+    // SPIKE (iteration 6, DO NOT MERGE): PRG ROM byte for disassembly.
+    // Same mask rule as RAM peeks: floating reads are open (None).
+    pub(crate) fn peek_prg_byte(&self, address: usize) -> Option<u8> {
+        if !(0x8000..=0xFFFF).contains(&address) {
+            return None;
+        }
+        let read = self.cartridge.read(address);
+        (read.mask == 0xFF).then_some(read.data)
     }
 
     pub fn inspect_cartridge(

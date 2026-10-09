@@ -50,6 +50,8 @@ pub(crate) struct HostState {
     app_menu: AppMenu,
     shell: NativeShellState,
     pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
+    // SPIKE (iteration 6, DO NOT MERGE): debugger probe window.
+    pub(crate) spike_debug_window: Option<crate::spike_debug_window::SpikeDebugWindowHandle>,
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
@@ -85,6 +87,7 @@ impl HostState {
             app_menu,
             shell: NativeShellState::new(),
             settings_window: None,
+            spike_debug_window: None,
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
@@ -170,6 +173,13 @@ impl HostState {
             .is_some_and(|h| h.window.id() == window_id)
     }
 
+    // SPIKE (iteration 6, DO NOT MERGE).
+    pub(crate) fn is_spike_debug_window(&self, window_id: WindowId) -> bool {
+        self.spike_debug_window
+            .as_ref()
+            .is_some_and(|h| h.window.id() == window_id)
+    }
+
     pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
         self.window
             .as_ref()
@@ -217,6 +227,13 @@ impl HostState {
             }
             MenuCommand::Settings => {
                 self.open_settings_window(event_loop);
+                HostAction::None
+            }
+            // SPIKE (iteration 6, DO NOT MERGE).
+            MenuCommand::SpikeDebug => {
+                self.open_spike_debug_window(event_loop);
+                self.sync_menu_state();
+                self.refresh_window_title();
                 HostAction::None
             }
             MenuCommand::Session(command) => {
@@ -464,6 +481,99 @@ impl HostState {
                     self.resume();
                 } else {
                     self.sync_menu_state();
+                }
+            }
+        }
+    }
+
+    // SPIKE (iteration 6, DO NOT MERGE): debugger probe lifecycle.
+    // Pauses first (all three sections are pause-gated), then opens with
+    // the first space selected. Space buttons re-read on selection.
+    fn open_spike_debug_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+        if self.spike_debug_window.is_some() {
+            return;
+        }
+        let _ = self.session.spike_pause();
+        let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String)> = self
+            .session
+            .spike_memory_spaces()
+            .into_iter()
+            .map(|s| (s.id, s.name.to_string()))
+            .collect();
+        if spaces.is_empty() {
+            log::warn!("spike debugger: no spaces (no core)");
+        }
+        let (regs, dump, disasm) = if spaces.is_empty() {
+            (
+                self.session.spike_registers_text(),
+                self.session
+                    .spike_read_text(nerust_core_traits::debugger::SpaceId(0), 0, 12),
+                self.session.spike_disasm_text(12),
+            )
+        } else {
+            self.spike_debug_texts(spaces[0].0)
+        };
+        match crate::spike_debug_window::SpikeDebugWindowHandle::new(
+            regs, dump, disasm, spaces, event_loop,
+        ) {
+            Some(handle) => self.spike_debug_window = Some(handle),
+            None => log::error!("failed to open spike debugger window"),
+        }
+    }
+
+    /// SPIKE: (regs, dump, disasm) triple for one space.
+    fn spike_debug_texts(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+    ) -> (String, String, String) {
+        let start = self
+            .session
+            .spike_memory_spaces()
+            .into_iter()
+            .find(|s| s.id == space)
+            .map(|s| *s.range.start())
+            .unwrap_or(0);
+        (
+            self.session.spike_registers_text(),
+            self.session.spike_read_text(space, start, 12),
+            self.session.spike_disasm_text(12),
+        )
+    }
+
+    // SPIKE (iteration 6, DO NOT MERGE): auto-open when env-gated and a
+    // ROM is already loaded (Xvfb capture needs no driving).
+    pub(crate) fn auto_open_spike_debug(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+        if std::env::var("NERUST_SPIKE_DEBUG").is_err() || !self.session.loaded() {
+            return;
+        }
+        self.open_spike_debug_window(event_loop);
+    }
+
+    /// SPIKE: drain refresh requests and push fresh section texts back.
+    pub(crate) fn drain_spike_debug_requests(&mut self) {
+        use crate::spike_debug_window::SpikeDebugRequest;
+        let requests = match self.spike_debug_window.as_ref() {
+            Some(handle) => handle.take_requests(),
+            None => return,
+        };
+        if requests.is_empty() {
+            return;
+        }
+        let space = match self
+            .spike_debug_window
+            .as_ref()
+            .and_then(|h| h.bridge.selected_space())
+        {
+            Some(space) => space,
+            None => return,
+        };
+        for request in requests {
+            match request {
+                SpikeDebugRequest::Refresh => {
+                    let (regs, dump, disasm) = self.spike_debug_texts(space);
+                    if let Some(handle) = self.spike_debug_window.as_mut() {
+                        handle.set_all(regs, dump, disasm);
+                    }
                 }
             }
         }

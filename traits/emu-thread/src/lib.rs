@@ -274,6 +274,20 @@ impl EmuThread {
                             // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = reply.send(result);
                         }
+                        // SPIKE (iteration 6, DO NOT MERGE).
+                        EmuCommand::DebuggerDisassemble { addr, count, reply } => {
+                            let result = match core.debugger() {
+                                Some(debugger) => {
+                                    if core.paused() {
+                                        Ok(debugger.disassemble(addr, count))
+                                    } else {
+                                        Err(DebuggerError::Unsupported)
+                                    }
+                                }
+                                None => Err(DebuggerError::Unsupported),
+                            };
+                            let _ = reply.send(result);
+                        }
                         EmuCommand::TapNominalAudio { tap, reply } => {
                             nominal_tap = Some(tap);
                             let _ = reply.send(());
