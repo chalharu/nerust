@@ -199,6 +199,17 @@ impl WindowRuntime {
                     handle.handle_tao_event(event);
                 }
                 self.host.drain_spike_debug_requests();
+                // SPIKE (iteration 10): push fresh pixels to the PPU
+                // separate window when the shared bridge changed.
+                let ppu_dirty = self
+                    .host
+                    .spike_debug_window
+                    .as_ref()
+                    .is_some_and(|handle| handle.take_ppu_dirty());
+                if ppu_dirty && let Some(ppu) = self.host.spike_ppu_window.as_mut() {
+                    ppu.sync_from_bridge();
+                    ppu.render();
+                }
                 let closed = match self.host.spike_debug_window.as_mut() {
                     Some(handle) => {
                         handle.render();
@@ -216,6 +227,48 @@ impl WindowRuntime {
             Event::RedrawRequested(window_id) if self.host.is_spike_debug_window(window_id) => {
                 self.host.drain_spike_debug_requests();
                 if let Some(handle) = self.host.spike_debug_window.as_mut() {
+                    handle.render();
+                }
+            }
+            // SPIKE (iteration 10, DO NOT MERGE): PPU separate-window
+            // routing. Data arrives via the main window drain; hover
+            // messages rebuild from these events directly.
+            Event::WindowEvent {
+                event, window_id, ..
+            } if self.host.is_spike_ppu_window(window_id) => {
+                {
+                    let Some(handle) = self.host.spike_ppu_window.as_mut() else {
+                        return;
+                    };
+                    match &event {
+                        WindowEvent::Resized(size) => handle.resize(size.width, size.height),
+                        WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                            handle.set_scale_factor(*scale_factor as f32);
+                        }
+                        WindowEvent::ModifiersChanged(state) => handle.set_modifiers(*state),
+                        WindowEvent::CloseRequested => {
+                            handle
+                                .should_close
+                                .store(true, std::sync::atomic::Ordering::Release);
+                        }
+                        _ => {}
+                    }
+                    handle.handle_tao_event(event);
+                    handle.render();
+                }
+                let closed = match self.host.spike_ppu_window.as_mut() {
+                    Some(handle) => handle
+                        .should_close
+                        .load(std::sync::atomic::Ordering::Acquire),
+                    None => false,
+                };
+                if closed {
+                    self.host.spike_ppu_window.take();
+                    self.host.request_redraw();
+                }
+            }
+            Event::RedrawRequested(window_id) if self.host.is_spike_ppu_window(window_id) => {
+                if let Some(handle) = self.host.spike_ppu_window.as_mut() {
                     handle.render();
                 }
             }

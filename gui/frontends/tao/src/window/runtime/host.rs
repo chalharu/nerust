@@ -52,6 +52,7 @@ pub(crate) struct HostState {
     pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
     // SPIKE (iteration 6, DO NOT MERGE): debugger probe window.
     pub(crate) spike_debug_window: Option<crate::spike_debug_window::SpikeDebugWindowHandle>,
+    pub(crate) spike_ppu_window: Option<crate::spike_ppu_window::SpikePpuWindowHandle>,
     // SPIKE (iteration 8, DO NOT MERGE): F4 opener request flag.
     spike_open_requested: bool,
     settings_open: bool,
@@ -90,6 +91,7 @@ impl HostState {
             shell: NativeShellState::new(),
             settings_window: None,
             spike_debug_window: None,
+            spike_ppu_window: None,
             spike_open_requested: false,
             settings_open: false,
             resume_after_settings: false,
@@ -183,6 +185,13 @@ impl HostState {
             .is_some_and(|h| h.window.id() == window_id)
     }
 
+    // SPIKE (iteration 10, DO NOT MERGE): PPU separate-window routing.
+    pub(crate) fn is_spike_ppu_window(&self, window_id: WindowId) -> bool {
+        self.spike_ppu_window
+            .as_ref()
+            .is_some_and(|h| h.window.id() == window_id)
+    }
+
     // SPIKE (iteration 8, DO NOT MERGE): consume the F4 opener flag.
     pub(crate) fn take_spike_open_request(&mut self) -> bool {
         std::mem::replace(&mut self.spike_open_requested, false)
@@ -269,8 +278,7 @@ impl HostState {
         // is production surface and out of spike scope; F4 is free in
         // the default bindings (F5-F8 slots, F11 fullscreen, Space
         // pause). The runtime consumes `take_spike_open_request`.
-        if input.state == ElementState::Pressed
-            && input.physical_key == tao::keyboard::KeyCode::F4
+        if input.state == ElementState::Pressed && input.physical_key == tao::keyboard::KeyCode::F4
         {
             self.spike_open_requested = true;
             return;
@@ -508,45 +516,64 @@ impl HostState {
     // SPIKE (iteration 6, DO NOT MERGE): debugger probe lifecycle.
     // Pauses first (all three sections are pause-gated), then opens with
     // the first space selected. Space buttons re-read on selection.
+    // SPIKE (iteration 10): also opens the PPU separate window sharing
+    // the same bridge; F4 re-opens whichever side was closed.
     pub(crate) fn open_spike_debug_window(
         &mut self,
         event_loop: &EventLoopWindowTarget<UserEvent>,
     ) {
-        if self.spike_debug_window.is_some() {
-            return;
+        if self.spike_debug_window.is_none() {
+            let _ = self.session.spike_pause();
+            let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> = self
+                .session
+                .spike_memory_spaces()
+                .into_iter()
+                .map(|s| (s.id, s.name.to_string(), *s.range.start()))
+                .collect();
+            if spaces.is_empty() {
+                log::warn!("spike debugger: no spaces (no core)");
+            }
+            let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
+            let (regs, dump_rows, disasm_lines, panels, images) = if spaces.is_empty() {
+                (
+                    self.session.spike_registers_text(),
+                    Vec::new(),
+                    Vec::new(),
+                    self.session.spike_panels_text(),
+                    Vec::new(),
+                )
+            } else {
+                self.spike_debug_texts(spaces[0].0, mem_addr, None)
+            };
+            match crate::spike_debug_window::SpikeDebugWindowHandle::new(
+                regs,
+                dump_rows,
+                disasm_lines,
+                panels,
+                images,
+                spaces,
+                mem_addr,
+                event_loop,
+            ) {
+                Some(handle) => self.spike_debug_window = Some(handle),
+                None => log::error!("failed to open spike debugger window"),
+            }
         }
-        let _ = self.session.spike_pause();
-        let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> = self
-            .session
-            .spike_memory_spaces()
-            .into_iter()
-            .map(|s| (s.id, s.name.to_string(), *s.range.start()))
-            .collect();
-        if spaces.is_empty() {
-            log::warn!("spike debugger: no spaces (no core)");
-        }
-        let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
-        let (regs, dump_rows, disasm, panels, images) = if spaces.is_empty() {
-            (
-                self.session.spike_registers_text(),
-                Vec::new(),
-                self.session.spike_disasm_text(12),
-                self.session.spike_panels_text(),
-                Vec::new(),
-            )
-        } else {
-            self.spike_debug_texts(spaces[0].0, mem_addr, None)
-        };
-        match crate::spike_debug_window::SpikeDebugWindowHandle::new(
-            regs, dump_rows, disasm, panels, images, spaces, mem_addr, event_loop,
-        ) {
-            Some(handle) => self.spike_debug_window = Some(handle),
-            None => log::error!("failed to open spike debugger window"),
+        if self.spike_ppu_window.is_none()
+            && let Some(main) = self.spike_debug_window.as_ref()
+        {
+            match crate::spike_ppu_window::SpikePpuWindowHandle::new(
+                Arc::clone(&main.bridge),
+                event_loop,
+            ) {
+                Some(handle) => self.spike_ppu_window = Some(handle),
+                None => log::error!("failed to open spike PPU window"),
+            }
         }
     }
 
-    /// SPIKE: (regs, rows, disasm, panels, images) for one space and
-    /// address. `dis_addr=None` follows the PC; `Some` pins there.
+    /// SPIKE: (regs, rows, disasm lines, panels, images) for one space
+    /// and address. `dis_addr=None` follows the PC; `Some` pins there.
     #[allow(clippy::type_complexity)]
     fn spike_debug_texts(
         &self,
@@ -556,18 +583,14 @@ impl HostState {
     ) -> (
         String,
         Vec<(u32, String)>,
-        String,
+        Vec<nerust_core_traits::debugger::DisasmLine>,
         String,
         Vec<(String, u32, u32, Vec<u8>)>,
     ) {
-        let disasm = match dis_addr {
-            Some(addr) => self.session.spike_disasm_at(addr, 12),
-            None => self.session.spike_disasm_text(12),
-        };
         (
             self.session.spike_registers_text(),
             self.session.spike_dump_rows(space, mem_addr),
-            disasm,
+            self.session.spike_disasm_lines(dis_addr, 8),
             self.session.spike_panels_text(),
             self.session.spike_images_rgba().unwrap_or_default(),
         )
@@ -655,6 +678,16 @@ impl HostState {
                 }
             }
         }
+        // SPIKE (iteration 10): frozen values re-apply on every drain
+        // (FCEUX freeze style). Silent by design; the rows show it.
+        if let Some(handle) = self.spike_debug_window.as_ref()
+            && let Some((addr, value)) = *handle.bridge.freeze.lock().unwrap()
+            && let Some(space) = handle.bridge.selected_space()
+        {
+            let _ = self
+                .session
+                .spike_write_memory(space, addr, 1, u64::from(value));
+        }
         let (space, mem_addr, dis_addr) = match self.spike_debug_window.as_ref() {
             Some(handle) => {
                 let mem_addr = *handle.bridge.mem_addr.lock().unwrap();
@@ -674,18 +707,51 @@ impl HostState {
                 "running".to_string()
             };
         }
-        let (regs, dump_rows, disasm, panels, images) = match space {
+        let (regs, dump_rows, disasm_lines, panels, images) = match space {
             Some(space) => self.spike_debug_texts(space, mem_addr, dis_addr),
             None => (
                 self.session.spike_registers_text(),
                 Vec::new(),
-                self.session.spike_disasm_text(12),
+                self.session.spike_disasm_lines(None, 8),
                 self.session.spike_panels_text(),
                 Vec::new(),
             ),
         };
+        // SPIKE (iteration 10): watch value fills here (read-only live
+        // value, BGB style); changed rows diff against the previous
+        // re-read for `*` marks (Mesen style, row-level).
+        let (watch_value, diff) = match self.spike_debug_window.as_ref() {
+            Some(handle) => {
+                let watch_value = handle
+                    .bridge
+                    .watch
+                    .lock()
+                    .unwrap()
+                    .and_then(|addr| space.and_then(|s| self.session.spike_read_byte(s, addr)));
+                let prev = handle.bridge.dump_rows.lock().unwrap().clone();
+                let diff: Vec<u32> = dump_rows
+                    .iter()
+                    .filter(|(addr, text)| {
+                        prev.iter()
+                            .any(|(prev_addr, prev_text)| prev_addr == addr && prev_text != text)
+                    })
+                    .map(|(addr, _)| *addr)
+                    .collect();
+                (watch_value, diff)
+            }
+            None => (None, Vec::new()),
+        };
         if let Some(handle) = self.spike_debug_window.as_mut() {
-            handle.set_all(regs, dump_rows, disasm, panels, images, status);
+            handle.set_all(
+                regs,
+                dump_rows,
+                disasm_lines,
+                panels,
+                images,
+                status,
+                watch_value,
+                diff,
+            );
         }
     }
 

@@ -593,20 +593,28 @@ pub fn spike_format_dump(dump: &nerust_core_traits::debugger::MemoryDump) -> Str
 
 /// SPIKE: format disassembly rows; the PC row carries a `>` marker.
 pub fn spike_format_disasm(rows: &[nerust_core_traits::debugger::DisasmLine]) -> String {
-    use std::fmt::Write as _;
     let mut out = String::new();
     for row in rows {
-        let mark = if row.is_pc { '>' } else { ' ' };
-        let _ = write!(out, "{mark}{:08X}: ", row.addr);
-        for i in 0..row.len {
-            let _ = write!(out, "{:02X} ", row.bytes[i as usize]);
-        }
-        for _ in row.len..3 {
-            out.push_str("   ");
-        }
-        out.push_str(&row.text);
+        out.push_str(&spike_format_disasm_line(row));
         out.push('\n');
     }
+    out
+}
+
+/// SPIKE (iteration 10, DO NOT MERGE): one disassembly row without the
+/// trailing newline, for per-line buttons. Deleted with the spike branch.
+pub fn spike_format_disasm_line(row: &nerust_core_traits::debugger::DisasmLine) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let mark = if row.is_pc { '>' } else { ' ' };
+    let _ = write!(out, "{mark}{:08X}: ", row.addr);
+    for i in 0..row.len {
+        let _ = write!(out, "{:02X} ", row.bytes[i as usize]);
+    }
+    for _ in row.len..3 {
+        out.push_str("   ");
+    }
+    out.push_str(&row.text);
     out
 }
 
@@ -715,15 +723,33 @@ impl SessionHandle {
 
     /// SPIKE: disassemble at an explicit address (free navigation).
     pub fn spike_disasm_at(&self, addr: u32, count: u16) -> String {
+        spike_format_disasm(&self.spike_disasm_lines(Some(addr), count))
+    }
+
+    /// SPIKE (iteration 10, DO NOT MERGE): raw disassembly rows for
+    /// per-line rendering (PC highlight, follow targets). `None`
+    /// centers on the PC like `spike_disasm_text`; empty means
+    /// unavailable (no core, no PC register, or no disassembler).
+    /// Deleted with the spike branch.
+    pub fn spike_disasm_lines(
+        &self,
+        addr: Option<u32>,
+        count: u16,
+    ) -> Vec<nerust_core_traits::debugger::DisasmLine> {
         let core = match self.emu_core.as_ref() {
             Some(core) => core,
-            None => return "no core".to_string(),
+            None => return Vec::new(),
+        };
+        let addr = match addr {
+            Some(addr) => addr,
+            None => match self.spike_pc() {
+                Some(addr) => addr,
+                None => return Vec::new(),
+            },
         };
         match core.disassemble(addr, count) {
-            Ok(Ok(rows)) if !rows.is_empty() => spike_format_disasm(&rows),
-            Ok(Ok(_)) => "(no disassembly)".to_string(),
-            Ok(Err(e)) => format!("disassemble failed: {e:?}"),
-            Err(e) => format!("thread failed: {e:?}"),
+            Ok(Ok(rows)) => rows,
+            Ok(Err(_)) | Err(_) => Vec::new(),
         }
     }
 
@@ -869,11 +895,16 @@ impl SessionHandle {
         };
         let result = core.inspect(req).ok()?.ok()?;
         let row = result.dump.rows.first()?;
-        if row.valid == 0 { None } else { Some(row.bytes[0]) }
+        if row.valid == 0 {
+            None
+        } else {
+            Some(row.bytes[0])
+        }
     }
 
     /// SPIKE (iteration 8): dump rows as (addr, text) for row-select
     /// buttons. Same bytes as `spike_read_text`, one string per row.
+    /// Iteration 10 shows 8 rows (800px two-pane fit).
     pub fn spike_dump_rows(
         &self,
         space: nerust_core_traits::debugger::SpaceId,
@@ -886,7 +917,7 @@ impl SessionHandle {
         let req = nerust_core_traits::debugger::InspectRequest {
             space: Some(space),
             addr: Some(addr),
-            rows: 12,
+            rows: 8,
         };
         let result = match core.inspect(req) {
             Ok(Ok(result)) => result,

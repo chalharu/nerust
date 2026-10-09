@@ -1,10 +1,9 @@
-// SPIKE (iteration 9, DO NOT MERGE): light-theme unification probe.
-// Same integrated window as iteration 8, restyled to the shared
-// control language (settings-window structure, M3/Fluent button
-// hierarchy): Light theme, secondary toolbar/nav, text-style dump
-// rows, primary Confirm, dropdown space selector, two-column
-// registers, settings spacing (12/16). No per-system branches.
-// Deleted with the branch.
+// SPIKE (iteration 10, DO NOT MERGE): cross-emulator survey probe.
+// Two-pane layout (disassembly left, state right), PC-row highlight,
+// line-click navigation with follow-target (no$ style) and Back undo,
+// changed-row `*` marks (Mesen style), bookmarks, watch/freeze
+// (FCEUX/BGB style). PPU lives in `spike_ppu_window`. No per-system
+// branches. Deleted with the branch.
 
 use std::sync::{
     Arc, Mutex,
@@ -26,7 +25,7 @@ use iced_winit::{
         user_interface::{Cache, UserInterface},
     },
 };
-use nerust_core_traits::debugger::SpaceId;
+use nerust_core_traits::debugger::{DisasmLine, SpaceId};
 use tao::{
     event_loop::EventLoopWindowTarget,
     window::{Window as TaoWindow, WindowBuilder},
@@ -63,7 +62,10 @@ pub(crate) struct SpikeEditState {
 pub(crate) struct SpikeDebugBridge {
     pub(crate) regs: Mutex<String>,
     pub(crate) dump_rows: Mutex<Vec<(u32, String)>>,
-    pub(crate) disasm: Mutex<String>,
+    /// Changed dump-row addresses since the previous re-read (Mesen
+    /// access marks, row-level; per-byte is production work).
+    pub(crate) diff: Mutex<Vec<u32>>,
+    pub(crate) disasm_lines: Mutex<Vec<DisasmLine>>,
     pub(crate) panels: Mutex<String>,
     #[allow(clippy::type_complexity)]
     pub(crate) images: Mutex<Vec<(String, u32, u32, Vec<u8>)>>,
@@ -73,18 +75,33 @@ pub(crate) struct SpikeDebugBridge {
     pub(crate) mem_input: Mutex<String>,
     pub(crate) dis_addr: Mutex<u32>,
     pub(crate) dis_input: Mutex<String>,
+    /// Disassembly navigation undo stack (no$ Back), newest last.
+    pub(crate) dis_back: Mutex<Vec<u32>>,
     pub(crate) follow_pc: AtomicBool,
+    /// In-window bookmarks (FCEUX style); window-local, no file yet.
+    pub(crate) bookmarks: Mutex<Vec<(u32, String)>>,
+    pub(crate) bm_input: Mutex<String>,
+    /// Read-only live watch (BGB style); value fills on each re-read.
+    pub(crate) watch: Mutex<Option<u32>>,
+    pub(crate) watch_value: Mutex<Option<u8>>,
+    /// Pinned value re-applied by the host on every drain (FCEUX
+    /// freeze style). Silent: the rows are the evidence.
+    pub(crate) freeze: Mutex<Option<(u32, u8)>>,
+    /// PPU-window hover line, set by the PPU program.
+    pub(crate) ppu_hover: Mutex<String>,
     pub(crate) status: Mutex<String>,
     pub(crate) edit: Mutex<SpikeEditState>,
     pub(crate) outbox: Mutex<Vec<SpikeDebugRequest>>,
     pub(crate) view_invalidated: AtomicBool,
+    /// PPU window rebuild flag (the main window clears only its own).
+    pub(crate) ppu_invalidated: AtomicBool,
 }
 
 impl SpikeDebugBridge {
     pub(crate) fn new(
         regs: String,
         dump_rows: Vec<(u32, String)>,
-        disasm: String,
+        disasm_lines: Vec<DisasmLine>,
         panels: String,
         images: Vec<(String, u32, u32, Vec<u8>)>,
         spaces: Vec<(SpaceId, String, u32)>,
@@ -93,7 +110,8 @@ impl SpikeDebugBridge {
         Self {
             regs: Mutex::new(regs),
             dump_rows: Mutex::new(dump_rows),
-            disasm: Mutex::new(disasm),
+            diff: Mutex::new(Vec::new()),
+            disasm_lines: Mutex::new(disasm_lines),
             panels: Mutex::new(panels),
             images: Mutex::new(images),
             spaces,
@@ -102,11 +120,19 @@ impl SpikeDebugBridge {
             mem_input: Mutex::new(format!("{mem_addr:08X}")),
             dis_addr: Mutex::new(0),
             dis_input: Mutex::new(String::new()),
+            dis_back: Mutex::new(Vec::new()),
             follow_pc: AtomicBool::new(true),
+            bookmarks: Mutex::new(Vec::new()),
+            bm_input: Mutex::new(String::new()),
+            watch: Mutex::new(None),
+            watch_value: Mutex::new(None),
+            freeze: Mutex::new(None),
+            ppu_hover: Mutex::new(String::new()),
             status: Mutex::new("paused".to_string()),
             edit: Mutex::new(SpikeEditState::default()),
             outbox: Mutex::new(Vec::new()),
             view_invalidated: AtomicBool::new(false),
+            ppu_invalidated: AtomicBool::new(false),
         }
     }
 
@@ -121,28 +147,76 @@ impl SpikeDebugBridge {
     }
 
     pub(crate) fn space_names(&self) -> Vec<String> {
-        self.spaces.iter().map(|(_, name, _)| name.clone()).collect()
+        self.spaces
+            .iter()
+            .map(|(_, name, _)| name.clone())
+            .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn set_all(
         &self,
         regs: String,
         dump_rows: Vec<(u32, String)>,
-        disasm: String,
+        disasm_lines: Vec<DisasmLine>,
         panels: String,
         images: Vec<(String, u32, u32, Vec<u8>)>,
         status: String,
+        watch_value: Option<u8>,
+        diff: Vec<u32>,
     ) {
         *self.regs.lock().unwrap() = regs;
         *self.dump_rows.lock().unwrap() = dump_rows;
-        *self.disasm.lock().unwrap() = disasm;
+        *self.disasm_lines.lock().unwrap() = disasm_lines;
         *self.panels.lock().unwrap() = panels;
         *self.images.lock().unwrap() = images;
         *self.status.lock().unwrap() = status;
+        *self.watch_value.lock().unwrap() = watch_value;
+        *self.diff.lock().unwrap() = diff;
         // Pending writes die on any re-read: the confirm row must
         // never offer a stale old value after step/refresh/space.
         self.edit.lock().unwrap().pending = None;
         self.view_invalidated.store(true, Ordering::Release);
+        self.ppu_invalidated.store(true, Ordering::Release);
+    }
+
+    /// Program-side status line (no host roundtrip needed).
+    pub(crate) fn set_status(&self, status: String) {
+        *self.status.lock().unwrap() = status;
+        self.view_invalidated.store(true, Ordering::Release);
+    }
+
+    /// Push the current disassembly anchor for Back undo (cap 32,
+    /// no consecutive duplicates), then pin `next`.
+    pub(crate) fn navigate_dis(&self, next: u32) {
+        // SPIKE (iteration 10): always push so the first hop out of
+        // follow-PC mode is undoable too. In follow mode `dis_addr`
+        // is stale (0); the address the user was looking at is the
+        // displayed anchor (first disasm line, i.e. the PC). Back
+        // returns there as a fixed address; follow-PC itself is
+        // re-enabled via the Follow PC button.
+        let follow = self.follow_pc.load(Ordering::Acquire);
+        let current = if follow {
+            self.disasm_lines
+                .lock()
+                .unwrap()
+                .first()
+                .map(|line| line.addr)
+                .unwrap_or(*self.dis_addr.lock().unwrap())
+        } else {
+            *self.dis_addr.lock().unwrap()
+        };
+        let mut back = self.dis_back.lock().unwrap();
+        if back.last() != Some(&current) {
+            back.push(current);
+            if back.len() > 32 {
+                back.remove(0);
+            }
+        }
+        *self.dis_addr.lock().unwrap() = next;
+        *self.dis_input.lock().unwrap() = format!("{next:08X}");
+        self.follow_pc.store(false, Ordering::Release);
+        self.push(SpikeDebugRequest::Refresh);
     }
 
     pub(crate) fn set_edit_selected(&self, addr: u32, old: Option<u8>, status: String) {
@@ -186,6 +260,16 @@ pub(crate) enum SpikeDebugMessage {
     DisInputChanged(String),
     DisGo,
     FollowPcToggle,
+    DisLineClicked(u32),
+    FollowTarget(u32),
+    DisBack,
+    BookmarkInputChanged(String),
+    BookmarkAdd,
+    BookmarkJump(u32),
+    WatchSet,
+    WatchClear,
+    FreezeSet,
+    FreezeClear,
     RowSelected(u32),
     EditInputChanged(String),
     EditWrite,
@@ -199,6 +283,19 @@ pub(crate) struct SpikeDebugState {
 
 pub(crate) struct SpikeDebugProgram {
     pub(crate) bridge: Arc<SpikeDebugBridge>,
+}
+
+/// SPIKE (iteration 10): trailing `$XXXX` operand of a disassembly
+/// line, e.g. `JMP $C5F5` (no$ follow adapted to buttons; cursor-key
+/// follow is production work). Generic text rule, no per-system
+/// branches; lines without one offer no follow button.
+fn spike_follow_target(line_text: &str) -> Option<u32> {
+    let token = line_text.split_whitespace().last()?;
+    let hex = token.strip_prefix('$')?;
+    if hex.is_empty() {
+        return None;
+    }
+    u32::from_str_radix(hex, 16).ok()
 }
 
 impl Program for SpikeDebugProgram {
@@ -271,19 +368,18 @@ impl Program for SpikeDebugProgram {
                         bridge.push(SpikeDebugRequest::MemNav);
                     }
                     None => {
-                        *bridge.status.lock().unwrap() =
-                            format!("parse failed: {input}");
+                        *bridge.status.lock().unwrap() = format!("parse failed: {input}");
                         bridge.view_invalidated.store(true, Ordering::Release);
                     }
                 }
             }
             SpikeDebugMessage::MemPage(delta) => {
                 let addr = *bridge.mem_addr.lock().unwrap();
-                // Page = 12 rows of 16 bytes.
+                // Page = 8 rows of 16 bytes (iteration 10 fits 800px).
                 let next = if delta < 0 {
-                    addr.saturating_sub(192)
+                    addr.saturating_sub(128)
                 } else {
-                    addr.saturating_add(192)
+                    addr.saturating_add(128)
                 };
                 *bridge.mem_addr.lock().unwrap() = next;
                 *bridge.mem_input.lock().unwrap() = format!("{next:08X}");
@@ -302,8 +398,7 @@ impl Program for SpikeDebugProgram {
                         bridge.push(SpikeDebugRequest::Refresh);
                     }
                     None => {
-                        *bridge.status.lock().unwrap() =
-                            format!("parse failed: {input}");
+                        *bridge.status.lock().unwrap() = format!("parse failed: {input}");
                         bridge.view_invalidated.store(true, Ordering::Release);
                     }
                 }
@@ -311,6 +406,93 @@ impl Program for SpikeDebugProgram {
             SpikeDebugMessage::FollowPcToggle => {
                 bridge.follow_pc.store(true, Ordering::Release);
                 bridge.push(SpikeDebugRequest::Refresh);
+            }
+            SpikeDebugMessage::DisLineClicked(addr) => {
+                bridge.navigate_dis(addr);
+            }
+            SpikeDebugMessage::FollowTarget(addr) => {
+                bridge.navigate_dis(addr);
+            }
+            SpikeDebugMessage::DisBack => {
+                let prev = bridge.dis_back.lock().unwrap().pop();
+                match prev {
+                    Some(addr) => {
+                        *bridge.dis_addr.lock().unwrap() = addr;
+                        *bridge.dis_input.lock().unwrap() = format!("{addr:08X}");
+                        bridge.follow_pc.store(false, Ordering::Release);
+                        bridge.push(SpikeDebugRequest::Refresh);
+                    }
+                    None => bridge.set_status("no history".to_string()),
+                }
+            }
+            SpikeDebugMessage::BookmarkInputChanged(text) => {
+                *bridge.bm_input.lock().unwrap() = text;
+                bridge.view_invalidated.store(true, Ordering::Release);
+            }
+            SpikeDebugMessage::BookmarkAdd => {
+                let label = bridge.bm_input.lock().unwrap().trim().to_string();
+                let mut marks = bridge.bookmarks.lock().unwrap();
+                if marks.len() >= 8 {
+                    bridge.set_status("bookmark list full".to_string());
+                } else {
+                    // Anchor on the PC row when following, else the pin.
+                    let addr = bridge
+                        .disasm_lines
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|line| line.is_pc)
+                        .map(|line| line.addr)
+                        .unwrap_or(*bridge.dis_addr.lock().unwrap());
+                    let n = marks.len() + 1;
+                    let label = if label.is_empty() {
+                        format!("BM{n}")
+                    } else {
+                        label
+                    };
+                    marks.push((addr, label));
+                    bridge.bm_input.lock().unwrap().clear();
+                    bridge.view_invalidated.store(true, Ordering::Release);
+                }
+            }
+            SpikeDebugMessage::BookmarkJump(addr) => {
+                bridge.navigate_dis(addr);
+            }
+            SpikeDebugMessage::WatchSet => {
+                let selected = bridge.edit.lock().unwrap().selected;
+                match selected {
+                    Some(addr) => {
+                        *bridge.watch.lock().unwrap() = Some(addr);
+                        bridge.push(SpikeDebugRequest::Refresh);
+                    }
+                    None => bridge.set_status("watch needs a selection".to_string()),
+                }
+            }
+            SpikeDebugMessage::WatchClear => {
+                *bridge.watch.lock().unwrap() = None;
+                *bridge.watch_value.lock().unwrap() = None;
+                bridge.view_invalidated.store(true, Ordering::Release);
+            }
+            SpikeDebugMessage::FreezeSet => {
+                let (selected, input) = {
+                    let edit = bridge.edit.lock().unwrap();
+                    (edit.selected, edit.input.clone())
+                };
+                match (
+                    selected,
+                    spike_parse_hex_addr(&input).filter(|v| *v <= 0xFF),
+                ) {
+                    (Some(addr), Some(value)) => {
+                        *bridge.freeze.lock().unwrap() = Some((addr, value as u8));
+                        bridge.set_status(format!("frozen {addr:08X}={value:02X}"));
+                        bridge.push(SpikeDebugRequest::Refresh);
+                    }
+                    _ => bridge.set_status("freeze needs a selected row and hex byte".to_string()),
+                }
+            }
+            SpikeDebugMessage::FreezeClear => {
+                *bridge.freeze.lock().unwrap() = None;
+                bridge.set_status("freeze cleared".to_string());
             }
             SpikeDebugMessage::RowSelected(addr) => {
                 bridge.push(SpikeDebugRequest::EditSelect(addr));
@@ -324,7 +506,10 @@ impl Program for SpikeDebugProgram {
                     let edit = bridge.edit.lock().unwrap();
                     (edit.selected, edit.old, edit.input.clone())
                 };
-                match (selected, spike_parse_hex_addr(&input).filter(|v| *v <= 0xFF)) {
+                match (
+                    selected,
+                    spike_parse_hex_addr(&input).filter(|v| *v <= 0xFF),
+                ) {
                     (Some(addr), Some(value)) => {
                         bridge.edit.lock().unwrap().pending = Some((addr, old, u64::from(value)));
                         bridge.view_invalidated.store(true, Ordering::Release);
@@ -351,27 +536,39 @@ impl Program for SpikeDebugProgram {
         state: &'a Self::State,
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
-        use iced::widget::{button, column, image, pick_list, row, scrollable, text, text_input};
         use iced::Length;
+        use iced::widget::{button, column, pick_list, row, text, text_input};
         let regs = state.bridge.regs.lock().unwrap().clone();
         let dump_rows = state.bridge.dump_rows.lock().unwrap().clone();
-        let disasm = state.bridge.disasm.lock().unwrap().clone();
-        let panels = state.bridge.panels.lock().unwrap().clone();
-        let images = state.bridge.images.lock().unwrap().clone();
+        let diff = state.bridge.diff.lock().unwrap().clone();
+        let disasm_lines = state.bridge.disasm_lines.lock().unwrap().clone();
         let status = state.bridge.status.lock().unwrap().clone();
         let mem_input = state.bridge.mem_input.lock().unwrap().clone();
         let dis_input = state.bridge.dis_input.lock().unwrap().clone();
         let edit = state.bridge.edit.lock().unwrap().clone();
         let follow_pc = state.bridge.follow_pc.load(Ordering::Acquire);
+        let back_len = state.bridge.dis_back.lock().unwrap().len();
+        let bookmarks = state.bridge.bookmarks.lock().unwrap().clone();
+        let bm_input = state.bridge.bm_input.lock().unwrap().clone();
+        let watch = *state.bridge.watch.lock().unwrap();
+        let watch_value = *state.bridge.watch_value.lock().unwrap();
+        let freeze = *state.bridge.freeze.lock().unwrap();
         // Button hierarchy (M3/Fluent): one primary per flow
         // (Confirm), secondary for toolbar/nav, text for list rows
         // and escape actions. Settings migrates to this language.
         let toolbar = row![
-            button(text("Pause")).style(button::secondary).on_press(SpikeDebugMessage::PausePressed),
-            button(text("Resume")).style(button::secondary).on_press(SpikeDebugMessage::ResumePressed),
-            button(text("Step Frame")).style(button::secondary).on_press(SpikeDebugMessage::StepFramePressed),
-            button(text("Step Instr")).style(button::secondary).on_press(SpikeDebugMessage::StepInstrPressed),
-            text(status).size(14),
+            button(text("Pause"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::PausePressed),
+            button(text("Resume"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::ResumePressed),
+            button(text("Step Frame"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::StepFramePressed),
+            button(text("Step Instr"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::StepInstrPressed),
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center);
@@ -388,13 +585,19 @@ impl Program for SpikeDebugProgram {
         .spacing(12)
         .align_y(iced::Alignment::Center);
         let mem_nav = row![
-            button(text("Prev")).style(button::secondary).on_press(SpikeDebugMessage::MemPage(-1)),
-            button(text("Next")).style(button::secondary).on_press(SpikeDebugMessage::MemPage(1)),
+            button(text("Prev"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::MemPage(-1)),
+            button(text("Next"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::MemPage(1)),
             text_input("addr hex", &mem_input)
                 .on_input(SpikeDebugMessage::MemInputChanged)
                 .on_submit(SpikeDebugMessage::MemGo)
                 .width(120),
-            button(text("Go")).style(button::secondary).on_press(SpikeDebugMessage::MemGo),
+            button(text("Go"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::MemGo),
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center);
@@ -403,15 +606,23 @@ impl Program for SpikeDebugProgram {
         // driving). Selected row inverts to secondary; the rest stay
         // quiet so the list does not shout (M3: no high emphasis in
         // lists). Compact padding keeps 12 rows affordable.
+        // Changed rows carry a `*` mark (Mesen access marks adapted
+        // to text: theme-safe, no new colors; per-byte marks are
+        // production work). Selection wins the secondary style.
         let mut dump_col = column![].spacing(2);
         for (addr, line) in &dump_rows {
-            let marker = if edit.selected == Some(*addr) {
-                "> "
-            } else {
-                "  "
+            let selected = edit.selected == Some(*addr);
+            let changed = diff.contains(addr);
+            let marker = match (selected, changed) {
+                (true, true) => ">*",
+                (true, false) => "> ",
+                (false, true) => " *",
+                (false, false) => "  ",
             };
             let row_button = button(
-                text(format!("{marker}{line}")).size(14).font(iced::Font::MONOSPACE),
+                text(format!("{marker}{line}"))
+                    .size(14)
+                    .font(iced::Font::MONOSPACE),
             )
             .padding([2, 8])
             .on_press(SpikeDebugMessage::RowSelected(*addr));
@@ -440,45 +651,26 @@ impl Program for SpikeDebugProgram {
             (None, _) => "Edit: select a dump row".to_string(),
         };
         let edit_row = row![
-            text(old_text).size(14).width(Length::Fixed(300.0)),
+            text(old_text).size(14).width(Length::Fixed(240.0)),
             text_input("new hex byte", &edit.input)
                 .on_input(SpikeDebugMessage::EditInputChanged)
                 .on_submit(SpikeDebugMessage::EditWrite)
-                .width(120),
-            button(text("Write")).style(button::secondary).on_press(SpikeDebugMessage::EditWrite),
+                .width(100),
+            button(text("Write"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::EditWrite),
+            button(text("Watch"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::WatchSet),
+            button(text("Freeze"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::FreezeSet),
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center);
-        let mut content = column![
-            text("SPIKE debugger probe (paused only)").size(18),
-            toolbar,
-            text("Registers").size(16),
-            regs_view,
-            text("Memory").size(16),
-            space_row,
-            mem_nav,
-            dump_col,
-            edit_row,
-        ]
-        .spacing(12)
-        .padding(16)
-        .width(Length::Fill);
-        if let Some((addr, old, value)) = edit.pending {
-            let old_text = match old {
-                Some(old) => format!("{old:02X}"),
-                None => "??".to_string(),
-            };
-            content = content.push(
-                row![
-                    text(format!("write {value:02X} to {addr:08X} (was {old_text})?")).size(14),
-                    button(text("Confirm")).style(button::primary).on_press(SpikeDebugMessage::ConfirmWrite),
-                    button(text("Cancel")).style(button::text).on_press(SpikeDebugMessage::CancelWrite),
-                ]
-                .spacing(12)
-                .align_y(iced::Alignment::Center),
-            );
-        }
         let follow_button = button(text("Follow PC")).on_press(SpikeDebugMessage::FollowPcToggle);
+        let back_button =
+            button(text(format!("Back ({back_len})"))).on_press(SpikeDebugMessage::DisBack);
         let dis_nav = row![
             text(if follow_pc {
                 "Disassembly (follow PC)"
@@ -493,38 +685,156 @@ impl Program for SpikeDebugProgram {
             text_input("addr hex", &dis_input)
                 .on_input(SpikeDebugMessage::DisInputChanged)
                 .on_submit(SpikeDebugMessage::DisGo)
-                .width(120),
-            button(text("Go")).style(button::secondary).on_press(SpikeDebugMessage::DisGo),
+                .width(100),
+            button(text("Go"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::DisGo),
+            if back_len > 0 {
+                back_button.style(button::secondary)
+            } else {
+                back_button.style(button::text)
+            },
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center);
-        let mut ppu_col = column![text("PPU").size(16)].spacing(12);
-        if images.is_empty() {
-            ppu_col = ppu_col.push(text("(no images)").size(14));
+        // Per-line disassembly: line click navigates (sets the pin),
+        // the PC row highlights (Mesen/FCEUX canon), and lines with a
+        // trailing `$XXXX` operand offer a follow button (no$ follow
+        // adapted to buttons; cursor-key follow is production work).
+        let mut dis_col = column![].spacing(2);
+        if disasm_lines.is_empty() {
+            dis_col = dis_col.push(text("(no disassembly)").size(14));
         }
-        for (label, width, height, rgba) in &images {
-            ppu_col = ppu_col.push(text(label.clone()).size(14));
-            ppu_col = ppu_col.push(image(image::Handle::from_rgba(
-                *width,
-                *height,
-                rgba.clone(),
-            )));
-        }
-        ppu_col = ppu_col.push(text("Panels").size(16));
-        ppu_col = ppu_col.push(text(panels).size(14).font(iced::Font::MONOSPACE));
-        content = content.push(
-            scrollable(
-                column![
-                    dis_nav,
-                    text(disasm).size(14).font(iced::Font::MONOSPACE),
-                    ppu_col,
-                ]
-                .spacing(12),
+        for line in &disasm_lines {
+            let line_button = button(
+                text(nerust_gui_shell::session::spike_format_disasm_line(line))
+                    .size(14)
+                    .font(iced::Font::MONOSPACE),
             )
-            .height(iced::Length::Fill),
-        );
+            .padding([2, 8])
+            .width(Length::Fill)
+            .on_press(SpikeDebugMessage::DisLineClicked(line.addr));
+            let line_button = if line.is_pc {
+                line_button.style(button::secondary)
+            } else {
+                line_button.style(button::text)
+            };
+            let mut line_row = row![line_button].spacing(4);
+            if let Some(target) = spike_follow_target(&line.text) {
+                line_row = line_row.push(
+                    button(text("→").size(14))
+                        .padding([2, 8])
+                        .width(Length::Fixed(40.0))
+                        .style(button::secondary)
+                        .on_press(SpikeDebugMessage::FollowTarget(target)),
+                );
+            }
+            dis_col = dis_col.push(line_row);
+        }
+        // Cross-emulator canon: execution above disassembly on the
+        // left, state on the right.
+        let left_col = column![
+            text("SPIKE debugger probe (paused only)").size(18),
+            toolbar,
+            dis_nav,
+            dis_col,
+        ]
+        .spacing(12)
+        .width(Length::Fill);
+        let watch_text = match (watch, watch_value) {
+            (Some(addr), Some(value)) => format!("watch {addr:08X} = {value:02X}"),
+            (Some(addr), None) => format!("watch {addr:08X} = ??"),
+            (None, _) => "watch: none".to_string(),
+        };
+        let freeze_text = match freeze {
+            Some((addr, value)) => format!("frozen {addr:08X}={value:02X}"),
+            None => "freeze: none".to_string(),
+        };
+        let mut bookmarks_col = column![].spacing(2);
+        for (addr, label) in &bookmarks {
+            bookmarks_col = bookmarks_col.push(
+                button(
+                    text(format!("{label} {addr:08X}"))
+                        .size(14)
+                        .font(iced::Font::MONOSPACE),
+                )
+                .padding([2, 8])
+                .style(button::text)
+                .on_press(SpikeDebugMessage::BookmarkJump(*addr)),
+            );
+        }
+        let right_col = column![
+            text(status).size(14).width(Length::Fill),
+            text("Registers").size(16),
+            regs_view,
+            text("Watch").size(16),
+            row![
+                text(watch_text).size(14).width(Length::Fill),
+                button(text("Clear"))
+                    .style(button::text)
+                    .on_press(SpikeDebugMessage::WatchClear),
+            ]
+            .spacing(12)
+            .align_y(iced::Alignment::Center),
+            text("Freeze").size(16),
+            row![
+                text(freeze_text).size(14).width(Length::Fill),
+                button(text("Clear"))
+                    .style(button::text)
+                    .on_press(SpikeDebugMessage::FreezeClear),
+            ]
+            .spacing(12)
+            .align_y(iced::Alignment::Center),
+            text("Bookmarks").size(16),
+            row![
+                text_input("label", &bm_input)
+                    .on_input(SpikeDebugMessage::BookmarkInputChanged)
+                    .on_submit(SpikeDebugMessage::BookmarkAdd)
+                    .width(140),
+                button(text("Add"))
+                    .style(button::secondary)
+                    .on_press(SpikeDebugMessage::BookmarkAdd),
+            ]
+            .spacing(12)
+            .align_y(iced::Alignment::Center),
+            bookmarks_col,
+        ]
+        .spacing(12)
+        .width(Length::Fixed(340.0));
+        let mut content = column![
+            row![left_col, right_col].spacing(16),
+            text("Memory").size(16),
+            space_row,
+            mem_nav,
+            dump_col,
+            edit_row,
+        ]
+        .spacing(10)
+        .padding(16)
+        .width(Length::Fill);
+        if let Some((addr, old, value)) = edit.pending {
+            let old_text = match old {
+                Some(old) => format!("{old:02X}"),
+                None => "??".to_string(),
+            };
+            content = content.push(
+                row![
+                    text(format!("write {value:02X} to {addr:08X} (was {old_text})?")).size(14),
+                    button(text("Confirm"))
+                        .style(button::primary)
+                        .on_press(SpikeDebugMessage::ConfirmWrite),
+                    button(text("Cancel"))
+                        .style(button::text)
+                        .on_press(SpikeDebugMessage::CancelWrite),
+                ]
+                .spacing(12)
+                .align_y(iced::Alignment::Center),
+            );
+        }
         content = content.push(
-            button(text("Refresh")).style(button::secondary).on_press(SpikeDebugMessage::RefreshPressed),
+            button(text("Refresh"))
+                .style(button::secondary)
+                .on_press(SpikeDebugMessage::RefreshPressed),
         );
         content.into()
     }
@@ -676,7 +986,7 @@ impl SpikeDebugWindowHandle {
     pub(crate) fn new(
         regs: String,
         dump_rows: Vec<(u32, String)>,
-        disasm: String,
+        disasm_lines: Vec<DisasmLine>,
         panels: String,
         images: Vec<(String, u32, u32, Vec<u8>)>,
         spaces: Vec<(SpaceId, String, u32)>,
@@ -685,12 +995,18 @@ impl SpikeDebugWindowHandle {
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
         let bridge = Arc::new(SpikeDebugBridge::new(
-            regs, dump_rows, disasm, panels, images, spaces, mem_addr,
+            regs,
+            dump_rows,
+            disasm_lines,
+            panels,
+            images,
+            spaces,
+            mem_addr,
         ));
         let window = Arc::new(
             WindowBuilder::new()
                 .with_title("Debugger (spike)")
-                .with_inner_size(tao::dpi::LogicalSize::new(700.0, 780.0))
+                .with_inner_size(tao::dpi::LogicalSize::new(1100.0, 800.0))
                 .build(event_loop)
                 .map_err(|e| {
                     log::error!("failed to create spike debugger window: {e}");
@@ -748,17 +1064,37 @@ impl SpikeDebugWindowHandle {
         self.bridge.take_requests()
     }
 
+    /// SPIKE (iteration 10): PPU sync gate for the runtime. The main
+    /// window steals the shared PPU flag so the PPU window rebuilds
+    /// exactly when fresh pixels land (hover rebuilds from its own
+    /// window events instead).
+    pub(crate) fn take_ppu_dirty(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        self.bridge.ppu_invalidated.swap(false, Ordering::AcqRel)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn set_all(
         &mut self,
         regs: String,
         dump_rows: Vec<(u32, String)>,
-        disasm: String,
+        disasm_lines: Vec<DisasmLine>,
         panels: String,
         images: Vec<(String, u32, u32, Vec<u8>)>,
         status: String,
+        watch_value: Option<u8>,
+        diff: Vec<u32>,
     ) {
-        self.bridge
-            .set_all(regs, dump_rows, disasm, panels, images, status);
+        self.bridge.set_all(
+            regs,
+            dump_rows,
+            disasm_lines,
+            panels,
+            images,
+            status,
+            watch_value,
+            diff,
+        );
         let bounds = Viewport::with_physical_size(
             Size::new(self.viewport_physical.0, self.viewport_physical.1),
             self.scale_factor,
@@ -806,7 +1142,8 @@ impl SpikeDebugWindowHandle {
                 self.scale_factor,
             )
             .logical_size();
-            self.ui_state.process_messages(                messages,
+            self.ui_state.process_messages(
+                messages,
                 self.window_id,
                 bounds,
                 &mut self.renderer.backend,
