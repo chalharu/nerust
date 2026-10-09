@@ -231,6 +231,11 @@ pub struct DisasmLine {
     pub text: String,
     /// True when this row holds the current PC.
     pub is_pc: bool,
+    // SPIKE (iteration 11, DO NOT MERGE): structured follow address
+    // for plain address operands (6502 Relative/ZeroPage/Absolute).
+    // Frontend buttons navigate from this, never by scraping `text`.
+    // Deleted with the spike branch.
+    pub target: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------

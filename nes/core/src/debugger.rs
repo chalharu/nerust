@@ -323,28 +323,42 @@ impl Debugger for NesDebugger<'_> {
                     len: 1,
                     text: format!(".DB ${op:02X}"),
                     is_pc: pc == Some(cursor),
+                    // SPIKE (iteration 11): raw bytes never navigate.
+                    target: None,
                 });
                 cursor += 1;
                 continue;
             }
             let b1 = bytes[1] as u16;
             let b2 = bytes[2] as u16;
+            // SPIKE (iteration 11): structured follow address for
+            // plain address operands only (matches the verified
+            // iteration-10 pixels: Relative/ZeroPage/Absolute offer
+            // follow, Immediate/Indexed/Indirect/Implied do not).
+            let mut target = None;
             let operand = match mode {
                 AddrMode::Implied | AddrMode::Jam => String::new(),
                 AddrMode::Accumulator => " A".to_string(),
                 AddrMode::Immediate => format!(" #${:02X}", bytes[1]),
-                AddrMode::ZeroPage => format!(" ${b1:02X}"),
+                AddrMode::ZeroPage => {
+                    target = Some(u32::from(b1));
+                    format!(" ${b1:02X}")
+                }
                 AddrMode::ZeroPageX => format!(" ${b1:02X},X"),
                 AddrMode::ZeroPageY => format!(" ${b1:02X},Y"),
-                AddrMode::Absolute => format!(" ${:04X}", b1 | (b2 << 8)),
+                AddrMode::Absolute => {
+                    target = Some(u32::from(b1 | (b2 << 8)));
+                    format!(" ${:04X}", b1 | (b2 << 8))
+                }
                 AddrMode::AbsoluteX => format!(" ${:04X},X", b1 | (b2 << 8)),
                 AddrMode::AbsoluteY => format!(" ${:04X},Y", b1 | (b2 << 8)),
                 AddrMode::Indirect => format!(" (${:04X})", b1 | (b2 << 8)),
                 AddrMode::IndexedIndirect => format!(" (${b1:02X},X)"),
                 AddrMode::IndirectIndexed => format!(" (${b1:02X}),Y"),
                 AddrMode::Relative => {
-                    let target = cursor.wrapping_add(2).wrapping_add(bytes[1] as i8 as u32);
-                    format!(" ${target:04X}")
+                    let resolved = cursor.wrapping_add(2).wrapping_add(bytes[1] as i8 as u32);
+                    target = Some(resolved);
+                    format!(" ${resolved:04X}")
                 }
             };
             out.push(DisasmLine {
@@ -353,6 +367,7 @@ impl Debugger for NesDebugger<'_> {
                 len: want as u8,
                 text: format!("{mnemonic}{operand}"),
                 is_pc: pc == Some(cursor),
+                target,
             });
             cursor += want;
         }

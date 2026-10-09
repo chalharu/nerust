@@ -151,8 +151,10 @@ pub(crate) mod imp {
             emulation_menu.append(&state_menu).unwrap();
 
             // SPIKE (iteration 6, DO NOT MERGE): env-gated throwaway entry.
+            // Iteration 11: same opener as F4, with the shortcut hint
+            // sibling items carry ("Save Active Slot (F5)" pattern).
             let (spike_debug, spike_debug_id) = if std::env::var("NERUST_SPIKE_DEBUG").is_ok() {
-                let item = MenuItem::new("Debugger (spike)", true, None);
+                let item = MenuItem::new("Open Debugger (F4)", true, None);
                 let id = item.id().clone();
                 emulation_menu.append(&item).unwrap();
                 (Some(item), Some(id))

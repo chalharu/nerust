@@ -96,6 +96,30 @@ pub struct SessionHandle {
     loaded_media: Option<LoadedMedia>,
     persistence: PersistenceManager,
     audio_registry: Arc<AudioBackendRegistry>,
+    spike_txn: std::sync::Mutex<Option<SpikePendingWrite>>,
+}
+
+/// SPIKE (iteration 11, DO NOT MERGE): shell-owned two-phase write
+/// transaction. The frontend holds only the input string; prepare,
+/// stage, commit, and clear all live here so the pending lifecycle
+/// never splits across layers. Deleted with the spike branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpikePendingWrite {
+    pub space: nerust_core_traits::debugger::SpaceId,
+    pub addr: u32,
+    pub old: Option<u8>,
+    pub value: Option<u64>,
+}
+
+/// SPIKE (iteration 11, DO NOT MERGE): batched drain payload.
+/// Deleted with the spike branch.
+#[derive(Debug, Clone, Default)]
+pub struct SpikeSnapshot {
+    pub regs: String,
+    pub dump_rows: Vec<(u32, String)>,
+    pub disasm_lines: Vec<nerust_core_traits::debugger::DisasmLine>,
+    pub panels: String,
+    pub images: Vec<(String, u32, u32, Vec<u8>)>,
 }
 
 impl SessionHandle {
@@ -289,6 +313,7 @@ impl SessionHandle {
             loaded_media: None,
             persistence: PersistenceManager::new(),
             audio_registry,
+            spike_txn: std::sync::Mutex::new(None),
         };
         result.rebuild_key_field_map();
         Ok(result)
@@ -851,6 +876,166 @@ impl SessionHandle {
                 (image.label_id.to_string(), image.width, image.height, rgba)
             })
             .collect())
+    }
+
+    /// SPIKE (iteration 11, DO NOT MERGE): shell-owned two-phase
+    /// write transaction. The frontend holds only the input string;
+    /// prepare/stage/commit/clear all live here so the pending
+    /// lifecycle never splits across layers. Deleted with the spike.
+    pub fn spike_prepare_write(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+        addr: u32,
+    ) -> Option<u8> {
+        let old = self.spike_read_byte(space, addr);
+        *self.spike_txn.lock().unwrap() = Some(SpikePendingWrite {
+            space,
+            addr,
+            old,
+            value: None,
+        });
+        old
+    }
+
+    /// SPIKE (iteration 11): stage the parsed value. No session
+    /// roundtrip needed beyond the lock; the value commits later.
+    pub fn spike_stage_write(&self, value: u64) {
+        if let Some(txn) = self.spike_txn.lock().unwrap().as_mut() {
+            txn.value = Some(value);
+        }
+    }
+
+    /// SPIKE (iteration 11): confirm-row text, if fully staged.
+    pub fn spike_pending_text(&self) -> Option<String> {
+        let txn = *self.spike_txn.lock().unwrap();
+        let txn = txn?;
+        let value = txn.value?;
+        let old_text = match txn.old {
+            Some(old) => format!("{old:02X}"),
+            None => "??".to_string(),
+        };
+        Some(format!(
+            "write {value:02X} to {:08X} (was {old_text})?",
+            txn.addr
+        ))
+    }
+
+    /// SPIKE (iteration 11): commit the staged write; consumes it.
+    /// Status strings match iteration 8/10 pixels exactly.
+    pub fn spike_commit_write(&self) -> String {
+        let staged = self.spike_txn.lock().unwrap().take();
+        match staged.and_then(|txn| txn.value.map(|value| (txn, value))) {
+            Some((txn, value)) => self.spike_write_memory(txn.space, txn.addr, 1, value),
+            None => "nothing to write".to_string(),
+        }
+    }
+
+    /// SPIKE (iteration 11): drop any uncommitted transaction
+    /// (re-read invalidation, cancel, space switch).
+    pub fn spike_clear_write(&self) {
+        *self.spike_txn.lock().unwrap() = None;
+    }
+
+    /// SPIKE (iteration 11, DO NOT MERGE): one batched snapshot per
+    /// drain. A single `inspect` covers registers, dump rows, and
+    /// panels; disassembly and images add one crossing each, so a
+    /// drain costs 3 thread crossings instead of ~7. Display strings
+    /// match the single-section helpers exactly. Deleted with spike.
+    pub fn spike_snapshot(
+        &self,
+        space: Option<nerust_core_traits::debugger::SpaceId>,
+        mem_addr: u32,
+        dis_addr: Option<u32>,
+    ) -> SpikeSnapshot {
+        use nerust_core_traits::debugger::InspectRequest;
+        let empty = || SpikeSnapshot {
+            regs: "no core".to_string(),
+            dump_rows: Vec::new(),
+            disasm_lines: Vec::new(),
+            panels: String::new(),
+            images: Vec::new(),
+        };
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return empty(),
+        };
+        let inspected = match core.inspect(InspectRequest {
+            space,
+            addr: space.map(|_| mem_addr),
+            rows: 8,
+        }) {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) | Err(_) => return empty(),
+        };
+        let regs = Self::format_probe_registers(&inspected.registers);
+        let dump_rows = Self::format_probe_dump(&inspected.dump);
+        let panels = Self::format_probe_panels(&inspected.panels);
+        let anchor = match dis_addr {
+            Some(addr) => Some(addr),
+            // PC from the same capture: no second inspect crossing.
+            None => inspected
+                .registers
+                .iter()
+                .find(|(name, _)| *name == "pc")
+                .map(|(_, value)| *value as u32),
+        };
+        let disasm_lines = match anchor {
+            Some(addr) => match core.disassemble(addr, 8) {
+                Ok(Ok(rows)) => rows,
+                Ok(Err(_)) | Err(_) => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        let images = self.spike_images_rgba().unwrap_or_default();
+        SpikeSnapshot {
+            regs,
+            dump_rows,
+            disasm_lines,
+            panels,
+            images,
+        }
+    }
+
+    fn format_probe_registers(registers: &[(&'static str, u64)]) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        for (name, value) in registers.iter() {
+            let _ = writeln!(out, "{name}: ${value:04X}");
+        }
+        out
+    }
+
+    fn format_probe_dump(dump: &nerust_core_traits::debugger::MemoryDump) -> Vec<(u32, String)> {
+        use std::fmt::Write as _;
+        dump.rows
+            .iter()
+            .map(|row| {
+                let mut text = format!("{:08X}:", row.addr);
+                for i in 0..row.valid {
+                    let _ = write!(text, " {:02X}", row.bytes[i as usize]);
+                }
+                (row.addr, text)
+            })
+            .collect()
+    }
+
+    fn format_probe_panels(panels: &[nerust_core_traits::debugger::DebugPanel]) -> String {
+        if panels.is_empty() {
+            return "(no panels)".to_string();
+        }
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        for panel in panels.iter() {
+            let _ = writeln!(out, "== {} ==", panel.label_id);
+            for row in panel.rows.iter() {
+                let _ = write!(out, "{}:", row.key);
+                for (cell, col) in row.cells.iter().zip(panel.columns.iter()) {
+                    let _ = write!(out, " {}", spike_format_cell(cell, col.kind));
+                }
+                out.push('\n');
+            }
+        }
+        out
     }
 
     /// SPIKE (iteration 8): two-step-confirmed write; returns the

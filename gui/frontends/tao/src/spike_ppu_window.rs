@@ -5,7 +5,7 @@
 // Deleted with the branch.
 
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -68,10 +68,19 @@ fn spike_tile_hover(label: &str, width: u32, height: u32, point: Point) -> Strin
 #[derive(Debug, Clone)]
 pub(crate) enum SpikePpuMessage {
     Hovered(String),
+    /// SPIKE (iteration 11): re-derive cached bytes from the bridge
+    /// (one 2x scale per drain, never per hover).
+    Sync,
 }
 
 pub(crate) struct SpikePpuState {
     bridge: Arc<SpikeDebugBridge>,
+    /// SPIKE (iteration 11): scaled display bytes, derived on Sync
+    /// only. `view` wraps handles; hover rebuilds never re-scale.
+    #[allow(clippy::type_complexity)]
+    scaled: Mutex<Vec<(String, u32, u32, Vec<u8>)>>,
+    panels_cache: Mutex<String>,
+    hover_cache: Mutex<String>,
 }
 
 pub(crate) struct SpikePpuProgram {
@@ -109,6 +118,9 @@ impl Program for SpikePpuProgram {
         (
             SpikePpuState {
                 bridge: Arc::clone(&self.bridge),
+                scaled: Mutex::new(Vec::new()),
+                panels_cache: Mutex::new(String::new()),
+                hover_cache: Mutex::new(String::new()),
             },
             Task::none(),
         )
@@ -118,8 +130,23 @@ impl Program for SpikePpuProgram {
         let bridge = &state.bridge;
         match message {
             SpikePpuMessage::Hovered(line) => {
-                *bridge.ppu_hover.lock().unwrap() = line;
+                *bridge.ppu_hover.lock().unwrap() = line.clone();
+                *state.hover_cache.lock().unwrap() = line;
                 bridge.ppu_invalidated.store(true, Ordering::Release);
+            }
+            SpikePpuMessage::Sync => {
+                let images = bridge.images.lock().unwrap().clone();
+                let mut scaled = Vec::with_capacity(images.len());
+                for (label, width, height, rgba) in &images {
+                    scaled.push((
+                        label.clone(),
+                        width * 2,
+                        height * 2,
+                        spike_scale2x(rgba, *width, *height),
+                    ));
+                }
+                *state.scaled.lock().unwrap() = scaled;
+                *state.panels_cache.lock().unwrap() = bridge.panels.lock().unwrap().clone();
             }
         }
         Task::none()
@@ -131,10 +158,12 @@ impl Program for SpikePpuProgram {
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::Length;
-        use iced::widget::{column, image, mouse_area, text};
-        let images = state.bridge.images.lock().unwrap().clone();
-        let panels = state.bridge.panels.lock().unwrap().clone();
-        let hover = state.bridge.ppu_hover.lock().unwrap().clone();
+        use iced::widget::{column, image, mouse_area, scrollable, text};
+        // SPIKE (iteration 11): single coherent capture; scaled bytes
+        // come from the Sync cache, never re-derived here.
+        let scaled = state.scaled.lock().unwrap().clone();
+        let panels = state.panels_cache.lock().unwrap().clone();
+        let hover = state.hover_cache.lock().unwrap().clone();
         let mut content = column![
             text("SPIKE PPU probe (paused only)").size(18),
             text(if hover.is_empty() {
@@ -148,26 +177,29 @@ impl Program for SpikePpuProgram {
         .spacing(12)
         .padding(16)
         .width(Length::Fill);
-        if images.is_empty() {
+        if scaled.is_empty() {
             content = content.push(text("(no images)").size(14));
         }
-        for (label, width, height, rgba) in &images {
+        for (label, width, height, rgba) in &scaled {
             content = content.push(text(label.clone()).size(14));
-            let (scaled_w, scaled_h) = (width * 2, height * 2);
-            let shown = image(image::Handle::from_rgba(
-                scaled_w,
-                scaled_h,
-                spike_scale2x(rgba, *width, *height),
-            ));
+            let shown = image(image::Handle::from_rgba(*width, *height, rgba.clone()));
             let hover_label = label.clone();
-            let (hover_w, hover_h) = (*width, *height);
+            // Original (unscaled) geometry for the hover math: the
+            // cache stores display size, so halve back here.
+            let (hover_w, hover_h) = (width / 2, height / 2);
             content = content.push(mouse_area(shown).on_move(move |point| {
                 SpikePpuMessage::Hovered(spike_tile_hover(&hover_label, hover_w, hover_h, point))
             }));
         }
         content = content.push(text("Panels").size(16));
         content = content.push(text(panels).size(14).font(iced::Font::MONOSPACE));
-        content.into()
+        // SPIKE (iteration 11): display-only content scrolls so Panels
+        // stays reachable in the 620px window (no controls inside, so
+        // the outside-controls rule is untouched).
+        scrollable(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 }
 
@@ -260,6 +292,9 @@ impl SpikePpuUiState {
         bounds: Size,
         renderer: &mut iced_tiny_skia::Renderer,
     ) {
+        // SPIKE (iteration 11): derive cached bytes first (one scale
+        // per drain), then rebuild the view from cache.
+        let _task = self.instance.update(SpikePpuMessage::Sync);
         self.bridge.ppu_invalidated.store(true, Ordering::Release);
         self.process_messages(Vec::new(), window_id, bounds, renderer);
     }

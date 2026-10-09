@@ -534,17 +534,25 @@ impl HostState {
                 log::warn!("spike debugger: no spaces (no core)");
             }
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
-            let (regs, dump_rows, disasm_lines, panels, images) = if spaces.is_empty() {
-                (
-                    self.session.spike_registers_text(),
-                    Vec::new(),
-                    Vec::new(),
-                    self.session.spike_panels_text(),
-                    Vec::new(),
-                )
+            // SPIKE (iteration 11): initial fill from the same batch
+            // the drain uses (single inspect + disassemble + images).
+            let snapshot = if spaces.is_empty() {
+                nerust_gui_shell::session::SpikeSnapshot {
+                    regs: self.session.spike_registers_text(),
+                    panels: self.session.spike_panels_text(),
+                    ..Default::default()
+                }
             } else {
-                self.spike_debug_texts(spaces[0].0, mem_addr, None)
+                self.session
+                    .spike_snapshot(Some(spaces[0].0), mem_addr, None)
             };
+            let (regs, dump_rows, disasm_lines, panels, images) = (
+                snapshot.regs,
+                snapshot.dump_rows,
+                snapshot.disasm_lines,
+                snapshot.panels,
+                snapshot.images,
+            );
             match crate::spike_debug_window::SpikeDebugWindowHandle::new(
                 regs,
                 dump_rows,
@@ -572,30 +580,6 @@ impl HostState {
         }
     }
 
-    /// SPIKE: (regs, rows, disasm lines, panels, images) for one space
-    /// and address. `dis_addr=None` follows the PC; `Some` pins there.
-    #[allow(clippy::type_complexity)]
-    fn spike_debug_texts(
-        &self,
-        space: nerust_core_traits::debugger::SpaceId,
-        mem_addr: u32,
-        dis_addr: Option<u32>,
-    ) -> (
-        String,
-        Vec<(u32, String)>,
-        Vec<nerust_core_traits::debugger::DisasmLine>,
-        String,
-        Vec<(String, u32, u32, Vec<u8>)>,
-    ) {
-        (
-            self.session.spike_registers_text(),
-            self.session.spike_dump_rows(space, mem_addr),
-            self.session.spike_disasm_lines(dis_addr, 8),
-            self.session.spike_panels_text(),
-            self.session.spike_images_rgba().unwrap_or_default(),
-        )
-    }
-
     // SPIKE (iteration 6, DO NOT MERGE): auto-open when env-gated and a
     // ROM is already loaded (Xvfb capture needs no driving).
     pub(crate) fn auto_open_spike_debug(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
@@ -618,12 +602,16 @@ impl HostState {
         }
         // Execution requests run before the re-read so one drain both
         // acts and refreshes. The status line reports the last outcome.
+        // SPIKE (iteration 11): EditStage/EditCancel only touch the
+        // shell transaction; they produce no status here.
         let mut status = String::new();
         for request in &requests {
             let outcome = match request {
                 SpikeDebugRequest::Refresh
                 | SpikeDebugRequest::MemNav
                 | SpikeDebugRequest::EditSelect(_)
+                | SpikeDebugRequest::EditStage(_)
+                | SpikeDebugRequest::EditCancel
                 | SpikeDebugRequest::WriteConfirm => continue,
                 SpikeDebugRequest::Pause => self.session.spike_pause(),
                 SpikeDebugRequest::Resume => self.session.spike_resume(),
@@ -639,7 +627,43 @@ impl HostState {
             };
             status = outcome;
         }
-        // Row selection reads the old byte for the confirm row.
+        // SPIKE (iteration 11): cancel/commit hit the shell-owned
+        // transaction in request order, before the stale-kill below.
+        for request in &requests {
+            match request {
+                SpikeDebugRequest::EditCancel => self.session.spike_clear_write(),
+                SpikeDebugRequest::WriteConfirm => {
+                    status = self.session.spike_commit_write();
+                    // Iteration-10 parity: a commit consumes the input
+                    // so stale digits never pollute the next value.
+                    if let Some(handle) = self.spike_debug_window.as_ref() {
+                        handle.bridge.edit.lock().unwrap().input.clear();
+                    }
+                }
+                _ => {}
+            }
+        }
+        // SPIKE (iteration 11): state-changing traffic kills
+        // staged-but-uncommitted values from previous drains
+        // (iteration-9 rule, enforced where the transaction lives).
+        // Select/stage/commit traffic never triggers the kill: it
+        // builds the transaction this same drain consumes or keeps.
+        if requests.iter().any(|request| {
+            matches!(
+                request,
+                SpikeDebugRequest::Refresh
+                    | SpikeDebugRequest::MemNav
+                    | SpikeDebugRequest::Pause
+                    | SpikeDebugRequest::Resume
+                    | SpikeDebugRequest::TogglePause
+                    | SpikeDebugRequest::StepFrame
+                    | SpikeDebugRequest::StepInstr
+            )
+        }) {
+            self.session.spike_clear_write();
+        }
+        // Row selection prepares the shell transaction (old byte
+        // for the confirm row) and mirrors selection display-side.
         for request in &requests {
             if let SpikeDebugRequest::EditSelect(addr) = request {
                 let handle = match self.spike_debug_window.as_ref() {
@@ -647,7 +671,7 @@ impl HostState {
                     None => return,
                 };
                 let space = handle.bridge.selected_space();
-                let old = space.and_then(|space| self.session.spike_read_byte(space, *addr));
+                let old = space.and_then(|space| self.session.spike_prepare_write(space, *addr));
                 let old_text = match old {
                     Some(old) => format!("{old:02X}"),
                     None => "??".to_string(),
@@ -659,23 +683,10 @@ impl HostState {
                 );
             }
         }
-        // Confirmed writes execute, then the single re-read below
-        // refreshes every pane including the edited row.
+        // SPIKE (iteration 11): fresh staging after the kill above.
         for request in &requests {
-            if *request == SpikeDebugRequest::WriteConfirm {
-                let handle = match self.spike_debug_window.as_ref() {
-                    Some(handle) => handle,
-                    None => return,
-                };
-                let space = handle.bridge.selected_space();
-                match (space, handle.bridge.take_pending_write()) {
-                    (Some(space), Some((addr, value))) => {
-                        status = self.session.spike_write_memory(space, addr, 1, value);
-                    }
-                    _ => {
-                        status = "nothing to write".to_string();
-                    }
-                }
+            if let SpikeDebugRequest::EditStage(value) = request {
+                self.session.spike_stage_write(*value);
             }
         }
         // SPIKE (iteration 10): frozen values re-apply on every drain
@@ -690,11 +701,11 @@ impl HostState {
         }
         let (space, mem_addr, dis_addr) = match self.spike_debug_window.as_ref() {
             Some(handle) => {
-                let mem_addr = *handle.bridge.mem_addr.lock().unwrap();
-                let dis_addr = if handle.bridge.follow_pc.load(Ordering::Acquire) {
+                let mem_addr = *handle.bridge.nav.mem_addr.lock().unwrap();
+                let dis_addr = if handle.bridge.nav.follow_pc.load(Ordering::Acquire) {
                     None
                 } else {
-                    Some(*handle.bridge.dis_addr.lock().unwrap())
+                    Some(*handle.bridge.nav.dis_addr.lock().unwrap())
                 };
                 (handle.bridge.selected_space(), mem_addr, dis_addr)
             }
@@ -707,16 +718,14 @@ impl HostState {
                 "running".to_string()
             };
         }
-        let (regs, dump_rows, disasm_lines, panels, images) = match space {
-            Some(space) => self.spike_debug_texts(space, mem_addr, dis_addr),
-            None => (
-                self.session.spike_registers_text(),
-                Vec::new(),
-                self.session.spike_disasm_lines(None, 8),
-                self.session.spike_panels_text(),
-                Vec::new(),
-            ),
+        // SPIKE (iteration 11): one batched snapshot per drain (3
+        // thread crossings: inspect, disassemble, images). Confirm
+        // text follows the cleared-or-committed transaction above.
+        let snapshot = match space {
+            Some(space) => self.session.spike_snapshot(Some(space), mem_addr, dis_addr),
+            None => self.session.spike_snapshot(None, mem_addr, dis_addr),
         };
+        let pending_text = self.session.spike_pending_text();
         // SPIKE (iteration 10): watch value fills here (read-only live
         // value, BGB style); changed rows diff against the previous
         // re-read for `*` marks (Mesen style, row-level).
@@ -729,7 +738,8 @@ impl HostState {
                     .unwrap()
                     .and_then(|addr| space.and_then(|s| self.session.spike_read_byte(s, addr)));
                 let prev = handle.bridge.dump_rows.lock().unwrap().clone();
-                let diff: Vec<u32> = dump_rows
+                let diff: Vec<u32> = snapshot
+                    .dump_rows
                     .iter()
                     .filter(|(addr, text)| {
                         prev.iter()
@@ -742,12 +752,13 @@ impl HostState {
             None => (None, Vec::new()),
         };
         if let Some(handle) = self.spike_debug_window.as_mut() {
+            *handle.bridge.pending_text.lock().unwrap() = pending_text;
             handle.set_all(
-                regs,
-                dump_rows,
-                disasm_lines,
-                panels,
-                images,
+                snapshot.regs,
+                snapshot.dump_rows,
+                snapshot.disasm_lines,
+                snapshot.panels,
+                snapshot.images,
                 status,
                 watch_value,
                 diff,
