@@ -432,10 +432,15 @@ mod tests {
         .expect("console");
         {
             let debugger = loaded.debugger().expect("debugger");
-            assert_eq!(debugger.spaces().len(), 3);
+            assert_eq!(debugger.spaces().len(), 4);
             assert!(
                 debugger
                     .read(crate::debugger::SPACE_WORK_RAM, 0, 1)
+                    .is_some()
+            );
+            assert!(
+                debugger
+                    .read(crate::debugger::SPACE_PRG_ROM, 0x8000, 1)
                     .is_some()
             );
         }
