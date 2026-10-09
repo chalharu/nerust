@@ -385,6 +385,48 @@ impl EmuCore {
         reply_rx.recv().map_err(|_| OperationError::NoReply)
     }
 
+    /// On-demand disassembly through the emu thread. Cold path:
+    /// callers hold pause for frame-consistent rows.
+    pub fn disassemble(
+        &self,
+        addr: u32,
+        count: u16,
+    ) -> Result<Result<Vec<nerust_core_traits::debugger::DisasmLine>, DebuggerError>, OperationError>
+    {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerDisassemble {
+                addr,
+                count,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// On-demand system images through the emu thread. Same cold-path
+    /// contract as [`EmuCore::disassemble`].
+    pub fn debug_images(
+        &self,
+    ) -> Result<Result<Vec<nerust_core_traits::debugger::DebugImage>, DebuggerError>, OperationError>
+    {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerImages { reply: reply_tx })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
+    /// On-demand program counter through the emu thread. Ungated (a
+    /// single register read); `Ok(None)` means no anchor.
+    pub fn program_counter(&self) -> Result<Result<Option<u32>, DebuggerError>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerPc { reply: reply_tx })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        reply_rx.recv().map_err(|_| OperationError::NoReply)
+    }
+
     /// Memory edit through the emu thread. Pause-ungated by design;
     /// deterministic callers pause first.
     pub fn write_memory(

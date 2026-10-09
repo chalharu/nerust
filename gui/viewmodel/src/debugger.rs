@@ -7,7 +7,11 @@
 //! Execution and writes stay in the shell session (later phases);
 //! this module owns pure interpretation only.
 
-use nerust_core_traits::debugger::DisasmLine;
+use std::time::Duration;
+
+use nerust_core_traits::debugger::{
+    CellValue, ColumnKind, DebugImage, DebugPanel, DisasmLine, ImageFormat, MemoryDump, SpaceId,
+};
 
 /// Disassembly undo depth (no$ Back adapted to buttons).
 pub const DISASM_BACK_CAP: usize = 32;
@@ -182,6 +186,88 @@ pub fn format_pending_write(addr: u32, old: Option<u8>, value: u64) -> String {
     format!("write {value:02X} to {addr:08X} (was {old_text})?")
 }
 
+/// Two-phase memory write transaction: `Empty` → `Prepared` (row
+/// selected, old byte read) → `Staged` (value parsed) → commit
+/// consumes. Pure transitions; the session owns one instance and
+/// applies the stale-kill rule around drains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WriteTransaction {
+    /// No pending write.
+    #[default]
+    Empty,
+    /// Row selected; value not yet staged.
+    Prepared {
+        space: SpaceId,
+        addr: u32,
+        old: Option<u8>,
+    },
+    /// Fully staged; the confirm row shows [`format_pending_write`].
+    Staged {
+        space: SpaceId,
+        addr: u32,
+        old: Option<u8>,
+        value: u64,
+    },
+}
+
+impl WriteTransaction {
+    /// Fresh selection overwrites any state.
+    pub fn prepare(&mut self, space: SpaceId, addr: u32, old: Option<u8>) {
+        *self = Self::Prepared { space, addr, old };
+    }
+
+    /// Stage the parsed value; only `Prepared` accepts it.
+    pub fn stage(&mut self, value: u64) {
+        if let Self::Prepared { space, addr, old } = *self {
+            *self = Self::Staged {
+                space,
+                addr,
+                old,
+                value,
+            };
+        }
+    }
+
+    /// Commit the staged write, consuming the transaction. `None`
+    /// unless fully staged.
+    pub fn take_commit(&mut self) -> Option<(SpaceId, u32, u64)> {
+        match *self {
+            Self::Staged {
+                space, addr, value, ..
+            } => {
+                *self = Self::Empty;
+                Some((space, addr, value))
+            }
+            _ => None,
+        }
+    }
+
+    /// Drop any uncommitted transaction (cancel, space switch).
+    pub fn clear(&mut self) {
+        *self = Self::Empty;
+    }
+
+    /// State-changing traffic (step, refresh, pause switches) kills
+    /// staged-but-uncommitted values from previous drains, whose old
+    /// byte may no longer match. Select/stage/commit traffic never
+    /// triggers this: it builds the transaction this drain consumes.
+    pub fn on_state_changing_traffic(&mut self) {
+        if !matches!(self, Self::Empty) {
+            *self = Self::Empty;
+        }
+    }
+
+    /// Confirm-row text, if fully staged.
+    pub fn pending_text(&self) -> Option<String> {
+        match *self {
+            Self::Staged {
+                addr, old, value, ..
+            } => Some(format_pending_write(addr, old, value)),
+            _ => None,
+        }
+    }
+}
+
 /// Parse a hex address (`0010`, `0x0010`, `$0010`). Surrounding
 /// whitespace is ignored; anything else is `None`.
 pub fn parse_hex_addr(raw: &str) -> Option<u32> {
@@ -192,6 +278,109 @@ pub fn parse_hex_addr(raw: &str) -> Option<u32> {
         return None;
     }
     u32::from_str_radix(text, 16).ok()
+}
+
+/// One drain's worth of interpreted debugger data. The session fills
+/// it from a single batched core pass; frontends render from it and
+/// never call the core themselves.
+#[derive(Debug, Clone, Default)]
+pub struct DebugSnapshot {
+    /// False when no core is loaded: all sections carry degenerates.
+    pub available: bool,
+    /// `name: $xxxx` lines in kernel order.
+    pub regs: String,
+    /// `(address, text)` hex rows for the current page.
+    pub dump_rows: Vec<(u32, String)>,
+    /// Current disassembly window rows (empty when unanchored).
+    pub disasm_lines: Vec<DisasmLine>,
+    /// Anchor the disassembly centers on (`None` in follow mode
+    /// without a named counter, or when pinned explicitly elsewhere).
+    pub pc: Option<u32>,
+    /// `== label ==` sections, or `(no panels)`.
+    pub panels: String,
+    /// `(label, width, height, rgba)` system images.
+    pub images: Vec<(String, u32, u32, Vec<u8>)>,
+    /// Wall time spent inside the batched core pass.
+    pub elapsed: Duration,
+}
+
+/// Format kernel registers as `name: $xxxx` lines, kernel order kept.
+pub fn format_registers(registers: &[(&'static str, u64)]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    for (name, value) in registers.iter() {
+        let _ = writeln!(out, "{name}: ${value:04X}");
+    }
+    out
+}
+
+/// Format a memory dump as one string per row (`addr: bytes`).
+pub fn format_dump_rows(dump: &MemoryDump) -> Vec<(u32, String)> {
+    use std::fmt::Write as _;
+    dump.rows
+        .iter()
+        .map(|row| {
+            let mut text = format!("{:08X}:", row.addr);
+            for i in 0..row.valid {
+                let _ = write!(text, " {:02X}", row.bytes[i as usize]);
+            }
+            (row.addr, text)
+        })
+        .collect()
+}
+
+/// Format one cell by its column kind.
+pub fn format_cell(cell: &CellValue, kind: ColumnKind) -> String {
+    match (cell, kind) {
+        (CellValue::Text(text), _) => text.clone(),
+        (CellValue::U64(value), ColumnKind::Hex { digits }) => {
+            format!("{:01$X}", value, digits as usize)
+        }
+        (CellValue::U64(value), ColumnKind::Dec) => format!("{value}"),
+        (CellValue::U64(value), _) => format!("{value}"),
+        (CellValue::Bool(true), ColumnKind::Bool) => "yes".to_string(),
+        (CellValue::Bool(false), ColumnKind::Bool) => "no".to_string(),
+        (CellValue::Bool(value), _) => format!("{value}"),
+    }
+}
+
+/// Format panels as `== label ==` / `key: cells` text, or the
+/// degenerate marker when empty.
+pub fn format_panels(panels: &[DebugPanel]) -> String {
+    if panels.is_empty() {
+        return "(no panels)".to_string();
+    }
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    for panel in panels.iter() {
+        let _ = writeln!(out, "== {} ==", panel.label_id);
+        for row in panel.rows.iter() {
+            let _ = write!(out, "{}:", row.key);
+            for (cell, column) in row.cells.iter().zip(panel.columns.iter()) {
+                let _ = write!(out, " {}", format_cell(cell, column.kind));
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Blit an indexed system image to `(label, width, height, rgba)`.
+/// The blit is mechanical (no system knowledge): indexed pixels
+/// through the descriptor palette, opaque alpha.
+pub fn rgba_image(image: &DebugImage) -> (String, u32, u32, Vec<u8>) {
+    let mut rgba = Vec::with_capacity(image.pixels.len() * 4);
+    for &pixel in &image.pixels {
+        let rgb = match image.format {
+            ImageFormat::Indexed2bpp => image
+                .palette
+                .get(pixel as usize)
+                .copied()
+                .unwrap_or([0, 0, 0]),
+        };
+        rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 0xFF]);
+    }
+    (image.label_id.to_string(), image.width, image.height, rgba)
 }
 
 #[cfg(test)]
@@ -335,5 +524,162 @@ mod tests {
         assert_eq!(cache.dump_rows.len(), 1);
         assert_eq!(cache.disasm_lines[0].addr, 0xC000);
         assert_eq!(cache.images.len(), 1);
+    }
+
+    #[test]
+    fn format_registers_keeps_kernel_order() {
+        let regs = [("b", 2u64), ("a", 1u64)];
+        assert_eq!(format_registers(&regs), "b: $0002\na: $0001\n");
+        assert_eq!(format_registers(&[]), "");
+    }
+
+    #[test]
+    fn format_dump_rows_renders_valid_prefix_only() {
+        use nerust_core_traits::debugger::SpaceId;
+        use nerust_core_traits::debugger::{HexRow, MemoryDump};
+        let dump = MemoryDump {
+            space: SpaceId(0),
+            base: 0,
+            rows: vec![HexRow {
+                addr: 0x10,
+                valid: 2,
+                bytes: [0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            }]
+            .into(),
+        };
+        assert_eq!(
+            format_dump_rows(&dump),
+            vec![(0x10u32, "00000010: AB CD".to_string())]
+        );
+        assert!(
+            format_dump_rows(&MemoryDump {
+                space: SpaceId(0),
+                base: 0,
+                rows: Vec::new().into(),
+            })
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn format_panels_covers_all_cell_kinds() {
+        use nerust_core_traits::debugger::ColumnKind;
+        use nerust_core_traits::debugger::{CellValue, DebugPanel, PanelColumn, PanelRow};
+        let panels = [DebugPanel {
+            id: "p",
+            label_id: "P",
+            columns: &[
+                PanelColumn {
+                    id: "t",
+                    label_id: "T",
+                    kind: ColumnKind::Text,
+                },
+                PanelColumn {
+                    id: "h",
+                    label_id: "H",
+                    kind: ColumnKind::Hex { digits: 2 },
+                },
+                PanelColumn {
+                    id: "d",
+                    label_id: "D",
+                    kind: ColumnKind::Dec,
+                },
+                PanelColumn {
+                    id: "b",
+                    label_id: "B",
+                    kind: ColumnKind::Bool,
+                },
+            ],
+            rows: vec![PanelRow {
+                key: "row",
+                cells: vec![
+                    CellValue::Text("s".to_string()),
+                    CellValue::U64(0xAB),
+                    CellValue::U64(241),
+                    CellValue::Bool(true),
+                ],
+            }],
+        }];
+        assert_eq!(format_panels(&panels), "== P ==\nrow: s AB 241 yes\n");
+        assert_eq!(format_panels(&[]), "(no panels)");
+    }
+
+    #[test]
+    fn rgba_image_blits_through_palette() {
+        use nerust_core_traits::debugger::{DebugImage, ImageFormat};
+        let image = DebugImage {
+            id: "left",
+            label_id: "Pattern left",
+            width: 2,
+            height: 1,
+            format: ImageFormat::Indexed2bpp,
+            palette: vec![[0, 0, 0], [255, 0, 0], [0, 255, 0], [0, 0, 255]],
+            pixels: vec![0, 3],
+        };
+        assert_eq!(
+            rgba_image(&image),
+            (
+                "Pattern left".to_string(),
+                2,
+                1,
+                vec![0, 0, 0, 0xFF, 0, 0, 255, 0xFF]
+            )
+        );
+    }
+
+    #[test]
+    fn write_transaction_flows_to_commit() {
+        use nerust_core_traits::debugger::SpaceId;
+        let mut txn = WriteTransaction::Empty;
+        assert_eq!(txn.pending_text(), None);
+        assert_eq!(txn.take_commit(), None);
+        // Staging without preparation is a no-op.
+        txn.stage(0x42);
+        assert_eq!(txn.take_commit(), None);
+        // Prepare, stage, commit consumes exactly once.
+        txn.prepare(SpaceId(0), 0x10, Some(0x00));
+        assert_eq!(txn.pending_text(), None);
+        txn.stage(0x42);
+        assert_eq!(
+            txn.pending_text(),
+            Some("write 42 to 00000010 (was 00)?".to_string())
+        );
+        assert_eq!(txn.take_commit(), Some((SpaceId(0), 0x10, 0x42)));
+        assert_eq!(txn, WriteTransaction::Empty);
+        assert_eq!(txn.take_commit(), None);
+    }
+
+    #[test]
+    fn write_transaction_prepare_overwrites() {
+        use nerust_core_traits::debugger::SpaceId;
+        let mut txn = WriteTransaction::Empty;
+        txn.prepare(SpaceId(0), 0x10, Some(0x00));
+        txn.stage(0x42);
+        // Fresh selection drops the staged value.
+        txn.prepare(SpaceId(0), 0x20, Some(0xFF));
+        assert_eq!(txn.pending_text(), None);
+        assert_eq!(txn.take_commit(), None);
+    }
+
+    #[test]
+    fn write_transaction_traffic_kills_uncommitted() {
+        use nerust_core_traits::debugger::SpaceId;
+        let mut txn = WriteTransaction::Empty;
+        // Empty traffic is a no-op.
+        txn.on_state_changing_traffic();
+        assert_eq!(txn, WriteTransaction::Empty);
+        // Prepared and staged values die on state-changing traffic.
+        txn.prepare(SpaceId(0), 0x10, Some(0x00));
+        txn.on_state_changing_traffic();
+        assert_eq!(txn, WriteTransaction::Empty);
+        txn.prepare(SpaceId(0), 0x10, Some(0x00));
+        txn.stage(0x42);
+        txn.on_state_changing_traffic();
+        assert_eq!(txn, WriteTransaction::Empty);
+        assert_eq!(txn.pending_text(), None);
+        // Explicit cancel clears too.
+        txn.prepare(SpaceId(0), 0x10, Some(0x00));
+        txn.clear();
+        assert_eq!(txn, WriteTransaction::Empty);
     }
 }

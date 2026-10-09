@@ -123,6 +123,15 @@ impl EmuThread {
                                 let _ =
                                     reply.send(Err(InspectError::Core(DebuggerError::Unsupported)));
                             }
+                            EmuCommand::DebuggerDisassemble { reply, .. } => {
+                                let _ = reply.send(Err(DebuggerError::Unsupported));
+                            }
+                            EmuCommand::DebuggerImages { reply, .. } => {
+                                let _ = reply.send(Err(DebuggerError::Unsupported));
+                            }
+                            EmuCommand::DebuggerPc { reply, .. } => {
+                                let _ = reply.send(Err(DebuggerError::Unsupported));
+                            }
                             EmuCommand::WriteMemory { reply, .. } => {
                                 let _ = reply.send(Err(DebuggerError::Unsupported));
                             }
@@ -260,6 +269,29 @@ impl EmuThread {
                             let frame = fc.load(Ordering::Relaxed);
                             let result = inspect_memory(&*core, &req, frame);
                             // reply send failure: receiver dropped (timeout/abort) — expected
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::DebuggerDisassemble { addr, count, reply } => {
+                            // Cold path, ungated like WriteMemory: callers
+                            // hold pause for frame-consistent rows.
+                            let result = match core.debugger() {
+                                Some(debugger) => Ok(debugger.disassemble(addr, count)),
+                                None => Err(DebuggerError::Unsupported),
+                            };
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::DebuggerImages { reply } => {
+                            let result = match core.debugger() {
+                                Some(debugger) => Ok(debugger.images()),
+                                None => Err(DebuggerError::Unsupported),
+                            };
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::DebuggerPc { reply } => {
+                            let result = match core.debugger() {
+                                Some(debugger) => Ok(debugger.program_counter()),
+                                None => Err(DebuggerError::Unsupported),
+                            };
                             let _ = reply.send(result);
                         }
                         EmuCommand::WriteMemory { req, reply } => {
