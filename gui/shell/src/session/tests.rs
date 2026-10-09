@@ -492,3 +492,63 @@ fn registry_all_produces_settings_page_for_registered_system() {
         "should produce one page per registered system"
     );
 }
+
+#[test]
+fn debug_snapshot_without_core_is_unavailable() {
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    // No core: paused reads as true (nothing runs), spaces are empty,
+    // and the snapshot carries degenerates only.
+    assert!(session.debug_paused());
+    assert!(session.debug_spaces().is_empty());
+    let snapshot = session.debug_snapshot(None, 0, None);
+    assert!(!snapshot.available);
+    assert!(snapshot.dump_rows.is_empty());
+    assert!(snapshot.disasm_lines.is_empty());
+    assert!(
+        session
+            .debug_read_byte(nerust_core_traits::debugger::SpaceId(0), 0)
+            .is_none()
+    );
+}
+
+#[test]
+fn debug_write_transaction_without_core() {
+    use nerust_core_traits::debugger::SpaceId;
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    // Prepare reads nothing without a core, but still arms.
+    assert_eq!(session.debug_prepare_write(SpaceId(0), 0x10), None);
+    assert_eq!(session.debug_pending_text(), None);
+    session.debug_stage_write(0x42);
+    assert_eq!(
+        session.debug_pending_text(),
+        Some("write 42 to 00000010 (was ??)?".to_string())
+    );
+    // Commit without a core reports loudly and consumes.
+    assert_eq!(session.debug_commit_write(), "no core");
+    assert_eq!(session.debug_pending_text(), None);
+    assert_eq!(session.debug_commit_write(), "nothing to write");
+}
+
+#[test]
+fn debug_traffic_kill_flows_through_session() {
+    use nerust_core_traits::debugger::SpaceId;
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    session.debug_prepare_write(SpaceId(0), 0x10);
+    session.debug_stage_write(0x42);
+    // Non-state-changing traffic keeps the staged value.
+    session.debug_note_traffic(false);
+    assert!(session.debug_pending_text().is_some());
+    // State-changing traffic kills it.
+    session.debug_note_traffic(true);
+    assert_eq!(session.debug_pending_text(), None);
+    // Explicit cancel clears too.
+    session.debug_prepare_write(SpaceId(0), 0x10);
+    session.debug_clear_write();
+    assert_eq!(session.debug_pending_text(), None);
+}
