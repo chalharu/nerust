@@ -196,6 +196,55 @@ pub trait Debugger {
     fn panels(&self) -> Vec<DebugPanel> {
         Vec::new()
     }
+
+    /// Program counter for disassembly anchoring, if the system names
+    /// one. Defaults to `None`: presentation shows an explicit
+    /// unanchored degenerate instead of guessing. Register names stay
+    /// architectural (`r15`, never a `pc` alias); anchoring does not
+    /// go through the register list.
+    fn program_counter(&self) -> Option<u32> {
+        None
+    }
+
+    /// System images (pattern tables). Empty by default; cores with
+    /// image views override it. Cold path: allocation is expected,
+    /// and callers never invoke it per frame.
+    fn images(&self) -> Vec<DebugImage> {
+        Vec::new()
+    }
+
+    /// Disassemble `count` rows from `addr`. Empty by default; cores
+    /// with a disassembler override it. Short reads at the range end
+    /// decode as raw bytes: a truncated tail never panics and never
+    /// fabricates instructions. Cold path like `images`.
+    fn disassemble(&self, _addr: u32, _count: u16) -> Vec<DisasmLine> {
+        Vec::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Disassembly — one decoded instruction row
+// ---------------------------------------------------------------------------
+
+/// A single disassembled instruction row. `bytes` holds up to 3
+/// instruction bytes, `len` the used prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisasmLine {
+    /// Instruction address.
+    pub addr: u32,
+    /// Raw instruction bytes (first `len` entries valid).
+    pub bytes: [u8; 3],
+    /// Instruction length in bytes (1-3).
+    pub len: u8,
+    /// Human-readable text, e.g. `JMP $C5F5`.
+    pub text: String,
+    /// True when this row holds the current PC.
+    pub is_pc: bool,
+    /// Follow address for plain address operands, e.g. relative
+    /// branches and absolute jumps. Presentation navigates from this
+    /// and never scrapes `text`. `None` for immediates, indexed and
+    /// indirect forms, implied instructions, and raw bytes.
+    pub target: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +287,25 @@ pub enum CellValue {
     Text(String),
     U64(u64),
     Bool(bool),
+}
+
+/// One system image. `pixels` are row-major indices into `palette`;
+/// the frontend blits mechanically with no system knowledge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugImage {
+    pub id: &'static str,
+    pub label_id: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub format: ImageFormat,
+    pub palette: Vec<[u8; 3]>,
+    pub pixels: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    /// 2 bits per pixel, values 0-3 into a 4-entry palette.
+    Indexed2bpp,
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +483,35 @@ mod tests {
     fn debug_control_is_dyn_compatible() {
         fn _assert_dyn<T: DebugControl + ?Sized>() {}
         let _f: fn(&mut dyn DebugControl) = |_| {};
+    }
+
+    struct EmptyDebugger;
+
+    impl Debugger for EmptyDebugger {
+        fn spaces(&self) -> &[SpaceInfo] {
+            &[]
+        }
+
+        fn space_containing(&self, _addr: u32) -> Option<SpaceId> {
+            None
+        }
+
+        fn read(&self, _space: SpaceId, _addr: u32, _width: u8) -> Option<u64> {
+            None
+        }
+
+        fn registers(&self) -> &[(&'static str, u64)] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn debugger_defaults_are_explicitly_empty() {
+        let debugger = EmptyDebugger;
+        assert_eq!(debugger.program_counter(), None);
+        assert!(debugger.images().is_empty());
+        assert!(debugger.disassemble(0xC000, 8).is_empty());
+        assert!(debugger.panels().is_empty());
     }
 
     #[test]
