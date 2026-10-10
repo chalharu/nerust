@@ -552,3 +552,25 @@ fn debug_traffic_kill_flows_through_session() {
     session.debug_clear_write();
     assert_eq!(session.debug_pending_text(), None);
 }
+
+#[test]
+fn debug_control_without_core_reports_loudly() {
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    assert_eq!(session.debug_pause(), "no core");
+    assert_eq!(session.debug_resume(), "no core");
+    assert_eq!(
+        session.debug_step(nerust_core_traits::debugger::StepUnit::Frame),
+        "no core"
+    );
+}
+
+#[test]
+fn debug_write_byte_without_core_is_silent() {
+    use nerust_core_traits::debugger::SpaceId;
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    assert!(!session.debug_write_byte(SpaceId(0), 0, 0xFF));
+}

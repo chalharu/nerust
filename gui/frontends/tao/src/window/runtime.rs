@@ -122,7 +122,12 @@ impl WindowRuntime {
                     self.host.sync_fullscreen_default_from_window();
                     self.host.request_redraw();
                 }
-                WindowEvent::KeyboardInput { event, .. } => self.host.on_keyboard_input(event),
+                WindowEvent::KeyboardInput { event, .. } => {
+                    self.host.on_keyboard_input(event);
+                    if self.host.take_debug_open_request() {
+                        self.host.open_debug_windows(event_loop);
+                    }
+                }
                 _ => (),
             },
             Event::WindowEvent {
@@ -162,6 +167,87 @@ impl WindowRuntime {
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
             Event::RedrawRequested(window_id) if self.host.is_settings_window(window_id) => {
                 if let Some(handle) = self.host.settings_window.as_mut() {
+                    handle.render();
+                }
+            }
+            Event::WindowEvent {
+                event, window_id, ..
+            } if self.host.is_debug_window(window_id) => {
+                if let WindowEvent::Moved(position) = &event {
+                    self.host.remember_debug_window_pos(position.x, position.y);
+                }
+                {
+                    let Some(handle) = self.host.debug_window.as_mut() else {
+                        return;
+                    };
+                    match &event {
+                        WindowEvent::Resized(size) => handle.resize(size.width, size.height),
+                        WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                            handle.set_scale_factor(*scale_factor as f32);
+                        }
+                        WindowEvent::ModifiersChanged(state) => handle.set_modifiers(*state),
+                        WindowEvent::CloseRequested => {
+                            handle
+                                .should_close
+                                .store(true, std::sync::atomic::Ordering::Release);
+                        }
+                        _ => {}
+                    }
+                    handle.handle_tao_event(event);
+                }
+                self.host.drain_debug_requests();
+                // Closing never resumes: resume is always explicit.
+                if let Some(handle) = self.host.debug_window.as_mut() {
+                    handle.render();
+                    if handle
+                        .should_close
+                        .load(std::sync::atomic::Ordering::Acquire)
+                    {
+                        self.host.debug_window.take();
+                        self.host.request_redraw();
+                    }
+                }
+            }
+            Event::RedrawRequested(window_id) if self.host.is_debug_window(window_id) => {
+                self.host.drain_debug_requests();
+                if let Some(handle) = self.host.debug_window.as_mut() {
+                    handle.render();
+                }
+            }
+            Event::WindowEvent {
+                event, window_id, ..
+            } if self.host.is_ppu_window(window_id) => {
+                if let WindowEvent::Moved(position) = &event {
+                    self.host.remember_ppu_window_pos(position.x, position.y);
+                }
+                let Some(handle) = self.host.ppu_window.as_mut() else {
+                    return;
+                };
+                match &event {
+                    WindowEvent::Resized(size) => handle.resize(size.width, size.height),
+                    WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                        handle.set_scale_factor(*scale_factor as f32);
+                    }
+                    WindowEvent::ModifiersChanged(state) => handle.set_modifiers(*state),
+                    WindowEvent::CloseRequested => {
+                        handle
+                            .should_close
+                            .store(true, std::sync::atomic::Ordering::Release);
+                    }
+                    _ => {}
+                }
+                handle.handle_tao_event(event);
+                handle.render();
+                if handle
+                    .should_close
+                    .load(std::sync::atomic::Ordering::Acquire)
+                {
+                    self.host.ppu_window.take();
+                    self.host.request_redraw();
+                }
+            }
+            Event::RedrawRequested(window_id) if self.host.is_ppu_window(window_id) => {
+                if let Some(handle) = self.host.ppu_window.as_mut() {
                     handle.render();
                 }
             }

@@ -520,10 +520,7 @@ mod tests {
         for line in log.lines().take(300) {
             let addr = u32::from_str_radix(&line[0..4], 16).expect("log addr");
             let reg_start = line.find("  A:").expect("log registers");
-            let operand = line[15..reg_start]
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or("");
+            let operand = line[15..reg_start].split_whitespace().nth(1).unwrap_or("");
             let rows = debugger.disassemble(addr, 1);
             assert_eq!(rows.len(), 1, "no row at {addr:04X}");
             let row = &rows[0];
