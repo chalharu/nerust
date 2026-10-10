@@ -14,6 +14,10 @@ use nerust_core_traits::debugger::{
 /// Disassembly undo depth (no$ Back adapted to buttons).
 pub const DISASM_BACK_CAP: usize = 32;
 
+/// PPU viewer empty-hover hint. Canonical wording for every
+/// frontend; PPU image titles render the raw kernel label.
+pub const PPU_HOVER_HINT: &str = "hover a tile";
+
 /// Movement state: spaces, addresses, inputs, undo stack, follow mode.
 /// Presentation-owned; the session never sees it.
 #[derive(Debug, Clone)]
@@ -428,6 +432,12 @@ pub fn scale2x_nearest(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ppu_hover_hint_is_canonical() {
+        // Single wording shared by the tao and GTK viewers.
+        assert_eq!(PPU_HOVER_HINT, "hover a tile");
+    }
 
     #[test]
     fn scale2x_doubles_each_pixel() {

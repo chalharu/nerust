@@ -5,7 +5,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
-use nerust_gui_viewmodel::debugger::scale2x_nearest;
+use nerust_gui_viewmodel::debugger::{PPU_HOVER_HINT, scale2x_nearest};
 
 use super::State;
 
@@ -22,6 +22,7 @@ impl PpuWindowCore {
         main_window: &gtk::ApplicationWindow,
         _state: Rc<RefCell<State>>,
         images: Vec<(String, u32, u32, Vec<u8>)>,
+        panels: String,
     ) -> PpuWindow {
         let window = gtk::ApplicationWindow::builder()
             .application(app)
@@ -35,9 +36,10 @@ impl PpuWindowCore {
         images_box.set_margin_bottom(16);
         images_box.set_margin_start(16);
         images_box.set_margin_end(16);
-        let hover_label = gtk::Label::new(Some("hover an image"));
+        let hover_label = gtk::Label::new(Some(PPU_HOVER_HINT));
         hover_label.set_xalign(0.0);
         let scroll = gtk::ScrolledWindow::new();
+        scroll.set_overlay_scrolling(false);
         scroll.set_child(Some(&images_box));
         scroll.set_vexpand(true);
         let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -52,7 +54,7 @@ impl PpuWindowCore {
             images_box,
             hover_label,
         }));
-        result.borrow_mut().sync(&images);
+        result.borrow_mut().sync(&images, &panels);
         window.present();
         result
     }
@@ -60,7 +62,7 @@ impl PpuWindowCore {
     /// Re-derive scaled pictures from fresh images (one 2x scale per
     /// refresh). Empty images show an explicit degenerate, never a
     /// blank window.
-    pub(crate) fn sync(&mut self, images: &[(String, u32, u32, Vec<u8>)]) {
+    pub(crate) fn sync(&mut self, images: &[(String, u32, u32, Vec<u8>)], panels: &str) {
         while let Some(child) = self.images_box.first_child() {
             self.images_box.remove(&child);
         }
@@ -68,10 +70,9 @@ impl PpuWindowCore {
             let empty = gtk::Label::new(Some("(no images)"));
             empty.set_xalign(0.0);
             self.images_box.append(&empty);
-            return;
         }
         for (label, width, height, rgba) in images {
-            let title = gtk::Label::new(Some(format!("== {label} ==").as_str()));
+            let title = gtk::Label::new(Some(label));
             title.set_xalign(0.0);
             self.images_box.append(&title);
             let scaled = scale2x_nearest(rgba, *width, *height);
@@ -96,6 +97,15 @@ impl PpuWindowCore {
             picture.add_controller(motion);
             self.images_box.append(&picture);
         }
+        // Panels live in the PPU viewer on every frontend, matching
+        // the tao viewer layout (images first, panels below).
+        let panels_title = gtk::Label::new(Some("Panels"));
+        panels_title.set_xalign(0.0);
+        self.images_box.append(&panels_title);
+        let panels_label = gtk::Label::new(Some(panels));
+        panels_label.add_css_class("monospace");
+        panels_label.set_xalign(0.0);
+        self.images_box.append(&panels_label);
     }
 }
 

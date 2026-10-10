@@ -196,6 +196,10 @@ impl WindowRuntime {
                     handle.handle_tao_event(event);
                 }
                 self.host.drain_debug_requests();
+                if self.host.take_ppu_open_request() {
+                    self.host.open_debug_windows(event_loop);
+                    self.host.run_debug_drain(&[]);
+                }
                 // Closing never resumes: resume is always explicit.
                 if let Some(handle) = self.host.debug_window.as_mut() {
                     handle.render();
@@ -210,6 +214,10 @@ impl WindowRuntime {
             }
             Event::RedrawRequested(window_id) if self.host.is_debug_window(window_id) => {
                 self.host.drain_debug_requests();
+                if self.host.take_ppu_open_request() {
+                    self.host.open_debug_windows(event_loop);
+                    self.host.run_debug_drain(&[]);
+                }
                 if let Some(handle) = self.host.debug_window.as_mut() {
                     handle.render();
                 }
