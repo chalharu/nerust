@@ -74,6 +74,7 @@ pub(crate) struct HostState {
     pub(crate) debug_window: Option<crate::debug_window::DebugWindowHandle>,
     pub(crate) ppu_window: Option<crate::ppu_window::PpuWindowHandle>,
     debug_open_requested: bool,
+    ppu_open_requested: bool,
     debug_window_pos: Option<(i32, i32)>,
     ppu_window_pos: Option<(i32, i32)>,
 }
@@ -114,6 +115,7 @@ impl HostState {
             debug_window: None,
             ppu_window: None,
             debug_open_requested: false,
+            ppu_open_requested: false,
             debug_window_pos: None,
             ppu_window_pos: None,
         }
@@ -299,6 +301,10 @@ impl HostState {
 
     pub(crate) fn take_debug_open_request(&mut self) -> bool {
         std::mem::take(&mut self.debug_open_requested)
+    }
+
+    pub(crate) fn take_ppu_open_request(&mut self) -> bool {
+        std::mem::take(&mut self.ppu_open_requested)
     }
 
     pub(crate) fn clear_keys(&mut self) {
@@ -545,8 +551,10 @@ impl HostState {
             let snapshot = if spaces.is_empty() {
                 debug_vm::DebugSnapshot::default()
             } else {
+                // Fetch images: the PPU viewer opens alongside and
+                // must not start on "(no images)".
                 self.session
-                    .debug_snapshot(Some(spaces[0].0), mem_addr, None, false)
+                    .debug_snapshot(Some(spaces[0].0), mem_addr, None, true)
             };
             let mut display = snapshot_to_display(&snapshot);
             display.status = self.session_status_text("");
@@ -567,7 +575,15 @@ impl HostState {
                 event_loop,
                 position,
             ) {
-                Some(handle) => self.ppu_window = Some(handle),
+                Some(handle) => {
+                    self.ppu_window = Some(handle);
+                    // Populate the image cache immediately: the bridge
+                    // already carries images, but the viewer derives
+                    // its scaled cache only on Sync.
+                    if let Some(ppu) = self.ppu_window.as_mut() {
+                        ppu.sync_from_bridge();
+                    }
+                }
                 None => log::error!("failed to open PPU viewer window"),
             }
         }
@@ -590,14 +606,28 @@ impl HostState {
     /// acts and refreshes. The phase order lives in the shared shell
     /// drain; this only gathers frontend state and renders.
     pub(crate) fn drain_debug_requests(&mut self) {
-        use nerust_gui_shell::debug::{DebugAction, DebugDrainInput};
+        use nerust_gui_shell::debug::DebugAction;
+        use std::sync::atomic::Ordering;
         let requests: Vec<DebugAction> = match self.debug_window.as_ref() {
-            Some(handle) => handle.take_requests(),
+            Some(handle) => {
+                if handle.bridge.open_ppu.swap(false, Ordering::SeqCst) {
+                    self.ppu_open_requested = true;
+                }
+                handle.take_requests()
+            }
             None => return,
         };
         if requests.is_empty() {
             return;
         }
+        self.run_debug_drain(&requests);
+    }
+
+    /// Run one action batch through the shared shell drain and push
+    /// the display back. Empty batches are pure re-reads (used after
+    /// PPU (re)open so images populate immediately).
+    pub(crate) fn run_debug_drain(&mut self, requests: &[nerust_gui_shell::debug::DebugAction]) {
+        use nerust_gui_shell::debug::DebugDrainInput;
         let (space, mem_addr, dis_addr, watch, freeze, prev_rows, need_images) =
             match self.debug_window.as_ref() {
                 Some(handle) => {
@@ -627,7 +657,7 @@ impl HostState {
             prev_dump_rows: &prev_rows,
             need_images,
         };
-        let output = self.session.debug_drain(&requests, &input);
+        let output = self.session.debug_drain(requests, &input);
         if let Some(handle) = self.debug_window.as_mut() {
             if let Some(selected) = output.reselected {
                 *handle.bridge.selected.lock().unwrap() = Some(selected);
