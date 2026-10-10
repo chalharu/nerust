@@ -357,24 +357,6 @@ impl Core {
         self.sample_interrupt();
     }
 
-    #[expect(dead_code, reason = "CPU step utility not yet wired")]
-    fn step_until_instruction_boundary(
-        &mut self,
-        ppu: &mut Ppu,
-        cartridge: &mut dyn MapperCartridge,
-        hub: &mut dyn ControllerHub,
-        apu: &mut Apu,
-    ) -> u64 {
-        let mut cycles = 0;
-        loop {
-            cycles += 1;
-            self.step(ppu, cartridge, hub, apu);
-            if self.is_instruction_boundary() {
-                return cycles;
-            }
-        }
-    }
-
     pub(crate) fn instruction_fast_path_max_cycles(
         &self,
         cartridge: &dyn MapperCartridge,
@@ -538,7 +520,7 @@ impl Core {
                 .is_some_and(OamDmaState::has_transaction)
     }
 
-    fn is_instruction_boundary(&self) -> bool {
+    pub(crate) fn is_instruction_boundary(&self) -> bool {
         self.internal_stat.get_state() == CpuStatesEnum::FetchOpCode
             && self.internal_stat.get_step() == 1
     }
