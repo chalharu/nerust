@@ -1,4 +1,5 @@
 pub mod context;
+pub mod debug;
 pub mod emu_core;
 pub mod keyboard_defaults;
 pub mod load;

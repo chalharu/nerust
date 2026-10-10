@@ -3,14 +3,16 @@
 //!
 //! Same semantics as the tao window, same shell APIs, same view-model
 //! formatters. GTK is synchronous, so there is no request queue: each
-//! action runs [`run_debug_actions`] (the drain phase order) and then
+//! action batch runs the shared shell drain
+//! ([`nerust_gui_shell::debug::SessionHandle::debug_drain`]) and then
 //! rebuilds the widgets. Paused pull-only like tao; the window opens
 //! paused and closing keeps the pause.
 
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
-use nerust_core_traits::debugger::{DUMP_ROW_BYTES, SpaceId, StepUnit};
+use nerust_core_traits::debugger::{DUMP_ROW_BYTES, SpaceId};
+use nerust_gui_shell::debug::{DebugAction, DebugDrainInput};
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState};
 
 use super::State;
@@ -20,23 +22,37 @@ const DUMP_PAGE_ROWS: i32 = 8;
 /// Bookmark cap (window-local, no file yet).
 const BOOKMARK_CAP: usize = 8;
 
-/// One action batch for [`run_debug_actions`]. Same phases as the tao
-/// drain: execution, cancel/commit, stale-kill, prepare/stage, freeze,
-/// snapshot. Order inside is load-bearing (kill runs before prepare).
-#[derive(Debug, Clone)]
-pub(crate) enum DebugAction {
-    Refresh,
-    Pause,
-    Resume,
-    TogglePause,
-    StepFrame,
-    StepInstr,
-    MemNav,
-    SelectRow(u32),
-    /// Stage a parsed value into the shell-owned transaction.
-    EditStage(u64),
-    EditCancel,
-    WriteConfirm,
+/// Pure write-input resolution: selection plus a hex byte. Widget
+/// callbacks stay thin; the rules are unit-tested below (and the
+/// drain owns the transaction, never the widgets).
+fn resolve_write_input(
+    selected: Option<(u32, Option<u8>)>,
+    input: &str,
+) -> Result<(u32, u64), String> {
+    let input = input.trim().to_string();
+    match (
+        selected,
+        vm::parse_hex_addr(&input).filter(|value| *value <= 0xFF),
+    ) {
+        (Some((addr, _)), Some(value)) => Ok((addr, value as u64)),
+        (None, _) => Err("write needs a selection".to_string()),
+        _ => Err(format!("parse failed: {input}")),
+    }
+}
+
+/// Pure freeze-input resolution, same shape as the write path.
+fn resolve_freeze_input(
+    selected: Option<(u32, Option<u8>)>,
+    input: &str,
+) -> Result<(u32, u8), String> {
+    let input = input.trim().to_string();
+    match (
+        selected,
+        vm::parse_hex_addr(&input).filter(|value| *value <= 0xFF),
+    ) {
+        (Some((addr, _)), Some(value)) => Ok((addr, value as u8)),
+        _ => Err("freeze needs a selected row and hex byte".to_string()),
+    }
 }
 
 /// Presentation state: movement, display data, and user lists.
@@ -94,108 +110,6 @@ impl DebuggerData {
             self.nav.dis_addr().unwrap_or(0)
         }
     }
-}
-
-/// Run one action batch against the session and publish a batched
-/// snapshot into `data.display`. The status line lands in
-/// `display.status` like the tao drain.
-pub(crate) fn run_debug_actions(
-    data: &mut DebuggerData,
-    session: &nerust_gui_shell::session::SessionHandle,
-    actions: &[DebugAction],
-) {
-    let mut status = String::new();
-    let mut state_changing = false;
-    for action in actions {
-        let outcome = match action {
-            DebugAction::Refresh | DebugAction::MemNav | DebugAction::SelectRow(_) => {
-                state_changing = true;
-                continue;
-            }
-            DebugAction::Pause => session.debug_pause(),
-            DebugAction::Resume => session.debug_resume(),
-            DebugAction::TogglePause => {
-                if session.debug_paused() {
-                    session.debug_resume()
-                } else {
-                    session.debug_pause()
-                }
-            }
-            DebugAction::StepFrame => {
-                state_changing = true;
-                session.debug_step(StepUnit::Frame)
-            }
-            DebugAction::StepInstr => {
-                state_changing = true;
-                session.debug_step(StepUnit::Instruction)
-            }
-            // Transaction traffic never kills: it builds the
-            // transaction this batch consumes.
-            DebugAction::EditStage(_) | DebugAction::EditCancel | DebugAction::WriteConfirm => {
-                continue;
-            }
-        };
-        status = outcome;
-    }
-    // Cancel/commit first: cancel clears, commit writes and consumes.
-    for action in actions {
-        match action {
-            DebugAction::EditCancel => session.debug_clear_write(),
-            DebugAction::WriteConfirm => {
-                status = session.debug_commit_write();
-            }
-            _ => {}
-        }
-    }
-    // Kill staged-but-uncommitted values from previous batches first;
-    // SelectRow prepares fresh state after this.
-    if state_changing {
-        session.debug_note_traffic(true);
-    }
-    // Row selection reads the old byte for the selection display.
-    for action in actions {
-        if let DebugAction::SelectRow(addr) = action {
-            let space = data.selected_space();
-            let old = space.and_then(|space| session.debug_read_byte(space, *addr));
-            data.selected = Some((*addr, old));
-            if let Some(space) = space {
-                session.debug_prepare_write(space, *addr);
-            }
-        }
-        if let DebugAction::EditStage(value) = action {
-            session.debug_stage_write(*value);
-        }
-    }
-    // Frozen values re-apply on every batch (silent by design).
-    if let Some((addr, value)) = data.freeze
-        && let Some(space) = data.selected_space()
-    {
-        let _ = session.debug_write_byte(space, addr, value);
-    }
-    let space = data.selected_space();
-    let prev = data.display.dump_rows.clone();
-    let snapshot = session.debug_snapshot(space, data.nav.mem_addr(), data.nav.dis_addr());
-    let watch_value = data
-        .watch
-        .and_then(|addr| space.and_then(|s| session.debug_read_byte(s, addr)));
-    let pending_text = session.debug_pending_text();
-    data.display.regs = snapshot.regs;
-    data.display.dump_rows = snapshot.dump_rows.clone();
-    data.display.diff = vm::diff_rows(&prev, &snapshot.dump_rows);
-    data.display.disasm_lines = snapshot.disasm_lines;
-    data.display.panels = snapshot.panels;
-    data.display.images = snapshot.images;
-    data.display.watch_value = watch_value;
-    data.display.pending_text = pending_text;
-    data.display.status = if status.is_empty() {
-        if session.debug_paused() {
-            "paused".to_string()
-        } else {
-            "running".to_string()
-        }
-    } else {
-        status
-    };
 }
 
 pub(crate) type DebuggerWindow = Rc<RefCell<DebuggerWindowCore>>;
@@ -468,6 +382,9 @@ impl DebuggerWindowCore {
         panes.append(&left_col);
         let right_scroll = gtk::ScrolledWindow::new();
         right_scroll.set_size_request(340, -1);
+        // Take the content's natural width: narrow rows (freeze,
+        // bookmarks) must not clip behind the viewport.
+        right_scroll.set_propagate_natural_width(true);
         right_scroll.set_child(Some(&right_col));
         panes.append(&right_scroll);
 
@@ -621,11 +538,31 @@ impl DebuggerWindowCore {
         Self::act(win, &[DebugAction::Refresh]);
     }
 
-    /// Run actions, then rebuild every widget from the new display.
+    /// Run actions through the shared shell drain, then rebuild
+    /// every widget from the new display. Images are fetched only
+    /// while the PPU viewer is open.
     fn act(win: &DebuggerWindow, actions: &[DebugAction]) {
-        let session = win.borrow().state.clone();
-        let session = session.borrow();
-        run_debug_actions(&mut win.borrow_mut().data, &session.session, actions);
+        let output = {
+            let this = win.borrow();
+            let state = this.state.clone();
+            let input = DebugDrainInput {
+                space: this.data.selected_space(),
+                mem_addr: this.data.nav.mem_addr(),
+                dis_addr: this.data.nav.dis_addr(),
+                watch: this.data.watch,
+                freeze: this.data.freeze,
+                prev_dump_rows: &this.data.display.dump_rows,
+                need_images: this.ppu_window.is_some(),
+            };
+            state.borrow().session.debug_drain(actions, &input)
+        };
+        {
+            let mut this = win.borrow_mut();
+            this.data.display = output.display;
+            if let Some(selected) = output.reselected {
+                this.data.selected = Some(selected);
+            }
+        }
         Self::rebuild(win);
     }
 
@@ -767,15 +704,20 @@ impl DebuggerWindowCore {
     }
 
     fn freeze_set(win: &DebuggerWindow) {
-        let selected = win.borrow().data.selected.map(|(addr, _)| addr);
-        let input = win.borrow().freeze_input.text().trim().to_string();
-        match (selected, vm::parse_hex_addr(&input).filter(|v| *v <= 0xFF)) {
-            (Some(addr), Some(value)) => {
-                win.borrow_mut().data.freeze = Some((addr, value as u8));
+        let (selected, input) = {
+            let this = win.borrow();
+            (
+                this.data.selected,
+                this.freeze_input.text().trim().to_string(),
+            )
+        };
+        match resolve_freeze_input(selected, &input) {
+            Ok((addr, value)) => {
+                win.borrow_mut().data.freeze = Some((addr, value));
                 Self::set_status(win, format!("frozen {addr:08X}={value:02X}"));
                 Self::act(win, &[DebugAction::Refresh]);
             }
-            _ => Self::set_status(win, "freeze needs a selected row and hex byte".to_string()),
+            Err(status) => Self::set_status(win, status),
         }
     }
 
@@ -785,35 +727,33 @@ impl DebuggerWindowCore {
     }
 
     fn edit_write(win: &DebuggerWindow) {
-        let selected = win.borrow().data.selected;
-        let input = win.borrow().edit_input.text().trim().to_string();
-        match (
-            selected,
-            vm::parse_hex_addr(&input).filter(|value| *value <= 0xFF),
-        ) {
-            (Some((addr, _)), Some(value)) => {
+        let (selected, input) = {
+            let this = win.borrow();
+            (
+                this.data.selected,
+                this.edit_input.text().trim().to_string(),
+            )
+        };
+        match resolve_write_input(selected, &input) {
+            Ok((addr, value)) => {
                 // Re-select first: the batch prepares fresh state
                 // before staging, so Write also works after a cancel.
                 // GTK runs batches synchronously, so the authoritative
                 // confirm row is already in the display after act.
                 Self::act(
                     win,
-                    &[
-                        DebugAction::SelectRow(addr),
-                        DebugAction::EditStage(value as u64),
-                    ],
+                    &[DebugAction::SelectRow(addr), DebugAction::EditStage(value)],
                 );
             }
-            (None, _) => Self::set_status(win, "write needs a selection".to_string()),
-            _ => Self::set_status(win, format!("parse failed: {input}")),
+            Err(status) => Self::set_status(win, status),
         }
     }
 
     fn confirm_write(win: &DebuggerWindow) {
         Self::act(win, &[DebugAction::WriteConfirm]);
-        // Commit consumes the transaction; the input clears.
+        // Commit consumes the transaction; the input clears. No
+        // rebuild: act already rendered the committed state.
         win.borrow().edit_input.set_text("");
-        Self::rebuild(win);
     }
 
     fn cancel_write(win: &DebuggerWindow) {
@@ -952,5 +892,55 @@ impl DebuggerWindowCore {
         if let Some(ppu) = this.ppu_window.as_ref() {
             ppu.borrow_mut().sync(&display.images);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_input_parses_hex_byte_with_selection() {
+        assert_eq!(
+            resolve_write_input(Some((0x30, Some(0x00))), "42"),
+            Ok((0x30, 0x42))
+        );
+        // Whitespace is harmless; values stay a single byte.
+        assert_eq!(
+            resolve_write_input(Some((0x30, None)), "  ff "),
+            Ok((0x30, 0xFF))
+        );
+    }
+
+    #[test]
+    fn write_input_rejects_missing_selection_and_bad_text() {
+        assert_eq!(
+            resolve_write_input(None, "42"),
+            Err("write needs a selection".to_string())
+        );
+        assert_eq!(
+            resolve_write_input(Some((0x30, Some(0x00))), "zz"),
+            Err("parse failed: zz".to_string())
+        );
+        assert_eq!(
+            resolve_write_input(Some((0x30, Some(0x00))), "100"),
+            Err("parse failed: 100".to_string())
+        );
+    }
+
+    #[test]
+    fn freeze_input_needs_row_and_byte_together() {
+        assert_eq!(
+            resolve_freeze_input(Some((0x10, Some(0x00))), "FF"),
+            Ok((0x10, 0xFF))
+        );
+        assert_eq!(
+            resolve_freeze_input(None, "FF"),
+            Err("freeze needs a selected row and hex byte".to_string())
+        );
+        assert_eq!(
+            resolve_freeze_input(Some((0x10, Some(0x00))), "1FF"),
+            Err("freeze needs a selected row and hex byte".to_string())
+        );
     }
 }
