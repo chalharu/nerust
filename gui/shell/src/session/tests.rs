@@ -502,7 +502,7 @@ fn debug_snapshot_without_core_is_unavailable() {
     // and the snapshot carries degenerates only.
     assert!(session.debug_paused());
     assert!(session.debug_spaces().is_empty());
-    let snapshot = session.debug_snapshot(None, 0, None);
+    let snapshot = session.debug_snapshot(None, 0, None, false);
     assert!(!snapshot.available);
     assert!(snapshot.dump_rows.is_empty());
     assert!(snapshot.disasm_lines.is_empty());
@@ -551,6 +551,118 @@ fn debug_traffic_kill_flows_through_session() {
     session.debug_prepare_write(SpaceId(0), 0x10);
     session.debug_clear_write();
     assert_eq!(session.debug_pending_text(), None);
+}
+
+#[test]
+fn debug_drain_select_then_stage_yields_pending() {
+    use crate::debug::{DebugAction, DebugDrainInput};
+    use nerust_core_traits::debugger::SpaceId;
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    let input = DebugDrainInput {
+        space: Some(SpaceId(0)),
+        mem_addr: 0,
+        dis_addr: None,
+        watch: None,
+        freeze: None,
+        prev_dump_rows: &[],
+        need_images: false,
+    };
+    // SelectRow prepares fresh state before EditStage builds on it
+    // within the same batch, so Write works right after a cancel.
+    let output = session.debug_drain(
+        &[DebugAction::SelectRow(0x10), DebugAction::EditStage(0x42)],
+        &input,
+    );
+    assert_eq!(output.reselected, Some((0x10, None)));
+    assert_eq!(
+        output.display.pending_text,
+        Some("write 42 to 00000010 (was ??)?".to_string())
+    );
+    // No execution outcome: status falls back to the pause state.
+    assert_eq!(output.display.status, "paused");
+    assert!(output.display.images.is_empty());
+}
+
+#[test]
+fn debug_drain_kills_stale_values_before_prepare() {
+    use crate::debug::{DebugAction, DebugDrainInput};
+    use nerust_core_traits::debugger::SpaceId;
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    let input = DebugDrainInput {
+        space: Some(SpaceId(0)),
+        mem_addr: 0,
+        dis_addr: None,
+        watch: None,
+        freeze: None,
+        prev_dump_rows: &[],
+        need_images: false,
+    };
+    let staged = session.debug_drain(
+        &[DebugAction::SelectRow(0x10), DebugAction::EditStage(0x42)],
+        &input,
+    );
+    assert!(staged.display.pending_text.is_some());
+    // A state-changing batch kills the staged value from the
+    // previous batch (kill runs before prepare inside the drain).
+    let killed = session.debug_drain(&[DebugAction::Refresh], &input);
+    assert_eq!(killed.display.pending_text, None);
+    assert_eq!(killed.reselected, None);
+}
+
+#[test]
+fn debug_drain_cancel_and_commit_consume() {
+    use crate::debug::{DebugAction, DebugDrainInput};
+    use nerust_core_traits::debugger::SpaceId;
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    let input = DebugDrainInput {
+        space: Some(SpaceId(0)),
+        mem_addr: 0,
+        dis_addr: None,
+        watch: None,
+        freeze: None,
+        prev_dump_rows: &[],
+        need_images: false,
+    };
+    session.debug_drain(
+        &[DebugAction::SelectRow(0x10), DebugAction::EditStage(0x42)],
+        &input,
+    );
+    let cancelled = session.debug_drain(&[DebugAction::EditCancel], &input);
+    assert_eq!(cancelled.display.pending_text, None);
+    session.debug_drain(
+        &[DebugAction::SelectRow(0x10), DebugAction::EditStage(0x42)],
+        &input,
+    );
+    // Commit without a core reports loudly and consumes.
+    let committed = session.debug_drain(&[DebugAction::WriteConfirm], &input);
+    assert_eq!(committed.display.status, "no core");
+    assert_eq!(committed.display.pending_text, None);
+}
+
+#[test]
+fn debug_drain_propagates_execution_outcomes() {
+    use crate::debug::{DebugAction, DebugDrainInput};
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    let input = DebugDrainInput {
+        space: None,
+        mem_addr: 0,
+        dis_addr: None,
+        watch: None,
+        freeze: None,
+        prev_dump_rows: &[],
+        need_images: false,
+    };
+    // Failures stay loud instead of degrading into idle text.
+    let stepped = session.debug_drain(&[DebugAction::StepFrame], &input);
+    assert_eq!(stepped.display.status, "no core");
 }
 
 #[test]

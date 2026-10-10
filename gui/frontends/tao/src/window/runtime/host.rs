@@ -1,6 +1,3 @@
-use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
-
-use nerust_core_traits::debugger::StepUnit;
 use nerust_gui_runtime::{
     settings::{
         BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
@@ -26,6 +23,7 @@ use nerust_render_traits::{
 };
 use nerust_settings_core::i18n::{UiText, text};
 use rfd::FileDialog;
+use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, KeyEvent},
@@ -548,7 +546,7 @@ impl HostState {
                 debug_vm::DebugSnapshot::default()
             } else {
                 self.session
-                    .debug_snapshot(Some(spaces[0].0), mem_addr, None)
+                    .debug_snapshot(Some(spaces[0].0), mem_addr, None, false)
             };
             let mut display = snapshot_to_display(&snapshot);
             display.status = self.session_status_text("");
@@ -589,124 +587,52 @@ impl HostState {
 
     /// Drain debugger requests and push one batched snapshot back.
     /// Execution requests run before the re-read so one drain both
-    /// acts and refreshes.
+    /// acts and refreshes. The phase order lives in the shared shell
+    /// drain; this only gathers frontend state and renders.
     pub(crate) fn drain_debug_requests(&mut self) {
-        use crate::debug_window::DebugRequest;
-        let requests = match self.debug_window.as_ref() {
+        use nerust_gui_shell::debug::{DebugAction, DebugDrainInput};
+        let requests: Vec<DebugAction> = match self.debug_window.as_ref() {
             Some(handle) => handle.take_requests(),
             None => return,
         };
         if requests.is_empty() {
             return;
         }
-        let mut status = String::new();
-        let mut state_changing = false;
-        for request in &requests {
-            let outcome = match request {
-                DebugRequest::Refresh | DebugRequest::MemNav | DebugRequest::SelectRow(_) => {
-                    state_changing = true;
-                    continue;
+        let (space, mem_addr, dis_addr, watch, freeze, prev_rows, need_images) =
+            match self.debug_window.as_ref() {
+                Some(handle) => {
+                    let nav = handle.bridge.nav.lock().unwrap();
+                    let mem_addr = nav.mem_addr();
+                    let dis_addr = nav.dis_addr();
+                    let prev = handle.bridge.display.lock().unwrap().dump_rows.clone();
+                    drop(nav);
+                    (
+                        handle.bridge.selected_space(),
+                        mem_addr,
+                        dis_addr,
+                        *handle.bridge.watch.lock().unwrap(),
+                        *handle.bridge.freeze.lock().unwrap(),
+                        prev,
+                        self.ppu_window.is_some(),
+                    )
                 }
-                DebugRequest::Pause => self.session.debug_pause(),
-                DebugRequest::Resume => self.session.debug_resume(),
-                DebugRequest::TogglePause => {
-                    if self.session.debug_paused() {
-                        self.session.debug_resume()
-                    } else {
-                        self.session.debug_pause()
-                    }
-                }
-                DebugRequest::StepFrame => {
-                    state_changing = true;
-                    self.session.debug_step(StepUnit::Frame)
-                }
-                DebugRequest::StepInstr => {
-                    state_changing = true;
-                    self.session.debug_step(StepUnit::Instruction)
-                }
-                // Transaction traffic never kills: it builds the
-                // transaction this drain consumes.
-                DebugRequest::EditStage(_)
-                | DebugRequest::EditCancel
-                | DebugRequest::WriteConfirm => {
-                    continue;
-                }
+                None => return,
             };
-            status = outcome;
-        }
-        // Cancel/commit first: cancel clears, commit writes and
-        // consumes the staged value.
-        for request in &requests {
-            match request {
-                DebugRequest::EditCancel => self.session.debug_clear_write(),
-                DebugRequest::WriteConfirm => {
-                    status = self.session.debug_commit_write();
-                }
-                _ => {}
-            }
-        }
-        // Kill staged-but-uncommitted values from previous drains
-        // first; SelectRow prepares fresh state after this, and
-        // EditStage builds on it within the same drain.
-        if state_changing {
-            self.session.debug_note_traffic(true);
-        }
-        // Row selection reads the old byte for the selection display.
-        for request in &requests {
-            if let DebugRequest::SelectRow(addr) = request {
-                let handle = match self.debug_window.as_ref() {
-                    Some(handle) => handle,
-                    None => return,
-                };
-                let space = handle.bridge.selected_space();
-                let old = space.and_then(|space| self.session.debug_read_byte(space, *addr));
-                *handle.bridge.selected.lock().unwrap() = Some((*addr, old));
-                if let Some(space) = space {
-                    self.session.debug_prepare_write(space, *addr);
-                }
-            }
-            if let DebugRequest::EditStage(value) = request {
-                self.session.debug_stage_write(*value);
-            }
-        }
-        // Frozen values re-apply on every drain (silent by design;
-        // the rows are the evidence).
-        if let Some(handle) = self.debug_window.as_ref()
-            && let Some((addr, value)) = *handle.bridge.freeze.lock().unwrap()
-            && let Some(space) = handle.bridge.selected_space()
-        {
-            let _ = self.session.debug_write_byte(space, addr, value);
-        }
-        let (space, mem_addr, dis_addr, prev_rows) = match self.debug_window.as_ref() {
-            Some(handle) => {
-                let nav = handle.bridge.nav.lock().unwrap();
-                let mem_addr = nav.mem_addr();
-                let dis_addr = nav.dis_addr();
-                let prev = handle.bridge.display.lock().unwrap().dump_rows.clone();
-                drop(nav);
-                (handle.bridge.selected_space(), mem_addr, dis_addr, prev)
-            }
-            None => return,
+        let input = DebugDrainInput {
+            space,
+            mem_addr,
+            dis_addr,
+            watch,
+            freeze,
+            prev_dump_rows: &prev_rows,
+            need_images,
         };
-        let snapshot = self.session.debug_snapshot(space, mem_addr, dis_addr);
-        let watch_value = match self.debug_window.as_ref() {
-            Some(handle) => handle
-                .bridge
-                .watch
-                .lock()
-                .unwrap()
-                .and_then(|addr| space.and_then(|s| self.session.debug_read_byte(s, addr))),
-            None => None,
-        };
-        let status = self.session_status_text(&status);
-        let pending_text = self.session.debug_pending_text();
+        let output = self.session.debug_drain(&requests, &input);
         if let Some(handle) = self.debug_window.as_mut() {
-            let mut display = snapshot_to_display(&snapshot);
-            display.diff = debug_vm::diff_rows(&prev_rows, &snapshot.dump_rows);
-            display.status = status;
-            display.watch_value = watch_value;
-            display.pending_text = pending_text;
-            handle.set_display(display);
+            if let Some(selected) = output.reselected {
+                *handle.bridge.selected.lock().unwrap() = Some(selected);
+            }
+            handle.set_display(output.display);
         }
         // PPU viewer follows the same drain (one scale per drain).
         if let Some(ppu) = self.ppu_window.as_mut() {

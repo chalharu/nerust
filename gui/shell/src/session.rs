@@ -381,9 +381,9 @@ impl SessionHandle {
         space: Option<nerust_core_traits::debugger::SpaceId>,
         mem_addr: u32,
         dis_addr: Option<u32>,
+        need_images: bool,
     ) -> debug_vm::DebugSnapshot {
         use nerust_core_traits::debugger::InspectRequest;
-        let started = std::time::Instant::now();
         let mut snapshot = debug_vm::DebugSnapshot::default();
         let core = match self.emu_core.as_ref() {
             Some(core) => core,
@@ -419,11 +419,14 @@ impl SessionHandle {
             },
             None => Vec::new(),
         };
-        snapshot.images = match core.debug_images() {
-            Ok(Ok(images)) => images.iter().map(debug_vm::rgba_image).collect(),
-            _ => Vec::new(),
+        snapshot.images = if need_images {
+            match core.debug_images() {
+                Ok(Ok(images)) => images.iter().map(debug_vm::rgba_image).collect(),
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
         };
-        snapshot.elapsed = started.elapsed();
         snapshot
     }
 
