@@ -1042,6 +1042,25 @@ impl DebugWindowHandle {
             }
         }
         let mut messages = Vec::new();
+        // Cursor keys page the dump (Up = toward lower addresses).
+        // Left/Right stay with the widgets: hijacking them would break
+        // caret movement in every text input. Computed before `mapped`
+        // moves into the UI update below.
+        let page = if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            physical_key,
+            repeat: false,
+            ..
+        }) = &mapped
+        {
+            use iced::keyboard::key::{Code, Physical};
+            match *physical_key {
+                Physical::Code(Code::ArrowUp) => Some(DebugMessage::MemPage(-1)),
+                Physical::Code(Code::ArrowDown) => Some(DebugMessage::MemPage(1)),
+                _ => None,
+            }
+        } else {
+            None
+        };
         self.ui_state.ui_mut().update(
             &[mapped],
             self.cursor,
@@ -1049,6 +1068,7 @@ impl DebugWindowHandle {
             &mut self.clipboard,
             &mut messages,
         );
+        messages.extend(page);
         if !messages.is_empty() {
             let bounds = Viewport::with_physical_size(
                 Size::new(self.viewport_physical.0, self.viewport_physical.1),
