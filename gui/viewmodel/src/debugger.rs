@@ -108,6 +108,18 @@ impl NavState {
         self.go_mem(start);
     }
 
+    /// Cycle spaces with wrap-around (space stepper). Returns the new
+    /// index, or `None` when there are no spaces.
+    pub fn cycle_space(&mut self, delta: i32) -> Option<usize> {
+        if self.space_count == 0 {
+            return None;
+        }
+        let len = self.space_count as i32;
+        let next = (self.space_idx as i32 + delta).rem_euclid(len) as usize;
+        self.space_idx = next;
+        Some(next)
+    }
+
     /// Pin `next`, pushing `current` for Back undo (cap 32, no
     /// consecutive duplicates). `current` is the displayed anchor:
     /// callers in follow-PC mode pass the first visible line, since
@@ -365,6 +377,24 @@ pub fn format_panels(panels: &[DebugPanel]) -> String {
     out
 }
 
+/// Format one disassembly row (`>addr: bytes  text`) for line
+/// buttons. The PC row carries the `>` mark (Mesen canon); the byte
+/// field pads to 3 bytes so mnemonics align across rows.
+pub fn format_disasm_line(row: &DisasmLine) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let mark = if row.is_pc { '>' } else { ' ' };
+    let _ = write!(out, "{mark}{:08X}: ", row.addr);
+    for byte in row.bytes.iter().take(row.len as usize) {
+        let _ = write!(out, "{byte:02X} ");
+    }
+    for _ in row.len..3 {
+        out.push_str("   ");
+    }
+    out.push_str(&row.text);
+    out
+}
+
 /// Blit an indexed system image to `(label, width, height, rgba)`.
 /// The blit is mechanical (no system knowledge): indexed pixels
 /// through the descriptor palette, opaque alpha.
@@ -438,6 +468,18 @@ mod tests {
         // Out-of-range index keeps the current space.
         nav.set_space(9, 0);
         assert_eq!(nav.space_idx(), 1);
+    }
+
+    #[test]
+    fn cycle_space_wraps_around() {
+        let mut nav = NavState::new(4, 0);
+        assert_eq!(nav.cycle_space(1), Some(1));
+        assert_eq!(nav.cycle_space(1), Some(2));
+        assert_eq!(nav.cycle_space(-1), Some(1));
+        assert_eq!(nav.cycle_space(-2), Some(3));
+        assert_eq!(nav.cycle_space(1), Some(0));
+        let mut empty = NavState::new(0, 0);
+        assert_eq!(empty.cycle_space(1), None);
     }
 
     #[test]
@@ -625,6 +667,28 @@ mod tests {
                 vec![0, 0, 0, 0xFF, 0, 0, 255, 0xFF]
             )
         );
+    }
+
+    #[test]
+    fn format_disasm_line_aligns_bytes() {
+        let row = DisasmLine {
+            addr: 0xC03A,
+            bytes: [0x88, 0, 0],
+            len: 1,
+            text: "DEY".to_string(),
+            is_pc: true,
+            target: None,
+        };
+        assert_eq!(format_disasm_line(&row), ">0000C03A: 88       DEY");
+        let row = DisasmLine {
+            addr: 0xC03B,
+            bytes: [0xD0, 0xF7, 0],
+            len: 2,
+            text: "BNE $C034".to_string(),
+            is_pc: false,
+            target: Some(0xC034),
+        };
+        assert_eq!(format_disasm_line(&row), " 0000C03B: D0 F7    BNE $C034");
     }
 
     #[test]

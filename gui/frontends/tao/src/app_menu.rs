@@ -7,6 +7,7 @@ use tao::window::Window as TaoWindow;
 pub(crate) enum MenuCommand {
     Open,
     Settings,
+    Debugger,
     Session(SessionCommand),
     Quit,
 }
@@ -108,6 +109,7 @@ pub(crate) mod imp {
 
             let open = MenuItem::new("Open ROM...", true, None);
             let settings = MenuItem::new("Settings...", true, None);
+            let debugger = MenuItem::new("Open Debugger (F4)", true, None);
             let pause = MenuItem::new("Pause", true, None);
             let resume = MenuItem::new("Resume", false, None);
             let reset = MenuItem::new("Reset", true, None);
@@ -118,6 +120,7 @@ pub(crate) mod imp {
 
             let open_id = open.id().clone();
             let settings_id = settings.id().clone();
+            let debugger_id = debugger.id().clone();
             let pause_id = pause.id().clone();
             let resume_id = resume.id().clone();
             let reset_id = reset.id().clone();
@@ -142,6 +145,7 @@ pub(crate) mod imp {
             emulation_menu.append(&resume).unwrap();
             emulation_menu.append(&reset).unwrap();
             emulation_menu.append(&state_menu).unwrap();
+            emulation_menu.append(&debugger).unwrap();
 
             menu_bar.append(&file_menu).unwrap();
             menu_bar.append(&emulation_menu).unwrap();
@@ -151,6 +155,8 @@ pub(crate) mod imp {
                     Some(MenuCommand::Open)
                 } else if event.id() == &settings_id {
                     Some(MenuCommand::Settings)
+                } else if event.id() == &debugger_id {
+                    Some(MenuCommand::Debugger)
                 } else if event.id() == &pause_id {
                     Some(MenuCommand::Session(SessionCommand::Pause))
                 } else if event.id() == &resume_id {

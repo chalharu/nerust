@@ -1,5 +1,6 @@
 use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
 
+use nerust_core_traits::debugger::StepUnit;
 use nerust_gui_runtime::{
     settings::{
         BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
@@ -18,6 +19,7 @@ use nerust_gui_shell::{
     },
     settings::scaling_factor,
 };
+use nerust_gui_viewmodel::debugger as debug_vm;
 use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, RenderResult},
@@ -43,6 +45,22 @@ pub(crate) enum HostAction {
 const DEFAULT_FIT_WINDOW_WIDTH: f64 = 960.0;
 const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 
+/// Snapshot rows into display cache shape; diff, status, watch, and
+/// pending fill per drain.
+fn snapshot_to_display(snapshot: &debug_vm::DebugSnapshot) -> debug_vm::DisplayCache {
+    debug_vm::DisplayCache {
+        regs: snapshot.regs.clone(),
+        dump_rows: snapshot.dump_rows.clone(),
+        diff: Vec::new(),
+        disasm_lines: snapshot.disasm_lines.clone(),
+        panels: snapshot.panels.clone(),
+        images: snapshot.images.clone(),
+        watch_value: None,
+        status: String::new(),
+        pending_text: None,
+    }
+}
+
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
     session: SessionHandle,
@@ -55,6 +73,11 @@ pub(crate) struct HostState {
     pending_fullscreen_sync: Option<bool>,
     pub(crate) active: bool,
     auto_paused: bool,
+    pub(crate) debug_window: Option<crate::debug_window::DebugWindowHandle>,
+    pub(crate) ppu_window: Option<crate::ppu_window::PpuWindowHandle>,
+    debug_open_requested: bool,
+    debug_window_pos: Option<(i32, i32)>,
+    ppu_window_pos: Option<(i32, i32)>,
 }
 
 impl HostState {
@@ -90,6 +113,11 @@ impl HostState {
             pending_fullscreen_sync: None,
             active: true,
             auto_paused: false,
+            debug_window: None,
+            ppu_window: None,
+            debug_open_requested: false,
+            debug_window_pos: None,
+            ppu_window_pos: None,
         }
     }
 
@@ -170,6 +198,18 @@ impl HostState {
             .is_some_and(|h| h.window.id() == window_id)
     }
 
+    pub(crate) fn is_debug_window(&self, window_id: WindowId) -> bool {
+        self.debug_window
+            .as_ref()
+            .is_some_and(|h| h.window.id() == window_id)
+    }
+
+    pub(crate) fn is_ppu_window(&self, window_id: WindowId) -> bool {
+        self.ppu_window
+            .as_ref()
+            .is_some_and(|h| h.window.id() == window_id)
+    }
+
     pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
         self.window
             .as_ref()
@@ -219,6 +259,10 @@ impl HostState {
                 self.open_settings_window(event_loop);
                 HostAction::None
             }
+            MenuCommand::Debugger => {
+                self.open_debug_windows(event_loop);
+                HostAction::None
+            }
             MenuCommand::Session(command) => {
                 self.run_command(command);
                 self.sync_menu_state();
@@ -245,6 +289,18 @@ impl HostState {
         {
             self.apply_keyboard_shortcut(shortcut);
         }
+        // F4 opens the debugger (schema first: a user binding wins).
+        // No slot shortcut owns F-keys, so this never conflicts today.
+        if input.state == ElementState::Pressed
+            && !input.repeat
+            && input.physical_key == tao::keyboard::KeyCode::F4
+        {
+            self.debug_open_requested = true;
+        }
+    }
+
+    pub(crate) fn take_debug_open_request(&mut self) -> bool {
+        std::mem::take(&mut self.debug_open_requested)
     }
 
     pub(crate) fn clear_keys(&mut self) {
@@ -323,6 +379,8 @@ impl HostState {
         self.settings_open = false;
         self.resume_after_settings = false;
         self.settings_window.take();
+        self.debug_window.take();
+        self.ppu_window.take();
         self.session.flush_before_exit();
         true
     }
@@ -467,6 +525,170 @@ impl HostState {
                 }
             }
         }
+    }
+
+    /// Open the debugger and PPU viewer (idempotent). Pauses first;
+    /// closing never resumes: resume is always explicit.
+    pub(crate) fn open_debug_windows(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+        if self.debug_window.is_none() {
+            if self.session.loaded() && !self.session.paused() {
+                self.pause();
+            }
+            let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> = self
+                .session
+                .debug_spaces()
+                .into_iter()
+                .map(|info| (info.id, info.name.to_string(), *info.range.start()))
+                .collect();
+            if spaces.is_empty() {
+                log::warn!("debugger: no spaces (no core)");
+            }
+            let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
+            let snapshot = if spaces.is_empty() {
+                debug_vm::DebugSnapshot::default()
+            } else {
+                self.session
+                    .debug_snapshot(Some(spaces[0].0), mem_addr, None)
+            };
+            let mut display = snapshot_to_display(&snapshot);
+            display.status = self.session_status_text("");
+            let position = self.debug_window_pos;
+            match crate::debug_window::DebugWindowHandle::new(
+                display, spaces, mem_addr, event_loop, position,
+            ) {
+                Some(handle) => self.debug_window = Some(handle),
+                None => log::error!("failed to open debugger window"),
+            }
+        }
+        if self.ppu_window.is_none()
+            && let Some(main) = self.debug_window.as_ref()
+        {
+            let position = self.ppu_window_pos;
+            match crate::ppu_window::PpuWindowHandle::new(
+                Arc::clone(&main.bridge),
+                event_loop,
+                position,
+            ) {
+                Some(handle) => self.ppu_window = Some(handle),
+                None => log::error!("failed to open PPU viewer window"),
+            }
+        }
+    }
+
+    fn session_status_text(&self, outcome: &str) -> String {
+        if outcome.is_empty() {
+            if self.session.debug_paused() {
+                "paused".to_string()
+            } else {
+                "running".to_string()
+            }
+        } else {
+            outcome.to_string()
+        }
+    }
+
+    /// Drain debugger requests and push one batched snapshot back.
+    /// Execution requests run before the re-read so one drain both
+    /// acts and refreshes.
+    pub(crate) fn drain_debug_requests(&mut self) {
+        use crate::debug_window::DebugRequest;
+        let requests = match self.debug_window.as_ref() {
+            Some(handle) => handle.take_requests(),
+            None => return,
+        };
+        if requests.is_empty() {
+            return;
+        }
+        let mut status = String::new();
+        let mut state_changing = false;
+        for request in &requests {
+            let outcome = match request {
+                DebugRequest::Refresh | DebugRequest::MemNav | DebugRequest::SelectRow(_) => {
+                    state_changing = true;
+                    continue;
+                }
+                DebugRequest::Pause => self.session.debug_pause(),
+                DebugRequest::Resume => self.session.debug_resume(),
+                DebugRequest::TogglePause => {
+                    if self.session.debug_paused() {
+                        self.session.debug_resume()
+                    } else {
+                        self.session.debug_pause()
+                    }
+                }
+                DebugRequest::StepFrame => {
+                    state_changing = true;
+                    self.session.debug_step(StepUnit::Frame)
+                }
+                DebugRequest::StepInstr => {
+                    state_changing = true;
+                    self.session.debug_step(StepUnit::Instruction)
+                }
+            };
+            status = outcome;
+        }
+        // Row selection reads the old byte for the selection display.
+        for request in &requests {
+            if let DebugRequest::SelectRow(addr) = request {
+                let handle = match self.debug_window.as_ref() {
+                    Some(handle) => handle,
+                    None => return,
+                };
+                let space = handle.bridge.selected_space();
+                let old = space.and_then(|space| self.session.debug_read_byte(space, *addr));
+                *handle.bridge.selected.lock().unwrap() = Some((*addr, old));
+            }
+        }
+        // Frozen values re-apply on every drain (silent by design;
+        // the rows are the evidence).
+        if let Some(handle) = self.debug_window.as_ref()
+            && let Some((addr, value)) = *handle.bridge.freeze.lock().unwrap()
+            && let Some(space) = handle.bridge.selected_space()
+        {
+            let _ = self.session.debug_write_byte(space, addr, value);
+        }
+        self.session.debug_note_traffic(state_changing);
+        let (space, mem_addr, dis_addr, prev_rows) = match self.debug_window.as_ref() {
+            Some(handle) => {
+                let nav = handle.bridge.nav.lock().unwrap();
+                let mem_addr = nav.mem_addr();
+                let dis_addr = nav.dis_addr();
+                let prev = handle.bridge.display.lock().unwrap().dump_rows.clone();
+                drop(nav);
+                (handle.bridge.selected_space(), mem_addr, dis_addr, prev)
+            }
+            None => return,
+        };
+        let snapshot = self.session.debug_snapshot(space, mem_addr, dis_addr);
+        let watch_value = match self.debug_window.as_ref() {
+            Some(handle) => handle
+                .bridge
+                .watch
+                .lock()
+                .unwrap()
+                .and_then(|addr| space.and_then(|s| self.session.debug_read_byte(s, addr))),
+            None => None,
+        };
+        let status = self.session_status_text(&status);
+        if let Some(handle) = self.debug_window.as_mut() {
+            let mut display = snapshot_to_display(&snapshot);
+            display.diff = debug_vm::diff_rows(&prev_rows, &snapshot.dump_rows);
+            display.status = status;
+            display.watch_value = watch_value;
+            handle.set_display(display);
+        }
+        // PPU viewer follows the same drain (one scale per drain).
+        if let Some(ppu) = self.ppu_window.as_mut() {
+            ppu.sync_from_bridge();
+        }
+    }
+
+    pub(crate) fn remember_debug_window_pos(&mut self, x: i32, y: i32) {
+        self.debug_window_pos = Some((x, y));
+    }
+
+    pub(crate) fn remember_ppu_window_pos(&mut self, x: i32, y: i32) {
+        self.ppu_window_pos = Some((x, y));
     }
 
     pub(crate) fn close_settings_window(

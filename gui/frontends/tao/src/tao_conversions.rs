@@ -1,4 +1,6 @@
-use iced::{Font, keyboard};
+use std::sync::atomic::AtomicBool;
+
+use iced::{Event, Font, Point, keyboard, mouse};
 use iced_winit::core::SmolStr;
 use tao::keyboard::ModifiersState as TaoModifiers;
 
@@ -35,6 +37,87 @@ pub(crate) fn default_font() -> Font {
     #[cfg(not(target_os = "windows"))]
     {
         Font::DEFAULT
+    }
+}
+
+/// Convert a Tao window event to an iced event, tracking cursor,
+/// modifiers, and close requests. Shared by the settings and debugger
+/// windows.
+pub(crate) fn convert_tao_window_event(
+    event: tao::event::WindowEvent,
+    cursor: &mut mouse::Cursor,
+    scale_factor: f32,
+    modifiers: &mut keyboard::Modifiers,
+    should_close: &AtomicBool,
+) -> Option<iced::Event> {
+    use tao::event::WindowEvent;
+    match event {
+        WindowEvent::CursorMoved { position, .. } => {
+            let logical = position.to_logical::<f64>(scale_factor as f64);
+            let point = Point::new(logical.x as f32, logical.y as f32);
+            *cursor = mouse::Cursor::Available(point);
+            Some(Event::Mouse(mouse::Event::CursorMoved { position: point }))
+        }
+        WindowEvent::CursorLeft { .. } => {
+            *cursor = mouse::Cursor::Unavailable;
+            None
+        }
+        WindowEvent::KeyboardInput { event: ke, .. } => {
+            let iced_key = tao_key_to_iced_key(&ke.logical_key);
+            let physical_key =
+                keyboard::key::Physical::Code(tao_keycode_to_iced_code(ke.physical_key));
+            match ke.state {
+                tao::event::ElementState::Pressed => {
+                    Some(Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: iced_key.clone(),
+                        modified_key: iced_key.clone(),
+                        physical_key,
+                        modifiers: *modifiers,
+                        location: keyboard::Location::Standard,
+                        text: ke.text.map(SmolStr::new),
+                        repeat: ke.repeat,
+                    }))
+                }
+                tao::event::ElementState::Released => {
+                    Some(Event::Keyboard(keyboard::Event::KeyReleased {
+                        key: iced_key.clone(),
+                        modified_key: iced_key,
+                        physical_key,
+                        modifiers: *modifiers,
+                        location: keyboard::Location::Standard,
+                    }))
+                }
+                _ => None,
+            }
+        }
+        WindowEvent::MouseInput { button, state, .. } => {
+            let btn = match button {
+                tao::event::MouseButton::Left => mouse::Button::Left,
+                tao::event::MouseButton::Right => mouse::Button::Right,
+                tao::event::MouseButton::Middle => mouse::Button::Middle,
+                _ => return None,
+            };
+            match state {
+                tao::event::ElementState::Pressed => {
+                    Some(Event::Mouse(mouse::Event::ButtonPressed(btn)))
+                }
+                tao::event::ElementState::Released => {
+                    Some(Event::Mouse(mouse::Event::ButtonReleased(btn)))
+                }
+                _ => None,
+            }
+        }
+        WindowEvent::ModifiersChanged(state) => {
+            *modifiers = tao_modifiers_to_iced(state);
+            None
+        }
+        WindowEvent::CloseRequested => {
+            should_close.store(true, std::sync::atomic::Ordering::Release);
+            None
+        }
+        // Touch, IME, axis motion, and other platform-specific events
+        // are not needed for utility windows.
+        _ => None,
     }
 }
 
