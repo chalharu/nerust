@@ -102,13 +102,16 @@ fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
 pub(crate) fn display_to_raw(display: &gdk::Display) -> Option<RawDisplayHandle> {
     let backend = display.backend();
     if backend.is_x11() {
+        // The raw handle needs the underlying Xlib `Display*`, not the
+        // `GdkDisplay*`: passing the GDK object pointer makes the
+        // backend dereference garbage and segfault in native code.
         // GDK4 (unlike GDK3) does not support multiple X screens — the display
         // always has exactly one root window.  screen = 0 is therefore correct
-        // for all GDK4 + X11 environments.  In the rare case of a multi-screen
-        // X server where surface creation fails, the caller should fall back to
-        // gdk_x11_display_get_xdisplay() + XDefaultScreen() from x11-dl.
+        // for all GDK4 + X11 environments.
+        let xdisplay =
+            unsafe { gdk4_x11_sys::gdk_x11_display_get_xdisplay(display.as_ptr().cast()) };
         Some(RawDisplayHandle::Xlib(
-            raw_window_handle::XlibDisplayHandle::new(NonNull::new(display.as_ptr().cast()), 0),
+            raw_window_handle::XlibDisplayHandle::new(NonNull::new(xdisplay.cast()), 0),
         ))
     } else if backend.is_wayland() {
         Some(RawDisplayHandle::Wayland(

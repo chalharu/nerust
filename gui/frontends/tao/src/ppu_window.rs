@@ -37,24 +37,7 @@ use crate::tao_conversions::{convert_tao_window_event, default_font};
 /// Initial PPU viewer window size (verified Xvfb fit).
 pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
 
-/// Nearest-neighbor 2x scale of indexed bytes (already palette-blitted
-/// RGBA). Pure; shared shape with the main window's future needs.
-fn scale2x_nearest(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let (w, h) = (width as usize, height as usize);
-    let mut out = vec![0u8; w * 2 * h * 2 * 4];
-    for y in 0..h {
-        for x in 0..w {
-            let src = &rgba[(y * w + x) * 4..(y * w + x) * 4 + 4];
-            for dy in 0..2 {
-                for dx in 0..2 {
-                    let dst = ((y * 2 + dy) * w * 2 + (x * 2 + dx)) * 4;
-                    out[dst..dst + 4].copy_from_slice(src);
-                }
-            }
-        }
-    }
-    out
-}
+use nerust_gui_viewmodel::debugger::scale2x_nearest;
 
 /// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
 /// tile start (+16 per tile). Generic geometry, no per-system branch.
@@ -509,19 +492,6 @@ impl PpuWindowHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn scale2x_doubles_each_pixel() {
-        // 2x1 red/green becomes 4x2 blocks.
-        let rgba = vec![255, 0, 0, 0xFF, 0, 255, 0, 0xFF];
-        let out = scale2x_nearest(&rgba, 2, 1);
-        assert_eq!(out.len(), 4 * 2 * 4);
-        // Top-left 2x2 block is red.
-        assert_eq!(&out[0..4], &[255, 0, 0, 0xFF]);
-        assert_eq!(&out[8..12], &[255, 0, 0, 0xFF]);
-        // Top-right 2x2 block is green.
-        assert_eq!(&out[16..20], &[0, 255, 0, 0xFF]);
-    }
 
     #[test]
     fn tile_hover_reports_index_and_offset() {
