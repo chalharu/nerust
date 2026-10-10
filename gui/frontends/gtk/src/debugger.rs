@@ -394,6 +394,9 @@ impl DebuggerWindowCore {
         let right_scroll = gtk::ScrolledWindow::new();
         right_scroll.set_size_request(340, -1);
         right_scroll.set_overlay_scrolling(false);
+        // Stretch to the panes height and scroll inside: tall state
+        // (GBA: 17 registers) must not push Bookmarks out of view.
+        right_scroll.set_vexpand(true);
         // Take the content's natural width: narrow rows (freeze,
         // bookmarks) must not clip behind the viewport.
         right_scroll.set_propagate_natural_width(true);
@@ -473,7 +476,7 @@ impl DebuggerWindowCore {
         let edit_freeze = action_button("Freeze");
         {
             let win = result.clone();
-            edit_freeze.connect_clicked(move |_| Self::freeze_set(&win));
+            edit_freeze.connect_clicked(move |_| Self::edit_freeze_set(&win));
         }
         edit_row.append(&select_label);
         edit_row.append(&edit_input);
@@ -731,14 +734,34 @@ impl DebuggerWindowCore {
     }
 
     fn freeze_set(win: &DebuggerWindow) {
+        let input = win.borrow().freeze_input.text().trim().to_string();
+        Self::freeze_stage(win, &input);
+    }
+
+    /// Edit-row Freeze: reads the edit row's own input, so each of
+    /// the row's three buttons reads what sits next to it (Write and
+    /// Watch already do; Freeze used to reach up to the top input).
+    fn edit_freeze_set(win: &DebuggerWindow) {
         let (selected, input) = {
             let this = win.borrow();
             (
                 this.data.selected,
-                this.freeze_input.text().trim().to_string(),
+                this.edit_input.text().trim().to_string(),
             )
         };
         match resolve_freeze_input(selected, &input) {
+            Ok((addr, value)) => {
+                win.borrow_mut().data.freeze = Some((addr, value));
+                Self::set_status(win, format!("frozen {addr:08X}={value:02X}"));
+                Self::act(win, &[DebugAction::Refresh]);
+            }
+            Err(status) => Self::set_status(win, status),
+        }
+    }
+
+    fn freeze_stage(win: &DebuggerWindow, input: &str) {
+        let selected = win.borrow().data.selected;
+        match resolve_freeze_input(selected, input) {
             Ok((addr, value)) => {
                 win.borrow_mut().data.freeze = Some((addr, value));
                 Self::set_status(win, format!("frozen {addr:08X}={value:02X}"));

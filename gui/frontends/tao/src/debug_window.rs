@@ -74,6 +74,7 @@ pub(crate) enum DebugMessage {
     WatchClear,
     FreezeInputChanged(String),
     FreezeSet,
+    EditFreezeSet,
     FreezeClear,
     RowSelected(u32),
     EditInputChanged(String),
@@ -179,6 +180,21 @@ pub(crate) struct DebugState {
 
 pub(crate) struct DebugProgram {
     pub(crate) bridge: Arc<DebugBridge>,
+}
+
+/// Shared freeze staging: selection plus a hex byte. The top
+/// Freeze row and the edit-row Freeze button differ only in which
+/// input they read; the rules live here, not in the widgets.
+fn apply_freeze(bridge: &DebugBridge, input: &str) {
+    let selected = bridge.selected.lock().unwrap().map(|(addr, _)| addr);
+    match (selected, vm::parse_hex_addr(input).filter(|v| *v <= 0xFF)) {
+        (Some(addr), Some(value)) => {
+            *bridge.freeze.lock().unwrap() = Some((addr, value as u8));
+            bridge.set_status(format!("frozen {addr:08X}={value:02X}"));
+            bridge.push(DebugAction::Refresh);
+        }
+        _ => bridge.set_status("freeze needs a selected row and hex byte".to_string()),
+    }
 }
 
 impl Program for DebugProgram {
@@ -370,16 +386,12 @@ impl Program for DebugProgram {
                 bridge.view_invalidated.store(true, Ordering::Release);
             }
             DebugMessage::FreezeSet => {
-                let selected = bridge.selected.lock().unwrap().map(|(addr, _)| addr);
                 let input = bridge.freeze_input.lock().unwrap().clone();
-                match (selected, vm::parse_hex_addr(&input).filter(|v| *v <= 0xFF)) {
-                    (Some(addr), Some(value)) => {
-                        *bridge.freeze.lock().unwrap() = Some((addr, value as u8));
-                        bridge.set_status(format!("frozen {addr:08X}={value:02X}"));
-                        bridge.push(DebugAction::Refresh);
-                    }
-                    _ => bridge.set_status("freeze needs a selected row and hex byte".to_string()),
-                }
+                apply_freeze(bridge, &input);
+            }
+            DebugMessage::EditFreezeSet => {
+                let input = bridge.edit_input.lock().unwrap().trim().to_string();
+                apply_freeze(bridge, &input);
             }
             DebugMessage::FreezeClear => {
                 *bridge.freeze.lock().unwrap() = None;
@@ -431,7 +443,7 @@ impl Program for DebugProgram {
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::Length;
-        use iced::widget::{button, column, row, text, text_input};
+        use iced::widget::{button, column, row, scrollable, text, text_input};
         // Single coherent capture per rebuild; widgets read locals only.
         let bridge = &state.bridge;
         let nav = bridge.nav.lock().unwrap().clone();
@@ -570,7 +582,7 @@ impl Program for DebugProgram {
                 .on_press(DebugMessage::WatchSet),
             button(text("Freeze"))
                 .style(button::secondary)
-                .on_press(DebugMessage::FreezeSet),
+                .on_press(DebugMessage::EditFreezeSet),
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center);
@@ -735,8 +747,15 @@ impl Program for DebugProgram {
         ]
         .spacing(12)
         .width(Length::Fixed(STATE_COLUMN_WIDTH));
+        // Tall state (GBA: 17 registers) scrolls inside the panes
+        // instead of pushing Bookmarks and Memory out of view. The
+        // panes row takes the remaining window height so the scroll
+        // viewport is bounded; Refresh stays pinned at the bottom.
+        let right_scroll = scrollable(right_col).height(Length::Fill);
         let content = column![
-            row![left_col, right_col].spacing(16),
+            row![left_col, right_scroll]
+                .spacing(16)
+                .height(Length::Fill),
             text("Memory").size(16),
             space_row,
             mem_nav,
@@ -745,7 +764,8 @@ impl Program for DebugProgram {
         ]
         .spacing(10)
         .padding(16)
-        .width(Length::Fill);
+        .width(Length::Fill)
+        .height(Length::Fill);
         let mut content = content;
         if let Some(confirm) = confirm_row {
             content = content.push(confirm);
@@ -1116,5 +1136,44 @@ impl DebugWindowHandle {
         self.ui_state
             .sync_from_bridge(self.window_id, bounds, &mut self.renderer.backend);
         self.window.request_redraw();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn freeze_bridge() -> Arc<DebugBridge> {
+        let bridge = Arc::new(DebugBridge::new(DisplayCache::default(), Vec::new(), 0));
+        *bridge.selected.lock().unwrap() = Some((0x0200_0010, Some(0x00)));
+        *bridge.freeze_input.lock().unwrap() = "FF".to_string();
+        *bridge.edit_input.lock().unwrap() = "AA".to_string();
+        bridge
+    }
+
+    fn drive(bridge: &Arc<DebugBridge>, message: DebugMessage) {
+        let program = DebugProgram {
+            bridge: Arc::clone(bridge),
+        };
+        let mut state = DebugState {
+            bridge: Arc::clone(bridge),
+        };
+        let _ = program.update(&mut state, message);
+    }
+
+    #[test]
+    fn edit_freeze_set_reads_edit_input() {
+        let bridge = freeze_bridge();
+        drive(&bridge, DebugMessage::EditFreezeSet);
+        assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x0200_0010, 0xAA)));
+        assert_eq!(bridge.display.lock().unwrap().status, "frozen 02000010=AA");
+    }
+
+    #[test]
+    fn freeze_set_reads_top_input() {
+        let bridge = freeze_bridge();
+        drive(&bridge, DebugMessage::FreezeSet);
+        assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x0200_0010, 0xFF)));
+        assert_eq!(bridge.display.lock().unwrap().status, "frozen 02000010=FF");
     }
 }
