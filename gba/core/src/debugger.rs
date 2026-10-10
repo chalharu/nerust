@@ -42,7 +42,9 @@
 
 use std::cell::OnceCell;
 
-use nerust_core_traits::debugger::{Debugger, SpaceAccess, SpaceId, SpaceInfo, SpaceTable};
+use nerust_core_traits::debugger::{
+    Debugger, DisasmLine, SpaceAccess, SpaceId, SpaceInfo, SpaceTable,
+};
 
 use crate::system::GbaSystem;
 
@@ -137,6 +139,118 @@ impl Debugger for GbaDebugger<'_> {
     fn registers(&self) -> &[(&'static str, u64)] {
         self.regs.get_or_init(|| self.snapshot_registers())
     }
+
+    /// Anchor for disassembly follow mode. The architectural `r15`
+    /// value (Thumb bit cleared by `pc()`); presentation never scans
+    /// the register list for it.
+    fn program_counter(&self) -> Option<u32> {
+        Some(self.system.cpu.registers().pc())
+    }
+
+    /// Disassemble `count` rows from `addr` in the CPSR-selected set.
+    /// Short reads at the range end decode as single raw bytes so a
+    /// truncated tail never panics and never fabricates instructions.
+    /// A Thumb BL pair (first half `0xF000-0xF7FF`, second
+    /// `0xF800-0xFFFF`) decodes as one 4-byte row; lone halves stay
+    /// `.HWORD`.
+    fn disassemble(&self, addr: u32, count: u16) -> Vec<DisasmLine> {
+        use crate::disasm_gba::{decode_arm, decode_thumb};
+        let pc = self.program_counter();
+        let thumb = self.system.cpu.registers().cpsr_t();
+        let mut out = Vec::new();
+        let mut cursor = addr;
+        for _ in 0..count {
+            if cursor > 0x0FFFFFFF {
+                break;
+            }
+            // Up to 4 physical bytes; fewer means the range end.
+            let mut raw = [0u8; 4];
+            let mut have = 0u32;
+            while have < 4 {
+                match self.read(SPACE_MEMORY, cursor + have, 1) {
+                    Some(v) => {
+                        raw[have as usize] = v as u8;
+                        have += 1;
+                    }
+                    None => break,
+                }
+            }
+            if have == 0 {
+                break;
+            }
+            let is_pc = pc == Some(cursor);
+            if thumb {
+                if have < 2 {
+                    out.push(raw_db(cursor, raw[0], is_pc));
+                    cursor += 1;
+                    continue;
+                }
+                let word = u16::from_le_bytes([raw[0], raw[1]]);
+                // BL pair: verify the second half before combining.
+                if (0xF000..0xF800).contains(&word) && have == 4 {
+                    let next = u16::from_le_bytes([raw[2], raw[3]]);
+                    if next >= 0xF800 {
+                        let combined =
+                            (u32::from(word & 0x3FF) << 12) | (u32::from(next & 0x7FF) << 1);
+                        let offset = ((combined << 9) as i32) >> 9;
+                        let dest = cursor.wrapping_add(4).wrapping_add(offset as u32);
+                        out.push(DisasmLine {
+                            addr: cursor,
+                            bytes: raw,
+                            len: 4,
+                            text: format!("BL ${dest:08X}"),
+                            is_pc,
+                            target: Some(dest),
+                        });
+                        cursor += 4;
+                        continue;
+                    }
+                }
+                let decoded = decode_thumb(cursor, word);
+                out.push(DisasmLine {
+                    addr: cursor,
+                    bytes: [raw[0], raw[1], 0, 0],
+                    len: 2,
+                    text: decoded.text,
+                    is_pc,
+                    target: decoded.target,
+                });
+                cursor += 2;
+            } else {
+                if have < 4 {
+                    for b in raw.iter().take(have as usize) {
+                        out.push(raw_db(cursor, *b, pc == Some(cursor)));
+                        cursor += 1;
+                    }
+                    continue;
+                }
+                let word = u32::from_le_bytes(raw);
+                let decoded = decode_arm(cursor, word);
+                out.push(DisasmLine {
+                    addr: cursor,
+                    bytes: raw,
+                    len: 4,
+                    text: decoded.text,
+                    is_pc,
+                    target: decoded.target,
+                });
+                cursor += 4;
+            }
+        }
+        out
+    }
+}
+
+/// Single raw byte row for truncated tails.
+fn raw_db(addr: u32, byte: u8, is_pc: bool) -> DisasmLine {
+    DisasmLine {
+        addr,
+        bytes: [byte, 0, 0, 0],
+        len: 1,
+        text: format!(".DB ${byte:02X}"),
+        is_pc,
+        target: None,
+    }
 }
 
 #[cfg(test)]
@@ -185,6 +299,40 @@ mod tests {
         // The debugger borrows the live system; the test ROM builds one
         // the same way load does.
         GbaSystem::from_test_rom(rom()).expect("test ROM builds a system")
+    }
+
+    #[test]
+    fn gba_program_counter_matches_r15_masked() {
+        let system = live_system();
+        let debugger = GbaDebugger::new(&system);
+        let r15 = debugger
+            .registers()
+            .iter()
+            .find(|(name, _)| *name == "r15")
+            .map(|(_, value)| *value as u32);
+        assert_eq!(debugger.program_counter(), r15.map(|pc| pc & !1));
+    }
+
+    #[test]
+    fn gba_disassemble_shape_and_tail() {
+        let system = live_system();
+        let debugger = GbaDebugger::new(&system);
+        // Uniform rows: one mode per pause point, stride matches len.
+        let rows = debugger.disassemble(0x08000000, 8);
+        assert_eq!(rows.len(), 8);
+        let len = rows[0].len;
+        assert!(len == 2 || len == 4);
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(row.len, len);
+            assert_eq!(row.addr, 0x08000000 + (i as u32) * u32::from(len));
+        }
+        // Truncated tail at the range end: raw bytes, no panic.
+        let tail = debugger.disassemble(0x0FFFFFFF, 4);
+        assert!(!tail.is_empty());
+        assert!(tail.iter().all(|row| row.len == 1));
+        assert!(tail.iter().all(|row| row.target.is_none()));
+        // Past the range: empty, never fabricated.
+        assert!(debugger.disassemble(0x10000000, 4).is_empty());
     }
 
     #[test]

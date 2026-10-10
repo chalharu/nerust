@@ -154,6 +154,8 @@ iced = { default-features = false, features = [
   "tiny-skia",
   "wayland",
   "x11",
+  # PPU viewer pattern images (`iced::widget::image`).
+  "image",
 ], version = "=0.14.0" }
 iced_tiny_skia = { version = "=0.14.1" }
 iced_winit = { version = "=0.14.1" }

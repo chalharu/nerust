@@ -162,6 +162,25 @@ pub enum EmuCommand {
         req: debugger::InspectRequest,
         reply: Sender<Result<debugger::InspectResult, debugger::InspectError>>,
     },
+    /// On-demand disassembly. Cold path like [`EmuCommand::DebuggerInspect`]:
+    /// callers hold pause for frame-consistent rows; the thread does not
+    /// gate, since decoding is side-effect free by kernel contract.
+    DebuggerDisassemble {
+        addr: u32,
+        count: u16,
+        reply: Sender<Result<Vec<debugger::DisasmLine>, debugger::DebuggerError>>,
+    },
+    /// On-demand system images (pattern tables). Same cold-path contract
+    /// as [`EmuCommand::DebuggerDisassemble`].
+    DebuggerImages {
+        reply: Sender<Result<Vec<debugger::DebugImage>, debugger::DebuggerError>>,
+    },
+    /// On-demand program counter for disassembly anchoring. Answers
+    /// without pause gating (a single register read); `Ok(None)` means
+    /// the system names no anchor.
+    DebuggerPc {
+        reply: Sender<Result<Option<u32>, debugger::DebuggerError>>,
+    },
     /// Memory edit through the control path. Deliberately pause-ungated:
     /// `DebuggerError` has no not-paused variant by design (§5.2), so
     /// deterministic callers pause first and racing writes interleave

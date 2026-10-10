@@ -9,7 +9,7 @@ pub mod title;
 
 use std::{
     collections::{BTreeSet, HashMap},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use nerust_core_traits::{
@@ -26,6 +26,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::ShortcutAction;
+use nerust_gui_viewmodel::debugger as debug_vm;
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
 use nerust_keyboard::Key;
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
@@ -96,6 +97,8 @@ pub struct SessionHandle {
     loaded_media: Option<LoadedMedia>,
     persistence: PersistenceManager,
     audio_registry: Arc<AudioBackendRegistry>,
+    /// Shell-owned two-phase memory write transaction (Phase B).
+    debug_txn: Mutex<debug_vm::WriteTransaction>,
 }
 
 impl SessionHandle {
@@ -289,6 +292,7 @@ impl SessionHandle {
             loaded_media: None,
             persistence: PersistenceManager::new(),
             audio_registry,
+            debug_txn: Mutex::new(debug_vm::WriteTransaction::Empty),
         };
         result.rebuild_key_field_map();
         Ok(result)
@@ -341,6 +345,232 @@ impl SessionHandle {
                 .unwrap_or_default(),
             slots: Arc::from(self.persistence.slots().to_vec()),
             active_slot_id: self.persistence.active_slot_id(),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Debugger views (Phase B). Batched, paused-gated reads plus the
+    // shell-owned two-phase write transaction. Frontends render from
+    // [`debug_vm::DebugSnapshot`] and never touch the core.
+    // ------------------------------------------------------------------
+
+    /// Memory-space table for the debugger's space picker. Empty when
+    /// no core is loaded.
+    pub fn debug_spaces(&self) -> Vec<nerust_core_traits::debugger::SpaceInfo> {
+        self.emu_core
+            .as_ref()
+            .and_then(|core| core.memory_spaces().ok())
+            .unwrap_or_default()
+    }
+
+    /// Whether the emulation is paused. Snapshot reads require pause;
+    /// frontends offer debugger refreshes only while paused.
+    pub fn debug_paused(&self) -> bool {
+        self.emu_core
+            .as_ref()
+            .is_none_or(|core| core.metrics().paused)
+    }
+
+    /// Single batched snapshot for one drain: one inspect (registers,
+    /// dump, panels), one disassembly at `dis_addr` (or the program
+    /// counter when `None`), one images pass. `elapsed` measures the
+    /// batched core pass. Unavailable when no core is loaded or the
+    /// inspect refuses (e.g. running): sections carry degenerates.
+    pub fn debug_snapshot(
+        &self,
+        space: Option<nerust_core_traits::debugger::SpaceId>,
+        mem_addr: u32,
+        dis_addr: Option<u32>,
+        need_images: bool,
+    ) -> debug_vm::DebugSnapshot {
+        use nerust_core_traits::debugger::InspectRequest;
+        let mut snapshot = debug_vm::DebugSnapshot::default();
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return snapshot,
+        };
+        let inspected = match core.inspect(InspectRequest {
+            space,
+            addr: space.map(|_| mem_addr),
+            rows: 8,
+        }) {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) | Err(_) => return snapshot,
+        };
+        snapshot.available = true;
+        snapshot.regs = debug_vm::format_registers(&inspected.registers);
+        snapshot.dump_rows = debug_vm::format_dump_rows(&inspected.dump);
+        snapshot.panels = debug_vm::format_panels(&inspected.panels);
+        // Anchor without name-scanning: explicit pin wins, otherwise
+        // the kernel program counter (one extra crossing, follow mode
+        // only).
+        let anchor = match dis_addr {
+            Some(addr) => Some(addr),
+            None => match core.program_counter() {
+                Ok(Ok(pc)) => pc,
+                _ => None,
+            },
+        };
+        snapshot.pc = anchor;
+        snapshot.disasm_lines = match anchor {
+            Some(addr) => match core.disassemble(addr, 8) {
+                Ok(Ok(rows)) => rows,
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        snapshot.images = if need_images {
+            match core.debug_images() {
+                Ok(Ok(images)) => images.iter().map(debug_vm::rgba_image).collect(),
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        snapshot
+    }
+
+    /// Single-byte read for old-value display and watch values.
+    pub fn debug_read_byte(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+        addr: u32,
+    ) -> Option<u8> {
+        let core = self.emu_core.as_ref()?;
+        let result = core
+            .inspect(nerust_core_traits::debugger::InspectRequest {
+                space: Some(space),
+                addr: Some(addr),
+                rows: 1,
+            })
+            .ok()?
+            .ok()?;
+        let row = result.dump.rows.first()?;
+        (row.valid > 0).then_some(row.bytes[0])
+    }
+
+    /// Single-byte write for freeze re-application. Silent by design:
+    /// the rows are the evidence. `false` when unwritable.
+    pub fn debug_write_byte(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+        addr: u32,
+        value: u8,
+    ) -> bool {
+        use nerust_core_traits::debugger::MemoryWrite;
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return false,
+        };
+        matches!(
+            core.write_memory(MemoryWrite {
+                space,
+                addr,
+                width: 1,
+                value: u64::from(value),
+            }),
+            Ok(Ok(()))
+        )
+    }
+
+    /// Select a row: read the old byte and prepare the transaction,
+    /// overwriting any state.
+    pub fn debug_prepare_write(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+        addr: u32,
+    ) -> Option<u8> {
+        let old = self.debug_read_byte(space, addr);
+        self.debug_txn.lock().unwrap().prepare(space, addr, old);
+        old
+    }
+
+    /// Stage the parsed value; only a prepared transaction accepts it.
+    pub fn debug_stage_write(&self, value: u64) {
+        self.debug_txn.lock().unwrap().stage(value);
+    }
+
+    /// Confirm-row text, if fully staged. Single formatter shared with
+    /// the optimistic display.
+    pub fn debug_pending_text(&self) -> Option<String> {
+        self.debug_txn.lock().unwrap().pending_text()
+    }
+
+    /// Commit the staged write, consuming the transaction. Status
+    /// strings match the verified prototype pixels exactly.
+    pub fn debug_commit_write(&self) -> String {
+        use nerust_core_traits::debugger::MemoryWrite;
+        let staged = self.debug_txn.lock().unwrap().take_commit();
+        let (space, addr, value) = match staged {
+            Some(staged) => staged,
+            None => return "nothing to write".to_string(),
+        };
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        match core.write_memory(MemoryWrite {
+            space,
+            addr,
+            width: 1,
+            value,
+        }) {
+            Ok(Ok(())) => format!("wrote {value:02X} to {addr:08X} (width 1)"),
+            Ok(Err(error)) => format!("write refused: {error:?}"),
+            Err(error) => format!("thread failed: {error:?}"),
+        }
+    }
+
+    /// Drop any uncommitted transaction (cancel, space switch).
+    pub fn debug_clear_write(&self) {
+        self.debug_txn.lock().unwrap().clear();
+    }
+
+    /// Report drain traffic: `state_changing` kills staged-but-
+    /// uncommitted values from previous drains (step, refresh, pause
+    /// switches). Select/stage/commit traffic passes `false`: it
+    /// builds the transaction this drain consumes. The frontend owns
+    /// request semantics; the session owns the kill.
+    pub fn debug_note_traffic(&self, state_changing: bool) {
+        if state_changing {
+            self.debug_txn.lock().unwrap().on_state_changing_traffic();
+        }
+    }
+
+    /// Pause for debugger control. Status strings match the verified
+    /// prototype pixels.
+    pub fn debug_pause(&self) -> String {
+        match self.emu_core.as_ref() {
+            Some(core) => match core.pause() {
+                Ok(()) => "paused".to_string(),
+                Err(error) => format!("pause failed: {error:?}"),
+            },
+            None => "no core".to_string(),
+        }
+    }
+
+    /// Resume for debugger control.
+    pub fn debug_resume(&self) -> String {
+        match self.emu_core.as_ref() {
+            Some(core) => match core.resume() {
+                Ok(()) => "resumed".to_string(),
+                Err(error) => format!("resume failed: {error:?}"),
+            },
+            None => "no core".to_string(),
+        }
+    }
+
+    /// Advance one unit for debugger control. Returns the stepped
+    /// count (`stepped N`) or a loud failure.
+    pub fn debug_step(&self, unit: nerust_core_traits::debugger::StepUnit) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        match core.step(unit) {
+            Ok(Ok(count)) => format!("stepped {count}"),
+            Ok(Err(error)) => format!("step failed: {error:?}"),
+            Err(error) => format!("thread failed: {error:?}"),
         }
     }
 

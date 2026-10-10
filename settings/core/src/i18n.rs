@@ -65,6 +65,7 @@ pub enum UiText {
     ConflictDetected,
     CapturePrompt,
     InvalidCustomStorageDirectory,
+    Debugger,
 }
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
@@ -155,6 +156,7 @@ fn english_text(key: UiText) -> &'static str {
         UiText::InvalidCustomStorageDirectory => {
             "The custom storage directory must exist or be creatable."
         }
+        UiText::Debugger => "Debugger",
     }
 }
 
@@ -225,5 +227,6 @@ fn japanese_text(key: UiText) -> &'static str {
         UiText::InvalidCustomStorageDirectory => {
             "任意の保存先フォルダは存在するか作成可能である必要があります。"
         }
+        UiText::Debugger => "デバッガ",
     }
 }
