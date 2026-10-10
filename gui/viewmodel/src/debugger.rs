@@ -379,7 +379,7 @@ pub fn format_panels(panels: &[DebugPanel]) -> String {
 
 /// Format one disassembly row (`>addr: bytes  text`) for line
 /// buttons. The PC row carries the `>` mark (Mesen canon); the byte
-/// field pads to 3 bytes so mnemonics align across rows.
+/// field pads to 4 bytes so mnemonics align across rows.
 pub fn format_disasm_line(row: &DisasmLine) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -388,7 +388,7 @@ pub fn format_disasm_line(row: &DisasmLine) -> String {
     for byte in row.bytes.iter().take(row.len as usize) {
         let _ = write!(out, "{byte:02X} ");
     }
-    for _ in row.len..3 {
+    for _ in row.len..4 {
         out.push_str("   ");
     }
     out.push_str(&row.text);
@@ -551,7 +551,7 @@ mod tests {
             diff: vec![0],
             disasm_lines: vec![DisasmLine {
                 addr: 0xC000,
-                bytes: [0xEA, 0, 0],
+                bytes: [0xEA, 0, 0, 0],
                 len: 1,
                 text: "NOP".to_string(),
                 is_pc: true,
@@ -673,22 +673,22 @@ mod tests {
     fn format_disasm_line_aligns_bytes() {
         let row = DisasmLine {
             addr: 0xC03A,
-            bytes: [0x88, 0, 0],
+            bytes: [0x88, 0, 0, 0],
             len: 1,
             text: "DEY".to_string(),
             is_pc: true,
             target: None,
         };
-        assert_eq!(format_disasm_line(&row), ">0000C03A: 88       DEY");
+        assert_eq!(format_disasm_line(&row), ">0000C03A: 88          DEY");
         let row = DisasmLine {
             addr: 0xC03B,
-            bytes: [0xD0, 0xF7, 0],
+            bytes: [0xD0, 0xF7, 0, 0],
             len: 2,
             text: "BNE $C034".to_string(),
             is_pc: false,
             target: Some(0xC034),
         };
-        assert_eq!(format_disasm_line(&row), " 0000C03B: D0 F7    BNE $C034");
+        assert_eq!(format_disasm_line(&row), " 0000C03B: D0 F7       BNE $C034");
     }
 
     #[test]

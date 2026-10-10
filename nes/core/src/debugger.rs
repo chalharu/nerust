@@ -300,7 +300,7 @@ impl Debugger for NesDebugger<'_> {
             };
             let (mnemonic, mode) = decode(op);
             let want = mode.len() as u32;
-            let mut bytes = [0u8; 3];
+            let mut bytes = [0u8; 4];
             bytes[0] = op;
             let mut have = 1u32;
             while have < want {
@@ -315,7 +315,7 @@ impl Debugger for NesDebugger<'_> {
             if mode == AddrMode::Jam || have < want {
                 out.push(DisasmLine {
                     addr: cursor,
-                    bytes: [op, 0, 0],
+                    bytes: [op, 0, 0, 0],
                     len: 1,
                     text: format!(".DB ${op:02X}"),
                     is_pc: pc == Some(cursor),
