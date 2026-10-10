@@ -29,9 +29,11 @@ pub(crate) struct WindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
     open_dialog: Option<gtk::FileChooserNative>,
+    debugger_window: Option<crate::debugger::DebuggerWindow>,
     close_action: gio::SimpleAction,
     pause_action: gio::SimpleAction,
     resume_action: gio::SimpleAction,
+    debugger_action: gio::SimpleAction,
     state_create_action: gio::SimpleAction,
     state_save_active_action: gio::SimpleAction,
     state_load_active_action: gio::SimpleAction,
@@ -58,6 +60,7 @@ pub(crate) trait WindowExtend {
     fn window(&self) -> gtk::ApplicationWindow;
     fn application(&self) -> gtk::Application;
     fn state(&self) -> Rc<RefCell<State>>;
+    fn open_debugger(&self);
     fn realize(&self);
     fn close_request(&self) -> bool;
     fn open(&self);
@@ -71,6 +74,7 @@ pub(crate) trait WindowExtend {
     fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut);
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum KeyEventState {
     Press,
     Release,
@@ -101,6 +105,7 @@ impl WindowExtend for Window {
         let close_action = gio::SimpleAction::new("close", None);
         let pause_action = gio::SimpleAction::new("pause", None);
         let resume_action = gio::SimpleAction::new("resume", None);
+        let debugger_action = gio::SimpleAction::new("debugger", None);
         let state_create_action = gio::SimpleAction::new("state-create", None);
         let state_save_active_action = gio::SimpleAction::new("state-save-active", None);
         let state_load_active_action = gio::SimpleAction::new("state-load-active", None);
@@ -119,9 +124,11 @@ impl WindowExtend for Window {
             window: window.clone(),
             state,
             open_dialog: None,
+            debugger_window: None,
             close_action: close_action.clone(),
             pause_action: pause_action.clone(),
             resume_action: resume_action.clone(),
+            debugger_action: debugger_action.clone(),
             state_create_action: state_create_action.clone(),
             state_save_active_action: state_save_active_action.clone(),
             state_load_active_action: state_load_active_action.clone(),
@@ -208,6 +215,14 @@ impl WindowExtend for Window {
             });
         }
         window.add_action(&resume_action);
+
+        {
+            let result = result.clone();
+            let _ = debugger_action.connect_activate(move |_, _| {
+                result.open_debugger();
+            });
+        }
+        window.add_action(&debugger_action);
 
         {
             let result = result.clone();
@@ -318,6 +333,23 @@ impl WindowExtend for Window {
         result
     }
 
+    fn open_debugger(&self) {
+        // Idempotent open: an existing window refreshes and presents
+        // instead of duplicating.
+        if let Some(existing) = self.borrow().debugger_window.clone() {
+            crate::debugger::DebuggerWindowCore::refresh(&existing);
+            existing.borrow().present();
+            return;
+        }
+        let debugger = crate::debugger::DebuggerWindowCore::open(
+            &self.application(),
+            &self.window(),
+            self.state(),
+        );
+        self.borrow_mut().debugger_window = Some(debugger);
+        self.update_actions();
+    }
+
     fn open(&self) {
         let file_chooser_native = gtk::FileChooserNative::new(
             Some("Open File"),
@@ -403,6 +435,7 @@ impl WindowExtend for Window {
         self.borrow().close_action.set_enabled(state.loaded());
         self.borrow().pause_action.set_enabled(state.can_pause());
         self.borrow().resume_action.set_enabled(state.can_resume());
+        self.borrow().debugger_action.set_enabled(state.loaded());
         self.borrow()
             .state_create_action
             .set_enabled(state.loaded());
@@ -495,6 +528,10 @@ impl WindowExtend for Window {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
+        if key == gdk::Key::F4 && key_event_pressed(event) {
+            self.open_debugger();
+            return true;
+        }
         if let Ok(controller_input) = key.try_into() {
             let shortcut = self
                 .state()

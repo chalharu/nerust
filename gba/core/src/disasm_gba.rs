@@ -72,8 +72,8 @@ pub fn decode_thumb(addr: u32, word: u16) -> Decoded {
     // Hi-register ALU (0x4400-0x46FF): ADD/CMP/MOV.
     } else if (0x4400..0x4700).contains(&w) {
         let op = ["ADD", "CMP", "MOV"][((w >> 8) & 3) as usize];
-        let rd = ((w & 7) | ((w >> 4) & 8)) as u32;
-        let rs = ((w >> 3) & 0xF) as u32;
+        let rd = (w & 7) | ((w >> 4) & 8);
+        let rs = (w >> 3) & 0xF;
         text = format!("{op} {}, {}", reg(rd), reg(rs));
     // ALU ops (0x4000-0x43FF).
     } else if (0x4000..0x4400).contains(&w) {
@@ -141,7 +141,7 @@ pub fn decode_thumb(addr: u32, word: u16) -> Decoded {
             };
         } else if (w >> 9) & 3 == 2 {
             let store = w & 0x0800 == 0;
-            let mut list = reg_list(w as u32, 8);
+            let mut list = reg_list(w, 8);
             if w & 0x0100 != 0 {
                 list.push(if store { "LR" } else { "PC" }.to_string());
             }
@@ -159,7 +159,7 @@ pub fn decode_thumb(addr: u32, word: u16) -> Decoded {
         text = format!(
             "{op} {}!, {{{}}}",
             reg((w >> 8) & 7),
-            reg_list(w as u32, 8).join(", ")
+            reg_list(w, 8).join(", ")
         );
     // Shift/add/sub small immediates and SWI.
     } else if w < 0x2000 {

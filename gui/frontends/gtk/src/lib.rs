@@ -1,5 +1,7 @@
+mod debugger;
 mod gdk_raw;
 pub mod mapping;
+mod ppu_window;
 mod preferences;
 mod renderer;
 mod surface;
@@ -350,6 +352,7 @@ pub(crate) fn build_menu_model(
     let emulation_menu = gio::Menu::new();
     emulation_menu.append(Some(text(language, UiText::Pause)), Some("win.pause"));
     emulation_menu.append(Some(text(language, UiText::Resume)), Some("win.resume"));
+    emulation_menu.append(Some(text(language, UiText::Debugger)), Some("win.debugger"));
     emulation_menu.append_submenu(Some(text(language, UiText::SaveStates)), state_menu);
 
     let help_menu = gio::Menu::new();
