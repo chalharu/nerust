@@ -1,4 +1,6 @@
 mod app_menu;
+pub(crate) mod debug_window;
+pub(crate) mod ppu_window;
 pub(crate) mod settings;
 pub mod settings_window;
 mod tao_conversions;

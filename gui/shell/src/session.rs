@@ -446,6 +446,30 @@ impl SessionHandle {
         (row.valid > 0).then_some(row.bytes[0])
     }
 
+    /// Single-byte write for freeze re-application. Silent by design:
+    /// the rows are the evidence. `false` when unwritable.
+    pub fn debug_write_byte(
+        &self,
+        space: nerust_core_traits::debugger::SpaceId,
+        addr: u32,
+        value: u8,
+    ) -> bool {
+        use nerust_core_traits::debugger::MemoryWrite;
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return false,
+        };
+        matches!(
+            core.write_memory(MemoryWrite {
+                space,
+                addr,
+                width: 1,
+                value: u64::from(value),
+            }),
+            Ok(Ok(()))
+        )
+    }
+
     /// Select a row: read the old byte and prepare the transaction,
     /// overwriting any state.
     pub fn debug_prepare_write(
@@ -507,6 +531,43 @@ impl SessionHandle {
     pub fn debug_note_traffic(&self, state_changing: bool) {
         if state_changing {
             self.debug_txn.lock().unwrap().on_state_changing_traffic();
+        }
+    }
+
+    /// Pause for debugger control. Status strings match the verified
+    /// prototype pixels.
+    pub fn debug_pause(&self) -> String {
+        match self.emu_core.as_ref() {
+            Some(core) => match core.pause() {
+                Ok(()) => "paused".to_string(),
+                Err(error) => format!("pause failed: {error:?}"),
+            },
+            None => "no core".to_string(),
+        }
+    }
+
+    /// Resume for debugger control.
+    pub fn debug_resume(&self) -> String {
+        match self.emu_core.as_ref() {
+            Some(core) => match core.resume() {
+                Ok(()) => "resumed".to_string(),
+                Err(error) => format!("resume failed: {error:?}"),
+            },
+            None => "no core".to_string(),
+        }
+    }
+
+    /// Advance one unit for debugger control. Returns the stepped
+    /// count (`stepped N`) or a loud failure.
+    pub fn debug_step(&self, unit: nerust_core_traits::debugger::StepUnit) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        match core.step(unit) {
+            Ok(Ok(count)) => format!("stepped {count}"),
+            Ok(Err(error)) => format!("step failed: {error:?}"),
+            Err(error) => format!("thread failed: {error:?}"),
         }
     }
 
