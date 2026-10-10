@@ -37,7 +37,7 @@ use crate::tao_conversions::{convert_tao_window_event, default_font};
 /// Initial PPU viewer window size (verified Xvfb fit).
 pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
 
-use nerust_gui_viewmodel::debugger::scale2x_nearest;
+use nerust_gui_viewmodel::debugger::{PPU_HOVER_HINT, scale2x_nearest};
 
 /// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
 /// tile start (+16 per tile). Generic geometry, no per-system branch.
@@ -149,7 +149,7 @@ impl Program for PpuProgram {
         let mut content = column![
             text("PPU Viewer").size(18),
             text(if hover.is_empty() {
-                "hover a tile".to_string()
+                PPU_HOVER_HINT.to_string()
             } else {
                 hover
             })

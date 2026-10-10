@@ -137,7 +137,6 @@ pub(crate) struct DebuggerWindowCore {
     freeze_label: gtk::Label,
     bookmark_input: gtk::Entry,
     bookmark_list: gtk::ListBox,
-    panels_label: gtk::Label,
 }
 
 fn section(title: &str) -> gtk::Label {
@@ -196,7 +195,9 @@ impl DebuggerWindowCore {
             .application(app)
             .title("Debugger")
             .default_width(1100)
-            .default_height(800)
+            // Taller than the tao twin: Adwaita rows need ~920px
+            // to show all 8 dump rows plus the panes.
+            .default_height(920)
             .build();
         window.set_transient_for(Some(main_window));
 
@@ -231,9 +232,6 @@ impl DebuggerWindowCore {
         freeze_label.set_hexpand(true);
         let bookmark_input = entry(Some("label"));
         let bookmark_list = gtk::ListBox::new();
-        let panels_label = gtk::Label::new(None);
-        panels_label.add_css_class("monospace");
-        panels_label.set_xalign(0.0);
 
         let result: DebuggerWindow = Rc::new(RefCell::new(Self {
             window: window.clone(),
@@ -258,7 +256,6 @@ impl DebuggerWindowCore {
             freeze_label: freeze_label.clone(),
             bookmark_input: bookmark_input.clone(),
             bookmark_list: bookmark_list.clone(),
-            panels_label: panels_label.clone(),
         }));
 
         // Toolbar: execution above disassembly, like tao.
@@ -310,6 +307,9 @@ impl DebuggerWindowCore {
 
         let dis_scroll = gtk::ScrolledWindow::new();
         dis_scroll.set_vexpand(true);
+        // Classic scrollbars: overlay indicators hide whether the
+        // disassembly, dump, and right column scroll.
+        dis_scroll.set_overlay_scrolling(false);
         dis_scroll.set_child(Some(&disasm_list));
 
         let left_col = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -374,14 +374,13 @@ impl DebuggerWindowCore {
         bm_row.append(&bm_add);
         right_col.append(&bm_row);
         right_col.append(&bookmark_list);
-        right_col.append(&section("Panels"));
-        right_col.append(&panels_label);
 
         let panes = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         panes.set_vexpand(true);
         panes.append(&left_col);
         let right_scroll = gtk::ScrolledWindow::new();
         right_scroll.set_size_request(340, -1);
+        right_scroll.set_overlay_scrolling(false);
         // Take the content's natural width: narrow rows (freeze,
         // bookmarks) must not clip behind the viewport.
         right_scroll.set_propagate_natural_width(true);
@@ -389,7 +388,7 @@ impl DebuggerWindowCore {
         panes.append(&right_scroll);
 
         // Memory section: full width below the panes.
-        let memory = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        let memory = gtk::Box::new(gtk::Orientation::Vertical, 8);
         memory.append(&section("Memory"));
         let space_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let space_title = gtk::Label::new(Some("space"));
@@ -435,8 +434,9 @@ impl DebuggerWindowCore {
         memory.append(&mem_nav);
         let dump_scroll = gtk::ScrolledWindow::new();
         // Fixed share: the memory section stays on screen with the
-        // panes above; the list scrolls inside its 5-row window.
-        dump_scroll.set_size_request(-1, 200);
+        // panes above; the list viewport fits a full 8-row page.
+        dump_scroll.set_size_request(-1, 300);
+        dump_scroll.set_overlay_scrolling(false);
         dump_scroll.set_child(Some(&dump_list));
         memory.append(&dump_scroll);
 
@@ -487,9 +487,9 @@ impl DebuggerWindowCore {
         }
         memory.append(&refresh_button);
 
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        content.set_margin_top(16);
-        content.set_margin_bottom(16);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        content.set_margin_top(12);
+        content.set_margin_bottom(12);
         content.set_margin_start(16);
         content.set_margin_end(16);
         content.append(&panes);
@@ -580,8 +580,13 @@ impl DebuggerWindowCore {
         let main = win.borrow().window.clone();
         let state = win.borrow().state.clone();
         let images = win.borrow().data.display.images.clone();
-        let ppu = super::ppu_window::PpuWindowCore::open(&app, &main, state, images);
+        let panels = win.borrow().data.display.panels.clone();
+        let ppu = super::ppu_window::PpuWindowCore::open(&app, &main, state, images, panels);
         win.borrow_mut().ppu_window = Some(ppu);
+        // The PPU opens with whatever the last drain fetched (empty
+        // before any PPU was open), so refresh once with the viewer
+        // present: images and panels populate immediately.
+        Self::act(win, &[DebugAction::Refresh]);
     }
 
     fn mem_go(win: &DebuggerWindow) {
@@ -797,6 +802,10 @@ impl DebuggerWindowCore {
             button.set_halign(gtk::Align::Fill);
             if line.is_pc {
                 button.add_css_class("suggested-action");
+            } else {
+                // Text-look rows like the tao viewer: the frame
+                // implies an action, but these only select.
+                button.add_css_class("flat");
             }
             let addr = line.addr;
             let clicked = Rc::clone(win);
@@ -832,6 +841,10 @@ impl DebuggerWindowCore {
             button.set_halign(gtk::Align::Fill);
             if is_selected {
                 button.add_css_class("suggested-action");
+            } else {
+                // Text-look rows like the tao viewer: the frame
+                // implies an action, but these only select.
+                button.add_css_class("flat");
             }
             let addr = *addr;
             let clicked = Rc::clone(win);
@@ -886,11 +899,10 @@ impl DebuggerWindowCore {
             row.set_child(Some(&hbox));
             this.bookmark_list.append(&row);
         }
-        this.panels_label.set_label(&display.panels);
 
-        // The PPU viewer follows the same refresh.
+        // The PPU viewer follows the same refresh (panels included).
         if let Some(ppu) = this.ppu_window.as_ref() {
-            ppu.borrow_mut().sync(&display.images);
+            ppu.borrow_mut().sync(&display.images, &display.panels);
         }
     }
 }

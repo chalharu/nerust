@@ -56,6 +56,7 @@ pub(crate) enum DebugMessage {
     ResumePressed,
     StepFramePressed,
     StepInstrPressed,
+    PpuOpenPressed,
     MemInputChanged(String),
     MemGo,
     MemPage(i32),
@@ -100,6 +101,9 @@ pub(crate) struct DebugBridge {
     pub(crate) outbox: Mutex<Vec<DebugAction>>,
     pub(crate) view_invalidated: AtomicBool,
     pub(crate) ppu_invalidated: AtomicBool,
+    /// Toolbar PPU-viewer request: host-owned window, so the iced
+    /// program only raises the flag (same split as F4 handling).
+    pub(crate) open_ppu: AtomicBool,
 }
 
 impl DebugBridge {
@@ -123,6 +127,7 @@ impl DebugBridge {
             outbox: Mutex::new(Vec::new()),
             view_invalidated: AtomicBool::new(false),
             ppu_invalidated: AtomicBool::new(false),
+            open_ppu: AtomicBool::new(false),
         }
     }
 
@@ -244,6 +249,10 @@ impl Program for DebugProgram {
             DebugMessage::ResumePressed => bridge.push(DebugAction::Resume),
             DebugMessage::StepFramePressed => bridge.push(DebugAction::StepFrame),
             DebugMessage::StepInstrPressed => bridge.push(DebugAction::StepInstr),
+            DebugMessage::PpuOpenPressed => {
+                bridge.open_ppu.store(true, Ordering::Release);
+                bridge.push(DebugAction::Refresh);
+            }
             DebugMessage::MemInputChanged(text) => {
                 bridge.nav.lock().unwrap().set_mem_input(text);
                 bridge.view_invalidated.store(true, Ordering::Release);
@@ -462,6 +471,9 @@ impl Program for DebugProgram {
             button(text("Step Instr"))
                 .style(button::secondary)
                 .on_press(DebugMessage::StepInstrPressed),
+            button(text("PPU Viewer"))
+                .style(button::secondary)
+                .on_press(DebugMessage::PpuOpenPressed),
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center);

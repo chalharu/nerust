@@ -395,6 +395,7 @@ impl SettingsWindowHandle {
 
 #[cfg(test)]
 mod tests {
+    use iced::{Event, Point};
     use tao::{dpi::PhysicalPosition, event::WindowEvent};
 
     use super::*;
