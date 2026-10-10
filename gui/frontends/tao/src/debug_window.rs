@@ -493,6 +493,7 @@ impl Program for DebugProgram {
         .spacing(12)
         .align_y(iced::Alignment::Center);
         let mem_nav = row![
+            text("page").width(Length::Fixed(150.0)),
             button(text("Prev"))
                 .style(button::secondary)
                 .on_press(DebugMessage::MemPage(-1)),
@@ -624,6 +625,7 @@ impl Program for DebugProgram {
         let mut dis_col = column![].spacing(2);
         if disasm_lines.is_empty() {
             dis_col = dis_col.push(text("(no disassembly)").size(14));
+            dis_col = dis_col.push(text("Enter an address and press Go, or press Back.").size(14));
         }
         for line in &disasm_lines {
             let line_button = button(
@@ -751,6 +753,7 @@ impl Program for DebugProgram {
         let content = content.push(
             button(text("Refresh"))
                 .style(button::secondary)
+                .width(Length::Fill)
                 .on_press(DebugMessage::RefreshPressed),
         );
         content.into()

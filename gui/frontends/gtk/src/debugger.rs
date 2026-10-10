@@ -131,7 +131,8 @@ pub(crate) struct DebuggerWindowCore {
     edit_input: gtk::Entry,
     confirm_row: gtk::Box,
     confirm_label: gtk::Label,
-    regs_label: gtk::Label,
+    regs_left: gtk::Label,
+    regs_right: gtk::Label,
     watch_label: gtk::Label,
     freeze_input: gtk::Entry,
     freeze_label: gtk::Label,
@@ -220,9 +221,20 @@ impl DebuggerWindowCore {
         let confirm_label = gtk::Label::new(None);
         confirm_label.set_xalign(0.0);
         confirm_label.set_hexpand(true);
-        let regs_label = gtk::Label::new(None);
-        regs_label.add_css_class("monospace");
-        regs_label.set_xalign(0.0);
+        // Registers flow into two columns like the tao viewer so
+        // tall lists (GBA: 17) cost half the height. Pure text
+        // split, no system branches.
+        let regs_left = gtk::Label::new(None);
+        regs_left.add_css_class("monospace");
+        regs_left.set_xalign(0.0);
+        regs_left.set_valign(gtk::Align::Start);
+        let regs_right = gtk::Label::new(None);
+        regs_right.add_css_class("monospace");
+        regs_right.set_xalign(0.0);
+        regs_right.set_valign(gtk::Align::Start);
+        let regs_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+        regs_row.append(&regs_left);
+        regs_row.append(&regs_right);
         let watch_label = gtk::Label::new(Some("watch: none"));
         watch_label.set_xalign(0.0);
         watch_label.set_hexpand(true);
@@ -250,7 +262,8 @@ impl DebuggerWindowCore {
             edit_input: edit_input.clone(),
             confirm_row: confirm_row.clone(),
             confirm_label: confirm_label.clone(),
-            regs_label: regs_label.clone(),
+            regs_left: regs_left.clone(),
+            regs_right: regs_right.clone(),
             watch_label: watch_label.clone(),
             freeze_input: freeze_input.clone(),
             freeze_label: freeze_label.clone(),
@@ -326,7 +339,7 @@ impl DebuggerWindowCore {
         let right_col = gtk::Box::new(gtk::Orientation::Vertical, 12);
         right_col.append(&status_label);
         right_col.append(&section("Registers"));
-        right_col.append(&regs_label);
+        right_col.append(&regs_row);
         right_col.append(&section("Watch"));
         let watch_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let watch_button = action_button("Watch");
@@ -410,6 +423,9 @@ impl DebuggerWindowCore {
         space_row.append(&space_next);
         memory.append(&space_row);
         let mem_nav = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let page_title = gtk::Label::new(Some("page"));
+        page_title.set_size_request(150, -1);
+        page_title.set_xalign(0.0);
         let mem_prev = action_button("Prev");
         {
             let win = result.clone();
@@ -427,6 +443,7 @@ impl DebuggerWindowCore {
             let win = result.clone();
             mem_input.connect_activate(move |_| Self::mem_go(&win));
         }
+        mem_nav.append(&page_title);
         mem_nav.append(&mem_prev);
         mem_nav.append(&mem_next);
         mem_nav.append(&mem_input);
@@ -653,14 +670,19 @@ impl DebuggerWindowCore {
     }
 
     fn bookmark_add(win: &DebuggerWindow) {
-        let label = win.borrow().bookmark_input.text().trim().to_string();
-        if label.is_empty() {
-            return;
-        }
+        let input = win.borrow().bookmark_input.text().trim().to_string();
         if win.borrow().data.bookmarks.len() >= BOOKMARK_CAP {
             Self::set_status(win, "bookmark list full".to_string());
             return;
         }
+        // Empty labels default to BM{n} like the tao viewer: Add
+        // always does something visible.
+        let n = win.borrow().data.bookmarks.len() + 1;
+        let label = if input.is_empty() {
+            format!("BM{n}")
+        } else {
+            input
+        };
         let addr = win.borrow().data.anchor();
         {
             let mut this = win.borrow_mut();
@@ -790,6 +812,8 @@ impl DebuggerWindowCore {
         clear_list(&this.disasm_list);
         if display.disasm_lines.is_empty() {
             this.disasm_list.append(&static_row("(no disassembly)"));
+            this.disasm_list
+                .append(&static_row("Enter an address and press Go, or press Back."));
         }
         for line in &display.disasm_lines {
             let row = gtk::ListBoxRow::new();
@@ -867,7 +891,13 @@ impl DebuggerWindowCore {
             None => this.confirm_row.set_visible(false),
         }
 
-        this.regs_label.set_label(&display.regs);
+        // Registers flow into two columns like the tao viewer:
+        // the kernel order is kept, the view only halves the list.
+        let reg_lines: Vec<&str> = display.regs.lines().collect();
+        let reg_mid = reg_lines.len().div_ceil(2);
+        let reg_end = reg_mid.min(reg_lines.len());
+        this.regs_left.set_label(&reg_lines[..reg_end].join("\n"));
+        this.regs_right.set_label(&reg_lines[reg_end..].join("\n"));
         let watch_text = match (this.data.watch, display.watch_value) {
             (Some(addr), Some(value)) => format!("watch {addr:08X} = {value:02X}"),
             (Some(addr), None) => format!("watch {addr:08X} = ??"),
