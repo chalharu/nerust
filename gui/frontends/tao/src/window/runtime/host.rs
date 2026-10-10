@@ -624,8 +624,32 @@ impl HostState {
                     state_changing = true;
                     self.session.debug_step(StepUnit::Instruction)
                 }
+                // Transaction traffic never kills: it builds the
+                // transaction this drain consumes.
+                DebugRequest::EditStage(_)
+                | DebugRequest::EditCancel
+                | DebugRequest::WriteConfirm => {
+                    continue;
+                }
             };
             status = outcome;
+        }
+        // Cancel/commit first: cancel clears, commit writes and
+        // consumes the staged value.
+        for request in &requests {
+            match request {
+                DebugRequest::EditCancel => self.session.debug_clear_write(),
+                DebugRequest::WriteConfirm => {
+                    status = self.session.debug_commit_write();
+                }
+                _ => {}
+            }
+        }
+        // Kill staged-but-uncommitted values from previous drains
+        // first; SelectRow prepares fresh state after this, and
+        // EditStage builds on it within the same drain.
+        if state_changing {
+            self.session.debug_note_traffic(true);
         }
         // Row selection reads the old byte for the selection display.
         for request in &requests {
@@ -637,6 +661,12 @@ impl HostState {
                 let space = handle.bridge.selected_space();
                 let old = space.and_then(|space| self.session.debug_read_byte(space, *addr));
                 *handle.bridge.selected.lock().unwrap() = Some((*addr, old));
+                if let Some(space) = space {
+                    self.session.debug_prepare_write(space, *addr);
+                }
+            }
+            if let DebugRequest::EditStage(value) = request {
+                self.session.debug_stage_write(*value);
             }
         }
         // Frozen values re-apply on every drain (silent by design;
@@ -647,7 +677,6 @@ impl HostState {
         {
             let _ = self.session.debug_write_byte(space, addr, value);
         }
-        self.session.debug_note_traffic(state_changing);
         let (space, mem_addr, dis_addr, prev_rows) = match self.debug_window.as_ref() {
             Some(handle) => {
                 let nav = handle.bridge.nav.lock().unwrap();
@@ -670,11 +699,13 @@ impl HostState {
             None => None,
         };
         let status = self.session_status_text(&status);
+        let pending_text = self.session.debug_pending_text();
         if let Some(handle) = self.debug_window.as_mut() {
             let mut display = snapshot_to_display(&snapshot);
             display.diff = debug_vm::diff_rows(&prev_rows, &snapshot.dump_rows);
             display.status = status;
             display.watch_value = watch_value;
+            display.pending_text = pending_text;
             handle.set_display(display);
         }
         // PPU viewer follows the same drain (one scale per drain).

@@ -1,10 +1,10 @@
 //! Debugger window: two-pane memory/disassembly probe plus register,
 //! watch, freeze, and bookmark state.
 //!
-//! Read-only in Phase C: row selection drives watch/freeze targets,
-//! and the write flow arrives in Phase E. The program stays pure;
-//! the host drain executes requests against the session and refreshes
-//! the display cache.
+//! Read-only in Phase C; Phase E adds the two-phase write (select,
+//! stage, confirm/cancel) with the shell-owned transaction. The
+//! program stays pure; the host drain executes requests against the
+//! session and refreshes the display cache.
 
 use std::sync::{
     Arc, Mutex,
@@ -56,6 +56,10 @@ pub(crate) enum DebugRequest {
     StepInstr,
     MemNav,
     SelectRow(u32),
+    /// Stage a parsed value into the shell-owned transaction.
+    EditStage(u64),
+    EditCancel,
+    WriteConfirm,
 }
 
 /// In-window debugger message. Pure: update touches the bridge only.
@@ -87,6 +91,10 @@ pub(crate) enum DebugMessage {
     FreezeSet,
     FreezeClear,
     RowSelected(u32),
+    EditInputChanged(String),
+    EditWrite,
+    ConfirmWrite,
+    CancelWrite,
 }
 
 /// Shared bridge between the iced program and the host drain.
@@ -102,6 +110,8 @@ pub(crate) struct DebugBridge {
     pub(crate) freeze: Mutex<Option<(u32, u8)>>,
     pub(crate) freeze_input: Mutex<String>,
     pub(crate) selected: Mutex<Option<(u32, Option<u8>)>>,
+    /// New-value input for the two-phase write (Phase E).
+    pub(crate) edit_input: Mutex<String>,
     pub(crate) ppu_hover: Mutex<String>,
     pub(crate) outbox: Mutex<Vec<DebugRequest>>,
     pub(crate) view_invalidated: AtomicBool,
@@ -124,6 +134,7 @@ impl DebugBridge {
             freeze: Mutex::new(None),
             freeze_input: Mutex::new(String::new()),
             selected: Mutex::new(None),
+            edit_input: Mutex::new(String::new()),
             ppu_hover: Mutex::new(String::new()),
             outbox: Mutex::new(Vec::new()),
             view_invalidated: AtomicBool::new(false),
@@ -384,6 +395,41 @@ impl Program for DebugProgram {
             DebugMessage::RowSelected(addr) => {
                 bridge.push(DebugRequest::SelectRow(addr));
             }
+            DebugMessage::EditInputChanged(text) => {
+                *bridge.edit_input.lock().unwrap() = text;
+                bridge.view_invalidated.store(true, Ordering::Release);
+            }
+            DebugMessage::EditWrite => {
+                let input = bridge.edit_input.lock().unwrap().trim().to_string();
+                let selected = *bridge.selected.lock().unwrap();
+                match (
+                    selected,
+                    vm::parse_hex_addr(&input).filter(|value| *value <= 0xFF),
+                ) {
+                    (Some((addr, old)), Some(value)) => {
+                        // Re-select first: the drain prepares fresh state
+                        // (old byte) before staging, so Write also works
+                        // after a cancel (which empties the transaction).
+                        bridge.push(DebugRequest::SelectRow(addr));
+                        bridge.push(DebugRequest::EditStage(value as u64));
+                        // Optimistic confirm row via the single shared
+                        // formatter; the drain overwrites it authoritatively.
+                        bridge.display.lock().unwrap().pending_text =
+                            Some(vm::format_pending_write(addr, old, value as u64));
+                    }
+                    (None, _) => bridge.set_status("write needs a selection".to_string()),
+                    _ => bridge.set_status(format!("parse failed: {input}")),
+                }
+            }
+            DebugMessage::ConfirmWrite => {
+                bridge.push(DebugRequest::WriteConfirm);
+                // Commit consumes the transaction; the input clears.
+                *bridge.edit_input.lock().unwrap() = String::new();
+            }
+            DebugMessage::CancelWrite => {
+                bridge.push(DebugRequest::EditCancel);
+                bridge.display.lock().unwrap().pending_text = None;
+            }
         }
         Task::none()
     }
@@ -405,6 +451,8 @@ impl Program for DebugProgram {
         let freeze = *bridge.freeze.lock().unwrap();
         let freeze_input = bridge.freeze_input.lock().unwrap().clone();
         let selected = *bridge.selected.lock().unwrap();
+        let edit_input = bridge.edit_input.lock().unwrap().clone();
+        let pending_text = display.pending_text;
         let selected_name = bridge.selected_name();
         let regs = display.regs;
         let dump_rows = display.dump_rows;
@@ -416,9 +464,9 @@ impl Program for DebugProgram {
         let follow_pc = nav.follow_pc();
         let back_len = nav.back_len();
         let watch_value = display.watch_value;
-        // Button hierarchy: one primary per flow (reserved for the
-        // Phase E Confirm), secondary for toolbar/nav, text for list
-        // rows and escape actions.
+        // Button hierarchy: one primary per flow (the Phase E
+        // Confirm), secondary for toolbar/nav, text for list rows
+        // and escape actions.
         let toolbar = row![
             button(text("Pause"))
                 .style(button::secondary)
@@ -507,8 +555,8 @@ impl Program for DebugProgram {
             reg_right = reg_right.push(text(line.clone()).size(14).font(iced::Font::MONOSPACE));
         }
         let regs_view = row![reg_left, reg_right].spacing(16).width(Length::Fill);
-        // Phase C selection display (Phase E adds the write input and
-        // confirm row here).
+        // Two-phase write: select a dump row, type the new byte,
+        // Write stages it, and the confirm row commits or cancels.
         let select_text = match selected {
             Some((addr, Some(old))) => format!("Selected {addr:08X} (was {old:02X})"),
             Some((addr, None)) => format!("Selected {addr:08X} (was ??)"),
@@ -516,6 +564,12 @@ impl Program for DebugProgram {
         };
         let edit_row = row![
             text(select_text).size(14).width(Length::Fixed(240.0)),
+            text_input("hex byte", &edit_input)
+                .on_input(DebugMessage::EditInputChanged)
+                .width(100),
+            button(text("Write"))
+                .style(button::secondary)
+                .on_press(DebugMessage::EditWrite),
             button(text("Watch"))
                 .style(button::secondary)
                 .on_press(DebugMessage::WatchSet),
@@ -525,6 +579,23 @@ impl Program for DebugProgram {
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center);
+        // Confirm row: the one primary button in the window; Cancel is
+        // a text escape. The drain owns the authoritative text.
+        let confirm_row: Option<iced::Element<'_, DebugMessage, theme::Theme, Renderer>> =
+            pending_text.map(|pending| {
+                row![
+                    text(pending).size(14).width(Length::Fill),
+                    button(text("Confirm"))
+                        .style(button::primary)
+                        .on_press(DebugMessage::ConfirmWrite),
+                    button(text("Cancel"))
+                        .style(button::text)
+                        .on_press(DebugMessage::CancelWrite),
+                ]
+                .spacing(12)
+                .align_y(iced::Alignment::Center)
+                .into()
+            });
         let follow_button = button(text("Follow PC")).on_press(DebugMessage::FollowPcToggle);
         let back_button =
             button(text(format!("Back ({back_len})"))).on_press(DebugMessage::DisBack);
@@ -613,7 +684,7 @@ impl Program for DebugProgram {
                     .style(button::text)
                     .on_press(DebugMessage::BookmarkJump(*addr)),
                     button(text("×").size(14))
-                        .padding([2, 8])
+                        .padding([4, 10])
                         .style(button::text)
                         .on_press(DebugMessage::BookmarkDelete(*addr)),
                 ]
@@ -679,6 +750,10 @@ impl Program for DebugProgram {
         .spacing(10)
         .padding(16)
         .width(Length::Fill);
+        let mut content = content;
+        if let Some(confirm) = confirm_row {
+            content = content.push(confirm);
+        }
         let content = content.push(
             button(text("Refresh"))
                 .style(button::secondary)
