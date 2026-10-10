@@ -488,6 +488,42 @@ impl Core {
     }
 
     #[inline(always)]
+    /// Cap for one instruction step: normal instructions retire in a
+    /// handful of cycles (DMA and interrupts extend into the
+    /// hundreds); a halted CPU (JAM) never reaches a boundary, so the
+    /// cap guarantees termination and the count stays honest.
+    pub(crate) const MAX_INSTRUCTION_STEP_CYCLES: u64 = 1_000_000;
+
+    /// Advance to the next instruction boundary, reporting core
+    /// cycles. Uses the exact per-cycle path (`step_cycle`), so
+    /// PPU/APU stay in lockstep. Audio samples are dropped: stepping
+    /// is a paused debugger operation, never audible output.
+    pub(crate) fn step_instruction(
+        &mut self,
+        screen: &mut FrameBuffer,
+        hub: &mut dyn ControllerHub,
+    ) -> u64 {
+        struct NullAudio;
+        impl AudioBackend for NullAudio {
+            fn start(&mut self) {}
+            fn pause(&mut self) {}
+            fn push(&mut self, _sample: StereoSample) {}
+        }
+        let mut mixer = NullAudio;
+        let sample_rate = mixer.sample_rate();
+        let mut cycles = 0;
+        while cycles < Self::MAX_INSTRUCTION_STEP_CYCLES {
+            cycles += 1;
+            // Frame completion mid-step is ignored: only the CPU
+            // boundary ends the step.
+            self.step_cycle(screen, hub, &mut mixer, sample_rate);
+            if self.cpu.is_instruction_boundary() {
+                break;
+            }
+        }
+        cycles
+    }
+
     fn step_cycle<M: AudioBackend>(
         &mut self,
         screen: &mut FrameBuffer,

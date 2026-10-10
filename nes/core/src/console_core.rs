@@ -118,6 +118,17 @@ impl NesConsoleCore {
 
         Ok(cycles)
     }
+
+    /// Advance one instruction, reporting the cycles the core counted.
+    /// No input is taken and no audio is produced: stepping inspects a
+    /// frozen moment, it does not play it.
+    pub(crate) fn step_instruction_cycles(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+    ) -> Result<u64, CoreError> {
+        let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
+        Ok(core.step_instruction(frame_slot, &mut self.controller))
+    }
 }
 
 impl ConsoleCore for NesConsoleCore {
@@ -256,9 +267,10 @@ impl DebugControl for NesDebugControl<'_> {
                 .console
                 .render_frame_cycles(&mut self.frame_slot, &mut self.audio_sink)
                 .map_err(|_| DebuggerError::Unsupported),
-            // Instruction stepping is a required debug capability, but
-            // needs an instruction-boundary API in the CPU core first.
-            StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
+            StepUnit::Instruction => self
+                .console
+                .step_instruction_cycles(&mut self.frame_slot)
+                .map_err(|_| DebuggerError::Unsupported),
         }
     }
 
@@ -500,11 +512,32 @@ mod tests {
                 addr: 0x1FFF
             })
         );
-        // Step has no cycle-accounted entry point yet: explicit, not silent.
-        assert_eq!(
-            boxed.step(StepUnit::Instruction),
-            Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
+        // Instruction stepping advances exactly one instruction and
+        // reports real cycles; the program counter moves by the
+        // decoded instruction length.
+        let pc_of = |console: &NesConsoleCore| {
+            console
+                .core_ref()
+                .expect("core")
+                .cpu_registers()
+                .iter()
+                .find(|(name, _)| *name == "pc")
+                .map(|(_, value)| *value as u32)
+                .expect("pc")
+        };
+        drop(boxed);
+        let pc_before = pc_of(&console);
+        let mut boxed: Box<dyn DebugControl + '_> = Box::new(NesDebugControl::new(&mut console));
+        let cycles = boxed.step(StepUnit::Instruction).expect("instr step");
+        assert!(cycles > 0);
+        assert!(cycles < crate::Core::MAX_INSTRUCTION_STEP_CYCLES);
+        drop(boxed);
+        let pc_after = pc_of(&console);
+        assert!(
+            pc_after.wrapping_sub(pc_before) <= 3,
+            "pc advanced one instruction: {pc_before:04X} -> {pc_after:04X}"
         );
+        let mut boxed: Box<dyn DebugControl + '_> = Box::new(NesDebugControl::new(&mut console));
         // Frame stepping reuses the render path and reports real cycles.
         let cycles = boxed.step(StepUnit::Frame).expect("frame step");
         assert!(cycles > 0);
