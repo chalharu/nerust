@@ -7,6 +7,7 @@ pub mod cpu;
 pub mod cpu_pipeline;
 pub mod cpu_registers;
 pub mod debugger;
+pub mod disasm_gba;
 pub mod dma;
 #[cfg(test)]
 mod dma_fit;

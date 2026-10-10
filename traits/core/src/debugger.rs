@@ -226,15 +226,16 @@ pub trait Debugger {
 // Disassembly — one decoded instruction row
 // ---------------------------------------------------------------------------
 
-/// A single disassembled instruction row. `bytes` holds up to 3
-/// instruction bytes, `len` the used prefix.
+/// A single disassembled instruction row. `bytes` holds up to 4
+/// instruction bytes (ARM needs 4, 6502 needs 3, Thumb needs 2),
+/// `len` the used prefix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisasmLine {
     /// Instruction address.
     pub addr: u32,
     /// Raw instruction bytes (first `len` entries valid).
-    pub bytes: [u8; 3],
-    /// Instruction length in bytes (1-3).
+    pub bytes: [u8; 4],
+    /// Instruction length in bytes (1-4).
     pub len: u8,
     /// Human-readable text, e.g. `JMP $C5F5`.
     pub text: String,
