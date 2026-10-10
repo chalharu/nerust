@@ -20,10 +20,17 @@ pub(crate) fn tao_keycode_to_iced_code(code: tao::keyboard::KeyCode) -> keyboard
     key.into()
 }
 
-/// Convert Tao Key to iced Key.
+/// Convert Tao Key to iced Key. Named editing keys map explicitly;
+/// anything else stays unidentified (physical codes cover shortcuts).
 pub(crate) fn tao_key_to_iced_key(key: &tao::keyboard::Key) -> keyboard::Key {
+    use iced::keyboard::key::Named;
     match key {
         tao::keyboard::Key::Character(s) => keyboard::Key::Character(SmolStr::new(s)),
+        tao::keyboard::Key::Backspace => keyboard::Key::Named(Named::Backspace),
+        tao::keyboard::Key::Delete => keyboard::Key::Named(Named::Delete),
+        tao::keyboard::Key::Enter => keyboard::Key::Named(Named::Enter),
+        tao::keyboard::Key::Escape => keyboard::Key::Named(Named::Escape),
+        tao::keyboard::Key::Tab => keyboard::Key::Named(Named::Tab),
         _ => keyboard::Key::Unidentified,
     }
 }
