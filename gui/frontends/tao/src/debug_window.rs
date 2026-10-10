@@ -24,6 +24,7 @@ use iced_winit::{
     runtime::user_interface::{Cache, UserInterface},
 };
 use nerust_core_traits::debugger::{DUMP_ROW_BYTES, SpaceId};
+use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState};
 
 #[cfg(target_os = "macos")]
@@ -44,23 +45,6 @@ const STATE_COLUMN_WIDTH: f32 = 340.0;
 const DUMP_PAGE_ROWS: i32 = 8;
 /// Bookmark cap (window-local, no file yet).
 const BOOKMARK_CAP: usize = 8;
-
-/// Request from the debugger program to the host drain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DebugRequest {
-    Refresh,
-    Pause,
-    Resume,
-    TogglePause,
-    StepFrame,
-    StepInstr,
-    MemNav,
-    SelectRow(u32),
-    /// Stage a parsed value into the shell-owned transaction.
-    EditStage(u64),
-    EditCancel,
-    WriteConfirm,
-}
 
 /// In-window debugger message. Pure: update touches the bridge only.
 #[derive(Debug, Clone)]
@@ -113,7 +97,7 @@ pub(crate) struct DebugBridge {
     /// New-value input for the two-phase write (Phase E).
     pub(crate) edit_input: Mutex<String>,
     pub(crate) ppu_hover: Mutex<String>,
-    pub(crate) outbox: Mutex<Vec<DebugRequest>>,
+    pub(crate) outbox: Mutex<Vec<DebugAction>>,
     pub(crate) view_invalidated: AtomicBool,
     pub(crate) ppu_invalidated: AtomicBool,
 }
@@ -157,11 +141,11 @@ impl DebugBridge {
         self.view_invalidated.store(true, Ordering::Release);
     }
 
-    pub(crate) fn take_requests(&self) -> Vec<DebugRequest> {
+    pub(crate) fn take_requests(&self) -> Vec<DebugAction> {
         std::mem::take(&mut *self.outbox.lock().unwrap())
     }
 
-    fn push(&self, request: DebugRequest) {
+    fn push(&self, request: DebugAction) {
         self.outbox.lock().unwrap().push(request);
         self.view_invalidated.store(true, Ordering::Release);
     }
@@ -231,7 +215,7 @@ impl Program for DebugProgram {
     fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
         let bridge = &state.bridge;
         match message {
-            DebugMessage::RefreshPressed => bridge.push(DebugRequest::Refresh),
+            DebugMessage::RefreshPressed => bridge.push(DebugAction::Refresh),
             // Space stepper (not a dropdown): overlay menus are
             // undrivable on headless Xvfb, and four fixed spaces suit
             // Prev/Next cycling. The dropdown decision is revisited
@@ -243,7 +227,7 @@ impl Program for DebugProgram {
                     nav.set_space(idx, start);
                     drop(nav);
                     *bridge.selected.lock().unwrap() = None;
-                    bridge.push(DebugRequest::Refresh);
+                    bridge.push(DebugAction::Refresh);
                 }
             }
             DebugMessage::SpaceNext => {
@@ -253,13 +237,13 @@ impl Program for DebugProgram {
                     nav.set_space(idx, start);
                     drop(nav);
                     *bridge.selected.lock().unwrap() = None;
-                    bridge.push(DebugRequest::Refresh);
+                    bridge.push(DebugAction::Refresh);
                 }
             }
-            DebugMessage::PausePressed => bridge.push(DebugRequest::Pause),
-            DebugMessage::ResumePressed => bridge.push(DebugRequest::Resume),
-            DebugMessage::StepFramePressed => bridge.push(DebugRequest::StepFrame),
-            DebugMessage::StepInstrPressed => bridge.push(DebugRequest::StepInstr),
+            DebugMessage::PausePressed => bridge.push(DebugAction::Pause),
+            DebugMessage::ResumePressed => bridge.push(DebugAction::Resume),
+            DebugMessage::StepFramePressed => bridge.push(DebugAction::StepFrame),
+            DebugMessage::StepInstrPressed => bridge.push(DebugAction::StepInstr),
             DebugMessage::MemInputChanged(text) => {
                 bridge.nav.lock().unwrap().set_mem_input(text);
                 bridge.view_invalidated.store(true, Ordering::Release);
@@ -269,7 +253,7 @@ impl Program for DebugProgram {
                 match vm::parse_hex_addr(&input) {
                     Some(addr) => {
                         bridge.nav.lock().unwrap().go_mem(addr);
-                        bridge.push(DebugRequest::MemNav);
+                        bridge.push(DebugAction::MemNav);
                     }
                     None => bridge.set_status(format!("parse failed: {input}")),
                 }
@@ -280,7 +264,7 @@ impl Program for DebugProgram {
                     .lock()
                     .unwrap()
                     .page_mem(delta * DUMP_PAGE_ROWS * DUMP_ROW_BYTES as i32);
-                bridge.push(DebugRequest::MemNav);
+                bridge.push(DebugAction::MemNav);
             }
             DebugMessage::DisInputChanged(text) => {
                 bridge.nav.lock().unwrap().set_dis_input(text);
@@ -292,27 +276,27 @@ impl Program for DebugProgram {
                     Some(addr) => {
                         let anchor = bridge.anchor();
                         bridge.nav.lock().unwrap().navigate(anchor, addr);
-                        bridge.push(DebugRequest::Refresh);
+                        bridge.push(DebugAction::Refresh);
                     }
                     None => bridge.set_status(format!("parse failed: {input}")),
                 }
             }
             DebugMessage::FollowPcToggle => {
                 bridge.nav.lock().unwrap().follow();
-                bridge.push(DebugRequest::Refresh);
+                bridge.push(DebugAction::Refresh);
             }
             DebugMessage::DisLineClicked(addr) => {
                 let anchor = bridge.anchor();
                 bridge.nav.lock().unwrap().navigate(anchor, addr);
-                bridge.push(DebugRequest::Refresh);
+                bridge.push(DebugAction::Refresh);
             }
             DebugMessage::FollowTarget(addr) => {
                 let anchor = bridge.anchor();
                 bridge.nav.lock().unwrap().navigate(anchor, addr);
-                bridge.push(DebugRequest::Refresh);
+                bridge.push(DebugAction::Refresh);
             }
             DebugMessage::DisBack => match bridge.nav.lock().unwrap().go_back() {
-                Some(_) => bridge.push(DebugRequest::Refresh),
+                Some(_) => bridge.push(DebugAction::Refresh),
                 None => bridge.set_status("back stack is empty".to_string()),
             },
             DebugMessage::BookmarkInputChanged(text) => {
@@ -351,7 +335,7 @@ impl Program for DebugProgram {
             DebugMessage::BookmarkJump(addr) => {
                 let anchor = bridge.anchor();
                 bridge.nav.lock().unwrap().navigate(anchor, addr);
-                bridge.push(DebugRequest::Refresh);
+                bridge.push(DebugAction::Refresh);
             }
             DebugMessage::BookmarkDelete(addr) => {
                 bridge.bookmarks.lock().unwrap().retain(|(a, _)| *a != addr);
@@ -362,7 +346,7 @@ impl Program for DebugProgram {
                 match selected {
                     Some(addr) => {
                         *bridge.watch.lock().unwrap() = Some(addr);
-                        bridge.push(DebugRequest::Refresh);
+                        bridge.push(DebugAction::Refresh);
                     }
                     None => bridge.set_status("watch needs a selection".to_string()),
                 }
@@ -383,7 +367,7 @@ impl Program for DebugProgram {
                     (Some(addr), Some(value)) => {
                         *bridge.freeze.lock().unwrap() = Some((addr, value as u8));
                         bridge.set_status(format!("frozen {addr:08X}={value:02X}"));
-                        bridge.push(DebugRequest::Refresh);
+                        bridge.push(DebugAction::Refresh);
                     }
                     _ => bridge.set_status("freeze needs a selected row and hex byte".to_string()),
                 }
@@ -393,7 +377,7 @@ impl Program for DebugProgram {
                 bridge.set_status("freeze cleared".to_string());
             }
             DebugMessage::RowSelected(addr) => {
-                bridge.push(DebugRequest::SelectRow(addr));
+                bridge.push(DebugAction::SelectRow(addr));
             }
             DebugMessage::EditInputChanged(text) => {
                 *bridge.edit_input.lock().unwrap() = text;
@@ -406,28 +390,26 @@ impl Program for DebugProgram {
                     selected,
                     vm::parse_hex_addr(&input).filter(|value| *value <= 0xFF),
                 ) {
-                    (Some((addr, old)), Some(value)) => {
+                    (Some((addr, _)), Some(value)) => {
                         // Re-select first: the drain prepares fresh state
                         // (old byte) before staging, so Write also works
                         // after a cancel (which empties the transaction).
-                        bridge.push(DebugRequest::SelectRow(addr));
-                        bridge.push(DebugRequest::EditStage(value as u64));
-                        // Optimistic confirm row via the single shared
-                        // formatter; the drain overwrites it authoritatively.
-                        bridge.display.lock().unwrap().pending_text =
-                            Some(vm::format_pending_write(addr, old, value as u64));
+                        // The confirm row comes back authoritatively from
+                        // the drain (same as GTK): no optimistic text.
+                        bridge.push(DebugAction::SelectRow(addr));
+                        bridge.push(DebugAction::EditStage(value as u64));
                     }
                     (None, _) => bridge.set_status("write needs a selection".to_string()),
                     _ => bridge.set_status(format!("parse failed: {input}")),
                 }
             }
             DebugMessage::ConfirmWrite => {
-                bridge.push(DebugRequest::WriteConfirm);
+                bridge.push(DebugAction::WriteConfirm);
                 // Commit consumes the transaction; the input clears.
                 *bridge.edit_input.lock().unwrap() = String::new();
             }
             DebugMessage::CancelWrite => {
-                bridge.push(DebugRequest::EditCancel);
+                bridge.push(DebugAction::EditCancel);
                 bridge.display.lock().unwrap().pending_text = None;
             }
         }
@@ -983,7 +965,7 @@ impl DebugWindowHandle {
         self.sync_from_bridge();
     }
 
-    pub(crate) fn take_requests(&self) -> Vec<DebugRequest> {
+    pub(crate) fn take_requests(&self) -> Vec<DebugAction> {
         self.bridge.take_requests()
     }
 
@@ -1032,9 +1014,9 @@ impl DebugWindowHandle {
             // NOTE: `physical_key` binds by reference through `&mapped`;
             // dereference before matching or no arm ever hits.
             let request = match *physical_key {
-                Physical::Code(Code::F6) => Some(DebugRequest::StepFrame),
-                Physical::Code(Code::F7) => Some(DebugRequest::StepInstr),
-                Physical::Code(Code::F9) => Some(DebugRequest::TogglePause),
+                Physical::Code(Code::F6) => Some(DebugAction::StepFrame),
+                Physical::Code(Code::F7) => Some(DebugAction::StepInstr),
+                Physical::Code(Code::F9) => Some(DebugAction::TogglePause),
                 _ => None,
             };
             if let Some(request) = request {

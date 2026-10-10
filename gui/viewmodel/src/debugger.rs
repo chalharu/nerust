@@ -7,17 +7,12 @@
 //! Execution and writes stay in the shell session (later phases);
 //! this module owns pure interpretation only.
 
-use std::time::Duration;
-
 use nerust_core_traits::debugger::{
     CellValue, ColumnKind, DebugImage, DebugPanel, DisasmLine, ImageFormat, MemoryDump, SpaceId,
 };
 
 /// Disassembly undo depth (no$ Back adapted to buttons).
 pub const DISASM_BACK_CAP: usize = 32;
-
-/// Bytes per hex-dump row in all debugger views.
-pub const DUMP_ROW_BYTES: u32 = 16;
 
 /// Movement state: spaces, addresses, inputs, undo stack, follow mode.
 /// Presentation-owned; the session never sees it.
@@ -312,8 +307,6 @@ pub struct DebugSnapshot {
     pub panels: String,
     /// `(label, width, height, rgba)` system images.
     pub images: Vec<(String, u32, u32, Vec<u8>)>,
-    /// Wall time spent inside the batched core pass.
-    pub elapsed: Duration,
 }
 
 /// Format kernel registers as `name: $xxxx` lines, kernel order kept.
