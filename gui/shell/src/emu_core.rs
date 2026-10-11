@@ -10,8 +10,8 @@ use std::{
 use nerust_core_traits::{
     CoreConfig, CoreOptions, EmuCommand, LoadCommand, StateDataCommand,
     debugger::{
-        DebuggerError, InspectError, InspectRequest, InspectResult, MemoryWrite, SpaceInfo,
-        StepUnit,
+        DebugImage, DebuggerError, InspectError, InspectRequest, InspectResult, MemoryWrite,
+        SpaceInfo, StepUnit,
     },
     factory::{CoreParts, load::MediaObject},
     identity::SystemIdentity,
@@ -72,6 +72,20 @@ pub struct EmuCore {
     disp_fb: FrameBuffer,
     frame_ready: Arc<AtomicBool>,
     metrics: Arc<Mutex<ConsoleMetrics>>,
+    image_cache: Mutex<CachedImages>,
+}
+
+/// Cached system images (pattern tables) for the debugger PPU viewer.
+///
+/// Decode is the drain's dearest pass (GBA re-reads 131k bus bytes
+/// per fetch) while paused memory never changes, so repeats serve
+/// from here. Anything that advances or replaces memory — step,
+/// write, load/unload/reset/state import, or a running core —
+/// marks the cache dirty instead.
+#[derive(Debug, Default)]
+struct CachedImages {
+    dirty: bool,
+    images: Vec<DebugImage>,
 }
 
 impl EmuCore {
@@ -94,6 +108,10 @@ impl EmuCore {
             disp_fb,
             frame_ready,
             metrics,
+            image_cache: Mutex::new(CachedImages {
+                dirty: true,
+                images: Vec::new(),
+            }),
         }
     }
 
@@ -152,6 +170,10 @@ impl EmuCore {
                     paused: true,
                     ..ConsoleMetrics::default()
                 })),
+                image_cache: Mutex::new(CachedImages {
+                    dirty: true,
+                    images: Vec::new(),
+                }),
             },
             parts.gui_input,
             field_map,
@@ -292,8 +314,17 @@ impl EmuCore {
                 }
                 Err(e) => log::warn!("metrics lock poisoned in load: {e}"),
             }
+            self.mark_images_dirty();
         }
         result
+    }
+
+    /// Mark cached system images stale. Called by every path that
+    /// advances or replaces memory; the next `debug_images` refetches.
+    fn mark_images_dirty(&self) {
+        if let Ok(mut cache) = self.image_cache.lock() {
+            cache.dirty = true;
+        }
     }
 
     pub fn unload(&self) -> Result<(), OperationError> {
@@ -304,13 +335,19 @@ impl EmuCore {
             Ok(mut guard) => guard.loaded = false,
             Err(e) => log::warn!("metrics lock poisoned in unload: {e}"),
         }
+        self.mark_images_dirty();
         Ok(())
     }
 
     pub fn reset(&self) -> Result<(), OperationError> {
-        self.emu
+        let result = self
+            .emu
             .send(EmuCommand::Reset)
-            .map_err(|_| OperationError::WorkerUnavailable)
+            .map_err(|_| OperationError::WorkerUnavailable);
+        if result.is_ok() {
+            self.mark_images_dirty();
+        }
+        result
     }
 
     pub fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, OperationError> {
@@ -332,10 +369,14 @@ impl EmuCore {
                 reply: reply_tx,
             })))
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx
+        let result = reply_rx
             .recv()
             .map_err(|_| OperationError::NoReply)?
-            .map_err(|e| OperationError::Reply(e.to_string()))
+            .map_err(|e| OperationError::Reply(e.to_string()));
+        if result.is_ok() {
+            self.mark_images_dirty();
+        }
+        result
     }
 
     /// Raw state save: Send SaveState, return core bytes (no header, no preview).
@@ -366,7 +407,11 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx.recv().map_err(|_| OperationError::NoReply)
+        let result = reply_rx.recv().map_err(|_| OperationError::NoReply);
+        if matches!(result, Ok(Ok(_))) {
+            self.mark_images_dirty();
+        }
+        result
     }
 
     /// On-demand inspect through the emu thread. Returns thread errors
@@ -405,16 +450,38 @@ impl EmuCore {
     }
 
     /// On-demand system images through the emu thread. Same cold-path
-    /// contract as [`EmuCore::disassemble`].
+    /// contract as [`EmuCore::disassemble`], plus a pause-frozen
+    /// cache: repeats while paused serve the stored decode, so page
+    /// and refresh drains skip the tile re-read. A running core
+    /// advances memory at any time and always refetches.
     pub fn debug_images(
         &self,
     ) -> Result<Result<Vec<nerust_core_traits::debugger::DebugImage>, DebuggerError>, OperationError>
     {
+        if !self.metrics().paused {
+            self.mark_images_dirty();
+        }
+        let cached = self
+            .image_cache
+            .lock()
+            .ok()
+            .filter(|cache| !cache.dirty && !cache.images.is_empty())
+            .map(|cache| cache.images.clone());
+        if let Some(images) = cached {
+            return Ok(Ok(images));
+        }
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::DebuggerImages { reply: reply_tx })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx.recv().map_err(|_| OperationError::NoReply)
+        let result = reply_rx.recv().map_err(|_| OperationError::NoReply);
+        if let Ok(Ok(images)) = &result
+            && let Ok(mut cache) = self.image_cache.lock()
+        {
+            cache.images.clone_from(images);
+            cache.dirty = false;
+        }
+        result
     }
 
     /// On-demand program counter through the emu thread. Ungated (a
@@ -440,7 +507,11 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx.recv().map_err(|_| OperationError::NoReply)
+        let result = reply_rx.recv().map_err(|_| OperationError::NoReply);
+        if matches!(result, Ok(Ok(()))) {
+            self.mark_images_dirty();
+        }
+        result
     }
 
     /// Install a nominal-audio tap: every rendered frame clones its
@@ -529,10 +600,14 @@ impl EmuCore {
                 reply: reply_tx,
             })))
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx
+        let result = reply_rx
             .recv()
             .map_err(|_| OperationError::NoReply)?
-            .map_err(|e| OperationError::Reply(e.to_string()))
+            .map_err(|e| OperationError::Reply(e.to_string()));
+        if result.is_ok() {
+            self.mark_images_dirty();
+        }
+        result
     }
 }
 

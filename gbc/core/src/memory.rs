@@ -844,6 +844,10 @@ impl GbcMemoryBus {
         self.interrupt.is_halted_or_stopped()
     }
 
+    pub fn is_stopped(&self) -> bool {
+        self.interrupt.is_stopped()
+    }
+
     pub fn is_halt_bug_active(&self) -> bool {
         self.interrupt.is_halt_bug_active()
     }

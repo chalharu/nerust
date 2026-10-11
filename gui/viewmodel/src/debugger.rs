@@ -174,6 +174,26 @@ pub struct DisplayCache {
     pub pending_text: Option<String>,
 }
 
+impl DisplayCache {
+    /// Clone everything but the system images. The debugger view
+    /// never renders images (the PPU viewer owns them through its
+    /// own Sync cache), so dragging up to 512KB of RGBA through
+    /// every rebuild is pure waste.
+    pub fn clone_without_images(&self) -> Self {
+        Self {
+            regs: self.regs.clone(),
+            dump_rows: self.dump_rows.clone(),
+            diff: self.diff.clone(),
+            disasm_lines: self.disasm_lines.clone(),
+            panels: self.panels.clone(),
+            images: Vec::new(),
+            watch_value: self.watch_value,
+            status: self.status.clone(),
+            pending_text: self.pending_text.clone(),
+        }
+    }
+}
+
 /// Changed row addresses: rows whose text differs from the previous
 /// re-read at the same address. Added rows (address absent before)
 /// are navigation, not change, and stay unmarked.

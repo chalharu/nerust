@@ -43,22 +43,6 @@ pub(crate) enum HostAction {
 const DEFAULT_FIT_WINDOW_WIDTH: f64 = 960.0;
 const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 
-/// Snapshot rows into display cache shape; diff, status, watch, and
-/// pending fill per drain.
-fn snapshot_to_display(snapshot: &debug_vm::DebugSnapshot) -> debug_vm::DisplayCache {
-    debug_vm::DisplayCache {
-        regs: snapshot.regs.clone(),
-        dump_rows: snapshot.dump_rows.clone(),
-        diff: Vec::new(),
-        disasm_lines: snapshot.disasm_lines.clone(),
-        panels: snapshot.panels.clone(),
-        images: snapshot.images.clone(),
-        watch_value: None,
-        status: String::new(),
-        pending_text: None,
-    }
-}
-
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
     session: SessionHandle,
@@ -533,11 +517,15 @@ impl HostState {
 
     /// Open the debugger and PPU viewer (idempotent). Pauses first;
     /// closing never resumes: resume is always explicit.
+    ///
+    /// The first pause and snapshot run through the shared shell
+    /// drain, never around it: opening with an empty display and
+    /// draining `[Pause, Refresh]` keeps one phase order for every
+    /// path. Pause must precede the paused-gated inspect, and the
+    /// drain runs them in order.
     pub(crate) fn open_debug_windows(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+        use nerust_gui_shell::debug::DebugAction;
         if self.debug_window.is_none() {
-            if self.session.loaded() && !self.session.paused() {
-                self.pause();
-            }
             let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> = self
                 .session
                 .debug_spaces()
@@ -548,21 +536,18 @@ impl HostState {
                 log::warn!("debugger: no spaces (no core)");
             }
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
-            let snapshot = if spaces.is_empty() {
-                debug_vm::DebugSnapshot::default()
-            } else {
-                // Fetch images: the PPU viewer opens alongside and
-                // must not start on "(no images)".
-                self.session
-                    .debug_snapshot(Some(spaces[0].0), mem_addr, None, true)
-            };
-            let mut display = snapshot_to_display(&snapshot);
-            display.status = self.session_status_text("");
             let position = self.debug_window_pos;
             match crate::debug_window::DebugWindowHandle::new(
-                display, spaces, mem_addr, event_loop, position,
+                debug_vm::DisplayCache::default(),
+                spaces,
+                mem_addr,
+                event_loop,
+                position,
             ) {
-                Some(handle) => self.debug_window = Some(handle),
+                Some(handle) => {
+                    self.debug_window = Some(handle);
+                    self.run_debug_drain(&[DebugAction::Pause, DebugAction::Refresh]);
+                }
                 None => log::error!("failed to open debugger window"),
             }
         }
@@ -583,21 +568,12 @@ impl HostState {
                     if let Some(ppu) = self.ppu_window.as_mut() {
                         ppu.sync_from_bridge();
                     }
+                    // The viewer is open now, so re-read with images:
+                    // the opening drain ran imageless.
+                    self.run_debug_drain(&[]);
                 }
                 None => log::error!("failed to open PPU viewer window"),
             }
-        }
-    }
-
-    fn session_status_text(&self, outcome: &str) -> String {
-        if outcome.is_empty() {
-            if self.session.debug_paused() {
-                "paused".to_string()
-            } else {
-                "running".to_string()
-            }
-        } else {
-            outcome.to_string()
         }
     }
 

@@ -1,7 +1,7 @@
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
     audio::{AudioBackend, StereoSample},
-    debugger::{DebugControl, DebuggerError, SpaceAccess, SpaceId, SpaceTable, StepUnit},
+    debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
 };
 use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
@@ -281,20 +281,9 @@ impl DebugControl for NesDebugControl<'_> {
         width: u8,
         value: u64,
     ) -> Result<(), DebuggerError> {
-        // Validation order matters: bad width first, so "width 0 with
-        // unknown SpaceId" does not mask as UnknownSpace.
-        if !SpaceTable::width_is_valid(width) {
-            return Err(DebuggerError::BadWidth(width));
-        }
-        let info = NES_SPACE_TABLE
-            .get(space)
-            .ok_or(DebuggerError::UnknownSpace(space))?;
-        if !NES_SPACE_TABLE.covers(space, addr, width) {
-            return Err(DebuggerError::UnmappedAddress { space, addr });
-        }
-        if info.access == SpaceAccess::ReadOnly {
-            return Err(DebuggerError::ReadOnlySpace(space));
-        }
+        // One table-owned gate: bad width, unknown space, unmapped
+        // address, then whole-space refusal, in that order.
+        NES_SPACE_TABLE.check_write(space, addr, width)?;
         let core = self
             .console
             .core_mut()

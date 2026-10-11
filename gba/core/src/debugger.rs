@@ -58,7 +58,17 @@ static GBA_SPACES: [SpaceInfo; 1] = [SpaceInfo {
 }];
 
 /// Validated GBA memory-space table.
-pub(crate) static GBA_SPACE_TABLE: SpaceTable = SpaceTable::build(&GBA_SPACES);
+///
+/// BIOS and ROM are not pokeable: stores there vanish on hardware
+/// (ROM also overlays GPIO). The windows live in the table so the
+/// write gate and the UI read the same data.
+pub(crate) static GBA_SPACE_TABLE: SpaceTable = SpaceTable::build_with_read_only(
+    &GBA_SPACES,
+    &[
+        (SPACE_MEMORY, 0x00000000, 0x00003FFF),
+        (SPACE_MEMORY, 0x08000000, 0x0DFFFFFF),
+    ],
+);
 
 /// GBA observer.
 ///

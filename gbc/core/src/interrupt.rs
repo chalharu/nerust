@@ -146,6 +146,12 @@ impl InterruptController {
         !matches!(self.halted, HaltState::Running)
     }
 
+    /// STOP wakes on joypad press only; the paused debugger never
+    /// delivers one, so stepping a stopped CPU cannot advance.
+    pub fn is_stopped(&self) -> bool {
+        matches!(self.halted, HaltState::Stopped)
+    }
+
     pub fn is_halted_or_stopped(&self) -> bool {
         self.is_halted()
     }
@@ -234,8 +240,10 @@ mod tests {
     fn halt_sets_halt_state() {
         let mut ic = InterruptController::new();
         assert!(!ic.is_halted());
+        assert!(!ic.is_stopped());
         ic.halt();
         assert!(ic.is_halted());
+        assert!(!ic.is_stopped());
     }
 
     #[test]
@@ -252,6 +260,7 @@ mod tests {
         let mut ic = InterruptController::new();
         ic.stop();
         assert!(ic.is_halted());
+        assert!(ic.is_stopped());
 
         // All buttons released → no wake
         assert!(!ic.wake_by_joypad(0xFF));
@@ -259,6 +268,7 @@ mod tests {
         // Any button pressed → wake
         assert!(ic.wake_by_joypad(0xFE));
         assert!(!ic.is_halted());
+        assert!(!ic.is_stopped());
     }
 
     #[test]
