@@ -325,6 +325,28 @@ impl GbcMemoryBus {
         }
     }
 
+    /// Debugger poke: stores land where hardware is writable. VRAM
+    /// and OAM bypass the PPU mode locks (like `debug_read`); WRAM
+    /// (including echo), cart RAM, I/O, and HRAM follow the CPU
+    /// store path. ROM has no store path by design — the control
+    /// layer refuses it before calling here. Gap lanes vanish.
+    pub fn debug_write(&mut self, addr: u16, value: u8) {
+        match addr {
+            0x8000..=0x9FFF => self.ppu.debug_write_vram(addr, value),
+            0xA000..=0xBFFF => self.cartridge.write_ram(addr, value),
+            0xC000..=0xDFFF => self.write_wram(addr, value),
+            0xE000..=0xFDFF => self.write_wram(addr - 0x2000, value),
+            0xFE00..=0xFE9F => self.ppu.debug_write_oam((addr & 0xFF) as u8, value),
+            0xFF00..=0xFFFF => self.write_io(addr, value),
+            _ => {}
+        }
+    }
+
+    /// PPU handle for tile imaging. Debugger-only.
+    pub(crate) fn debug_ppu(&self) -> &GbcPpu {
+        &self.ppu
+    }
+
     /// Cartridge, VRAM, WRAM, and HRAM — shared between
     /// `read()` (CPU access) and `read_raw()` (DMA access).
     fn read_storage(&self, addr: u16) -> u8 {

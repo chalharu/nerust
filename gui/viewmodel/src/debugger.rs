@@ -399,7 +399,7 @@ pub fn rgba_image(image: &DebugImage) -> (String, u32, u32, Vec<u8>) {
     let mut rgba = Vec::with_capacity(image.pixels.len() * 4);
     for &pixel in &image.pixels {
         let rgb = match image.format {
-            ImageFormat::Indexed2bpp => image
+            ImageFormat::Indexed2bpp | ImageFormat::Indexed4bpp => image
                 .palette
                 .get(pixel as usize)
                 .copied()
@@ -703,6 +703,31 @@ mod tests {
                 2,
                 1,
                 vec![0, 0, 0, 0xFF, 0, 0, 255, 0xFF]
+            )
+        );
+    }
+
+    #[test]
+    fn rgba_image_blits_4bpp_through_palette() {
+        use nerust_core_traits::debugger::{DebugImage, ImageFormat};
+        let mut palette = vec![[0, 0, 0]; 16];
+        palette[15] = [1, 2, 3];
+        let image = DebugImage {
+            id: "tiles",
+            label_id: "Tiles",
+            width: 2,
+            height: 1,
+            format: ImageFormat::Indexed4bpp,
+            palette,
+            pixels: vec![0, 15],
+        };
+        assert_eq!(
+            rgba_image(&image),
+            (
+                "Tiles".to_string(),
+                2,
+                1,
+                vec![0, 0, 0, 0xFF, 1, 2, 3, 0xFF]
             )
         );
     }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
     audio::StereoSample,
-    debugger::{DebugControl, DebuggerError, SpaceAccess, SpaceId, SpaceTable, StepUnit},
+    debugger::{DebugControl, DebuggerError, SpaceId, SpaceTable, StepUnit},
     identity::SystemIdentity,
 };
 use nerust_input_traits::EmuInput;
@@ -306,8 +306,9 @@ impl ConsoleCore for GbaConsoleCore {
 /// Holds the console: frame stepping reuses the exact `render_frame`
 /// path and reports the cycles it counted. The scratch buffer is
 /// display-irrelevant; stepped frames are not published to any shared
-/// framebuffer here. The space is read-only in phase 1, so every
-/// in-range write is refused as `ReadOnlySpace`.
+/// framebuffer here. Debugger pokes travel the CPU store path, so
+/// mirrors, VRAM/OAM byte rules, SRAM/flash, and I/O side effects
+/// behave like CPU stores; BIOS and ROM refuse as `ReadOnlySpace`.
 pub struct GbaDebugControl<'a> {
     console: &'a mut GbaConsoleCore,
     frame_slot: FrameBuffer,
@@ -333,7 +334,12 @@ impl DebugControl for GbaDebugControl<'_> {
                 .console
                 .render_frame_cycles(&mut self.frame_slot, &mut self.audio_sink)
                 .map_err(|_| DebuggerError::Unsupported),
-            StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
+            StepUnit::Instruction => self
+                .console
+                .loaded
+                .as_mut()
+                .map(|loaded| loaded.system.step_instruction())
+                .ok_or(DebuggerError::Unsupported),
         }
     }
 
@@ -342,23 +348,39 @@ impl DebugControl for GbaDebugControl<'_> {
         space: SpaceId,
         addr: u32,
         width: u8,
-        _value: u64,
+        value: u64,
     ) -> Result<(), DebuggerError> {
         // Validation order matters: bad width first, so "width 0 with
         // unknown SpaceId" does not mask as UnknownSpace.
         if !SpaceTable::width_is_valid(width) {
             return Err(DebuggerError::BadWidth(width));
         }
-        let info = GBA_SPACE_TABLE
-            .get(space)
-            .ok_or(DebuggerError::UnknownSpace(space))?;
+        if GBA_SPACE_TABLE.get(space).is_none() {
+            return Err(DebuggerError::UnknownSpace(space));
+        }
         if !GBA_SPACE_TABLE.covers(space, addr, width) {
             return Err(DebuggerError::UnmappedAddress { space, addr });
         }
-        if info.access == SpaceAccess::ReadOnly {
+        // BIOS and ROM are not pokeable: stores there vanish on
+        // hardware (ROM also overlays GPIO), so refuse loudly
+        // instead of reporting a write that never lands.
+        if matches!(addr, 0x00000000..=0x00003FFF | 0x08000000..=0x0DFFFFFF) {
             return Err(DebuggerError::ReadOnlySpace(space));
         }
-        Err(DebuggerError::ReadOnlySpace(space))
+        let loaded = self
+            .console
+            .loaded
+            .as_mut()
+            .ok_or(DebuggerError::Unsupported)?;
+        // Byte-wise through the CPU store path: mirrors, VRAM/OAM
+        // byte rules, SRAM/flash, and I/O side effects all behave
+        // like CPU stores. Gap lanes vanish like hardware open bus.
+        // Wait-cycle charging is timing-model only; it perturbs the
+        // next frame by a few cycles, never function.
+        for i in 0..width as u32 {
+            loaded.system.bus.write8(addr + i, (value >> (8 * i)) as u8);
+        }
+        Ok(())
     }
 }
 
@@ -893,20 +915,37 @@ mod tests {
                 addr: 0x10000000
             })
         );
-        // Phase 1 is read-only.
+        // Writes land where hardware is writable; BIOS and ROM
+        // refuse loudly.
         assert_eq!(
-            boxed.write_memory(SPACE_MEMORY, 0x02000000, 1, 0),
+            boxed.write_memory(SPACE_MEMORY, 0x02000000, 1, 0x42),
+            Ok(())
+        );
+        assert_eq!(
+            boxed.write_memory(SPACE_MEMORY, 0x08000000, 1, 0x42),
             Err(DebuggerError::ReadOnlySpace(SPACE_MEMORY))
         );
-        // No instruction stepping yet: explicit, not silent.
         assert_eq!(
-            boxed.step(StepUnit::Instruction),
-            Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
+            boxed.write_memory(SPACE_MEMORY, 0x00000010, 1, 0x42),
+            Err(DebuggerError::ReadOnlySpace(SPACE_MEMORY))
         );
+        // Instruction stepping runs one instruction with real cycles.
+        let instr_cycles = boxed.step(StepUnit::Instruction).expect("instr step");
+        assert!(instr_cycles > 0);
+        assert!(instr_cycles <= 10_000);
         // Frame stepping reuses the render path and reports real cycles.
         let cycles = boxed.step(StepUnit::Frame).expect("frame step");
         assert!(cycles > 0);
         assert!(cycles <= 280_896);
+        // Round trip through the debugger read path. The frame step
+        // above runs guest code, so re-poke first for determinism.
+        assert_eq!(
+            boxed.write_memory(SPACE_MEMORY, 0x02000010, 1, 0xA5),
+            Ok(())
+        );
+        drop(boxed);
+        let debugger = console.debugger().expect("debugger");
+        assert_eq!(debugger.read(SPACE_MEMORY, 0x02000010, 1), Some(0xA5));
     }
 
     #[test]

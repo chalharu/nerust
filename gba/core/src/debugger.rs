@@ -1,10 +1,5 @@
 //! GBA debugger address space.
 //!
-//! Staged introduction: this module currently owns only the static
-//! [`SpaceTable`]. The `Debugger`/`DebugControl` implementation that
-//! reads through it lands next; the table is fixed first because every
-//! read, write, and dump resolves against it.
-//!
 //! Deliberately a single space: regions are already distinguished by
 //! address, so extra ids would buy nothing — the reader dispatches on
 //! the address internally. The one trade-off is typo detection: gap
@@ -43,7 +38,8 @@
 use std::cell::OnceCell;
 
 use nerust_core_traits::debugger::{
-    Debugger, DisasmLine, SpaceAccess, SpaceId, SpaceInfo, SpaceTable,
+    DebugImage, Debugger, DisasmLine, ImageFormat, SpaceAccess, SpaceId, SpaceInfo, SpaceTable,
+    rgb555_to_rgb888,
 };
 
 use crate::system::GbaSystem;
@@ -58,13 +54,13 @@ static GBA_SPACES: [SpaceInfo; 1] = [SpaceInfo {
     name: "Memory",
     address_bits: 32,
     range: 0x00000000..=0x0FFFFFFF,
-    access: SpaceAccess::ReadOnly,
+    access: SpaceAccess::ReadWrite,
 }];
 
 /// Validated GBA memory-space table.
 pub(crate) static GBA_SPACE_TABLE: SpaceTable = SpaceTable::build(&GBA_SPACES);
 
-/// Read-only GBA observer.
+/// GBA observer.
 ///
 /// Built per use (built, read, dropped); `registers()` borrows a buffer
 /// filled once in `new`.
@@ -138,6 +134,50 @@ impl Debugger for GbaDebugger<'_> {
 
     fn registers(&self) -> &[(&'static str, u64)] {
         self.regs.get_or_init(|| self.snapshot_registers())
+    }
+
+    fn images(&self) -> Vec<DebugImage> {
+        // 4bpp tiles from the first two charblock pairs: 1024 tiles
+        // each in a 32x32 grid (256x256). Bytes unreadable through
+        // the peek path decode as blank; palette is BG 0.
+        const TILES: u32 = 1024;
+        const COLS: u32 = 32;
+        let mut palette = Vec::with_capacity(16);
+        for i in 0..16u32 {
+            let raw = self.read(SPACE_MEMORY, 0x05000000 + 2 * i, 2).unwrap_or(0);
+            palette.push(rgb555_to_rgb888(raw as u16));
+        }
+        [("tiles-low", 0x06000000), ("tiles-high", 0x06008000)]
+            .into_iter()
+            .map(|(id, base)| {
+                let mut pixels = vec![0u8; 256 * 256];
+                for tile in 0..TILES {
+                    let tx = (tile % COLS) * 8;
+                    let ty = (tile / COLS) * 8;
+                    for row in 0..8u32 {
+                        for col in 0..8u32 {
+                            let addr = base + tile * 32 + row * 4 + col / 2;
+                            let byte = self.read(SPACE_MEMORY, addr, 1).unwrap_or(0) as u8;
+                            let px = if col & 1 == 0 { byte & 0xF } else { byte >> 4 };
+                            pixels[(ty + row) as usize * 256 + (tx + col) as usize] = px;
+                        }
+                    }
+                }
+                DebugImage {
+                    id,
+                    label_id: if base == 0x06000000 {
+                        "Tiles low"
+                    } else {
+                        "Tiles high"
+                    },
+                    width: 256,
+                    height: 256,
+                    format: ImageFormat::Indexed4bpp,
+                    palette: palette.clone(),
+                    pixels,
+                }
+            })
+            .collect()
     }
 
     /// Anchor for disassembly follow mode. The architectural `r15`
@@ -311,6 +351,23 @@ mod tests {
             .find(|(name, _)| *name == "r15")
             .map(|(_, value)| *value as u32);
         assert_eq!(debugger.program_counter(), r15.map(|pc| pc & !1));
+    }
+
+    #[test]
+    fn gba_images_tile_blocks() {
+        let system = live_system();
+        let debugger = GbaDebugger::new(&system);
+        let images = debugger.images();
+        assert_eq!(images.len(), 2);
+        for image in &images {
+            assert_eq!((image.width, image.height), (256, 256));
+            assert_eq!(image.format, ImageFormat::Indexed4bpp);
+            assert_eq!(image.palette.len(), 16);
+            assert_eq!(image.pixels.len(), 256 * 256);
+            assert!(image.pixels.iter().all(|&p| p < 16));
+        }
+        assert_eq!(images[0].id, "tiles-low");
+        assert_eq!(images[1].id, "tiles-high");
     }
 
     #[test]

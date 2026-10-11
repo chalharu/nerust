@@ -307,6 +307,21 @@ pub struct DebugImage {
 pub enum ImageFormat {
     /// 2 bits per pixel, values 0-3 into a 4-entry palette.
     Indexed2bpp,
+    /// 4 bits per pixel, values 0-15 into a 16-entry palette.
+    Indexed4bpp,
+}
+
+/// Expand a 15-bit BGR color (Game Boy / GBA native) to RGB888.
+/// Shared tile-imaging helper; cores with paletted images use it so
+/// every viewer shows identical colors.
+pub fn rgb555_to_rgb888(value: u16) -> [u8; 3] {
+    // Bits 0-4 red, 5-9 green, 10-14 blue on both systems.
+    let expand = |v: u16| ((u32::from(v) * 255 + 15) / 31) as u8;
+    [
+        expand(value & 31),
+        expand((value >> 5) & 31),
+        expand((value >> 10) & 31),
+    ]
 }
 
 // ---------------------------------------------------------------------------
