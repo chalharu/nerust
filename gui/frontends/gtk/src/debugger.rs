@@ -1352,7 +1352,9 @@ mod tests {
     /// main thread) and skip cleanly on headless `cargo test`.
     /// The gate checks `DISPLAY`/`WAYLAND_DISPLAY` without touching
     /// GTK: even a failed `gtk::init()`-family call can poison the
-    /// process-wide init state for other tests.
+    /// process-wide init state for other tests. Conversely only one
+    /// init per process ever succeeds, so plain multithreaded
+    /// `cargo test` with a display cannot run these — use nextest.
     fn display_available() -> bool {
         fn present(name: &str) -> bool {
             std::env::var_os(name).is_some_and(|v| !v.is_empty())
@@ -1360,20 +1362,6 @@ mod tests {
         present("DISPLAY") || present("WAYLAND_DISPLAY")
     }
 
-    /// Temporary CI diagnostic: report mapped legacy GTK paths
-    /// when a widget test starts (see `has_legacy_gtk`).
-    fn report_legacy_gtk(stage: &str) {
-        let hits = std::fs::read_to_string("/proc/self/maps")
-            .map(|maps| {
-                maps.lines()
-                    .filter(|line| line.contains("libgtk-3.so") || line.contains("libgtk-2"))
-                    .take(3)
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        eprintln!("DIAG {stage}: legacy-gtk-hits={hits:?}");
-    }
     #[derive(Debug)]
     struct MockGpuFactory;
 
@@ -1417,7 +1405,6 @@ mod tests {
         if !display_available() || gtk::init().is_err() {
             return None;
         }
-        report_legacy_gtk("harness-ready");
         let app = gtk::Application::builder()
             .application_id("org.nerust.debugger-test")
             .build();
@@ -1495,23 +1482,43 @@ mod tests {
         }
     }
 
+    /// Open a debugger window for widget tests. Each test uses its
+    /// own application: a second Application fights the first for
+    /// GApplication registration. The caller binds and holds the
+    /// whole tuple so nothing drops mid-test.
+    fn open_test_window() -> Option<(gtk::Application, gtk::ApplicationWindow, DebuggerWindow)> {
+        let (app, main, state) = harness()?;
+        let win = DebuggerWindowCore::open(&app, &main, state);
+        Some((app, main, win))
+    }
+
     #[test]
-    fn debugger_open_drives_every_action() {
-        let Some((app, main, state)) = harness() else {
+    fn widget_harness_builds_app_state() {
+        let Some((_app, _main, _state)) = harness() else {
             eprintln!("SKIP: debugger widget test needs a display");
             return;
         };
-        // One application per test process: a second Application
-        // fights the first for GApplication registration, so every
-        // widget below shares this one.
-        let state2 = Rc::clone(&state);
-        let win = DebuggerWindowCore::open(&app, &main, state);
-        report_legacy_gtk("after-open");
+    }
+
+    #[test]
+    fn widget_debugger_open_constructs() {
+        let Some((_app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
+            return;
+        };
         // No core reads as paused: the toggle offers Resume.
         assert_eq!(win.borrow().pause_button.label().as_deref(), Some("Resume"));
         assert!(win.borrow().data.selected_space().is_none());
         assert_eq!(win.borrow().data.selected_name(), "");
         assert_eq!(win.borrow().data.anchor(), 0);
+    }
+
+    #[test]
+    fn widget_drive_actions() {
+        let Some((_app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
+            return;
+        };
         // One mock space so selection can prepare without a core:
         // the drain still refuses loudly at the core boundary.
         win.borrow_mut().data.spaces = vec![(SpaceId(0), "Mock".to_string(), 0)];
@@ -1555,7 +1562,15 @@ mod tests {
         DebuggerWindowCore::bookmark_jump(&win, 0x310);
         DebuggerWindowCore::bookmark_delete(&win, 0x310);
         assert_eq!(win.borrow().data.bookmarks.len(), 7);
-        report_legacy_gtk("after-bookmarks");
+    }
+
+    #[test]
+    fn widget_drive_selection_and_writes() {
+        let Some((_app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
+            return;
+        };
+        win.borrow_mut().data.spaces = vec![(SpaceId(0), "Mock".to_string(), 0)];
         // Row click selects, then watch/freeze/edit ride the target.
         DebuggerWindowCore::row_selected(&win, 0x10);
         assert_eq!(win.borrow().data.selected, Some((0x10, None)));
@@ -1605,19 +1620,29 @@ mod tests {
         DebuggerWindowCore::reg_set(&win);
         win.borrow_mut().data.reg_target = None;
         DebuggerWindowCore::reg_set(&win);
+    }
+
+    #[test]
+    fn widget_ppu_opens_and_represents() {
+        let Some((_app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
+            return;
+        };
         // The viewer opens once, then re-presents with focus.
         assert!(win.borrow().ppu_window.is_none());
         DebuggerWindowCore::open_ppu(&win);
         assert!(win.borrow().ppu_window.is_some());
         DebuggerWindowCore::open_ppu(&win);
-        report_legacy_gtk("after-open-ppu");
-        // A second window on the same application renders a
-        // synthetic display: pinned anchor `@`, Back depth,
-        // register target, watch, freeze, and selection.
-        let win2 = DebuggerWindowCore::open(&app, &main, state2);
-        report_legacy_gtk("after-open2");
+    }
+
+    #[test]
+    fn widget_rebuild_renders_synthetic_display() {
+        let Some((_app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
+            return;
+        };
         {
-            let mut this = win2.borrow_mut();
+            let mut this = win.borrow_mut();
             this.data.display = synthetic_display();
             this.data.selected = Some((0x102, Some(9)));
             this.data.watch = Some(0x100);
@@ -1626,29 +1651,33 @@ mod tests {
             this.data.bookmarks = vec![(0x300, "BM1".to_string())];
             this.data.nav.navigate(0x300, 0x302);
         }
-        DebuggerWindowCore::rebuild(&win2);
-        report_legacy_gtk("after-rebuild");
-        assert!(win2.borrow().disasm_title.label().contains("@00000302"));
+        DebuggerWindowCore::rebuild(&win);
+        assert!(win.borrow().disasm_title.label().contains("@00000302"));
         assert!(
-            win2.borrow()
+            win.borrow()
                 .back_button
                 .label()
                 .as_deref()
                 .unwrap_or("")
                 .contains("(1)")
         );
-        assert!(win2.borrow().reg_target_label.label().contains("r0"));
-        assert!(win2.borrow().watch_label.label().contains("00000100"));
-        assert!(win2.borrow().freeze_label.label().contains("00000100"));
-        assert!(win2.borrow().select_label.label().contains("00000102"));
+        assert!(win.borrow().reg_target_label.label().contains("r0"));
+        assert!(win.borrow().watch_label.label().contains("00000100"));
+        assert!(win.borrow().freeze_label.label().contains("00000100"));
+        assert!(win.borrow().select_label.label().contains("00000102"));
         // The viewer follows the rebuild with images and panels.
-        DebuggerWindowCore::open_ppu(&win2);
-        assert!(win2.borrow().ppu_window.is_some());
-        // The preferences dialog builds from the same harness state.
-        super::super::preferences::present_preferences_dialog(
-            &main,
-            win2.borrow().state.clone(),
-            || {},
-        );
+        DebuggerWindowCore::open_ppu(&win);
+        assert!(win.borrow().ppu_window.is_some());
+    }
+
+    #[test]
+    fn widget_preferences_dialog_builds() {
+        let Some((_app, main, state)) = harness() else {
+            eprintln!("SKIP: preferences widget test needs a display");
+            return;
+        };
+        // Builds the full dialog (settings snapshot drives every
+        // section); closing runs the callback without applying.
+        super::super::preferences::present_preferences_dialog(&main, state, || {});
     }
 }
