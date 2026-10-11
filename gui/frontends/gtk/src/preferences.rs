@@ -1211,38 +1211,7 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
 
-    #[cfg(not(target_os = "macos"))]
-    fn gtk_available() -> bool {
-        static GTK_INIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *GTK_INIT.get_or_init(|| {
-            if has_legacy_gtk() {
-                return false;
-            }
-            gtk::init().is_ok() && gdk::Display::default().is_some()
-        })
-    }
-
-    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
-    fn has_legacy_gtk() -> bool {
-        false
-    }
-
-    #[cfg(target_os = "linux")]
-    fn has_legacy_gtk() -> bool {
-        // On Linux, check /proc/self/maps for GTK 2/3 libraries that would
-        // cause GTK4's gtk_init() to abort with SIGTRAP.
-        std::fs::read_to_string("/proc/self/maps")
-            .map(|maps| {
-                maps.lines()
-                    .any(|line| line.contains("libgtk-3.so") || line.contains("libgtk-2"))
-            })
-            .unwrap_or(false)
-    }
-
-    #[cfg(target_os = "macos")]
-    fn gtk_available() -> bool {
-        false
-    }
+    use crate::test_support::ui_test_available;
 
     #[test]
     fn with_mut_releases_borrow_before_follow_up_work() {
@@ -1256,7 +1225,7 @@ mod tests {
         ($name:ident, $body:expr) => {
             #[test]
             fn $name() {
-                if gtk_available() {
+                if ui_test_available() {
                     $body()
                 } else {
                     eprintln!("skipped (no GTK display)");

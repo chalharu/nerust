@@ -1346,22 +1346,6 @@ mod tests {
         );
     }
 
-    /// Display-gated harness: widget construction needs a display
-    /// server, so these tests run under xvfb (like the CI coverage
-    /// job, which uses nextest: one process per test, always the
-    /// main thread) and skip cleanly on headless `cargo test`.
-    /// The gate checks `DISPLAY`/`WAYLAND_DISPLAY` without touching
-    /// GTK: even a failed `gtk::init()`-family call can poison the
-    /// process-wide init state for other tests. Conversely only one
-    /// init per process ever succeeds, so plain multithreaded
-    /// `cargo test` with a display cannot run these — use nextest.
-    fn display_available() -> bool {
-        fn present(name: &str) -> bool {
-            std::env::var_os(name).is_some_and(|v| !v.is_empty())
-        }
-        present("DISPLAY") || present("WAYLAND_DISPLAY")
-    }
-
     #[derive(Debug)]
     struct MockGpuFactory;
 
@@ -1402,7 +1386,7 @@ mod tests {
         Rc<RefCell<crate::State>>,
     )> {
         use std::sync::Arc;
-        if !display_available() || gtk::init().is_err() {
+        if !crate::test_support::ui_test_available() {
             return None;
         }
         let app = gtk::Application::builder()
@@ -1419,84 +1403,6 @@ mod tests {
         };
         let state = Rc::new(RefCell::new(crate::State::new(ctx)));
         Some((app, main, state))
-    }
-
-    /// Bisection for the CI-only legacy-GTK abort: each phase runs
-    /// in its own process (nextest), so the aborting operation shows
-    /// up by name. Temporary scaffolding, removed after diagnosis.
-    fn bisect_state() -> Option<Rc<RefCell<crate::State>>> {
-        use std::sync::Arc;
-        if !display_available() || gtk::init().is_err() {
-            return None;
-        }
-        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
-        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
-        let ctx = nerust_gui_shell::context::FrontendContext {
-            gpu_factory: Rc::new(MockGpuFactory),
-            registry,
-            rom_loader: Box::new(MockRomLoader),
-            audio_registry: audio,
-        };
-        Some(Rc::new(RefCell::new(crate::State::new(ctx))))
-    }
-
-    /// Startup probe (no GTK calls at all): fails loudly with the
-    /// mapped paths if legacy GTK is already linked into the test
-    /// process, distinguishing linkage from runtime dlopen.
-    #[test]
-    fn aaa_probe_legacy_gtk_at_startup() {
-        let hits: Vec<String> = std::fs::read_to_string("/proc/self/maps")
-            .map(|maps| {
-                maps.lines()
-                    .filter(|line| line.contains("libgtk-3.so") || line.contains("libgtk-2"))
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default();
-        assert!(
-            hits.is_empty(),
-            "legacy GTK pre-mapped at startup: {hits:?}"
-        );
-    }
-
-    #[test]
-    fn bisect_gtk_init_only() {
-        if !display_available() {
-            eprintln!("SKIP: needs a display");
-            return;
-        }
-        assert!(gtk::init().is_ok());
-    }
-
-    #[test]
-    fn bisect_gtk_application_only() {
-        if !display_available() {
-            eprintln!("SKIP: needs a display");
-            return;
-        }
-        assert!(gtk::init().is_ok());
-        let _app = gtk::Application::builder()
-            .application_id("org.nerust.bisect")
-            .build();
-    }
-
-    #[test]
-    fn bisect_gtk_main_window_only() {
-        if !display_available() || gtk::init().is_err() {
-            eprintln!("SKIP: needs a display");
-            return;
-        }
-        let app = gtk::Application::builder()
-            .application_id("org.nerust.bisect-window")
-            .build();
-        let _main = gtk::ApplicationWindow::builder().application(&app).build();
-    }
-
-    #[test]
-    fn bisect_state_without_windows() {
-        if bisect_state().is_none() {
-            eprintln!("SKIP: needs a display");
-        }
     }
 
     fn synthetic_display() -> DisplayCache {
