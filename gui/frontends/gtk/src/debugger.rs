@@ -1421,6 +1421,65 @@ mod tests {
         Some((app, main, state))
     }
 
+    /// Bisection for the CI-only legacy-GTK abort: each phase runs
+    /// in its own process (nextest), so the aborting operation shows
+    /// up by name. Temporary scaffolding, removed after diagnosis.
+    fn bisect_state() -> Option<Rc<RefCell<crate::State>>> {
+        use std::sync::Arc;
+        if !display_available() || gtk::init().is_err() {
+            return None;
+        }
+        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let ctx = nerust_gui_shell::context::FrontendContext {
+            gpu_factory: Rc::new(MockGpuFactory),
+            registry,
+            rom_loader: Box::new(MockRomLoader),
+            audio_registry: audio,
+        };
+        Some(Rc::new(RefCell::new(crate::State::new(ctx))))
+    }
+
+    #[test]
+    fn bisect_gtk_init_only() {
+        if !display_available() {
+            eprintln!("SKIP: needs a display");
+            return;
+        }
+        assert!(gtk::init().is_ok());
+    }
+
+    #[test]
+    fn bisect_gtk_application_only() {
+        if !display_available() {
+            eprintln!("SKIP: needs a display");
+            return;
+        }
+        assert!(gtk::init().is_ok());
+        let _app = gtk::Application::builder()
+            .application_id("org.nerust.bisect")
+            .build();
+    }
+
+    #[test]
+    fn bisect_gtk_main_window_only() {
+        if !display_available() || gtk::init().is_err() {
+            eprintln!("SKIP: needs a display");
+            return;
+        }
+        let app = gtk::Application::builder()
+            .application_id("org.nerust.bisect-window")
+            .build();
+        let _main = gtk::ApplicationWindow::builder().application(&app).build();
+    }
+
+    #[test]
+    fn bisect_state_without_windows() {
+        if bisect_state().is_none() {
+            eprintln!("SKIP: needs a display");
+        }
+    }
+
     fn synthetic_display() -> DisplayCache {
         use nerust_core_traits::debugger::{
             CellValue, ColumnKind, DebugPanel, DisasmLine, HexRow, PanelColumn, PanelRow,
