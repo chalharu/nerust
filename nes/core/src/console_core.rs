@@ -293,6 +293,18 @@ impl DebugControl for NesDebugControl<'_> {
         }
         Ok(())
     }
+
+    fn write_register(&mut self, name: &str, value: u64) -> Result<(), DebuggerError> {
+        let core = self
+            .console
+            .core_mut()
+            .map_err(|_| DebuggerError::Unsupported)?;
+        if core.write_cpu_register(name, value) {
+            Ok(())
+        } else {
+            Err(DebuggerError::Unsupported)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -467,6 +479,30 @@ mod tests {
         assert_eq!(debugger.read(SPACE_WORK_RAM, 0x0100, 2), Some(0xBEEF));
         assert_eq!(debugger.read(SPACE_WORK_RAM, 0x0100, 1), Some(0xEF));
         assert_eq!(debugger.read(SPACE_WORK_RAM, 0x0101, 1), Some(0xBE));
+    }
+
+    #[test]
+    fn nes_register_write_roundtrips_and_refuses_unknown() {
+        let mut console = NesConsoleCore::new(
+            nrom_test_data(),
+            ControllerCollection::new(vec![]),
+            test_emu_input(),
+        )
+        .expect("console");
+        {
+            let mut control = NesDebugControl::new(&mut console);
+            control.write_register("a", 0x42).expect("a write");
+            control.write_register("pc", 0xC000).expect("pc write");
+            assert_eq!(
+                control.write_register("bogus", 0),
+                Err(DebuggerError::Unsupported)
+            );
+        }
+        let core = console.core_ref().expect("loaded");
+        let regs: std::collections::HashMap<&str, u64> =
+            core.cpu_registers().iter().copied().collect();
+        assert_eq!(regs["a"], 0x42);
+        assert_eq!(regs["pc"], 0xC000);
     }
 
     #[test]

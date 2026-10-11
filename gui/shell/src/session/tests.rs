@@ -566,6 +566,7 @@ fn debug_drain_select_then_stage_yields_pending() {
         dis_addr: None,
         watch: None,
         freeze: None,
+        reg_target: None,
         prev_dump_rows: &[],
         need_images: false,
     };
@@ -598,6 +599,7 @@ fn debug_drain_kills_stale_values_before_prepare() {
         dis_addr: None,
         watch: None,
         freeze: None,
+        reg_target: None,
         prev_dump_rows: &[],
         need_images: false,
     };
@@ -626,6 +628,7 @@ fn debug_drain_cancel_and_commit_consume() {
         dis_addr: None,
         watch: None,
         freeze: None,
+        reg_target: None,
         prev_dump_rows: &[],
         need_images: false,
     };
@@ -657,6 +660,7 @@ fn debug_drain_propagates_execution_outcomes() {
         dis_addr: None,
         watch: None,
         freeze: None,
+        reg_target: None,
         prev_dump_rows: &[],
         need_images: false,
     };

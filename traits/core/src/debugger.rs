@@ -556,6 +556,16 @@ pub trait DebugControl {
         width: u8,
         value: u64,
     ) -> Result<(), DebuggerError>;
+
+    /// Edit one named register (register-viewer path). `name` is one
+    /// of [`Debugger::registers`] names; backends mask `value` to the
+    /// register width. Unknown names report `Unsupported` (no new
+    /// error variant: the name travels as data, and the refusal
+    /// reason stays one word). Defaults to `Unsupported` so
+    /// observation-only controls stay expressible.
+    fn write_register(&mut self, _name: &str, _value: u64) -> Result<(), DebuggerError> {
+        Err(DebuggerError::Unsupported)
+    }
 }
 
 #[cfg(test)]

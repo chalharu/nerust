@@ -168,6 +168,13 @@ pub struct DisplayCache {
     pub images: Vec<(String, u32, u32, Vec<u8>)>,
     /// Read-only live watch value, if watched and readable.
     pub watch_value: Option<u8>,
+    /// Pause state at capture: drives the single Pause/Resume toggle
+    /// label without scraping status text.
+    pub paused: bool,
+    /// Register names parallel to `regs` lines, for the register
+    /// viewer target. Kernel `&'static str`: no allocation, and the
+    /// drain's write path reuses the exact names.
+    pub reg_names: Vec<&'static str>,
     /// Status line (last outcome, or paused/running).
     pub status: String,
     /// Confirm-row text for a fully staged write, if any.
@@ -188,6 +195,8 @@ impl DisplayCache {
             panels: self.panels.clone(),
             images: Vec::new(),
             watch_value: self.watch_value,
+            paused: self.paused,
+            reg_names: self.reg_names.clone(),
             status: self.status.clone(),
             pending_text: self.pending_text.clone(),
         }
@@ -331,6 +340,17 @@ pub struct DebugSnapshot {
     pub panels: String,
     /// `(label, width, height, rgba)` system images.
     pub images: Vec<(String, u32, u32, Vec<u8>)>,
+    /// Register names parallel to `regs` lines.
+    pub reg_names: Vec<&'static str>,
+}
+
+/// Empty-panels marker. Frontends hide the Panels section on
+/// this instead of showing a puzzling label.
+pub const EMPTY_PANELS_TEXT: &str = "(no panels)";
+
+/// Whether a formatted panels string carries content.
+pub fn panels_visible(panels: &str) -> bool {
+    panels != EMPTY_PANELS_TEXT
 }
 
 /// Format kernel registers as `name: $xxxx` lines, kernel order kept.
@@ -377,7 +397,7 @@ pub fn format_cell(cell: &CellValue, kind: ColumnKind) -> String {
 /// degenerate marker when empty.
 pub fn format_panels(panels: &[DebugPanel]) -> String {
     if panels.is_empty() {
-        return "(no panels)".to_string();
+        return EMPTY_PANELS_TEXT.to_string();
     }
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -618,6 +638,8 @@ mod tests {
             panels: "== P ==".to_string(),
             images: vec![("Pattern left".to_string(), 256, 256, vec![0xFF; 4])],
             watch_value: Some(0x42),
+            paused: true,
+            reg_names: vec!["a"],
             status: "paused".to_string(),
             pending_text: Some("write 42 to 00000000 (was 00)?".to_string()),
         };

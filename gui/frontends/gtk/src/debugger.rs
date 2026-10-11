@@ -12,8 +12,10 @@ use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::{DUMP_ROW_BYTES, SpaceId};
+use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::debug::{DebugAction, DebugDrainInput};
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState};
+use nerust_settings_core::i18n::{UiText, text};
 
 use super::State;
 
@@ -65,6 +67,9 @@ pub(crate) struct DebuggerData {
     pub(crate) watch: Option<u32>,
     pub(crate) freeze: Option<(u32, u8)>,
     pub(crate) selected: Option<(u32, Option<u8>)>,
+    pub(crate) reg_target: Option<&'static str>,
+    /// UI language snapshot at open time.
+    pub(crate) language: AppLanguage,
 }
 
 impl DebuggerData {
@@ -75,6 +80,7 @@ impl DebuggerData {
             .map(|info| (info.id, info.name.to_string(), *info.range.start()))
             .collect();
         let start = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
+        let language = session.settings_snapshot().shared.general.language;
         Self {
             nav: NavState::new(spaces.len(), start),
             spaces,
@@ -83,6 +89,8 @@ impl DebuggerData {
             watch: None,
             freeze: None,
             selected: None,
+            reg_target: None,
+            language,
         }
     }
 
@@ -119,6 +127,12 @@ pub(crate) struct DebuggerWindowCore {
     state: Rc<RefCell<State>>,
     data: DebuggerData,
     ppu_window: Option<super::ppu_window::PpuWindow>,
+    pause_button: gtk::Button,
+    write_button: gtk::Button,
+    regs_left: gtk::ListBox,
+    regs_right: gtk::ListBox,
+    reg_target_label: gtk::Label,
+    reg_input: gtk::Entry,
     status_label: gtk::Label,
     disasm_title: gtk::Label,
     disasm_list: gtk::ListBox,
@@ -131,8 +145,6 @@ pub(crate) struct DebuggerWindowCore {
     edit_input: gtk::Entry,
     confirm_row: gtk::Box,
     confirm_label: gtk::Label,
-    regs_left: gtk::Label,
-    regs_right: gtk::Label,
     watch_label: gtk::Label,
     freeze_input: gtk::Entry,
     freeze_label: gtk::Label,
@@ -192,9 +204,10 @@ impl DebuggerWindowCore {
         state: Rc<RefCell<State>>,
     ) -> DebuggerWindow {
         let data = DebuggerData::new(&state.borrow().session);
+        let language = data.language;
         let window = gtk::ApplicationWindow::builder()
             .application(app)
-            .title("Debugger")
+            .title(text(language, UiText::Debugger))
             .default_width(1100)
             // Taller than the tao twin: Adwaita rows need ~920px
             // to show all 8 dump rows plus the panes.
@@ -202,54 +215,57 @@ impl DebuggerWindowCore {
             .build();
         window.set_transient_for(Some(main_window));
 
+        let pause_button = action_button(text(language, UiText::Pause));
         let status_label = gtk::Label::new(None);
         status_label.set_xalign(0.0);
-        let disasm_title = gtk::Label::new(Some("Disassembly"));
+        let disasm_title = gtk::Label::new(Some(text(language, UiText::Disassembly)));
         disasm_title.set_xalign(0.0);
         let disasm_list = gtk::ListBox::new();
-        let dis_input = entry(Some("addr hex"));
-        let back_button = action_button("Back (0)");
+        let dis_input = entry(Some(text(language, UiText::AddrHex)));
+        let back_button = action_button(&format!("{} (0)", text(language, UiText::Back)));
         let space_label = gtk::Label::new(None);
         space_label.set_xalign(0.0);
         space_label.set_hexpand(true);
-        let mem_input = entry(Some("addr hex"));
+        let mem_input = entry(Some(text(language, UiText::AddrHex)));
         let dump_list = gtk::ListBox::new();
-        let select_label = gtk::Label::new(Some("Select a dump row"));
+        let select_label = gtk::Label::new(Some(text(language, UiText::SelectDumpRow)));
         select_label.set_xalign(0.0);
-        let edit_input = entry(Some("hex byte"));
+        let edit_input = entry(Some(text(language, UiText::HexByte)));
         let confirm_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let confirm_label = gtk::Label::new(None);
         confirm_label.set_xalign(0.0);
         confirm_label.set_hexpand(true);
-        // Registers flow into two columns like the tao viewer so
-        // tall lists (GBA: 17) cost half the height. Pure text
-        // split, no system branches.
-        let regs_left = gtk::Label::new(None);
-        regs_left.add_css_class("monospace");
-        regs_left.set_xalign(0.0);
-        regs_left.set_valign(gtk::Align::Start);
-        let regs_right = gtk::Label::new(None);
-        regs_right.add_css_class("monospace");
-        regs_right.set_xalign(0.0);
-        regs_right.set_valign(gtk::Align::Start);
+        // Registers flow into two clickable columns like the tao
+        // viewer so tall lists (GBA: 17) cost half the height. Pure
+        // text split, no system branches. Row click picks the write
+        // target; the Set row below writes through the drain.
+        let regs_left = gtk::ListBox::new();
+        regs_left.set_selection_mode(gtk::SelectionMode::None);
+        let regs_right = gtk::ListBox::new();
+        regs_right.set_selection_mode(gtk::SelectionMode::None);
+        let reg_target_label = gtk::Label::new(Some(text(language, UiText::PickRegister)));
+        reg_target_label.set_xalign(0.0);
+        let reg_input = entry(Some(text(language, UiText::Hex)));
         let regs_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         regs_row.append(&regs_left);
         regs_row.append(&regs_right);
-        let watch_label = gtk::Label::new(Some("watch: none"));
+        let watch_label = gtk::Label::new(Some(text(language, UiText::WatchNone)));
         watch_label.set_xalign(0.0);
         watch_label.set_hexpand(true);
-        let freeze_input = entry(Some("hex byte"));
-        let freeze_label = gtk::Label::new(Some("freeze: none"));
+        let freeze_input = entry(Some(text(language, UiText::HexByte)));
+        let freeze_label = gtk::Label::new(Some(text(language, UiText::FreezeNone)));
         freeze_label.set_xalign(0.0);
         freeze_label.set_hexpand(true);
-        let bookmark_input = entry(Some("label"));
+        let bookmark_input = entry(Some(text(language, UiText::Label)));
         let bookmark_list = gtk::ListBox::new();
+        let write_button = action_button(text(language, UiText::Write));
 
         let result: DebuggerWindow = Rc::new(RefCell::new(Self {
             window: window.clone(),
             state: state.clone(),
             data,
             ppu_window: None,
+            pause_button: pause_button.clone(),
             status_label: status_label.clone(),
             disasm_title: disasm_title.clone(),
             disasm_list: disasm_list.clone(),
@@ -260,10 +276,13 @@ impl DebuggerWindowCore {
             dump_list: dump_list.clone(),
             select_label: select_label.clone(),
             edit_input: edit_input.clone(),
+            write_button: write_button.clone(),
             confirm_row: confirm_row.clone(),
             confirm_label: confirm_label.clone(),
             regs_left: regs_left.clone(),
             regs_right: regs_right.clone(),
+            reg_target_label: reg_target_label.clone(),
+            reg_input: reg_input.clone(),
             watch_label: watch_label.clone(),
             freeze_input: freeze_input.clone(),
             freeze_label: freeze_label.clone(),
@@ -271,27 +290,33 @@ impl DebuggerWindowCore {
             bookmark_list: bookmark_list.clone(),
         }));
 
-        // Toolbar: execution above disassembly, like tao.
+        // Toolbar: a single Pause/Resume toggle plus stepping,
+        // like tao. The label follows the drained pause state.
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        toolbar.append(&pause_button);
+        {
+            let win = result.clone();
+            pause_button.connect_clicked(move |_| {
+                Self::act(&win, &[DebugAction::TogglePause]);
+            });
+        }
         for (label, action) in [
-            ("Pause", DebugAction::Pause),
-            ("Resume", DebugAction::Resume),
-            ("Step Frame", DebugAction::StepFrame),
-            ("Step Instr", DebugAction::StepInstr),
+            (text(language, UiText::StepFrame), DebugAction::StepFrame),
+            (text(language, UiText::StepInstr), DebugAction::StepInstr),
         ] {
             let button = action_button(label);
             let win = result.clone();
             button.connect_clicked(move |_| Self::act(&win, std::slice::from_ref(&action)));
             toolbar.append(&button);
         }
-        let ppu_button = action_button("PPU Viewer");
+        let ppu_button = action_button(text(language, UiText::PpuViewer));
         Self::wire_toolbar(&result, &ppu_button);
         toolbar.append(&ppu_button);
 
         // Disassembly header: title, Follow PC, addr entry, Go, Back.
         let dis_nav = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let follow_button = action_button("Follow PC");
-        let go_button = action_button("Go");
+        let follow_button = action_button(text(language, UiText::FollowPc));
+        let go_button = action_button(text(language, UiText::Go));
         Self::wire_dis_nav(
             &result,
             &follow_button,
@@ -307,15 +332,32 @@ impl DebuggerWindowCore {
 
         let dis_scroll = gtk::ScrolledWindow::new();
         dis_scroll.set_vexpand(true);
+        // Minimum one full 8-row page: the right column's lists
+        // start empty (zero natural height), so without a floor the
+        // panes minimum collapses and the list would show a stub.
+        dis_scroll.set_size_request(-1, 260);
         // Classic scrollbars: overlay indicators hide whether the
         // disassembly, dump, and right column scroll.
         dis_scroll.set_overlay_scrolling(false);
         dis_scroll.set_child(Some(&disasm_list));
+        // Wheel pages the disassembly window: the anchor moves by a
+        // Thumb page (16 bytes) and pins, like a line click.
+        {
+            let win = result.clone();
+            let wheel = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+            wheel.connect_scroll(move |_, _, dy| {
+                let anchor = win.borrow().data.anchor();
+                let target = anchor.saturating_add_signed(if dy > 0.0 { 16 } else { -16 });
+                Self::dis_line_clicked(&win, target);
+                glib::Propagation::Stop
+            });
+            dis_scroll.add_controller(wheel);
+        }
 
         let left_col = gtk::Box::new(gtk::Orientation::Vertical, 12);
         left_col.set_hexpand(true);
         left_col.set_vexpand(true);
-        let title = gtk::Label::new(Some("Debugger"));
+        let title = gtk::Label::new(Some(text(language, UiText::Debugger)));
         title.set_xalign(0.0);
         left_col.append(&title);
         left_col.append(&toolbar);
@@ -325,20 +367,28 @@ impl DebuggerWindowCore {
         // Right state column (scrolls independently; PPU panels are long).
         let right_col = gtk::Box::new(gtk::Orientation::Vertical, 12);
         right_col.append(&status_label);
-        right_col.append(&section("Registers"));
+        right_col.append(&section(text(language, UiText::Registers)));
         right_col.append(&regs_row);
-        right_col.append(&section("Watch"));
+        let reg_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        reg_target_label.set_size_request(140, -1);
+        let reg_set = action_button(text(language, UiText::Set));
+        Self::wire_reg_row(&result, &reg_set, &reg_input);
+        reg_row.append(&reg_target_label);
+        reg_row.append(&reg_input);
+        reg_row.append(&reg_set);
+        right_col.append(&reg_row);
+        right_col.append(&section(text(language, UiText::Watch)));
         let watch_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let watch_button = action_button("Watch");
-        let watch_clear = action_button("Clear");
+        let watch_button = action_button(text(language, UiText::Watch));
+        let watch_clear = action_button(text(language, UiText::Clear));
         watch_row.append(&watch_button);
         watch_row.append(&watch_label);
         watch_row.append(&watch_clear);
         right_col.append(&watch_row);
-        right_col.append(&section("Freeze"));
+        right_col.append(&section(text(language, UiText::Freeze)));
         let freeze_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let freeze_button = action_button("Freeze");
-        let freeze_clear = action_button("Clear");
+        let freeze_button = action_button(text(language, UiText::Freeze));
+        let freeze_clear = action_button(text(language, UiText::Clear));
         Self::wire_watch_freeze(
             &result,
             &watch_button,
@@ -351,10 +401,10 @@ impl DebuggerWindowCore {
         freeze_row.append(&freeze_label);
         freeze_row.append(&freeze_clear);
         right_col.append(&freeze_row);
-        right_col.append(&section("Bookmarks"));
+        right_col.append(&section(text(language, UiText::Bookmarks)));
         let bm_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         bookmark_input.set_hexpand(true);
-        let bm_add = action_button("Add");
+        let bm_add = action_button(text(language, UiText::Add));
         Self::wire_bookmarks(&result, &bm_add, &bookmark_input);
         bm_row.append(&bookmark_input);
         bm_row.append(&bm_add);
@@ -376,15 +426,18 @@ impl DebuggerWindowCore {
         right_scroll.set_child(Some(&right_col));
         panes.append(&right_scroll);
 
-        // Memory section: full width below the panes.
+        // Memory section: full width below the panes. It stretches
+        // with the window together with the panes, so resizing
+        // grows the viewports instead of stranding dead space.
         let memory = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        memory.append(&section("Memory"));
+        memory.set_vexpand(true);
+        memory.append(&section(text(language, UiText::Memory)));
         let space_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let space_title = gtk::Label::new(Some("space"));
+        let space_title = gtk::Label::new(Some(text(language, UiText::Space)));
         space_title.set_size_request(150, -1);
         space_title.set_xalign(0.0);
-        let space_prev = action_button("Prev");
-        let space_next = action_button("Next");
+        let space_prev = action_button(text(language, UiText::Prev));
+        let space_next = action_button(text(language, UiText::Next));
         Self::wire_space_prev_next(&result, &space_prev, &space_next);
         space_row.append(&space_title);
         space_row.append(&space_prev);
@@ -392,12 +445,12 @@ impl DebuggerWindowCore {
         space_row.append(&space_next);
         memory.append(&space_row);
         let mem_nav = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let page_title = gtk::Label::new(Some("page"));
+        let page_title = gtk::Label::new(Some(text(language, UiText::Page)));
         page_title.set_size_request(150, -1);
         page_title.set_xalign(0.0);
-        let mem_prev = action_button("Prev");
-        let mem_next = action_button("Next");
-        let mem_go = action_button("Go");
+        let mem_prev = action_button(text(language, UiText::Prev));
+        let mem_next = action_button(text(language, UiText::Next));
+        let mem_go = action_button(text(language, UiText::Go));
         Self::wire_mem_nav(&result, &mem_prev, &mem_next, &mem_go, &mem_input);
         mem_nav.append(&page_title);
         mem_nav.append(&mem_prev);
@@ -409,21 +462,31 @@ impl DebuggerWindowCore {
         // Fixed share: the memory section stays on screen with the
         // panes above; the list viewport fits a full 8-row page.
         dump_scroll.set_size_request(-1, 300);
+        dump_scroll.set_vexpand(true);
         dump_scroll.set_overlay_scrolling(false);
         dump_scroll.set_child(Some(&dump_list));
+        // Wheel turns dump pages: down advances, up retreats.
+        {
+            let win = result.clone();
+            let wheel = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+            wheel.connect_scroll(move |_, _, dy| {
+                Self::page_mem(&win, if dy > 0.0 { 1 } else { -1 });
+                glib::Propagation::Stop
+            });
+            dump_scroll.add_controller(wheel);
+        }
         memory.append(&dump_scroll);
 
         // Edit row + confirm row + Refresh.
         let edit_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         select_label.set_size_request(240, -1);
-        let write_button = action_button("Write");
-        let edit_watch = action_button("Watch");
-        let edit_freeze = action_button("Freeze");
-        let confirm_button = action_button("Confirm");
+        let edit_watch = action_button(text(language, UiText::Watch));
+        let edit_freeze = action_button(text(language, UiText::Freeze));
+        let confirm_button = action_button(text(language, UiText::Confirm));
         confirm_button.add_css_class("suggested-action");
-        let cancel_button = action_button("Cancel");
+        let cancel_button = action_button(text(language, UiText::Cancel));
         cancel_button.add_css_class("flat");
-        let refresh_button = action_button("Refresh");
+        let refresh_button = action_button(text(language, UiText::Refresh));
         Self::wire_edit_row(
             &result,
             &write_button,
@@ -522,6 +585,13 @@ impl DebuggerWindowCore {
         bookmark_input.connect_activate(move |_| Self::bookmark_add(&clicked));
     }
 
+    fn wire_reg_row(win: &DebuggerWindow, reg_set: &gtk::Button, reg_input: &gtk::Entry) {
+        let clicked = win.clone();
+        reg_set.connect_clicked(move |_| Self::reg_set(&clicked));
+        let clicked = win.clone();
+        reg_input.connect_activate(move |_| Self::reg_set(&clicked));
+    }
+
     fn wire_space_prev_next(
         win: &DebuggerWindow,
         space_prev: &gtk::Button,
@@ -606,7 +676,17 @@ impl DebuggerWindowCore {
     /// the blocking drain so the window borrow never spans the
     /// thread round-trips.
     fn act(win: &DebuggerWindow, actions: &[DebugAction]) {
-        let (state, space, mem_addr, dis_addr, watch, freeze, prev_dump_rows, need_images) = {
+        let (
+            state,
+            space,
+            mem_addr,
+            dis_addr,
+            watch,
+            freeze,
+            reg_target,
+            prev_dump_rows,
+            need_images,
+        ) = {
             let this = win.borrow();
             (
                 this.state.clone(),
@@ -615,6 +695,7 @@ impl DebuggerWindowCore {
                 this.data.nav.dis_addr(),
                 this.data.watch,
                 this.data.freeze,
+                this.data.reg_target,
                 this.data.display.dump_rows.clone(),
                 this.ppu_window.is_some(),
             )
@@ -625,6 +706,7 @@ impl DebuggerWindowCore {
             dis_addr,
             watch,
             freeze,
+            reg_target,
             prev_dump_rows: &prev_dump_rows,
             need_images,
         };
@@ -645,6 +727,12 @@ impl DebuggerWindowCore {
     }
 
     fn open_ppu(win: &DebuggerWindow) {
+        // Idempotent: a hidden viewer re-presents with focus instead
+        // of duplicating (close hides, never destroys).
+        if let Some(ppu) = win.borrow().ppu_window.clone() {
+            ppu.borrow().present();
+            return;
+        }
         let app = win
             .borrow()
             .window
@@ -654,7 +742,9 @@ impl DebuggerWindowCore {
         let state = win.borrow().state.clone();
         let images = win.borrow().data.display.images.clone();
         let panels = win.borrow().data.display.panels.clone();
-        let ppu = super::ppu_window::PpuWindowCore::open(&app, &main, state, images, panels);
+        let language = win.borrow().data.language;
+        let ppu =
+            super::ppu_window::PpuWindowCore::open(&app, &main, state, images, panels, language);
         win.borrow_mut().ppu_window = Some(ppu);
         // The PPU opens with whatever the last drain fetched (empty
         // before any PPU was open), so refresh once with the viewer
@@ -765,6 +855,28 @@ impl DebuggerWindowCore {
         Self::act(win, &[DebugAction::SelectRow(addr)]);
     }
 
+    fn reg_selected(win: &DebuggerWindow, name: &'static str) {
+        win.borrow_mut().data.reg_target = Some(name);
+        Self::act(win, &[DebugAction::Refresh]);
+    }
+
+    fn reg_set(win: &DebuggerWindow) {
+        let (target, input) = {
+            let this = win.borrow();
+            (
+                this.data.reg_target,
+                this.reg_input.text().trim().to_string(),
+            )
+        };
+        match (target, vm::parse_hex_addr(&input)) {
+            (Some(_), Some(value)) => {
+                Self::act(win, &[DebugAction::RegisterWrite(u64::from(value))]);
+            }
+            (None, _) => Self::set_status(win, "register write needs a register".to_string()),
+            _ => Self::set_status(win, format!("parse failed: {input}")),
+        }
+    }
+
     fn watch_set(win: &DebuggerWindow) {
         // Copy out first: matching on the borrowed guard while taking
         // a mutable borrow below panics (RefCell already borrowed).
@@ -871,7 +983,7 @@ impl DebuggerWindowCore {
         Self::rebuild_disasm(win, &this);
         Self::rebuild_dump(win, &this);
         Self::rebuild_edit_row(&this);
-        Self::rebuild_state(&this);
+        Self::rebuild_state(win, &this);
         Self::rebuild_bookmarks(win, &this);
 
         // The PPU viewer follows the same refresh (panels included).
@@ -885,14 +997,35 @@ impl DebuggerWindowCore {
     fn rebuild_header(this: &DebuggerWindowCore) {
         let display = &this.data.display;
         let nav = &this.data.nav;
-        this.status_label.set_label(&display.status);
-        this.disasm_title.set_label(if nav.follow_pc() {
-            "Disassembly (follow PC)"
+        let language = this.data.language;
+        this.pause_button.set_label(if display.paused {
+            text(language, UiText::Resume)
         } else {
-            "Disassembly (fixed)"
+            text(language, UiText::Pause)
         });
-        this.back_button
-            .set_label(&format!("Back ({})", nav.back_len()));
+        this.status_label.set_label(&display.status);
+        // The title names the anchor: clicks pin it visibly instead
+        // of silently moving the window.
+        let dis_title = if nav.follow_pc() {
+            format!(
+                "{} {}",
+                text(language, UiText::Disassembly),
+                text(language, UiText::FollowPcTag)
+            )
+        } else {
+            format!(
+                "{} @{:08X} {}",
+                text(language, UiText::Disassembly),
+                this.data.anchor(),
+                text(language, UiText::FixedTag)
+            )
+        };
+        this.disasm_title.set_label(&dis_title);
+        this.back_button.set_label(&format!(
+            "{} ({})",
+            text(language, UiText::Back),
+            nav.back_len()
+        ));
         this.space_label.set_label(&this.data.selected_name());
         if this.mem_input.text() != nav.mem_input() {
             this.mem_input.set_text(nav.mem_input());
@@ -904,17 +1037,23 @@ impl DebuggerWindowCore {
 
     fn rebuild_disasm(win: &DebuggerWindow, this: &DebuggerWindowCore) {
         let display = &this.data.display;
+        let language = this.data.language;
         clear_list(&this.disasm_list);
         if display.disasm_lines.is_empty() {
-            this.disasm_list.append(&static_row("(no disassembly)"));
             this.disasm_list
-                .append(&static_row("Enter an address and press Go, or press Back."));
+                .append(&static_row(text(language, UiText::NoDisassembly)));
+            this.disasm_list
+                .append(&static_row(text(language, UiText::DisassemblyHint)));
         }
         for line in &display.disasm_lines {
             let row = gtk::ListBoxRow::new();
             row.set_selectable(false);
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-            let button = gtk::Button::with_label(&vm::format_disasm_line(line));
+            // The PC row carries a `>` marker like the dump
+            // selection: the current position reads at a glance.
+            let marker = if line.is_pc { "> " } else { "  " };
+            let button =
+                gtk::Button::with_label(&format!("{marker}{}", vm::format_disasm_line(line)));
             button.add_css_class("monospace");
             left_align(&button);
             button.set_hexpand(true);
@@ -978,12 +1117,19 @@ impl DebuggerWindowCore {
 
     fn rebuild_edit_row(this: &DebuggerWindowCore) {
         let display = &this.data.display;
+        let language = this.data.language;
         let select_text = match this.data.selected {
             Some((addr, Some(old))) => format!("Selected {addr:08X} (was {old:02X})"),
             Some((addr, None)) => format!("Selected {addr:08X} (was ??)"),
-            None => "Select a dump row".to_string(),
+            None => text(language, UiText::SelectDumpRow).to_string(),
         };
         this.select_label.set_label(&select_text);
+        // The target rides on the button: writes always land on the
+        // selected row, never on the page anchor.
+        this.write_button.set_label(&match this.data.selected {
+            Some((addr, _)) => format!("{} {addr:08X}", text(language, UiText::Write)),
+            None => text(language, UiText::Write).to_string(),
+        });
         match &display.pending_text {
             Some(pending) => {
                 this.confirm_label.set_label(pending);
@@ -993,26 +1139,83 @@ impl DebuggerWindowCore {
         }
     }
 
-    fn rebuild_state(this: &DebuggerWindowCore) {
+    fn rebuild_state(win: &DebuggerWindow, this: &DebuggerWindowCore) {
         let display = &this.data.display;
-        // Registers flow into two columns like the tao viewer:
-        // the kernel order is kept, the view only halves the list.
-        let reg_lines: Vec<&str> = display.regs.lines().collect();
-        let reg_mid = reg_lines.len().div_ceil(2);
-        let reg_end = reg_mid.min(reg_lines.len());
-        this.regs_left.set_label(&reg_lines[..reg_end].join("\n"));
-        this.regs_right.set_label(&reg_lines[reg_end..].join("\n"));
+        let language = this.data.language;
+        // Registers flow into two clickable columns like the tao
+        // viewer: the kernel order is kept, the view only halves
+        // the list. Row click picks the write target; names come
+        // from the snapshot, never scraped from text.
+        let lines: Vec<&str> = display.regs.lines().collect();
+        let mid = lines.len().div_ceil(2).min(lines.len());
+        let names = &display.reg_names;
+        Self::fill_reg_list(
+            win,
+            &this.regs_left,
+            &lines[..mid],
+            names,
+            0,
+            this.data.reg_target,
+        );
+        Self::fill_reg_list(
+            win,
+            &this.regs_right,
+            &lines[mid..],
+            names,
+            mid,
+            this.data.reg_target,
+        );
+        this.reg_target_label
+            .set_label(&match this.data.reg_target {
+                Some(name) => format!("{} {name}", text(language, UiText::Set)),
+                None => text(language, UiText::PickRegister).to_string(),
+            });
         let watch_text = match (this.data.watch, display.watch_value) {
             (Some(addr), Some(value)) => format!("watch {addr:08X} = {value:02X}"),
             (Some(addr), None) => format!("watch {addr:08X} = ??"),
-            (None, _) => "watch: none".to_string(),
+            (None, _) => text(language, UiText::WatchNone).to_string(),
         };
         this.watch_label.set_label(&watch_text);
         let freeze_text = match this.data.freeze {
             Some((addr, value)) => format!("frozen {addr:08X}={value:02X}"),
-            None => "freeze: none".to_string(),
+            None => text(language, UiText::FreezeNone).to_string(),
         };
         this.freeze_label.set_label(&freeze_text);
+    }
+
+    fn fill_reg_list(
+        win: &DebuggerWindow,
+        list: &gtk::ListBox,
+        lines: &[&str],
+        names: &[&'static str],
+        base: usize,
+        target: Option<&'static str>,
+    ) {
+        clear_list(list);
+        for (i, line) in lines.iter().enumerate() {
+            let row = gtk::ListBoxRow::new();
+            row.set_selectable(false);
+            match names.get(base + i).copied() {
+                Some(name) => {
+                    let button = gtk::Button::with_label(line);
+                    button.add_css_class("monospace");
+                    left_align(&button);
+                    button.set_hexpand(true);
+                    button.set_halign(gtk::Align::Fill);
+                    if Some(name) == target {
+                        button.add_css_class("suggested-action");
+                    } else {
+                        button.add_css_class("flat");
+                    }
+                    let clicked = Rc::clone(win);
+                    button.connect_clicked(move |_| Self::reg_selected(&clicked, name));
+                    row.set_child(Some(&button));
+                }
+                // Unnamed degenerate lines stay plain text.
+                None => row.set_child(Some(&static_row(line))),
+            }
+            list.append(&row);
+        }
     }
 
     fn rebuild_bookmarks(win: &DebuggerWindow, this: &DebuggerWindowCore) {

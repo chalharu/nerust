@@ -176,6 +176,11 @@ impl WindowRuntime {
                 if let WindowEvent::Moved(position) = &event {
                     self.host.remember_debug_window_pos(position.x, position.y);
                 }
+                // Focus follows the main window's auto-pause: pause
+                // first (idempotent) and re-read so the display
+                // matches the newly paused state. The empty batch
+                // never kills a staged transaction.
+                let refocused = matches!(event, WindowEvent::Focused(true));
                 {
                     let Some(handle) = self.host.debug_window.as_mut() else {
                         return;
@@ -194,6 +199,10 @@ impl WindowRuntime {
                         _ => {}
                     }
                     handle.handle_tao_event(event);
+                }
+                if refocused {
+                    use nerust_gui_shell::debug::DebugAction;
+                    self.host.run_debug_drain(&[DebugAction::Pause]);
                 }
                 self.host.drain_debug_requests();
                 if self.host.take_ppu_open_request() {

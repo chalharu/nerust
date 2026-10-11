@@ -537,10 +537,12 @@ impl HostState {
             }
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
             let position = self.debug_window_pos;
+            let language = self.session.settings_snapshot().shared.general.language;
             match crate::debug_window::DebugWindowHandle::new(
                 debug_vm::DisplayCache::default(),
                 spaces,
                 mem_addr,
+                language,
                 event_loop,
                 position,
             ) {
@@ -604,7 +606,7 @@ impl HostState {
     /// PPU (re)open so images populate immediately).
     pub(crate) fn run_debug_drain(&mut self, requests: &[nerust_gui_shell::debug::DebugAction]) {
         use nerust_gui_shell::debug::DebugDrainInput;
-        let (space, mem_addr, dis_addr, watch, freeze, prev_rows, need_images) =
+        let (space, mem_addr, dis_addr, watch, freeze, reg_target, prev_rows, need_images) =
             match self.debug_window.as_ref() {
                 Some(handle) => {
                     let nav = handle.bridge.nav.lock().unwrap();
@@ -618,6 +620,7 @@ impl HostState {
                         dis_addr,
                         *handle.bridge.watch.lock().unwrap(),
                         *handle.bridge.freeze.lock().unwrap(),
+                        *handle.bridge.reg_target.lock().unwrap(),
                         prev,
                         self.ppu_window.is_some(),
                     )
@@ -630,6 +633,7 @@ impl HostState {
             dis_addr,
             watch,
             freeze,
+            reg_target,
             prev_dump_rows: &prev_rows,
             need_images,
         };

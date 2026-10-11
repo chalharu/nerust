@@ -79,12 +79,49 @@ impl GbaCpu {
             cpsr &= !(1 << 5);
         }
         self.regs.set_cpsr(cpsr);
+        self.refill_after_jump(bus, pc);
+    }
+
+    /// Shared jump refill: set PC, drop the in-flight stream, and
+    /// refill so the next step fetches the new stream. Used by the
+    /// test jump and the debugger register poke alike.
+    fn refill_after_jump(&mut self, bus: &mut GbaMemoryBus, pc: u32) {
         self.regs.set_pc(pc);
         self.pipeline = [0; 2];
         self.micro_ops.clear();
         self.micro_pos = 0;
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         bus.take_access_wait_cycles();
+    }
+
+    /// Debugger register poke with pipeline discipline. `r15` and
+    /// `cpsr` refill the pipeline (an ISA/mode switch mid-stream
+    /// would otherwise execute stale micro-ops); general registers
+    /// are plain sets. Unknown names return `false`.
+    pub(crate) fn debug_write_register(
+        &mut self,
+        bus: &mut GbaMemoryBus,
+        name: &str,
+        value: u32,
+    ) -> bool {
+        if name == "cpsr" {
+            self.regs.set_cpsr(value);
+            let pc = self.regs.pc();
+            self.refill_after_jump(bus, pc);
+            return true;
+        }
+        if let Some(index) = name.strip_prefix('r')
+            && let Ok(idx) = index.parse::<usize>()
+            && idx < 16
+        {
+            if idx == 15 {
+                self.refill_after_jump(bus, value);
+            } else {
+                self.regs.set_r(idx, value);
+            }
+            return true;
+        }
+        false
     }
 
     /// Take a pending IRQ: returns the entry charge (discarded source

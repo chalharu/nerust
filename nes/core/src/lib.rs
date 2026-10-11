@@ -265,6 +265,23 @@ impl Core {
         ]
     }
 
+    /// Debugger register poke. Values mask to the register width;
+    /// unknown names return `false`. Same `pub(crate)` setters the
+    /// core itself uses; `Register` stays crate-private.
+    pub(crate) fn write_cpu_register(&mut self, name: &str, value: u64) -> bool {
+        let r = self.cpu.register_mut();
+        match name {
+            "a" => r.set_a(value as u8),
+            "p" => r.set_p(value as u8),
+            "pc" => r.set_pc(value as u16),
+            "sp" => r.set_sp(value as u8),
+            "x" => r.set_x(value as u8),
+            "y" => r.set_y(value as u8),
+            _ => return false,
+        }
+        true
+    }
+
     pub fn peek_cartridge_ram(&self, address: usize) -> Option<OpenBusReadResult> {
         if (0x6000..=0x7FFF).contains(&address) {
             Some(self.cartridge.read(address))

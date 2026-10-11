@@ -563,6 +563,7 @@ pub(crate) fn present_preferences_dialog(
             s.ctx.audio_registry.clone(),
         )
     };
+    let lang = snapshot.shared.general.language;
 
     let factories: Vec<Arc<dyn CoreFactory>> = registry.all().iter().map(Arc::clone).collect();
 
@@ -586,12 +587,12 @@ pub(crate) fn present_preferences_dialog(
     let dialog = gtk::Dialog::builder()
         .transient_for(parent)
         .modal(true)
-        .title("Preferences")
+        .title(ui_text(lang, UiText::Preferences))
         .default_width(900)
         .default_height(560)
         .build();
-    let cancel_button = dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-    let ok_button = dialog.add_button("OK", gtk::ResponseType::Ok);
+    let cancel_button = dialog.add_button(ui_text(lang, UiText::Cancel), gtk::ResponseType::Cancel);
+    let ok_button = dialog.add_button(ui_text(lang, UiText::Ok), gtk::ResponseType::Ok);
     if let Some(action_box) = ok_button
         .parent()
         .and_then(|parent| parent.downcast::<gtk::Box>().ok())
@@ -630,11 +631,31 @@ pub(crate) fn present_preferences_dialog(
     let (video_page_scroller, video_page) = stack_page();
     let (audio_page_scroller, audio_page) = stack_page();
     let (system_page_scroller, system_page) = stack_page();
-    stack.add_titled(&general_page_scroller, Some("general"), "General");
-    stack.add_titled(&input_page_scroller, Some("input"), "Input");
-    stack.add_titled(&video_page_scroller, Some("video"), "Video");
-    stack.add_titled(&audio_page_scroller, Some("audio"), "Audio");
-    stack.add_titled(&system_page_scroller, Some("system"), "System");
+    stack.add_titled(
+        &general_page_scroller,
+        Some("general"),
+        ui_text(lang, UiText::General),
+    );
+    stack.add_titled(
+        &input_page_scroller,
+        Some("input"),
+        ui_text(lang, UiText::Input),
+    );
+    stack.add_titled(
+        &video_page_scroller,
+        Some("video"),
+        ui_text(lang, UiText::Video),
+    );
+    stack.add_titled(
+        &audio_page_scroller,
+        Some("audio"),
+        ui_text(lang, UiText::Audio),
+    );
+    stack.add_titled(
+        &system_page_scroller,
+        Some("system"),
+        ui_text(lang, UiText::System),
+    );
 
     let error_label = gtk::Label::new(None);
     error_label.set_xalign(0.0);
@@ -643,27 +664,27 @@ pub(crate) fn present_preferences_dialog(
     // ---- General page ----
     let language_label = gtk::Label::new(Some("Language"));
     let language_combo = combo_box(&[
-        ("system_default", "System Default"),
-        ("japanese", "Japanese"),
-        ("english", "English"),
+        ("system_default", ui_text(lang, UiText::SystemDefault)),
+        ("japanese", ui_text(lang, UiText::Japanese)),
+        ("english", ui_text(lang, UiText::English)),
     ]);
     let lang_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     lang_row.append(&language_label);
     lang_row.append(&language_combo);
     general_page.append(&lang_row);
 
-    let storage_policy_label = gtk::Label::new(Some("Save Storage Policy"));
+    let storage_policy_label = gtk::Label::new(Some(ui_text(lang, UiText::SaveStoragePolicy)));
     let storage_policy_combo = combo_box(&[
-        ("sidecar", "Sidecar"),
-        ("app_shared_data", "App Shared Data"),
-        ("custom_directory", "Custom Directory"),
+        ("sidecar", ui_text(lang, UiText::Sidecar)),
+        ("app_shared_data", ui_text(lang, UiText::AppSharedData)),
+        ("custom_directory", ui_text(lang, UiText::CustomDirectory)),
     ]);
     let sp_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     sp_row.append(&storage_policy_label);
     sp_row.append(&storage_policy_combo);
     general_page.append(&sp_row);
 
-    let storage_dir_label = gtk::Label::new(Some("Save Storage Directory"));
+    let storage_dir_label = gtk::Label::new(Some(ui_text(lang, UiText::SaveStorageDirectory)));
     let storage_dir_entry = gtk::Entry::new();
     let storage_dir_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     storage_dir_row.append(&storage_dir_label);
@@ -674,11 +695,11 @@ pub(crate) fn present_preferences_dialog(
     general_page.append(&storage_error_label);
 
     // ---- Video page ----
-    let fullscreen_check = gtk::CheckButton::with_label("Fullscreen Default");
+    let fullscreen_check = gtk::CheckButton::with_label(ui_text(lang, UiText::FullscreenDefault));
     video_page.append(&fullscreen_check);
-    let scaling_label = gtk::Label::new(Some("Scaling"));
+    let scaling_label = gtk::Label::new(Some(ui_text(lang, UiText::Scaling)));
     let scaling_combo = combo_box(&[
-        ("fit", "Fit to Window"),
+        ("fit", ui_text(lang, UiText::FitToWindow)),
         ("1", "1x"),
         ("2", "2x"),
         ("3", "3x"),
@@ -689,19 +710,19 @@ pub(crate) fn present_preferences_dialog(
     scaling_row.append(&scaling_label);
     scaling_row.append(&scaling_combo);
     video_page.append(&scaling_row);
-    let vsync_check = gtk::CheckButton::with_label("Vsync");
+    let vsync_check = gtk::CheckButton::with_label(ui_text(lang, UiText::Vsync));
     video_page.append(&vsync_check);
 
     // ---- Audio page ----
-    let mute_check = gtk::CheckButton::with_label("Mute");
+    let mute_check = gtk::CheckButton::with_label(ui_text(lang, UiText::Mute));
     audio_page.append(&mute_check);
-    let volume_label = gtk::Label::new(Some("Master Volume"));
+    let volume_label = gtk::Label::new(Some(ui_text(lang, UiText::MasterVolume)));
     let volume_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
     let vol_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     vol_row.append(&volume_label);
     vol_row.append(&volume_spin);
     audio_page.append(&vol_row);
-    let sample_rate_label = gtk::Label::new(Some("Sample Rate"));
+    let sample_rate_label = gtk::Label::new(Some(ui_text(lang, UiText::SampleRate)));
     let sample_rate_combo = {
         let rates: &[u32] = if audio_registry.supported_rates().is_empty() {
             &[44_100, 48_000]
@@ -719,7 +740,7 @@ pub(crate) fn present_preferences_dialog(
     sr_row.append(&sample_rate_label);
     sr_row.append(&sample_rate_combo);
     audio_page.append(&sr_row);
-    let latency_label = gtk::Label::new(Some("Audio Latency"));
+    let latency_label = gtk::Label::new(Some(ui_text(lang, UiText::AudioLatency)));
     let latency_spin = gtk::SpinButton::with_range(10.0, 200.0, 1.0);
     let lat_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     lat_row.append(&latency_label);

@@ -313,6 +313,10 @@ impl Core {
         &self.register
     }
 
+    pub(crate) fn register_mut(&mut self) -> &mut Register {
+        &mut self.register
+    }
+
     pub(crate) fn poke_work_ram(&mut self, address: usize, value: u8) {
         self.memory.poke_work_ram(address, value)
     }
