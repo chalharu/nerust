@@ -3,7 +3,7 @@ use std::{sync::Arc, time::SystemTime};
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
     audio::StereoSample,
-    debugger::{DebugControl, DebuggerError, SpaceId, SpaceTable, StepUnit},
+    debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
     peripheral::{
         AccelerometerInputPort, RumbleOutputPort, RumbleState, accelerometer_channel,
@@ -119,8 +119,16 @@ impl GbcConsoleCore {
     /// `step_tcycle` body, so PPU/timers/APU stay consistent. A
     /// halted/stopped CPU waits for its wake interrupt instead of
     /// hanging the debugger; the wait is bounded.
+    ///
+    /// STOP has no wake source in the debugger (joypad only, never
+    /// delivered while paused), so it returns zero immediately
+    /// instead of burning the bound. HALT keeps the bounded wait:
+    /// timers keep ticking and can raise the wake interrupt.
     pub(crate) fn step_instruction(&mut self) -> Result<u64, CoreError> {
         let loaded = self.loaded_mut()?;
+        if loaded.system.bus.is_stopped() {
+            return Ok(0);
+        }
         let mut elapsed = 0u64;
         loop {
             loaded.system.bus.step_tcycle(&mut loaded.system.cpu);
@@ -385,23 +393,10 @@ impl DebugControl for GbcDebugControl<'_> {
         width: u8,
         value: u64,
     ) -> Result<(), DebuggerError> {
-        // Validation order matters: bad width first, so "width 0 with
-        // unknown SpaceId" does not mask as UnknownSpace.
-        if !SpaceTable::width_is_valid(width) {
-            return Err(DebuggerError::BadWidth(width));
-        }
-        if GBC_SPACE_TABLE.get(space).is_none() {
-            return Err(DebuggerError::UnknownSpace(space));
-        }
-        if !GBC_SPACE_TABLE.covers(space, addr, width) {
-            return Err(DebuggerError::UnmappedAddress { space, addr });
-        }
-        // ROM is not pokeable: a CPU store there drives MBC commands,
-        // so refuse loudly instead of bank-switching by surprise.
-        // The cast below is safe: covers() pins addr + width - 1.
-        if addr < 0x8000 {
-            return Err(DebuggerError::ReadOnlySpace(space));
-        }
+        // One table-owned gate: bad width, unknown space, unmapped
+        // address, then ROM refusal, in that order. The cast below is
+        // safe: check_write pins addr + width - 1.
+        GBC_SPACE_TABLE.check_write(space, addr, width)?;
         let loaded = self
             .console
             .loaded

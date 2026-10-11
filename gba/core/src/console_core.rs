@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
     audio::StereoSample,
-    debugger::{DebugControl, DebuggerError, SpaceId, SpaceTable, StepUnit},
+    debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
 };
 use nerust_input_traits::EmuInput;
@@ -350,23 +350,9 @@ impl DebugControl for GbaDebugControl<'_> {
         width: u8,
         value: u64,
     ) -> Result<(), DebuggerError> {
-        // Validation order matters: bad width first, so "width 0 with
-        // unknown SpaceId" does not mask as UnknownSpace.
-        if !SpaceTable::width_is_valid(width) {
-            return Err(DebuggerError::BadWidth(width));
-        }
-        if GBA_SPACE_TABLE.get(space).is_none() {
-            return Err(DebuggerError::UnknownSpace(space));
-        }
-        if !GBA_SPACE_TABLE.covers(space, addr, width) {
-            return Err(DebuggerError::UnmappedAddress { space, addr });
-        }
-        // BIOS and ROM are not pokeable: stores there vanish on
-        // hardware (ROM also overlays GPIO), so refuse loudly
-        // instead of reporting a write that never lands.
-        if matches!(addr, 0x00000000..=0x00003FFF | 0x08000000..=0x0DFFFFFF) {
-            return Err(DebuggerError::ReadOnlySpace(space));
-        }
+        // One table-owned gate: bad width, unknown space, unmapped
+        // address, then BIOS/ROM refusal, in that order.
+        GBA_SPACE_TABLE.check_write(space, addr, width)?;
         let loaded = self
             .console
             .loaded

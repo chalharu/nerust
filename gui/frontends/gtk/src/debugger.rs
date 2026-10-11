@@ -183,14 +183,14 @@ fn action_button(label: &str) -> gtk::Button {
 }
 
 impl DebuggerWindowCore {
-    /// Open the debugger: pin pause, build widgets, refresh, present.
-    /// Closing keeps the pause; resume stays explicit.
+    /// Open the debugger: build widgets, then pause and refresh
+    /// through the shared drain. Closing keeps the pause; resume
+    /// stays explicit.
     pub(crate) fn open(
         app: &gtk::Application,
         main_window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
     ) -> DebuggerWindow {
-        state.borrow().session.debug_pause();
         let data = DebuggerData::new(&state.borrow().session);
         let window = gtk::ApplicationWindow::builder()
             .application(app)
@@ -285,33 +285,20 @@ impl DebuggerWindowCore {
             toolbar.append(&button);
         }
         let ppu_button = action_button("PPU Viewer");
-        {
-            let win = result.clone();
-            ppu_button.connect_clicked(move |_| Self::open_ppu(&win));
-        }
+        Self::wire_toolbar(&result, &ppu_button);
         toolbar.append(&ppu_button);
 
         // Disassembly header: title, Follow PC, addr entry, Go, Back.
         let dis_nav = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let follow_button = action_button("Follow PC");
-        {
-            let win = result.clone();
-            follow_button.connect_clicked(move |_| {
-                win.borrow_mut().data.nav.follow();
-                Self::act(&win, &[DebugAction::Refresh]);
-            });
-        }
         let go_button = action_button("Go");
-        {
-            let win = result.clone();
-            go_button.connect_clicked(move |_| Self::dis_go(&win));
-            let win = result.clone();
-            dis_input.connect_activate(move |_| Self::dis_go(&win));
-        }
-        {
-            let win = result.clone();
-            back_button.connect_clicked(move |_| Self::dis_back(&win));
-        }
+        Self::wire_dis_nav(
+            &result,
+            &follow_button,
+            &go_button,
+            &dis_input,
+            &back_button,
+        );
         dis_nav.append(&disasm_title);
         dis_nav.append(&follow_button);
         dis_nav.append(&dis_input);
@@ -343,15 +330,7 @@ impl DebuggerWindowCore {
         right_col.append(&section("Watch"));
         let watch_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let watch_button = action_button("Watch");
-        {
-            let win = result.clone();
-            watch_button.connect_clicked(move |_| Self::watch_set(&win));
-        }
         let watch_clear = action_button("Clear");
-        {
-            let win = result.clone();
-            watch_clear.connect_clicked(move |_| Self::watch_clear(&win));
-        }
         watch_row.append(&watch_button);
         watch_row.append(&watch_label);
         watch_row.append(&watch_clear);
@@ -359,15 +338,14 @@ impl DebuggerWindowCore {
         right_col.append(&section("Freeze"));
         let freeze_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let freeze_button = action_button("Freeze");
-        {
-            let win = result.clone();
-            freeze_button.connect_clicked(move |_| Self::freeze_set(&win));
-        }
         let freeze_clear = action_button("Clear");
-        {
-            let win = result.clone();
-            freeze_clear.connect_clicked(move |_| Self::freeze_clear(&win));
-        }
+        Self::wire_watch_freeze(
+            &result,
+            &watch_button,
+            &watch_clear,
+            &freeze_button,
+            &freeze_clear,
+        );
         freeze_row.append(&freeze_input);
         freeze_row.append(&freeze_button);
         freeze_row.append(&freeze_label);
@@ -377,12 +355,7 @@ impl DebuggerWindowCore {
         let bm_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         bookmark_input.set_hexpand(true);
         let bm_add = action_button("Add");
-        {
-            let win = result.clone();
-            bm_add.connect_clicked(move |_| Self::bookmark_add(&win));
-            let win = result.clone();
-            bookmark_input.connect_activate(move |_| Self::bookmark_add(&win));
-        }
+        Self::wire_bookmarks(&result, &bm_add, &bookmark_input);
         bm_row.append(&bookmark_input);
         bm_row.append(&bm_add);
         right_col.append(&bm_row);
@@ -411,15 +384,8 @@ impl DebuggerWindowCore {
         space_title.set_size_request(150, -1);
         space_title.set_xalign(0.0);
         let space_prev = action_button("Prev");
-        {
-            let win = result.clone();
-            space_prev.connect_clicked(move |_| Self::cycle_space(&win, -1));
-        }
         let space_next = action_button("Next");
-        {
-            let win = result.clone();
-            space_next.connect_clicked(move |_| Self::cycle_space(&win, 1));
-        }
+        Self::wire_space_prev_next(&result, &space_prev, &space_next);
         space_row.append(&space_title);
         space_row.append(&space_prev);
         space_row.append(&space_label);
@@ -430,22 +396,9 @@ impl DebuggerWindowCore {
         page_title.set_size_request(150, -1);
         page_title.set_xalign(0.0);
         let mem_prev = action_button("Prev");
-        {
-            let win = result.clone();
-            mem_prev.connect_clicked(move |_| Self::page_mem(&win, -1));
-        }
         let mem_next = action_button("Next");
-        {
-            let win = result.clone();
-            mem_next.connect_clicked(move |_| Self::page_mem(&win, 1));
-        }
         let mem_go = action_button("Go");
-        {
-            let win = result.clone();
-            mem_go.connect_clicked(move |_| Self::mem_go(&win));
-            let win = result.clone();
-            mem_input.connect_activate(move |_| Self::mem_go(&win));
-        }
+        Self::wire_mem_nav(&result, &mem_prev, &mem_next, &mem_go, &mem_input);
         mem_nav.append(&page_title);
         mem_nav.append(&mem_prev);
         mem_nav.append(&mem_next);
@@ -464,47 +417,32 @@ impl DebuggerWindowCore {
         let edit_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         select_label.set_size_request(240, -1);
         let write_button = action_button("Write");
-        {
-            let win = result.clone();
-            write_button.connect_clicked(move |_| Self::edit_write(&win));
-        }
         let edit_watch = action_button("Watch");
-        {
-            let win = result.clone();
-            edit_watch.connect_clicked(move |_| Self::watch_set(&win));
-        }
         let edit_freeze = action_button("Freeze");
-        {
-            let win = result.clone();
-            edit_freeze.connect_clicked(move |_| Self::edit_freeze_set(&win));
-        }
+        let confirm_button = action_button("Confirm");
+        confirm_button.add_css_class("suggested-action");
+        let cancel_button = action_button("Cancel");
+        cancel_button.add_css_class("flat");
+        let refresh_button = action_button("Refresh");
+        Self::wire_edit_row(
+            &result,
+            &write_button,
+            &edit_watch,
+            &edit_freeze,
+            &confirm_button,
+            &cancel_button,
+            &refresh_button,
+        );
         edit_row.append(&select_label);
         edit_row.append(&edit_input);
         edit_row.append(&write_button);
         edit_row.append(&edit_watch);
         edit_row.append(&edit_freeze);
         memory.append(&edit_row);
-        let confirm_button = action_button("Confirm");
-        confirm_button.add_css_class("suggested-action");
-        {
-            let win = result.clone();
-            confirm_button.connect_clicked(move |_| Self::confirm_write(&win));
-        }
-        let cancel_button = action_button("Cancel");
-        cancel_button.add_css_class("flat");
-        {
-            let win = result.clone();
-            cancel_button.connect_clicked(move |_| Self::cancel_write(&win));
-        }
         confirm_row.append(&confirm_label);
         confirm_row.append(&confirm_button);
         confirm_row.append(&cancel_button);
         memory.append(&confirm_row);
-        let refresh_button = action_button("Refresh");
-        {
-            let win = result.clone();
-            refresh_button.connect_clicked(move |_| Self::act(&win, &[DebugAction::Refresh]));
-        }
         memory.append(&refresh_button);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -520,22 +458,7 @@ impl DebuggerWindowCore {
 
         // Window-scoped keys: F6/F7/F9 execution, Up/Down dump paging.
         // Left/Right stay with the widgets (caret movement).
-        let keys = gtk::EventControllerKey::new();
-        {
-            let win = result.clone();
-            keys.connect_key_pressed(move |_, key, _, _| {
-                match key {
-                    gdk::Key::F6 => Self::act(&win, &[DebugAction::StepFrame]),
-                    gdk::Key::F7 => Self::act(&win, &[DebugAction::StepInstr]),
-                    gdk::Key::F9 => Self::act(&win, &[DebugAction::TogglePause]),
-                    gdk::Key::Up => Self::page_mem(&win, -1),
-                    gdk::Key::Down => Self::page_mem(&win, 1),
-                    _ => (),
-                }
-                glib::Propagation::Proceed
-            });
-        }
-        window.add_controller(keys);
+        Self::wire_keys(&result, &window);
 
         window.connect_close_request(|window| {
             // Close keeps the pause; resume stays explicit.
@@ -543,9 +466,128 @@ impl DebuggerWindowCore {
             glib::Propagation::Stop
         });
 
-        Self::act(&result, &[DebugAction::Refresh]);
+        Self::act(&result, &[DebugAction::Pause, DebugAction::Refresh]);
         window.present();
         result
+    }
+
+    /// One wiring helper per section: each connects a single
+    /// pane's callbacks, so `open` stays construction plus calls.
+    fn wire_toolbar(win: &DebuggerWindow, ppu_button: &gtk::Button) {
+        let clicked = win.clone();
+        ppu_button.connect_clicked(move |_| Self::open_ppu(&clicked));
+    }
+
+    fn wire_dis_nav(
+        win: &DebuggerWindow,
+        follow_button: &gtk::Button,
+        go_button: &gtk::Button,
+        dis_input: &gtk::Entry,
+        back_button: &gtk::Button,
+    ) {
+        let clicked = win.clone();
+        follow_button.connect_clicked(move |_| {
+            clicked.borrow_mut().data.nav.follow();
+            Self::act(&clicked, &[DebugAction::Refresh]);
+        });
+        let clicked = win.clone();
+        go_button.connect_clicked(move |_| Self::dis_go(&clicked));
+        let clicked = win.clone();
+        dis_input.connect_activate(move |_| Self::dis_go(&clicked));
+        let clicked = win.clone();
+        back_button.connect_clicked(move |_| Self::dis_back(&clicked));
+    }
+
+    fn wire_watch_freeze(
+        win: &DebuggerWindow,
+        watch_button: &gtk::Button,
+        watch_clear: &gtk::Button,
+        freeze_button: &gtk::Button,
+        freeze_clear: &gtk::Button,
+    ) {
+        let clicked = win.clone();
+        watch_button.connect_clicked(move |_| Self::watch_set(&clicked));
+        let clicked = win.clone();
+        watch_clear.connect_clicked(move |_| Self::watch_clear(&clicked));
+        let clicked = win.clone();
+        freeze_button.connect_clicked(move |_| Self::freeze_set(&clicked));
+        let clicked = win.clone();
+        freeze_clear.connect_clicked(move |_| Self::freeze_clear(&clicked));
+    }
+
+    fn wire_bookmarks(win: &DebuggerWindow, bm_add: &gtk::Button, bookmark_input: &gtk::Entry) {
+        let clicked = win.clone();
+        bm_add.connect_clicked(move |_| Self::bookmark_add(&clicked));
+        let clicked = win.clone();
+        bookmark_input.connect_activate(move |_| Self::bookmark_add(&clicked));
+    }
+
+    fn wire_space_prev_next(
+        win: &DebuggerWindow,
+        space_prev: &gtk::Button,
+        space_next: &gtk::Button,
+    ) {
+        let clicked = win.clone();
+        space_prev.connect_clicked(move |_| Self::cycle_space(&clicked, -1));
+        let clicked = win.clone();
+        space_next.connect_clicked(move |_| Self::cycle_space(&clicked, 1));
+    }
+
+    fn wire_mem_nav(
+        win: &DebuggerWindow,
+        mem_prev: &gtk::Button,
+        mem_next: &gtk::Button,
+        mem_go: &gtk::Button,
+        mem_input: &gtk::Entry,
+    ) {
+        let clicked = win.clone();
+        mem_prev.connect_clicked(move |_| Self::page_mem(&clicked, -1));
+        let clicked = win.clone();
+        mem_next.connect_clicked(move |_| Self::page_mem(&clicked, 1));
+        let clicked = win.clone();
+        mem_go.connect_clicked(move |_| Self::mem_go(&clicked));
+        let clicked = win.clone();
+        mem_input.connect_activate(move |_| Self::mem_go(&clicked));
+    }
+
+    fn wire_edit_row(
+        win: &DebuggerWindow,
+        write_button: &gtk::Button,
+        edit_watch: &gtk::Button,
+        edit_freeze: &gtk::Button,
+        confirm_button: &gtk::Button,
+        cancel_button: &gtk::Button,
+        refresh_button: &gtk::Button,
+    ) {
+        let clicked = win.clone();
+        write_button.connect_clicked(move |_| Self::edit_write(&clicked));
+        let clicked = win.clone();
+        edit_watch.connect_clicked(move |_| Self::watch_set(&clicked));
+        let clicked = win.clone();
+        edit_freeze.connect_clicked(move |_| Self::edit_freeze_set(&clicked));
+        let clicked = win.clone();
+        confirm_button.connect_clicked(move |_| Self::confirm_write(&clicked));
+        let clicked = win.clone();
+        cancel_button.connect_clicked(move |_| Self::cancel_write(&clicked));
+        let clicked = win.clone();
+        refresh_button.connect_clicked(move |_| Self::act(&clicked, &[DebugAction::Refresh]));
+    }
+
+    fn wire_keys(win: &DebuggerWindow, window: &gtk::ApplicationWindow) {
+        let keys = gtk::EventControllerKey::new();
+        let clicked = win.clone();
+        keys.connect_key_pressed(move |_, key, _, _| {
+            match key {
+                gdk::Key::F6 => Self::act(&clicked, &[DebugAction::StepFrame]),
+                gdk::Key::F7 => Self::act(&clicked, &[DebugAction::StepInstr]),
+                gdk::Key::F9 => Self::act(&clicked, &[DebugAction::TogglePause]),
+                gdk::Key::Up => Self::page_mem(&clicked, -1),
+                gdk::Key::Down => Self::page_mem(&clicked, 1),
+                _ => (),
+            }
+            glib::Propagation::Proceed
+        });
+        window.add_controller(keys);
     }
 
     /// Present an existing window (idempotent reopen path).
@@ -560,22 +602,33 @@ impl DebuggerWindowCore {
 
     /// Run actions through the shared shell drain, then rebuild
     /// every widget from the new display. Images are fetched only
-    /// while the PPU viewer is open.
+    /// while the PPU viewer is open. Inputs are copied out before
+    /// the blocking drain so the window borrow never spans the
+    /// thread round-trips.
     fn act(win: &DebuggerWindow, actions: &[DebugAction]) {
-        let output = {
+        let (state, space, mem_addr, dis_addr, watch, freeze, prev_dump_rows, need_images) = {
             let this = win.borrow();
-            let state = this.state.clone();
-            let input = DebugDrainInput {
-                space: this.data.selected_space(),
-                mem_addr: this.data.nav.mem_addr(),
-                dis_addr: this.data.nav.dis_addr(),
-                watch: this.data.watch,
-                freeze: this.data.freeze,
-                prev_dump_rows: &this.data.display.dump_rows,
-                need_images: this.ppu_window.is_some(),
-            };
-            state.borrow().session.debug_drain(actions, &input)
+            (
+                this.state.clone(),
+                this.data.selected_space(),
+                this.data.nav.mem_addr(),
+                this.data.nav.dis_addr(),
+                this.data.watch,
+                this.data.freeze,
+                this.data.display.dump_rows.clone(),
+                this.ppu_window.is_some(),
+            )
         };
+        let input = DebugDrainInput {
+            space,
+            mem_addr,
+            dis_addr,
+            watch,
+            freeze,
+            prev_dump_rows: &prev_dump_rows,
+            need_images,
+        };
+        let output = state.borrow().session.debug_drain(actions, &input);
         {
             let mut this = win.borrow_mut();
             this.data.display = output.display;
@@ -814,6 +867,22 @@ impl DebuggerWindowCore {
     /// callbacks never touch the session directly.
     fn rebuild(win: &DebuggerWindow) {
         let this = win.borrow();
+        Self::rebuild_header(&this);
+        Self::rebuild_disasm(win, &this);
+        Self::rebuild_dump(win, &this);
+        Self::rebuild_edit_row(&this);
+        Self::rebuild_state(&this);
+        Self::rebuild_bookmarks(win, &this);
+
+        // The PPU viewer follows the same refresh (panels included).
+        if let Some(ppu) = this.ppu_window.as_ref() {
+            let display = &this.data.display;
+            ppu.borrow_mut().sync(&display.images, &display.panels);
+        }
+    }
+
+    /// One rebuild helper per section; all read the borrowed core.
+    fn rebuild_header(this: &DebuggerWindowCore) {
         let display = &this.data.display;
         let nav = &this.data.nav;
         this.status_label.set_label(&display.status);
@@ -831,7 +900,10 @@ impl DebuggerWindowCore {
         if this.dis_input.text() != nav.dis_input() {
             this.dis_input.set_text(nav.dis_input());
         }
+    }
 
+    fn rebuild_disasm(win: &DebuggerWindow, this: &DebuggerWindowCore) {
+        let display = &this.data.display;
         clear_list(&this.disasm_list);
         if display.disasm_lines.is_empty() {
             this.disasm_list.append(&static_row("(no disassembly)"));
@@ -868,7 +940,10 @@ impl DebuggerWindowCore {
             row.set_child(Some(&hbox));
             this.disasm_list.append(&row);
         }
+    }
 
+    fn rebuild_dump(win: &DebuggerWindow, this: &DebuggerWindowCore) {
+        let display = &this.data.display;
         clear_list(&this.dump_list);
         for (addr, line) in &display.dump_rows {
             let is_selected = this.data.selected.map(|(a, _)| a) == Some(*addr);
@@ -899,7 +974,10 @@ impl DebuggerWindowCore {
             row.set_child(Some(&button));
             this.dump_list.append(&row);
         }
+    }
 
+    fn rebuild_edit_row(this: &DebuggerWindowCore) {
+        let display = &this.data.display;
         let select_text = match this.data.selected {
             Some((addr, Some(old))) => format!("Selected {addr:08X} (was {old:02X})"),
             Some((addr, None)) => format!("Selected {addr:08X} (was ??)"),
@@ -913,7 +991,10 @@ impl DebuggerWindowCore {
             }
             None => this.confirm_row.set_visible(false),
         }
+    }
 
+    fn rebuild_state(this: &DebuggerWindowCore) {
+        let display = &this.data.display;
         // Registers flow into two columns like the tao viewer:
         // the kernel order is kept, the view only halves the list.
         let reg_lines: Vec<&str> = display.regs.lines().collect();
@@ -932,7 +1013,9 @@ impl DebuggerWindowCore {
             None => "freeze: none".to_string(),
         };
         this.freeze_label.set_label(&freeze_text);
+    }
 
+    fn rebuild_bookmarks(win: &DebuggerWindow, this: &DebuggerWindowCore) {
         clear_list(&this.bookmark_list);
         for (addr, label) in &this.data.bookmarks {
             let row = gtk::ListBoxRow::new();
@@ -951,11 +1034,6 @@ impl DebuggerWindowCore {
             hbox.append(&delete);
             row.set_child(Some(&hbox));
             this.bookmark_list.append(&row);
-        }
-
-        // The PPU viewer follows the same refresh (panels included).
-        if let Some(ppu) = this.ppu_window.as_ref() {
-            ppu.borrow_mut().sync(&display.images, &display.panels);
         }
     }
 }

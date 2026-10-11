@@ -383,7 +383,9 @@ impl SessionHandle {
         dis_addr: Option<u32>,
         need_images: bool,
     ) -> debug_vm::DebugSnapshot {
-        use nerust_core_traits::debugger::InspectRequest;
+        use nerust_core_traits::debugger::{
+            DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, InspectRequest,
+        };
         let mut snapshot = debug_vm::DebugSnapshot::default();
         let core = match self.emu_core.as_ref() {
             Some(core) => core,
@@ -392,7 +394,7 @@ impl SessionHandle {
         let inspected = match core.inspect(InspectRequest {
             space,
             addr: space.map(|_| mem_addr),
-            rows: 8,
+            rows: DEBUG_DUMP_PAGE_ROWS,
         }) {
             Ok(Ok(result)) => result,
             Ok(Err(_)) | Err(_) => return snapshot,
@@ -413,7 +415,7 @@ impl SessionHandle {
         };
         snapshot.pc = anchor;
         snapshot.disasm_lines = match anchor {
-            Some(addr) => match core.disassemble(addr, 8) {
+            Some(addr) => match core.disassemble(addr, DEBUG_DISASM_ROWS) {
                 Ok(Ok(rows)) => rows,
                 _ => Vec::new(),
             },

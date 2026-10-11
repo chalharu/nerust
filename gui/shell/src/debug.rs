@@ -117,17 +117,16 @@ impl SessionHandle {
         if state_changing {
             self.debug_note_traffic(true);
         }
-        // Row selection reads the old byte for the selection display.
+        // Row selection prepares the transaction and reports the old
+        // byte for the selection display in one read: `prepare`
+        // already returns it, so no second inspect crosses here.
         let mut reselected = None;
         for action in actions {
             if let DebugAction::SelectRow(addr) = action {
                 let old = input
                     .space
-                    .and_then(|space| self.debug_read_byte(space, *addr));
+                    .and_then(|space| self.debug_prepare_write(space, *addr));
                 reselected = Some((*addr, old));
-                if let Some(space) = input.space {
-                    self.debug_prepare_write(space, *addr);
-                }
             }
             if let DebugAction::EditStage(value) = action {
                 self.debug_stage_write(*value);

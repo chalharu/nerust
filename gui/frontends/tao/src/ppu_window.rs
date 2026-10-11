@@ -64,6 +64,20 @@ pub(crate) struct PpuState {
     scaled: Mutex<Vec<(String, u32, u32, Vec<u8>)>>,
     panels_cache: Mutex<String>,
     hover_cache: Mutex<String>,
+    /// Hash of the source images behind `scaled`. Sync re-derives
+    /// only when the bytes actually change: drains while paused
+    /// re-run Sync with identical memory.
+    source_hash: Mutex<u64>,
+}
+
+/// Content hash over source images (labels, sizes, bytes). 8 bytes
+/// of retained state instead of a second 512KB copy.
+fn source_images_hash(images: &[(String, u32, u32, Vec<u8>)]) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    images.hash(&mut hasher);
+    hasher.finish()
 }
 
 pub(crate) struct PpuProgram {
@@ -104,6 +118,7 @@ impl Program for PpuProgram {
                 scaled: Mutex::new(Vec::new()),
                 panels_cache: Mutex::new(String::new()),
                 hover_cache: Mutex::new(String::new()),
+                source_hash: Mutex::new(0),
             },
             Task::none(),
         )
@@ -119,16 +134,21 @@ impl Program for PpuProgram {
             }
             PpuMessage::Sync => {
                 let display = bridge.display.lock().unwrap();
-                let mut scaled = Vec::with_capacity(display.images.len());
-                for (label, width, height, rgba) in &display.images {
-                    scaled.push((
-                        label.clone(),
-                        width * 2,
-                        height * 2,
-                        scale2x_nearest(rgba, *width, *height),
-                    ));
+                let hash = source_images_hash(&display.images);
+                let mut source_hash = state.source_hash.lock().unwrap();
+                if *source_hash != hash {
+                    let mut scaled = Vec::with_capacity(display.images.len());
+                    for (label, width, height, rgba) in &display.images {
+                        scaled.push((
+                            label.clone(),
+                            width * 2,
+                            height * 2,
+                            scale2x_nearest(rgba, *width, *height),
+                        ));
+                    }
+                    *state.scaled.lock().unwrap() = scaled;
+                    *source_hash = hash;
                 }
-                *state.scaled.lock().unwrap() = scaled;
                 *state.panels_cache.lock().unwrap() = display.panels.clone();
             }
         }

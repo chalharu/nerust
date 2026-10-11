@@ -44,7 +44,12 @@ static GBC_SPACES: [SpaceInfo; 1] = [SpaceInfo {
 }];
 
 /// Validated GBC memory-space table.
-pub(crate) static GBC_SPACE_TABLE: SpaceTable = SpaceTable::build(&GBC_SPACES);
+///
+/// ROM is not pokeable: a CPU store there drives MBC commands. The
+/// window lives in the table so the write gate and the UI read the
+/// same data.
+pub(crate) static GBC_SPACE_TABLE: SpaceTable =
+    SpaceTable::build_with_read_only(&GBC_SPACES, &[(SPACE_MEMORY, 0x0000, 0x7FFF)]);
 
 /// GBC observer.
 ///

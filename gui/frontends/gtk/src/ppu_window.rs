@@ -14,6 +14,21 @@ pub(crate) type PpuWindow = Rc<RefCell<PpuWindowCore>>;
 pub(crate) struct PpuWindowCore {
     images_box: gtk::Box,
     hover_label: gtk::Label,
+    /// Hash of the last synced `(images, panels)`. Refresh drains
+    /// re-run sync with identical bytes while paused; the 2x scale
+    /// and widget rebuild run only on change.
+    last_hash: u64,
+}
+
+/// Content hash over source images and panels: 8 bytes of retained
+/// state instead of a second copy of the pixels.
+fn sync_hash(images: &[(String, u32, u32, Vec<u8>)], panels: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    images.hash(&mut hasher);
+    panels.hash(&mut hasher);
+    hasher.finish()
 }
 
 impl PpuWindowCore {
@@ -53,6 +68,7 @@ impl PpuWindowCore {
         let result = Rc::new(RefCell::new(Self {
             images_box,
             hover_label,
+            last_hash: 0,
         }));
         result.borrow_mut().sync(&images, &panels);
         window.present();
@@ -60,9 +76,14 @@ impl PpuWindowCore {
     }
 
     /// Re-derive scaled pictures from fresh images (one 2x scale per
-    /// refresh). Empty images show an explicit degenerate, never a
-    /// blank window.
+    /// change). Empty images show an explicit degenerate, never a
+    /// blank window. Unchanged content skips the rebuild entirely.
     pub(crate) fn sync(&mut self, images: &[(String, u32, u32, Vec<u8>)], panels: &str) {
+        let hash = sync_hash(images, panels);
+        if hash == self.last_hash {
+            return;
+        }
+        self.last_hash = hash;
         while let Some(child) = self.images_box.first_child() {
             self.images_box.remove(&child);
         }

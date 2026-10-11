@@ -62,6 +62,11 @@ pub enum SpaceError {
         id: SpaceId,
         index: usize,
     },
+    /// A `read_only` window names an unknown space, is empty, or
+    /// escapes its space's range.
+    ReadOnlyOutOfRange {
+        space: SpaceId,
+    },
 }
 
 /// Verify that a space list is sorted, disjoint, and id/index consistent.
@@ -95,14 +100,33 @@ pub fn validate_spaces(spaces: &[SpaceInfo]) -> Result<(), SpaceError> {
 /// Static address-space table. The address map is fixed per machine and
 /// never changes across load/unload, so the table is a `&'static` slice:
 /// no allocation, no ownership, no lifetime management.
+///
+/// Write refusal is table data, not backend branches: `entries` carry
+/// the space-level capability while `read_only` lists hardware windows
+/// (BIOS, ROM) where stores vanish, as `(space, start, end)` inclusive.
+/// `SpaceInfo.access` stays honest — a `ReadWrite` space with
+/// read-only windows is still writable elsewhere — and generic
+/// consumers check exact writability with [`SpaceTable::check_write`]
+/// instead of trusting `access` alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpaceTable {
     pub entries: &'static [SpaceInfo],
+    pub read_only: &'static [(SpaceId, u32, u32)],
 }
 
 impl SpaceTable {
     pub const fn build(entries: &'static [SpaceInfo]) -> Self {
-        Self { entries }
+        Self {
+            entries,
+            read_only: &[],
+        }
+    }
+
+    pub const fn build_with_read_only(
+        entries: &'static [SpaceInfo],
+        read_only: &'static [(SpaceId, u32, u32)],
+    ) -> Self {
+        Self { entries, read_only }
     }
 
     /// Return the space for `id`, checking id/index consistency.
@@ -113,7 +137,16 @@ impl SpaceTable {
 
     /// Sortedness / disjointness check. Call from each core's unit test.
     pub fn validate(&self) -> Result<(), SpaceError> {
-        validate_spaces(self.entries)
+        validate_spaces(self.entries)?;
+        for (space, start, end) in self.read_only {
+            let info = self
+                .get(*space)
+                .ok_or(SpaceError::ReadOnlyOutOfRange { space: *space })?;
+            if start > end || *start < *info.range.start() || *end > *info.range.end() {
+                return Err(SpaceError::ReadOnlyOutOfRange { space: *space });
+            }
+        }
+        Ok(())
     }
 
     /// `width` is 1, 2, or 4. Zero is invalid.
@@ -137,6 +170,38 @@ impl SpaceTable {
             }
             _ => false,
         }
+    }
+
+    /// Write-side validation in load-bearing order: `BadWidth`, then
+    /// `UnknownSpace`, then `UnmappedAddress`, then `ReadOnlySpace`.
+    /// The single home of the refusal rules so the three backends
+    /// cannot diverge: every `DebugControl::write_memory` starts here.
+    ///
+    /// A write touching a `read_only` window refuses even when it
+    /// starts outside: straddling stores would half-land on hardware,
+    /// so refusing loudly is the honest answer.
+    pub fn check_write(&self, space: SpaceId, addr: u32, width: u8) -> Result<(), DebuggerError> {
+        if !Self::width_is_valid(width) {
+            return Err(DebuggerError::BadWidth(width));
+        }
+        let info = self.get(space).ok_or(DebuggerError::UnknownSpace(space))?;
+        if !self.covers(space, addr, width) {
+            return Err(DebuggerError::UnmappedAddress { space, addr });
+        }
+        if info.access == SpaceAccess::ReadOnly {
+            return Err(DebuggerError::ReadOnlySpace(space));
+        }
+        // `covers` pinned `addr + width - 1` without overflow, so the
+        // recomputation cannot wrap.
+        let end = addr + u32::from(width) - 1;
+        if self
+            .read_only
+            .iter()
+            .any(|(s, start, stop)| *s == space && addr <= *stop && end >= *start)
+        {
+            return Err(DebuggerError::ReadOnlySpace(space));
+        }
+        Ok(())
     }
 }
 
@@ -189,7 +254,12 @@ pub trait Debugger {
 
     /// Name → value register list, borrowed, zero allocation.
     ///
-    /// Contract: names in ascending order, so presentation never sorts.
+    /// Contract: the order is backend-defined and stable across
+    /// snapshots, so presentation never sorts. Backends use ascending
+    /// architectural order where the architecture has one (GBC, NES);
+    /// GBA deliberately leads with `cpsr` and omits a `pc` alias
+    /// (`r15` is the anchor). Anchoring never goes through this list:
+    /// use [`Debugger::program_counter`] instead of name-scanning.
     fn registers(&self) -> &[(&'static str, u64)];
 
     /// System-specific observation tables. Not called per frame.
@@ -332,6 +402,11 @@ pub fn rgb555_to_rgb888(value: u16) -> [u8; 3] {
 pub const MAX_DUMP_BYTES: usize = 4096;
 pub const DEFAULT_DUMP_ROWS: u16 = 32;
 pub const DUMP_ROW_BYTES: usize = 16;
+
+/// One debugger drain's page sizes. The drain fetches a full page plus
+/// a disassembly window; single-byte reads use `rows: 1` directly.
+pub const DEBUG_DUMP_PAGE_ROWS: u16 = 8;
+pub const DEBUG_DISASM_ROWS: u16 = 8;
 
 /// Per-frame published observation. Holds results only — staleness and
 /// last-error tracking live in the application layer.
@@ -555,6 +630,63 @@ mod tests {
     }
 
     #[test]
+    fn check_write_orders_refusals_and_honors_read_only_windows() {
+        static ENTRIES: [SpaceInfo; 2] = [
+            SpaceInfo {
+                id: SpaceId(0),
+                key: "wram",
+                name: "WRAM",
+                address_bits: 13,
+                range: 0x0000..=0x1FFF,
+                access: SpaceAccess::ReadWrite,
+            },
+            SpaceInfo {
+                id: SpaceId(1),
+                key: "rom",
+                name: "ROM",
+                address_bits: 13,
+                range: 0x2000..=0x3FFF,
+                access: SpaceAccess::ReadOnly,
+            },
+        ];
+        static READ_ONLY: [(SpaceId, u32, u32); 1] = [(SpaceId(0), 0x0000, 0x00FF)];
+        let table = SpaceTable::build_with_read_only(&ENTRIES, &READ_ONLY);
+        assert!(table.validate().is_ok());
+        // Load-bearing order: bad width first, so it never masks as
+        // an unknown space.
+        assert_eq!(
+            table.check_write(SpaceId(9), 0x0100, 0),
+            Err(DebuggerError::BadWidth(0))
+        );
+        assert_eq!(
+            table.check_write(SpaceId(9), 0x0100, 1),
+            Err(DebuggerError::UnknownSpace(SpaceId(9)))
+        );
+        assert_eq!(
+            table.check_write(SpaceId(0), 0x2000, 1),
+            Err(DebuggerError::UnmappedAddress {
+                space: SpaceId(0),
+                addr: 0x2000
+            })
+        );
+        // Whole-space refusal, then window refusal.
+        assert_eq!(
+            table.check_write(SpaceId(1), 0x2000, 1),
+            Err(DebuggerError::ReadOnlySpace(SpaceId(1)))
+        );
+        assert_eq!(
+            table.check_write(SpaceId(0), 0x0010, 1),
+            Err(DebuggerError::ReadOnlySpace(SpaceId(0)))
+        );
+        // A write straddling a window refuses instead of half-landing.
+        assert_eq!(
+            table.check_write(SpaceId(0), 0x00FE, 4),
+            Err(DebuggerError::ReadOnlySpace(SpaceId(0)))
+        );
+        assert_eq!(table.check_write(SpaceId(0), 0x0100, 4), Ok(()));
+    }
+
+    #[test]
     fn validate_spaces_rejects_overlap_disorder_gaps_and_ghosts() {
         let ok = [
             SpaceInfo {
@@ -611,6 +743,28 @@ mod tests {
                 id: SpaceId(7),
                 index: 1
             })
+        );
+    }
+
+    #[test]
+    fn validate_rejects_escaping_read_only_windows() {
+        static ENTRIES: [SpaceInfo; 1] = [SpaceInfo {
+            id: SpaceId(0),
+            key: "wram",
+            name: "WRAM",
+            address_bits: 13,
+            range: 0x0000..=0x1FFF,
+            access: SpaceAccess::ReadWrite,
+        }];
+        static ESCAPING: [(SpaceId, u32, u32); 1] = [(SpaceId(0), 0x1000, 0x2000)];
+        static GHOST: [(SpaceId, u32, u32); 1] = [(SpaceId(9), 0x0010, 0x001F)];
+        assert_eq!(
+            SpaceTable::build_with_read_only(&ENTRIES, &ESCAPING).validate(),
+            Err(SpaceError::ReadOnlyOutOfRange { space: SpaceId(0) })
+        );
+        assert_eq!(
+            SpaceTable::build_with_read_only(&ENTRIES, &GHOST).validate(),
+            Err(SpaceError::ReadOnlyOutOfRange { space: SpaceId(9) })
         );
     }
 }
