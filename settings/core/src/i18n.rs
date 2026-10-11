@@ -66,6 +66,7 @@ pub enum UiText {
     CapturePrompt,
     InvalidCustomStorageDirectory,
     Debugger,
+    OpenDebugger,
     StepFrame,
     StepInstr,
     PpuViewer,
@@ -102,6 +103,17 @@ pub enum UiText {
     NoImages,
     Panels,
     HoverTile,
+    WriteNeedsSelection,
+    FreezeNeedsSelection,
+    WatchNeedsSelection,
+    RegisterNeedsSelection,
+    BackEmpty,
+    BookmarkFull,
+    FreezeCleared,
+    NoCore,
+    NothingToWrite,
+    PausedState,
+    RunningState,
 }
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
@@ -193,6 +205,7 @@ fn english_text(key: UiText) -> &'static str {
             "The custom storage directory must exist or be creatable."
         }
         UiText::Debugger => "Debugger",
+        UiText::OpenDebugger => "Open Debugger (F4)",
         UiText::StepFrame => "Step Frame",
         UiText::StepInstr => "Step Instr",
         UiText::PpuViewer => "PPU Viewer",
@@ -229,6 +242,17 @@ fn english_text(key: UiText) -> &'static str {
         UiText::NoImages => "(no images)",
         UiText::Panels => "Panels",
         UiText::HoverTile => "hover a tile",
+        UiText::WriteNeedsSelection => "write needs a selection",
+        UiText::FreezeNeedsSelection => "freeze needs a selected row and hex byte",
+        UiText::WatchNeedsSelection => "watch needs a selection",
+        UiText::RegisterNeedsSelection => "register write needs a register",
+        UiText::BackEmpty => "back stack is empty",
+        UiText::BookmarkFull => "bookmark list full",
+        UiText::FreezeCleared => "freeze cleared",
+        UiText::NoCore => "no core",
+        UiText::NothingToWrite => "nothing to write",
+        UiText::PausedState => "paused",
+        UiText::RunningState => "running",
     }
 }
 
@@ -300,6 +324,7 @@ fn japanese_text(key: UiText) -> &'static str {
             "任意の保存先フォルダは存在するか作成可能である必要があります。"
         }
         UiText::Debugger => "デバッガ",
+        UiText::OpenDebugger => "デバッガを開く (F4)",
         UiText::StepFrame => "フレーム実行",
         UiText::StepInstr => "命令実行",
         UiText::PpuViewer => "PPUビューア",
@@ -336,5 +361,158 @@ fn japanese_text(key: UiText) -> &'static str {
         UiText::NoImages => "(画像なし)",
         UiText::Panels => "パネル",
         UiText::HoverTile => "タイルにホバー",
+        UiText::WriteNeedsSelection => "書込には行選択が必要",
+        UiText::FreezeNeedsSelection => "フリーズには行選択と16進バイトが必要",
+        UiText::WatchNeedsSelection => "ウォッチには行選択が必要",
+        UiText::RegisterNeedsSelection => "レジスタ書込にはレジスタ選択が必要",
+        UiText::BackEmpty => "戻る履歴がありません",
+        UiText::BookmarkFull => "ブックマークが上限です",
+        UiText::FreezeCleared => "フリーズを解除しました",
+        UiText::NoCore => "コアなし",
+        UiText::NothingToWrite => "書込内容がありません",
+        UiText::PausedState => "一時停止中",
+        UiText::RunningState => "実行中",
+    }
+}
+
+/// Parameterized debugger messages. `text()` covers fixed labels;
+/// these carry addresses, values, and error detail, so one helper
+/// per message keeps both languages side by side instead of
+/// scattering `format!` across the frontends.
+pub fn parse_failed(language: AppLanguage, input: &str) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("解析失敗: {input}"),
+        _ => format!("parse failed: {input}"),
+    }
+}
+
+/// Selected dump row (`was ??` when the old byte is unreadable).
+pub fn selected_row(language: AppLanguage, addr: u32, old: Option<u8>) -> String {
+    let old_text = match old {
+        Some(old) => format!("{old:02X}"),
+        None => "??".to_string(),
+    };
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("選択 {addr:08X} (元 {old_text})"),
+        _ => format!("Selected {addr:08X} (was {old_text})"),
+    }
+}
+
+/// Confirm-row text for a fully staged write.
+pub fn pending_write(language: AppLanguage, addr: u32, old: Option<u8>, value: u64) -> String {
+    let old_text = match old {
+        Some(old) => format!("{old:02X}"),
+        None => "??".to_string(),
+    };
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("{addr:08X} に {value:02X} を書込 (元 {old_text})?"),
+        _ => format!("write {value:02X} to {addr:08X} (was {old_text})?"),
+    }
+}
+
+/// Committed single-byte memory write.
+pub fn wrote_memory(language: AppLanguage, addr: u32, value: u64) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("{addr:08X} に {value:02X} を書込済 (幅1)"),
+        _ => format!("wrote {value:02X} to {addr:08X} (width 1)"),
+    }
+}
+
+/// Committed register write.
+pub fn register_wrote(language: AppLanguage, name: &str, value: u64) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("レジスタ {name} に {value:04X} を書込済"),
+        _ => format!("wrote {value:04X} to register {name}"),
+    }
+}
+
+/// Domain-side refusal (`{detail:?}` at the call site).
+pub fn write_refused(language: AppLanguage, detail: &str) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("書込拒否: {detail}"),
+        _ => format!("write refused: {detail}"),
+    }
+}
+
+/// Domain-side register refusal.
+pub fn register_refused(language: AppLanguage, detail: &str) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("レジスタ書込拒否: {detail}"),
+        _ => format!("register write refused: {detail}"),
+    }
+}
+
+/// Emu-thread transport failure.
+pub fn thread_failed(language: AppLanguage, detail: &str) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("スレッドエラー: {detail}"),
+        _ => format!("thread failed: {detail}"),
+    }
+}
+
+/// Successful step (`stepped N`).
+pub fn stepped(language: AppLanguage, count: u64) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("ステップ実行 {count}"),
+        _ => format!("stepped {count}"),
+    }
+}
+
+/// Failed step.
+pub fn step_failed(language: AppLanguage, detail: &str) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("ステップ失敗: {detail}"),
+        _ => format!("step failed: {detail}"),
+    }
+}
+
+/// Failed pause.
+pub fn pause_failed(language: AppLanguage, detail: &str) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("一時停止失敗: {detail}"),
+        _ => format!("pause failed: {detail}"),
+    }
+}
+
+/// Failed resume.
+pub fn resume_failed(language: AppLanguage, detail: &str) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("再開失敗: {detail}"),
+        _ => format!("resume failed: {detail}"),
+    }
+}
+
+/// Applied freeze (`frozen {addr}={value}`).
+pub fn frozen(language: AppLanguage, addr: u32, value: u8) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("フリーズ {addr:08X}={value:02X}"),
+        _ => format!("frozen {addr:08X}={value:02X}"),
+    }
+}
+
+/// Live watch readout (`= ??` when unreadable).
+pub fn watch_value(language: AppLanguage, addr: u32, value: Option<u8>) -> String {
+    let value_text = match value {
+        Some(value) => format!("{value:02X}"),
+        None => "??".to_string(),
+    };
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("ウォッチ {addr:08X} = {value_text}"),
+        _ => format!("watch {addr:08X} = {value_text}"),
+    }
+}
+
+/// Tile hover readout (`+{offset:04X}` is the tile-start byte offset).
+pub fn tile_hover(
+    language: AppLanguage,
+    label: &str,
+    idx: u32,
+    sx: u32,
+    sy: u32,
+    offset: u32,
+) -> String {
+    match resolve_language(language) {
+        AppLanguage::Japanese => format!("{label} タイル #{idx} (px {sx},{sy}, +{offset:04X})"),
+        _ => format!("{label} tile #{idx} (px {sx},{sy}, +{offset:04X})"),
     }
 }

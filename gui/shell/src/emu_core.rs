@@ -81,10 +81,12 @@ pub struct EmuCore {
 /// per fetch) while paused memory never changes, so repeats serve
 /// from here. Anything that advances or replaces memory — step,
 /// write, load/unload/reset/state import, or a running core —
-/// marks the cache dirty instead.
+/// marks the cache dirty instead. `generation` bumps on every dirty mark:
+/// PPU viewers compare generations instead of hashing megabytes.
 #[derive(Debug, Default)]
 struct CachedImages {
     dirty: bool,
+    generation: u64,
     images: Vec<DebugImage>,
 }
 
@@ -110,6 +112,7 @@ impl EmuCore {
             metrics,
             image_cache: Mutex::new(CachedImages {
                 dirty: true,
+                generation: 0,
                 images: Vec::new(),
             }),
         }
@@ -172,6 +175,7 @@ impl EmuCore {
                 })),
                 image_cache: Mutex::new(CachedImages {
                     dirty: true,
+                    generation: 0,
                     images: Vec::new(),
                 }),
             },
@@ -321,9 +325,11 @@ impl EmuCore {
 
     /// Mark cached system images stale. Called by every path that
     /// advances or replaces memory; the next `debug_images` refetches.
+    /// The generation bumps so viewers can compare generations.
     fn mark_images_dirty(&self) {
         if let Ok(mut cache) = self.image_cache.lock() {
             cache.dirty = true;
+            cache.generation = cache.generation.wrapping_add(1);
         }
     }
 
@@ -453,11 +459,15 @@ impl EmuCore {
     /// contract as [`EmuCore::disassemble`], plus a pause-frozen
     /// cache: repeats while paused serve the stored decode, so page
     /// and refresh drains skip the tile re-read. A running core
-    /// advances memory at any time and always refetches.
+    /// advances memory at any time and always refetches. Returns the
+    /// source generation with the pixels: viewers skip re-deriving
+    /// when the generation they already show comes back.
     pub fn debug_images(
         &self,
-    ) -> Result<Result<Vec<nerust_core_traits::debugger::DebugImage>, DebuggerError>, OperationError>
-    {
+    ) -> Result<
+        Result<(u64, Vec<nerust_core_traits::debugger::DebugImage>), DebuggerError>,
+        OperationError,
+    > {
         if !self.metrics().paused {
             self.mark_images_dirty();
         }
@@ -466,22 +476,29 @@ impl EmuCore {
             .lock()
             .ok()
             .filter(|cache| !cache.dirty && !cache.images.is_empty())
-            .map(|cache| cache.images.clone());
-        if let Some(images) = cached {
-            return Ok(Ok(images));
+            .map(|cache| (cache.generation, cache.images.clone()));
+        if let Some((generation, images)) = cached {
+            return Ok(Ok((generation, images)));
         }
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::DebuggerImages { reply: reply_tx })
             .map_err(|_| OperationError::WorkerUnavailable)?;
         let result = reply_rx.recv().map_err(|_| OperationError::NoReply);
-        if let Ok(Ok(images)) = &result
-            && let Ok(mut cache) = self.image_cache.lock()
-        {
-            cache.images.clone_from(images);
-            cache.dirty = false;
-        }
-        result
+        let images = match result {
+            Ok(Ok(images)) => images,
+            Ok(Err(error)) => return Ok(Err(error)),
+            Err(_) => return Err(OperationError::NoReply),
+        };
+        // Poison recovery mirrors `metrics()`: a poisoned cache still
+        // serves this decode instead of failing the viewer.
+        let mut cache = self.image_cache.lock().unwrap_or_else(|e| {
+            log::warn!("image cache mutex poisoned, recovering");
+            e.into_inner()
+        });
+        cache.images.clone_from(&images);
+        cache.dirty = false;
+        Ok(Ok((cache.generation, images)))
     }
 
     /// On-demand program counter through the emu thread. Ungated (a

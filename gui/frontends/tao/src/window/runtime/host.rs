@@ -5,7 +5,9 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_gui_settings::{app_state::RememberedWindowSize, input::ShortcutAction};
+use nerust_gui_settings::{
+    app_state::RememberedWindowSize, input::ShortcutAction, language::AppLanguage,
+};
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
@@ -244,7 +246,7 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Debugger => {
-                self.open_debug_windows(event_loop);
+                self.open_debug_windows(event_loop, false);
                 HostAction::None
             }
             MenuCommand::Session(command) => {
@@ -523,7 +525,15 @@ impl HostState {
     /// draining `[Pause, Refresh]` keeps one phase order for every
     /// path. Pause must precede the paused-gated inspect, and the
     /// drain runs them in order.
-    pub(crate) fn open_debug_windows(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+    ///
+    /// `focus_ppu` serves the toolbar PPU-viewer button: an already
+    /// open viewer takes focus instead of staying buried. The F4
+    /// path passes `false` so the debugger keeps focus.
+    pub(crate) fn open_debug_windows(
+        &mut self,
+        event_loop: &EventLoopWindowTarget<UserEvent>,
+        focus_ppu: bool,
+    ) {
         use nerust_gui_shell::debug::DebugAction;
         if self.debug_window.is_none() {
             let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> = self
@@ -576,6 +586,10 @@ impl HostState {
                 }
                 None => log::error!("failed to open PPU viewer window"),
             }
+        } else if focus_ppu && let Some(ppu) = self.ppu_window.as_ref() {
+            // Second and later presses: the viewer exists, so take
+            // focus instead of no-op.
+            ppu.window.set_focus();
         }
     }
 
@@ -636,6 +650,11 @@ impl HostState {
             reg_target,
             prev_dump_rows: &prev_rows,
             need_images,
+            language: self
+                .debug_window
+                .as_ref()
+                .map(|handle| handle.bridge.language)
+                .unwrap_or(AppLanguage::SystemDefault),
         };
         let output = self.session.debug_drain(requests, &input);
         if let Some(handle) = self.debug_window.as_mut() {
