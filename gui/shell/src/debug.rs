@@ -27,6 +27,9 @@ pub enum DebugAction {
     EditStage(u64),
     EditCancel,
     WriteConfirm,
+    /// Write a parsed value into the selected register
+    /// ([`DebugDrainInput::reg_target`]).
+    RegisterWrite(u64),
 }
 
 /// Frontend-owned state the drain reads but never stores.
@@ -39,6 +42,8 @@ pub struct DebugDrainInput<'a> {
     pub dis_addr: Option<u32>,
     /// Watched address for the read-only live value.
     pub watch: Option<u32>,
+    /// Selected register for [`DebugAction::RegisterWrite`].
+    pub reg_target: Option<&'static str>,
     /// Frozen `(address, value)` re-applied every batch.
     pub freeze: Option<(u32, u8)>,
     /// Previous dump rows for `*` diff marks.
@@ -95,8 +100,12 @@ impl SessionHandle {
                     self.debug_step(StepUnit::Instruction)
                 }
                 // Transaction traffic never kills: it builds the
-                // transaction this batch consumes.
-                DebugAction::EditStage(_) | DebugAction::EditCancel | DebugAction::WriteConfirm => {
+                // transaction this batch consumes. Register writes
+                // execute below; they carry no transaction state.
+                DebugAction::EditStage(_)
+                | DebugAction::EditCancel
+                | DebugAction::WriteConfirm
+                | DebugAction::RegisterWrite(_) => {
                     continue;
                 }
             };
@@ -108,6 +117,11 @@ impl SessionHandle {
                 DebugAction::EditCancel => self.debug_clear_write(),
                 DebugAction::WriteConfirm => {
                     status = self.debug_commit_write();
+                }
+                DebugAction::RegisterWrite(value) => {
+                    if let Some(name) = input.reg_target {
+                        status = self.debug_write_register(name, *value);
+                    }
                 }
                 _ => {}
             }
@@ -165,6 +179,8 @@ impl SessionHandle {
             panels: snapshot.panels,
             images: snapshot.images,
             watch_value,
+            paused: self.debug_paused(),
+            reg_names: snapshot.reg_names,
             status,
             pending_text,
         };

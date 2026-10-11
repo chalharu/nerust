@@ -514,6 +514,28 @@ impl EmuCore {
         result
     }
 
+    /// Register edit through the emu thread. Same pause-ungated
+    /// contract as [`EmuCore::write_memory`].
+    pub fn write_register(
+        &self,
+        name: &'static str,
+        value: u64,
+    ) -> Result<Result<(), DebuggerError>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::WriteRegister {
+                name,
+                value,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        let result = reply_rx.recv().map_err(|_| OperationError::NoReply);
+        if matches!(result, Ok(Ok(()))) {
+            self.mark_images_dirty();
+        }
+        result
+    }
+
     /// Install a nominal-audio tap: every rendered frame clones its
     /// caller-buffer samples into `tap`. Headless capture only.
     pub fn tap_nominal_audio(

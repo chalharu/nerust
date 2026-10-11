@@ -135,6 +135,9 @@ impl EmuThread {
                             EmuCommand::WriteMemory { reply, .. } => {
                                 let _ = reply.send(Err(DebuggerError::Unsupported));
                             }
+                            EmuCommand::WriteRegister { reply, .. } => {
+                                let _ = reply.send(Err(DebuggerError::Unsupported));
+                            }
                             EmuCommand::TapNominalAudio { tap, reply } => {
                                 nominal_tap = Some(tap);
                                 let _ = reply.send(());
@@ -304,6 +307,14 @@ impl EmuThread {
                                 None => Err(DebuggerError::Unsupported),
                             };
                             // reply send failure: receiver dropped (timeout/abort) — expected
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::WriteRegister { name, value, reply } => {
+                            // Same pause-ungated contract as WriteMemory.
+                            let result = match core.debug_control() {
+                                Some(mut control) => control.write_register(name, value),
+                                None => Err(DebuggerError::Unsupported),
+                            };
                             let _ = reply.send(result);
                         }
                         EmuCommand::TapNominalAudio { tap, reply } => {

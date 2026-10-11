@@ -368,6 +368,25 @@ impl DebugControl for GbaDebugControl<'_> {
         }
         Ok(())
     }
+
+    fn write_register(&mut self, name: &str, value: u64) -> Result<(), DebuggerError> {
+        let loaded = self
+            .console
+            .loaded
+            .as_mut()
+            .ok_or(DebuggerError::Unsupported)?;
+        // Disjoint borrows: the CPU poke refills through the bus for
+        // r15/cpsr (pipeline discipline lives in the CPU).
+        let system = &mut loaded.system;
+        if system
+            .cpu
+            .debug_write_register(&mut system.bus, name, value as u32)
+        {
+            Ok(())
+        } else {
+            Err(DebuggerError::Unsupported)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -932,6 +951,26 @@ mod tests {
         drop(boxed);
         let debugger = console.debugger().expect("debugger");
         assert_eq!(debugger.read(SPACE_MEMORY, 0x02000010, 1), Some(0xA5));
+    }
+
+    #[test]
+    fn gba_register_write_roundtrips_and_refuses_unknown() {
+        let mut console = load_console();
+        {
+            let mut boxed: Box<dyn DebugControl + '_> =
+                Box::new(GbaDebugControl::new(&mut console));
+            boxed.write_register("r0", 0x12345678).expect("r0 write");
+            boxed.write_register("cpsr", 0x1F).expect("cpsr write");
+            assert_eq!(
+                boxed.write_register("bogus", 0),
+                Err(DebuggerError::Unsupported)
+            );
+        }
+        let debugger = console.debugger().expect("debugger");
+        let regs: std::collections::HashMap<&str, u64> =
+            debugger.registers().iter().copied().collect();
+        assert_eq!(regs["r0"], 0x12345678);
+        assert_eq!(regs["cpsr"] & 0xFF, 0x1F);
     }
 
     #[test]

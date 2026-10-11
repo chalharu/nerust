@@ -189,6 +189,15 @@ pub enum EmuCommand {
         req: debugger::MemoryWrite,
         reply: Sender<Result<(), debugger::DebuggerError>>,
     },
+    /// Register edit through the control path. `name` is one of the
+    /// backend's register names (`&'static str` travels the channel
+    /// without allocation). Same pause-ungated contract as
+    /// [`EmuCommand::WriteMemory`].
+    WriteRegister {
+        name: &'static str,
+        value: u64,
+        reply: Sender<Result<(), debugger::DebuggerError>>,
+    },
     /// Install a nominal-audio tap: every rendered frame clones its
     /// caller-buffer samples into `tap`. Headless capture only; the
     /// session audio transport is unaffected.

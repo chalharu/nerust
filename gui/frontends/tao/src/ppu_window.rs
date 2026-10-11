@@ -37,7 +37,7 @@ use crate::tao_conversions::{convert_tao_window_event, default_font};
 /// Initial PPU viewer window size (verified Xvfb fit).
 pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
 
-use nerust_gui_viewmodel::debugger::{PPU_HOVER_HINT, scale2x_nearest};
+use nerust_gui_viewmodel::debugger::scale2x_nearest;
 
 /// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
 /// tile start (+16 per tile). Generic geometry, no per-system branch.
@@ -161,15 +161,17 @@ impl Program for PpuProgram {
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::widget::{column, image, mouse_area, scrollable, text};
+        use nerust_settings_core::i18n::{UiText, text as ui_text};
         // Single coherent capture; scaled bytes come from the Sync
         // cache, never re-derived here.
+        let language = state.bridge.language;
         let scaled = state.scaled.lock().unwrap().clone();
         let panels = state.panels_cache.lock().unwrap().clone();
         let hover = state.hover_cache.lock().unwrap().clone();
         let mut content = column![
-            text("PPU Viewer").size(18),
+            text(ui_text(language, UiText::PpuViewer)).size(18),
             text(if hover.is_empty() {
-                PPU_HOVER_HINT.to_string()
+                ui_text(language, UiText::HoverTile).to_string()
             } else {
                 hover
             })
@@ -180,7 +182,7 @@ impl Program for PpuProgram {
         .padding(16)
         .width(Length::Fill);
         if scaled.is_empty() {
-            content = content.push(text("(no images)").size(14));
+            content = content.push(text(ui_text(language, UiText::NoImages)).size(14));
         }
         for (label, width, height, rgba) in &scaled {
             content = content.push(text(label.clone()).size(14));
@@ -192,8 +194,12 @@ impl Program for PpuProgram {
                 PpuMessage::Hovered(tile_hover_text(&hover_label, hover_w, hover_h, point))
             }));
         }
-        content = content.push(text("Panels").size(16));
-        content = content.push(text(panels).size(14).font(iced::Font::MONOSPACE));
+        // Systems without observation tables (GBA/GBC) show no
+        // Panels section at all instead of a puzzling marker.
+        if nerust_gui_viewmodel::debugger::panels_visible(&panels) {
+            content = content.push(text(ui_text(language, UiText::Panels)).size(16));
+            content = content.push(text(panels).size(14).font(iced::Font::MONOSPACE));
+        }
         scrollable(content)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -350,9 +356,11 @@ impl PpuWindowHandle {
         event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
+        use nerust_settings_core::i18n::{UiText, text as ui_text};
+        let language = bridge.language;
         let should_close = Arc::new(AtomicBool::new(false));
         let mut builder = WindowBuilder::new()
-            .with_title("PPU Viewer")
+            .with_title(ui_text(language, UiText::PpuViewer))
             .with_inner_size(tao::dpi::LogicalSize::new(
                 PPU_WINDOW_SIZE.0,
                 PPU_WINDOW_SIZE.1,
@@ -399,6 +407,9 @@ impl PpuWindowHandle {
             Arc::clone(&bridge),
         );
         window.request_redraw();
+        // The viewer opens on demand from the debugger toolbar: take
+        // focus so keyboard and wheel go straight to the tiles.
+        window.set_focus();
         Some(Self {
             window,
             window_id,

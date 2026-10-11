@@ -401,6 +401,7 @@ impl SessionHandle {
         };
         snapshot.available = true;
         snapshot.regs = debug_vm::format_registers(&inspected.registers);
+        snapshot.reg_names = inspected.registers.iter().map(|(name, _)| *name).collect();
         snapshot.dump_rows = debug_vm::format_dump_rows(&inspected.dump);
         snapshot.panels = debug_vm::format_panels(&inspected.panels);
         // Anchor without name-scanning: explicit pin wins, otherwise
@@ -473,6 +474,20 @@ impl SessionHandle {
             }),
             Ok(Ok(()))
         )
+    }
+
+    /// Single-register write for the register viewer. Status
+    /// strings follow the memory-commit shape.
+    pub fn debug_write_register(&self, name: &'static str, value: u64) -> String {
+        let core = match self.emu_core.as_ref() {
+            Some(core) => core,
+            None => return "no core".to_string(),
+        };
+        match core.write_register(name, value) {
+            Ok(Ok(())) => format!("wrote {value:04X} to register {name}"),
+            Ok(Err(error)) => format!("register write refused: {error:?}"),
+            Err(error) => format!("thread failed: {error:?}"),
+        }
     }
 
     /// Select a row: read the old byte and prepare the transaction,

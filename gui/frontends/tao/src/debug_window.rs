@@ -24,8 +24,10 @@ use iced_winit::{
     runtime::user_interface::{Cache, UserInterface},
 };
 use nerust_core_traits::debugger::{DUMP_ROW_BYTES, SpaceId};
+use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState};
+use nerust_settings_core::i18n::{UiText, text as ui_text};
 
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
@@ -52,8 +54,7 @@ pub(crate) enum DebugMessage {
     RefreshPressed,
     SpacePrev,
     SpaceNext,
-    PausePressed,
-    ResumePressed,
+    TogglePausePressed,
     StepFramePressed,
     StepInstrPressed,
     PpuOpenPressed,
@@ -81,6 +82,9 @@ pub(crate) enum DebugMessage {
     EditWrite,
     ConfirmWrite,
     CancelWrite,
+    RegSelected(&'static str),
+    RegInputChanged(String),
+    RegSet,
 }
 
 /// Shared bridge between the iced program and the host drain.
@@ -90,6 +94,8 @@ pub(crate) struct DebugBridge {
     pub(crate) nav: Mutex<NavState>,
     pub(crate) display: Mutex<DisplayCache>,
     pub(crate) spaces: Vec<(SpaceId, String, u32)>,
+    /// UI language snapshot at open time.
+    pub(crate) language: AppLanguage,
     pub(crate) bookmarks: Mutex<Vec<(u32, String)>>,
     pub(crate) bm_input: Mutex<String>,
     pub(crate) watch: Mutex<Option<u32>>,
@@ -98,6 +104,10 @@ pub(crate) struct DebugBridge {
     pub(crate) selected: Mutex<Option<(u32, Option<u8>)>>,
     /// New-value input for the two-phase write (Phase E).
     pub(crate) edit_input: Mutex<String>,
+    /// Register write target (kernel name) plus hex input. Mirrors
+    /// the memory edit row: pick a register, type a value, Set.
+    pub(crate) reg_target: Mutex<Option<&'static str>>,
+    pub(crate) reg_input: Mutex<String>,
     pub(crate) ppu_hover: Mutex<String>,
     pub(crate) outbox: Mutex<Vec<DebugAction>>,
     pub(crate) view_invalidated: AtomicBool,
@@ -112,11 +122,13 @@ impl DebugBridge {
         display: DisplayCache,
         spaces: Vec<(SpaceId, String, u32)>,
         mem_addr: u32,
+        language: AppLanguage,
     ) -> Self {
         Self {
             nav: Mutex::new(NavState::new(spaces.len(), mem_addr)),
             display: Mutex::new(display),
             spaces,
+            language,
             bookmarks: Mutex::new(Vec::new()),
             bm_input: Mutex::new(String::new()),
             watch: Mutex::new(None),
@@ -124,6 +136,8 @@ impl DebugBridge {
             freeze_input: Mutex::new(String::new()),
             selected: Mutex::new(None),
             edit_input: Mutex::new(String::new()),
+            reg_target: Mutex::new(None),
+            reg_input: Mutex::new(String::new()),
             ppu_hover: Mutex::new(String::new()),
             outbox: Mutex::new(Vec::new()),
             view_invalidated: AtomicBool::new(false),
@@ -314,6 +328,21 @@ fn edit_write(bridge: &DebugBridge) {
     }
 }
 
+/// Register write: the target rides in bridge state (picked by row
+/// click), the value parses as a full-width hex number; the backend
+/// masks to the register width.
+fn reg_set(bridge: &DebugBridge) {
+    let input = bridge.reg_input.lock().unwrap().trim().to_string();
+    let target = *bridge.reg_target.lock().unwrap();
+    match (target, vm::parse_hex_addr(&input)) {
+        (Some(_), Some(value)) => {
+            bridge.push(DebugAction::RegisterWrite(u64::from(value)));
+        }
+        (None, _) => bridge.set_status("register write needs a register".to_string()),
+        _ => bridge.set_status(format!("parse failed: {input}")),
+    }
+}
+
 impl Program for DebugProgram {
     type State = DebugState;
     type Message = DebugMessage;
@@ -356,8 +385,7 @@ impl Program for DebugProgram {
             DebugMessage::RefreshPressed => bridge.push(DebugAction::Refresh),
             DebugMessage::SpacePrev => cycle_space(bridge, -1),
             DebugMessage::SpaceNext => cycle_space(bridge, 1),
-            DebugMessage::PausePressed => bridge.push(DebugAction::Pause),
-            DebugMessage::ResumePressed => bridge.push(DebugAction::Resume),
+            DebugMessage::TogglePausePressed => bridge.push(DebugAction::TogglePause),
             DebugMessage::StepFramePressed => bridge.push(DebugAction::StepFrame),
             DebugMessage::StepInstrPressed => bridge.push(DebugAction::StepInstr),
             DebugMessage::PpuOpenPressed => {
@@ -427,6 +455,15 @@ impl Program for DebugProgram {
                 // Commit consumes the transaction; the input clears.
                 *bridge.edit_input.lock().unwrap() = String::new();
             }
+            DebugMessage::RegSelected(name) => {
+                *bridge.reg_target.lock().unwrap() = Some(name);
+                bridge.view_invalidated.store(true, Ordering::Release);
+            }
+            DebugMessage::RegInputChanged(text) => {
+                *bridge.reg_input.lock().unwrap() = text;
+                bridge.view_invalidated.store(true, Ordering::Release);
+            }
+            DebugMessage::RegSet => reg_set(bridge),
             DebugMessage::CancelWrite => {
                 bridge.push(DebugAction::EditCancel);
                 bridge.display.lock().unwrap().pending_text = None;
@@ -445,6 +482,7 @@ impl Program for DebugProgram {
         // Single coherent capture per rebuild; widgets read locals only.
         // Images stay out: the debugger view never renders them.
         let bridge = &state.bridge;
+        let language = bridge.language;
         let nav = bridge.nav.lock().unwrap().clone();
         let display = bridge.display.lock().unwrap().clone_without_images();
         let bookmarks = bridge.bookmarks.lock().unwrap().clone();
@@ -466,30 +504,40 @@ impl Program for DebugProgram {
         let follow_pc = nav.follow_pc();
         let back_len = nav.back_len();
         let watch_value = display.watch_value;
+        let paused = display.paused;
+        let anchor = bridge.anchor();
         // Button hierarchy: one primary per flow (the Phase E
         // Confirm), secondary for toolbar/nav, text for list rows
         // and escape actions.
-        let toolbar = view_toolbar();
+        let toolbar = view_toolbar(paused, language);
         // Settings form language: fixed label column + stepper.
-        let space_row = view_space_row(selected_name.as_deref().unwrap_or(""));
-        let mem_nav = view_mem_nav(&mem_input);
+        let space_row = view_space_row(selected_name.as_deref().unwrap_or(""), language);
+        let mem_nav = view_mem_nav(&mem_input, language);
         let dump_col = view_dump_col(&dump_rows, &diff, selected);
-        let regs_view = view_regs(&regs);
+        let reg_target = *bridge.reg_target.lock().unwrap();
+        let reg_input = bridge.reg_input.lock().unwrap().clone();
+        let regs_view =
+            view_regs_section(&regs, &display.reg_names, reg_target, &reg_input, language);
         // Two-phase write: select a dump row, type the new byte,
         // Write stages it, and the confirm row commits or cancels.
-        let edit_row = view_edit_row(selected, &edit_input);
+        let edit_row = view_edit_row(selected, &edit_input, language);
         // Confirm row: the one primary button in the window; Cancel is
         // a text escape. The drain owns the authoritative text.
-        let confirm_row = view_confirm_row(pending_text);
-        let dis_nav = view_dis_nav(follow_pc, back_len, &dis_input);
+        let confirm_row = view_confirm_row(pending_text, language);
+        let dis_nav = view_dis_nav(follow_pc, back_len, anchor, &dis_input, language);
         // Per-line disassembly: line click pins the anchor, the PC row
         // highlights, and structured targets offer follow buttons.
-        let dis_col = view_dis_col(&disasm_lines);
+        let dis_col = view_dis_col(&disasm_lines, language);
         // Cross-emulator canon: execution above disassembly on the
         // left, state on the right.
-        let left_col = column![text("Debugger").size(18), toolbar, dis_nav, dis_col]
-            .spacing(12)
-            .width(Length::Fill);
+        let left_col = column![
+            text(ui_text(language, UiText::Debugger)).size(18),
+            toolbar,
+            dis_nav,
+            dis_col
+        ]
+        .spacing(12)
+        .width(Length::Fill);
         let right_col = view_right_col(
             status,
             regs_view,
@@ -499,6 +547,7 @@ impl Program for DebugProgram {
             &freeze_input,
             &bm_input,
             &bookmarks,
+            language,
         );
         // Tall state (GBA: 17 registers) scrolls inside the panes
         // instead of pushing Bookmarks and Memory out of view. The
@@ -509,7 +558,7 @@ impl Program for DebugProgram {
             row![left_col, right_scroll]
                 .spacing(16)
                 .height(Length::Fill),
-            text("Memory").size(16),
+            text(ui_text(language, UiText::Memory)).size(16),
             space_row,
             mem_nav,
             dump_col,
@@ -524,7 +573,7 @@ impl Program for DebugProgram {
             content = content.push(confirm);
         }
         let content = content.push(
-            button(text("Refresh"))
+            button(text(ui_text(language, UiText::Refresh)))
                 .style(button::secondary)
                 .width(Length::Fill)
                 .on_press(DebugMessage::RefreshPressed),
@@ -535,22 +584,29 @@ impl Program for DebugProgram {
 
 /// One pane builders: each renders a single debugger section from
 /// plain locals. `view` stays a capture-and-assemble pass.
-fn view_toolbar() -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
+///
+/// The toolbar carries a single Pause/Resume toggle (not two
+/// buttons): the label follows the drained pause state.
+fn view_toolbar(
+    paused: bool,
+    language: AppLanguage,
+) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::widget::{button, row, text};
     row![
-        button(text("Pause"))
-            .style(button::secondary)
-            .on_press(DebugMessage::PausePressed),
-        button(text("Resume"))
-            .style(button::secondary)
-            .on_press(DebugMessage::ResumePressed),
-        button(text("Step Frame"))
+        button(text(if paused {
+            ui_text(language, UiText::Resume)
+        } else {
+            ui_text(language, UiText::Pause)
+        }))
+        .style(button::secondary)
+        .on_press(DebugMessage::TogglePausePressed),
+        button(text(ui_text(language, UiText::StepFrame)))
             .style(button::secondary)
             .on_press(DebugMessage::StepFramePressed),
-        button(text("Step Instr"))
+        button(text(ui_text(language, UiText::StepInstr)))
             .style(button::secondary)
             .on_press(DebugMessage::StepInstrPressed),
-        button(text("PPU Viewer"))
+        button(text(ui_text(language, UiText::PpuViewer)))
             .style(button::secondary)
             .on_press(DebugMessage::PpuOpenPressed),
     ]
@@ -561,16 +617,17 @@ fn view_toolbar() -> iced::Element<'static, DebugMessage, iced::Theme, Renderer>
 
 fn view_space_row(
     selected_name: &str,
+    language: AppLanguage,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, row, text};
     row![
-        text("space").width(Length::Fixed(150.0)),
-        button(text("Prev"))
+        text(ui_text(language, UiText::Space)).width(Length::Fixed(150.0)),
+        button(text(ui_text(language, UiText::Prev)))
             .style(button::secondary)
             .on_press(DebugMessage::SpacePrev),
         text(selected_name.to_owned()).size(14).width(Length::Fill),
-        button(text("Next"))
+        button(text(ui_text(language, UiText::Next)))
             .style(button::secondary)
             .on_press(DebugMessage::SpaceNext),
     ]
@@ -579,22 +636,25 @@ fn view_space_row(
     .into()
 }
 
-fn view_mem_nav(mem_input: &str) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
+fn view_mem_nav(
+    mem_input: &str,
+    language: AppLanguage,
+) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, row, text, text_input};
     row![
-        text("page").width(Length::Fixed(150.0)),
-        button(text("Prev"))
+        text(ui_text(language, UiText::Page)).width(Length::Fixed(150.0)),
+        button(text(ui_text(language, UiText::Prev)))
             .style(button::secondary)
             .on_press(DebugMessage::MemPage(-1)),
-        button(text("Next"))
+        button(text(ui_text(language, UiText::Next)))
             .style(button::secondary)
             .on_press(DebugMessage::MemPage(1)),
-        text_input("addr hex", mem_input)
+        text_input(ui_text(language, UiText::AddrHex), mem_input)
             .on_input(DebugMessage::MemInputChanged)
             .on_submit(DebugMessage::MemGo)
             .width(120),
-        button(text("Go"))
+        button(text(ui_text(language, UiText::Go)))
             .style(button::secondary)
             .on_press(DebugMessage::MemGo),
     ]
@@ -606,13 +666,19 @@ fn view_mem_nav(mem_input: &str) -> iced::Element<'static, DebugMessage, iced::T
 /// Dump rows are text-style buttons; selection inverts to
 /// secondary. Changed rows carry a `*` mark (theme-safe, no
 /// new colors). Selection wins the secondary style.
+///
+/// The list rides in a scrollable that fills its share: window
+/// growth lands in the viewport instead of stranding dead space,
+/// and shrunken windows scroll natively. (Wheel paging is a GTK
+/// affordance: iced reports scroll position, not wheel deltas, so
+/// an exact-fit page cannot tell the direction.)
 fn view_dump_col(
     dump_rows: &[(u32, String)],
     diff: &[u32],
     selected: Option<(u32, Option<u8>)>,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
-    use iced::widget::{button, column, text};
+    use iced::widget::{button, column, scrollable, text};
     let mut dump_col = column![].spacing(2);
     for (addr, line) in dump_rows {
         let is_selected = selected.map(|(a, _)| a) == Some(*addr);
@@ -637,61 +703,101 @@ fn view_dump_col(
             row_button.style(button::text)
         });
     }
-    dump_col.into()
+    scrollable(dump_col).height(Length::Fill).into()
 }
 
-/// Registers flow into two columns so tall lists (GBA: 17)
-/// cost half the height. Pure text split, no system branches.
-fn view_regs(regs: &str) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
+/// Registers flow into two clickable columns so tall lists (GBA:
+/// 17) cost half the height. Pure text split, no system branches.
+/// Row click picks the write target (highlighted); the Set row
+/// below writes the parsed hex value through the drain. Names come
+/// from the snapshot, never scraped from text.
+fn view_regs_section(
+    regs: &str,
+    reg_names: &[&'static str],
+    reg_target: Option<&'static str>,
+    reg_input: &str,
+    language: AppLanguage,
+) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
-    use iced::widget::{column, row, text};
-    let reg_lines: Vec<&str> = regs.lines().collect();
-    let reg_mid = reg_lines.len().div_ceil(2);
-    let mut reg_left = column![].spacing(2);
-    for line in reg_lines.iter().take(reg_mid.min(reg_lines.len())) {
-        reg_left = reg_left.push(
-            text((*line).to_owned())
-                .size(14)
-                .font(iced::Font::MONOSPACE),
-        );
+    use iced::widget::{button, column, row, text, text_input};
+    let lines: Vec<&str> = regs.lines().collect();
+    let reg_mid = lines.len().div_ceil(2);
+    let mid = reg_mid.min(lines.len());
+    let mut halves_row = row![].spacing(16).width(Length::Fill);
+    for (base, half) in [(0, &lines[..mid]), (mid, &lines[mid..])] {
+        let mut col = column![].spacing(2);
+        for (i, line) in half.iter().enumerate() {
+            let name = reg_names.get(base + i).copied();
+            let row_button = button(
+                text((*line).to_owned())
+                    .size(14)
+                    .font(iced::Font::MONOSPACE),
+            )
+            .padding([2, 8])
+            .width(Length::Fill);
+            col = col.push(match name {
+                Some(target) => row_button
+                    .style(if Some(target) == reg_target {
+                        button::secondary
+                    } else {
+                        button::text
+                    })
+                    .on_press(DebugMessage::RegSelected(target)),
+                // Unnamed degenerate lines stay plain clickable-free text.
+                None => row_button.style(button::text),
+            });
+        }
+        halves_row = halves_row.push(col);
     }
-    let mut reg_right = column![].spacing(2);
-    for line in reg_lines.iter().skip(reg_mid.min(reg_lines.len())) {
-        reg_right = reg_right.push(
-            text((*line).to_owned())
-                .size(14)
-                .font(iced::Font::MONOSPACE),
-        );
-    }
-    row![reg_left, reg_right]
-        .spacing(16)
-        .width(Length::Fill)
-        .into()
+    let target_text = match reg_target {
+        Some(name) => format!("{} {name}", ui_text(language, UiText::Set)),
+        None => ui_text(language, UiText::PickRegister).to_string(),
+    };
+    let edit = row![
+        text(target_text).size(14).width(Length::Fixed(140.0)),
+        text_input(ui_text(language, UiText::Hex), reg_input)
+            .on_input(DebugMessage::RegInputChanged)
+            .on_submit(DebugMessage::RegSet)
+            .width(100),
+        button(text(ui_text(language, UiText::Set)))
+            .style(button::secondary)
+            .on_press(DebugMessage::RegSet),
+    ]
+    .spacing(12)
+    .align_y(iced::Alignment::Center);
+    column![halves_row, edit].spacing(4).into()
 }
 
 fn view_edit_row(
     selected: Option<(u32, Option<u8>)>,
     edit_input: &str,
+    language: AppLanguage,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, row, text, text_input};
     let select_text = match selected {
         Some((addr, Some(old))) => format!("Selected {addr:08X} (was {old:02X})"),
         Some((addr, None)) => format!("Selected {addr:08X} (was ??)"),
-        None => "Select a dump row".to_string(),
+        None => ui_text(language, UiText::SelectDumpRow).to_string(),
+    };
+    // The target rides on the button: writes always land on the
+    // selected row, never on the page anchor.
+    let write_label = match selected {
+        Some((addr, _)) => format!("{} {addr:08X}", ui_text(language, UiText::Write)),
+        None => ui_text(language, UiText::Write).to_string(),
     };
     row![
         text(select_text).size(14).width(Length::Fixed(240.0)),
-        text_input("hex byte", edit_input)
+        text_input(ui_text(language, UiText::HexByte), edit_input)
             .on_input(DebugMessage::EditInputChanged)
             .width(100),
-        button(text("Write"))
+        button(text(write_label))
             .style(button::secondary)
             .on_press(DebugMessage::EditWrite),
-        button(text("Watch"))
+        button(text(ui_text(language, UiText::Watch)))
             .style(button::secondary)
             .on_press(DebugMessage::WatchSet),
-        button(text("Freeze"))
+        button(text(ui_text(language, UiText::Freeze)))
             .style(button::secondary)
             .on_press(DebugMessage::EditFreezeSet),
     ]
@@ -702,16 +808,17 @@ fn view_edit_row(
 
 fn view_confirm_row(
     pending_text: Option<String>,
+    language: AppLanguage,
 ) -> Option<iced::Element<'static, DebugMessage, iced::Theme, Renderer>> {
     use iced::Length;
     use iced::widget::{button, row, text};
     pending_text.map(|pending| {
         row![
             text(pending).size(14).width(Length::Fill),
-            button(text("Confirm"))
+            button(text(ui_text(language, UiText::Confirm)))
                 .style(button::primary)
                 .on_press(DebugMessage::ConfirmWrite),
-            button(text("Cancel"))
+            button(text(ui_text(language, UiText::Cancel)))
                 .style(button::text)
                 .on_press(DebugMessage::CancelWrite),
         ]
@@ -720,31 +827,48 @@ fn view_confirm_row(
         .into()
     })
 }
-
 fn view_dis_nav(
     follow_pc: bool,
     back_len: usize,
+    anchor: u32,
     dis_input: &str,
+    language: AppLanguage,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::widget::{button, row, text, text_input};
-    let follow_button = button(text("Follow PC")).on_press(DebugMessage::FollowPcToggle);
-    let back_button = button(text(format!("Back ({back_len})"))).on_press(DebugMessage::DisBack);
+    let follow_button =
+        button(text(ui_text(language, UiText::FollowPc))).on_press(DebugMessage::FollowPcToggle);
+    let back_button = button(text(format!(
+        "{} ({back_len})",
+        ui_text(language, UiText::Back)
+    )))
+    .on_press(DebugMessage::DisBack);
+    // The title names the anchor: clicks pin it visibly instead of
+    // silently moving the window.
+    let title = if follow_pc {
+        format!(
+            "{} {}",
+            ui_text(language, UiText::Disassembly),
+            ui_text(language, UiText::FollowPcTag)
+        )
+    } else {
+        format!(
+            "{} @{anchor:08X} {}",
+            ui_text(language, UiText::Disassembly),
+            ui_text(language, UiText::FixedTag)
+        )
+    };
     row![
-        text(if follow_pc {
-            "Disassembly (follow PC)"
-        } else {
-            "Disassembly (fixed)"
-        }),
+        text(title),
         if follow_pc {
             follow_button.style(button::secondary)
         } else {
             follow_button.style(button::text)
         },
-        text_input("addr hex", dis_input)
+        text_input(ui_text(language, UiText::AddrHex), dis_input)
             .on_input(DebugMessage::DisInputChanged)
             .on_submit(DebugMessage::DisGo)
             .width(100),
-        button(text("Go"))
+        button(text(ui_text(language, UiText::Go)))
             .style(button::secondary)
             .on_press(DebugMessage::DisGo),
         if back_len > 0 {
@@ -760,17 +884,21 @@ fn view_dis_nav(
 
 fn view_dis_col(
     disasm_lines: &[nerust_core_traits::debugger::DisasmLine],
+    language: AppLanguage,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
-    use iced::widget::{button, column, row, text};
+    use iced::widget::{button, column, row, scrollable, text};
     let mut dis_col = column![].spacing(2);
     if disasm_lines.is_empty() {
-        dis_col = dis_col.push(text("(no disassembly)").size(14));
-        dis_col = dis_col.push(text("Enter an address and press Go, or press Back.").size(14));
+        dis_col = dis_col.push(text(ui_text(language, UiText::NoDisassembly)).size(14));
+        dis_col = dis_col.push(text(ui_text(language, UiText::DisassemblyHint)).size(14));
     }
     for line in disasm_lines {
+        // The PC row carries a `>` marker like the dump selection:
+        // the current position reads at a glance.
+        let marker = if line.is_pc { "> " } else { "  " };
         let line_button = button(
-            text(vm::format_disasm_line(line))
+            text(format!("{marker}{}", vm::format_disasm_line(line)))
                 .size(14)
                 .font(iced::Font::MONOSPACE),
         )
@@ -794,7 +922,7 @@ fn view_dis_col(
         }
         dis_col = dis_col.push(line_row);
     }
-    dis_col.into()
+    scrollable(dis_col).height(Length::Fill).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -807,17 +935,18 @@ fn view_right_col(
     freeze_input: &str,
     bm_input: &str,
     bookmarks: &[(u32, String)],
+    language: AppLanguage,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, column, row, text, text_input};
     let watch_text = match (watch, watch_value) {
         (Some(addr), Some(value)) => format!("watch {addr:08X} = {value:02X}"),
         (Some(addr), None) => format!("watch {addr:08X} = ??"),
-        (None, _) => "watch: none".to_string(),
+        (None, _) => ui_text(language, UiText::WatchNone).to_string(),
     };
     let freeze_text = match freeze {
         Some((addr, value)) => format!("frozen {addr:08X}={value:02X}"),
-        None => "freeze: none".to_string(),
+        None => ui_text(language, UiText::FreezeNone).to_string(),
     };
     let mut bookmarks_col = column![].spacing(2);
     for (addr, label) in bookmarks {
@@ -842,42 +971,42 @@ fn view_right_col(
     }
     column![
         text(status).size(14).width(Length::Fill),
-        text("Registers").size(16),
+        text(ui_text(language, UiText::Registers)).size(16),
         regs_view,
-        text("Watch").size(16),
+        text(ui_text(language, UiText::Watch)).size(16),
         row![
-            button(text("Watch"))
+            button(text(ui_text(language, UiText::Watch)))
                 .style(button::secondary)
                 .on_press(DebugMessage::WatchSet),
             text(watch_text).size(14).width(Length::Fill),
-            button(text("Clear"))
+            button(text(ui_text(language, UiText::Clear)))
                 .style(button::text)
                 .on_press(DebugMessage::WatchClear),
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center),
-        text("Freeze").size(16),
+        text(ui_text(language, UiText::Freeze)).size(16),
         row![
-            text_input("hex byte", freeze_input)
+            text_input(ui_text(language, UiText::HexByte), freeze_input)
                 .on_input(DebugMessage::FreezeInputChanged)
                 .width(100),
-            button(text("Freeze"))
+            button(text(ui_text(language, UiText::Freeze)))
                 .style(button::secondary)
                 .on_press(DebugMessage::FreezeSet),
             text(freeze_text).size(14).width(Length::Fill),
-            button(text("Clear"))
+            button(text(ui_text(language, UiText::Clear)))
                 .style(button::text)
                 .on_press(DebugMessage::FreezeClear),
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center),
-        text("Bookmarks").size(16),
+        text(ui_text(language, UiText::Bookmarks)).size(16),
         row![
-            text_input("label", bm_input)
+            text_input(ui_text(language, UiText::Label), bm_input)
                 .on_input(DebugMessage::BookmarkInputChanged)
                 .on_submit(DebugMessage::BookmarkAdd)
                 .width(Length::Fill),
-            button(text("Add"))
+            button(text(ui_text(language, UiText::Add)))
                 .style(button::secondary)
                 .on_press(DebugMessage::BookmarkAdd),
         ]
@@ -1036,14 +1165,18 @@ impl DebugWindowHandle {
         display: DisplayCache,
         spaces: Vec<(SpaceId, String, u32)>,
         mem_addr: u32,
+        language: AppLanguage,
         event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
-        let bridge = Arc::new(DebugBridge::new(display, spaces, mem_addr));
-        let mut builder = WindowBuilder::new().with_title("Debugger").with_inner_size(
-            tao::dpi::LogicalSize::new(DEBUG_WINDOW_SIZE.0, DEBUG_WINDOW_SIZE.1),
-        );
+        let bridge = Arc::new(DebugBridge::new(display, spaces, mem_addr, language));
+        let mut builder = WindowBuilder::new()
+            .with_title(ui_text(language, UiText::Debugger))
+            .with_inner_size(tao::dpi::LogicalSize::new(
+                DEBUG_WINDOW_SIZE.0,
+                DEBUG_WINDOW_SIZE.1,
+            ));
         #[cfg(target_os = "macos")]
         {
             builder = builder.with_automatic_window_tabbing(false);
@@ -1254,7 +1387,12 @@ mod tests {
     use super::*;
 
     fn freeze_bridge() -> Arc<DebugBridge> {
-        let bridge = Arc::new(DebugBridge::new(DisplayCache::default(), Vec::new(), 0));
+        let bridge = Arc::new(DebugBridge::new(
+            DisplayCache::default(),
+            Vec::new(),
+            0,
+            AppLanguage::English,
+        ));
         *bridge.selected.lock().unwrap() = Some((0x0200_0010, Some(0x00)));
         *bridge.freeze_input.lock().unwrap() = "FF".to_string();
         *bridge.edit_input.lock().unwrap() = "AA".to_string();

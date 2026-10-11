@@ -5,15 +5,19 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
-use nerust_gui_viewmodel::debugger::{PPU_HOVER_HINT, scale2x_nearest};
+use nerust_gui_settings::language::AppLanguage;
+use nerust_gui_viewmodel::debugger::scale2x_nearest;
+use nerust_settings_core::i18n::{UiText, text};
 
 use super::State;
 
 pub(crate) type PpuWindow = Rc<RefCell<PpuWindowCore>>;
 
 pub(crate) struct PpuWindowCore {
+    window: gtk::ApplicationWindow,
     images_box: gtk::Box,
     hover_label: gtk::Label,
+    language: AppLanguage,
     /// Hash of the last synced `(images, panels)`. Refresh drains
     /// re-run sync with identical bytes while paused; the 2x scale
     /// and widget rebuild run only on change.
@@ -38,10 +42,11 @@ impl PpuWindowCore {
         _state: Rc<RefCell<State>>,
         images: Vec<(String, u32, u32, Vec<u8>)>,
         panels: String,
+        language: AppLanguage,
     ) -> PpuWindow {
         let window = gtk::ApplicationWindow::builder()
             .application(app)
-            .title("PPU Viewer")
+            .title(text(language, UiText::PpuViewer))
             .default_width(560)
             .default_height(620)
             .build();
@@ -51,7 +56,7 @@ impl PpuWindowCore {
         images_box.set_margin_bottom(16);
         images_box.set_margin_start(16);
         images_box.set_margin_end(16);
-        let hover_label = gtk::Label::new(Some(PPU_HOVER_HINT));
+        let hover_label = gtk::Label::new(Some(text(language, UiText::HoverTile)));
         hover_label.set_xalign(0.0);
         let scroll = gtk::ScrolledWindow::new();
         scroll.set_overlay_scrolling(false);
@@ -66,13 +71,20 @@ impl PpuWindowCore {
             glib::Propagation::Stop
         });
         let result = Rc::new(RefCell::new(Self {
+            window: window.clone(),
             images_box,
             hover_label,
+            language,
             last_hash: 0,
         }));
         result.borrow_mut().sync(&images, &panels);
         window.present();
         result
+    }
+
+    /// Re-present a hidden viewer (idempotent reopen path).
+    pub(crate) fn present(&self) {
+        self.window.present();
     }
 
     /// Re-derive scaled pictures from fresh images (one 2x scale per
@@ -88,7 +100,7 @@ impl PpuWindowCore {
             self.images_box.remove(&child);
         }
         if images.is_empty() {
-            let empty = gtk::Label::new(Some("(no images)"));
+            let empty = gtk::Label::new(Some(text(self.language, UiText::NoImages)));
             empty.set_xalign(0.0);
             self.images_box.append(&empty);
         }
@@ -120,13 +132,17 @@ impl PpuWindowCore {
         }
         // Panels live in the PPU viewer on every frontend, matching
         // the tao viewer layout (images first, panels below).
-        let panels_title = gtk::Label::new(Some("Panels"));
-        panels_title.set_xalign(0.0);
-        self.images_box.append(&panels_title);
-        let panels_label = gtk::Label::new(Some(panels));
-        panels_label.add_css_class("monospace");
-        panels_label.set_xalign(0.0);
-        self.images_box.append(&panels_label);
+        // Systems without observation tables show no Panels section
+        // at all instead of a puzzling marker.
+        if nerust_gui_viewmodel::debugger::panels_visible(panels) {
+            let panels_title = gtk::Label::new(Some(text(self.language, UiText::Panels)));
+            panels_title.set_xalign(0.0);
+            self.images_box.append(&panels_title);
+            let panels_label = gtk::Label::new(Some(panels));
+            panels_label.add_css_class("monospace");
+            panels_label.set_xalign(0.0);
+            self.images_box.append(&panels_label);
+        }
     }
 }
 

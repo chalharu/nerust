@@ -410,6 +410,32 @@ impl DebugControl for GbcDebugControl<'_> {
         }
         Ok(())
     }
+
+    fn write_register(&mut self, name: &str, value: u64) -> Result<(), DebuggerError> {
+        let loaded = self
+            .console
+            .loaded
+            .as_mut()
+            .ok_or(DebuggerError::Unsupported)?;
+        // Values mask to the register width; unknown names refuse.
+        // A mid-instruction poke applies immediately and the next
+        // boundary normalizes, same as a memory poke.
+        let regs = loaded.system.cpu.registers_mut();
+        match name {
+            "a" => regs.set_a(value as u8),
+            "b" => regs.set_b(value as u8),
+            "c" => regs.set_c(value as u8),
+            "d" => regs.set_d(value as u8),
+            "e" => regs.set_e(value as u8),
+            "f" => regs.set_f(value as u8),
+            "h" => regs.set_h(value as u8),
+            "l" => regs.set_l(value as u8),
+            "pc" => regs.set_pc(value as u16),
+            "sp" => regs.set_sp(value as u16),
+            _ => return Err(DebuggerError::Unsupported),
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -718,5 +744,26 @@ mod tests {
         empty.unload();
         assert!(empty.debugger().is_none());
         assert!(empty.debug_control().is_none());
+    }
+
+    #[test]
+    fn gbc_register_write_roundtrips_and_refuses_unknown() {
+        let mut console = GbcConsoleCore::new_empty(input());
+        console.load(&rom(), &config()).expect("test ROM loads");
+        {
+            let mut boxed: Box<dyn DebugControl + '_> =
+                Box::new(GbcDebugControl::new(&mut console));
+            boxed.write_register("a", 0x42).expect("a write");
+            boxed.write_register("pc", 0x1234).expect("pc write");
+            assert_eq!(
+                boxed.write_register("bogus", 0),
+                Err(DebuggerError::Unsupported)
+            );
+        }
+        let debugger = console.debugger().expect("debugger");
+        let regs: std::collections::HashMap<&str, u64> =
+            debugger.registers().iter().copied().collect();
+        assert_eq!(regs["a"], 0x42);
+        assert_eq!(regs["pc"], 0x1234);
     }
 }
