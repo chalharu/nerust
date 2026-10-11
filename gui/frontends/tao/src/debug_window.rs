@@ -23,11 +23,11 @@ use iced_winit::{
     program::{self, Program},
     runtime::user_interface::{Cache, UserInterface},
 };
-use nerust_core_traits::debugger::{DUMP_ROW_BYTES, SpaceId};
+use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, HexRow, SpaceId};
 use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState};
-use nerust_settings_core::i18n::{UiText, text as ui_text};
+use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};
 
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
@@ -41,10 +41,11 @@ use crate::tao_conversions::{convert_tao_window_event, default_font};
 
 /// Initial debugger window size (verified Xvfb fit).
 pub(crate) const DEBUG_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
+/// Minimum debugger size: below this the fixed label columns and
+/// the register halves collide instead of reflowing.
+pub(crate) const DEBUG_WINDOW_MIN_SIZE: (f64, f64) = (900.0, 650.0);
 /// Right state column width.
 const STATE_COLUMN_WIDTH: f32 = 340.0;
-/// Dump rows per page; paging moves by a full page.
-const DUMP_PAGE_ROWS: i32 = 8;
 /// Bookmark cap (window-local, no file yet).
 const BOOKMARK_CAP: usize = 8;
 
@@ -200,14 +201,15 @@ pub(crate) struct DebugProgram {
 /// Freeze row and the edit-row Freeze button differ only in which
 /// input they read; the rules live here, not in the widgets.
 fn apply_freeze(bridge: &DebugBridge, input: &str) {
+    let language = bridge.language;
     let selected = bridge.selected.lock().unwrap().map(|(addr, _)| addr);
     match (selected, vm::parse_hex_addr(input).filter(|v| *v <= 0xFF)) {
         (Some(addr), Some(value)) => {
             *bridge.freeze.lock().unwrap() = Some((addr, value as u8));
-            bridge.set_status(format!("frozen {addr:08X}={value:02X}"));
+            bridge.set_status(ui_msg::frozen(language, addr, value as u8));
             bridge.push(DebugAction::Refresh);
         }
-        _ => bridge.set_status("freeze needs a selected row and hex byte".to_string()),
+        _ => bridge.set_status(ui_text(language, UiText::FreezeNeedsSelection).to_string()),
     }
 }
 
@@ -226,13 +228,14 @@ fn cycle_space(bridge: &DebugBridge, delta: i32) {
 }
 
 fn mem_go(bridge: &DebugBridge) {
+    let language = bridge.language;
     let input = bridge.nav.lock().unwrap().mem_input().to_string();
     match vm::parse_hex_addr(&input) {
         Some(addr) => {
             bridge.nav.lock().unwrap().go_mem(addr);
             bridge.push(DebugAction::MemNav);
         }
-        None => bridge.set_status(format!("parse failed: {input}")),
+        None => bridge.set_status(ui_msg::parse_failed(language, &input)),
     }
 }
 
@@ -241,15 +244,16 @@ fn mem_page(bridge: &DebugBridge, delta: i32) {
         .nav
         .lock()
         .unwrap()
-        .page_mem(delta * DUMP_PAGE_ROWS * DUMP_ROW_BYTES as i32);
+        .page_mem(delta * DEBUG_DUMP_PAGE_ROWS as i32 * DUMP_ROW_BYTES as i32);
     bridge.push(DebugAction::MemNav);
 }
 
 fn dis_go(bridge: &DebugBridge) {
+    let language = bridge.language;
     let input = bridge.nav.lock().unwrap().dis_input().to_string();
     match vm::parse_hex_addr(&input) {
         Some(addr) => navigate_to(bridge, addr),
-        None => bridge.set_status(format!("parse failed: {input}")),
+        None => bridge.set_status(ui_msg::parse_failed(language, &input)),
     }
 }
 
@@ -262,7 +266,7 @@ fn navigate_to(bridge: &DebugBridge, addr: u32) {
 fn dis_back(bridge: &DebugBridge) {
     match bridge.nav.lock().unwrap().go_back() {
         Some(_) => bridge.push(DebugAction::Refresh),
-        None => bridge.set_status("back stack is empty".to_string()),
+        None => bridge.set_status(ui_text(bridge.language, UiText::BackEmpty).to_string()),
     }
 }
 
@@ -270,7 +274,7 @@ fn bookmark_add(bridge: &DebugBridge) {
     let label = bridge.bm_input.lock().unwrap().trim().to_string();
     let mut marks = bridge.bookmarks.lock().unwrap();
     if marks.len() >= BOOKMARK_CAP {
-        bridge.set_status("bookmark list full".to_string());
+        bridge.set_status(ui_text(bridge.language, UiText::BookmarkFull).to_string());
         return;
     }
     // Anchor on the PC row when following, else the pin.
@@ -303,7 +307,9 @@ fn watch_set(bridge: &DebugBridge) {
             *bridge.watch.lock().unwrap() = Some(addr);
             bridge.push(DebugAction::Refresh);
         }
-        None => bridge.set_status("watch needs a selection".to_string()),
+        None => {
+            bridge.set_status(ui_text(bridge.language, UiText::WatchNeedsSelection).to_string())
+        }
     }
 }
 
@@ -323,8 +329,10 @@ fn edit_write(bridge: &DebugBridge) {
             bridge.push(DebugAction::SelectRow(addr));
             bridge.push(DebugAction::EditStage(value as u64));
         }
-        (None, _) => bridge.set_status("write needs a selection".to_string()),
-        _ => bridge.set_status(format!("parse failed: {input}")),
+        (None, _) => {
+            bridge.set_status(ui_text(bridge.language, UiText::WriteNeedsSelection).to_string())
+        }
+        _ => bridge.set_status(ui_msg::parse_failed(bridge.language, &input)),
     }
 }
 
@@ -338,8 +346,10 @@ fn reg_set(bridge: &DebugBridge) {
         (Some(_), Some(value)) => {
             bridge.push(DebugAction::RegisterWrite(u64::from(value)));
         }
-        (None, _) => bridge.set_status("register write needs a register".to_string()),
-        _ => bridge.set_status(format!("parse failed: {input}")),
+        (None, _) => {
+            bridge.set_status(ui_text(bridge.language, UiText::RegisterNeedsSelection).to_string())
+        }
+        _ => bridge.set_status(ui_msg::parse_failed(bridge.language, &input)),
     }
 }
 
@@ -440,7 +450,7 @@ impl Program for DebugProgram {
             }
             DebugMessage::FreezeClear => {
                 *bridge.freeze.lock().unwrap() = None;
-                bridge.set_status("freeze cleared".to_string());
+                bridge.set_status(ui_text(bridge.language, UiText::FreezeCleared).to_string());
             }
             DebugMessage::RowSelected(addr) => {
                 bridge.push(DebugAction::SelectRow(addr));
@@ -516,8 +526,7 @@ impl Program for DebugProgram {
         let dump_col = view_dump_col(&dump_rows, &diff, selected);
         let reg_target = *bridge.reg_target.lock().unwrap();
         let reg_input = bridge.reg_input.lock().unwrap().clone();
-        let regs_view =
-            view_regs_section(&regs, &display.reg_names, reg_target, &reg_input, language);
+        let regs_view = view_regs_section(&regs, reg_target, &reg_input, language);
         // Two-phase write: select a dump row, type the new byte,
         // Write stages it, and the confirm row commits or cancels.
         let edit_row = view_edit_row(selected, &edit_input, language);
@@ -525,9 +534,12 @@ impl Program for DebugProgram {
         // a text escape. The drain owns the authoritative text.
         let confirm_row = view_confirm_row(pending_text, language);
         let dis_nav = view_dis_nav(follow_pc, back_len, anchor, &dis_input, language);
-        // Per-line disassembly: line click pins the anchor, the PC row
-        // highlights, and structured targets offer follow buttons.
-        let dis_col = view_dis_col(&disasm_lines, language);
+        // Per-line disassembly: line click pins the anchor (the
+        // pinned row carries `@`, the PC row `>`), and structured
+        // targets offer follow buttons. In follow-PC mode nothing
+        // is pinned, so no `@` shows.
+        let pinned = if follow_pc { None } else { Some(anchor) };
+        let dis_col = view_dis_col(&disasm_lines, pinned, language);
         // Cross-emulator canon: execution above disassembly on the
         // left, state on the right.
         let left_col = column![
@@ -673,14 +685,14 @@ fn view_mem_nav(
 /// affordance: iced reports scroll position, not wheel deltas, so
 /// an exact-fit page cannot tell the direction.)
 fn view_dump_col(
-    dump_rows: &[(u32, String)],
+    dump_rows: &[HexRow],
     diff: &[u32],
     selected: Option<(u32, Option<u8>)>,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, column, scrollable, text};
     let mut dump_col = column![].spacing(2);
-    for (addr, line) in dump_rows {
+    for (addr, line) in &vm::format_dump_rows(dump_rows) {
         let is_selected = selected.map(|(a, _)| a) == Some(*addr);
         let changed = diff.contains(addr);
         let marker = match (is_selected, changed) {
@@ -709,43 +721,37 @@ fn view_dump_col(
 /// Registers flow into two clickable columns so tall lists (GBA:
 /// 17) cost half the height. Pure text split, no system branches.
 /// Row click picks the write target (highlighted); the Set row
-/// below writes the parsed hex value through the drain. Names come
-/// from the snapshot, never scraped from text.
+/// below writes the parsed hex value through the drain. Lines are
+/// formatted here from the structured snapshot, never scraped.
 fn view_regs_section(
-    regs: &str,
-    reg_names: &[&'static str],
+    regs: &[(&'static str, u64)],
     reg_target: Option<&'static str>,
     reg_input: &str,
     language: AppLanguage,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, column, row, text, text_input};
-    let lines: Vec<&str> = regs.lines().collect();
-    let reg_mid = lines.len().div_ceil(2);
-    let mid = reg_mid.min(lines.len());
+    let mid = regs.len().div_ceil(2).min(regs.len());
     let mut halves_row = row![].spacing(16).width(Length::Fill);
-    for (base, half) in [(0, &lines[..mid]), (mid, &lines[mid..])] {
+    for half in [&regs[..mid], &regs[mid..]] {
         let mut col = column![].spacing(2);
-        for (i, line) in half.iter().enumerate() {
-            let name = reg_names.get(base + i).copied();
+        for (name, value) in half.iter() {
             let row_button = button(
-                text((*line).to_owned())
+                text(vm::format_register(name, *value))
                     .size(14)
                     .font(iced::Font::MONOSPACE),
             )
             .padding([2, 8])
             .width(Length::Fill);
-            col = col.push(match name {
-                Some(target) => row_button
-                    .style(if Some(target) == reg_target {
+            col = col.push(
+                row_button
+                    .style(if Some(*name) == reg_target {
                         button::secondary
                     } else {
                         button::text
                     })
-                    .on_press(DebugMessage::RegSelected(target)),
-                // Unnamed degenerate lines stay plain clickable-free text.
-                None => row_button.style(button::text),
-            });
+                    .on_press(DebugMessage::RegSelected(name)),
+            );
         }
         halves_row = halves_row.push(col);
     }
@@ -775,9 +781,10 @@ fn view_edit_row(
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, row, text, text_input};
+    // The target rides on the label and the button: writes always
+    // land on the selected row, never on the page anchor.
     let select_text = match selected {
-        Some((addr, Some(old))) => format!("Selected {addr:08X} (was {old:02X})"),
-        Some((addr, None)) => format!("Selected {addr:08X} (was ??)"),
+        Some((addr, old)) => ui_msg::selected_row(language, addr, old),
         None => ui_text(language, UiText::SelectDumpRow).to_string(),
     };
     // The target rides on the button: writes always land on the
@@ -884,6 +891,7 @@ fn view_dis_nav(
 
 fn view_dis_col(
     disasm_lines: &[nerust_core_traits::debugger::DisasmLine],
+    pinned: Option<u32>,
     language: AppLanguage,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
@@ -894,9 +902,17 @@ fn view_dis_col(
         dis_col = dis_col.push(text(ui_text(language, UiText::DisassemblyHint)).size(14));
     }
     for line in disasm_lines {
-        // The PC row carries a `>` marker like the dump selection:
-        // the current position reads at a glance.
-        let marker = if line.is_pc { "> " } else { "  " };
+        // The PC row carries a `>` marker like the dump selection;
+        // the pinned anchor row carries `@` so a line click reads
+        // back visibly even off-PC. Both highlight.
+        let is_pinned = pinned == Some(line.addr);
+        let marker = if line.is_pc {
+            "> "
+        } else if is_pinned {
+            "@ "
+        } else {
+            "  "
+        };
         let line_button = button(
             text(format!("{marker}{}", vm::format_disasm_line(line)))
                 .size(14)
@@ -905,7 +921,7 @@ fn view_dis_col(
         .padding([2, 8])
         .width(Length::Fill)
         .on_press(DebugMessage::DisLineClicked(line.addr));
-        let line_button = if line.is_pc {
+        let line_button = if line.is_pc || is_pinned {
             line_button.style(button::secondary)
         } else {
             line_button.style(button::text)
@@ -940,12 +956,12 @@ fn view_right_col(
     use iced::Length;
     use iced::widget::{button, column, row, text, text_input};
     let watch_text = match (watch, watch_value) {
-        (Some(addr), Some(value)) => format!("watch {addr:08X} = {value:02X}"),
-        (Some(addr), None) => format!("watch {addr:08X} = ??"),
+        (Some(addr), Some(value)) => ui_msg::watch_value(language, addr, Some(value)),
+        (Some(addr), None) => ui_msg::watch_value(language, addr, None),
         (None, _) => ui_text(language, UiText::WatchNone).to_string(),
     };
     let freeze_text = match freeze {
-        Some((addr, value)) => format!("frozen {addr:08X}={value:02X}"),
+        Some((addr, value)) => ui_msg::frozen(language, addr, value),
         None => ui_text(language, UiText::FreezeNone).to_string(),
     };
     let mut bookmarks_col = column![].spacing(2);
@@ -1176,6 +1192,10 @@ impl DebugWindowHandle {
             .with_inner_size(tao::dpi::LogicalSize::new(
                 DEBUG_WINDOW_SIZE.0,
                 DEBUG_WINDOW_SIZE.1,
+            ))
+            .with_min_inner_size(tao::dpi::LogicalSize::new(
+                DEBUG_WINDOW_MIN_SIZE.0,
+                DEBUG_WINDOW_MIN_SIZE.1,
             ));
         #[cfg(target_os = "macos")]
         {

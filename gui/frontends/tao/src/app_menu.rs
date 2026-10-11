@@ -63,6 +63,7 @@ pub(crate) mod imp {
         state_menu: Submenu,
         open: MenuItem,
         settings: MenuItem,
+        debugger: MenuItem,
         pause: MenuItem,
         resume: MenuItem,
         reset: MenuItem,
@@ -192,6 +193,7 @@ pub(crate) mod imp {
                 state_menu,
                 open,
                 settings,
+                debugger,
                 pause,
                 resume,
                 reset,
@@ -322,6 +324,7 @@ pub(crate) mod imp {
                 .set_text(format!("{}...", text(language, UiText::Open)));
             self.settings
                 .set_text(format!("{}...", text(language, UiText::Settings)));
+            self.debugger.set_text(text(language, UiText::OpenDebugger));
             self.pause.set_text(text(language, UiText::Pause));
             self.resume.set_text(text(language, UiText::Resume));
             self.reset.set_text(text(language, UiText::Reset));

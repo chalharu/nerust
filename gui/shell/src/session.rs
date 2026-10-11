@@ -26,12 +26,14 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::ShortcutAction;
+use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_viewmodel::debugger as debug_vm;
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
 use nerust_keyboard::Key;
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
+use nerust_settings_core::i18n as ui_text;
 use thiserror::Error;
 
 use crate::{
@@ -376,12 +378,18 @@ impl SessionHandle {
     /// counter when `None`), one images pass. `elapsed` measures the
     /// batched core pass. Unavailable when no core is loaded or the
     /// inspect refuses (e.g. running): sections carry degenerates.
+    ///
+    /// Registers, dump rows, and panels travel structured; text
+    /// formatting is the frontends' job at rebuild time. `watch` is
+    /// folded into the same inspect when it lands on the fetched
+    /// page, saving a thread round-trip in the common case.
     pub fn debug_snapshot(
         &self,
         space: Option<nerust_core_traits::debugger::SpaceId>,
         mem_addr: u32,
         dis_addr: Option<u32>,
         need_images: bool,
+        watch: Option<u32>,
     ) -> debug_vm::DebugSnapshot {
         use nerust_core_traits::debugger::{
             DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, InspectRequest,
@@ -400,10 +408,14 @@ impl SessionHandle {
             Ok(Err(_)) | Err(_) => return snapshot,
         };
         snapshot.available = true;
-        snapshot.regs = debug_vm::format_registers(&inspected.registers);
+        snapshot.regs = inspected
+            .registers
+            .iter()
+            .map(|&(name, value)| (name, value))
+            .collect();
         snapshot.reg_names = inspected.registers.iter().map(|(name, _)| *name).collect();
-        snapshot.dump_rows = debug_vm::format_dump_rows(&inspected.dump);
-        snapshot.panels = debug_vm::format_panels(&inspected.panels);
+        snapshot.dump_rows = inspected.dump.rows.iter().copied().collect();
+        snapshot.panels = inspected.panels.iter().cloned().collect();
         // Anchor without name-scanning: explicit pin wins, otherwise
         // the kernel program counter (one extra crossing, follow mode
         // only).
@@ -422,14 +434,26 @@ impl SessionHandle {
             },
             None => Vec::new(),
         };
-        snapshot.images = if need_images {
+        let (images_gen, images) = if need_images {
             match core.debug_images() {
-                Ok(Ok(images)) => images.iter().map(debug_vm::rgba_image).collect(),
-                _ => Vec::new(),
+                Ok(Ok((generation, images))) => (generation, images),
+                _ => (0, Vec::new()),
             }
         } else {
-            Vec::new()
+            (0, Vec::new())
         };
+        snapshot.images_gen = images_gen;
+        snapshot.images = images.iter().map(debug_vm::rgba_image).collect();
+        // Watch folded into the page read when it lands on it;
+        // off-page watches still fall back to a single-byte inspect.
+        snapshot.watch = watch.and_then(|addr| {
+            inspected
+                .dump
+                .rows
+                .iter()
+                .find(|row| addr >= row.addr && addr < row.addr + u32::from(row.valid))
+                .map(|row| row.bytes[(addr - row.addr) as usize])
+        });
         snapshot
     }
 
@@ -477,16 +501,22 @@ impl SessionHandle {
     }
 
     /// Single-register write for the register viewer. Status
-    /// strings follow the memory-commit shape.
-    pub fn debug_write_register(&self, name: &'static str, value: u64) -> String {
+    /// strings follow the memory-commit shape, in the drain language.
+    pub fn debug_write_register(
+        &self,
+        language: AppLanguage,
+        name: &'static str,
+        value: u64,
+    ) -> String {
+        use nerust_settings_core::i18n::UiText;
         let core = match self.emu_core.as_ref() {
             Some(core) => core,
-            None => return "no core".to_string(),
+            None => return ui_text::text(language, UiText::NoCore).to_string(),
         };
         match core.write_register(name, value) {
-            Ok(Ok(())) => format!("wrote {value:04X} to register {name}"),
-            Ok(Err(error)) => format!("register write refused: {error:?}"),
-            Err(error) => format!("thread failed: {error:?}"),
+            Ok(Ok(())) => ui_text::register_wrote(language, name, value),
+            Ok(Err(error)) => ui_text::register_refused(language, &format!("{error:?}")),
+            Err(error) => ui_text::thread_failed(language, &format!("{error:?}")),
         }
     }
 
@@ -508,23 +538,24 @@ impl SessionHandle {
     }
 
     /// Confirm-row text, if fully staged. Single formatter shared with
-    /// the optimistic display.
-    pub fn debug_pending_text(&self) -> Option<String> {
-        self.debug_txn.lock().unwrap().pending_text()
+    /// the optimistic display, in the drain language.
+    pub fn debug_pending_text(&self, language: AppLanguage) -> Option<String> {
+        self.debug_txn.lock().unwrap().pending_text(language)
     }
 
     /// Commit the staged write, consuming the transaction. Status
     /// strings match the verified prototype pixels exactly.
-    pub fn debug_commit_write(&self) -> String {
+    pub fn debug_commit_write(&self, language: AppLanguage) -> String {
         use nerust_core_traits::debugger::MemoryWrite;
+        use nerust_settings_core::i18n::UiText;
         let staged = self.debug_txn.lock().unwrap().take_commit();
         let (space, addr, value) = match staged {
             Some(staged) => staged,
-            None => return "nothing to write".to_string(),
+            None => return ui_text::text(language, UiText::NothingToWrite).to_string(),
         };
         let core = match self.emu_core.as_ref() {
             Some(core) => core,
-            None => return "no core".to_string(),
+            None => return ui_text::text(language, UiText::NoCore).to_string(),
         };
         match core.write_memory(MemoryWrite {
             space,
@@ -532,9 +563,9 @@ impl SessionHandle {
             width: 1,
             value,
         }) {
-            Ok(Ok(())) => format!("wrote {value:02X} to {addr:08X} (width 1)"),
-            Ok(Err(error)) => format!("write refused: {error:?}"),
-            Err(error) => format!("thread failed: {error:?}"),
+            Ok(Ok(())) => ui_text::wrote_memory(language, addr, value),
+            Ok(Err(error)) => ui_text::write_refused(language, &format!("{error:?}")),
+            Err(error) => ui_text::thread_failed(language, &format!("{error:?}")),
         }
     }
 
@@ -556,38 +587,45 @@ impl SessionHandle {
 
     /// Pause for debugger control. Status strings match the verified
     /// prototype pixels.
-    pub fn debug_pause(&self) -> String {
+    pub fn debug_pause(&self, language: AppLanguage) -> String {
+        use nerust_settings_core::i18n::UiText;
         match self.emu_core.as_ref() {
             Some(core) => match core.pause() {
-                Ok(()) => "paused".to_string(),
-                Err(error) => format!("pause failed: {error:?}"),
+                Ok(()) => ui_text::text(language, UiText::PausedState).to_string(),
+                Err(error) => ui_text::pause_failed(language, &format!("{error:?}")),
             },
-            None => "no core".to_string(),
+            None => ui_text::text(language, UiText::NoCore).to_string(),
         }
     }
 
     /// Resume for debugger control.
-    pub fn debug_resume(&self) -> String {
+    pub fn debug_resume(&self, language: AppLanguage) -> String {
+        use nerust_settings_core::i18n::UiText;
         match self.emu_core.as_ref() {
             Some(core) => match core.resume() {
-                Ok(()) => "resumed".to_string(),
-                Err(error) => format!("resume failed: {error:?}"),
+                Ok(()) => ui_text::text(language, UiText::Resume).to_string(),
+                Err(error) => ui_text::resume_failed(language, &format!("{error:?}")),
             },
-            None => "no core".to_string(),
+            None => ui_text::text(language, UiText::NoCore).to_string(),
         }
     }
 
     /// Advance one unit for debugger control. Returns the stepped
     /// count (`stepped N`) or a loud failure.
-    pub fn debug_step(&self, unit: nerust_core_traits::debugger::StepUnit) -> String {
+    pub fn debug_step(
+        &self,
+        language: AppLanguage,
+        unit: nerust_core_traits::debugger::StepUnit,
+    ) -> String {
+        use nerust_settings_core::i18n::UiText;
         let core = match self.emu_core.as_ref() {
             Some(core) => core,
-            None => return "no core".to_string(),
+            None => return ui_text::text(language, UiText::NoCore).to_string(),
         };
         match core.step(unit) {
-            Ok(Ok(count)) => format!("stepped {count}"),
-            Ok(Err(error)) => format!("step failed: {error:?}"),
-            Err(error) => format!("thread failed: {error:?}"),
+            Ok(Ok(count)) => ui_text::stepped(language, count),
+            Ok(Err(error)) => ui_text::step_failed(language, &format!("{error:?}")),
+            Err(error) => ui_text::thread_failed(language, &format!("{error:?}")),
         }
     }
 

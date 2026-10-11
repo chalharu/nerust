@@ -41,12 +41,18 @@ use nerust_gui_viewmodel::debugger::scale2x_nearest;
 
 /// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
 /// tile start (+16 per tile). Generic geometry, no per-system branch.
-fn tile_hover_text(label: &str, width: u32, height: u32, point: Point) -> String {
+fn tile_hover_text(
+    language: nerust_gui_settings::language::AppLanguage,
+    label: &str,
+    width: u32,
+    height: u32,
+    point: Point,
+) -> String {
     let sx = (point.x / 2.0).floor().clamp(0.0, width as f32 - 1.0) as u32;
     let sy = (point.y / 2.0).floor().clamp(0.0, height as f32 - 1.0) as u32;
     let cols = (width / 8).max(1);
     let idx = (sy / 8) * cols + (sx / 8);
-    format!("{label} tile #{idx} (px {sx},{sy}, +{:04X})", idx * 16)
+    nerust_settings_core::i18n::tile_hover(language, label, idx, sx, sy, idx * 16)
 }
 
 #[derive(Debug, Clone)]
@@ -64,20 +70,12 @@ pub(crate) struct PpuState {
     scaled: Mutex<Vec<(String, u32, u32, Vec<u8>)>>,
     panels_cache: Mutex<String>,
     hover_cache: Mutex<String>,
-    /// Hash of the source images behind `scaled`. Sync re-derives
-    /// only when the bytes actually change: drains while paused
-    /// re-run Sync with identical memory.
-    source_hash: Mutex<u64>,
-}
-
-/// Content hash over source images (labels, sizes, bytes). 8 bytes
-/// of retained state instead of a second 512KB copy.
-fn source_images_hash(images: &[(String, u32, u32, Vec<u8>)]) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    images.hash(&mut hasher);
-    hasher.finish()
+    /// Generation of the source images behind `scaled`. Sync
+    /// re-derives only when the drain reports a new generation:
+    /// drains while paused re-run Sync with identical memory. Starts
+    /// impossibly high so the first Sync always derives (generation
+    /// zero is a valid first fetch).
+    source_gen: Mutex<u64>,
 }
 
 pub(crate) struct PpuProgram {
@@ -118,7 +116,7 @@ impl Program for PpuProgram {
                 scaled: Mutex::new(Vec::new()),
                 panels_cache: Mutex::new(String::new()),
                 hover_cache: Mutex::new(String::new()),
-                source_hash: Mutex::new(0),
+                source_gen: Mutex::new(u64::MAX),
             },
             Task::none(),
         )
@@ -134,9 +132,9 @@ impl Program for PpuProgram {
             }
             PpuMessage::Sync => {
                 let display = bridge.display.lock().unwrap();
-                let hash = source_images_hash(&display.images);
-                let mut source_hash = state.source_hash.lock().unwrap();
-                if *source_hash != hash {
+                let generation = display.images_gen;
+                let mut source_gen = state.source_gen.lock().unwrap();
+                if *source_gen != generation {
                     let mut scaled = Vec::with_capacity(display.images.len());
                     for (label, width, height, rgba) in &display.images {
                         scaled.push((
@@ -147,9 +145,10 @@ impl Program for PpuProgram {
                         ));
                     }
                     *state.scaled.lock().unwrap() = scaled;
-                    *source_hash = hash;
+                    *source_gen = generation;
                 }
-                *state.panels_cache.lock().unwrap() = display.panels.clone();
+                *state.panels_cache.lock().unwrap() =
+                    nerust_gui_viewmodel::debugger::format_panels(&display.panels);
             }
         }
         Task::none()
@@ -191,7 +190,13 @@ impl Program for PpuProgram {
             // Cache stores display size; halve back for hover math.
             let (hover_w, hover_h) = (width / 2, height / 2);
             content = content.push(mouse_area(shown).on_move(move |point| {
-                PpuMessage::Hovered(tile_hover_text(&hover_label, hover_w, hover_h, point))
+                PpuMessage::Hovered(tile_hover_text(
+                    language,
+                    &hover_label,
+                    hover_w,
+                    hover_h,
+                    point,
+                ))
             }));
         }
         // Systems without observation tables (GBA/GBC) show no
@@ -517,6 +522,10 @@ impl PpuWindowHandle {
         self.ui_state
             .sync_from_bridge(self.window_id, bounds, &mut self.renderer.backend);
         self.window.request_redraw();
+        // Deterministic pixels per drain: render synchronously
+        // instead of depending on the next window event, so the
+        // viewer never sits on a stale or blank frame.
+        self.render();
     }
 }
 
@@ -526,13 +535,27 @@ mod tests {
 
     #[test]
     fn tile_hover_reports_index_and_offset() {
-        let line = tile_hover_text("Pattern left", 128, 128, Point::new(88.0, 26.0));
+        use nerust_gui_settings::language::AppLanguage;
+        let line = tile_hover_text(
+            AppLanguage::English,
+            "Pattern left",
+            128,
+            128,
+            Point::new(88.0, 26.0),
+        );
         assert_eq!(line, "Pattern left tile #21 (px 44,13, +0150)");
     }
 
     #[test]
     fn tile_hover_clamps_to_table() {
-        let line = tile_hover_text("Pattern right", 128, 128, Point::new(500.0, 500.0));
-        assert!(line.starts_with("Pattern right tile #255 "));
+        use nerust_gui_settings::language::AppLanguage;
+        let line = tile_hover_text(
+            AppLanguage::Japanese,
+            "Pattern right",
+            128,
+            128,
+            Point::new(500.0, 500.0),
+        );
+        assert!(line.starts_with("Pattern right タイル #255 "));
     }
 }

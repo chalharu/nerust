@@ -125,7 +125,7 @@ impl WindowRuntime {
                 WindowEvent::KeyboardInput { event, .. } => {
                     self.host.on_keyboard_input(event);
                     if self.host.take_debug_open_request() {
-                        self.host.open_debug_windows(event_loop);
+                        self.host.open_debug_windows(event_loop, false);
                     }
                 }
                 _ => (),
@@ -206,7 +206,7 @@ impl WindowRuntime {
                 }
                 self.host.drain_debug_requests();
                 if self.host.take_ppu_open_request() {
-                    self.host.open_debug_windows(event_loop);
+                    self.host.open_debug_windows(event_loop, true);
                     self.host.run_debug_drain(&[]);
                 }
                 // Closing never resumes: resume is always explicit.
@@ -224,7 +224,7 @@ impl WindowRuntime {
             Event::RedrawRequested(window_id) if self.host.is_debug_window(window_id) => {
                 self.host.drain_debug_requests();
                 if self.host.take_ppu_open_request() {
-                    self.host.open_debug_windows(event_loop);
+                    self.host.open_debug_windows(event_loop, true);
                     self.host.run_debug_drain(&[]);
                 }
                 if let Some(handle) = self.host.debug_window.as_mut() {

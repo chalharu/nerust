@@ -403,10 +403,12 @@ pub const MAX_DUMP_BYTES: usize = 4096;
 pub const DEFAULT_DUMP_ROWS: u16 = 32;
 pub const DUMP_ROW_BYTES: usize = 16;
 
-/// One debugger drain's page sizes. The drain fetches a full page plus
-/// a disassembly window; single-byte reads use `rows: 1` directly.
-pub const DEBUG_DUMP_PAGE_ROWS: u16 = 8;
-pub const DEBUG_DISASM_ROWS: u16 = 8;
+/// One debugger drain's page sizes. The drain fetches a scroll
+/// window (not just the visible rows) so both twins get native
+/// wheel/viewport scrolling: the viewport shows a slice, Prev/Next
+/// move by the whole window. Single-byte reads use `rows: 1`.
+pub const DEBUG_DUMP_PAGE_ROWS: u16 = 32;
+pub const DEBUG_DISASM_ROWS: u16 = 32;
 
 /// Per-frame published observation. Holds results only — staleness and
 /// last-error tracking live in the application layer.
@@ -485,9 +487,16 @@ pub struct MemoryWrite {
 
 /// Debug-capability failure reasons.
 ///
-/// Errors carry their own data only; display keys resolve through
-/// [`DebuggerError::space_key`], so `UnknownSpace` never fabricates one.
+/// Errors carry their own data only; display keys resolve outside
+/// the kernel (see `nerust_gui_viewmodel::debugger::space_key`),
+/// so `UnknownSpace` never fabricates one.
 /// All variants are produced by domain (core) code alone.
+///
+/// `Unsupported` covers both "not implemented" and "unknown
+/// register name" for `write_register`: the name travels as data
+/// and the refusal stays one word. If callers ever need to tell
+/// the two apart, add a dedicated variant here (and thread it
+/// through every `DebugControl` backend) instead of overloading.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DebuggerError {
     /// The core supports neither debugger nor debug control.
@@ -503,18 +512,6 @@ pub enum DebuggerError {
     ReadOnlySpace(SpaceId),
     /// Width other than 1 / 2 / 4. Write-side only; reads use `None`.
     BadWidth(u8),
-}
-
-impl DebuggerError {
-    /// Resolve the display key. `None` for variants without a table entry.
-    pub fn space_key(&self, table: &SpaceTable) -> Option<&'static str> {
-        let id = match self {
-            Self::UnknownSpace(id) | Self::ReadOnlySpace(id) => *id,
-            Self::UnmappedAddress { space, .. } => *space,
-            _ => return None,
-        };
-        table.get(id).map(|s| s.key)
-    }
 }
 
 /// `EmuCommand::DebuggerInspect` failure reasons.

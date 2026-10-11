@@ -8,8 +8,10 @@
 //! this module owns pure interpretation only.
 
 use nerust_core_traits::debugger::{
-    CellValue, ColumnKind, DebugImage, DebugPanel, DisasmLine, ImageFormat, MemoryDump, SpaceId,
+    CellValue, ColumnKind, DebugImage, DebugPanel, DebuggerError, DisasmLine, HexRow, ImageFormat,
+    SpaceId, SpaceTable,
 };
+use nerust_gui_settings::language::AppLanguage;
 
 /// Disassembly undo depth (no$ Back adapted to buttons).
 pub const DISASM_BACK_CAP: usize = 32;
@@ -152,20 +154,29 @@ impl NavState {
 
 /// One rebuild's worth of display data. Written by the drain, read by
 /// view code; widgets never lock session state mid-build.
+///
+/// Registers, dump rows, and panels travel structured (kernel order
+/// kept): formatting to text is presentation's job, done per rebuild
+/// with the `format_*` helpers below. The one exception is `status`
+/// and `pending_text`, which arrive pre-formatted in the drain's
+/// language because the drain owns the outcome wording.
 #[derive(Debug, Clone, Default)]
 pub struct DisplayCache {
-    /// `name: $xxxx` lines in kernel order.
-    pub regs: String,
-    /// `(address, text)` hex rows for the current page.
-    pub dump_rows: Vec<(u32, String)>,
+    /// `(name, value)` in kernel order.
+    pub regs: Vec<(&'static str, u64)>,
+    /// Raw hex rows for the current scroll window.
+    pub dump_rows: Vec<HexRow>,
     /// Changed row addresses since the previous re-read (`*` marks).
     pub diff: Vec<u32>,
     /// Current disassembly window rows.
     pub disasm_lines: Vec<DisasmLine>,
-    /// system panels text (`== label ==` sections).
-    pub panels: String,
+    /// System observation tables (empty when the core has none).
+    pub panels: Vec<DebugPanel>,
     /// `(label, width, height, rgba)` system images.
     pub images: Vec<(String, u32, u32, Vec<u8>)>,
+    /// Image source generation behind `images` (see
+    /// `DebugSnapshot::images_gen`).
+    pub images_gen: u64,
     /// Read-only live watch value, if watched and readable.
     pub watch_value: Option<u8>,
     /// Pause state at capture: drives the single Pause/Resume toggle
@@ -194,6 +205,7 @@ impl DisplayCache {
             disasm_lines: self.disasm_lines.clone(),
             panels: self.panels.clone(),
             images: Vec::new(),
+            images_gen: self.images_gen,
             watch_value: self.watch_value,
             paused: self.paused,
             reg_names: self.reg_names.clone(),
@@ -203,27 +215,44 @@ impl DisplayCache {
     }
 }
 
-/// Changed row addresses: rows whose text differs from the previous
+/// Resolve the display key for a [`DebuggerError`]. `None` for
+/// variants without a table entry. Lives outside the kernel: error
+/// display is presentation's duty, so `UnknownSpace` never
+/// fabricates a key from inside domain code.
+pub fn space_key(table: &SpaceTable, error: &DebuggerError) -> Option<&'static str> {
+    let id: SpaceId = match error {
+        DebuggerError::UnknownSpace(id) | DebuggerError::ReadOnlySpace(id) => *id,
+        DebuggerError::UnmappedAddress { space, .. } => *space,
+        _ => return None,
+    };
+    table.get(id).map(|s| s.key)
+}
+
+/// Changed row addresses: rows whose bytes differ from the previous
 /// re-read at the same address. Added rows (address absent before)
 /// are navigation, not change, and stay unmarked.
-pub fn diff_rows(prev: &[(u32, String)], next: &[(u32, String)]) -> Vec<u32> {
+pub fn diff_rows(prev: &[HexRow], next: &[HexRow]) -> Vec<u32> {
     next.iter()
-        .filter(|(addr, text)| {
-            prev.iter()
-                .any(|(prev_addr, prev_text)| prev_addr == addr && prev_text != text)
+        .filter(|row| {
+            prev.iter().any(|p| {
+                p.addr == row.addr
+                    && (p.valid != row.valid
+                        || p.bytes[..p.valid as usize] != row.bytes[..row.valid as usize])
+            })
         })
-        .map(|(addr, _)| *addr)
+        .map(|row| row.addr)
         .collect()
 }
 
 /// Confirm-row text shared by the optimistic display and the
 /// authoritative drain value. Single formatter: both writers call it.
-pub fn format_pending_write(addr: u32, old: Option<u8>, value: u64) -> String {
-    let old_text = match old {
-        Some(old) => format!("{old:02X}"),
-        None => "??".to_string(),
-    };
-    format!("write {value:02X} to {addr:08X} (was {old_text})?")
+pub fn format_pending_write(
+    language: AppLanguage,
+    addr: u32,
+    old: Option<u8>,
+    value: u64,
+) -> String {
+    nerust_settings_core::i18n::pending_write(language, addr, old, value)
 }
 
 /// Two-phase memory write transaction: `Empty` → `Prepared` (row
@@ -298,11 +327,11 @@ impl WriteTransaction {
     }
 
     /// Confirm-row text, if fully staged.
-    pub fn pending_text(&self) -> Option<String> {
+    pub fn pending_text(&self, language: AppLanguage) -> Option<String> {
         match *self {
             Self::Staged {
                 addr, old, value, ..
-            } => Some(format_pending_write(addr, old, value)),
+            } => Some(format_pending_write(language, addr, old, value)),
             _ => None,
         }
     }
@@ -327,19 +356,26 @@ pub fn parse_hex_addr(raw: &str) -> Option<u32> {
 pub struct DebugSnapshot {
     /// False when no core is loaded: all sections carry degenerates.
     pub available: bool,
-    /// `name: $xxxx` lines in kernel order.
-    pub regs: String,
-    /// `(address, text)` hex rows for the current page.
-    pub dump_rows: Vec<(u32, String)>,
+    /// `(name, value)` in kernel order.
+    pub regs: Vec<(&'static str, u64)>,
+    /// Raw hex rows for the current scroll window.
+    pub dump_rows: Vec<HexRow>,
     /// Current disassembly window rows (empty when unanchored).
     pub disasm_lines: Vec<DisasmLine>,
     /// Anchor the disassembly centers on (`None` in follow mode
     /// without a named counter, or when pinned explicitly elsewhere).
     pub pc: Option<u32>,
-    /// `== label ==` sections, or `(no panels)`.
-    pub panels: String,
+    /// System observation tables (empty when the core has none).
+    pub panels: Vec<DebugPanel>,
     /// `(label, width, height, rgba)` system images.
     pub images: Vec<(String, u32, u32, Vec<u8>)>,
+    /// Image source generation: bumped by every path that advances
+    /// or replaces memory, so PPU viewers skip re-deriving on
+    /// identical generations instead of hashing megabytes.
+    pub images_gen: u64,
+    /// Live watch value folded into the page read (`None` when
+    /// unwatched or off-page; the drain falls back to one read).
+    pub watch: Option<u8>,
     /// Register names parallel to `regs` lines.
     pub reg_names: Vec<&'static str>,
 }
@@ -353,21 +389,10 @@ pub fn panels_visible(panels: &str) -> bool {
     panels != EMPTY_PANELS_TEXT
 }
 
-/// Format kernel registers as `name: $xxxx` lines, kernel order kept.
-pub fn format_registers(registers: &[(&'static str, u64)]) -> String {
+/// Format raw hex rows as one string per row (`addr: bytes`).
+pub fn format_dump_rows(rows: &[HexRow]) -> Vec<(u32, String)> {
     use std::fmt::Write as _;
-    let mut out = String::new();
-    for (name, value) in registers.iter() {
-        let _ = writeln!(out, "{name}: ${value:04X}");
-    }
-    out
-}
-
-/// Format a memory dump as one string per row (`addr: bytes`).
-pub fn format_dump_rows(dump: &MemoryDump) -> Vec<(u32, String)> {
-    use std::fmt::Write as _;
-    dump.rows
-        .iter()
+    rows.iter()
         .map(|row| {
             let mut text = format!("{:08X}:", row.addr);
             for i in 0..row.valid {
@@ -376,6 +401,11 @@ pub fn format_dump_rows(dump: &MemoryDump) -> Vec<(u32, String)> {
             (row.addr, text)
         })
         .collect()
+}
+
+/// Format one kernel register line (`name: $xxxx`), kernel order kept.
+pub fn format_register(name: &'static str, value: u64) -> String {
+    format!("{name}: ${value:04X}")
 }
 
 /// Format one cell by its column kind.
@@ -472,6 +502,7 @@ pub fn scale2x_nearest(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_gui_settings::language::AppLanguage;
 
     #[test]
     fn ppu_hover_hint_is_canonical() {
@@ -582,12 +613,18 @@ mod tests {
 
     #[test]
     fn diff_rows_marks_changed_only() {
-        let prev = vec![(0u32, "00: 00".to_string()), (16u32, "10: 00".to_string())];
-        let next = vec![
-            (0u32, "00: 42".to_string()),
-            (16u32, "10: 00".to_string()),
-            (32u32, "20: 00".to_string()),
-        ];
+        use nerust_core_traits::debugger::HexRow;
+        let row = |addr: u32, bytes: &[u8]| HexRow {
+            addr,
+            valid: bytes.len() as u8,
+            bytes: {
+                let mut all = [0u8; 16];
+                all[..bytes.len()].copy_from_slice(bytes);
+                all
+            },
+        };
+        let prev = vec![row(0, &[0x00]), row(16, &[0x00])];
+        let next = vec![row(0, &[0x42]), row(16, &[0x00]), row(32, &[0x00])];
         // Changed row marks; unchanged and added rows do not.
         assert_eq!(diff_rows(&prev, &next), vec![0]);
         assert!(diff_rows(&prev, &prev).is_empty());
@@ -595,13 +632,18 @@ mod tests {
 
     #[test]
     fn format_pending_write_covers_unknown_old() {
+        use nerust_gui_settings::language::AppLanguage;
         assert_eq!(
-            format_pending_write(0, Some(0xAB), 0x42),
+            format_pending_write(AppLanguage::English, 0, Some(0xAB), 0x42),
             "write 42 to 00000000 (was AB)?"
         );
         assert_eq!(
-            format_pending_write(0x80, None, 0xCC),
+            format_pending_write(AppLanguage::English, 0x80, None, 0xCC),
             "write CC to 00000080 (was ??)?"
+        );
+        assert_eq!(
+            format_pending_write(AppLanguage::Japanese, 0x80, Some(0x00), 0xCC),
+            "00000080 に CC を書込 (元 00)?"
         );
     }
 
@@ -622,10 +664,15 @@ mod tests {
 
     #[test]
     fn display_cache_covers_all_sections() {
+        use nerust_core_traits::debugger::HexRow;
         // Snapshot shape: every section the drain refreshes has a slot.
         let cache = DisplayCache {
-            regs: "a: $00".to_string(),
-            dump_rows: vec![(0, "00000000: 00".to_string())],
+            regs: vec![("a", 0)],
+            dump_rows: vec![HexRow {
+                addr: 0,
+                valid: 1,
+                bytes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            }],
             diff: vec![0],
             disasm_lines: vec![DisasmLine {
                 addr: 0xC000,
@@ -635,8 +682,9 @@ mod tests {
                 is_pc: true,
                 target: None,
             }],
-            panels: "== P ==".to_string(),
+            panels: vec![],
             images: vec![("Pattern left".to_string(), 256, 256, vec![0xFF; 4])],
+            images_gen: 7,
             watch_value: Some(0x42),
             paused: true,
             reg_names: vec!["a"],
@@ -646,41 +694,33 @@ mod tests {
         assert_eq!(cache.dump_rows.len(), 1);
         assert_eq!(cache.disasm_lines[0].addr, 0xC000);
         assert_eq!(cache.images.len(), 1);
+        // The imageless clone keeps the generation: viewers compare
+        // generations, never pixels.
+        let light = cache.clone_without_images();
+        assert!(light.images.is_empty());
+        assert_eq!(light.images_gen, 7);
     }
 
     #[test]
-    fn format_registers_keeps_kernel_order() {
-        let regs = [("b", 2u64), ("a", 1u64)];
-        assert_eq!(format_registers(&regs), "b: $0002\na: $0001\n");
-        assert_eq!(format_registers(&[]), "");
+    fn format_register_orders_value() {
+        assert_eq!(format_register("b", 2), "b: $0002");
+        assert_eq!(format_register("a", 1), "a: $0001");
     }
 
     #[test]
     fn format_dump_rows_renders_valid_prefix_only() {
-        use nerust_core_traits::debugger::SpaceId;
-        use nerust_core_traits::debugger::{HexRow, MemoryDump};
-        let dump = MemoryDump {
-            space: SpaceId(0),
-            base: 0,
-            rows: vec![HexRow {
-                addr: 0x10,
-                valid: 2,
-                bytes: [0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            }]
-            .into(),
-        };
+        use nerust_core_traits::debugger::HexRow;
+        let rows = vec![HexRow {
+            addr: 0x10,
+            valid: 2,
+            bytes: [0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        }];
         assert_eq!(
-            format_dump_rows(&dump),
+            format_dump_rows(&rows),
             vec![(0x10u32, "00000010: AB CD".to_string())]
         );
-        assert!(
-            format_dump_rows(&MemoryDump {
-                space: SpaceId(0),
-                base: 0,
-                rows: Vec::new().into(),
-            })
-            .is_empty()
-        );
+        let empty: Vec<HexRow> = Vec::new();
+        assert!(format_dump_rows(&empty).is_empty());
     }
 
     #[test]
@@ -800,17 +840,17 @@ mod tests {
     fn write_transaction_flows_to_commit() {
         use nerust_core_traits::debugger::SpaceId;
         let mut txn = WriteTransaction::Empty;
-        assert_eq!(txn.pending_text(), None);
+        assert_eq!(txn.pending_text(AppLanguage::English), None);
         assert_eq!(txn.take_commit(), None);
         // Staging without preparation is a no-op.
         txn.stage(0x42);
         assert_eq!(txn.take_commit(), None);
         // Prepare, stage, commit consumes exactly once.
         txn.prepare(SpaceId(0), 0x10, Some(0x00));
-        assert_eq!(txn.pending_text(), None);
+        assert_eq!(txn.pending_text(AppLanguage::English), None);
         txn.stage(0x42);
         assert_eq!(
-            txn.pending_text(),
+            txn.pending_text(AppLanguage::English),
             Some("write 42 to 00000010 (was 00)?".to_string())
         );
         assert_eq!(txn.take_commit(), Some((SpaceId(0), 0x10, 0x42)));
@@ -826,7 +866,7 @@ mod tests {
         txn.stage(0x42);
         // Fresh selection drops the staged value.
         txn.prepare(SpaceId(0), 0x20, Some(0xFF));
-        assert_eq!(txn.pending_text(), None);
+        assert_eq!(txn.pending_text(AppLanguage::English), None);
         assert_eq!(txn.take_commit(), None);
     }
 
@@ -845,7 +885,7 @@ mod tests {
         txn.stage(0x42);
         txn.on_state_changing_traffic();
         assert_eq!(txn, WriteTransaction::Empty);
-        assert_eq!(txn.pending_text(), None);
+        assert_eq!(txn.pending_text(AppLanguage::English), None);
         // Explicit cancel clears too.
         txn.prepare(SpaceId(0), 0x10, Some(0x00));
         txn.clear();

@@ -5,9 +5,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
+use nerust_core_traits::debugger::DebugPanel;
 use nerust_gui_settings::language::AppLanguage;
-use nerust_gui_viewmodel::debugger::scale2x_nearest;
-use nerust_settings_core::i18n::{UiText, text};
+use nerust_gui_viewmodel::debugger::{format_panels, scale2x_nearest};
+use nerust_settings_core::i18n::{UiText, text, tile_hover};
 
 use super::State;
 
@@ -18,21 +19,12 @@ pub(crate) struct PpuWindowCore {
     images_box: gtk::Box,
     hover_label: gtk::Label,
     language: AppLanguage,
-    /// Hash of the last synced `(images, panels)`. Refresh drains
-    /// re-run sync with identical bytes while paused; the 2x scale
-    /// and widget rebuild run only on change.
-    last_hash: u64,
-}
-
-/// Content hash over source images and panels: 8 bytes of retained
-/// state instead of a second copy of the pixels.
-fn sync_hash(images: &[(String, u32, u32, Vec<u8>)], panels: &str) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    images.hash(&mut hasher);
-    panels.hash(&mut hasher);
-    hasher.finish()
+    /// Generation of the last synced images. Refresh drains re-run
+    /// sync with identical generations while paused; the 2x scale
+    /// and widget rebuild run only on change. Starts impossibly high
+    /// so the first sync always derives (generation zero is valid).
+    last_gen: u64,
+    last_panels: Vec<DebugPanel>,
 }
 
 impl PpuWindowCore {
@@ -41,7 +33,8 @@ impl PpuWindowCore {
         main_window: &gtk::ApplicationWindow,
         _state: Rc<RefCell<State>>,
         images: Vec<(String, u32, u32, Vec<u8>)>,
-        panels: String,
+        images_gen: u64,
+        panels: Vec<DebugPanel>,
         language: AppLanguage,
     ) -> PpuWindow {
         let window = gtk::ApplicationWindow::builder()
@@ -75,9 +68,10 @@ impl PpuWindowCore {
             images_box,
             hover_label,
             language,
-            last_hash: 0,
+            last_gen: u64::MAX,
+            last_panels: Vec::new(),
         }));
-        result.borrow_mut().sync(&images, &panels);
+        result.borrow_mut().sync(&images, images_gen, &panels);
         window.present();
         result
     }
@@ -90,12 +84,17 @@ impl PpuWindowCore {
     /// Re-derive scaled pictures from fresh images (one 2x scale per
     /// change). Empty images show an explicit degenerate, never a
     /// blank window. Unchanged content skips the rebuild entirely.
-    pub(crate) fn sync(&mut self, images: &[(String, u32, u32, Vec<u8>)], panels: &str) {
-        let hash = sync_hash(images, panels);
-        if hash == self.last_hash {
+    pub(crate) fn sync(
+        &mut self,
+        images: &[(String, u32, u32, Vec<u8>)],
+        images_gen: u64,
+        panels: &[DebugPanel],
+    ) {
+        if images_gen == self.last_gen && panels == self.last_panels {
             return;
         }
-        self.last_hash = hash;
+        self.last_gen = images_gen;
+        self.last_panels = panels.to_vec();
         while let Some(child) = self.images_box.first_child() {
             self.images_box.remove(&child);
         }
@@ -124,8 +123,9 @@ impl PpuWindowCore {
             let hover = self.hover_label.clone();
             let label = label.clone();
             let (width, height) = (*width, *height);
+            let language = self.language;
             motion.connect_motion(move |_, x, y| {
-                hover.set_label(&tile_hover_text(&label, width, height, x, y));
+                hover.set_label(&tile_hover_text(language, &label, width, height, x, y));
             });
             picture.add_controller(motion);
             self.images_box.append(&picture);
@@ -134,11 +134,11 @@ impl PpuWindowCore {
         // the tao viewer layout (images first, panels below).
         // Systems without observation tables show no Panels section
         // at all instead of a puzzling marker.
-        if nerust_gui_viewmodel::debugger::panels_visible(panels) {
+        if !panels.is_empty() {
             let panels_title = gtk::Label::new(Some(text(self.language, UiText::Panels)));
             panels_title.set_xalign(0.0);
             self.images_box.append(&panels_title);
-            let panels_label = gtk::Label::new(Some(panels));
+            let panels_label = gtk::Label::new(Some(&format_panels(panels)));
             panels_label.add_css_class("monospace");
             panels_label.set_xalign(0.0);
             self.images_box.append(&panels_label);
@@ -148,12 +148,19 @@ impl PpuWindowCore {
 
 /// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
 /// tile start (+16 per tile). Same geometry as the tao viewer.
-fn tile_hover_text(label: &str, width: u32, height: u32, x: f64, y: f64) -> String {
+fn tile_hover_text(
+    language: AppLanguage,
+    label: &str,
+    width: u32,
+    height: u32,
+    x: f64,
+    y: f64,
+) -> String {
     let sx = (x / 2.0).floor().clamp(0.0, width as f64 - 1.0) as u32;
     let sy = (y / 2.0).floor().clamp(0.0, height as f64 - 1.0) as u32;
     let cols = (width / 8).max(1);
     let idx = (sy / 8) * cols + (sx / 8);
-    format!("{label} tile #{idx} (px {sx},{sy}, +{:04X})", idx * 16)
+    tile_hover(language, label, idx, sx, sy, idx * 16)
 }
 
 #[cfg(test)]
@@ -163,7 +170,7 @@ mod tests {
     #[test]
     fn tile_hover_matches_tao_geometry() {
         assert_eq!(
-            tile_hover_text("Pattern left", 128, 128, 88.0, 26.0),
+            tile_hover_text(AppLanguage::English, "Pattern left", 128, 128, 88.0, 26.0),
             "Pattern left tile #21 (px 44,13, +0150)"
         );
     }

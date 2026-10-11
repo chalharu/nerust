@@ -6,7 +6,8 @@
 //! place keeps tao and GTK behavior identical by construction and
 //! makes the order unit-testable without a GUI.
 
-use nerust_core_traits::debugger::{SpaceId, StepUnit};
+use nerust_core_traits::debugger::{HexRow, SpaceId, StepUnit};
+use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache};
 
 use crate::session::SessionHandle;
@@ -47,10 +48,12 @@ pub struct DebugDrainInput<'a> {
     /// Frozen `(address, value)` re-applied every batch.
     pub freeze: Option<(u32, u8)>,
     /// Previous dump rows for `*` diff marks.
-    pub prev_dump_rows: &'a [(u32, String)],
+    pub prev_dump_rows: &'a [HexRow],
     /// Fetch system images (pattern tables). False when no PPU
     /// viewer is open: CHR decode is skipped, not just unused.
     pub need_images: bool,
+    /// Drain language: the session formats outcome status in it.
+    pub language: AppLanguage,
 }
 
 /// Everything a frontend needs to render after a batch.
@@ -74,6 +77,8 @@ impl SessionHandle {
         actions: &[DebugAction],
         input: &DebugDrainInput,
     ) -> DebugDrainOutput {
+        use nerust_settings_core::i18n::UiText;
+        let language = input.language;
         let mut status = String::new();
         let mut state_changing = false;
         for action in actions {
@@ -82,22 +87,22 @@ impl SessionHandle {
                     state_changing = true;
                     continue;
                 }
-                DebugAction::Pause => self.debug_pause(),
-                DebugAction::Resume => self.debug_resume(),
+                DebugAction::Pause => self.debug_pause(language),
+                DebugAction::Resume => self.debug_resume(language),
                 DebugAction::TogglePause => {
                     if self.debug_paused() {
-                        self.debug_resume()
+                        self.debug_resume(language)
                     } else {
-                        self.debug_pause()
+                        self.debug_pause(language)
                     }
                 }
                 DebugAction::StepFrame => {
                     state_changing = true;
-                    self.debug_step(StepUnit::Frame)
+                    self.debug_step(language, StepUnit::Frame)
                 }
                 DebugAction::StepInstr => {
                     state_changing = true;
-                    self.debug_step(StepUnit::Instruction)
+                    self.debug_step(language, StepUnit::Instruction)
                 }
                 // Transaction traffic never kills: it builds the
                 // transaction this batch consumes. Register writes
@@ -116,11 +121,11 @@ impl SessionHandle {
             match action {
                 DebugAction::EditCancel => self.debug_clear_write(),
                 DebugAction::WriteConfirm => {
-                    status = self.debug_commit_write();
+                    status = self.debug_commit_write(language);
                 }
                 DebugAction::RegisterWrite(value) => {
                     if let Some(name) = input.reg_target {
-                        status = self.debug_write_register(name, *value);
+                        status = self.debug_write_register(language, name, *value);
                     }
                 }
                 _ => {}
@@ -157,16 +162,21 @@ impl SessionHandle {
             input.mem_addr,
             input.dis_addr,
             input.need_images,
+            input.watch,
         );
-        let watch_value = input
-            .watch
-            .and_then(|addr| input.space.and_then(|s| self.debug_read_byte(s, addr)));
-        let pending_text = self.debug_pending_text();
+        // Watch prefers the folded page read; off-page watches fall
+        // back to one single-byte inspect.
+        let watch_value = snapshot.watch.or_else(|| {
+            input
+                .watch
+                .and_then(|addr| input.space.and_then(|s| self.debug_read_byte(s, addr)))
+        });
+        let pending_text = self.debug_pending_text(language);
         let status = if status.is_empty() {
             if self.debug_paused() {
-                "paused".to_string()
+                nerust_settings_core::i18n::text(language, UiText::PausedState).to_string()
             } else {
-                "running".to_string()
+                nerust_settings_core::i18n::text(language, UiText::RunningState).to_string()
             }
         } else {
             status
@@ -178,6 +188,7 @@ impl SessionHandle {
             disasm_lines: snapshot.disasm_lines,
             panels: snapshot.panels,
             images: snapshot.images,
+            images_gen: snapshot.images_gen,
             watch_value,
             paused: self.debug_paused(),
             reg_names: snapshot.reg_names,
