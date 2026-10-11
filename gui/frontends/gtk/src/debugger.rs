@@ -1359,6 +1359,21 @@ mod tests {
         }
         present("DISPLAY") || present("WAYLAND_DISPLAY")
     }
+
+    /// Temporary CI diagnostic: report mapped legacy GTK paths
+    /// when a widget test starts (see `has_legacy_gtk`).
+    fn report_legacy_gtk(stage: &str) {
+        let hits = std::fs::read_to_string("/proc/self/maps")
+            .map(|maps| {
+                maps.lines()
+                    .filter(|line| line.contains("libgtk-3.so") || line.contains("libgtk-2"))
+                    .take(3)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        eprintln!("DIAG {stage}: legacy-gtk-hits={hits:?}");
+    }
     #[derive(Debug)]
     struct MockGpuFactory;
 
@@ -1402,6 +1417,7 @@ mod tests {
         if !display_available() || gtk::init().is_err() {
             return None;
         }
+        report_legacy_gtk("harness-ready");
         let app = gtk::Application::builder()
             .application_id("org.nerust.debugger-test")
             .build();
@@ -1490,6 +1506,7 @@ mod tests {
         // widget below shares this one.
         let state2 = Rc::clone(&state);
         let win = DebuggerWindowCore::open(&app, &main, state);
+        report_legacy_gtk("after-open");
         // No core reads as paused: the toggle offers Resume.
         assert_eq!(win.borrow().pause_button.label().as_deref(), Some("Resume"));
         assert!(win.borrow().data.selected_space().is_none());
@@ -1538,6 +1555,7 @@ mod tests {
         DebuggerWindowCore::bookmark_jump(&win, 0x310);
         DebuggerWindowCore::bookmark_delete(&win, 0x310);
         assert_eq!(win.borrow().data.bookmarks.len(), 7);
+        report_legacy_gtk("after-bookmarks");
         // Row click selects, then watch/freeze/edit ride the target.
         DebuggerWindowCore::row_selected(&win, 0x10);
         assert_eq!(win.borrow().data.selected, Some((0x10, None)));
@@ -1592,10 +1610,12 @@ mod tests {
         DebuggerWindowCore::open_ppu(&win);
         assert!(win.borrow().ppu_window.is_some());
         DebuggerWindowCore::open_ppu(&win);
+        report_legacy_gtk("after-open-ppu");
         // A second window on the same application renders a
         // synthetic display: pinned anchor `@`, Back depth,
         // register target, watch, freeze, and selection.
         let win2 = DebuggerWindowCore::open(&app, &main, state2);
+        report_legacy_gtk("after-open2");
         {
             let mut this = win2.borrow_mut();
             this.data.display = synthetic_display();
@@ -1607,6 +1627,7 @@ mod tests {
             this.data.nav.navigate(0x300, 0x302);
         }
         DebuggerWindowCore::rebuild(&win2);
+        report_legacy_gtk("after-rebuild");
         assert!(win2.borrow().disasm_title.label().contains("@00000302"));
         assert!(
             win2.borrow()
