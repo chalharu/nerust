@@ -1108,10 +1108,16 @@ impl DebuggerWindowCore {
     fn rebuild_dump(win: &DebuggerWindow, this: &DebuggerWindowCore) {
         let display = &this.data.display;
         clear_list(&this.dump_list);
-        for (addr, line) in &vm::format_dump_rows(&display.dump_rows) {
-            let is_selected = this.data.selected.map(|(a, _)| a) == Some(*addr);
-            let changed = display.diff.contains(addr);
-            let marker = match (is_selected, changed) {
+        // Byte-precise selection like the tao viewer: every byte is
+        // its own button, so the write target reads exactly (the
+        // address head keeps the old row-base pick).
+        for hex_row in &display.dump_rows {
+            let selected_addr = this.data.selected.map(|(a, _)| a);
+            // Containing-row match: a mid-row pick still lights its row.
+            let row_hit = selected_addr
+                .is_some_and(|a| a >= hex_row.addr && a < hex_row.addr + u32::from(hex_row.valid));
+            let changed = display.diff.contains(&hex_row.addr);
+            let marker = match (row_hit, changed) {
                 (true, true) => ">*",
                 (true, false) => "> ",
                 (false, true) => " *",
@@ -1119,22 +1125,34 @@ impl DebuggerWindowCore {
             };
             let row = gtk::ListBoxRow::new();
             row.set_selectable(false);
-            let button = gtk::Button::with_label(&format!("{marker}{line}"));
-            button.add_css_class("monospace");
-            left_align(&button);
-            button.set_hexpand(true);
-            button.set_halign(gtk::Align::Fill);
-            if is_selected {
-                button.add_css_class("suggested-action");
+            let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+            let head = gtk::Button::with_label(&format!("{marker}{:08X}:", hex_row.addr));
+            head.add_css_class("monospace");
+            left_align(&head);
+            if row_hit {
+                head.add_css_class("suggested-action");
             } else {
-                // Text-look rows like the tao viewer: the frame
-                // implies an action, but these only select.
-                button.add_css_class("flat");
+                head.add_css_class("flat");
             }
-            let addr = *addr;
-            let clicked = Rc::clone(win);
-            button.connect_clicked(move |_| Self::row_selected(&clicked, addr));
-            row.set_child(Some(&button));
+            let base = hex_row.addr;
+            let head_clicked = Rc::clone(win);
+            head.connect_clicked(move |_| Self::row_selected(&head_clicked, base));
+            hbox.append(&head);
+            for i in 0..hex_row.valid {
+                let addr = hex_row.addr + u32::from(i);
+                let byte = hex_row.bytes[usize::from(i)];
+                let button = gtk::Button::with_label(&format!("{byte:02X}"));
+                button.add_css_class("monospace");
+                if selected_addr == Some(addr) {
+                    button.add_css_class("suggested-action");
+                } else {
+                    button.add_css_class("flat");
+                }
+                let clicked = Rc::clone(win);
+                button.connect_clicked(move |_| Self::row_selected(&clicked, addr));
+                hbox.append(&button);
+            }
+            row.set_child(Some(&hbox));
             this.dump_list.append(&row);
         }
     }

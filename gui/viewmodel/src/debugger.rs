@@ -389,20 +389,6 @@ pub fn panels_visible(panels: &str) -> bool {
     panels != EMPTY_PANELS_TEXT
 }
 
-/// Format raw hex rows as one string per row (`addr: bytes`).
-pub fn format_dump_rows(rows: &[HexRow]) -> Vec<(u32, String)> {
-    use std::fmt::Write as _;
-    rows.iter()
-        .map(|row| {
-            let mut text = format!("{:08X}:", row.addr);
-            for i in 0..row.valid {
-                let _ = write!(text, " {:02X}", row.bytes[i as usize]);
-            }
-            (row.addr, text)
-        })
-        .collect()
-}
-
 /// Format one kernel register line (`name: $xxxx`), kernel order kept.
 pub fn format_register(name: &'static str, value: u64) -> String {
     format!("{name}: ${value:04X}")
@@ -705,22 +691,6 @@ mod tests {
     fn format_register_orders_value() {
         assert_eq!(format_register("b", 2), "b: $0002");
         assert_eq!(format_register("a", 1), "a: $0001");
-    }
-
-    #[test]
-    fn format_dump_rows_renders_valid_prefix_only() {
-        use nerust_core_traits::debugger::HexRow;
-        let rows = vec![HexRow {
-            addr: 0x10,
-            valid: 2,
-            bytes: [0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        }];
-        assert_eq!(
-            format_dump_rows(&rows),
-            vec![(0x10u32, "00000010: AB CD".to_string())]
-        );
-        let empty: Vec<HexRow> = Vec::new();
-        assert!(format_dump_rows(&empty).is_empty());
     }
 
     #[test]
