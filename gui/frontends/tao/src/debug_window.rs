@@ -690,30 +690,59 @@ fn view_dump_col(
     selected: Option<(u32, Option<u8>)>,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
-    use iced::widget::{button, column, scrollable, text};
+    use iced::widget::{button, column, row, scrollable, text};
+    // Byte-precise selection: every byte is its own button, so the
+    // write target reads exactly (the address head keeps the old
+    // row-base pick). The drain, transaction, and commit path were
+    // already byte-exact; only the click granularity was row-wide.
     let mut dump_col = column![].spacing(2);
-    for (addr, line) in &vm::format_dump_rows(dump_rows) {
-        let is_selected = selected.map(|(a, _)| a) == Some(*addr);
-        let changed = diff.contains(addr);
-        let marker = match (is_selected, changed) {
+    for hex_row in dump_rows {
+        let selected_addr = selected.map(|(a, _)| a);
+        // Containing-row match: a mid-row pick still lights its row.
+        let row_hit = selected_addr
+            .is_some_and(|a| a >= hex_row.addr && a < hex_row.addr + u32::from(hex_row.valid));
+        let changed = diff.contains(&hex_row.addr);
+        let marker = match (row_hit, changed) {
             (true, true) => ">*",
             (true, false) => "> ",
             (false, true) => " *",
             (false, false) => "  ",
         };
-        let row_button = button(
-            text(format!("{marker}{line}"))
-                .size(14)
-                .font(iced::Font::MONOSPACE),
-        )
-        .padding([2, 8])
-        .width(Length::Fill)
-        .on_press(DebugMessage::RowSelected(*addr));
-        dump_col = dump_col.push(if is_selected {
-            row_button.style(button::secondary)
-        } else {
-            row_button.style(button::text)
-        });
+        let mut line_row = row![
+            button(
+                text(format!("{marker}{:08X}:", hex_row.addr))
+                    .size(14)
+                    .font(iced::Font::MONOSPACE),
+            )
+            .padding([2, 4])
+            .style(if row_hit {
+                button::secondary
+            } else {
+                button::text
+            })
+            .on_press(DebugMessage::RowSelected(hex_row.addr)),
+        ]
+        .spacing(2);
+        for i in 0..hex_row.valid {
+            let addr = hex_row.addr + u32::from(i);
+            let byte = hex_row.bytes[usize::from(i)];
+            let is_selected = selected_addr == Some(addr);
+            line_row = line_row.push(
+                button(
+                    text(format!("{byte:02X}"))
+                        .size(14)
+                        .font(iced::Font::MONOSPACE),
+                )
+                .padding([2, 4])
+                .style(if is_selected {
+                    button::secondary
+                } else {
+                    button::text
+                })
+                .on_press(DebugMessage::RowSelected(addr)),
+            );
+        }
+        dump_col = dump_col.push(line_row.width(Length::Fill));
     }
     scrollable(dump_col).height(Length::Fill).into()
 }
