@@ -630,13 +630,12 @@ impl DebuggerWindowCore {
         let keys = gtk::EventControllerKey::new();
         let clicked = win.clone();
         keys.connect_key_pressed(move |_, key, _, _| {
-            match key {
-                gdk::Key::F6 => Self::act(&clicked, &[DebugAction::StepFrame]),
-                gdk::Key::F7 => Self::act(&clicked, &[DebugAction::StepInstr]),
-                gdk::Key::F9 => Self::act(&clicked, &[DebugAction::TogglePause]),
-                gdk::Key::Up => Self::page_mem(&clicked, -1),
-                gdk::Key::Down => Self::page_mem(&clicked, 1),
-                _ => (),
+            match key_action(key) {
+                Some(DebuggerKey::StepFrame) => Self::act(&clicked, &[DebugAction::StepFrame]),
+                Some(DebuggerKey::StepInstr) => Self::act(&clicked, &[DebugAction::StepInstr]),
+                Some(DebuggerKey::TogglePause) => Self::act(&clicked, &[DebugAction::TogglePause]),
+                Some(DebuggerKey::PageMem(delta)) => Self::page_mem(&clicked, delta),
+                None => (),
             }
             glib::Propagation::Proceed
         });
@@ -1258,6 +1257,28 @@ impl DebuggerWindowCore {
     }
 }
 
+/// Window-scoped key mapping: F6/F7/F9 execution, Up/Down dump
+/// paging. Left/Right stay with the widgets (caret movement).
+/// Pure mapping shared by the controller and the tests below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DebuggerKey {
+    StepFrame,
+    StepInstr,
+    TogglePause,
+    PageMem(i32),
+}
+
+fn key_action(key: gdk::Key) -> Option<DebuggerKey> {
+    match key {
+        gdk::Key::F6 => Some(DebuggerKey::StepFrame),
+        gdk::Key::F7 => Some(DebuggerKey::StepInstr),
+        gdk::Key::F9 => Some(DebuggerKey::TogglePause),
+        gdk::Key::Up => Some(DebuggerKey::PageMem(-1)),
+        gdk::Key::Down => Some(DebuggerKey::PageMem(1)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1298,6 +1319,17 @@ mod tests {
     }
 
     #[test]
+    fn key_action_maps_window_shortcuts() {
+        assert_eq!(key_action(gdk::Key::F6), Some(DebuggerKey::StepFrame));
+        assert_eq!(key_action(gdk::Key::F7), Some(DebuggerKey::StepInstr));
+        assert_eq!(key_action(gdk::Key::F9), Some(DebuggerKey::TogglePause));
+        assert_eq!(key_action(gdk::Key::Up), Some(DebuggerKey::PageMem(-1)));
+        assert_eq!(key_action(gdk::Key::Down), Some(DebuggerKey::PageMem(1)));
+        assert_eq!(key_action(gdk::Key::Left), None);
+        assert_eq!(key_action(gdk::Key::a), None);
+    }
+
+    #[test]
     fn freeze_input_needs_row_and_byte_together() {
         use nerust_gui_settings::language::AppLanguage;
         assert_eq!(
@@ -1311,6 +1343,291 @@ mod tests {
         assert_eq!(
             resolve_freeze_input(AppLanguage::English, Some((0x10, Some(0x00))), "1FF"),
             Err("freeze needs a selected row and hex byte".to_string())
+        );
+    }
+
+    /// Display-gated harness: widget construction needs a display
+    /// server, so these tests run under xvfb (like the CI coverage
+    /// job, which uses nextest: one process per test, always the
+    /// main thread) and skip cleanly on headless `cargo test`.
+    /// The gate checks `DISPLAY`/`WAYLAND_DISPLAY` without touching
+    /// GTK: even a failed `gtk::init()`-family call can poison the
+    /// process-wide init state for other tests.
+    fn display_available() -> bool {
+        fn present(name: &str) -> bool {
+            std::env::var_os(name).is_some_and(|v| !v.is_empty())
+        }
+        present("DISPLAY") || present("WAYLAND_DISPLAY")
+    }
+    #[derive(Debug)]
+    struct MockGpuFactory;
+
+    impl nerust_render_traits::renderer::GpuFactory for MockGpuFactory {
+        fn create_renderer(
+            &self,
+            _config: &nerust_render_traits::renderer::RendererConfig,
+            _display: raw_window_handle::RawDisplayHandle,
+        ) -> Result<
+            Box<dyn nerust_render_traits::renderer::GpuRenderer>,
+            nerust_render_traits::renderer::RendererError,
+        > {
+            Err(nerust_render_traits::renderer::RendererError::new(
+                "test",
+                Box::new(std::io::Error::other("no renderer in tests")),
+            ))
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockRomLoader;
+
+    impl nerust_gui_shell::load::RomLoader for MockRomLoader {
+        fn load_rom(
+            &mut self,
+            _path: &std::path::Path,
+            _target: &mut dyn nerust_gui_shell::load::RomLoadTarget,
+        ) -> Result<(), nerust_gui_shell::load::RomLoaderError> {
+            Err(nerust_gui_shell::load::RomLoaderError::Load(
+                "no ROM in tests".to_string(),
+            ))
+        }
+    }
+
+    fn harness() -> Option<(
+        gtk::Application,
+        gtk::ApplicationWindow,
+        Rc<RefCell<crate::State>>,
+    )> {
+        use std::sync::Arc;
+        if !display_available() || gtk::init().is_err() {
+            return None;
+        }
+        let app = gtk::Application::builder()
+            .application_id("org.nerust.debugger-test")
+            .build();
+        let main = gtk::ApplicationWindow::builder().application(&app).build();
+        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let ctx = nerust_gui_shell::context::FrontendContext {
+            gpu_factory: Rc::new(MockGpuFactory),
+            registry,
+            rom_loader: Box::new(MockRomLoader),
+            audio_registry: audio,
+        };
+        let state = Rc::new(RefCell::new(crate::State::new(ctx)));
+        Some((app, main, state))
+    }
+
+    fn synthetic_display() -> DisplayCache {
+        use nerust_core_traits::debugger::{
+            CellValue, ColumnKind, DebugPanel, DisasmLine, HexRow, PanelColumn, PanelRow,
+        };
+        static TEST_COLUMNS: [PanelColumn; 1] = [PanelColumn {
+            id: "h",
+            label_id: "H",
+            kind: ColumnKind::Hex { digits: 2 },
+        }];
+        DisplayCache {
+            regs: vec![("cpsr", 0x3F), ("r0", 1), ("r1", 2)],
+            dump_rows: vec![
+                HexRow {
+                    addr: 0x100,
+                    valid: 16,
+                    bytes: [0xAB; 16],
+                },
+                HexRow {
+                    addr: 0x110,
+                    valid: 3,
+                    bytes: [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                },
+            ],
+            diff: vec![0x100],
+            disasm_lines: vec![
+                DisasmLine {
+                    addr: 0x300,
+                    bytes: [0xF0, 0xBC, 0, 0],
+                    len: 2,
+                    text: "POP {r4, r5, r6, r7}".to_string(),
+                    is_pc: true,
+                    target: None,
+                },
+                DisasmLine {
+                    addr: 0x302,
+                    bytes: [0x02, 0xBC, 0, 0],
+                    len: 2,
+                    text: "POP {r1}".to_string(),
+                    is_pc: false,
+                    target: Some(0x400),
+                },
+            ],
+            panels: vec![DebugPanel {
+                id: "p",
+                label_id: "P",
+                columns: &TEST_COLUMNS,
+                rows: vec![PanelRow {
+                    key: "row",
+                    cells: vec![CellValue::U64(0xAB)],
+                }],
+            }],
+            images: vec![("Tiles".to_string(), 2, 1, vec![0xFF; 8])],
+            images_gen: 3,
+            watch_value: Some(0xAB),
+            paused: true,
+            reg_names: vec!["cpsr", "r0", "r1"],
+            status: "paused".to_string(),
+            pending_text: Some("write 42 to 00000100 (was AB)?".to_string()),
+        }
+    }
+
+    #[test]
+    fn debugger_open_drives_every_action() {
+        let Some((app, main, state)) = harness() else {
+            eprintln!("SKIP: debugger widget test needs a display");
+            return;
+        };
+        // One application per test process: a second Application
+        // fights the first for GApplication registration, so every
+        // widget below shares this one.
+        let state2 = Rc::clone(&state);
+        let win = DebuggerWindowCore::open(&app, &main, state);
+        // No core reads as paused: the toggle offers Resume.
+        assert_eq!(win.borrow().pause_button.label().as_deref(), Some("Resume"));
+        assert!(win.borrow().data.selected_space().is_none());
+        assert_eq!(win.borrow().data.selected_name(), "");
+        assert_eq!(win.borrow().data.anchor(), 0);
+        // One mock space so selection can prepare without a core:
+        // the drain still refuses loudly at the core boundary.
+        win.borrow_mut().data.spaces = vec![(SpaceId(0), "Mock".to_string(), 0)];
+        assert!(win.borrow().data.selected_space().is_some());
+        assert_eq!(win.borrow().data.selected_name(), "Mock");
+        // Memory navigation resolves valid hex, rejects the rest.
+        win.borrow().mem_input.set_text("100");
+        DebuggerWindowCore::mem_go(&win);
+        assert_eq!(win.borrow().data.nav.mem_addr(), 0x100);
+        win.borrow().mem_input.set_text("zz");
+        DebuggerWindowCore::mem_go(&win);
+        assert!(win.borrow().data.display.status.contains("parse failed"));
+        DebuggerWindowCore::page_mem(&win, 1);
+        DebuggerWindowCore::page_mem(&win, -1);
+        // The stepper cycles the single mock space.
+        DebuggerWindowCore::cycle_space(&win, 1);
+        DebuggerWindowCore::cycle_space(&win, -1);
+        // Disassembly navigation pins, follows, and backs out.
+        win.borrow().dis_input.set_text("300");
+        DebuggerWindowCore::dis_go(&win);
+        assert!(!win.borrow().data.nav.follow_pc());
+        win.borrow().dis_input.set_text("zz");
+        DebuggerWindowCore::dis_go(&win);
+        DebuggerWindowCore::dis_back(&win);
+        DebuggerWindowCore::dis_line_clicked(&win, 0x302);
+        DebuggerWindowCore::follow_target(&win, 0x400);
+        DebuggerWindowCore::dis_back(&win);
+        DebuggerWindowCore::dis_back(&win);
+        // Bookmarks default empty labels, fill to the cap, jump, delete.
+        win.borrow().bookmark_input.set_text("");
+        DebuggerWindowCore::bookmark_add(&win);
+        assert_eq!(win.borrow().data.bookmarks.len(), 1);
+        for i in 1..9u32 {
+            DebuggerWindowCore::dis_line_clicked(&win, 0x300 + i * 0x10);
+            DebuggerWindowCore::bookmark_add(&win);
+        }
+        assert_eq!(win.borrow().data.bookmarks.len(), 8);
+        DebuggerWindowCore::dis_line_clicked(&win, 0x500);
+        DebuggerWindowCore::bookmark_add(&win);
+        assert_eq!(win.borrow().data.bookmarks.len(), 8);
+        DebuggerWindowCore::bookmark_jump(&win, 0x310);
+        DebuggerWindowCore::bookmark_delete(&win, 0x310);
+        assert_eq!(win.borrow().data.bookmarks.len(), 7);
+        // Row click selects, then watch/freeze/edit ride the target.
+        DebuggerWindowCore::row_selected(&win, 0x10);
+        assert_eq!(win.borrow().data.selected, Some((0x10, None)));
+        DebuggerWindowCore::watch_set(&win);
+        assert_eq!(win.borrow().data.watch, Some(0x10));
+        DebuggerWindowCore::watch_clear(&win);
+        assert!(win.borrow().data.watch.is_none());
+        win.borrow_mut().data.selected = None;
+        DebuggerWindowCore::watch_set(&win);
+        win.borrow_mut().data.selected = Some((0x10, Some(0)));
+        win.borrow().freeze_input.set_text("FF");
+        DebuggerWindowCore::freeze_set(&win);
+        assert_eq!(win.borrow().data.freeze, Some((0x10, 0xFF)));
+        win.borrow().edit_input.set_text("00");
+        DebuggerWindowCore::edit_freeze_set(&win);
+        assert_eq!(win.borrow().data.freeze, Some((0x10, 0x00)));
+        win.borrow().freeze_input.set_text("1FF");
+        DebuggerWindowCore::freeze_set(&win);
+        win.borrow_mut().data.selected = None;
+        DebuggerWindowCore::freeze_set(&win);
+        DebuggerWindowCore::freeze_clear(&win);
+        assert!(win.borrow().data.freeze.is_none());
+        // Write stages SelectRow plus EditStage, then commits loudly
+        // without a core; cancel clears the optimistic text.
+        win.borrow_mut().data.selected = Some((0x10, Some(0)));
+        win.borrow().edit_input.set_text("42");
+        DebuggerWindowCore::edit_write(&win);
+        assert!(win.borrow().data.display.pending_text.is_some());
+        DebuggerWindowCore::confirm_write(&win);
+        assert_eq!(win.borrow().data.display.status, "no core");
+        assert_eq!(win.borrow().edit_input.text().as_str(), "");
+        DebuggerWindowCore::edit_write(&win);
+        DebuggerWindowCore::cancel_write(&win);
+        assert!(win.borrow().data.display.pending_text.is_none());
+        win.borrow_mut().data.selected = None;
+        DebuggerWindowCore::edit_write(&win);
+        win.borrow().edit_input.set_text("zz");
+        win.borrow_mut().data.selected = Some((0x10, Some(0)));
+        DebuggerWindowCore::edit_write(&win);
+        // Register pick then Set pushes one register write.
+        DebuggerWindowCore::reg_selected(&win, "r0");
+        assert_eq!(win.borrow().data.reg_target, Some("r0"));
+        win.borrow().reg_input.set_text("7");
+        DebuggerWindowCore::reg_set(&win);
+        assert_eq!(win.borrow().data.display.status, "no core");
+        win.borrow().reg_input.set_text("zz");
+        DebuggerWindowCore::reg_set(&win);
+        win.borrow_mut().data.reg_target = None;
+        DebuggerWindowCore::reg_set(&win);
+        // The viewer opens once, then re-presents with focus.
+        assert!(win.borrow().ppu_window.is_none());
+        DebuggerWindowCore::open_ppu(&win);
+        assert!(win.borrow().ppu_window.is_some());
+        DebuggerWindowCore::open_ppu(&win);
+        // A second window on the same application renders a
+        // synthetic display: pinned anchor `@`, Back depth,
+        // register target, watch, freeze, and selection.
+        let win2 = DebuggerWindowCore::open(&app, &main, state2);
+        {
+            let mut this = win2.borrow_mut();
+            this.data.display = synthetic_display();
+            this.data.selected = Some((0x102, Some(9)));
+            this.data.watch = Some(0x100);
+            this.data.freeze = Some((0x100, 0xFF));
+            this.data.reg_target = Some("r0");
+            this.data.bookmarks = vec![(0x300, "BM1".to_string())];
+            this.data.nav.navigate(0x300, 0x302);
+        }
+        DebuggerWindowCore::rebuild(&win2);
+        assert!(win2.borrow().disasm_title.label().contains("@00000302"));
+        assert!(
+            win2.borrow()
+                .back_button
+                .label()
+                .as_deref()
+                .unwrap_or("")
+                .contains("(1)")
+        );
+        assert!(win2.borrow().reg_target_label.label().contains("r0"));
+        assert!(win2.borrow().watch_label.label().contains("00000100"));
+        assert!(win2.borrow().freeze_label.label().contains("00000100"));
+        assert!(win2.borrow().select_label.label().contains("00000102"));
+        // The viewer follows the rebuild with images and panels.
+        DebuggerWindowCore::open_ppu(&win2);
+        assert!(win2.borrow().ppu_window.is_some());
+        // The preferences dialog builds from the same harness state.
+        super::super::preferences::present_preferences_dialog(
+            &main,
+            win2.borrow().state.clone(),
+            || {},
         );
     }
 }

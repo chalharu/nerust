@@ -706,6 +706,155 @@ fn debug_write_byte_without_core_is_silent() {
     assert!(!session.debug_write_byte(SpaceId(0), 0, 0xFF));
 }
 
+fn loaded_debug_session() -> SessionHandle {
+    let mut session = test_session();
+    let resolved = session
+        .factory()
+        .expect("no active system")
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .expect("load resolves");
+    session
+        .load_resolved(MediaObject::new(None, test_rom()), resolved)
+        .expect("test ROM loads");
+    assert!(session.debug_paused());
+    session
+}
+
+fn drain_input(language: AppLanguage) -> crate::debug::DebugDrainInput<'static> {
+    use crate::debug::DebugDrainInput;
+    use nerust_core_traits::debugger::SpaceId;
+    DebugDrainInput {
+        space: Some(SpaceId(0)),
+        mem_addr: 0,
+        dis_addr: None,
+        watch: None,
+        freeze: None,
+        reg_target: None,
+        prev_dump_rows: &[],
+        need_images: false,
+        language,
+    }
+}
+
+#[test]
+fn debug_snapshot_covers_loaded_mock_core() {
+    use nerust_core_traits::debugger::SpaceId;
+    let session = loaded_debug_session();
+    let snapshot = session.debug_snapshot(Some(SpaceId(0)), 0, None, true, Some(0x10));
+    assert!(snapshot.available);
+    assert_eq!(snapshot.reg_names, vec!["a", "b"]);
+    assert_eq!(snapshot.regs.len(), 2);
+    // Scroll window over the 256-byte mock space: 16 full rows,
+    // then the range end stops the fetch.
+    assert_eq!(snapshot.dump_rows.len(), 16);
+    assert_eq!(snapshot.pc, Some(0x10));
+    assert_eq!(snapshot.disasm_lines.len(), 32);
+    assert!(snapshot.disasm_lines[0].is_pc);
+    assert_eq!(snapshot.images.len(), 1);
+    // Watch folds into the page read: fresh mock memory is zero.
+    assert_eq!(snapshot.watch, Some(0));
+    assert!(snapshot.panels.is_empty());
+}
+
+#[test]
+fn debug_drain_happy_path_reports_success() {
+    use crate::debug::DebugAction;
+    let session = loaded_debug_session();
+    for language in [AppLanguage::English, AppLanguage::Japanese] {
+        let input = drain_input(language);
+        let paused = session.debug_drain(&[DebugAction::Pause], &input);
+        assert_eq!(
+            paused.display.status,
+            session.debug_pause(language),
+            "pause round-trips status"
+        );
+        let stepped = session.debug_drain(&[DebugAction::StepFrame], &input);
+        // Frame steps report the barrier frame counter (free-run may
+        // precede the pause), so only the prefix is pinned.
+        assert!(
+            stepped
+                .display
+                .status
+                .starts_with(if language == AppLanguage::English {
+                    "stepped "
+                } else {
+                    "ステップ実行 "
+                })
+        );
+    }
+    // Memory write round-trips through the thread: stage, commit,
+    // then read back the staged byte.
+    let input = drain_input(AppLanguage::English);
+    let staged = session.debug_drain(
+        &[DebugAction::SelectRow(0x20), DebugAction::EditStage(0xAB)],
+        &input,
+    );
+    assert!(staged.display.pending_text.is_some());
+    let committed = session.debug_drain(&[DebugAction::WriteConfirm], &input);
+    assert_eq!(committed.display.status, "wrote AB to 00000020 (width 1)");
+    assert_eq!(
+        session.debug_read_byte(nerust_core_traits::debugger::SpaceId(0), 0x20),
+        Some(0xAB)
+    );
+    // Staging off the map commits loudly instead of writing.
+    session.debug_prepare_write(nerust_core_traits::debugger::SpaceId(9), 0x10);
+    session.debug_stage_write(0xAB);
+    assert_eq!(
+        session.debug_commit_write(AppLanguage::English),
+        "write refused: UnknownSpace(SpaceId(9))"
+    );
+    // Resume, toggle, instruction steps, and freeze re-apply ride
+    // the same drain.
+    let resumed = session.debug_drain(&[DebugAction::Resume], &input);
+    assert_eq!(resumed.display.status, "Resume");
+    // An empty batch on the running core reports running.
+    let running = session.debug_drain(&[], &input);
+    assert_eq!(running.display.status, "running");
+    let toggled = session.debug_drain(&[DebugAction::TogglePause], &input);
+    assert_eq!(toggled.display.status, "paused");
+    let instr = session.debug_drain(&[DebugAction::StepInstr], &input);
+    assert!(instr.display.status.starts_with("stepped "));
+    // Toggling while paused resumes back; pause again for the
+    // deterministic reads below.
+    let toggled_back = session.debug_drain(&[DebugAction::TogglePause], &input);
+    assert_eq!(toggled_back.display.status, "Resume");
+    session.debug_drain(&[DebugAction::Pause], &input);
+    let mut frozen = drain_input(AppLanguage::English);
+    frozen.freeze = Some((0x30, 0xBB));
+    session.debug_drain(&[DebugAction::Refresh], &frozen);
+    assert_eq!(
+        session.debug_read_byte(nerust_core_traits::debugger::SpaceId(0), 0x30),
+        Some(0xBB)
+    );
+    // Register write round-trips the same way, in both languages.
+    for (language, expected) in [
+        (AppLanguage::English, "wrote 0007 to register a"),
+        (AppLanguage::Japanese, "レジスタ a に 0007 を書込済"),
+    ] {
+        let mut targeted = drain_input(language);
+        targeted.reg_target = Some("a");
+        let wrote = session.debug_drain(&[DebugAction::RegisterWrite(7)], &targeted);
+        assert_eq!(wrote.display.status, expected);
+    }
+    // Unknown names refuse loudly, in both languages.
+    assert_eq!(
+        session.debug_write_register(AppLanguage::English, "bogus", 0),
+        "register write refused: Unsupported"
+    );
+    assert_eq!(
+        session.debug_write_register(AppLanguage::Japanese, "bogus", 0),
+        "レジスタ書込拒否: Unsupported"
+    );
+    let after = session.debug_snapshot(
+        Some(nerust_core_traits::debugger::SpaceId(0)),
+        0,
+        None,
+        false,
+        None,
+    );
+    assert_eq!(after.regs[0], ("a", 7));
+}
+
 #[test]
 fn debug_drain_register_write_reports_loudly_without_core() {
     use crate::debug::{DebugAction, DebugDrainInput};

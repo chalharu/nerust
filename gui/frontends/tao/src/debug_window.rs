@@ -11,17 +11,12 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use iced::{Size, Task, advanced::renderer, keyboard, mouse, theme};
-use iced_tiny_skia::{
-    Renderer,
-    graphics::compositor::Compositor as _,
-    window::{Compositor, Surface, compositor},
-};
+use iced::{Size, Task, keyboard, mouse};
+use iced_tiny_skia::Renderer;
 use iced_winit::{
     Clipboard,
     graphics::Viewport,
     program::{self, Program},
-    runtime::user_interface::{Cache, UserInterface},
 };
 use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, HexRow, SpaceId};
 use nerust_gui_settings::language::AppLanguage;
@@ -32,12 +27,14 @@ use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 use tao::{
-    event_loop::EventLoopWindowTarget,
-    keyboard::ModifiersState as TaoModifiers,
-    window::{Window as TaoWindow, WindowBuilder},
+    event_loop::EventLoopWindowTarget, keyboard::ModifiersState as TaoModifiers,
+    window::Window as TaoWindow,
 };
 
-use crate::tao_conversions::{convert_tao_window_event, default_font};
+use crate::{
+    iced_shell::{ShellRenderer, UiShell, WindowScaffold, aux_settings, aux_theme, render_ui},
+    tao_conversions::convert_tao_window_event,
+};
 
 /// Initial debugger window size (verified Xvfb fit).
 pub(crate) const DEBUG_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
@@ -365,15 +362,11 @@ impl Program for DebugProgram {
     }
 
     fn theme(&self, _state: &Self::State, _window: iced::window::Id) -> Option<Self::Theme> {
-        Some(iced::Theme::Light)
+        aux_theme()
     }
 
     fn settings(&self) -> iced::Settings {
-        iced::Settings {
-            default_font: default_font(),
-            default_text_size: iced::Pixels(16.0),
-            ..Default::default()
-        }
+        aux_settings()
     }
 
     fn window(&self) -> Option<iced::window::Settings> {
@@ -1064,111 +1057,11 @@ fn view_right_col(
     .into()
 }
 
-/// Owns Instance + Cache + UI, mirroring `settings_window::UiState`.
-pub(crate) struct DebugUiState {
-    ui: std::mem::ManuallyDrop<
-        UserInterface<'static, DebugMessage, iced::Theme, iced_tiny_skia::Renderer>,
-    >,
-    instance: program::Instance<DebugProgram>,
-    bridge: Arc<DebugBridge>,
-}
-
-impl DebugUiState {
-    fn build_ui(
-        instance: &program::Instance<DebugProgram>,
-        window_id: iced::window::Id,
-        bounds: Size,
-        cache: Cache,
-        renderer: &mut iced_tiny_skia::Renderer,
-    ) -> UserInterface<'static, DebugMessage, iced::Theme, iced_tiny_skia::Renderer> {
-        unsafe {
-            std::mem::transmute::<
-                UserInterface<'_, DebugMessage, iced::Theme, iced_tiny_skia::Renderer>,
-                UserInterface<'static, DebugMessage, iced::Theme, iced_tiny_skia::Renderer>,
-            >(UserInterface::build(
-                instance.view(window_id),
-                bounds,
-                cache,
-                renderer,
-            ))
-        }
-    }
-
-    fn new(
-        instance: program::Instance<DebugProgram>,
-        window_id: iced::window::Id,
-        bounds: Size,
-        renderer: &mut iced_tiny_skia::Renderer,
-        bridge: Arc<DebugBridge>,
-    ) -> Self {
-        let ui = Self::build_ui(&instance, window_id, bounds, Cache::default(), renderer);
-        Self {
-            ui: std::mem::ManuallyDrop::new(ui),
-            instance,
-            bridge,
-        }
-    }
-
-    fn ui_mut(
-        &mut self,
-    ) -> &mut UserInterface<'static, DebugMessage, iced::Theme, iced_tiny_skia::Renderer> {
-        &mut self.ui
-    }
-
-    fn process_messages(
-        &mut self,
-        messages: Vec<DebugMessage>,
-        window_id: iced::window::Id,
-        bounds: Size,
-        renderer: &mut iced_tiny_skia::Renderer,
-    ) {
-        if messages.is_empty() && !self.bridge.view_invalidated.load(Ordering::Acquire) {
-            return;
-        }
-        let placeholder = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(
-                &self.instance,
-                window_id,
-                bounds,
-                Cache::default(),
-                renderer,
-            ),
-        );
-        let cache = placeholder.into_cache();
-        for msg in messages {
-            let _task = self.instance.update(msg);
-        }
-        let stale = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
-        );
-        let _ = stale.into_cache();
-        self.bridge.view_invalidated.store(false, Ordering::Release);
-    }
-
-    fn sync_from_bridge(
-        &mut self,
-        window_id: iced::window::Id,
-        bounds: Size,
-        renderer: &mut iced_tiny_skia::Renderer,
-    ) {
-        self.bridge.view_invalidated.store(true, Ordering::Release);
-        self.process_messages(Vec::new(), window_id, bounds, renderer);
-    }
-}
-
-impl Drop for DebugUiState {
-    fn drop(&mut self) {
-        unsafe { std::mem::ManuallyDrop::drop(&mut self.ui) };
-    }
-}
-
 pub(crate) struct DebugWindowHandle {
     pub(crate) window: Arc<TaoWindow>,
     window_id: iced::window::Id,
-    ui_state: DebugUiState,
-    renderer: DebugRenderer,
+    ui_state: UiShell<DebugProgram>,
+    renderer: ShellRenderer,
     viewport_physical: (u32, u32),
     pub(crate) scale_factor: f32,
     pub(crate) modifiers: keyboard::Modifiers,
@@ -1178,30 +1071,27 @@ pub(crate) struct DebugWindowHandle {
     clipboard: Clipboard,
 }
 
-pub(crate) struct DebugRenderer {
-    compositor: Compositor,
-    surface: Surface,
-    backend: Renderer,
+/// Window-scoped shortcuts on physical codes: F6 steps a frame,
+/// F7 an instruction, F9 toggles pause. Pure mapping shared by the
+/// event handler and the tests below.
+fn shortcut_request(physical: &iced::keyboard::key::Physical) -> Option<DebugAction> {
+    use iced::keyboard::key::{Code, Physical};
+    match *physical {
+        Physical::Code(Code::F6) => Some(DebugAction::StepFrame),
+        Physical::Code(Code::F7) => Some(DebugAction::StepInstr),
+        Physical::Code(Code::F9) => Some(DebugAction::TogglePause),
+        _ => None,
+    }
 }
 
-impl DebugRenderer {
-    fn present(
-        &mut self,
-        viewport: &Viewport,
-        background_color: iced::Color,
-    ) -> Result<(), iced_tiny_skia::graphics::compositor::SurfaceError> {
-        self.compositor.present(
-            &mut self.backend,
-            &mut self.surface,
-            viewport,
-            background_color,
-            || {},
-        )
-    }
-
-    fn resize(&mut self, width: u32, height: u32) {
-        self.compositor
-            .configure_surface(&mut self.surface, width, height);
+/// Cursor keys page the dump (Up = toward lower addresses). Pure
+/// mapping; Left/Right stay `None` for the text inputs.
+fn cursor_page(physical: &iced::keyboard::key::Physical) -> Option<DebugMessage> {
+    use iced::keyboard::key::{Code, Physical};
+    match *physical {
+        Physical::Code(Code::ArrowUp) => Some(DebugMessage::MemPage(-1)),
+        Physical::Code(Code::ArrowDown) => Some(DebugMessage::MemPage(1)),
+        _ => None,
     }
 }
 
@@ -1216,63 +1106,36 @@ impl DebugWindowHandle {
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
         let bridge = Arc::new(DebugBridge::new(display, spaces, mem_addr, language));
-        let mut builder = WindowBuilder::new()
-            .with_title(ui_text(language, UiText::Debugger))
-            .with_inner_size(tao::dpi::LogicalSize::new(
-                DEBUG_WINDOW_SIZE.0,
-                DEBUG_WINDOW_SIZE.1,
-            ))
-            .with_min_inner_size(tao::dpi::LogicalSize::new(
-                DEBUG_WINDOW_MIN_SIZE.0,
-                DEBUG_WINDOW_MIN_SIZE.1,
-            ));
-        #[cfg(target_os = "macos")]
-        {
-            builder = builder.with_automatic_window_tabbing(false);
-        }
-        if let Some((x, y)) = position {
-            builder = builder.with_position(tao::dpi::LogicalPosition::new(x as f64, y as f64));
-        }
-        let window = Arc::new(match builder.build(event_loop) {
-            Ok(window) => window,
-            Err(error) => {
-                log::error!("failed to create debugger window: {error}");
-                return None;
-            }
-        });
-        let window_id = iced::window::Id::unique();
+        let title = ui_text(language, UiText::Debugger).to_string();
+        let scaffold = WindowScaffold::open(
+            event_loop,
+            &title,
+            DEBUG_WINDOW_SIZE,
+            Some(DEBUG_WINDOW_MIN_SIZE),
+            position,
+            "debugger window",
+        )?;
+        let crate::iced_shell::WindowScaffold {
+            window,
+            window_id,
+            scale_factor,
+            viewport_physical,
+            bounds,
+            compositor,
+            mut renderer,
+            surface,
+        } = scaffold;
         let program = DebugProgram {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let scale_factor = window.scale_factor() as f32;
-        let window_size = window.inner_size();
-        let viewport_physical = (window_size.width, window_size.height);
-        let logical_size = window_size.to_logical::<f64>(scale_factor as f64);
-        let bounds = Size::new(logical_size.width as f32, logical_size.height as f32);
-        let mut compositor = compositor::new(
-            iced_tiny_skia::Settings {
-                default_font: default_font(),
-                default_text_size: iced::Pixels(16.0),
-            },
-            Arc::clone(&window),
-        );
-        let mut renderer = compositor.create_renderer();
-        let surface =
-            compositor.create_surface(Arc::clone(&window), window_size.width, window_size.height);
-        let ui_state = DebugUiState::new(
-            instance,
-            window_id,
-            bounds,
-            &mut renderer,
-            Arc::clone(&bridge),
-        );
+        let ui_state = UiShell::new(instance, window_id, bounds, &mut renderer);
         window.request_redraw();
         Some(Self {
             window,
             window_id,
             ui_state,
-            renderer: DebugRenderer {
+            renderer: ShellRenderer {
                 compositor,
                 surface,
                 backend: renderer,
@@ -1297,60 +1160,32 @@ impl DebugWindowHandle {
     }
 
     pub(crate) fn render(&mut self) {
-        // Light theme for OS light-theme nativeness.
-        let theme = iced::Theme::Light;
-        let style = <iced::Theme as theme::Base>::base(&theme);
-        let viewport = Viewport::with_physical_size(
-            Size::new(self.viewport_physical.0, self.viewport_physical.1),
+        render_ui(
+            &mut self.ui_state,
+            &mut self.renderer,
+            self.viewport_physical,
             self.scale_factor,
-        );
-        let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
-            std::time::Instant::now(),
-        ));
-        let _ = self.ui_state.ui_mut().update(
-            &[redraw_event],
             self.cursor,
-            &mut self.renderer.backend,
             &mut self.clipboard,
-            &mut std::vec::Vec::new(),
+            "debugger",
         );
-        self.ui_state.ui_mut().draw(
-            &mut self.renderer.backend,
-            &theme,
-            &renderer::Style {
-                text_color: style.text_color,
-            },
-            self.cursor,
-        );
-        if let Err(error) = self.renderer.present(&viewport, style.background_color) {
-            log::warn!("debugger render present failed: {error}");
-        }
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
         // Window-scoped shortcuts on physical codes (F6 step frame,
         // F7 step instruction, F9 pause toggle). Slot switching owns
         // no F-keys, so no schema conflict; the main window keeps F4.
+        // NOTE: `physical_key` binds by reference through `&mapped`;
+        // dereference before matching or no arm ever hits.
         if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
             physical_key,
             repeat: false,
             ..
         }) = &mapped
+            && let Some(request) = shortcut_request(physical_key)
         {
-            use iced::keyboard::key::{Code, Physical};
-            // NOTE: `physical_key` binds by reference through `&mapped`;
-            // dereference before matching or no arm ever hits.
-            let request = match *physical_key {
-                Physical::Code(Code::F6) => Some(DebugAction::StepFrame),
-                Physical::Code(Code::F7) => Some(DebugAction::StepInstr),
-                Physical::Code(Code::F9) => Some(DebugAction::TogglePause),
-                _ => None,
-            };
-            if let Some(request) = request {
-                self.bridge.push(request);
-            }
+            self.bridge.push(request);
         }
-        let mut messages = Vec::new();
         // Cursor keys page the dump (Up = toward lower addresses).
         // Left/Right stay with the widgets: hijacking them would break
         // caret movement in every text input. Computed before `mapped`
@@ -1361,21 +1196,15 @@ impl DebugWindowHandle {
             ..
         }) = &mapped
         {
-            use iced::keyboard::key::{Code, Physical};
-            match *physical_key {
-                Physical::Code(Code::ArrowUp) => Some(DebugMessage::MemPage(-1)),
-                Physical::Code(Code::ArrowDown) => Some(DebugMessage::MemPage(1)),
-                _ => None,
-            }
+            cursor_page(physical_key)
         } else {
             None
         };
-        self.ui_state.ui_mut().update(
-            &[mapped],
+        let mut messages = self.ui_state.pump(
+            mapped,
             self.cursor,
-            &mut self.renderer.backend,
             &mut self.clipboard,
-            &mut messages,
+            &mut self.renderer.backend,
         );
         messages.extend(page);
         if !messages.is_empty() {
@@ -1389,6 +1218,7 @@ impl DebugWindowHandle {
                 self.window_id,
                 bounds,
                 &mut self.renderer.backend,
+                &self.bridge.view_invalidated,
             );
             self.window.request_redraw();
         }
@@ -1420,13 +1250,19 @@ impl DebugWindowHandle {
     }
 
     pub(crate) fn sync_from_bridge(&mut self) {
+        self.bridge.view_invalidated.store(true, Ordering::Release);
         let bounds = Viewport::with_physical_size(
             Size::new(self.viewport_physical.0, self.viewport_physical.1),
             self.scale_factor,
         )
         .logical_size();
-        self.ui_state
-            .sync_from_bridge(self.window_id, bounds, &mut self.renderer.backend);
+        self.ui_state.process_messages(
+            Vec::new(),
+            self.window_id,
+            bounds,
+            &mut self.renderer.backend,
+            &self.bridge.view_invalidated,
+        );
         self.window.request_redraw();
     }
 }
@@ -1472,5 +1308,296 @@ mod tests {
         drive(&bridge, DebugMessage::FreezeSet);
         assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x0200_0010, 0xFF)));
         assert_eq!(bridge.display.lock().unwrap().status, "frozen 02000010=FF");
+    }
+
+    fn full_bridge() -> Arc<DebugBridge> {
+        use nerust_core_traits::debugger::DisasmLine;
+        let display = DisplayCache {
+            disasm_lines: vec![
+                DisasmLine {
+                    addr: 0x0800_27D2,
+                    bytes: [0xF0, 0xBC, 0, 0],
+                    len: 2,
+                    text: "POP {r4, r5, r6, r7}".to_string(),
+                    is_pc: true,
+                    target: None,
+                },
+                DisasmLine {
+                    addr: 0x0800_27D2E,
+                    bytes: [0x02, 0xBC, 0, 0],
+                    len: 2,
+                    text: "POP {r1}".to_string(),
+                    is_pc: false,
+                    target: Some(0x0800_27CA8),
+                },
+            ],
+            regs: vec![("r0", 1), ("r1", 2)],
+            reg_names: vec!["r0", "r1"],
+            dump_rows: vec![
+                HexRow {
+                    addr: 0x100,
+                    valid: 16,
+                    bytes: [0xAB; 16],
+                },
+                HexRow {
+                    addr: 0x110,
+                    valid: 3,
+                    bytes: [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                },
+            ],
+            diff: vec![0x100],
+            ..DisplayCache::default()
+        };
+        let bridge = Arc::new(DebugBridge::new(
+            display,
+            vec![(SpaceId(0), "Memory".to_string(), 0)],
+            0,
+            AppLanguage::English,
+        ));
+        *bridge.selected.lock().unwrap() = Some((0x100, Some(0xAB)));
+        *bridge.edit_input.lock().unwrap() = "42".to_string();
+        *bridge.reg_input.lock().unwrap() = "7".to_string();
+        *bridge.freeze_input.lock().unwrap() = "FF".to_string();
+        bridge
+    }
+
+    #[test]
+    fn update_drives_toolbar_and_nav() {
+        let bridge = full_bridge();
+        for message in [
+            DebugMessage::RefreshPressed,
+            DebugMessage::TogglePausePressed,
+            DebugMessage::StepFramePressed,
+            DebugMessage::StepInstrPressed,
+            DebugMessage::PpuOpenPressed,
+            DebugMessage::MemPage(1),
+            DebugMessage::MemPage(-1),
+            DebugMessage::FollowPcToggle,
+            DebugMessage::RowSelected(0x110),
+        ] {
+            drive(&bridge, message);
+        }
+        assert!(bridge.open_ppu.load(Ordering::Acquire));
+        assert!(!bridge.outbox.lock().unwrap().is_empty());
+        // Space stepper with one space cycles and clears selection.
+        drive(&bridge, DebugMessage::SpaceNext);
+        assert!(bridge.selected.lock().unwrap().is_none());
+        drive(&bridge, DebugMessage::SpacePrev);
+        // Memory Go resolves valid hex, rejects the rest.
+        drive(&bridge, DebugMessage::MemInputChanged("100".to_string()));
+        drive(&bridge, DebugMessage::MemGo);
+        assert_eq!(bridge.nav.lock().unwrap().mem_addr(), 0x100);
+        drive(&bridge, DebugMessage::MemInputChanged("zz".to_string()));
+        drive(&bridge, DebugMessage::MemGo);
+        assert_eq!(bridge.display.lock().unwrap().status, "parse failed: zz");
+    }
+
+    #[test]
+    fn update_drives_disassembly_pin_and_back() {
+        let bridge = full_bridge();
+        // Line click pins the anchor and leaves follow mode.
+        drive(&bridge, DebugMessage::DisLineClicked(0x300));
+        assert!(!bridge.nav.lock().unwrap().follow_pc());
+        drive(&bridge, DebugMessage::FollowTarget(0x308));
+        // Back pops twice, then reports the empty stack.
+        drive(&bridge, DebugMessage::DisBack);
+        drive(&bridge, DebugMessage::DisBack);
+        drive(&bridge, DebugMessage::DisBack);
+        assert_eq!(bridge.display.lock().unwrap().status, "back stack is empty");
+        // Go resolves valid hex, rejects the rest.
+        drive(&bridge, DebugMessage::DisInputChanged("200".to_string()));
+        drive(&bridge, DebugMessage::DisGo);
+        assert!(!bridge.nav.lock().unwrap().follow_pc());
+        drive(&bridge, DebugMessage::DisInputChanged("zz".to_string()));
+        drive(&bridge, DebugMessage::DisGo);
+        assert_eq!(bridge.display.lock().unwrap().status, "parse failed: zz");
+        drive(&bridge, DebugMessage::FollowPcToggle);
+        assert!(bridge.nav.lock().unwrap().follow_pc());
+    }
+
+    #[test]
+    fn update_drives_bookmarks_watch_and_freeze() {
+        let bridge = full_bridge();
+        drive(
+            &bridge,
+            DebugMessage::BookmarkInputChanged("start".to_string()),
+        );
+        drive(&bridge, DebugMessage::BookmarkAdd);
+        assert_eq!(bridge.bookmarks.lock().unwrap().len(), 1);
+        // PC row anchors the bookmark while following.
+        assert_eq!(bridge.bookmarks.lock().unwrap()[0].0, 0x0800_27D2);
+        drive(&bridge, DebugMessage::BookmarkJump(0x0800_27D2));
+        drive(&bridge, DebugMessage::BookmarkDelete(0x0800_27D2));
+        assert!(bridge.bookmarks.lock().unwrap().is_empty());
+        // A full list refuses loudly.
+        bridge
+            .bookmarks
+            .lock()
+            .unwrap()
+            .extend((0..8).map(|i| (0x100 + i, format!("BM{i}"))));
+        drive(&bridge, DebugMessage::BookmarkAdd);
+        assert_eq!(bridge.display.lock().unwrap().status, "bookmark list full");
+        // Watch follows the selection, then clears.
+        drive(&bridge, DebugMessage::WatchSet);
+        assert_eq!(*bridge.watch.lock().unwrap(), Some(0x100));
+        drive(&bridge, DebugMessage::WatchClear);
+        assert!(bridge.watch.lock().unwrap().is_none());
+        *bridge.selected.lock().unwrap() = None;
+        drive(&bridge, DebugMessage::WatchSet);
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            "watch needs a selection"
+        );
+        // Freeze reads the top input, the edit input, then clears.
+        *bridge.selected.lock().unwrap() = Some((0x100, Some(0xAB)));
+        drive(&bridge, DebugMessage::FreezeInputChanged("00".to_string()));
+        drive(&bridge, DebugMessage::FreezeSet);
+        assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x100, 0x00)));
+        drive(&bridge, DebugMessage::EditFreezeSet);
+        assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x100, 0x42)));
+        drive(&bridge, DebugMessage::FreezeClear);
+        assert!(bridge.freeze.lock().unwrap().is_none());
+        assert_eq!(bridge.display.lock().unwrap().status, "freeze cleared");
+        // Rejections stay loud.
+        *bridge.selected.lock().unwrap() = None;
+        drive(&bridge, DebugMessage::FreezeSet);
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            "freeze needs a selected row and hex byte"
+        );
+    }
+
+    #[test]
+    fn update_drives_write_and_register_flow() {
+        let bridge = full_bridge();
+        // EditWrite stages SelectRow plus EditStage in one batch.
+        drive(&bridge, DebugMessage::EditInputChanged("42".to_string()));
+        drive(&bridge, DebugMessage::EditWrite);
+        assert_eq!(bridge.outbox.lock().unwrap().len(), 2);
+        // Confirm consumes the transaction and clears the input.
+        drive(&bridge, DebugMessage::ConfirmWrite);
+        assert!(bridge.edit_input.lock().unwrap().is_empty());
+        // Cancel clears the optimistic text.
+        drive(&bridge, DebugMessage::CancelWrite);
+        assert!(bridge.display.lock().unwrap().pending_text.is_none());
+        // Register pick then Set pushes one register write.
+        drive(&bridge, DebugMessage::RegSelected("r0"));
+        assert_eq!(*bridge.reg_target.lock().unwrap(), Some("r0"));
+        drive(&bridge, DebugMessage::RegInputChanged("7".to_string()));
+        drive(&bridge, DebugMessage::RegSet);
+        assert_eq!(bridge.outbox.lock().unwrap().len(), 5);
+        // Rejections stay loud.
+        *bridge.reg_target.lock().unwrap() = None;
+        drive(&bridge, DebugMessage::RegSet);
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            "register write needs a register"
+        );
+        *bridge.selected.lock().unwrap() = None;
+        drive(&bridge, DebugMessage::EditWrite);
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            "write needs a selection"
+        );
+        drive(&bridge, DebugMessage::RegInputChanged("zz".to_string()));
+        *bridge.reg_target.lock().unwrap() = Some("r0");
+        drive(&bridge, DebugMessage::RegSet);
+        assert_eq!(bridge.display.lock().unwrap().status, "parse failed: zz");
+    }
+
+    #[test]
+    fn view_builders_construct_every_section() {
+        let bridge = full_bridge();
+        let language = AppLanguage::English;
+        let display = bridge.display.lock().unwrap().clone_without_images();
+        let selected = *bridge.selected.lock().unwrap();
+        let _ = view_toolbar(true, language);
+        let _ = view_toolbar(false, language);
+        let _ = view_space_row("Memory", language);
+        let _ = view_mem_nav("00000100", language);
+        // Mid-row byte selection still lights its row.
+        let _ = view_dump_col(&display.dump_rows, &display.diff, Some((0x102, Some(9))));
+        let _ = view_dump_col(&display.dump_rows, &[], None);
+        let _ = view_regs_section(&display.regs, Some("r0"), "7", language);
+        let _ = view_regs_section(&display.regs, None, "", language);
+        let _ = view_regs_section(&[], None, "", language);
+        let _ = view_edit_row(selected, "42", language);
+        let _ = view_edit_row(None, "", language);
+        let _ = view_confirm_row(Some("write 42 to 00000100 (was AB)?".to_string()), language);
+        let _ = view_confirm_row(None, language);
+        let _ = view_dis_nav(true, 0, 0x0800_27D2, "", language);
+        let _ = view_dis_nav(false, 2, 0x300, "00000300", language);
+        let _ = view_dis_col(&[], None, language);
+        let _ = view_dis_col(&display.disasm_lines, None, language);
+        let _ = view_dis_col(&display.disasm_lines, Some(0x0800_27D2E), language);
+        let _ = view_right_col(
+            "paused".to_string(),
+            view_regs_section(&display.regs, None, "", language),
+            Some(0x100),
+            Some(0xAB),
+            Some((0x100, 0xFF)),
+            "FF",
+            "tag",
+            &[(0x200, "BM1".to_string())],
+            language,
+        );
+        let _ = view_right_col(
+            String::new(),
+            view_regs_section(&[], None, "", language),
+            None,
+            None,
+            None,
+            "",
+            "",
+            &[],
+            language,
+        );
+        // Disassembly lines exercise the target follow button.
+        assert_eq!(display.disasm_lines.len(), 2);
+    }
+
+    #[test]
+    fn view_assembles_follow_and_fixed_modes() {
+        let bridge = full_bridge();
+        let program = DebugProgram {
+            bridge: Arc::clone(&bridge),
+        };
+        let state = DebugState {
+            bridge: Arc::clone(&bridge),
+        };
+        // Follow-PC mode anchors on the first visible line.
+        let _follow = program.view(&state, iced::window::Id::unique());
+        drop(_follow);
+        // Fixed mode pins the anchor and shows the Back depth.
+        drive(&bridge, DebugMessage::DisLineClicked(0x300));
+        let _fixed = program.view(&state, iced::window::Id::unique());
+        drop(_fixed);
+    }
+
+    #[test]
+    fn shortcut_and_cursor_keys_map_physical_codes() {
+        use iced::keyboard::key::{Code, Physical};
+        assert!(matches!(
+            shortcut_request(&Physical::Code(Code::F6)),
+            Some(DebugAction::StepFrame)
+        ));
+        assert!(matches!(
+            shortcut_request(&Physical::Code(Code::F7)),
+            Some(DebugAction::StepInstr)
+        ));
+        assert!(matches!(
+            shortcut_request(&Physical::Code(Code::F9)),
+            Some(DebugAction::TogglePause)
+        ));
+        assert!(shortcut_request(&Physical::Code(Code::KeyA)).is_none());
+        assert!(matches!(
+            cursor_page(&Physical::Code(Code::ArrowUp)),
+            Some(DebugMessage::MemPage(-1))
+        ));
+        assert!(matches!(
+            cursor_page(&Physical::Code(Code::ArrowDown)),
+            Some(DebugMessage::MemPage(1))
+        ));
+        assert!(cursor_page(&Physical::Code(Code::ArrowLeft)).is_none());
     }
 }

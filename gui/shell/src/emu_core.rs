@@ -683,3 +683,85 @@ fn op_to_persistence(e: OperationError) -> CorePersistenceError {
         OperationError::Reply(s) => CorePersistenceError::Core(s),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::build_test_core_parts;
+    use nerust_core_traits::debugger::SpaceId;
+
+    fn loaded_core() -> EmuCore {
+        let (core, _, _, _) = EmuCore::from_parts(build_test_core_parts());
+        let media = MediaObject::new(None, vec![0u8; 16]);
+        core.load(&media, None).expect("mock ROM loads");
+        assert!(core.metrics().paused);
+        core
+    }
+
+    #[test]
+    fn debug_images_cache_serves_paused_repeats() {
+        let core = loaded_core();
+        let (gen0, images0) = core.debug_images().expect("thread").expect("images");
+        assert_eq!(images0.len(), 1);
+        let (gen1, images1) = core.debug_images().expect("thread").expect("images");
+        assert_eq!((gen0, images1.len()), (gen1, 1));
+        core.write_memory(MemoryWrite {
+            space: SpaceId(0),
+            addr: 0x10,
+            width: 1,
+            value: 0xFF,
+        })
+        .expect("thread")
+        .expect("writable");
+        let (gen2, _) = core.debug_images().expect("thread").expect("images");
+        assert!(gen2 > gen1, "writes dirty the cache generation");
+        // A running core always refetches: the metrics mirror says
+        // running, so the generation bumps on every call.
+        core.resume().expect("thread");
+        let (gen3, _) = core.debug_images().expect("thread").expect("images");
+        assert!(gen3 > gen2, "running refetches advance the generation");
+        core.pause().expect("thread");
+    }
+
+    #[test]
+    fn debug_registers_roundtrip_and_refuse() {
+        let core = loaded_core();
+        core.write_register("a", 5)
+            .expect("thread")
+            .expect("a writable");
+        let inspected = core
+            .inspect(InspectRequest {
+                space: Some(SpaceId(0)),
+                addr: Some(0),
+                rows: 1,
+            })
+            .expect("thread")
+            .expect("inspect");
+        assert_eq!(inspected.registers[0], ("a", 5));
+        assert!(matches!(
+            core.write_register("bogus", 0),
+            Ok(Err(DebuggerError::Unsupported))
+        ));
+    }
+
+    #[test]
+    fn debug_observation_paths_answer() {
+        let core = loaded_core();
+        assert_eq!(core.memory_spaces().expect("thread").len(), 1);
+        assert_eq!(
+            core.program_counter().expect("thread").expect("pc"),
+            Some(0x10)
+        );
+        assert_eq!(
+            core.disassemble(0x10, 2)
+                .expect("thread")
+                .expect("rows")
+                .len(),
+            2
+        );
+        assert!(
+            core.step(StepUnit::Frame).expect("thread").expect("step") >= 1,
+            "frame steps report the barrier frame counter"
+        );
+    }
+}

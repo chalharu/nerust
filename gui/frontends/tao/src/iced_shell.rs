@@ -1,0 +1,302 @@
+//! Shared iced-on-tao auxiliary-window shell: the debugger and PPU
+//! viewer run the same tiny-skia lifecycle (builder, compositor,
+//! UI instance, event pump, render) over different programs.
+//! Splitting it out keeps the two windows' twins from drifting and
+//! keeps the pattern in one place for the next auxiliary window.
+
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
+use iced::{Size, advanced::renderer, mouse, theme};
+use iced_tiny_skia::{
+    Renderer,
+    graphics::compositor::Compositor as _,
+    window::{Compositor, Surface, compositor},
+};
+use iced_winit::{
+    Clipboard,
+    graphics::Viewport,
+    program::{self, Program},
+    runtime::user_interface::{Cache, UserInterface},
+};
+use tao::{
+    event_loop::EventLoopWindowTarget,
+    window::{Window as TaoWindow, WindowBuilder},
+};
+
+#[cfg(target_os = "macos")]
+use tao::platform::macos::WindowBuilderExtMacOS;
+
+use crate::{app_menu::UserEvent, tao_conversions::default_font};
+
+/// Light theme for OS light-theme nativeness. Every auxiliary
+/// program shares it (the flagged duplication was five copies).
+pub(crate) fn aux_theme() -> Option<iced::Theme> {
+    Some(iced::Theme::Light)
+}
+
+/// Shared program settings: one default font and text size.
+pub(crate) fn aux_settings() -> iced::Settings {
+    iced::Settings {
+        default_font: default_font(),
+        default_text_size: iced::Pixels(16.0),
+        ..Default::default()
+    }
+}
+
+/// Window creation scaffolding both auxiliary windows share: title,
+/// size, optional minimum, position, compositor, renderer, surface,
+/// and initial bounds. Programs and UI instances stay per-window.
+pub(crate) struct WindowScaffold {
+    pub window: Arc<TaoWindow>,
+    pub window_id: iced::window::Id,
+    pub scale_factor: f32,
+    pub viewport_physical: (u32, u32),
+    pub bounds: Size,
+    pub compositor: Compositor,
+    pub renderer: Renderer,
+    pub surface: Surface,
+}
+
+impl WindowScaffold {
+    pub fn open(
+        event_loop: &EventLoopWindowTarget<UserEvent>,
+        title: &str,
+        size: (f64, f64),
+        min_size: Option<(f64, f64)>,
+        position: Option<(i32, i32)>,
+        log_tag: &'static str,
+    ) -> Option<Self> {
+        let mut builder = WindowBuilder::new()
+            .with_title(title)
+            .with_inner_size(tao::dpi::LogicalSize::new(size.0, size.1));
+        if let Some((w, h)) = min_size {
+            builder = builder.with_min_inner_size(tao::dpi::LogicalSize::new(w, h));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            builder = builder.with_automatic_window_tabbing(false);
+        }
+        if let Some((x, y)) = position {
+            builder = builder.with_position(tao::dpi::LogicalPosition::new(x as f64, y as f64));
+        }
+        let window = Arc::new(match builder.build(event_loop) {
+            Ok(window) => window,
+            Err(error) => {
+                log::error!("failed to create {log_tag}: {error}");
+                return None;
+            }
+        });
+        let window_id = iced::window::Id::unique();
+        let scale_factor = window.scale_factor() as f32;
+        let window_size = window.inner_size();
+        let viewport_physical = (window_size.width, window_size.height);
+        let logical_size = window_size.to_logical::<f64>(scale_factor as f64);
+        let bounds = Size::new(logical_size.width as f32, logical_size.height as f32);
+        let mut compositor = compositor::new(
+            iced_tiny_skia::Settings {
+                default_font: default_font(),
+                default_text_size: iced::Pixels(16.0),
+            },
+            Arc::clone(&window),
+        );
+        let renderer = compositor.create_renderer();
+        let surface =
+            compositor.create_surface(Arc::clone(&window), window_size.width, window_size.height);
+        Some(Self {
+            window,
+            window_id,
+            scale_factor,
+            viewport_physical,
+            bounds,
+            compositor,
+            renderer,
+            surface,
+        })
+    }
+}
+
+/// Renderer triple both auxiliary windows share. Field names mirror
+/// the former per-window structs so call sites barely change.
+pub(crate) struct ShellRenderer {
+    pub compositor: Compositor,
+    pub surface: Surface,
+    pub backend: Renderer,
+}
+
+impl ShellRenderer {
+    pub fn present(
+        &mut self,
+        viewport: &Viewport,
+        background_color: iced::Color,
+    ) -> Result<(), iced_tiny_skia::graphics::compositor::SurfaceError> {
+        self.compositor.present(
+            &mut self.backend,
+            &mut self.surface,
+            viewport,
+            background_color,
+            || {},
+        )
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.compositor
+            .configure_surface(&mut self.surface, width, height);
+    }
+}
+
+/// Program UI instance plus its manual lifetime. Generic over the
+/// program so the debugger and PPU viewer share build, rebuild, and
+/// drop instead of mirroring them.
+pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
+    ui: std::mem::ManuallyDrop<UserInterface<'static, P::Message, iced::Theme, Renderer>>,
+    instance: program::Instance<P>,
+}
+
+impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
+    /// Build a UserInterface from instance state, transmuting the
+    /// phantom lifetime to 'static. Safe because this shell's Drop
+    /// ensures the UI is destroyed before the Instance it references.
+    fn build_ui(
+        instance: &program::Instance<P>,
+        window_id: iced::window::Id,
+        bounds: Size,
+        cache: Cache,
+        renderer: &mut Renderer,
+    ) -> UserInterface<'static, P::Message, iced::Theme, Renderer> {
+        unsafe {
+            std::mem::transmute::<
+                UserInterface<'_, P::Message, iced::Theme, Renderer>,
+                UserInterface<'static, P::Message, iced::Theme, Renderer>,
+            >(UserInterface::build(
+                instance.view(window_id),
+                bounds,
+                cache,
+                renderer,
+            ))
+        }
+    }
+
+    pub fn new(
+        instance: program::Instance<P>,
+        window_id: iced::window::Id,
+        bounds: Size,
+        renderer: &mut Renderer,
+    ) -> Self {
+        let ui = Self::build_ui(&instance, window_id, bounds, Cache::default(), renderer);
+        Self {
+            ui: std::mem::ManuallyDrop::new(ui),
+            instance,
+        }
+    }
+
+    pub fn ui_mut(&mut self) -> &mut UserInterface<'static, P::Message, iced::Theme, Renderer> {
+        &mut self.ui
+    }
+
+    /// Push one program message without a rebuild (Sync-style refresh
+    /// entry point shared by both viewers).
+    pub fn push_message(&mut self, message: P::Message) {
+        let _task = self.instance.update(message);
+    }
+
+    pub fn process_messages(
+        &mut self,
+        messages: Vec<P::Message>,
+        window_id: iced::window::Id,
+        bounds: Size,
+        renderer: &mut Renderer,
+        invalidated: &AtomicBool,
+    ) {
+        if messages.is_empty() && !invalidated.load(Ordering::Acquire) {
+            return;
+        }
+        let placeholder = std::mem::replace(
+            &mut *self.ui,
+            Self::build_ui(
+                &self.instance,
+                window_id,
+                bounds,
+                Cache::default(),
+                renderer,
+            ),
+        );
+        let cache = placeholder.into_cache();
+        for msg in messages {
+            let _task = self.instance.update(msg);
+        }
+        let stale = std::mem::replace(
+            &mut *self.ui,
+            Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
+        );
+        let _ = stale.into_cache();
+        invalidated.store(false, Ordering::Release);
+    }
+
+    /// Feed one iced event through the UI and collect the resulting
+    /// messages without rebuilding: the caller appends window-local
+    /// traffic (the debugger's paging), then calls
+    /// [`UiShell::process_messages`] itself.
+    pub fn pump(
+        &mut self,
+        mapped: iced::Event,
+        cursor: mouse::Cursor,
+        clipboard: &mut Clipboard,
+        backend: &mut Renderer,
+    ) -> Vec<P::Message> {
+        let mut messages = Vec::new();
+        self.ui_mut()
+            .update(&[mapped], cursor, backend, clipboard, &mut messages);
+        messages
+    }
+}
+
+impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> Drop for UiShell<P> {
+    fn drop(&mut self) {
+        unsafe { std::mem::ManuallyDrop::drop(&mut self.ui) };
+    }
+}
+
+/// Shared full render: Light theme, redraw pump, draw, present.
+/// Both viewers call this; only the failure log tag differs.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
+    ui: &mut UiShell<P>,
+    renderer: &mut ShellRenderer,
+    viewport_physical: (u32, u32),
+    scale_factor: f32,
+    cursor: mouse::Cursor,
+    clipboard: &mut Clipboard,
+    log_tag: &'static str,
+) {
+    // Light theme for OS light-theme nativeness.
+    let theme = iced::Theme::Light;
+    let style = <iced::Theme as theme::Base>::base(&theme);
+    let viewport = Viewport::with_physical_size(
+        Size::new(viewport_physical.0, viewport_physical.1),
+        scale_factor,
+    );
+    let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
+        std::time::Instant::now(),
+    ));
+    let _ = ui.ui_mut().update(
+        &[redraw_event],
+        cursor,
+        &mut renderer.backend,
+        clipboard,
+        &mut std::vec::Vec::new(),
+    );
+    ui.ui_mut().draw(
+        &mut renderer.backend,
+        &theme,
+        &renderer::Style {
+            text_color: style.text_color,
+        },
+        cursor,
+    );
+    if let Err(error) = renderer.present(&viewport, style.background_color) {
+        log::warn!("{log_tag} render present failed: {error}");
+    }
+}

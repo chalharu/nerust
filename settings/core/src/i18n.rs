@@ -379,11 +379,24 @@ fn japanese_text(key: UiText) -> &'static str {
 /// these carry addresses, values, and error detail, so one helper
 /// per message keeps both languages side by side instead of
 /// scattering `format!` across the frontends.
+///
+/// Branch helper: one match instead of fifteen copies (arms stay
+/// lazy like a hand-written match).
+macro_rules! localized {
+    ($language:expr, $en:expr, $ja:expr) => {
+        match resolve_language($language) {
+            AppLanguage::Japanese => $ja,
+            _ => $en,
+        }
+    };
+}
+
 pub fn parse_failed(language: AppLanguage, input: &str) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("解析失敗: {input}"),
-        _ => format!("parse failed: {input}"),
-    }
+    localized!(
+        language,
+        format!("parse failed: {input}"),
+        format!("解析失敗: {input}")
+    )
 }
 
 /// Selected dump row (`was ??` when the old byte is unreadable).
@@ -392,10 +405,11 @@ pub fn selected_row(language: AppLanguage, addr: u32, old: Option<u8>) -> String
         Some(old) => format!("{old:02X}"),
         None => "??".to_string(),
     };
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("選択 {addr:08X} (元 {old_text})"),
-        _ => format!("Selected {addr:08X} (was {old_text})"),
-    }
+    localized!(
+        language,
+        format!("Selected {addr:08X} (was {old_text})"),
+        format!("選択 {addr:08X} (元 {old_text})")
+    )
 }
 
 /// Confirm-row text for a fully staged write.
@@ -404,90 +418,101 @@ pub fn pending_write(language: AppLanguage, addr: u32, old: Option<u8>, value: u
         Some(old) => format!("{old:02X}"),
         None => "??".to_string(),
     };
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("{addr:08X} に {value:02X} を書込 (元 {old_text})?"),
-        _ => format!("write {value:02X} to {addr:08X} (was {old_text})?"),
-    }
+    localized!(
+        language,
+        format!("write {value:02X} to {addr:08X} (was {old_text})?"),
+        format!("{addr:08X} に {value:02X} を書込 (元 {old_text})?")
+    )
 }
 
 /// Committed single-byte memory write.
 pub fn wrote_memory(language: AppLanguage, addr: u32, value: u64) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("{addr:08X} に {value:02X} を書込済 (幅1)"),
-        _ => format!("wrote {value:02X} to {addr:08X} (width 1)"),
-    }
+    localized!(
+        language,
+        format!("wrote {value:02X} to {addr:08X} (width 1)"),
+        format!("{addr:08X} に {value:02X} を書込済 (幅1)")
+    )
 }
 
 /// Committed register write.
 pub fn register_wrote(language: AppLanguage, name: &str, value: u64) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("レジスタ {name} に {value:04X} を書込済"),
-        _ => format!("wrote {value:04X} to register {name}"),
-    }
+    localized!(
+        language,
+        format!("wrote {value:04X} to register {name}"),
+        format!("レジスタ {name} に {value:04X} を書込済")
+    )
 }
 
 /// Domain-side refusal (`{detail:?}` at the call site).
 pub fn write_refused(language: AppLanguage, detail: &str) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("書込拒否: {detail}"),
-        _ => format!("write refused: {detail}"),
-    }
+    localized!(
+        language,
+        format!("write refused: {detail}"),
+        format!("書込拒否: {detail}")
+    )
 }
 
 /// Domain-side register refusal.
 pub fn register_refused(language: AppLanguage, detail: &str) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("レジスタ書込拒否: {detail}"),
-        _ => format!("register write refused: {detail}"),
-    }
+    localized!(
+        language,
+        format!("register write refused: {detail}"),
+        format!("レジスタ書込拒否: {detail}")
+    )
 }
 
 /// Emu-thread transport failure.
 pub fn thread_failed(language: AppLanguage, detail: &str) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("スレッドエラー: {detail}"),
-        _ => format!("thread failed: {detail}"),
-    }
+    localized!(
+        language,
+        format!("thread failed: {detail}"),
+        format!("スレッドエラー: {detail}")
+    )
 }
 
 /// Successful step (`stepped N`).
 pub fn stepped(language: AppLanguage, count: u64) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("ステップ実行 {count}"),
-        _ => format!("stepped {count}"),
-    }
+    localized!(
+        language,
+        format!("stepped {count}"),
+        format!("ステップ実行 {count}")
+    )
 }
 
 /// Failed step.
 pub fn step_failed(language: AppLanguage, detail: &str) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("ステップ失敗: {detail}"),
-        _ => format!("step failed: {detail}"),
-    }
+    localized!(
+        language,
+        format!("step failed: {detail}"),
+        format!("ステップ失敗: {detail}")
+    )
 }
 
 /// Failed pause.
 pub fn pause_failed(language: AppLanguage, detail: &str) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("一時停止失敗: {detail}"),
-        _ => format!("pause failed: {detail}"),
-    }
+    localized!(
+        language,
+        format!("pause failed: {detail}"),
+        format!("一時停止失敗: {detail}")
+    )
 }
 
 /// Failed resume.
 pub fn resume_failed(language: AppLanguage, detail: &str) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("再開失敗: {detail}"),
-        _ => format!("resume failed: {detail}"),
-    }
+    localized!(
+        language,
+        format!("resume failed: {detail}"),
+        format!("再開失敗: {detail}")
+    )
 }
 
 /// Applied freeze (`frozen {addr}={value}`).
 pub fn frozen(language: AppLanguage, addr: u32, value: u8) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("フリーズ {addr:08X}={value:02X}"),
-        _ => format!("frozen {addr:08X}={value:02X}"),
-    }
+    localized!(
+        language,
+        format!("frozen {addr:08X}={value:02X}"),
+        format!("フリーズ {addr:08X}={value:02X}")
+    )
 }
 
 /// Live watch readout (`= ??` when unreadable).
@@ -496,10 +521,11 @@ pub fn watch_value(language: AppLanguage, addr: u32, value: Option<u8>) -> Strin
         Some(value) => format!("{value:02X}"),
         None => "??".to_string(),
     };
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("ウォッチ {addr:08X} = {value_text}"),
-        _ => format!("watch {addr:08X} = {value_text}"),
-    }
+    localized!(
+        language,
+        format!("watch {addr:08X} = {value_text}"),
+        format!("ウォッチ {addr:08X} = {value_text}")
+    )
 }
 
 /// Tile hover readout (`+{offset:04X}` is the tile-start byte offset).
@@ -511,8 +537,108 @@ pub fn tile_hover(
     sy: u32,
     offset: u32,
 ) -> String {
-    match resolve_language(language) {
-        AppLanguage::Japanese => format!("{label} タイル #{idx} (px {sx},{sy}, +{offset:04X})"),
-        _ => format!("{label} tile #{idx} (px {sx},{sy}, +{offset:04X})"),
+    localized!(
+        language,
+        format!("{label} tile #{idx} (px {sx},{sy}, +{offset:04X})"),
+        format!("{label} タイル #{idx} (px {sx},{sy}, +{offset:04X})")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn en() -> AppLanguage {
+        AppLanguage::English
+    }
+
+    fn ja() -> AppLanguage {
+        AppLanguage::Japanese
+    }
+
+    #[test]
+    fn new_keys_resolve_in_both_languages() {
+        use UiText::*;
+        for key in [
+            OpenDebugger,
+            WriteNeedsSelection,
+            FreezeNeedsSelection,
+            WatchNeedsSelection,
+            RegisterNeedsSelection,
+            BackEmpty,
+            BookmarkFull,
+            FreezeCleared,
+            NoCore,
+            NothingToWrite,
+            PausedState,
+            RunningState,
+        ] {
+            assert!(!text(en(), key).is_empty());
+            assert!(!text(ja(), key).is_empty());
+            assert_ne!(text(en(), key), text(ja(), key));
+        }
+    }
+
+    #[test]
+    fn parameterized_messages_cover_both_languages() {
+        assert_eq!(parse_failed(en(), "zz"), "parse failed: zz");
+        assert_eq!(parse_failed(ja(), "zz"), "解析失敗: zz");
+        assert_eq!(
+            selected_row(en(), 0x80, Some(0xAB)),
+            "Selected 00000080 (was AB)"
+        );
+        assert_eq!(selected_row(en(), 0x80, None), "Selected 00000080 (was ??)");
+        assert_eq!(
+            selected_row(ja(), 0x80, Some(0xAB)),
+            "選択 00000080 (元 AB)"
+        );
+        assert_eq!(
+            pending_write(en(), 0x80, Some(0), 0xCC),
+            "write CC to 00000080 (was 00)?"
+        );
+        assert_eq!(
+            pending_write(ja(), 0x80, None, 0xCC),
+            "00000080 に CC を書込 (元 ??)?"
+        );
+        assert_eq!(
+            wrote_memory(en(), 0x10, 0x42),
+            "wrote 42 to 00000010 (width 1)"
+        );
+        assert_eq!(
+            wrote_memory(ja(), 0x10, 0x42),
+            "00000010 に 42 を書込済 (幅1)"
+        );
+        assert_eq!(register_wrote(en(), "r7", 1), "wrote 0001 to register r7");
+        assert_eq!(
+            register_wrote(ja(), "r7", 1),
+            "レジスタ r7 に 0001 を書込済"
+        );
+        assert_eq!(write_refused(en(), "X"), "write refused: X");
+        assert_eq!(write_refused(ja(), "X"), "書込拒否: X");
+        assert_eq!(register_refused(en(), "X"), "register write refused: X");
+        assert_eq!(register_refused(ja(), "X"), "レジスタ書込拒否: X");
+        assert_eq!(thread_failed(en(), "X"), "thread failed: X");
+        assert_eq!(thread_failed(ja(), "X"), "スレッドエラー: X");
+        assert_eq!(stepped(en(), 7), "stepped 7");
+        assert_eq!(stepped(ja(), 7), "ステップ実行 7");
+        assert_eq!(step_failed(en(), "X"), "step failed: X");
+        assert_eq!(step_failed(ja(), "X"), "ステップ失敗: X");
+        assert_eq!(pause_failed(en(), "X"), "pause failed: X");
+        assert_eq!(pause_failed(ja(), "X"), "一時停止失敗: X");
+        assert_eq!(resume_failed(en(), "X"), "resume failed: X");
+        assert_eq!(resume_failed(ja(), "X"), "再開失敗: X");
+        assert_eq!(frozen(en(), 0x10, 0xFF), "frozen 00000010=FF");
+        assert_eq!(frozen(ja(), 0x10, 0xFF), "フリーズ 00000010=FF");
+        assert_eq!(watch_value(en(), 0x10, Some(1)), "watch 00000010 = 01");
+        assert_eq!(watch_value(en(), 0x10, None), "watch 00000010 = ??");
+        assert_eq!(watch_value(ja(), 0x10, Some(1)), "ウォッチ 00000010 = 01");
+        assert_eq!(
+            tile_hover(en(), "Tiles", 21, 44, 13, 0x150),
+            "Tiles tile #21 (px 44,13, +0150)"
+        );
+        assert_eq!(
+            tile_hover(ja(), "Tiles", 21, 44, 13, 0x150),
+            "Tiles タイル #21 (px 44,13, +0150)"
+        );
     }
 }

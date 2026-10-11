@@ -206,4 +206,74 @@ mod tests {
             keyboard::Key::Character(SmolStr::new(""))
         );
     }
+
+    #[test]
+    fn window_events_convert_or_pass_through() {
+        use std::sync::atomic::AtomicBool;
+        use tao::event::{DeviceId, ElementState, WindowEvent};
+        let mut cursor = mouse::Cursor::default();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        fn convert(
+            event: WindowEvent,
+            cursor: &mut mouse::Cursor,
+            modifiers: &mut keyboard::Modifiers,
+            should_close: &AtomicBool,
+        ) -> Option<iced::Event> {
+            convert_tao_window_event(event, cursor, 1.0, modifiers, should_close)
+        }
+        macro_rules! feed {
+            ($event:expr) => {
+                convert($event, &mut cursor, &mut modifiers, &should_close)
+            };
+        }
+        let device = unsafe { DeviceId::dummy() };
+        // Cursor movement tracks the pointer.
+        let moved = feed!(WindowEvent::CursorMoved {
+            device_id: device,
+            position: tao::dpi::PhysicalPosition::new(10.0, 20.0),
+            modifiers: tao::keyboard::ModifiersState::empty(),
+        });
+        assert!(matches!(
+            moved,
+            Some(iced::Event::Mouse(mouse::Event::CursorMoved { .. }))
+        ));
+        assert!(matches!(cursor, mouse::Cursor::Available(_)));
+        // Leaving the window drops the cursor.
+        assert!(feed!(WindowEvent::CursorLeft { device_id: device }).is_none());
+        assert!(matches!(cursor, mouse::Cursor::Unavailable));
+        // Mouse buttons map left/right/middle, others pass through.
+        for button in [
+            tao::event::MouseButton::Left,
+            tao::event::MouseButton::Right,
+            tao::event::MouseButton::Middle,
+        ] {
+            let click = feed!(WindowEvent::MouseInput {
+                device_id: device,
+                state: ElementState::Pressed,
+                button,
+                modifiers: tao::keyboard::ModifiersState::empty(),
+            });
+            assert!(matches!(
+                click,
+                Some(iced::Event::Mouse(mouse::Event::ButtonPressed(_)))
+            ));
+        }
+        let other = feed!(WindowEvent::MouseInput {
+            device_id: device,
+            state: ElementState::Pressed,
+            button: tao::event::MouseButton::Other(9),
+            modifiers: tao::keyboard::ModifiersState::empty(),
+        });
+        assert!(other.is_none());
+        // Modifiers update state; close flips the flag.
+        let changed = feed!(WindowEvent::ModifiersChanged(
+            tao::keyboard::ModifiersState::empty(),
+        ));
+        assert!(changed.is_none());
+        assert!(feed!(WindowEvent::CloseRequested).is_none());
+        assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
+        // Anything else (resizes and friends) passes through silently.
+        assert!(feed!(WindowEvent::Resized(tao::dpi::PhysicalSize::new(800, 600))).is_none());
+    }
 }

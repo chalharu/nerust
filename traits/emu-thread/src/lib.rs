@@ -777,7 +777,7 @@ mod tests {
         }
     }
 
-    fn spawn_loaded() -> EmuThread {
+    fn spawn_bare() -> EmuThread {
         let fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
             256,
             240,
@@ -785,7 +785,7 @@ mod tests {
                 palette: Box::new([0u32; 256]),
             },
         )));
-        let thread = EmuThread::spawn(
+        EmuThread::spawn(
             Box::new(FakeCore {
                 paused: false,
                 loaded: false,
@@ -806,7 +806,11 @@ mod tests {
                 slot
             },
             Box::new(SilentBackend),
-        );
+        )
+    }
+
+    fn spawn_loaded() -> EmuThread {
+        let thread = spawn_bare();
         let (tx, rx) = mpsc::channel();
         thread
             .send(EmuCommand::Load(Box::new(LoadCommand {
@@ -851,35 +855,7 @@ mod tests {
 
     #[test]
     fn paused_load_runs_no_free_frames() {
-        let fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
-            256,
-            240,
-            PixelFormat::PaletteIndex {
-                palette: Box::new([0u32; 256]),
-            },
-        )));
-        let thread = EmuThread::spawn(
-            Box::new(FakeCore {
-                paused: false,
-                loaded: false,
-                stepped_frames: 0,
-                mem: std::array::from_fn(|i| i as u8),
-            }),
-            Arc::clone(&fb),
-            Arc::new(AtomicBool::new(false)),
-            {
-                let mut slot = FrameBuffer::with_capacity(
-                    256,
-                    240,
-                    PixelFormat::PaletteIndex {
-                        palette: Box::new([0u32; 256]),
-                    },
-                );
-                slot.resize(256, 240);
-                slot
-            },
-            Box::new(SilentBackend),
-        );
+        let thread = spawn_bare();
         let (tx, rx) = mpsc::channel();
         thread
             .send(EmuCommand::Load(Box::new(LoadCommand {
@@ -931,6 +907,22 @@ mod tests {
             .send(EmuCommand::WriteMemory { req, reply: tx })
             .expect("write send");
         rx.recv().expect("write reply")
+    }
+
+    fn write_register(
+        thread: &EmuThread,
+        name: &'static str,
+        value: u64,
+    ) -> Result<(), DebuggerError> {
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::WriteRegister {
+                name,
+                value,
+                reply: tx,
+            })
+            .expect("register write send");
+        rx.recv().expect("register write reply")
     }
 
     fn paused_inspect_request() -> InspectRequest {
@@ -1022,6 +1014,35 @@ mod tests {
                 },
             ),
             Err(DebuggerError::BadWidth(0))
+        );
+    }
+
+    #[test]
+    fn write_register_dispatch_reaches_control() {
+        let thread = spawn_loaded();
+        // FakeControl has no register file: the running arm reports
+        // the default Unsupported (the dispatch itself is pinned).
+        assert_eq!(
+            write_register(&thread, "a", 1),
+            Err(DebuggerError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn write_register_while_unloaded_is_unsupported() {
+        // Never loaded: the idle arm answers instead of hanging.
+        let thread = spawn_bare();
+        assert_eq!(
+            write_register(&thread, "a", 1),
+            Err(DebuggerError::Unsupported)
+        );
+        // Loaded then unloaded: the running arm reports the
+        // control-level refusal instead.
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Unload).expect("unload send");
+        assert_eq!(
+            write_register(&thread, "a", 1),
+            Err(DebuggerError::Unsupported)
         );
     }
 

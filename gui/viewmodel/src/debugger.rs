@@ -694,6 +694,52 @@ mod tests {
     }
 
     #[test]
+    fn space_key_resolves_display_keys_without_fabrication() {
+        use nerust_core_traits::debugger::{SpaceAccess, SpaceId, SpaceInfo, SpaceTable};
+        static ENTRIES: [SpaceInfo; 1] = [SpaceInfo {
+            id: SpaceId(0),
+            key: "wram",
+            name: "WRAM",
+            address_bits: 13,
+            range: 0x0000..=0x1FFF,
+            access: SpaceAccess::ReadWrite,
+        }];
+        let table = SpaceTable::build(&ENTRIES);
+        assert_eq!(
+            space_key(
+                &table,
+                &nerust_core_traits::debugger::DebuggerError::UnknownSpace(SpaceId(9))
+            ),
+            None,
+            "unknown spaces never fabricate a key"
+        );
+        assert_eq!(
+            space_key(
+                &table,
+                &nerust_core_traits::debugger::DebuggerError::ReadOnlySpace(SpaceId(0))
+            ),
+            Some("wram")
+        );
+        assert_eq!(
+            space_key(
+                &table,
+                &nerust_core_traits::debugger::DebuggerError::UnmappedAddress {
+                    space: SpaceId(0),
+                    addr: 0x2000
+                }
+            ),
+            Some("wram")
+        );
+        assert_eq!(
+            space_key(
+                &table,
+                &nerust_core_traits::debugger::DebuggerError::BadWidth(0)
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn format_panels_covers_all_cell_kinds() {
         use nerust_core_traits::debugger::ColumnKind;
         use nerust_core_traits::debugger::{CellValue, DebugPanel, PanelColumn, PanelRow};
@@ -734,6 +780,12 @@ mod tests {
         }];
         assert_eq!(format_panels(&panels), "== P ==\nrow: s AB 241 yes\n");
         assert_eq!(format_panels(&[]), "(no panels)");
+        // Kind/cell mismatches degrade instead of panicking.
+        assert_eq!(format_cell(&CellValue::U64(7), ColumnKind::Text), "7");
+        assert_eq!(
+            format_cell(&CellValue::Bool(false), ColumnKind::Hex { digits: 2 }),
+            "false"
+        );
     }
 
     #[test]
