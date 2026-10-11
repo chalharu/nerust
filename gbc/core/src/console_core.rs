@@ -3,7 +3,7 @@ use std::{sync::Arc, time::SystemTime};
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
     audio::StereoSample,
-    debugger::{DebugControl, DebuggerError, SpaceAccess, SpaceId, SpaceTable, StepUnit},
+    debugger::{DebugControl, DebuggerError, SpaceId, SpaceTable, StepUnit},
     identity::SystemIdentity,
     peripheral::{
         AccelerometerInputPort, RumbleOutputPort, RumbleState, accelerometer_channel,
@@ -14,7 +14,7 @@ use nerust_input_traits::EmuInput;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
-    cartridge_descriptor::detect_cartridge, core_options::GbcCoreOptions,
+    cartridge_descriptor::detect_cartridge, core_options::GbcCoreOptions, cpu_core::Phase,
     debugger::GBC_SPACE_TABLE, input_types::GbcInputBuffer, persistence,
     rom_identity::GbcRomIdentity, system::GbcSystem,
 };
@@ -112,6 +112,30 @@ impl GbcConsoleCore {
 
     fn loaded_mut(&mut self) -> Result<&mut LoadedGbc, CoreError> {
         self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)
+    }
+
+    /// Advance to the next instruction boundary, reporting consumed
+    /// T-cycles. Devices tick with the CPU through the untouched
+    /// `step_tcycle` body, so PPU/timers/APU stay consistent. A
+    /// halted/stopped CPU waits for its wake interrupt instead of
+    /// hanging the debugger; the wait is bounded.
+    pub(crate) fn step_instruction(&mut self) -> Result<u64, CoreError> {
+        let loaded = self.loaded_mut()?;
+        let mut elapsed = 0u64;
+        loop {
+            loaded.system.bus.step_tcycle(&mut loaded.system.cpu);
+            elapsed += 1;
+            if elapsed >= 1_000_000 {
+                break;
+            }
+            if loaded.system.bus.is_halted_or_stopped() {
+                continue;
+            }
+            if matches!(loaded.system.cpu.phase(), Phase::FetchOpcode) {
+                break;
+            }
+        }
+        Ok(elapsed)
     }
 
     /// Advance one frame, reporting the T-cycles the bus counted.
@@ -319,8 +343,9 @@ impl ConsoleCore for GbcConsoleCore {
 /// Holds the console: frame stepping reuses the exact `render_frame`
 /// path and reports the T-cycles it counted. The scratch buffer is
 /// display-irrelevant; stepped frames are not published to any shared
-/// framebuffer here. All spaces are read-only in phase 1, so every
-/// in-range write is refused as `ReadOnlySpace`.
+/// framebuffer here. Debugger pokes land where hardware is writable
+/// (VRAM/OAM bypass the PPU mode locks); ROM refuses as
+/// `ReadOnlySpace` instead of driving MBC commands.
 pub struct GbcDebugControl<'a> {
     console: &'a mut GbcConsoleCore,
     frame_slot: FrameBuffer,
@@ -346,7 +371,10 @@ impl DebugControl for GbcDebugControl<'_> {
                 .console
                 .render_frame_cycles(&mut self.frame_slot, &mut self.audio_sink)
                 .map_err(|_| DebuggerError::Unsupported),
-            StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
+            StepUnit::Instruction => self
+                .console
+                .step_instruction()
+                .map_err(|_| DebuggerError::Unsupported),
         }
     }
 
@@ -355,23 +383,37 @@ impl DebugControl for GbcDebugControl<'_> {
         space: SpaceId,
         addr: u32,
         width: u8,
-        _value: u64,
+        value: u64,
     ) -> Result<(), DebuggerError> {
         // Validation order matters: bad width first, so "width 0 with
         // unknown SpaceId" does not mask as UnknownSpace.
         if !SpaceTable::width_is_valid(width) {
             return Err(DebuggerError::BadWidth(width));
         }
-        let info = GBC_SPACE_TABLE
-            .get(space)
-            .ok_or(DebuggerError::UnknownSpace(space))?;
+        if GBC_SPACE_TABLE.get(space).is_none() {
+            return Err(DebuggerError::UnknownSpace(space));
+        }
         if !GBC_SPACE_TABLE.covers(space, addr, width) {
             return Err(DebuggerError::UnmappedAddress { space, addr });
         }
-        if info.access == SpaceAccess::ReadOnly {
+        // ROM is not pokeable: a CPU store there drives MBC commands,
+        // so refuse loudly instead of bank-switching by surprise.
+        // The cast below is safe: covers() pins addr + width - 1.
+        if addr < 0x8000 {
             return Err(DebuggerError::ReadOnlySpace(space));
         }
-        Err(DebuggerError::ReadOnlySpace(space))
+        let loaded = self
+            .console
+            .loaded
+            .as_mut()
+            .ok_or(DebuggerError::Unsupported)?;
+        for i in 0..width as u32 {
+            loaded
+                .system
+                .bus
+                .debug_write((addr + i) as u16, (value >> (8 * i)) as u8);
+        }
+        Ok(())
     }
 }
 
@@ -645,20 +687,27 @@ mod tests {
                 addr: 0x10000
             })
         );
-        // Phase 1 is read-only: even WRAM refuses.
+        // Writes land where hardware is writable; ROM refuses
+        // loudly instead of driving MBC commands.
+        assert_eq!(boxed.write_memory(SPACE_MEMORY, 0xC000, 1, 0x42), Ok(()));
         assert_eq!(
-            boxed.write_memory(SPACE_MEMORY, 0xC000, 1, 0),
+            boxed.write_memory(SPACE_MEMORY, 0x0100, 1, 0x42),
             Err(DebuggerError::ReadOnlySpace(SPACE_MEMORY))
         );
-        // No instruction stepping yet: explicit, not silent.
-        assert_eq!(
-            boxed.step(StepUnit::Instruction),
-            Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
-        );
+        // Instruction stepping runs one instruction with real cycles.
+        let instr_cycles = boxed.step(StepUnit::Instruction).expect("instr step");
+        assert!(instr_cycles > 0);
+        assert!(instr_cycles <= 10_000);
         // Frame stepping reuses the render path and reports real cycles.
         let cycles = boxed.step(StepUnit::Frame).expect("frame step");
         assert!(cycles > 0);
         assert!(cycles <= 70_224);
+        // Round trip through the debugger read path. The frame step
+        // above runs guest code, so re-poke first for determinism.
+        assert_eq!(boxed.write_memory(SPACE_MEMORY, 0xC010, 1, 0xA5), Ok(()));
+        drop(boxed);
+        let debugger = console.debugger().expect("debugger");
+        assert_eq!(debugger.read(SPACE_MEMORY, 0xC010, 1), Some(0xA5));
     }
 
     #[test]

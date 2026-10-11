@@ -1,3 +1,4 @@
+use nerust_core_traits::debugger::rgb555_to_rgb888;
 use nerust_render_traits::FrameBuffer;
 
 mod pipeline;
@@ -1132,6 +1133,12 @@ impl GbcPpu {
         self.vram[self.vram_index(addr)]
     }
 
+    /// VRAM store without the mode-3 write block. Debugger-only:
+    /// a poke lands regardless of the PPU mode at pause time.
+    pub fn debug_write_vram(&mut self, addr: u16, value: u8) {
+        self.vram[self.vram_index(addr)] = value;
+    }
+
     pub fn write_vram(&mut self, addr: u16, value: u8) {
         let blocked = if self.cgb_mode {
             self.current_mode() == PpuMode::PixelTransfer
@@ -1167,6 +1174,35 @@ impl GbcPpu {
     /// observation must not depend on the PPU mode at pause time.
     pub fn debug_read_oam(&self, addr: u8) -> u8 {
         self.oam[addr as usize]
+    }
+
+    /// OAM store without the mode-2/3 write block. Debugger-only:
+    /// a poke lands regardless of the PPU mode at pause time.
+    pub fn debug_write_oam(&mut self, addr: u8, value: u8) {
+        self.oam[addr as usize] = value;
+    }
+
+    /// Tile byte from an explicit VRAM bank. Debugger-only: imaging
+    /// both banks must not flip the VBK state.
+    pub(crate) fn debug_read_vram_bank(&self, bank: u8, offset: u16) -> u8 {
+        let base = if bank & 1 == 0 { 0 } else { 0x2000 };
+        self.vram[base + (offset & 0x1FFF) as usize]
+    }
+
+    /// Background palette 0 as RGB888 quadruples for tile imaging:
+    /// CGB 15-bit colors, else the DMG BGP shades.
+    pub(crate) fn debug_bg_palette(&self) -> [[u8; 3]; 4] {
+        if self.cgb_mode {
+            std::array::from_fn(|i| rgb555_to_rgb888(self.bg_palette[i]))
+        } else {
+            const SHADES: [[u8; 3]; 4] = [
+                [0xFF, 0xFF, 0xFF],
+                [0xAA, 0xAA, 0xAA],
+                [0x55, 0x55, 0x55],
+                [0x00, 0x00, 0x00],
+            ];
+            std::array::from_fn(|i| SHADES[((self.bgp >> (2 * i)) & 3) as usize])
+        }
     }
 
     fn oam_read_blocked(&self) -> bool {
