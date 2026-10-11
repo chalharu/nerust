@@ -1440,10 +1440,9 @@ mod tests {
         Some(Rc::new(RefCell::new(crate::State::new(ctx))))
     }
 
-    /// Startup probe (no GTK calls at all): reports whether legacy
-    /// GTK is already mapped when a test process starts. A hit here
-    /// means linkage (DT_NEEDED), not runtime dlopen, and names the
-    /// offending dependency to chase instead.
+    /// Startup probe (no GTK calls at all): fails loudly with the
+    /// mapped paths if legacy GTK is already linked into the test
+    /// process, distinguishing linkage from runtime dlopen.
     #[test]
     fn aaa_probe_legacy_gtk_at_startup() {
         let hits: Vec<String> = std::fs::read_to_string("/proc/self/maps")
@@ -1454,7 +1453,10 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default();
-        eprintln!("PROBE startup legacy-gtk-hits={hits:?}");
+        assert!(
+            hits.is_empty(),
+            "legacy GTK pre-mapped at startup: {hits:?}"
+        );
     }
 
     #[test]
