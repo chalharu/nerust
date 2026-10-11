@@ -5,6 +5,8 @@ mod ppu_window;
 mod preferences;
 mod renderer;
 mod surface;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod window;
 
 use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
