@@ -46,12 +46,17 @@ pub fn decode_thumb(addr: u32, word: u16) -> Decoded {
     let w = u32::from(word);
     let text;
     let mut target = None;
-    // Conditional branch (0xD000-0xDEFF; 0xDFxx is SWI).
-    if (0xD000..0xDF00).contains(&w) {
+    // Conditional branch (0xD000-0xDDFF; 0xDE__ is a reserved
+    // condition and 0xDFxx is SWI).
+    if (0xD000..0xDE00).contains(&w) {
         let cond = THUMB_COND[((w >> 8) & 0xF) as usize];
         let offset = ((w & 0xFF) as i8 as i32 * 2).wrapping_add(addr.wrapping_add(4) as i32);
         target = Some(offset as u32);
         text = format!("B{cond} ${:08X}", offset as u32);
+    } else if (0xDE00..0xDF00).contains(&w) {
+        // Reserved condition (NV): raw halfword, never fabricated
+        // (indexing THUMB_COND here would panic: it holds 14).
+        text = format!(".HWORD ${w:04X}");
     // Unconditional branch: signed 11-bit field, doubled, from base+4.
     } else if (0xE000..0xE800).contains(&w) {
         let raw = w & 0x7FF;
@@ -407,6 +412,25 @@ mod tests {
         // Register-indirect forms never navigate.
         assert_eq!(decode_thumb(0, 0x4770).target, None);
         assert_eq!(decode_thumb(0, 0x4908).target, None);
+    }
+
+    #[test]
+    fn thumb_decode_covers_every_halfword() {
+        // Exhaustive sweep: every 16-bit pattern decodes without
+        // panic, with a non-empty mnemonic and a sane length. This
+        // pins every decode arm by construction (and caught the
+        // reserved-condition 0xDE__ out-of-bounds panic).
+        for word in 0..=0xFFFFu32 {
+            let decoded = decode_thumb(0x0800_0000, word as u16);
+            assert!(!decoded.text.is_empty(), "empty text for {word:04X}");
+            assert!(
+                decoded.len == 2 || decoded.len == 4,
+                "bad length for {word:04X}"
+            );
+        }
+        // The reserved condition degrades to a raw halfword.
+        assert_eq!(decode_thumb(0, 0xDE00).text, ".HWORD $DE00");
+        assert_eq!(decode_thumb(0, 0xDEFF).target, None);
     }
 
     #[test]

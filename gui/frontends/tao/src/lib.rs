@@ -1,5 +1,6 @@
 mod app_menu;
 pub(crate) mod debug_window;
+pub(crate) mod iced_shell;
 pub(crate) mod ppu_window;
 pub(crate) mod settings;
 pub mod settings_window;

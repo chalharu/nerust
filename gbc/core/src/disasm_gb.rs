@@ -399,6 +399,24 @@ mod tests {
     }
 
     #[test]
+    fn decode_sweep_never_panics_with_sane_lengths() {
+        // Exhaustive sweep over the primary table plus the CB
+        // sub-table: every pattern decodes without panic, with a
+        // non-empty mnemonic and a sane length.
+        for op in 0..=255u32 {
+            let d = decode(0xC000, op as u8, 0, 0);
+            assert!(!d.text.is_empty(), "empty text for {op:02X}");
+            assert!((1..=3).contains(&d.len), "bad length for {op:02X}");
+            if op == 0xCB {
+                for b1 in 0..=255u32 {
+                    let c = decode(0xC000, 0xCB, b1 as u8, 0);
+                    assert!(!c.text.is_empty(), "empty CB text for {b1:02X}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn decode_vectors() {
         let d = decode(0x100, 0x01, 0x34, 0x12);
         assert_eq!((d.text.as_str(), d.len, d.target), ("LD BC $1234", 3, None));

@@ -10,29 +10,25 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use iced::{Length, Point, Size, Task, advanced::renderer, keyboard, mouse, theme};
-use iced_tiny_skia::{
-    Renderer,
-    graphics::compositor::Compositor as _,
-    window::{Compositor, Surface, compositor},
-};
+use iced::{Length, Point, Size, Task, keyboard, mouse};
 use iced_winit::{
     Clipboard,
     graphics::Viewport,
     program::{self, Program},
-    runtime::user_interface::{Cache, UserInterface},
 };
 
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 use tao::{
-    event_loop::EventLoopWindowTarget,
-    keyboard::ModifiersState as TaoModifiers,
-    window::{Window as TaoWindow, WindowBuilder},
+    event_loop::EventLoopWindowTarget, keyboard::ModifiersState as TaoModifiers,
+    window::Window as TaoWindow,
 };
 
 use super::debug_window::DebugBridge;
-use crate::tao_conversions::{convert_tao_window_event, default_font};
+use crate::{
+    iced_shell::{ShellRenderer, UiShell, WindowScaffold, aux_settings, aux_theme, render_ui},
+    tao_conversions::convert_tao_window_event,
+};
 
 /// Initial PPU viewer window size (verified Xvfb fit).
 pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
@@ -94,15 +90,11 @@ impl Program for PpuProgram {
     }
 
     fn theme(&self, _state: &Self::State, _window: iced::window::Id) -> Option<Self::Theme> {
-        Some(iced::Theme::Light)
+        aux_theme()
     }
 
     fn settings(&self) -> iced::Settings {
-        iced::Settings {
-            default_font: default_font(),
-            default_text_size: iced::Pixels(16.0),
-            ..Default::default()
-        }
+        aux_settings()
     }
 
     fn window(&self) -> Option<iced::window::Settings> {
@@ -212,147 +204,18 @@ impl Program for PpuProgram {
     }
 }
 
-/// Owns Instance + Cache + UI, mirroring the debugger window.
-pub(crate) struct PpuUiState {
-    ui: std::mem::ManuallyDrop<
-        UserInterface<'static, PpuMessage, iced::Theme, iced_tiny_skia::Renderer>,
-    >,
-    instance: program::Instance<PpuProgram>,
-    bridge: Arc<DebugBridge>,
-}
-
-impl PpuUiState {
-    fn build_ui(
-        instance: &program::Instance<PpuProgram>,
-        window_id: iced::window::Id,
-        bounds: Size,
-        cache: Cache,
-        renderer: &mut iced_tiny_skia::Renderer,
-    ) -> UserInterface<'static, PpuMessage, iced::Theme, iced_tiny_skia::Renderer> {
-        unsafe {
-            std::mem::transmute::<
-                UserInterface<'_, PpuMessage, iced::Theme, iced_tiny_skia::Renderer>,
-                UserInterface<'static, PpuMessage, iced::Theme, iced_tiny_skia::Renderer>,
-            >(UserInterface::build(
-                instance.view(window_id),
-                bounds,
-                cache,
-                renderer,
-            ))
-        }
-    }
-
-    fn new(
-        instance: program::Instance<PpuProgram>,
-        window_id: iced::window::Id,
-        bounds: Size,
-        renderer: &mut iced_tiny_skia::Renderer,
-        bridge: Arc<DebugBridge>,
-    ) -> Self {
-        let ui = Self::build_ui(&instance, window_id, bounds, Cache::default(), renderer);
-        Self {
-            ui: std::mem::ManuallyDrop::new(ui),
-            instance,
-            bridge,
-        }
-    }
-
-    fn ui_mut(
-        &mut self,
-    ) -> &mut UserInterface<'static, PpuMessage, iced::Theme, iced_tiny_skia::Renderer> {
-        &mut self.ui
-    }
-
-    fn process_messages(
-        &mut self,
-        messages: Vec<PpuMessage>,
-        window_id: iced::window::Id,
-        bounds: Size,
-        renderer: &mut iced_tiny_skia::Renderer,
-    ) {
-        if messages.is_empty() && !self.bridge.ppu_invalidated.load(Ordering::Acquire) {
-            return;
-        }
-        let placeholder = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(
-                &self.instance,
-                window_id,
-                bounds,
-                Cache::default(),
-                renderer,
-            ),
-        );
-        let cache = placeholder.into_cache();
-        for msg in messages {
-            let _task = self.instance.update(msg);
-        }
-        let stale = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
-        );
-        let _ = stale.into_cache();
-        self.bridge.ppu_invalidated.store(false, Ordering::Release);
-    }
-
-    fn sync_from_bridge(
-        &mut self,
-        window_id: iced::window::Id,
-        bounds: Size,
-        renderer: &mut iced_tiny_skia::Renderer,
-    ) {
-        // Derive cached bytes first (one scale per drain), then
-        // rebuild the view from cache.
-        let _task = self.instance.update(PpuMessage::Sync);
-        self.bridge.ppu_invalidated.store(true, Ordering::Release);
-        self.process_messages(Vec::new(), window_id, bounds, renderer);
-    }
-}
-
-impl Drop for PpuUiState {
-    fn drop(&mut self) {
-        unsafe { std::mem::ManuallyDrop::drop(&mut self.ui) };
-    }
-}
-
 pub(crate) struct PpuWindowHandle {
     pub(crate) window: Arc<TaoWindow>,
     window_id: iced::window::Id,
-    ui_state: PpuUiState,
-    renderer: PpuRenderer,
+    ui_state: UiShell<PpuProgram>,
+    renderer: ShellRenderer,
     viewport_physical: (u32, u32),
     pub(crate) scale_factor: f32,
     pub(crate) modifiers: keyboard::Modifiers,
     pub(crate) should_close: Arc<AtomicBool>,
     cursor: mouse::Cursor,
     clipboard: Clipboard,
-}
-
-pub(crate) struct PpuRenderer {
-    compositor: Compositor,
-    surface: Surface,
-    backend: Renderer,
-}
-
-impl PpuRenderer {
-    fn present(
-        &mut self,
-        viewport: &Viewport,
-        background_color: iced::Color,
-    ) -> Result<(), iced_tiny_skia::graphics::compositor::SurfaceError> {
-        self.compositor.present(
-            &mut self.backend,
-            &mut self.surface,
-            viewport,
-            background_color,
-            || {},
-        )
-    }
-
-    fn resize(&mut self, width: u32, height: u32) {
-        self.compositor
-            .configure_surface(&mut self.surface, width, height);
-    }
+    bridge: Arc<DebugBridge>,
 }
 
 impl PpuWindowHandle {
@@ -364,53 +227,30 @@ impl PpuWindowHandle {
         use nerust_settings_core::i18n::{UiText, text as ui_text};
         let language = bridge.language;
         let should_close = Arc::new(AtomicBool::new(false));
-        let mut builder = WindowBuilder::new()
-            .with_title(ui_text(language, UiText::PpuViewer))
-            .with_inner_size(tao::dpi::LogicalSize::new(
-                PPU_WINDOW_SIZE.0,
-                PPU_WINDOW_SIZE.1,
-            ));
-        #[cfg(target_os = "macos")]
-        {
-            builder = builder.with_automatic_window_tabbing(false);
-        }
-        if let Some((x, y)) = position {
-            builder = builder.with_position(tao::dpi::LogicalPosition::new(x as f64, y as f64));
-        }
-        let window = Arc::new(match builder.build(event_loop) {
-            Ok(window) => window,
-            Err(error) => {
-                log::error!("failed to create PPU viewer window: {error}");
-                return None;
-            }
-        });
-        let window_id = iced::window::Id::unique();
+        let title = ui_text(language, UiText::PpuViewer).to_string();
+        let scaffold = WindowScaffold::open(
+            event_loop,
+            &title,
+            PPU_WINDOW_SIZE,
+            None,
+            position,
+            "PPU viewer window",
+        )?;
+        let crate::iced_shell::WindowScaffold {
+            window,
+            window_id,
+            scale_factor,
+            viewport_physical,
+            bounds,
+            compositor,
+            mut renderer,
+            surface,
+        } = scaffold;
         let program = PpuProgram {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let scale_factor = window.scale_factor() as f32;
-        let window_size = window.inner_size();
-        let viewport_physical = (window_size.width, window_size.height);
-        let logical_size = window_size.to_logical::<f64>(scale_factor as f64);
-        let bounds = Size::new(logical_size.width as f32, logical_size.height as f32);
-        let mut compositor = compositor::new(
-            iced_tiny_skia::Settings {
-                default_font: default_font(),
-                default_text_size: iced::Pixels(16.0),
-            },
-            Arc::clone(&window),
-        );
-        let mut renderer = compositor.create_renderer();
-        let surface =
-            compositor.create_surface(Arc::clone(&window), window_size.width, window_size.height);
-        let ui_state = PpuUiState::new(
-            instance,
-            window_id,
-            bounds,
-            &mut renderer,
-            Arc::clone(&bridge),
-        );
+        let ui_state = UiShell::new(instance, window_id, bounds, &mut renderer);
         window.request_redraw();
         // The viewer opens on demand from the debugger toolbar: take
         // focus so keyboard and wheel go straight to the tiles.
@@ -419,7 +259,7 @@ impl PpuWindowHandle {
             window,
             window_id,
             ui_state,
-            renderer: PpuRenderer {
+            renderer: ShellRenderer {
                 compositor,
                 surface,
                 backend: renderer,
@@ -430,17 +270,16 @@ impl PpuWindowHandle {
             should_close,
             cursor: mouse::Cursor::default(),
             clipboard: Clipboard::unconnected(),
+            bridge,
         })
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
-        let mut messages = Vec::new();
-        self.ui_state.ui_mut().update(
-            &[mapped],
+        let messages = self.ui_state.pump(
+            mapped,
             self.cursor,
-            &mut self.renderer.backend,
             &mut self.clipboard,
-            &mut messages,
+            &mut self.renderer.backend,
         );
         if !messages.is_empty() {
             let bounds = Viewport::with_physical_size(
@@ -453,39 +292,22 @@ impl PpuWindowHandle {
                 self.window_id,
                 bounds,
                 &mut self.renderer.backend,
+                &self.bridge.ppu_invalidated,
             );
             self.window.request_redraw();
         }
     }
 
     pub(crate) fn render(&mut self) {
-        let theme = iced::Theme::Light;
-        let style = <iced::Theme as theme::Base>::base(&theme);
-        let viewport = Viewport::with_physical_size(
-            Size::new(self.viewport_physical.0, self.viewport_physical.1),
+        render_ui(
+            &mut self.ui_state,
+            &mut self.renderer,
+            self.viewport_physical,
             self.scale_factor,
-        );
-        let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
-            std::time::Instant::now(),
-        ));
-        let _ = self.ui_state.ui_mut().update(
-            &[redraw_event],
             self.cursor,
-            &mut self.renderer.backend,
             &mut self.clipboard,
-            &mut std::vec::Vec::new(),
+            "PPU viewer",
         );
-        self.ui_state.ui_mut().draw(
-            &mut self.renderer.backend,
-            &theme,
-            &renderer::Style {
-                text_color: style.text_color,
-            },
-            self.cursor,
-        );
-        if let Err(error) = self.renderer.present(&viewport, style.background_color) {
-            log::warn!("PPU viewer render present failed: {error}");
-        }
     }
 
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
@@ -519,8 +341,17 @@ impl PpuWindowHandle {
             self.scale_factor,
         )
         .logical_size();
-        self.ui_state
-            .sync_from_bridge(self.window_id, bounds, &mut self.renderer.backend);
+        // Derive cached bytes first (one scale per drain), then
+        // rebuild the view from cache.
+        self.ui_state.push_message(PpuMessage::Sync);
+        self.bridge.ppu_invalidated.store(true, Ordering::Release);
+        self.ui_state.process_messages(
+            Vec::new(),
+            self.window_id,
+            bounds,
+            &mut self.renderer.backend,
+            &self.bridge.ppu_invalidated,
+        );
         self.window.request_redraw();
         // Deterministic pixels per drain: render synchronously
         // instead of depending on the next window event, so the
@@ -557,5 +388,80 @@ mod tests {
             Point::new(500.0, 500.0),
         );
         assert!(line.starts_with("Pattern right タイル #255 "));
+    }
+
+    fn ppu_bridge() -> Arc<DebugBridge> {
+        use nerust_gui_settings::language::AppLanguage;
+        use nerust_gui_viewmodel::debugger::DisplayCache;
+        let display = DisplayCache {
+            images: vec![("Tiles".to_string(), 2, 1, vec![0xFF; 8])],
+            images_gen: 5,
+            ..DisplayCache::default()
+        };
+        Arc::new(DebugBridge::new(
+            display,
+            Vec::new(),
+            0,
+            AppLanguage::English,
+        ))
+    }
+
+    fn ppu_state(bridge: &Arc<DebugBridge>) -> PpuState {
+        PpuState {
+            bridge: Arc::clone(bridge),
+            scaled: Mutex::new(Vec::new()),
+            panels_cache: Mutex::new(String::new()),
+            hover_cache: Mutex::new(String::new()),
+            source_gen: Mutex::new(u64::MAX),
+        }
+    }
+
+    #[test]
+    fn sync_derives_once_per_generation() {
+        let bridge = ppu_bridge();
+        let program = PpuProgram {
+            bridge: Arc::clone(&bridge),
+        };
+        let mut state = ppu_state(&bridge);
+        let _ = program.update(&mut state, PpuMessage::Sync);
+        // First sync derives: one 2x image plus the generation.
+        assert_eq!(state.scaled.lock().unwrap().len(), 1);
+        assert_eq!(*state.source_gen.lock().unwrap(), 5);
+        assert_eq!(state.scaled.lock().unwrap()[0].1, 4);
+        assert_eq!(state.scaled.lock().unwrap()[0].2, 2);
+        // Identical generation re-runs Sync without re-deriving.
+        let _ = program.update(&mut state, PpuMessage::Sync);
+        assert_eq!(*state.source_gen.lock().unwrap(), 5);
+        // Hover only records the line, never re-derives.
+        let _ = program.update(
+            &mut state,
+            PpuMessage::Hovered("Tiles tile #0 (px 0,0, +0000)".to_string()),
+        );
+        assert_eq!(
+            *state.hover_cache.lock().unwrap(),
+            "Tiles tile #0 (px 0,0, +0000)"
+        );
+        assert!(bridge.ppu_invalidated.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn view_renders_scaled_empty_and_hover() {
+        let bridge = ppu_bridge();
+        let program = PpuProgram {
+            bridge: Arc::clone(&bridge),
+        };
+        // Empty cache shows the degenerate, never a blank window.
+        let state = ppu_state(&bridge);
+        let _empty = program.view(&state, iced::window::Id::unique());
+        drop(_empty);
+        // Synced cache renders labels plus images plus hover text.
+        let mut synced = ppu_state(&bridge);
+        let _ = program.update(&mut synced, PpuMessage::Sync);
+        let _ = program.update(
+            &mut synced,
+            PpuMessage::Hovered("Tiles tile #1 (px 8,0, +0010)".to_string()),
+        );
+        let _full = program.view(&synced, iced::window::Id::unique());
+        drop(_full);
     }
 }

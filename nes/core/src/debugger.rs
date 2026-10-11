@@ -420,6 +420,19 @@ mod tests {
     }
 
     #[test]
+    fn nes_debugger_reads_wide_and_rereads_registers() {
+        let core = live_core();
+        let dbg = NesDebugger::new(&core);
+        // Width-2/4 composition over fresh WRAM.
+        assert!(dbg.read(SPACE_WORK_RAM, 0x0100, 2).is_some());
+        assert!(dbg.read(SPACE_WORK_RAM, 0x0100, 4).is_some());
+        // Register reads are stable across calls.
+        assert_eq!(dbg.registers().len(), 6);
+        assert_eq!(dbg.registers().len(), 6);
+        assert_eq!(dbg.space_containing(0xFFFF_FFFF), None);
+    }
+
+    #[test]
     fn nes_panels_have_three_kinds() {
         let core = live_core();
         let dbg = NesDebugger::new(&core);

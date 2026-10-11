@@ -766,4 +766,25 @@ mod tests {
         assert_eq!(regs["a"], 0x42);
         assert_eq!(regs["pc"], 0x1234);
     }
+
+    #[test]
+    fn gbc_debugger_truncated_tail_degrades_to_raw_db() {
+        let mut console = GbcConsoleCore::new_empty(input());
+        console.load(&rom(), &config()).expect("test ROM loads");
+        // Park a two-byte prefix at the range end through the control
+        // path: the missing tail byte must degrade to raw instead of
+        // fabricating or panicking.
+        {
+            let mut boxed: Box<dyn DebugControl + '_> =
+                Box::new(GbcDebugControl::new(&mut console));
+            boxed
+                .write_memory(SPACE_MEMORY, 0xFFFF, 1, 0xCB)
+                .expect("range end takes the prefix");
+        }
+        let debugger = console.debugger().expect("debugger");
+        let tail = debugger.disassemble(0xFFFF, 2);
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].addr, 0xFFFF);
+        assert!(tail[0].text.starts_with(".DB"));
+    }
 }

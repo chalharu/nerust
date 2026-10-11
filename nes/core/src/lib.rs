@@ -504,7 +504,6 @@ impl Core {
         }
     }
 
-    #[inline(always)]
     /// Cap for one instruction step: normal instructions retire in a
     /// handful of cycles (DMA and interrupts extend into the
     /// hundreds); a halted CPU (JAM) never reaches a boundary, so the

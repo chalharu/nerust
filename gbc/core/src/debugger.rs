@@ -169,6 +169,14 @@ impl Debugger for GbcDebugger<'_> {
             }
             let is_pc = pc == Some(cursor);
             if op == 0xCB {
+                // The prefix needs its sub-opcode: at the range end
+                // the tail byte was never read, so degrade to raw
+                // instead of fabricating a decode from zero.
+                if have < 2 {
+                    out.push(raw_db(cursor, op, is_pc));
+                    cursor += 1;
+                    continue;
+                }
                 let decoded = decode(cursor, op, raw[1], 0);
                 out.push(DisasmLine {
                     addr: cursor,
@@ -361,5 +369,39 @@ mod tests {
         }
         assert_eq!(images[0].id, "tiles-bank0");
         assert_eq!(images[1].id, "tiles-bank1");
+    }
+
+    #[test]
+    fn gbc_debugger_disassembles_jr_cb_and_truncated_tail() {
+        // Custom ROM: JR at 0x100 (as usual), a CB prefix at 0x200,
+        // and a 3-byte LD at 0xFFFE straddling the range end.
+        let mut rom = rom();
+        rom[0x0200] = 0xCB;
+        rom[0x0201] = 0x11; // RL C
+        let descriptor = crate::cartridge_descriptor::detect_cartridge(&rom).expect("header");
+        let system = GbcSystem::from_descriptor(
+            crate::core_options::GbcCoreOptions::default().hardware_model,
+            rom,
+            &descriptor,
+        )
+        .expect("system builds");
+        let debugger = GbcDebugger::new(&system);
+        // The program counter always resolves (register scan).
+        assert!(debugger.program_counter().is_some());
+        let jr = &debugger.disassemble(0x0100, 1)[0];
+        assert_eq!((jr.addr, jr.len), (0x0100, 2));
+        assert!(jr.text.starts_with("JR"));
+        // CB prefix decodes two bytes with no follow target.
+        let cb = &debugger.disassemble(0x0200, 1)[0];
+        assert_eq!((cb.len, cb.target), (2, None));
+        assert_eq!(cb.bytes[0], 0xCB);
+        // The range end yields its final row, then stops: one row
+        // at 0xFFFF, never a spill past the bus.
+        let tail = debugger.disassemble(0xFFFF, 2);
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].addr, 0xFFFF);
+        // Empty window past the end stays empty, never panics.
+        assert!(debugger.disassemble(0x1_0000, 4).is_empty());
+        assert!(debugger.panels().is_empty());
     }
 }

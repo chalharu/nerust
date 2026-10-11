@@ -437,4 +437,21 @@ mod tests {
         assert_eq!(boxed.read(SPACE_MEMORY, 0x02000000, 3), None);
         assert_eq!(boxed.read(SpaceId(9), 0x02000000, 1), None);
     }
+
+    #[test]
+    fn gba_debugger_reads_wide_and_rereads_registers() {
+        let system = live_system();
+        let debugger = GbaDebugger::new(&system);
+        // Width-4 composition over the logo bytes.
+        let wide = debugger
+            .read(SPACE_MEMORY, 0x08000004, 4)
+            .expect("wide read");
+        assert_eq!(wide & 0xFF, 0x24);
+        // Register reads are cached but stable across calls.
+        assert_eq!(debugger.registers().len(), 17);
+        assert_eq!(debugger.registers().len(), 17);
+        // Misses and range crossings collapse to None.
+        assert_eq!(debugger.space_containing(0xFFFF_FFFF), None);
+        assert_eq!(debugger.read(SPACE_MEMORY, 0x0FFF_FFFE, 4), None);
+    }
 }
