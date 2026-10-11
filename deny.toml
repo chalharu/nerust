@@ -19,6 +19,8 @@ ignore = [
   # quick-xml
   "RUSTSEC-2026-0194",
   "RUSTSEC-2026-0195",
+  # paste
+  "RUSTSEC-2024-0436",
 ]
 
 [bans]
