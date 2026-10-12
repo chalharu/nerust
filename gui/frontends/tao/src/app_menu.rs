@@ -6,6 +6,7 @@ use tao::window::Window as TaoWindow;
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum MenuCommand {
     Open,
+    Close,
     Settings,
     Debugger,
     Session(SessionCommand),
@@ -44,7 +45,7 @@ pub(crate) mod imp {
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
     use nerust_gui_settings::language::AppLanguage;
-    use nerust_settings_core::i18n::{UiText, text};
+    use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
     use tao::event_loop::EventLoopProxy;
     #[cfg(target_os = "macos")]
     use tao::platform::macos::WindowExtMacOS;
@@ -67,6 +68,7 @@ pub(crate) mod imp {
         emulation_menu: Submenu,
         state_menu: Submenu,
         open: MenuItem,
+        close: MenuItem,
         settings: MenuItem,
         debugger: MenuItem,
         pause: MenuItem,
@@ -114,6 +116,7 @@ pub(crate) mod imp {
             }
 
             let open = MenuItem::new("Open ROM...", true, None);
+            let close = MenuItem::new("Close", true, None);
             let settings = MenuItem::new("Settings...", true, None);
             let debugger = MenuItem::new("Open Debugger (F4)", true, None);
             let pause = MenuItem::new("Pause", true, None);
@@ -125,6 +128,7 @@ pub(crate) mod imp {
             let load_active = MenuItem::new("Load Active Slot (F8)", false, None);
 
             let open_id = open.id().clone();
+            let close_id = close.id().clone();
             let settings_id = settings.id().clone();
             let debugger_id = debugger.id().clone();
             let pause_id = pause.id().clone();
@@ -138,6 +142,7 @@ pub(crate) mod imp {
             let dynamic_commands_handler = dynamic_commands.clone();
 
             file_menu.append(&open).unwrap();
+            file_menu.append(&close).unwrap();
             file_menu.append(&settings).unwrap();
             file_menu.append(&quit).unwrap();
             state_menu.append(&create_slot).unwrap();
@@ -159,6 +164,8 @@ pub(crate) mod imp {
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
                 let command = if event.id() == &open_id {
                     Some(MenuCommand::Open)
+                } else if event.id() == &close_id {
+                    Some(MenuCommand::Close)
                 } else if event.id() == &settings_id {
                     Some(MenuCommand::Settings)
                 } else if event.id() == &debugger_id {
@@ -197,6 +204,7 @@ pub(crate) mod imp {
                 emulation_menu,
                 state_menu,
                 open,
+                close,
                 settings,
                 debugger,
                 pause,
@@ -252,14 +260,17 @@ pub(crate) mod imp {
         ) {
             self.update_labels(language);
             self.open.set_enabled(!settings_open);
+            self.close.set_enabled(!settings_open && loaded);
             self.settings.set_enabled(!settings_open);
             self.pause.set_enabled(!settings_open && loaded && !paused);
             self.resume.set_enabled(!settings_open && loaded && paused);
+            self.reset.set_enabled(!settings_open && loaded);
+            self.debugger.set_enabled(!settings_open && loaded);
             self.create_slot.set_enabled(!settings_open && loaded);
             self.save_active.set_enabled(!settings_open && loaded);
             self.load_active
                 .set_enabled(!settings_open && loaded && active_slot.is_some());
-            self.rebuild_dynamic_slot_menus(slots, active_slot);
+            self.rebuild_dynamic_slot_menus(slots, active_slot, language);
         }
 
         pub(crate) fn clear_event_handler(&self) {
@@ -270,12 +281,25 @@ pub(crate) mod imp {
             &mut self,
             slots: &[StateSlotSummary],
             active_slot: Option<u64>,
+            language: AppLanguage,
         ) {
             clear_submenu(&self.active_slot_menu);
             clear_submenu(&self.save_slot_menu);
             clear_submenu(&self.load_slot_menu);
             clear_submenu(&self.delete_slot_menu);
             let mut commands = Vec::new();
+            if slots.is_empty() {
+                let placeholder = text(language, UiText::NoSaveSlots);
+                for menu in [
+                    &self.active_slot_menu,
+                    &self.save_slot_menu,
+                    &self.load_slot_menu,
+                    &self.delete_slot_menu,
+                ] {
+                    menu.append(&MenuItem::new(placeholder, false, None))
+                        .unwrap();
+                }
+            }
             for slot in slots {
                 let select_item = MenuItem::new(slot_label(slot, active_slot), true, None);
                 commands.push((
@@ -327,6 +351,7 @@ pub(crate) mod imp {
 
             self.open
                 .set_text(format!("{}...", text(language, UiText::Open)));
+            self.close.set_text(text(language, UiText::Close));
             self.settings
                 .set_text(format!("{}...", text(language, UiText::Settings)));
             self.debugger.set_text(text(language, UiText::OpenDebugger));
@@ -351,10 +376,6 @@ pub(crate) mod imp {
         while !menu.items().is_empty() {
             let _ = menu.remove_at(0);
         }
-    }
-
-    fn menu_label_with_shortcut(label: &str, shortcut: &str) -> String {
-        format!("{label} ({shortcut})")
     }
 }
 

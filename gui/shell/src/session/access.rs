@@ -37,6 +37,10 @@ pub trait FrontendSession {
     fn select_slot(&mut self, slot_id: u64);
     fn create_slot(&mut self);
     fn reset(&mut self);
+    /// Unload the current ROM, flushing mapper saves. Closing the
+    /// ROM rides this trait like every other session operation so no
+    /// frontend bypasses the session behind its back.
+    fn unload(&mut self);
     fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
@@ -122,6 +126,9 @@ mod tests {
         }
         fn reset(&mut self) {
             self.calls.push("reset");
+        }
+        fn unload(&mut self) {
+            self.calls.push("unload");
         }
         fn apply_settings(
             &mut self,

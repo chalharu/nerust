@@ -223,9 +223,10 @@ impl DisplayCache {
 /// presentation (wording, language) out of the application layer:
 /// the drain no longer needs a language, and both languages are
 /// covered by construction.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum StatusMessage {
     /// Nothing to report yet (empty display).
+    #[default]
     Empty,
     Paused,
     Running,
@@ -250,12 +251,6 @@ pub enum StatusMessage {
     /// Frontend-local wording (parse errors, selection prompts):
     /// never produced by the session, rendered verbatim.
     Local(String),
-}
-
-impl Default for StatusMessage {
-    fn default() -> Self {
-        Self::Empty
-    }
 }
 
 impl StatusMessage {
@@ -569,7 +564,6 @@ pub fn scale2x_nearest(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_gui_settings::language::AppLanguage;
 
     #[test]
     fn ppu_hover_hint_is_canonical() {

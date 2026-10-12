@@ -342,7 +342,7 @@ impl SettingsWindowHandle {
     }
 
     pub(crate) fn render(&mut self) {
-        let theme = iced::Theme::Dark;
+        let theme = iced::Theme::Light;
         let style = <iced::Theme as theme::Base>::base(&theme);
         let vp = Viewport::with_physical_size(
             Size::new(self.viewport_physical.0, self.viewport_physical.1),
@@ -371,7 +371,7 @@ impl SettingsWindowHandle {
             self.cursor,
         );
 
-        if let Err(e) = self.renderer.present(&vp, iced::Color::BLACK) {
+        if let Err(e) = self.renderer.present(&vp, style.background_color) {
             log::warn!("settings render present failed: {e:?}");
         }
     }

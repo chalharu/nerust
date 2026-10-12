@@ -34,7 +34,7 @@ use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
 use nerust_run_options::RunOptions;
-use nerust_settings_core::i18n::{UiText, text};
+use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
 
 use self::window::{StateMenus, Window, WindowExtend};
 
@@ -93,13 +93,18 @@ impl State {
         self.session.can_resume()
     }
 
-    pub(crate) fn load_path(&mut self, path: &Path) {
-        if let Err(e) = self.ctx.rom_loader.load_rom(path, &mut self.session) {
-            log::warn!("ROM load failed: {e}");
+    /// Load a ROM, flagging a renderer rebuild on success.
+    /// Returns the failure detail on error; presenting it (dialog)
+    /// is the caller's job so no error state is stashed here.
+    pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
+        if let Err(error) = self.ctx.rom_loader.load_rom(path, &mut self.session) {
+            log::warn!("ROM load failed: {error}");
+            return Err(error.to_string());
         }
         if self.session.loaded() {
             self.renderer_reload_pending = true;
         }
+        Ok(())
     }
 
     pub(crate) fn loaded(&self) -> bool {
@@ -112,10 +117,6 @@ impl State {
 
     pub(crate) fn title(&self) -> String {
         self.session.window_title()
-    }
-
-    pub(crate) fn unload(&mut self) -> bool {
-        self.session.unload().is_ok()
     }
 
     pub(crate) fn flush_before_exit(&mut self) {
@@ -179,6 +180,11 @@ impl FrontendSession for State {
     }
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
+    }
+    fn unload(&mut self) {
+        if let Err(error) = self.session.unload() {
+            log::warn!("ROM unload failed: {error}");
+        }
     }
     fn run_command(&mut self, command: SessionCommand) {
         let _ = self.session.run_command(command);
@@ -330,11 +336,17 @@ pub(crate) fn build_menu_model(
         Some("win.state-create"),
     );
     state_menu.append(
-        Some(text(language, UiText::SaveActiveSlot)),
+        Some(&menu_label_with_shortcut(
+            text(language, UiText::SaveActiveSlot),
+            "F5",
+        )),
         Some("win.state-save-active"),
     );
     state_menu.append(
-        Some(text(language, UiText::LoadActiveSlot)),
+        Some(&menu_label_with_shortcut(
+            text(language, UiText::LoadActiveSlot),
+            "F8",
+        )),
         Some("win.state-load-active"),
     );
     state_menu.append_submenu(
@@ -351,11 +363,18 @@ pub(crate) fn build_menu_model(
     file_menu.append(Some(text(language, UiText::Settings)), Some("win.settings"));
     file_menu.append(Some(text(language, UiText::Quit)), Some("app.quit"));
 
+    // Order mirrors the tao frontend: Pause, Resume, Reset, Save
+    // States, Debugger. The debugger label carries its default
+    // shortcut like tao so both shells advertise F4/F5/F8.
     let emulation_menu = gio::Menu::new();
     emulation_menu.append(Some(text(language, UiText::Pause)), Some("win.pause"));
     emulation_menu.append(Some(text(language, UiText::Resume)), Some("win.resume"));
-    emulation_menu.append(Some(text(language, UiText::Debugger)), Some("win.debugger"));
+    emulation_menu.append(Some(text(language, UiText::Reset)), Some("win.reset"));
     emulation_menu.append_submenu(Some(text(language, UiText::SaveStates)), state_menu);
+    emulation_menu.append(
+        Some(text(language, UiText::OpenDebugger)),
+        Some("win.debugger"),
+    );
 
     let help_menu = gio::Menu::new();
     help_menu.append(Some(text(language, UiText::About)), Some("app.about"));
@@ -363,7 +382,7 @@ pub(crate) fn build_menu_model(
     let menu = gio::Menu::new();
     menu.append_submenu(Some(text(language, UiText::File)), &file_menu);
     menu.append_submenu(Some(text(language, UiText::Emulation)), &emulation_menu);
-    menu.append_submenu(Some(text(language, UiText::About)), &help_menu);
+    menu.append_submenu(Some(text(language, UiText::Help)), &help_menu);
     menu
 }
 
@@ -406,8 +425,9 @@ pub fn run(ctx: FrontendContext, _options: RunOptions) {
         let _ = app.connect_open(move |app, files, _| {
             let window = ensure_window(app, &gpu_factory, &state, &current_window);
             if let Some(path) = files.iter().find_map(|file| file.path()) {
-                state.borrow_mut().load_path(&path);
-                window.update_actions();
+                // One path for every open: failure dialog and action
+                // sync live in `Window::load_path`.
+                window.load_path(&path);
             }
             window.window().present();
         });

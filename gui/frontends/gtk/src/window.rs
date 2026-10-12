@@ -33,6 +33,7 @@ pub(crate) struct WindowCore {
     close_action: gio::SimpleAction,
     pause_action: gio::SimpleAction,
     resume_action: gio::SimpleAction,
+    reset_action: gio::SimpleAction,
     debugger_action: gio::SimpleAction,
     state_create_action: gio::SimpleAction,
     state_save_active_action: gio::SimpleAction,
@@ -105,6 +106,7 @@ impl WindowExtend for Window {
         let close_action = gio::SimpleAction::new("close", None);
         let pause_action = gio::SimpleAction::new("pause", None);
         let resume_action = gio::SimpleAction::new("resume", None);
+        let reset_action = gio::SimpleAction::new("reset", None);
         let debugger_action = gio::SimpleAction::new("debugger", None);
         let state_create_action = gio::SimpleAction::new("state-create", None);
         let state_save_active_action = gio::SimpleAction::new("state-save-active", None);
@@ -128,6 +130,7 @@ impl WindowExtend for Window {
             close_action: close_action.clone(),
             pause_action: pause_action.clone(),
             resume_action: resume_action.clone(),
+            reset_action: reset_action.clone(),
             debugger_action: debugger_action.clone(),
             state_create_action: state_create_action.clone(),
             state_save_active_action: state_save_active_action.clone(),
@@ -215,6 +218,15 @@ impl WindowExtend for Window {
             });
         }
         window.add_action(&resume_action);
+
+        {
+            let result = result.clone();
+            let _ = reset_action.connect_activate(move |_, _| {
+                result.state().borrow_mut().reset();
+                result.update_actions();
+            });
+        }
+        window.add_action(&reset_action);
 
         {
             let result = result.clone();
@@ -394,12 +406,14 @@ impl WindowExtend for Window {
     }
 
     fn load_path(&self, path: &Path) {
-        self.state().borrow_mut().load_path(path);
+        if let Err(detail) = self.state().borrow_mut().load_path(path) {
+            show_rom_load_error(&self.window(), self.state(), &detail);
+        }
         self.update_actions();
     }
 
     fn close(&self) {
-        let _ = self.state().borrow_mut().unload();
+        self.state().borrow_mut().unload();
         self.update_actions();
     }
 
@@ -435,6 +449,7 @@ impl WindowExtend for Window {
         self.borrow().close_action.set_enabled(state.loaded());
         self.borrow().pause_action.set_enabled(state.can_pause());
         self.borrow().resume_action.set_enabled(state.can_resume());
+        self.borrow().reset_action.set_enabled(state.loaded());
         self.borrow().debugger_action.set_enabled(state.loaded());
         self.borrow()
             .state_create_action
@@ -458,29 +473,34 @@ impl WindowExtend for Window {
             .state_delete_slot_action
             .set_enabled(state.loaded() && !state.slots().is_empty());
 
+        let language = state.settings_snapshot().shared.general.language;
         rebuild_slot_menu(
             &self.borrow().select_active_slot_menu,
             state.slots(),
             state.active_slot_id(),
             "win.state-select-slot",
+            language,
         );
         rebuild_slot_menu(
             &self.borrow().save_slot_menu,
             state.slots(),
             state.active_slot_id(),
             "win.state-save-slot",
+            language,
         );
         rebuild_slot_menu(
             &self.borrow().load_slot_menu,
             state.slots(),
             state.active_slot_id(),
             "win.state-load-slot",
+            language,
         );
         rebuild_slot_menu(
             &self.borrow().delete_slot_menu,
             state.slots(),
             state.active_slot_id(),
             "win.state-delete-slot",
+            language,
         );
         drop(state);
         self.refresh_title();
@@ -603,11 +623,42 @@ fn rebuild_slot_menu(
     slots: &[StateSlotSummary],
     active_slot: Option<u64>,
     action: &str,
+    language: nerust_gui_settings::language::AppLanguage,
 ) {
+    use nerust_settings_core::i18n::{UiText, text};
     menu.remove_all();
+    if slots.is_empty() {
+        // An action-less item renders disabled: the empty submenu
+        // explains itself instead of showing a blank list.
+        let item = gio::MenuItem::new(Some(text(language, UiText::NoSaveSlots)), None);
+        menu.append_item(&item);
+        return;
+    }
     for slot in slots {
         let item = gio::MenuItem::new(Some(&slot_label(slot, active_slot)), None);
         item.set_action_and_target_value(Some(action), Some(&slot.slot_id.to_variant()));
         menu.append_item(&item);
     }
+}
+
+/// Modal error dialog for ROM load failures: mirrors the tao
+/// frontend so a bad file explains itself instead of failing
+/// silently.
+fn show_rom_load_error(parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>>, detail: &str) {
+    use gtk::prelude::*;
+    use nerust_settings_core::i18n::{UiText, text};
+    let language = state.borrow().settings_snapshot().shared.general.language;
+    let dialog = gtk::MessageDialog::builder()
+        .transient_for(parent)
+        .modal(true)
+        .message_type(gtk::MessageType::Error)
+        .buttons(gtk::ButtonsType::Close)
+        .text(text(language, UiText::RomLoadFailed))
+        .secondary_text(detail)
+        .build();
+    let dialog_clone = dialog.clone();
+    let _ = dialog.connect_response(move |_, _| {
+        dialog_clone.hide();
+    });
+    dialog.show();
 }
