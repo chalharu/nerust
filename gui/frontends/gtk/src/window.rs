@@ -511,15 +511,12 @@ impl WindowExtend for Window {
     }
 
     fn rebuild_menubar(&self) {
-        let language = self
-            .state()
-            .borrow()
-            .settings_snapshot()
-            .shared
-            .general
-            .language;
+        let state = self.state();
+        let guarded = state.borrow();
+        let snapshot = guarded.settings_snapshot();
         let menu_model = build_menu_model(
-            language,
+            snapshot.shared.general.language,
+            &snapshot.shared.input.shortcuts.keyboard,
             &gio::Menu::new(),
             &self.borrow().select_active_slot_menu,
             &self.borrow().save_slot_menu,

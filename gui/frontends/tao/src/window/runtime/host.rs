@@ -443,14 +443,17 @@ impl HostState {
     }
 
     fn sync_menu_state(&mut self) {
-        self.app_menu.update(
-            self.session.loaded(),
-            self.session.paused(),
-            self.session.slots(),
-            self.session.active_slot_id(),
-            self.settings_open,
-            self.session.settings_snapshot().shared.general.language,
-        );
+        let snapshot = self.session.settings_snapshot();
+        let slots = self.session.slots();
+        self.app_menu.update(crate::app_menu::MenuSync {
+            loaded: self.session.loaded(),
+            paused: self.session.paused(),
+            slots,
+            active_slot: self.session.active_slot_id(),
+            settings_open: self.settings_open,
+            language: snapshot.shared.general.language,
+            shortcuts: &snapshot.shared.input.shortcuts.keyboard,
+        });
     }
 
     fn refresh_window_title(&mut self) {
@@ -583,8 +586,9 @@ impl HostState {
         }
     }
 
-    /// Open the debugger and PPU viewer (idempotent). Pauses first;
-    /// closing never resumes: resume is always explicit.
+    /// Open the debugger (idempotent), and the PPU viewer only for
+    /// the toolbar button. Closing never resumes: resume is always
+    /// explicit.
     ///
     /// The first pause and snapshot run through the shared shell
     /// drain, never around it: opening with an empty display and
@@ -592,9 +596,10 @@ impl HostState {
     /// path. Pause must precede the paused-gated inspect, and the
     /// drain runs them in order.
     ///
-    /// `focus_ppu` serves the toolbar PPU-viewer button: an already
-    /// open viewer takes focus instead of staying buried. The F4
-    /// path passes `false` so the debugger keeps focus.
+    /// `focus_ppu` serves the toolbar PPU-viewer button: a missing
+    /// viewer is created, an already open one takes focus instead
+    /// of staying buried. The F4/menu path passes `false` so only
+    /// the debugger opens (the gtk twin never auto-opens either).
     pub(crate) fn open_debug_windows(
         &mut self,
         event_loop: &EventLoopWindowTarget<UserEvent>,
@@ -629,7 +634,8 @@ impl HostState {
                 None => log::error!("failed to open debugger window"),
             }
         }
-        if self.debug.ppu_window.is_none()
+        if focus_ppu
+            && self.debug.ppu_window.is_none()
             && let Some(main) = self.debug.debug_window.as_ref()
         {
             let position = self.debug.ppu_window_pos();

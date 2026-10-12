@@ -172,6 +172,19 @@ impl WindowRuntime {
             Event::WindowEvent {
                 event, window_id, ..
             } if self.host.is_settings_window(window_id) => {
+                // External destroy without CloseRequested: the window
+                // is already gone, so skip event/render and run the
+                // normal close path (pending apply still commits).
+                if matches!(event, WindowEvent::Destroyed) {
+                    if let Some(handle) = self.host.settings_window.take() {
+                        let plan = self.host.close_settings_window(handle);
+                        if plan.is_some_and(|p| p.renderer_needs_rebuild) {
+                            self.recreate_renderer();
+                        }
+                        self.host.request_redraw();
+                    }
+                    return;
+                }
                 let Some(handle) = self.host.settings_window.as_mut() else {
                     return;
                 };
@@ -224,7 +237,15 @@ impl WindowRuntime {
                 // "stepped N" with a bare "paused"). The empty batch
                 // still refreshes the toolbar label so it agrees with
                 // the menu.
+                // External destroy without CloseRequested: drop the
+                // stale handle so a later F4 reopens instead of
+                // silently no-op'ing on a dead window.
                 let refocused = matches!(event, WindowEvent::Focused(true));
+                if matches!(event, WindowEvent::Destroyed) {
+                    self.host.debug.debug_window.take();
+                    self.host.request_redraw();
+                    return;
+                }
                 {
                     let Some(handle) = self.host.debug.debug_window.as_mut() else {
                         return;
@@ -277,6 +298,13 @@ impl WindowRuntime {
             Event::WindowEvent {
                 event, window_id, ..
             } if self.host.debug.is_ppu_window(window_id) => {
+                // Same external-destroy guard as the debugger: a dead
+                // handle must not linger and block reopening.
+                if matches!(event, WindowEvent::Destroyed) {
+                    self.host.debug.ppu_window.take();
+                    self.host.request_redraw();
+                    return;
+                }
                 if let WindowEvent::Moved(position) = &event {
                     self.host
                         .debug
