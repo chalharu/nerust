@@ -7,7 +7,6 @@
 //! makes the order unit-testable without a GUI.
 
 use nerust_core_traits::debugger::{HexRow, SpaceId, StepUnit};
-use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache};
 
 use crate::session::SessionHandle;
@@ -52,14 +51,12 @@ pub struct DebugDrainInput<'a> {
     /// Fetch system images (pattern tables). False when no PPU
     /// viewer is open: CHR decode is skipped, not just unused.
     pub need_images: bool,
-    /// Drain language: the session formats outcome status in it.
-    pub language: AppLanguage,
 }
 
 /// Everything a frontend needs to render after a batch.
 pub struct DebugDrainOutput {
-    /// Ready-to-render display (diff, watch value, pending text,
-    /// and final status included).
+    /// Render-ready display (diff, watch value, pending write, and
+    /// structured status included; the frontend renders wording).
     pub display: DisplayCache,
     /// Fresh `(address, old byte)` when the batch selected a row
     /// (`None` means the selection is unchanged).
@@ -96,9 +93,7 @@ impl SessionHandle {
         actions: &[DebugAction],
         input: &DebugDrainInput,
     ) -> DebugDrainOutput {
-        use nerust_settings_core::i18n::UiText;
-        let language = input.language;
-        let mut status = String::new();
+        let mut status: Option<vm::StatusMessage> = None;
         let mut state_changing = false;
         for action in actions {
             let outcome = match action {
@@ -106,22 +101,22 @@ impl SessionHandle {
                     state_changing = true;
                     continue;
                 }
-                DebugAction::Pause => self.debug_pause(language),
-                DebugAction::Resume => self.debug_resume(language),
+                DebugAction::Pause => self.debug_pause(),
+                DebugAction::Resume => self.debug_resume(),
                 DebugAction::TogglePause => {
                     if self.debug_paused() {
-                        self.debug_resume(language)
+                        self.debug_resume()
                     } else {
-                        self.debug_pause(language)
+                        self.debug_pause()
                     }
                 }
                 DebugAction::StepFrame => {
                     state_changing = true;
-                    self.debug_step(language, StepUnit::Frame)
+                    self.debug_step(StepUnit::Frame)
                 }
                 DebugAction::StepInstr => {
                     state_changing = true;
-                    self.debug_step(language, StepUnit::Instruction)
+                    self.debug_step(StepUnit::Instruction)
                 }
                 // Transaction traffic never kills: it builds the
                 // transaction this batch consumes. Register writes
@@ -133,18 +128,18 @@ impl SessionHandle {
                     continue;
                 }
             };
-            status = outcome;
+            status = Some(outcome);
         }
         // Cancel/commit first: cancel clears, commit writes and consumes.
         for action in actions {
             match action {
                 DebugAction::EditCancel => self.debug_clear_write(),
                 DebugAction::WriteConfirm => {
-                    status = self.debug_commit_write(language);
+                    status = Some(self.debug_commit_write());
                 }
                 DebugAction::RegisterWrite(value) => {
                     if let Some(name) = input.reg_target {
-                        status = self.debug_write_register(language, name, *value);
+                        status = Some(self.debug_write_register(name, *value));
                     }
                 }
                 _ => {}
@@ -190,16 +185,14 @@ impl SessionHandle {
                 .watch
                 .and_then(|addr| input.space.and_then(|s| self.debug_read_byte(s, addr)))
         });
-        let pending_text = self.debug_pending_text(language);
-        let status = if status.is_empty() {
+        let pending = self.debug_pending_text();
+        let status = status.unwrap_or_else(|| {
             if self.debug_paused() {
-                nerust_settings_core::i18n::text(language, UiText::PausedState).to_string()
+                vm::StatusMessage::Paused
             } else {
-                nerust_settings_core::i18n::text(language, UiText::RunningState).to_string()
+                vm::StatusMessage::Running
             }
-        } else {
-            status
-        };
+        });
         let display = DisplayCache {
             regs: snapshot.regs,
             diff: vm::diff_rows(input.prev_dump_rows, &snapshot.dump_rows),
@@ -212,7 +205,7 @@ impl SessionHandle {
             paused: self.debug_paused(),
             reg_names: snapshot.reg_names,
             status,
-            pending_text,
+            pending,
         };
         DebugDrainOutput {
             display,
@@ -238,7 +231,7 @@ mod tests {
                 })
                 .unwrap_or_default(),
             regs: rows.then(|| vec![("a", 1)]).unwrap_or_default(),
-            status: "paused".to_string(),
+            status: vm::StatusMessage::Paused,
             paused: true,
             ..DisplayCache::default()
         }
@@ -249,13 +242,13 @@ mod tests {
         let old = cached(true);
         let mut new = DisplayCache {
             paused: false,
-            status: "running".to_string(),
+            status: vm::StatusMessage::Running,
             ..DisplayCache::default()
         };
         merge_running_sections(&old, &mut new);
         assert_eq!(new.dump_rows.len(), 1);
         assert_eq!(new.regs, vec![("a", 1)]);
-        assert_eq!(new.status, "running", "fresh chrome stays");
+        assert_eq!(new.status, vm::StatusMessage::Running, "fresh chrome stays");
         // Paused drains pass through untouched.
         let mut paused_new = DisplayCache {
             paused: true,

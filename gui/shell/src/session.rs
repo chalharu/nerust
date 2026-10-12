@@ -26,14 +26,12 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::ShortcutAction;
-use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_viewmodel::debugger as debug_vm;
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
 use nerust_keyboard::Key;
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
-use nerust_settings_core::i18n as ui_text;
 use thiserror::Error;
 
 use crate::{
@@ -529,23 +527,16 @@ impl SessionHandle {
         )
     }
 
-    /// Single-register write for the register viewer. Status
-    /// strings follow the memory-commit shape, in the drain language.
-    pub fn debug_write_register(
-        &self,
-        language: AppLanguage,
-        name: &'static str,
-        value: u64,
-    ) -> String {
-        use nerust_settings_core::i18n::UiText;
+    /// Single-register write for the register viewer.
+    pub fn debug_write_register(&self, name: &'static str, value: u64) -> debug_vm::StatusMessage {
         let core = match self.emu_core.as_ref() {
             Some(core) => core,
-            None => return ui_text::text(language, UiText::NoCore).to_string(),
+            None => return debug_vm::StatusMessage::NoCore,
         };
         match core.write_register(name, value) {
-            Ok(Ok(())) => ui_text::register_wrote(language, name, value),
-            Ok(Err(error)) => ui_text::register_refused(language, &format!("{error:?}")),
-            Err(error) => ui_text::thread_failed(language, &format!("{error:?}")),
+            Ok(Ok(())) => debug_vm::StatusMessage::RegisterWrote { name, value },
+            Ok(Err(error)) => debug_vm::StatusMessage::RegisterRefused(format!("{error:?}")),
+            Err(error) => debug_vm::StatusMessage::ThreadFailed(format!("{error:?}")),
         }
     }
 
@@ -566,25 +557,23 @@ impl SessionHandle {
         self.debug_txn.lock().unwrap().stage(value);
     }
 
-    /// Confirm-row text, if fully staged. Single formatter shared with
-    /// the optimistic display, in the drain language.
-    pub fn debug_pending_text(&self, language: AppLanguage) -> Option<String> {
-        self.debug_txn.lock().unwrap().pending_text(language)
+    /// Confirm-row data, if fully staged. The frontend renders the
+    /// wording; the session only reports the staged values.
+    pub fn debug_pending_text(&self) -> Option<debug_vm::PendingWrite> {
+        self.debug_txn.lock().unwrap().pending()
     }
 
-    /// Commit the staged write, consuming the transaction. Status
-    /// strings match the verified prototype pixels exactly.
-    pub fn debug_commit_write(&self, language: AppLanguage) -> String {
+    /// Commit the staged write, consuming the transaction.
+    pub fn debug_commit_write(&self) -> debug_vm::StatusMessage {
         use nerust_core_traits::debugger::MemoryWrite;
-        use nerust_settings_core::i18n::UiText;
         let staged = self.debug_txn.lock().unwrap().take_commit();
         let (space, addr, value) = match staged {
             Some(staged) => staged,
-            None => return ui_text::text(language, UiText::NothingToWrite).to_string(),
+            None => return debug_vm::StatusMessage::NothingToWrite,
         };
         let core = match self.emu_core.as_ref() {
             Some(core) => core,
-            None => return ui_text::text(language, UiText::NoCore).to_string(),
+            None => return debug_vm::StatusMessage::NoCore,
         };
         match core.write_memory(MemoryWrite {
             space,
@@ -592,9 +581,9 @@ impl SessionHandle {
             width: 1,
             value,
         }) {
-            Ok(Ok(())) => ui_text::wrote_memory(language, addr, value),
-            Ok(Err(error)) => ui_text::write_refused(language, &format!("{error:?}")),
-            Err(error) => ui_text::thread_failed(language, &format!("{error:?}")),
+            Ok(Ok(())) => debug_vm::StatusMessage::WroteMemory { addr, value },
+            Ok(Err(error)) => debug_vm::StatusMessage::WriteRefused(format!("{error:?}")),
+            Err(error) => debug_vm::StatusMessage::ThreadFailed(format!("{error:?}")),
         }
     }
 
@@ -614,47 +603,42 @@ impl SessionHandle {
         }
     }
 
-    /// Pause for debugger control. Status strings match the verified
-    /// prototype pixels.
-    pub fn debug_pause(&self, language: AppLanguage) -> String {
-        use nerust_settings_core::i18n::UiText;
+    /// Pause for debugger control.
+    pub fn debug_pause(&self) -> debug_vm::StatusMessage {
         match self.emu_core.as_ref() {
             Some(core) => match core.pause() {
-                Ok(()) => ui_text::text(language, UiText::PausedState).to_string(),
-                Err(error) => ui_text::pause_failed(language, &format!("{error:?}")),
+                Ok(()) => debug_vm::StatusMessage::Paused,
+                Err(error) => debug_vm::StatusMessage::PauseFailed(format!("{error:?}")),
             },
-            None => ui_text::text(language, UiText::NoCore).to_string(),
+            None => debug_vm::StatusMessage::NoCore,
         }
     }
 
     /// Resume for debugger control.
-    pub fn debug_resume(&self, language: AppLanguage) -> String {
-        use nerust_settings_core::i18n::UiText;
+    pub fn debug_resume(&self) -> debug_vm::StatusMessage {
         match self.emu_core.as_ref() {
             Some(core) => match core.resume() {
-                Ok(()) => ui_text::text(language, UiText::Resume).to_string(),
-                Err(error) => ui_text::resume_failed(language, &format!("{error:?}")),
+                Ok(()) => debug_vm::StatusMessage::Resume,
+                Err(error) => debug_vm::StatusMessage::ResumeFailed(format!("{error:?}")),
             },
-            None => ui_text::text(language, UiText::NoCore).to_string(),
+            None => debug_vm::StatusMessage::NoCore,
         }
     }
 
     /// Advance one unit for debugger control. Returns the stepped
-    /// count (`stepped N`) or a loud failure.
+    /// count or a structured failure.
     pub fn debug_step(
         &self,
-        language: AppLanguage,
         unit: nerust_core_traits::debugger::StepUnit,
-    ) -> String {
-        use nerust_settings_core::i18n::UiText;
+    ) -> debug_vm::StatusMessage {
         let core = match self.emu_core.as_ref() {
             Some(core) => core,
-            None => return ui_text::text(language, UiText::NoCore).to_string(),
+            None => return debug_vm::StatusMessage::NoCore,
         };
         match core.step(unit) {
-            Ok(Ok(count)) => ui_text::stepped(language, count),
-            Ok(Err(error)) => ui_text::step_failed(language, &format!("{error:?}")),
-            Err(error) => ui_text::thread_failed(language, &format!("{error:?}")),
+            Ok(Ok(count)) => debug_vm::StatusMessage::Stepped(count),
+            Ok(Err(error)) => debug_vm::StatusMessage::StepFailed(format!("{error:?}")),
+            Err(error) => debug_vm::StatusMessage::ThreadFailed(format!("{error:?}")),
         }
     }
 

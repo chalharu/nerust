@@ -2,8 +2,8 @@
 //! scale plus panels and tile hover info.
 //!
 //! Display-only content scrolls so panels stay reachable in the fixed
-//! window height. Scaled bytes derive once per drain (Sync); hover
-//! rebuilds never re-derive them.
+//! window height. Scaled pictures derive once per drain (Sync); hover
+//! rebuilds clone the cached handles, never the bytes.
 
 use std::sync::{
     Arc, Mutex,
@@ -54,16 +54,19 @@ fn tile_hover_text(
 #[derive(Debug, Clone)]
 pub(crate) enum PpuMessage {
     Hovered(String),
-    /// Re-derive cached bytes from the bridge (one 2x scale per
-    /// drain, never per hover).
+    /// Re-derive cached pictures from the bridge (one 2x scale per
+    /// drain, never per hover or view).
     Sync,
 }
 
 pub(crate) struct PpuState {
     bridge: Arc<DebugBridge>,
-    /// Scaled display bytes `(label, w, h, rgba)`, Sync-derived.
+    /// Scaled display pictures `(label, w, h, handle)`, Sync-derived.
+    /// Handles (cheap Arc clones) ride here instead of raw bytes so
+    /// hover-driven rebuilds never re-copy megabytes per mouse move:
+    /// the 2x scale runs once per drain, never per view.
     #[allow(clippy::type_complexity)]
-    scaled: Mutex<Vec<(String, u32, u32, Vec<u8>)>>,
+    scaled: Mutex<Vec<(String, u32, u32, iced::widget::image::Handle)>>,
     panels_cache: Mutex<String>,
     hover_cache: Mutex<String>,
     /// Generation of the source images behind `scaled`. Sync
@@ -129,11 +132,12 @@ impl Program for PpuProgram {
                 if *source_gen != generation {
                     let mut scaled = Vec::with_capacity(display.images.len());
                     for (label, width, height, rgba) in &display.images {
+                        let bytes = scale2x_nearest(rgba, *width, *height);
                         scaled.push((
                             label.clone(),
                             width * 2,
                             height * 2,
-                            scale2x_nearest(rgba, *width, *height),
+                            iced::widget::image::Handle::from_rgba(width * 2, height * 2, bytes),
                         ));
                     }
                     *state.scaled.lock().unwrap() = scaled;
@@ -175,9 +179,10 @@ impl Program for PpuProgram {
         if scaled.is_empty() {
             content = content.push(text(ui_text(language, UiText::NoImages)).size(14));
         }
-        for (label, width, height, rgba) in &scaled {
+        for (label, width, height, handle) in &scaled {
             content = content.push(text(label.clone()).size(14));
-            let shown = image(image::Handle::from_rgba(*width, *height, rgba.clone()));
+            // Arc clone only: the bytes were scaled once at Sync time.
+            let shown = image(handle.clone());
             let hover_label = label.clone();
             // Cache stores display size; halve back for hover math.
             let (hover_w, hover_h) = (width / 2, height / 2);

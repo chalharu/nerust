@@ -21,7 +21,7 @@ use iced_winit::{
 use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, HexRow, SpaceId};
 use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::debug::DebugAction;
-use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState};
+use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};
 
 #[cfg(target_os = "macos")]
@@ -155,7 +155,10 @@ impl DebugBridge {
     }
 
     pub(crate) fn set_status(&self, status: String) {
-        self.display.lock().unwrap().status = status;
+        // Frontend-local wording (parse errors, prompts): stored
+        // verbatim. Drain outcomes arrive structured and never pass
+        // through here.
+        self.display.lock().unwrap().status = StatusMessage::Local(status);
         self.view_invalidated.store(true, Ordering::Release);
     }
 
@@ -469,7 +472,7 @@ impl Program for DebugProgram {
             DebugMessage::RegSet => reg_set(bridge),
             DebugMessage::CancelWrite => {
                 bridge.push(DebugAction::EditCancel);
-                bridge.display.lock().unwrap().pending_text = None;
+                bridge.display.lock().unwrap().pending = None;
             }
         }
         Task::none()
@@ -495,7 +498,7 @@ impl Program for DebugProgram {
         let freeze_input = bridge.freeze_input.lock().unwrap().clone();
         let selected = *bridge.selected.lock().unwrap();
         let edit_input = bridge.edit_input.lock().unwrap().clone();
-        let pending_text = display.pending_text;
+        let pending = display.pending;
         let selected_name = bridge.selected_name();
         let regs = display.regs;
         let dump_rows = display.dump_rows;
@@ -525,7 +528,7 @@ impl Program for DebugProgram {
         let edit_row = view_edit_row(selected, &edit_input, language);
         // Confirm row: the one primary button in the window; Cancel is
         // a text escape. The drain owns the authoritative text.
-        let confirm_row = view_confirm_row(pending_text, language);
+        let confirm_row = view_confirm_row(pending, language);
         let dis_nav = view_dis_nav(follow_pc, back_len, anchor, &dis_input, language);
         // Per-line disassembly: line click pins the anchor (the
         // pinned row carries `@`, the PC row `>`), and structured
@@ -836,14 +839,14 @@ fn view_edit_row(
 }
 
 fn view_confirm_row(
-    pending_text: Option<String>,
+    pending: Option<vm::PendingWrite>,
     language: AppLanguage,
 ) -> Option<iced::Element<'static, DebugMessage, iced::Theme, Renderer>> {
     use iced::Length;
     use iced::widget::{button, row, text};
-    pending_text.map(|pending| {
+    pending.map(|pending| {
         row![
-            text(pending).size(14).width(Length::Fill),
+            text(pending.render(language)).size(14).width(Length::Fill),
             button(text(ui_text(language, UiText::Confirm)))
                 .style(button::primary)
                 .on_press(DebugMessage::ConfirmWrite),
@@ -965,7 +968,7 @@ fn view_dis_col(
 
 #[allow(clippy::too_many_arguments)]
 fn view_right_col(
-    status: String,
+    status: StatusMessage,
     regs_view: iced::Element<'static, DebugMessage, iced::Theme, Renderer>,
     watch: Option<u32>,
     watch_value: Option<u8>,
@@ -1008,7 +1011,7 @@ fn view_right_col(
         );
     }
     column![
-        text(status).size(14).width(Length::Fill),
+        text(status.render(language)).size(14).width(Length::Fill),
         text(ui_text(language, UiText::Registers)).size(16),
         regs_view,
         text(ui_text(language, UiText::Watch)).size(16),
@@ -1313,13 +1316,39 @@ mod tests {
     }
 
     #[test]
+    fn input_echo_never_queues_drain_traffic() {
+        // Typing must stay on the UI thread: input-echo messages
+        // re-render locally and never queue emu-thread round-trips
+        // (a drain would block typing on the thread reply).
+        let bridge = full_bridge();
+        for message in [
+            DebugMessage::MemInputChanged("0x100".to_string()),
+            DebugMessage::DisInputChanged("0x200".to_string()),
+            DebugMessage::BookmarkInputChanged("tag".to_string()),
+            DebugMessage::FreezeInputChanged("FF".to_string()),
+            DebugMessage::EditInputChanged("42".to_string()),
+            DebugMessage::RegInputChanged("7".to_string()),
+            DebugMessage::RegSelected("r0"),
+            DebugMessage::WatchClear,
+            DebugMessage::BookmarkDelete(0x999),
+        ] {
+            drive(&bridge, message);
+        }
+        assert!(
+            bridge.outbox.lock().unwrap().is_empty(),
+            "typing never blocks on the emu thread"
+        );
+        assert!(bridge.view_invalidated.load(Ordering::Acquire));
+    }
+
+    #[test]
     fn edit_freeze_set_reads_edit_input() {
         let bridge = freeze_bridge();
         drive(&bridge, DebugMessage::EditFreezeSet);
         assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x0200_0010, 0xAA)));
         assert_eq!(
             bridge.display.lock().unwrap().status,
-            "frozen 0x02000010=AA"
+            StatusMessage::Local("frozen 0x02000010=AA".to_string())
         );
     }
 
@@ -1330,7 +1359,7 @@ mod tests {
         assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x0200_0010, 0xFF)));
         assert_eq!(
             bridge.display.lock().unwrap().status,
-            "frozen 0x02000010=FF"
+            StatusMessage::Local("frozen 0x02000010=FF".to_string())
         );
     }
 
@@ -1413,7 +1442,10 @@ mod tests {
         assert_eq!(bridge.nav.lock().unwrap().mem_addr(), 0x100);
         drive(&bridge, DebugMessage::MemInputChanged("zz".to_string()));
         drive(&bridge, DebugMessage::MemGo);
-        assert_eq!(bridge.display.lock().unwrap().status, "parse failed: zz");
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            StatusMessage::Local("parse failed: zz".to_string())
+        );
     }
 
     #[test]
@@ -1427,14 +1459,20 @@ mod tests {
         drive(&bridge, DebugMessage::DisBack);
         drive(&bridge, DebugMessage::DisBack);
         drive(&bridge, DebugMessage::DisBack);
-        assert_eq!(bridge.display.lock().unwrap().status, "back stack is empty");
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            StatusMessage::Local("back stack is empty".to_string())
+        );
         // Go resolves valid hex, rejects the rest.
         drive(&bridge, DebugMessage::DisInputChanged("200".to_string()));
         drive(&bridge, DebugMessage::DisGo);
         assert!(!bridge.nav.lock().unwrap().follow_pc());
         drive(&bridge, DebugMessage::DisInputChanged("zz".to_string()));
         drive(&bridge, DebugMessage::DisGo);
-        assert_eq!(bridge.display.lock().unwrap().status, "parse failed: zz");
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            StatusMessage::Local("parse failed: zz".to_string())
+        );
         drive(&bridge, DebugMessage::FollowPcToggle);
         assert!(bridge.nav.lock().unwrap().follow_pc());
     }
@@ -1460,7 +1498,10 @@ mod tests {
             .unwrap()
             .extend((0..8).map(|i| (0x100 + i, format!("BM{i}"))));
         drive(&bridge, DebugMessage::BookmarkAdd);
-        assert_eq!(bridge.display.lock().unwrap().status, "bookmark list full");
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            StatusMessage::Local("bookmark list full".to_string())
+        );
         // Watch follows the selection, then clears.
         drive(&bridge, DebugMessage::WatchSet);
         assert_eq!(*bridge.watch.lock().unwrap(), Some(0x100));
@@ -1470,7 +1511,7 @@ mod tests {
         drive(&bridge, DebugMessage::WatchSet);
         assert_eq!(
             bridge.display.lock().unwrap().status,
-            "watch needs a selection"
+            StatusMessage::Local("watch needs a selection".to_string())
         );
         // Freeze reads the top input, the edit input, then clears.
         *bridge.selected.lock().unwrap() = Some((0x100, Some(0xAB)));
@@ -1481,13 +1522,16 @@ mod tests {
         assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x100, 0x42)));
         drive(&bridge, DebugMessage::FreezeClear);
         assert!(bridge.freeze.lock().unwrap().is_none());
-        assert_eq!(bridge.display.lock().unwrap().status, "freeze cleared");
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            StatusMessage::Local("freeze cleared".to_string())
+        );
         // Rejections stay loud.
         *bridge.selected.lock().unwrap() = None;
         drive(&bridge, DebugMessage::FreezeSet);
         assert_eq!(
             bridge.display.lock().unwrap().status,
-            "freeze needs a selected row and hex byte"
+            StatusMessage::Local("freeze needs a selected row and hex byte".to_string())
         );
     }
 
@@ -1503,7 +1547,7 @@ mod tests {
         assert!(bridge.edit_input.lock().unwrap().is_empty());
         // Cancel clears the optimistic text.
         drive(&bridge, DebugMessage::CancelWrite);
-        assert!(bridge.display.lock().unwrap().pending_text.is_none());
+        assert!(bridge.display.lock().unwrap().pending.is_none());
         // Register pick then Set pushes one register write.
         drive(&bridge, DebugMessage::RegSelected("r0"));
         assert_eq!(*bridge.reg_target.lock().unwrap(), Some("r0"));
@@ -1515,18 +1559,21 @@ mod tests {
         drive(&bridge, DebugMessage::RegSet);
         assert_eq!(
             bridge.display.lock().unwrap().status,
-            "register write needs a register"
+            StatusMessage::Local("register write needs a register".to_string())
         );
         *bridge.selected.lock().unwrap() = None;
         drive(&bridge, DebugMessage::EditWrite);
         assert_eq!(
             bridge.display.lock().unwrap().status,
-            "write needs a selection"
+            StatusMessage::Local("write needs a selection".to_string())
         );
         drive(&bridge, DebugMessage::RegInputChanged("zz".to_string()));
         *bridge.reg_target.lock().unwrap() = Some("r0");
         drive(&bridge, DebugMessage::RegSet);
-        assert_eq!(bridge.display.lock().unwrap().status, "parse failed: zz");
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            StatusMessage::Local("parse failed: zz".to_string())
+        );
     }
 
     #[test]
@@ -1548,7 +1595,11 @@ mod tests {
         let _ = view_edit_row(selected, "42", language);
         let _ = view_edit_row(None, "", language);
         let _ = view_confirm_row(
-            Some("write 42 to 0x00000100 (was AB)?".to_string()),
+            Some(vm::PendingWrite {
+                addr: 0x100,
+                old: Some(0xAB),
+                value: 0x42,
+            }),
             language,
         );
         let _ = view_confirm_row(None, language);
@@ -1558,7 +1609,7 @@ mod tests {
         let _ = view_dis_col(&display.disasm_lines, None, language);
         let _ = view_dis_col(&display.disasm_lines, Some(0x0800_27D2E), language);
         let _ = view_right_col(
-            "paused".to_string(),
+            StatusMessage::Paused,
             view_regs_section(&display.regs, None, "", language),
             Some(0x100),
             Some(0xAB),
@@ -1569,7 +1620,7 @@ mod tests {
             language,
         );
         let _ = view_right_col(
-            String::new(),
+            StatusMessage::Empty,
             view_regs_section(&[], None, "", language),
             None,
             None,

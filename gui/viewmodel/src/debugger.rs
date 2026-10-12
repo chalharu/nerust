@@ -157,9 +157,9 @@ impl NavState {
 ///
 /// Registers, dump rows, and panels travel structured (kernel order
 /// kept): formatting to text is presentation's job, done per rebuild
-/// with the `format_*` helpers below. The one exception is `status`
-/// and `pending_text`, which arrive pre-formatted in the drain's
-/// language because the drain owns the outcome wording.
+/// with the `format_*` helpers below. Outcomes travel structured too
+/// ([`StatusMessage`], [`PendingWrite`]: the session reports *what*
+/// happened, frontends render the wording in their own language.
 #[derive(Debug, Clone, Default)]
 pub struct DisplayCache {
     /// `(name, value)` in kernel order.
@@ -186,10 +186,12 @@ pub struct DisplayCache {
     /// viewer target. Kernel `&'static str`: no allocation, and the
     /// drain's write path reuses the exact names.
     pub reg_names: Vec<&'static str>,
-    /// Status line (last outcome, or paused/running).
-    pub status: String,
-    /// Confirm-row text for a fully staged write, if any.
-    pub pending_text: Option<String>,
+    /// Status line (last outcome, or paused/running), rendered by the
+    /// frontend in its own language.
+    pub status: StatusMessage,
+    /// Staged write awaiting confirm, if any. The frontend renders
+    /// the confirm row from this.
+    pub pending: Option<PendingWrite>,
 }
 
 impl DisplayCache {
@@ -210,8 +212,95 @@ impl DisplayCache {
             paused: self.paused,
             reg_names: self.reg_names.clone(),
             status: self.status.clone(),
-            pending_text: self.pending_text.clone(),
+            pending: self.pending,
         }
+    }
+}
+
+/// One debugger outcome, data only. The session and drain report
+/// *what* happened; frontends render the wording via
+/// [`StatusMessage::render`] in their own language. This keeps
+/// presentation (wording, language) out of the application layer:
+/// the drain no longer needs a language, and both languages are
+/// covered by construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatusMessage {
+    /// Nothing to report yet (empty display).
+    Empty,
+    Paused,
+    Running,
+    Resume,
+    NothingToWrite,
+    NoCore,
+    Stepped(u64),
+    WroteMemory {
+        addr: u32,
+        value: u64,
+    },
+    RegisterWrote {
+        name: &'static str,
+        value: u64,
+    },
+    PauseFailed(String),
+    ResumeFailed(String),
+    StepFailed(String),
+    WriteRefused(String),
+    RegisterRefused(String),
+    ThreadFailed(String),
+    /// Frontend-local wording (parse errors, selection prompts):
+    /// never produced by the session, rendered verbatim.
+    Local(String),
+}
+
+impl Default for StatusMessage {
+    fn default() -> Self {
+        Self::Empty
+    }
+}
+
+impl StatusMessage {
+    /// Render the outcome in a language. Single wording shared by
+    /// every frontend (and its tests).
+    pub fn render(&self, language: AppLanguage) -> String {
+        use nerust_settings_core::i18n as ui_msg;
+        match self {
+            Self::Empty => String::new(),
+            Self::Paused => ui_msg::text(language, ui_msg::UiText::PausedState).to_string(),
+            Self::Running => ui_msg::text(language, ui_msg::UiText::RunningState).to_string(),
+            Self::Resume => ui_msg::text(language, ui_msg::UiText::Resume).to_string(),
+            Self::NothingToWrite => {
+                ui_msg::text(language, ui_msg::UiText::NothingToWrite).to_string()
+            }
+            Self::NoCore => ui_msg::text(language, ui_msg::UiText::NoCore).to_string(),
+            Self::Stepped(count) => ui_msg::stepped(language, *count),
+            Self::WroteMemory { addr, value } => ui_msg::wrote_memory(language, *addr, *value),
+            Self::RegisterWrote { name, value } => ui_msg::register_wrote(language, name, *value),
+            Self::PauseFailed(detail) => ui_msg::pause_failed(language, detail),
+            Self::ResumeFailed(detail) => ui_msg::resume_failed(language, detail),
+            Self::StepFailed(detail) => ui_msg::step_failed(language, detail),
+            Self::WriteRefused(detail) => ui_msg::write_refused(language, detail),
+            Self::RegisterRefused(detail) => ui_msg::register_refused(language, detail),
+            Self::ThreadFailed(detail) => ui_msg::thread_failed(language, detail),
+            Self::Local(text) => text.clone(),
+        }
+    }
+}
+
+/// A fully staged write awaiting confirm. Rendered by the frontend's
+/// confirm row; the drain and any optimistic display share this one
+/// shape instead of pre-formatted strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PendingWrite {
+    pub addr: u32,
+    pub old: Option<u8>,
+    pub value: u64,
+}
+
+impl PendingWrite {
+    /// Confirm-row text in a language. Single formatter shared by
+    /// every frontend.
+    pub fn render(&self, language: AppLanguage) -> String {
+        nerust_settings_core::i18n::pending_write(language, self.addr, self.old, self.value)
     }
 }
 
@@ -244,17 +333,6 @@ pub fn diff_rows(prev: &[HexRow], next: &[HexRow]) -> Vec<u32> {
         .collect()
 }
 
-/// Confirm-row text shared by the optimistic display and the
-/// authoritative drain value. Single formatter: both writers call it.
-pub fn format_pending_write(
-    language: AppLanguage,
-    addr: u32,
-    old: Option<u8>,
-    value: u64,
-) -> String {
-    nerust_settings_core::i18n::pending_write(language, addr, old, value)
-}
-
 /// Two-phase memory write transaction: `Empty` → `Prepared` (row
 /// selected, old byte read) → `Staged` (value parsed) → commit
 /// consumes. Pure transitions; the session owns one instance and
@@ -270,7 +348,7 @@ pub enum WriteTransaction {
         addr: u32,
         old: Option<u8>,
     },
-    /// Fully staged; the confirm row shows [`format_pending_write`].
+    /// Fully staged; the confirm row renders [`PendingWrite`].
     Staged {
         space: SpaceId,
         addr: u32,
@@ -326,12 +404,13 @@ impl WriteTransaction {
         }
     }
 
-    /// Confirm-row text, if fully staged.
-    pub fn pending_text(&self, language: AppLanguage) -> Option<String> {
+    /// Staged write, if fully staged. The frontend renders the
+    /// confirm row from this (no language here: presentation owns it).
+    pub fn pending(&self) -> Option<PendingWrite> {
         match *self {
             Self::Staged {
                 addr, old, value, ..
-            } => Some(format_pending_write(language, addr, old, value)),
+            } => Some(PendingWrite { addr, old, value }),
             _ => None,
         }
     }
@@ -619,19 +698,71 @@ mod tests {
     }
 
     #[test]
-    fn format_pending_write_covers_unknown_old() {
+    fn pending_write_renders_in_both_languages() {
         use nerust_gui_settings::language::AppLanguage;
+        let staged = PendingWrite {
+            addr: 0,
+            old: Some(0xAB),
+            value: 0x42,
+        };
         assert_eq!(
-            format_pending_write(AppLanguage::English, 0, Some(0xAB), 0x42),
+            staged.render(AppLanguage::English),
             "write 42 to 0x00000000 (was AB)?"
         );
+        let unknown = PendingWrite {
+            addr: 0x80,
+            old: None,
+            value: 0xCC,
+        };
         assert_eq!(
-            format_pending_write(AppLanguage::English, 0x80, None, 0xCC),
+            unknown.render(AppLanguage::English),
             "write CC to 0x00000080 (was ??)?"
         );
         assert_eq!(
-            format_pending_write(AppLanguage::Japanese, 0x80, Some(0x00), 0xCC),
-            "0x00000080 に CC を書込 (元 00)?"
+            unknown.render(AppLanguage::Japanese),
+            "0x00000080 に CC を書込 (元 ??)?"
+        );
+    }
+
+    #[test]
+    fn status_message_renders_every_variant() {
+        use nerust_gui_settings::language::AppLanguage;
+        let en = AppLanguage::English;
+        assert_eq!(StatusMessage::Empty.render(en), "");
+        assert_eq!(StatusMessage::Paused.render(en), "paused");
+        assert_eq!(StatusMessage::Running.render(en), "running");
+        assert_eq!(StatusMessage::Resume.render(en), "Resume");
+        assert_eq!(StatusMessage::NothingToWrite.render(en), "nothing to write");
+        assert_eq!(StatusMessage::NoCore.render(en), "no core");
+        assert_eq!(StatusMessage::Stepped(7).render(en), "stepped 7");
+        assert_eq!(
+            StatusMessage::WroteMemory {
+                addr: 0x10,
+                value: 0x42
+            }
+            .render(en),
+            "wrote 42 to 0x00000010 (width 1)"
+        );
+        assert_eq!(
+            StatusMessage::RegisterWrote {
+                name: "r7",
+                value: 1
+            }
+            .render(en),
+            "wrote 0x0001 to register r7"
+        );
+        assert_eq!(
+            StatusMessage::WriteRefused("X".to_string()).render(en),
+            "write refused: X"
+        );
+        assert_eq!(
+            StatusMessage::Local("custom".to_string()).render(en),
+            "custom"
+        );
+        // One Japanese spot-check pins the language threading.
+        assert_eq!(
+            StatusMessage::Paused.render(AppLanguage::Japanese),
+            "一時停止中"
         );
     }
 
@@ -676,8 +807,12 @@ mod tests {
             watch_value: Some(0x42),
             paused: true,
             reg_names: vec!["a"],
-            status: "paused".to_string(),
-            pending_text: Some("write 42 to 0x00000000 (was 00)?".to_string()),
+            status: StatusMessage::Paused,
+            pending: Some(PendingWrite {
+                addr: 0,
+                old: Some(0x00),
+                value: 0x42,
+            }),
         };
         assert_eq!(cache.dump_rows.len(), 1);
         assert_eq!(cache.disasm_lines[0].addr, 0xC000);
@@ -867,18 +1002,22 @@ mod tests {
     fn write_transaction_flows_to_commit() {
         use nerust_core_traits::debugger::SpaceId;
         let mut txn = WriteTransaction::Empty;
-        assert_eq!(txn.pending_text(AppLanguage::English), None);
+        assert_eq!(txn.pending(), None);
         assert_eq!(txn.take_commit(), None);
         // Staging without preparation is a no-op.
         txn.stage(0x42);
         assert_eq!(txn.take_commit(), None);
         // Prepare, stage, commit consumes exactly once.
         txn.prepare(SpaceId(0), 0x10, Some(0x00));
-        assert_eq!(txn.pending_text(AppLanguage::English), None);
+        assert_eq!(txn.pending(), None);
         txn.stage(0x42);
         assert_eq!(
-            txn.pending_text(AppLanguage::English),
-            Some("write 42 to 0x00000010 (was 00)?".to_string())
+            txn.pending(),
+            Some(PendingWrite {
+                addr: 0x10,
+                old: Some(0x00),
+                value: 0x42,
+            })
         );
         assert_eq!(txn.take_commit(), Some((SpaceId(0), 0x10, 0x42)));
         assert_eq!(txn, WriteTransaction::Empty);
@@ -893,7 +1032,7 @@ mod tests {
         txn.stage(0x42);
         // Fresh selection drops the staged value.
         txn.prepare(SpaceId(0), 0x20, Some(0xFF));
-        assert_eq!(txn.pending_text(AppLanguage::English), None);
+        assert_eq!(txn.pending(), None);
         assert_eq!(txn.take_commit(), None);
     }
 
@@ -912,7 +1051,7 @@ mod tests {
         txn.stage(0x42);
         txn.on_state_changing_traffic();
         assert_eq!(txn, WriteTransaction::Empty);
-        assert_eq!(txn.pending_text(AppLanguage::English), None);
+        assert_eq!(txn.pending(), None);
         // Explicit cancel clears too.
         txn.prepare(SpaceId(0), 0x10, Some(0x00));
         txn.clear();

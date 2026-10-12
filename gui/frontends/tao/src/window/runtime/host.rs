@@ -5,9 +5,7 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_gui_settings::{
-    app_state::RememberedWindowSize, input::ShortcutAction, language::AppLanguage,
-};
+use nerust_gui_settings::app_state::RememberedWindowSize;
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
@@ -35,6 +33,8 @@ use tao::{
 
 use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
 
+use super::debug_windows::DebugWindows;
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {
     None,
@@ -44,10 +44,6 @@ pub(crate) enum HostAction {
 
 const DEFAULT_FIT_WINDOW_WIDTH: f64 = 960.0;
 const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
-/// Live PPU cadence while the core runs: the viewer follows the
-/// running picture instead of freezing on the open-time frame.
-/// Drains are empty batches (never kill staged transactions).
-const PPU_LIVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
@@ -61,13 +57,9 @@ pub(crate) struct HostState {
     pending_fullscreen_sync: Option<bool>,
     pub(crate) active: bool,
     auto_paused: bool,
-    pub(crate) debug_window: Option<crate::debug_window::DebugWindowHandle>,
-    pub(crate) ppu_window: Option<crate::ppu_window::PpuWindowHandle>,
-    debug_open_requested: bool,
-    ppu_open_requested: bool,
-    debug_window_pos: Option<(i32, i32)>,
-    ppu_window_pos: Option<(i32, i32)>,
-    last_ppu_live: Option<Instant>,
+    /// Aux-window state (debugger + PPU viewer). Orchestration lives
+    /// here; ownership lives there.
+    pub(crate) debug: DebugWindows,
 }
 
 impl HostState {
@@ -103,13 +95,7 @@ impl HostState {
             pending_fullscreen_sync: None,
             active: true,
             auto_paused: false,
-            debug_window: None,
-            ppu_window: None,
-            debug_open_requested: false,
-            ppu_open_requested: false,
-            debug_window_pos: None,
-            ppu_window_pos: None,
-            last_ppu_live: None,
+            debug: DebugWindows::new(),
         }
     }
 
@@ -186,18 +172,6 @@ impl HostState {
 
     pub(crate) fn is_settings_window(&self, window_id: WindowId) -> bool {
         self.settings_window
-            .as_ref()
-            .is_some_and(|h| h.window.id() == window_id)
-    }
-
-    pub(crate) fn is_debug_window(&self, window_id: WindowId) -> bool {
-        self.debug_window
-            .as_ref()
-            .is_some_and(|h| h.window.id() == window_id)
-    }
-
-    pub(crate) fn is_ppu_window(&self, window_id: WindowId) -> bool {
-        self.ppu_window
             .as_ref()
             .is_some_and(|h| h.window.id() == window_id)
     }
@@ -284,11 +258,11 @@ impl HostState {
     }
 
     pub(crate) fn take_debug_open_request(&mut self) -> bool {
-        std::mem::take(&mut self.debug_open_requested)
+        self.debug.take_debug_open_request()
     }
 
     pub(crate) fn take_ppu_open_request(&mut self) -> bool {
-        std::mem::take(&mut self.ppu_open_requested)
+        self.debug.take_ppu_open_request()
     }
 
     pub(crate) fn clear_keys(&mut self) {
@@ -334,15 +308,9 @@ impl HostState {
         // tick: plain Wait sleeps until the next input event, which
         // would collapse the live cadence to zero whenever the aux
         // windows (not the main one) hold focus.
-        if self.debug_window.is_some()
-            && self.ppu_window.is_some()
-            && self.session.loaded()
-            && !self.session.paused()
+        if self.live_follow_active()
+            && let Some(next) = self.debug.next_live_tick()
         {
-            let next = self
-                .last_ppu_live
-                .map(|last| last + PPU_LIVE_INTERVAL)
-                .unwrap_or_else(Instant::now);
             *control_flow = ControlFlow::WaitUntil(next);
         }
 
@@ -355,10 +323,7 @@ impl HostState {
         // the live cadence above actually fires (a bare WaitUntil does
         // not reliably wake the loop on its own); the cost is one
         // running frame render, the same as normal play.
-        let live = self.debug_window.is_some()
-            && self.ppu_window.is_some()
-            && self.session.loaded()
-            && !self.session.paused();
+        let live = self.live_follow_active();
         if (self.active || live)
             && let Some(window) = self.window.as_ref()
         {
@@ -393,8 +358,7 @@ impl HostState {
         self.settings_open = false;
         self.resume_after_settings = false;
         self.settings_window.take();
-        self.debug_window.take();
-        self.ppu_window.take();
+        self.debug.close_all();
         self.session.flush_before_exit();
         true
     }
@@ -474,6 +438,16 @@ impl HostState {
         }
     }
 
+    /// Live follow is active: both aux windows open on a running
+    /// loaded core. Single predicate for the tick, the wake backstop,
+    /// and the redraw pump below.
+    fn live_follow_active(&self) -> bool {
+        self.debug.debug_window.is_some()
+            && self.debug.ppu_window.is_some()
+            && self.session.loaded()
+            && !self.session.paused()
+    }
+
     /// Live-follow pulse entry (timer thread via `UserEvent::LiveTick`).
     /// Throttle-guarded inside; no-ops unless a running core has the
     /// viewer open.
@@ -488,28 +462,18 @@ impl HostState {
     /// change memory, so no periodic work happens there — demand
     /// drains already refresh.
     fn maybe_live_ppu(&mut self) {
-        if self.ppu_window.is_none() || self.debug_window.is_none() {
+        if !self.live_follow_active() {
             return;
         }
-        if !self.session.loaded() || self.session.paused() {
+        if !self.debug.live_due(Instant::now()) {
             return;
         }
-        let now = Instant::now();
-        if self
-            .last_ppu_live
-            .is_some_and(|last| now.duration_since(last) < PPU_LIVE_INTERVAL)
-        {
-            return;
-        }
-        self.last_ppu_live = Some(now);
         let Some((generation, images)) = self.session.debug_live_images(true) else {
-            log::warn!("live tick: fetch-none");
             return;
         };
-        let Some(handle) = self.debug_window.as_mut() else {
+        let Some(handle) = self.debug.debug_window.as_mut() else {
             return;
         };
-        let language = handle.bridge.language;
         {
             let mut display = handle.bridge.display.lock().unwrap();
             if display.images_gen == generation {
@@ -518,42 +482,28 @@ impl HostState {
             display.images = images;
             display.images_gen = generation;
             display.paused = false;
-            display.status = text(language, UiText::RunningState).to_string();
+            display.status = nerust_gui_viewmodel::debugger::StatusMessage::Running;
         }
         // Rebuild, not just repaint: the patch lands in bridge state,
         // and only a rebuild re-reads it into the widget tree.
         handle.sync_from_bridge();
-        if let Some(ppu) = self.ppu_window.as_mut() {
+        if let Some(ppu) = self.debug.ppu_window.as_mut() {
             ppu.sync_from_bridge();
         }
     }
 
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
+        use nerust_gui_shell::session::access::dispatch_session_action;
         match shortcut {
             // The debugger open rides the same schema as every other
             // shortcut (default F4, rebindable in Settings): it only
             // sets the flag here because opening needs the event loop,
             // which the runtime arm owns.
             KeyboardShortcut::OpenDebugger => {
-                self.debug_open_requested = true;
+                self.debug.request_debug_open();
                 return;
             }
-            KeyboardShortcut::Session(action) => match action {
-                ShortcutAction::TogglePause => self.toggle_pause(),
-                ShortcutAction::SaveActiveSlot => {
-                    let _ = self.save_active_slot();
-                }
-                ShortcutAction::SelectNextSlot => self.select_next_slot(),
-                ShortcutAction::SelectPreviousSlot => self.select_previous_slot(),
-                ShortcutAction::LoadActiveSlot => {
-                    let _ = self.load_active_slot();
-                }
-                ShortcutAction::Reset => self.reset(),
-                ShortcutAction::ToggleFullscreen => self.toggle_fullscreen(),
-                // Unreachable: the session maps OpenDebugger to
-                // `KeyboardShortcut::OpenDebugger`, never `Session`.
-                ShortcutAction::OpenDebugger => {}
-            },
+            KeyboardShortcut::Session(action) => dispatch_session_action(self, action),
             KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
         }
         self.sync_menu_state();
@@ -624,7 +574,7 @@ impl HostState {
         focus_ppu: bool,
     ) {
         use nerust_gui_shell::debug::DebugAction;
-        if self.debug_window.is_none() {
+        if self.debug.debug_window.is_none() {
             let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> = self
                 .session
                 .debug_spaces()
@@ -635,7 +585,7 @@ impl HostState {
                 log::warn!("debugger: no spaces (no core)");
             }
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
-            let position = self.debug_window_pos;
+            let position = self.debug.debug_window_pos();
             let language = self.session.settings_snapshot().shared.general.language;
             match crate::debug_window::DebugWindowHandle::new(
                 debug_vm::DisplayCache::default(),
@@ -646,27 +596,27 @@ impl HostState {
                 position,
             ) {
                 Some(handle) => {
-                    self.debug_window = Some(handle);
+                    self.debug.debug_window = Some(handle);
                     self.run_debug_drain(&[DebugAction::Pause, DebugAction::Refresh]);
                 }
                 None => log::error!("failed to open debugger window"),
             }
         }
-        if self.ppu_window.is_none()
-            && let Some(main) = self.debug_window.as_ref()
+        if self.debug.ppu_window.is_none()
+            && let Some(main) = self.debug.debug_window.as_ref()
         {
-            let position = self.ppu_window_pos;
+            let position = self.debug.ppu_window_pos();
             match crate::ppu_window::PpuWindowHandle::new(
                 Arc::clone(&main.bridge),
                 event_loop,
                 position,
             ) {
                 Some(handle) => {
-                    self.ppu_window = Some(handle);
+                    self.debug.ppu_window = Some(handle);
                     // Populate the image cache immediately: the bridge
                     // already carries images, but the viewer derives
                     // its scaled cache only on Sync.
-                    if let Some(ppu) = self.ppu_window.as_mut() {
+                    if let Some(ppu) = self.debug.ppu_window.as_mut() {
                         ppu.sync_from_bridge();
                     }
                     // The viewer is open now, so re-read with images:
@@ -675,7 +625,7 @@ impl HostState {
                 }
                 None => log::error!("failed to open PPU viewer window"),
             }
-        } else if focus_ppu && let Some(ppu) = self.ppu_window.as_ref() {
+        } else if focus_ppu && let Some(ppu) = self.debug.ppu_window.as_ref() {
             // Second and later presses: the viewer exists, so take
             // focus instead of no-op.
             ppu.window.set_focus();
@@ -689,10 +639,10 @@ impl HostState {
     pub(crate) fn drain_debug_requests(&mut self) {
         use nerust_gui_shell::debug::DebugAction;
         use std::sync::atomic::Ordering;
-        let requests: Vec<DebugAction> = match self.debug_window.as_ref() {
+        let requests: Vec<DebugAction> = match self.debug.debug_window.as_ref() {
             Some(handle) => {
                 if handle.bridge.open_ppu.swap(false, Ordering::SeqCst) {
-                    self.ppu_open_requested = true;
+                    self.debug.ppu_open_requested = true;
                 }
                 handle.take_requests()
             }
@@ -710,7 +660,7 @@ impl HostState {
     pub(crate) fn run_debug_drain(&mut self, requests: &[nerust_gui_shell::debug::DebugAction]) {
         use nerust_gui_shell::debug::DebugDrainInput;
         let (space, mem_addr, dis_addr, watch, freeze, reg_target, prev_rows, need_images) =
-            match self.debug_window.as_ref() {
+            match self.debug.debug_window.as_ref() {
                 Some(handle) => {
                     let nav = handle.bridge.nav.lock().unwrap();
                     let mem_addr = nav.mem_addr();
@@ -725,7 +675,7 @@ impl HostState {
                         *handle.bridge.freeze.lock().unwrap(),
                         *handle.bridge.reg_target.lock().unwrap(),
                         prev,
-                        self.ppu_window.is_some(),
+                        self.debug.ppu_window.is_some(),
                     )
                 }
                 None => return,
@@ -739,14 +689,9 @@ impl HostState {
             reg_target,
             prev_dump_rows: &prev_rows,
             need_images,
-            language: self
-                .debug_window
-                .as_ref()
-                .map(|handle| handle.bridge.language)
-                .unwrap_or(AppLanguage::SystemDefault),
         };
         let output = self.session.debug_drain(requests, &input);
-        if let Some(handle) = self.debug_window.as_mut() {
+        if let Some(handle) = self.debug.debug_window.as_mut() {
             if let Some(selected) = output.reselected {
                 *handle.bridge.selected.lock().unwrap() = Some(selected);
             }
@@ -761,7 +706,7 @@ impl HostState {
             handle.set_display(display);
         }
         // PPU viewer follows the same drain (one scale per drain).
-        if let Some(ppu) = self.ppu_window.as_mut() {
+        if let Some(ppu) = self.debug.ppu_window.as_mut() {
             ppu.sync_from_bridge();
         }
         // The drain is the single pause-truth agreement point: the
@@ -770,14 +715,6 @@ impl HostState {
         // "two Pause statuses" bug).
         self.sync_menu_state();
         self.refresh_window_title();
-    }
-
-    pub(crate) fn remember_debug_window_pos(&mut self, x: i32, y: i32) {
-        self.debug_window_pos = Some((x, y));
-    }
-
-    pub(crate) fn remember_ppu_window_pos(&mut self, x: i32, y: i32) {
-        self.ppu_window_pos = Some((x, y));
     }
 
     pub(crate) fn close_settings_window(

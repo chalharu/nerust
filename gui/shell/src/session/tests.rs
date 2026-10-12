@@ -14,6 +14,7 @@ use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsApplyPlan, SettingsManager, SettingsSnapshot,
 };
 use nerust_gui_settings::language::AppLanguage;
+use nerust_gui_viewmodel::debugger::{PendingWrite, StatusMessage};
 use nerust_input_traits::{InputAssignments, InputSystemFactory};
 use nerust_settings_core::factory::settings_view;
 
@@ -522,23 +523,25 @@ fn debug_write_transaction_without_core() {
     let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
     // Prepare reads nothing without a core, but still arms.
     assert_eq!(session.debug_prepare_write(SpaceId(0), 0x10), None);
-    assert_eq!(session.debug_pending_text(AppLanguage::English), None);
+    assert_eq!(session.debug_pending_text(), None);
     session.debug_stage_write(0x42);
     assert_eq!(
-        session.debug_pending_text(AppLanguage::English),
-        Some("write 42 to 0x00000010 (was ??)?".to_string())
-    );
-    assert_eq!(
-        session.debug_pending_text(AppLanguage::Japanese),
-        Some("0x00000010 に 42 を書込 (元 ??)?".to_string())
+        session.debug_pending_text(),
+        Some(PendingWrite {
+            addr: 0x10,
+            old: None,
+            value: 0x42,
+        })
     );
     // Commit without a core reports loudly and consumes.
-    assert_eq!(session.debug_commit_write(AppLanguage::English), "no core");
-    assert_eq!(session.debug_pending_text(AppLanguage::English), None);
     assert_eq!(
-        session.debug_commit_write(AppLanguage::English),
-        "nothing to write"
+        session.debug_commit_write(),
+        StatusMessage::NoCore,
+        "rendered: {}",
+        StatusMessage::NoCore.render(AppLanguage::English)
     );
+    assert_eq!(session.debug_pending_text(), None);
+    assert_eq!(session.debug_commit_write(), StatusMessage::NothingToWrite);
 }
 
 #[test]
@@ -551,14 +554,14 @@ fn debug_traffic_kill_flows_through_session() {
     session.debug_stage_write(0x42);
     // Non-state-changing traffic keeps the staged value.
     session.debug_note_traffic(false);
-    assert!(session.debug_pending_text(AppLanguage::English).is_some());
+    assert!(session.debug_pending_text().is_some());
     // State-changing traffic kills it.
     session.debug_note_traffic(true);
-    assert_eq!(session.debug_pending_text(AppLanguage::English), None);
+    assert_eq!(session.debug_pending_text(), None);
     // Explicit cancel clears too.
     session.debug_prepare_write(SpaceId(0), 0x10);
     session.debug_clear_write();
-    assert_eq!(session.debug_pending_text(AppLanguage::English), None);
+    assert_eq!(session.debug_pending_text(), None);
 }
 
 #[test]
@@ -577,7 +580,6 @@ fn debug_drain_select_then_stage_yields_pending() {
         reg_target: None,
         prev_dump_rows: &[],
         need_images: false,
-        language: AppLanguage::English,
     };
     // SelectRow prepares fresh state before EditStage builds on it
     // within the same batch, so Write works right after a cancel.
@@ -587,11 +589,15 @@ fn debug_drain_select_then_stage_yields_pending() {
     );
     assert_eq!(output.reselected, Some((0x10, None)));
     assert_eq!(
-        output.display.pending_text,
-        Some("write 42 to 0x00000010 (was ??)?".to_string())
+        output.display.pending,
+        Some(PendingWrite {
+            addr: 0x10,
+            old: None,
+            value: 0x42,
+        })
     );
     // No execution outcome: status falls back to the pause state.
-    assert_eq!(output.display.status, "paused");
+    assert_eq!(output.display.status, StatusMessage::Paused);
     assert!(output.display.images.is_empty());
 }
 
@@ -611,17 +617,16 @@ fn debug_drain_kills_stale_values_before_prepare() {
         reg_target: None,
         prev_dump_rows: &[],
         need_images: false,
-        language: AppLanguage::English,
     };
     let staged = session.debug_drain(
         &[DebugAction::SelectRow(0x10), DebugAction::EditStage(0x42)],
         &input,
     );
-    assert!(staged.display.pending_text.is_some());
+    assert!(staged.display.pending.is_some());
     // A state-changing batch kills the staged value from the
     // previous batch (kill runs before prepare inside the drain).
     let killed = session.debug_drain(&[DebugAction::Refresh], &input);
-    assert_eq!(killed.display.pending_text, None);
+    assert_eq!(killed.display.pending, None);
     assert_eq!(killed.reselected, None);
 }
 
@@ -641,22 +646,21 @@ fn debug_drain_cancel_and_commit_consume() {
         reg_target: None,
         prev_dump_rows: &[],
         need_images: false,
-        language: AppLanguage::English,
     };
     session.debug_drain(
         &[DebugAction::SelectRow(0x10), DebugAction::EditStage(0x42)],
         &input,
     );
     let cancelled = session.debug_drain(&[DebugAction::EditCancel], &input);
-    assert_eq!(cancelled.display.pending_text, None);
+    assert_eq!(cancelled.display.pending, None);
     session.debug_drain(
         &[DebugAction::SelectRow(0x10), DebugAction::EditStage(0x42)],
         &input,
     );
     // Commit without a core reports loudly and consumes.
     let committed = session.debug_drain(&[DebugAction::WriteConfirm], &input);
-    assert_eq!(committed.display.status, "no core");
-    assert_eq!(committed.display.pending_text, None);
+    assert_eq!(committed.display.status, StatusMessage::NoCore);
+    assert_eq!(committed.display.pending, None);
 }
 
 #[test]
@@ -674,11 +678,10 @@ fn debug_drain_propagates_execution_outcomes() {
         reg_target: None,
         prev_dump_rows: &[],
         need_images: false,
-        language: AppLanguage::English,
     };
     // Failures stay loud instead of degrading into idle text.
     let stepped = session.debug_drain(&[DebugAction::StepFrame], &input);
-    assert_eq!(stepped.display.status, "no core");
+    assert_eq!(stepped.display.status, StatusMessage::NoCore);
 }
 
 #[test]
@@ -686,14 +689,11 @@ fn debug_control_without_core_reports_loudly() {
     let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
     let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
-    assert_eq!(session.debug_pause(AppLanguage::English), "no core");
-    assert_eq!(session.debug_resume(AppLanguage::English), "no core");
+    assert_eq!(session.debug_pause(), StatusMessage::NoCore);
+    assert_eq!(session.debug_resume(), StatusMessage::NoCore);
     assert_eq!(
-        session.debug_step(
-            AppLanguage::English,
-            nerust_core_traits::debugger::StepUnit::Frame
-        ),
-        "no core"
+        session.debug_step(nerust_core_traits::debugger::StepUnit::Frame),
+        StatusMessage::NoCore
     );
 }
 
@@ -720,7 +720,7 @@ fn loaded_debug_session() -> SessionHandle {
     session
 }
 
-fn drain_input(language: AppLanguage) -> crate::debug::DebugDrainInput<'static> {
+fn drain_input() -> crate::debug::DebugDrainInput<'static> {
     use crate::debug::DebugDrainInput;
     use nerust_core_traits::debugger::SpaceId;
     DebugDrainInput {
@@ -732,7 +732,6 @@ fn drain_input(language: AppLanguage) -> crate::debug::DebugDrainInput<'static> 
         reg_target: None,
         prev_dump_rows: &[],
         need_images: false,
-        language,
     }
 }
 
@@ -760,7 +759,7 @@ fn debug_snapshot_covers_loaded_mock_core() {
 fn debug_live_images_follow_running_without_snapshot() {
     use crate::debug::DebugAction;
     let session = loaded_debug_session();
-    let input = drain_input(AppLanguage::English);
+    let input = drain_input();
     // Paused baseline carries dump rows.
     let paused = session.debug_drain(&[DebugAction::Refresh], &input);
     assert!(!paused.display.dump_rows.is_empty());
@@ -771,7 +770,7 @@ fn debug_live_images_follow_running_without_snapshot() {
     // is paused-gated (running reads cannot pin a frame)...
     session.debug_drain(&[DebugAction::Resume], &input);
     let running = session.debug_drain(&[], &input);
-    assert_eq!(running.display.status, "running");
+    assert_eq!(running.display.status, StatusMessage::Running);
     assert!(
         running.display.dump_rows.is_empty(),
         "inspect refuses while running"
@@ -787,38 +786,33 @@ fn debug_live_images_follow_running_without_snapshot() {
 fn debug_drain_happy_path_reports_success() {
     use crate::debug::DebugAction;
     let session = loaded_debug_session();
-    for language in [AppLanguage::English, AppLanguage::Japanese] {
-        let input = drain_input(language);
-        let paused = session.debug_drain(&[DebugAction::Pause], &input);
-        assert_eq!(
-            paused.display.status,
-            session.debug_pause(language),
-            "pause round-trips status"
-        );
-        let stepped = session.debug_drain(&[DebugAction::StepFrame], &input);
-        // Frame steps report the barrier frame counter (free-run may
-        // precede the pause), so only the prefix is pinned.
-        assert!(
-            stepped
-                .display
-                .status
-                .starts_with(if language == AppLanguage::English {
-                    "stepped "
-                } else {
-                    "ステップ実行 "
-                })
-        );
-    }
+    let input = drain_input();
+    let paused = session.debug_drain(&[DebugAction::Pause], &input);
+    assert_eq!(
+        paused.display.status,
+        session.debug_pause(),
+        "pause round-trips status"
+    );
+    let stepped = session.debug_drain(&[DebugAction::StepFrame], &input);
+    // Frame steps report the barrier frame counter (free-run may
+    // precede the pause), so only the variant is pinned; wording is
+    // the frontend's job (covered in the viewmodel render test).
+    assert!(matches!(stepped.display.status, StatusMessage::Stepped(_)));
     // Memory write round-trips through the thread: stage, commit,
     // then read back the staged byte.
-    let input = drain_input(AppLanguage::English);
     let staged = session.debug_drain(
         &[DebugAction::SelectRow(0x20), DebugAction::EditStage(0xAB)],
         &input,
     );
-    assert!(staged.display.pending_text.is_some());
+    assert!(staged.display.pending.is_some());
     let committed = session.debug_drain(&[DebugAction::WriteConfirm], &input);
-    assert_eq!(committed.display.status, "wrote AB to 0x00000020 (width 1)");
+    assert_eq!(
+        committed.display.status,
+        StatusMessage::WroteMemory {
+            addr: 0x20,
+            value: 0xAB
+        }
+    );
     assert_eq!(
         session.debug_read_byte(nerust_core_traits::debugger::SpaceId(0), 0x20),
         Some(0xAB)
@@ -827,50 +821,52 @@ fn debug_drain_happy_path_reports_success() {
     session.debug_prepare_write(nerust_core_traits::debugger::SpaceId(9), 0x10);
     session.debug_stage_write(0xAB);
     assert_eq!(
-        session.debug_commit_write(AppLanguage::English),
-        "write refused: UnknownSpace(SpaceId(9))"
+        session.debug_commit_write(),
+        StatusMessage::WriteRefused("UnknownSpace(SpaceId(9))".to_string())
     );
     // Resume, toggle, instruction steps, and freeze re-apply ride
     // the same drain.
     let resumed = session.debug_drain(&[DebugAction::Resume], &input);
-    assert_eq!(resumed.display.status, "Resume");
+    assert_eq!(resumed.display.status, StatusMessage::Resume);
     // An empty batch on the running core reports running.
     let running = session.debug_drain(&[], &input);
-    assert_eq!(running.display.status, "running");
+    assert_eq!(running.display.status, StatusMessage::Running);
     let toggled = session.debug_drain(&[DebugAction::TogglePause], &input);
-    assert_eq!(toggled.display.status, "paused");
+    assert_eq!(toggled.display.status, StatusMessage::Paused);
     let instr = session.debug_drain(&[DebugAction::StepInstr], &input);
-    assert!(instr.display.status.starts_with("stepped "));
+    assert!(matches!(instr.display.status, StatusMessage::Stepped(_)));
     // Toggling while paused resumes back; pause again for the
     // deterministic reads below.
     let toggled_back = session.debug_drain(&[DebugAction::TogglePause], &input);
-    assert_eq!(toggled_back.display.status, "Resume");
+    assert_eq!(toggled_back.display.status, StatusMessage::Resume);
     session.debug_drain(&[DebugAction::Pause], &input);
-    let mut frozen = drain_input(AppLanguage::English);
+    let mut frozen = drain_input();
     frozen.freeze = Some((0x30, 0xBB));
     session.debug_drain(&[DebugAction::Refresh], &frozen);
     assert_eq!(
         session.debug_read_byte(nerust_core_traits::debugger::SpaceId(0), 0x30),
         Some(0xBB)
     );
-    // Register write round-trips the same way, in both languages.
-    for (language, expected) in [
-        (AppLanguage::English, "wrote 0x0007 to register a"),
-        (AppLanguage::Japanese, "レジスタ a に 0x0007 を書込済"),
-    ] {
-        let mut targeted = drain_input(language);
-        targeted.reg_target = Some("a");
-        let wrote = session.debug_drain(&[DebugAction::RegisterWrite(7)], &targeted);
-        assert_eq!(wrote.display.status, expected);
-    }
-    // Unknown names refuse loudly, in both languages.
+    // Register write round-trips the same way (wording is rendered
+    // frontend-side; one spot-check pins the end-to-end text).
+    let mut targeted = drain_input();
+    targeted.reg_target = Some("a");
+    let wrote = session.debug_drain(&[DebugAction::RegisterWrite(7)], &targeted);
     assert_eq!(
-        session.debug_write_register(AppLanguage::English, "bogus", 0),
-        "register write refused: Unsupported"
+        wrote.display.status,
+        StatusMessage::RegisterWrote {
+            name: "a",
+            value: 7
+        }
     );
     assert_eq!(
-        session.debug_write_register(AppLanguage::Japanese, "bogus", 0),
-        "レジスタ書込拒否: Unsupported"
+        wrote.display.status.render(AppLanguage::English),
+        "wrote 0x0007 to register a"
+    );
+    // Unknown names refuse loudly.
+    assert_eq!(
+        session.debug_write_register("bogus", 0),
+        StatusMessage::RegisterRefused("Unsupported".to_string())
     );
     let after = session.debug_snapshot(
         Some(nerust_core_traits::debugger::SpaceId(0)),
@@ -898,24 +894,20 @@ fn debug_drain_register_write_reports_loudly_without_core() {
         reg_target: Some("r0"),
         prev_dump_rows: &[],
         need_images: false,
-        language: AppLanguage::English,
     };
     // Register writes ride the drain like memory commits: without a
     // core the refusal is loud, never silent.
     let output = session.debug_drain(&[DebugAction::RegisterWrite(0x42)], &input);
-    assert_eq!(output.display.status, "no core");
-    // The same outcome localizes in a Japanese drain.
-    let ja_input = DebugDrainInput {
-        language: AppLanguage::Japanese,
-        ..input
-    };
-    let ja = session.debug_drain(&[DebugAction::RegisterWrite(0x42)], &ja_input);
-    assert_eq!(ja.display.status, "コアなし");
+    assert_eq!(output.display.status, StatusMessage::NoCore);
+    assert_eq!(
+        output.display.status.render(AppLanguage::Japanese),
+        "コアなし"
+    );
     // No target, no write: the batch stays a pure re-read.
     let untargeted = DebugDrainInput {
         reg_target: None,
         ..input
     };
     let idle = session.debug_drain(&[DebugAction::RegisterWrite(0x42)], &untargeted);
-    assert_eq!(idle.display.status, "paused");
+    assert_eq!(idle.display.status, StatusMessage::Paused);
 }

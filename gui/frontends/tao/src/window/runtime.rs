@@ -1,3 +1,4 @@
+mod debug_windows;
 mod host;
 
 use std::path::Path;
@@ -195,9 +196,11 @@ impl WindowRuntime {
             }
             Event::WindowEvent {
                 event, window_id, ..
-            } if self.host.is_debug_window(window_id) => {
+            } if self.host.debug.is_debug_window(window_id) => {
                 if let WindowEvent::Moved(position) = &event {
-                    self.host.remember_debug_window_pos(position.x, position.y);
+                    self.host
+                        .debug
+                        .remember_debug_window_pos(position.x, position.y);
                 }
                 // Focus re-reads, never force-pauses: the main window's
                 // auto-pause already paused when the debugger took
@@ -208,7 +211,7 @@ impl WindowRuntime {
                 // the menu.
                 let refocused = matches!(event, WindowEvent::Focused(true));
                 {
-                    let Some(handle) = self.host.debug_window.as_mut() else {
+                    let Some(handle) = self.host.debug.debug_window.as_mut() else {
                         return;
                     };
                     match &event {
@@ -235,34 +238,36 @@ impl WindowRuntime {
                     self.host.run_debug_drain(&[]);
                 }
                 // Closing never resumes: resume is always explicit.
-                if let Some(handle) = self.host.debug_window.as_mut() {
+                if let Some(handle) = self.host.debug.debug_window.as_mut() {
                     handle.render();
                     if handle
                         .should_close
                         .load(std::sync::atomic::Ordering::Acquire)
                     {
-                        self.host.debug_window.take();
+                        self.host.debug.debug_window.take();
                         self.host.request_redraw();
                     }
                 }
             }
-            Event::RedrawRequested(window_id) if self.host.is_debug_window(window_id) => {
+            Event::RedrawRequested(window_id) if self.host.debug.is_debug_window(window_id) => {
                 self.host.drain_debug_requests();
                 if self.host.take_ppu_open_request() {
                     self.host.open_debug_windows(event_loop, true);
                     self.host.run_debug_drain(&[]);
                 }
-                if let Some(handle) = self.host.debug_window.as_mut() {
+                if let Some(handle) = self.host.debug.debug_window.as_mut() {
                     handle.render();
                 }
             }
             Event::WindowEvent {
                 event, window_id, ..
-            } if self.host.is_ppu_window(window_id) => {
+            } if self.host.debug.is_ppu_window(window_id) => {
                 if let WindowEvent::Moved(position) = &event {
-                    self.host.remember_ppu_window_pos(position.x, position.y);
+                    self.host
+                        .debug
+                        .remember_ppu_window_pos(position.x, position.y);
                 }
-                let Some(handle) = self.host.ppu_window.as_mut() else {
+                let Some(handle) = self.host.debug.ppu_window.as_mut() else {
                     return;
                 };
                 match &event {
@@ -284,12 +289,12 @@ impl WindowRuntime {
                     .should_close
                     .load(std::sync::atomic::Ordering::Acquire)
                 {
-                    self.host.ppu_window.take();
+                    self.host.debug.ppu_window.take();
                     self.host.request_redraw();
                 }
             }
-            Event::RedrawRequested(window_id) if self.host.is_ppu_window(window_id) => {
-                if let Some(handle) = self.host.ppu_window.as_mut() {
+            Event::RedrawRequested(window_id) if self.host.debug.is_ppu_window(window_id) => {
+                if let Some(handle) = self.host.debug.ppu_window.as_mut() {
                     handle.render();
                 }
             }

@@ -1,6 +1,7 @@
 use nerust_core_traits::save_state::load_state_from_header;
-use nerust_emu_thread::EmuThread;
 use nerust_render_traits::FrameBuffer;
+
+use crate::emu_core::EmuThreadPort;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewFrame {
@@ -25,9 +26,9 @@ struct ConsoleStatePayload {
     core_state: Vec<u8>,
 }
 
-/// Generate a preview frame from the EmuThread's shared frame buffer.
+/// Generate a preview frame from the port's shared frame buffer.
 /// Caller should hold no lock on the shared frame buffer.
-pub fn generate_preview(emu: &EmuThread) -> Option<PreviewFrame> {
+pub fn generate_preview(emu: &dyn EmuThreadPort) -> Option<PreviewFrame> {
     let Ok(guard) = emu.shared_frame_buffer().lock() else {
         log::warn!("generate_preview: shared frame buffer lock failed");
         return None;
