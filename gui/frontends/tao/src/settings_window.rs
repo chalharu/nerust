@@ -89,6 +89,34 @@ impl UiState {
         &mut self.ui
     }
 
+    /// Rebuild the layout with new bounds unconditionally (resize and
+    /// scale-factor paths share the debugger's contract: controls
+    /// reflow immediately instead of waiting for the next message).
+    fn rebuild(
+        &mut self,
+        window_id: iced::window::Id,
+        bounds: Size,
+        renderer: &mut iced_tiny_skia::Renderer,
+    ) {
+        let placeholder = std::mem::replace(
+            &mut *self.ui,
+            Self::build_ui(
+                &self.instance,
+                window_id,
+                bounds,
+                Cache::default(),
+                renderer,
+            ),
+        );
+        let cache = placeholder.into_cache();
+        let stale = std::mem::replace(
+            &mut *self.ui,
+            Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
+        );
+        let _ = stale.into_cache();
+        self.view_invalidated.set(false);
+    }
+
     /// Process messages, then conditionally rebuild UI.
     ///
     /// Rebuilds only when `view_invalidated` is set or when the message
@@ -354,6 +382,7 @@ impl SettingsWindowHandle {
 
     pub(crate) fn set_scale_factor(&mut self, sf: f32) {
         self.scale_factor = sf;
+        self.rebuild_with_current_bounds();
     }
 
     pub(crate) fn set_modifiers(&mut self, modifiers: TaoModifiers) {
@@ -385,11 +414,20 @@ impl SettingsWindowHandle {
 impl SettingsWindowHandle {
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.viewport_physical = (width, height);
-        self.viewport = Size::new(
-            width as f32 / self.scale_factor,
-            height as f32 / self.scale_factor,
-        );
         self.renderer.resize(width, height);
+        self.rebuild_with_current_bounds();
+    }
+
+    fn rebuild_with_current_bounds(&mut self) {
+        self.viewport = Size::new(
+            self.viewport_physical.0 as f32 / self.scale_factor,
+            self.viewport_physical.1 as f32 / self.scale_factor,
+        );
+        let window_id = self.window_id;
+        let bounds = self.viewport;
+        let backend = &mut self.renderer.backend;
+        self.ui_state.rebuild(window_id, bounds, backend);
+        self.window.request_redraw();
     }
 }
 

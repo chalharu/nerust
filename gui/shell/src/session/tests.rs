@@ -526,11 +526,11 @@ fn debug_write_transaction_without_core() {
     session.debug_stage_write(0x42);
     assert_eq!(
         session.debug_pending_text(AppLanguage::English),
-        Some("write 42 to 00000010 (was ??)?".to_string())
+        Some("write 42 to 0x00000010 (was ??)?".to_string())
     );
     assert_eq!(
         session.debug_pending_text(AppLanguage::Japanese),
-        Some("00000010 に 42 を書込 (元 ??)?".to_string())
+        Some("0x00000010 に 42 を書込 (元 ??)?".to_string())
     );
     // Commit without a core reports loudly and consumes.
     assert_eq!(session.debug_commit_write(AppLanguage::English), "no core");
@@ -588,7 +588,7 @@ fn debug_drain_select_then_stage_yields_pending() {
     assert_eq!(output.reselected, Some((0x10, None)));
     assert_eq!(
         output.display.pending_text,
-        Some("write 42 to 00000010 (was ??)?".to_string())
+        Some("write 42 to 0x00000010 (was ??)?".to_string())
     );
     // No execution outcome: status falls back to the pause state.
     assert_eq!(output.display.status, "paused");
@@ -791,7 +791,7 @@ fn debug_drain_happy_path_reports_success() {
     );
     assert!(staged.display.pending_text.is_some());
     let committed = session.debug_drain(&[DebugAction::WriteConfirm], &input);
-    assert_eq!(committed.display.status, "wrote AB to 00000020 (width 1)");
+    assert_eq!(committed.display.status, "wrote AB to 0x00000020 (width 1)");
     assert_eq!(
         session.debug_read_byte(nerust_core_traits::debugger::SpaceId(0), 0x20),
         Some(0xAB)
@@ -828,8 +828,8 @@ fn debug_drain_happy_path_reports_success() {
     );
     // Register write round-trips the same way, in both languages.
     for (language, expected) in [
-        (AppLanguage::English, "wrote 0007 to register a"),
-        (AppLanguage::Japanese, "レジスタ a に 0007 を書込済"),
+        (AppLanguage::English, "wrote 0x0007 to register a"),
+        (AppLanguage::Japanese, "レジスタ a に 0x0007 を書込済"),
     ] {
         let mut targeted = drain_input(language);
         targeted.reg_target = Some("a");

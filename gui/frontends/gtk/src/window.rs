@@ -528,10 +528,9 @@ impl WindowExtend for Window {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
-        if key == gdk::Key::F4 && key_event_pressed(event) {
-            self.open_debugger();
-            return true;
-        }
+        // No hardcoded F-keys: the debugger open rides the shortcut
+        // schema (default F4, rebindable in Settings) like every other
+        // shortcut, so a user binding always wins.
         if let Ok(controller_input) = key.try_into() {
             let shortcut = self
                 .state()
@@ -568,9 +567,15 @@ impl WindowExtend for Window {
                 ShortcutAction::ToggleFullscreen => {
                     toggle_window_fullscreen(self);
                 }
+                // Unreachable: the session maps OpenDebugger to
+                // `KeyboardShortcut::OpenDebugger`, never `Session`.
+                ShortcutAction::OpenDebugger => (),
             },
             KeyboardShortcut::ToggleFullscreen => {
                 toggle_window_fullscreen(self);
+            }
+            KeyboardShortcut::OpenDebugger => {
+                self.open_debugger();
             }
         }
         self.update_actions();

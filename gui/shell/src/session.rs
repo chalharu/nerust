@@ -80,6 +80,10 @@ pub struct SessionSnapshot {
 pub enum KeyboardShortcut {
     Session(ShortcutAction),
     ToggleFullscreen,
+    /// Open the debugger window. Not a session command: frontends
+    /// route it to their debugger-open path (schema first, so a user
+    /// binding wins over the F4 default).
+    OpenDebugger,
 }
 
 pub struct SessionHandle {

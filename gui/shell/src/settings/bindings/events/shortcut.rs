@@ -34,7 +34,7 @@ fn shortcut_action_to_command(action: ShortcutAction) -> Option<SessionCommand> 
         ShortcutAction::SelectNextSlot => SessionCommand::SelectNextSlot,
         ShortcutAction::SelectPreviousSlot => SessionCommand::SelectPreviousSlot,
         ShortcutAction::LoadActiveSlot => SessionCommand::LoadActiveSlot,
-        ShortcutAction::ToggleFullscreen => return None,
+        ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger => return None,
     })
 }
 
@@ -67,5 +67,17 @@ mod tests {
             Some(ShortcutAction::ToggleFullscreen)
         );
         assert_eq!(shortcut_command_for_key(&settings, Key::F11), None);
+    }
+
+    #[test]
+    fn debugger_shortcut_resolves_through_schema() {
+        let settings = default_shared_settings(&[]);
+
+        assert_eq!(
+            shortcut_action_for_key(&settings, Key::F4),
+            Some(ShortcutAction::OpenDebugger)
+        );
+        // Window-opening is not a session command.
+        assert_eq!(shortcut_command_for_key(&settings, Key::F4), None);
     }
 }

@@ -97,6 +97,24 @@ pub(crate) fn convert_tao_window_event(
                 _ => None,
             }
         }
+        WindowEvent::MouseWheel { delta, .. } => {
+            // Without this the scrollables never move: every other
+            // arm maps, but the wheel fell into the catch-all below.
+            let delta = match delta {
+                tao::event::MouseScrollDelta::LineDelta(x, y) => mouse::ScrollDelta::Lines { x, y },
+                tao::event::MouseScrollDelta::PixelDelta(position) => {
+                    let logical = position.to_logical::<f64>(scale_factor as f64);
+                    mouse::ScrollDelta::Pixels {
+                        x: logical.x as f32,
+                        y: logical.y as f32,
+                    }
+                }
+                // Non-exhaustive upstream enum: unknown future
+                // deltas scroll nothing instead of breaking the build.
+                _ => return None,
+            };
+            Some(Event::Mouse(mouse::Event::WheelScrolled { delta }))
+        }
         WindowEvent::MouseInput { button, state, .. } => {
             let btn = match button {
                 tao::event::MouseButton::Left => mouse::Button::Left,
@@ -271,6 +289,34 @@ mod tests {
             tao::keyboard::ModifiersState::empty(),
         ));
         assert!(changed.is_none());
+        // Wheel deltas reach the scrollables (the reported bug was
+        // the wheel falling into the catch-all below).
+        let lines = feed!(WindowEvent::MouseWheel {
+            device_id: device,
+            delta: tao::event::MouseScrollDelta::LineDelta(0.0, 1.0),
+            phase: tao::event::TouchPhase::Moved,
+            modifiers: tao::keyboard::ModifiersState::empty(),
+        });
+        assert!(matches!(
+            lines,
+            Some(iced::Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Lines { .. }
+            }))
+        ));
+        let pixels = feed!(WindowEvent::MouseWheel {
+            device_id: device,
+            delta: tao::event::MouseScrollDelta::PixelDelta(tao::dpi::PhysicalPosition::new(
+                0.0, 24.0
+            )),
+            phase: tao::event::TouchPhase::Moved,
+            modifiers: tao::keyboard::ModifiersState::empty(),
+        });
+        assert!(matches!(
+            pixels,
+            Some(iced::Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Pixels { .. }
+            }))
+        ));
         assert!(feed!(WindowEvent::CloseRequested).is_none());
         assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
         // Anything else (resizes and friends) passes through silently.

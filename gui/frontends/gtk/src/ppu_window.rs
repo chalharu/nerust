@@ -171,7 +171,7 @@ mod tests {
     fn tile_hover_matches_tao_geometry() {
         assert_eq!(
             tile_hover_text(AppLanguage::English, "Pattern left", 128, 128, 88.0, 26.0),
-            "Pattern left tile #21 (px 44,13, +0150)"
+            "Pattern left tile #21 (px 44,13, +0x0150)"
         );
     }
 }

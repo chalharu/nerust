@@ -44,6 +44,10 @@ pub(crate) enum HostAction {
 
 const DEFAULT_FIT_WINDOW_WIDTH: f64 = 960.0;
 const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
+/// Live PPU cadence while the core runs: the viewer follows the
+/// running picture instead of freezing on the open-time frame.
+/// Drains are empty batches (never kill staged transactions).
+const PPU_LIVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
@@ -63,6 +67,7 @@ pub(crate) struct HostState {
     ppu_open_requested: bool,
     debug_window_pos: Option<(i32, i32)>,
     ppu_window_pos: Option<(i32, i32)>,
+    last_ppu_live: Option<Instant>,
 }
 
 impl HostState {
@@ -104,6 +109,7 @@ impl HostState {
             ppu_open_requested: false,
             debug_window_pos: None,
             ppu_window_pos: None,
+            last_ppu_live: None,
         }
     }
 
@@ -275,14 +281,6 @@ impl HostState {
         {
             self.apply_keyboard_shortcut(shortcut);
         }
-        // F4 opens the debugger (schema first: a user binding wins).
-        // No slot shortcut owns F-keys, so this never conflicts today.
-        if input.state == ElementState::Pressed
-            && !input.repeat
-            && input.physical_key == tao::keyboard::KeyCode::F4
-        {
-            self.debug_open_requested = true;
-        }
     }
 
     pub(crate) fn take_debug_open_request(&mut self) -> bool {
@@ -330,6 +328,7 @@ impl HostState {
     pub(crate) fn update_control_flow(&mut self, control_flow: &mut ControlFlow) {
         self.sync_fullscreen_default_from_window();
         self.maybe_refresh_window_title(Instant::now());
+        self.maybe_live_ppu();
         *control_flow = ControlFlow::Wait;
 
         // On macOS, request_redraw() integrates with CVDisplayLink/vsync.
@@ -450,8 +449,38 @@ impl HostState {
         }
     }
 
+    /// Live PPU follow while the core runs: an empty drain every
+    /// interval re-reads (images included) so the viewer tracks the
+    /// running picture. Paused cores never change memory, so no
+    /// periodic work happens there — demand drains already refresh.
+    fn maybe_live_ppu(&mut self) {
+        if self.ppu_window.is_none() || self.debug_window.is_none() {
+            return;
+        }
+        if !self.session.loaded() || self.session.paused() {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .last_ppu_live
+            .is_some_and(|last| now.duration_since(last) < PPU_LIVE_INTERVAL)
+        {
+            return;
+        }
+        self.last_ppu_live = Some(now);
+        self.run_debug_drain(&[]);
+    }
+
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
         match shortcut {
+            // The debugger open rides the same schema as every other
+            // shortcut (default F4, rebindable in Settings): it only
+            // sets the flag here because opening needs the event loop,
+            // which the runtime arm owns.
+            KeyboardShortcut::OpenDebugger => {
+                self.debug_open_requested = true;
+                return;
+            }
             KeyboardShortcut::Session(action) => match action {
                 ShortcutAction::TogglePause => self.toggle_pause(),
                 ShortcutAction::SaveActiveSlot => {
@@ -464,6 +493,9 @@ impl HostState {
                 }
                 ShortcutAction::Reset => self.reset(),
                 ShortcutAction::ToggleFullscreen => self.toggle_fullscreen(),
+                // Unreachable: the session maps OpenDebugger to
+                // `KeyboardShortcut::OpenDebugger`, never `Session`.
+                ShortcutAction::OpenDebugger => {}
             },
             KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
         }
@@ -667,6 +699,12 @@ impl HostState {
         if let Some(ppu) = self.ppu_window.as_mut() {
             ppu.sync_from_bridge();
         }
+        // The drain is the single pause-truth agreement point: the
+        // toolbar label follows the drained state, so the menu and the
+        // title sync here too instead of drifting apart (the reported
+        // "two Pause statuses" bug).
+        self.sync_menu_state();
+        self.refresh_window_title();
     }
 
     pub(crate) fn remember_debug_window_pos(&mut self, x: i32, y: i32) {

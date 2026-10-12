@@ -703,7 +703,7 @@ fn view_dump_col(
         };
         let mut line_row = row![
             button(
-                text(format!("{marker}{:08X}:", hex_row.addr))
+                text(format!("{marker}0x{:08X}:", hex_row.addr))
                     .size(14)
                     .font(iced::Font::MONOSPACE),
             )
@@ -812,7 +812,7 @@ fn view_edit_row(
     // The target rides on the button: writes always land on the
     // selected row, never on the page anchor.
     let write_label = match selected {
-        Some((addr, _)) => format!("{} {addr:08X}", ui_text(language, UiText::Write)),
+        Some((addr, _)) => format!("{} 0x{addr:08X}", ui_text(language, UiText::Write)),
         None => ui_text(language, UiText::Write).to_string(),
     };
     row![
@@ -881,7 +881,7 @@ fn view_dis_nav(
         )
     } else {
         format!(
-            "{} @{anchor:08X} {}",
+            "{} @0x{anchor:08X} {}",
             ui_text(language, UiText::Disassembly),
             ui_text(language, UiText::FixedTag)
         )
@@ -991,7 +991,7 @@ fn view_right_col(
         bookmarks_col = bookmarks_col.push(
             row![
                 button(
-                    text(format!("{label} {addr:08X}"))
+                    text(format!("{label} 0x{addr:08X}"))
                         .size(14)
                         .font(iced::Font::MONOSPACE),
                 )
@@ -1054,6 +1054,12 @@ fn view_right_col(
     ]
     .spacing(12)
     .width(Length::Fixed(STATE_COLUMN_WIDTH))
+    // Right breathing room for the overlay scrollbar: without it the
+    // rail sits on top of the register text (tall GBA lists scroll).
+    .padding(iced::Padding {
+        right: 16.0,
+        ..Default::default()
+    })
     .into()
 }
 
@@ -1174,7 +1180,8 @@ impl DebugWindowHandle {
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
         // Window-scoped shortcuts on physical codes (F6 step frame,
         // F7 step instruction, F9 pause toggle). Slot switching owns
-        // no F-keys, so no schema conflict; the main window keeps F4.
+        // no F-keys; the debugger open rides the settings schema
+        // (default F4), not a hardcoded key, so no conflict either.
         // NOTE: `physical_key` binds by reference through `&mapped`;
         // dereference before matching or no arm ever hits.
         if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -1226,6 +1233,11 @@ impl DebugWindowHandle {
 
     pub(crate) fn set_scale_factor(&mut self, scale_factor: f32) {
         self.scale_factor = scale_factor;
+        // Scale changes move every layout bound: rebuild like resize.
+        let bounds = crate::iced_shell::logical_bounds(self.viewport_physical, self.scale_factor);
+        self.ui_state
+            .rebuild(self.window_id, bounds, &mut self.renderer.backend);
+        self.window.request_redraw();
     }
 
     pub(crate) fn set_modifiers(&mut self, modifiers: TaoModifiers) {
@@ -1247,6 +1259,12 @@ impl DebugWindowHandle {
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.viewport_physical = (width, height);
         self.renderer.resize(width, height);
+        // Rebuild with the new bounds now: otherwise the widgets keep
+        // the open-time layout until the next message arrives.
+        let bounds = crate::iced_shell::logical_bounds((width, height), self.scale_factor);
+        self.ui_state
+            .rebuild(self.window_id, bounds, &mut self.renderer.backend);
+        self.window.request_redraw();
     }
 
     pub(crate) fn sync_from_bridge(&mut self) {
@@ -1299,7 +1317,10 @@ mod tests {
         let bridge = freeze_bridge();
         drive(&bridge, DebugMessage::EditFreezeSet);
         assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x0200_0010, 0xAA)));
-        assert_eq!(bridge.display.lock().unwrap().status, "frozen 02000010=AA");
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            "frozen 0x02000010=AA"
+        );
     }
 
     #[test]
@@ -1307,7 +1328,10 @@ mod tests {
         let bridge = freeze_bridge();
         drive(&bridge, DebugMessage::FreezeSet);
         assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x0200_0010, 0xFF)));
-        assert_eq!(bridge.display.lock().unwrap().status, "frozen 02000010=FF");
+        assert_eq!(
+            bridge.display.lock().unwrap().status,
+            "frozen 0x02000010=FF"
+        );
     }
 
     fn full_bridge() -> Arc<DebugBridge> {
@@ -1514,7 +1538,7 @@ mod tests {
         let _ = view_toolbar(true, language);
         let _ = view_toolbar(false, language);
         let _ = view_space_row("Memory", language);
-        let _ = view_mem_nav("00000100", language);
+        let _ = view_mem_nav("0x00000100", language);
         // Mid-row byte selection still lights its row.
         let _ = view_dump_col(&display.dump_rows, &display.diff, Some((0x102, Some(9))));
         let _ = view_dump_col(&display.dump_rows, &[], None);
@@ -1523,10 +1547,13 @@ mod tests {
         let _ = view_regs_section(&[], None, "", language);
         let _ = view_edit_row(selected, "42", language);
         let _ = view_edit_row(None, "", language);
-        let _ = view_confirm_row(Some("write 42 to 00000100 (was AB)?".to_string()), language);
+        let _ = view_confirm_row(
+            Some("write 42 to 0x00000100 (was AB)?".to_string()),
+            language,
+        );
         let _ = view_confirm_row(None, language);
         let _ = view_dis_nav(true, 0, 0x0800_27D2, "", language);
-        let _ = view_dis_nav(false, 2, 0x300, "00000300", language);
+        let _ = view_dis_nav(false, 2, 0x300, "0x00000300", language);
         let _ = view_dis_col(&[], None, language);
         let _ = view_dis_col(&display.disasm_lines, None, language);
         let _ = view_dis_col(&display.disasm_lines, Some(0x0800_27D2E), language);

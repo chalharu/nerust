@@ -2,12 +2,9 @@ use std::sync::Arc;
 
 use nerust_core_traits::factory::CoreFactory;
 use nerust_gui_settings::{
-    app_state::DesktopAppState,
-    input::{IMPLICIT_PROFILE_ID, ShortcutAction, ShortcutBinding},
-    local::HostBackendLocalSettings,
+    app_state::DesktopAppState, input::IMPLICIT_PROFILE_ID, local::HostBackendLocalSettings,
     shared::DesktopSharedSettings,
 };
-use nerust_keyboard::Key;
 
 pub fn default_shared_settings(factories: &[Arc<dyn CoreFactory>]) -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings::default();
@@ -37,36 +34,7 @@ pub fn default_shared_settings(factories: &[Arc<dyn CoreFactory>]) -> DesktopSha
 }
 
 fn seed_global_shortcuts(settings: &mut DesktopSharedSettings) {
-    settings.input.shortcuts.keyboard = vec![
-        ShortcutBinding {
-            action: ShortcutAction::TogglePause,
-            key: Some(Key::Space),
-        },
-        ShortcutBinding {
-            action: ShortcutAction::SaveActiveSlot,
-            key: Some(Key::F5),
-        },
-        ShortcutBinding {
-            action: ShortcutAction::SelectNextSlot,
-            key: Some(Key::F6),
-        },
-        ShortcutBinding {
-            action: ShortcutAction::SelectPreviousSlot,
-            key: Some(Key::F7),
-        },
-        ShortcutBinding {
-            action: ShortcutAction::LoadActiveSlot,
-            key: Some(Key::F8),
-        },
-        ShortcutBinding {
-            action: ShortcutAction::ToggleFullscreen,
-            key: Some(Key::F11),
-        },
-        ShortcutBinding {
-            action: ShortcutAction::Reset,
-            key: None,
-        },
-    ];
+    settings.input.shortcuts.keyboard = nerust_gui_settings::input::default_shortcut_bindings();
 }
 
 pub fn default_local_settings() -> HostBackendLocalSettings {
@@ -80,6 +48,7 @@ pub fn default_app_state() -> DesktopAppState {
 #[cfg(test)]
 mod tests {
     use nerust_gui_settings::input::ShortcutAction;
+    use nerust_keyboard::Key;
 
     use super::default_shared_settings;
 
@@ -93,6 +62,20 @@ mod tests {
                 .keyboard
                 .iter()
                 .any(|binding| binding.action == ShortcutAction::Reset && binding.key.is_none())
+        );
+    }
+
+    #[test]
+    fn debugger_shortcut_defaults_to_f4() {
+        let settings = default_shared_settings(&[]);
+        assert!(
+            settings
+                .input
+                .shortcuts
+                .keyboard
+                .iter()
+                .any(|binding| binding.action == ShortcutAction::OpenDebugger
+                    && binding.key == Some(Key::F4))
         );
     }
 }
