@@ -157,6 +157,8 @@ impl SessionHandle {
             return shortcut_action_for_key(&self.settings_snapshot.shared, key).map(|action| {
                 if matches!(action, ShortcutAction::ToggleFullscreen) {
                     KeyboardShortcut::ToggleFullscreen
+                } else if matches!(action, ShortcutAction::OpenDebugger) {
+                    KeyboardShortcut::OpenDebugger
                 } else {
                     KeyboardShortcut::Session(action)
                 }

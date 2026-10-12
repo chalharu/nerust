@@ -313,10 +313,20 @@ impl PpuWindowHandle {
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.viewport_physical = (width, height);
         self.renderer.resize(width, height);
+        // Same rebuild-on-resize contract as the debugger: the tiles
+        // reflow immediately instead of waiting for the next Sync.
+        let bounds = crate::iced_shell::logical_bounds((width, height), self.scale_factor);
+        self.ui_state
+            .rebuild(self.window_id, bounds, &mut self.renderer.backend);
+        self.window.request_redraw();
     }
 
     pub(crate) fn set_scale_factor(&mut self, sf: f32) {
         self.scale_factor = sf;
+        let bounds = crate::iced_shell::logical_bounds(self.viewport_physical, self.scale_factor);
+        self.ui_state
+            .rebuild(self.window_id, bounds, &mut self.renderer.backend);
+        self.window.request_redraw();
     }
 
     pub(crate) fn set_modifiers(&mut self, modifiers: TaoModifiers) {
@@ -374,7 +384,7 @@ mod tests {
             128,
             Point::new(88.0, 26.0),
         );
-        assert_eq!(line, "Pattern left tile #21 (px 44,13, +0150)");
+        assert_eq!(line, "Pattern left tile #21 (px 44,13, +0x0150)");
     }
 
     #[test]

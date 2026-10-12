@@ -55,6 +55,27 @@ impl CorePersistenceError {
     }
 }
 
+/// Bound for debugger query round-trips (inspect, disassembly,
+/// images, steps, writes). These run on the UI thread: an unbounded
+/// `recv` would freeze every window's input forever if the emu thread
+/// ever stalls (wedged audio, a panicked core that already dropped
+/// its reply). A timeout degrades to the existing loud `NoReply`
+/// failure instead, which every drain already reports in the status
+/// line. Five seconds is generous: the dearest path (a running GBA
+/// image re-decode) answers in milliseconds.
+const DEBUG_REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn recv_debug_reply<T>(reply_rx: std::sync::mpsc::Receiver<T>) -> Result<T, OperationError> {
+    reply_rx.recv_timeout(DEBUG_REPLY_TIMEOUT).map_err(|error| {
+        match error {
+            std::sync::mpsc::RecvTimeoutError::Timeout => {
+                log::warn!("debugger round-trip timed out; emu thread may be stalled");
+            }
+            std::sync::mpsc::RecvTimeoutError::Disconnected => {}
+        }
+        OperationError::NoReply
+    })
+}
 /// The persistence-relevant subset of EmuCore's interface.
 pub trait CorePersistence {
     fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError>;
@@ -413,7 +434,7 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        let result = reply_rx.recv().map_err(|_| OperationError::NoReply);
+        let result = recv_debug_reply(reply_rx);
         if matches!(result, Ok(Ok(_))) {
             self.mark_images_dirty();
         }
@@ -433,7 +454,7 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx.recv().map_err(|_| OperationError::NoReply)
+        recv_debug_reply(reply_rx)
     }
 
     /// On-demand disassembly through the emu thread. Cold path:
@@ -452,7 +473,7 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx.recv().map_err(|_| OperationError::NoReply)
+        recv_debug_reply(reply_rx)
     }
 
     /// On-demand system images through the emu thread. Same cold-path
@@ -484,7 +505,7 @@ impl EmuCore {
         self.emu
             .send(EmuCommand::DebuggerImages { reply: reply_tx })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        let result = reply_rx.recv().map_err(|_| OperationError::NoReply);
+        let result = recv_debug_reply(reply_rx);
         let images = match result {
             Ok(Ok(images)) => images,
             Ok(Err(error)) => return Ok(Err(error)),
@@ -508,7 +529,7 @@ impl EmuCore {
         self.emu
             .send(EmuCommand::DebuggerPc { reply: reply_tx })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx.recv().map_err(|_| OperationError::NoReply)
+        recv_debug_reply(reply_rx)
     }
 
     /// Memory edit through the emu thread. Pause-ungated by design;
@@ -524,7 +545,7 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        let result = reply_rx.recv().map_err(|_| OperationError::NoReply);
+        let result = recv_debug_reply(reply_rx);
         if matches!(result, Ok(Ok(()))) {
             self.mark_images_dirty();
         }
@@ -546,7 +567,7 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        let result = reply_rx.recv().map_err(|_| OperationError::NoReply);
+        let result = recv_debug_reply(reply_rx);
         if matches!(result, Ok(Ok(()))) {
             self.mark_images_dirty();
         }
@@ -596,7 +617,7 @@ impl EmuCore {
         self.emu
             .send(EmuCommand::DebuggerSpaces { reply: reply_tx })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx.recv().map_err(|_| OperationError::NoReply)
+        recv_debug_reply(reply_rx)
     }
 
     /// Guest-output channel names through the emu thread. Empty when
@@ -606,7 +627,7 @@ impl EmuCore {
         self.emu
             .send(EmuCommand::OutputChannels { reply: reply_tx })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx.recv().map_err(|_| OperationError::NoReply)
+        recv_debug_reply(reply_rx)
     }
 
     pub fn canonical_media_identity(&self) -> Option<SystemIdentity> {

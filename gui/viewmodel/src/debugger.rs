@@ -42,7 +42,7 @@ impl NavState {
             space_idx: 0,
             space_count,
             mem_addr: mem_start,
-            mem_input: format!("{mem_start:08X}"),
+            mem_input: format!("0x{mem_start:08X}"),
             dis_addr: 0,
             dis_input: String::new(),
             back: Vec::new(),
@@ -91,7 +91,7 @@ impl NavState {
     /// Jump the memory view; keeps the typed input in sync.
     pub fn go_mem(&mut self, addr: u32) {
         self.mem_addr = addr;
-        self.mem_input = format!("{addr:08X}");
+        self.mem_input = format!("0x{addr:08X}");
     }
 
     /// Page the memory view by `delta` bytes (positive or negative,
@@ -133,7 +133,7 @@ impl NavState {
             }
         }
         self.dis_addr = next;
-        self.dis_input = format!("{next:08X}");
+        self.dis_input = format!("0x{next:08X}");
         self.follow_pc = false;
     }
 
@@ -141,7 +141,7 @@ impl NavState {
     pub fn go_back(&mut self) -> Option<u32> {
         let addr = self.back.pop()?;
         self.dis_addr = addr;
-        self.dis_input = format!("{addr:08X}");
+        self.dis_input = format!("0x{addr:08X}");
         self.follow_pc = false;
         Some(addr)
     }
@@ -389,9 +389,11 @@ pub fn panels_visible(panels: &str) -> bool {
     panels != EMPTY_PANELS_TEXT
 }
 
-/// Format one kernel register line (`name: $xxxx`), kernel order kept.
+/// Format one kernel register line (`name: 0xxxx`), kernel order
+/// kept. The `0x` canon is cross-system: `$` is NES-only nostalgia
+/// and this debugger serves NES, GBC, and GBA alike.
 pub fn format_register(name: &'static str, value: u64) -> String {
-    format!("{name}: ${value:04X}")
+    format!("{name}: 0x{value:04X}")
 }
 
 /// Format one cell by its column kind.
@@ -430,14 +432,14 @@ pub fn format_panels(panels: &[DebugPanel]) -> String {
     out
 }
 
-/// Format one disassembly row (`>addr: bytes  text`) for line
+/// Format one disassembly row (`>0xaddr: bytes  text`) for line
 /// buttons. The PC row carries the `>` mark (Mesen canon); the byte
 /// field pads to 4 bytes so mnemonics align across rows.
 pub fn format_disasm_line(row: &DisasmLine) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     let mark = if row.is_pc { '>' } else { ' ' };
-    let _ = write!(out, "{mark}{:08X}: ", row.addr);
+    let _ = write!(out, "{mark}0x{:08X}: ", row.addr);
     for byte in row.bytes.iter().take(row.len as usize) {
         let _ = write!(out, "{byte:02X} ");
     }
@@ -520,7 +522,7 @@ mod tests {
         nav.navigate(0xC03A, 0xC034);
         assert!(!nav.follow_pc());
         assert_eq!(nav.dis_addr(), Some(0xC034));
-        assert_eq!(nav.dis_input(), "0000C034");
+        assert_eq!(nav.dis_input(), "0x0000C034");
         assert_eq!(nav.back_len(), 1);
     }
 
@@ -559,7 +561,7 @@ mod tests {
         nav.set_space(1, 0x2000);
         assert_eq!(nav.space_idx(), 1);
         assert_eq!(nav.mem_addr(), 0x2000);
-        assert_eq!(nav.mem_input(), "00002000");
+        assert_eq!(nav.mem_input(), "0x00002000");
         // Out-of-range index keeps the current space.
         nav.set_space(9, 0);
         assert_eq!(nav.space_idx(), 1);
@@ -621,15 +623,15 @@ mod tests {
         use nerust_gui_settings::language::AppLanguage;
         assert_eq!(
             format_pending_write(AppLanguage::English, 0, Some(0xAB), 0x42),
-            "write 42 to 00000000 (was AB)?"
+            "write 42 to 0x00000000 (was AB)?"
         );
         assert_eq!(
             format_pending_write(AppLanguage::English, 0x80, None, 0xCC),
-            "write CC to 00000080 (was ??)?"
+            "write CC to 0x00000080 (was ??)?"
         );
         assert_eq!(
             format_pending_write(AppLanguage::Japanese, 0x80, Some(0x00), 0xCC),
-            "00000080 に CC を書込 (元 00)?"
+            "0x00000080 に CC を書込 (元 00)?"
         );
     }
 
@@ -675,7 +677,7 @@ mod tests {
             paused: true,
             reg_names: vec!["a"],
             status: "paused".to_string(),
-            pending_text: Some("write 42 to 00000000 (was 00)?".to_string()),
+            pending_text: Some("write 42 to 0x00000000 (was 00)?".to_string()),
         };
         assert_eq!(cache.dump_rows.len(), 1);
         assert_eq!(cache.disasm_lines[0].addr, 0xC000);
@@ -689,8 +691,8 @@ mod tests {
 
     #[test]
     fn format_register_orders_value() {
-        assert_eq!(format_register("b", 2), "b: $0002");
-        assert_eq!(format_register("a", 1), "a: $0001");
+        assert_eq!(format_register("b", 2), "b: 0x0002");
+        assert_eq!(format_register("a", 1), "a: 0x0001");
     }
 
     #[test]
@@ -846,7 +848,7 @@ mod tests {
             is_pc: true,
             target: None,
         };
-        assert_eq!(format_disasm_line(&row), ">0000C03A: 88          DEY");
+        assert_eq!(format_disasm_line(&row), ">0x0000C03A: 88          DEY");
         let row = DisasmLine {
             addr: 0xC03B,
             bytes: [0xD0, 0xF7, 0, 0],
@@ -855,7 +857,10 @@ mod tests {
             is_pc: false,
             target: Some(0xC034),
         };
-        assert_eq!(format_disasm_line(&row), " 0000C03B: D0 F7       BNE $C034");
+        assert_eq!(
+            format_disasm_line(&row),
+            " 0x0000C03B: D0 F7       BNE $C034"
+        );
     }
 
     #[test]
@@ -873,7 +878,7 @@ mod tests {
         txn.stage(0x42);
         assert_eq!(
             txn.pending_text(AppLanguage::English),
-            Some("write 42 to 00000010 (was 00)?".to_string())
+            Some("write 42 to 0x00000010 (was 00)?".to_string())
         );
         assert_eq!(txn.take_commit(), Some((SpaceId(0), 0x10, 0x42)));
         assert_eq!(txn, WriteTransaction::Empty);

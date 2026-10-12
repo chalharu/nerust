@@ -109,6 +109,9 @@ impl WindowRuntime {
                         self.host.clear_auto_paused();
                     }
                     self.host.request_redraw();
+                    // Keep the debugger toolbar truthful: a focus
+                    // resume changes the pause state behind its back.
+                    self.host.run_debug_drain(&[]);
                 }
                 WindowEvent::Focused(false) => {
                     self.host.active = false;
@@ -117,6 +120,10 @@ impl WindowRuntime {
                         self.host.set_auto_paused();
                     }
                     self.host.clear_keys();
+                    // Same agreement in the other direction: the drain
+                    // re-reads paused state into the toolbar and syncs
+                    // the menu/title with it.
+                    self.host.run_debug_drain(&[]);
                 }
                 WindowEvent::Resized(_) => {
                     self.host.sync_fullscreen_default_from_window();
@@ -176,10 +183,13 @@ impl WindowRuntime {
                 if let WindowEvent::Moved(position) = &event {
                     self.host.remember_debug_window_pos(position.x, position.y);
                 }
-                // Focus follows the main window's auto-pause: pause
-                // first (idempotent) and re-read so the display
-                // matches the newly paused state. The empty batch
-                // never kills a staged transaction.
+                // Focus re-reads, never force-pauses: the main window's
+                // auto-pause already paused when the debugger took
+                // focus, and re-pausing here would surprise a running
+                // session (and overwrite a meaningful status like
+                // "stepped N" with a bare "paused"). The empty batch
+                // still refreshes the toolbar label so it agrees with
+                // the menu.
                 let refocused = matches!(event, WindowEvent::Focused(true));
                 {
                     let Some(handle) = self.host.debug_window.as_mut() else {
@@ -201,8 +211,7 @@ impl WindowRuntime {
                     handle.handle_tao_event(event);
                 }
                 if refocused {
-                    use nerust_gui_shell::debug::DebugAction;
-                    self.host.run_debug_drain(&[DebugAction::Pause]);
+                    self.host.run_debug_drain(&[]);
                 }
                 self.host.drain_debug_requests();
                 if self.host.take_ppu_open_request() {

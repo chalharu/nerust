@@ -513,6 +513,25 @@ impl DebuggerWindowCore {
         });
 
         Self::act(&result, &[DebugAction::Pause, DebugAction::Refresh]);
+        // Live PPU follow while the core runs (tao twin: `maybe_live_ppu`).
+        // An empty drain every interval re-reads so the viewer tracks
+        // the running picture; paused cores never change memory, so the
+        // tick skips them. The tick dies with the window.
+        let weak = Rc::downgrade(&result);
+        glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+            let Some(win) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let live = win.borrow().window.is_visible() && win.borrow().ppu_window.is_some() && {
+                let state = win.borrow().state.clone();
+                let session = &state.borrow().session;
+                session.loaded() && !session.paused()
+            };
+            if live {
+                Self::act(&win, &[]);
+            }
+            glib::ControlFlow::Continue
+        });
         window.present();
         result
     }
@@ -1022,7 +1041,7 @@ impl DebuggerWindowCore {
             )
         } else {
             format!(
-                "{} @{:08X} {}",
+                "{} @0x{:08X} {}",
                 text(language, UiText::Disassembly),
                 this.data.anchor(),
                 text(language, UiText::FixedTag)
@@ -1125,7 +1144,7 @@ impl DebuggerWindowCore {
             let row = gtk::ListBoxRow::new();
             row.set_selectable(false);
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-            let head = gtk::Button::with_label(&format!("{marker}{:08X}:", hex_row.addr));
+            let head = gtk::Button::with_label(&format!("{marker}0x{:08X}:", hex_row.addr));
             head.add_css_class("monospace");
             left_align(&head);
             if row_hit {
@@ -1167,7 +1186,7 @@ impl DebuggerWindowCore {
         // The target rides on the button: writes always land on the
         // selected row, never on the page anchor.
         this.write_button.set_label(&match this.data.selected {
-            Some((addr, _)) => format!("{} {addr:08X}", text(language, UiText::Write)),
+            Some((addr, _)) => format!("{} 0x{addr:08X}", text(language, UiText::Write)),
             None => text(language, UiText::Write).to_string(),
         });
         match &display.pending_text {
@@ -1240,7 +1259,7 @@ impl DebuggerWindowCore {
             let row = gtk::ListBoxRow::new();
             row.set_selectable(false);
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-            let jump = gtk::Button::with_label(&format!("{label} {addr:08X}"));
+            let jump = gtk::Button::with_label(&format!("{label} 0x{addr:08X}"));
             jump.add_css_class("monospace");
             jump.add_css_class("flat");
             let addr = *addr;
@@ -1462,7 +1481,7 @@ mod tests {
             paused: true,
             reg_names: vec!["cpsr", "r0", "r1"],
             status: "paused".to_string(),
-            pending_text: Some("write 42 to 00000100 (was AB)?".to_string()),
+            pending_text: Some("write 42 to 0x00000100 (was AB)?".to_string()),
         }
     }
 
@@ -1636,7 +1655,7 @@ mod tests {
             this.data.nav.navigate(0x300, 0x302);
         }
         DebuggerWindowCore::rebuild(&win);
-        assert!(win.borrow().disasm_title.label().contains("@00000302"));
+        assert!(win.borrow().disasm_title.label().contains("@0x00000302"));
         assert!(
             win.borrow()
                 .back_button
@@ -1646,9 +1665,9 @@ mod tests {
                 .contains("(1)")
         );
         assert!(win.borrow().reg_target_label.label().contains("r0"));
-        assert!(win.borrow().watch_label.label().contains("00000100"));
-        assert!(win.borrow().freeze_label.label().contains("00000100"));
-        assert!(win.borrow().select_label.label().contains("00000102"));
+        assert!(win.borrow().watch_label.label().contains("0x00000100"));
+        assert!(win.borrow().freeze_label.label().contains("0x00000100"));
+        assert!(win.borrow().select_label.label().contains("0x00000102"));
         // The viewer follows the rebuild with images and panels.
         DebuggerWindowCore::open_ppu(&win);
         assert!(win.borrow().ppu_window.is_some());

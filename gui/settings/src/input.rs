@@ -60,6 +60,77 @@ pub struct ShortcutSettings {
     pub keyboard: Vec<ShortcutBinding>,
 }
 
+/// Canonical default shortcut bindings (single source: the seeder and
+/// the load-time migration both use this).
+pub fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
+    vec![
+        ShortcutBinding {
+            action: ShortcutAction::TogglePause,
+            key: Some(Key::Space),
+        },
+        ShortcutBinding {
+            action: ShortcutAction::SaveActiveSlot,
+            key: Some(Key::F5),
+        },
+        ShortcutBinding {
+            action: ShortcutAction::SelectNextSlot,
+            key: Some(Key::F6),
+        },
+        ShortcutBinding {
+            action: ShortcutAction::SelectPreviousSlot,
+            key: Some(Key::F7),
+        },
+        ShortcutBinding {
+            action: ShortcutAction::LoadActiveSlot,
+            key: Some(Key::F8),
+        },
+        ShortcutBinding {
+            action: ShortcutAction::ToggleFullscreen,
+            key: Some(Key::F11),
+        },
+        ShortcutBinding {
+            action: ShortcutAction::Reset,
+            key: None,
+        },
+        ShortcutBinding {
+            action: ShortcutAction::OpenDebugger,
+            key: Some(Key::F4),
+        },
+    ]
+}
+
+/// Migrate persisted shortcuts forward: append defaults for actions
+/// the file predates (e.g. `OpenDebugger` on files seeded before it
+/// existed). User bindings are never touched; when the default key is
+/// already taken by another action the migrated entry stays unbound
+/// (visible and rebindable in Settings) instead of stealing the key.
+pub fn ensure_default_shortcuts(settings: &mut ShortcutSettings) {
+    for default in default_shortcut_bindings() {
+        if settings
+            .keyboard
+            .iter()
+            .any(|binding| binding.action == default.action)
+        {
+            continue;
+        }
+        let key = match default.key {
+            Some(key)
+                if settings
+                    .keyboard
+                    .iter()
+                    .any(|binding| binding.key == Some(key)) =>
+            {
+                None
+            }
+            key => key,
+        };
+        settings.keyboard.push(ShortcutBinding {
+            action: default.action,
+            key,
+        });
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ShortcutBinding {
     pub action: ShortcutAction,
@@ -78,6 +149,9 @@ pub enum ShortcutAction {
     LoadActiveSlot,
     ToggleFullscreen,
     Reset,
+    /// Open the debugger window (default F4). Schema-driven like
+    /// every other shortcut: users rebind or unbind it in Settings.
+    OpenDebugger,
 }
 
 #[derive(
@@ -129,5 +203,47 @@ impl PersistedControlId {
 impl PartialEq<DigitalControlId> for PersistedControlId {
     fn eq(&self, other: &DigitalControlId) -> bool {
         matches!(self, Self::Digital(v) if v == other.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_adds_missing_actions_without_touching_users() {
+        let mut settings = ShortcutSettings {
+            keyboard: Vec::new(),
+        };
+        ensure_default_shortcuts(&mut settings);
+        assert_eq!(settings.keyboard, default_shortcut_bindings());
+        // Second run is a no-op: nothing duplicates.
+        ensure_default_shortcuts(&mut settings);
+        assert_eq!(settings.keyboard, default_shortcut_bindings());
+    }
+
+    #[test]
+    fn ensure_leaves_taken_keys_unbound() {
+        // A legacy file that rebound F4 to pause: the migrated
+        // debugger entry must not steal it back.
+        let mut settings = ShortcutSettings {
+            keyboard: vec![ShortcutBinding {
+                action: ShortcutAction::TogglePause,
+                key: Some(Key::F4),
+            }],
+        };
+        ensure_default_shortcuts(&mut settings);
+        let debugger = settings
+            .keyboard
+            .iter()
+            .find(|binding| binding.action == ShortcutAction::OpenDebugger)
+            .expect("migrated entry");
+        assert_eq!(debugger.key, None);
+        let pause = settings
+            .keyboard
+            .iter()
+            .find(|binding| binding.action == ShortcutAction::TogglePause)
+            .expect("user binding");
+        assert_eq!(pause.key, Some(Key::F4));
     }
 }

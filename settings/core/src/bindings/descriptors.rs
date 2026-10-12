@@ -28,7 +28,7 @@ pub struct ShortcutDescriptor {
     pub label: &'static str,
 }
 
-const SHORTCUT_DESCRIPTORS: [ShortcutDescriptor; 7] = [
+const SHORTCUT_DESCRIPTORS: [ShortcutDescriptor; 8] = [
     ShortcutDescriptor {
         action: ShortcutAction::TogglePause,
         label: "Toggle Pause",
@@ -56,6 +56,10 @@ const SHORTCUT_DESCRIPTORS: [ShortcutDescriptor; 7] = [
     ShortcutDescriptor {
         action: ShortcutAction::Reset,
         label: "Reset",
+    },
+    ShortcutDescriptor {
+        action: ShortcutAction::OpenDebugger,
+        label: "Open Debugger",
     },
 ];
 
@@ -229,6 +233,12 @@ mod tests {
             shortcut_descriptors()
                 .iter()
                 .any(|descriptor| matches!(descriptor.action, ShortcutAction::ToggleFullscreen))
+        );
+        // The debugger open is user-rebindable through the same editor.
+        assert!(
+            shortcut_descriptors()
+                .iter()
+                .any(|descriptor| matches!(descriptor.action, ShortcutAction::OpenDebugger))
         );
     }
 }

@@ -6,6 +6,7 @@ use std::{
 use nerust_core_traits::identity::{SystemId, SystemIdentity};
 use nerust_gui_settings::{
     app_state::{DesktopAppState, RememberedWindowSize},
+    input::ensure_default_shortcuts,
     local::HostBackendLocalSettings,
     shared::DesktopSharedSettings,
 };
@@ -53,7 +54,11 @@ impl SettingsManager {
             local: local_defaults,
             app_state: app_state_defaults,
         };
-        let (current, document) = load_settings(&paths.settings_file, &defaults);
+        let (mut current, document) = load_settings(&paths.settings_file, &defaults);
+        // Forward migration: files seeded before a shortcut action
+        // existed (e.g. OpenDebugger) gain its default without
+        // touching user bindings.
+        ensure_default_shortcuts(&mut current.shared.input.shortcuts);
         Ok(Self {
             inner: Arc::new(RwLock::new(SettingsState {
                 defaults: defaults.clone(),
@@ -106,7 +111,8 @@ impl SettingsManager {
         paths: SettingsPaths,
         defaults: &SettingsSnapshot,
     ) -> Result<Self, SettingsError> {
-        let (current, document) = load_settings(&paths.settings_file, defaults);
+        let (mut current, document) = load_settings(&paths.settings_file, defaults);
+        ensure_default_shortcuts(&mut current.shared.input.shortcuts);
         Ok(Self {
             inner: Arc::new(RwLock::new(SettingsState {
                 defaults: defaults.clone(),

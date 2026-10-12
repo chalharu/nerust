@@ -400,6 +400,8 @@ pub fn parse_failed(language: AppLanguage, input: &str) -> String {
 }
 
 /// Selected dump row (`was ??` when the old byte is unreadable).
+/// Addresses use the cross-system `0x` canon (never the NES `$`
+/// sigil): the same debugger serves NES, GBC, and GBA.
 pub fn selected_row(language: AppLanguage, addr: u32, old: Option<u8>) -> String {
     let old_text = match old {
         Some(old) => format!("{old:02X}"),
@@ -407,8 +409,8 @@ pub fn selected_row(language: AppLanguage, addr: u32, old: Option<u8>) -> String
     };
     localized!(
         language,
-        format!("Selected {addr:08X} (was {old_text})"),
-        format!("選択 {addr:08X} (元 {old_text})")
+        format!("Selected 0x{addr:08X} (was {old_text})"),
+        format!("選択 0x{addr:08X} (元 {old_text})")
     )
 }
 
@@ -420,8 +422,8 @@ pub fn pending_write(language: AppLanguage, addr: u32, old: Option<u8>, value: u
     };
     localized!(
         language,
-        format!("write {value:02X} to {addr:08X} (was {old_text})?"),
-        format!("{addr:08X} に {value:02X} を書込 (元 {old_text})?")
+        format!("write {value:02X} to 0x{addr:08X} (was {old_text})?"),
+        format!("0x{addr:08X} に {value:02X} を書込 (元 {old_text})?")
     )
 }
 
@@ -429,8 +431,8 @@ pub fn pending_write(language: AppLanguage, addr: u32, old: Option<u8>, value: u
 pub fn wrote_memory(language: AppLanguage, addr: u32, value: u64) -> String {
     localized!(
         language,
-        format!("wrote {value:02X} to {addr:08X} (width 1)"),
-        format!("{addr:08X} に {value:02X} を書込済 (幅1)")
+        format!("wrote {value:02X} to 0x{addr:08X} (width 1)"),
+        format!("0x{addr:08X} に {value:02X} を書込済 (幅1)")
     )
 }
 
@@ -438,8 +440,8 @@ pub fn wrote_memory(language: AppLanguage, addr: u32, value: u64) -> String {
 pub fn register_wrote(language: AppLanguage, name: &str, value: u64) -> String {
     localized!(
         language,
-        format!("wrote {value:04X} to register {name}"),
-        format!("レジスタ {name} に {value:04X} を書込済")
+        format!("wrote 0x{value:04X} to register {name}"),
+        format!("レジスタ {name} に 0x{value:04X} を書込済")
     )
 }
 
@@ -510,8 +512,8 @@ pub fn resume_failed(language: AppLanguage, detail: &str) -> String {
 pub fn frozen(language: AppLanguage, addr: u32, value: u8) -> String {
     localized!(
         language,
-        format!("frozen {addr:08X}={value:02X}"),
-        format!("フリーズ {addr:08X}={value:02X}")
+        format!("frozen 0x{addr:08X}={value:02X}"),
+        format!("フリーズ 0x{addr:08X}={value:02X}")
     )
 }
 
@@ -523,12 +525,12 @@ pub fn watch_value(language: AppLanguage, addr: u32, value: Option<u8>) -> Strin
     };
     localized!(
         language,
-        format!("watch {addr:08X} = {value_text}"),
-        format!("ウォッチ {addr:08X} = {value_text}")
+        format!("watch 0x{addr:08X} = {value_text}"),
+        format!("ウォッチ 0x{addr:08X} = {value_text}")
     )
 }
 
-/// Tile hover readout (`+{offset:04X}` is the tile-start byte offset).
+/// Tile hover readout (`+0x{offset}` is the tile-start byte offset).
 pub fn tile_hover(
     language: AppLanguage,
     label: &str,
@@ -539,8 +541,8 @@ pub fn tile_hover(
 ) -> String {
     localized!(
         language,
-        format!("{label} tile #{idx} (px {sx},{sy}, +{offset:04X})"),
-        format!("{label} タイル #{idx} (px {sx},{sy}, +{offset:04X})")
+        format!("{label} tile #{idx} (px {sx},{sy}, +0x{offset:04X})"),
+        format!("{label} タイル #{idx} (px {sx},{sy}, +0x{offset:04X})")
     )
 }
 
@@ -585,33 +587,36 @@ mod tests {
         assert_eq!(parse_failed(ja(), "zz"), "解析失敗: zz");
         assert_eq!(
             selected_row(en(), 0x80, Some(0xAB)),
-            "Selected 00000080 (was AB)"
+            "Selected 0x00000080 (was AB)"
         );
-        assert_eq!(selected_row(en(), 0x80, None), "Selected 00000080 (was ??)");
+        assert_eq!(
+            selected_row(en(), 0x80, None),
+            "Selected 0x00000080 (was ??)"
+        );
         assert_eq!(
             selected_row(ja(), 0x80, Some(0xAB)),
-            "選択 00000080 (元 AB)"
+            "選択 0x00000080 (元 AB)"
         );
         assert_eq!(
             pending_write(en(), 0x80, Some(0), 0xCC),
-            "write CC to 00000080 (was 00)?"
+            "write CC to 0x00000080 (was 00)?"
         );
         assert_eq!(
             pending_write(ja(), 0x80, None, 0xCC),
-            "00000080 に CC を書込 (元 ??)?"
+            "0x00000080 に CC を書込 (元 ??)?"
         );
         assert_eq!(
             wrote_memory(en(), 0x10, 0x42),
-            "wrote 42 to 00000010 (width 1)"
+            "wrote 42 to 0x00000010 (width 1)"
         );
         assert_eq!(
             wrote_memory(ja(), 0x10, 0x42),
-            "00000010 に 42 を書込済 (幅1)"
+            "0x00000010 に 42 を書込済 (幅1)"
         );
-        assert_eq!(register_wrote(en(), "r7", 1), "wrote 0001 to register r7");
+        assert_eq!(register_wrote(en(), "r7", 1), "wrote 0x0001 to register r7");
         assert_eq!(
             register_wrote(ja(), "r7", 1),
-            "レジスタ r7 に 0001 を書込済"
+            "レジスタ r7 に 0x0001 を書込済"
         );
         assert_eq!(write_refused(en(), "X"), "write refused: X");
         assert_eq!(write_refused(ja(), "X"), "書込拒否: X");
@@ -627,18 +632,18 @@ mod tests {
         assert_eq!(pause_failed(ja(), "X"), "一時停止失敗: X");
         assert_eq!(resume_failed(en(), "X"), "resume failed: X");
         assert_eq!(resume_failed(ja(), "X"), "再開失敗: X");
-        assert_eq!(frozen(en(), 0x10, 0xFF), "frozen 00000010=FF");
-        assert_eq!(frozen(ja(), 0x10, 0xFF), "フリーズ 00000010=FF");
-        assert_eq!(watch_value(en(), 0x10, Some(1)), "watch 00000010 = 01");
-        assert_eq!(watch_value(en(), 0x10, None), "watch 00000010 = ??");
-        assert_eq!(watch_value(ja(), 0x10, Some(1)), "ウォッチ 00000010 = 01");
+        assert_eq!(frozen(en(), 0x10, 0xFF), "frozen 0x00000010=FF");
+        assert_eq!(frozen(ja(), 0x10, 0xFF), "フリーズ 0x00000010=FF");
+        assert_eq!(watch_value(en(), 0x10, Some(1)), "watch 0x00000010 = 01");
+        assert_eq!(watch_value(en(), 0x10, None), "watch 0x00000010 = ??");
+        assert_eq!(watch_value(ja(), 0x10, Some(1)), "ウォッチ 0x00000010 = 01");
         assert_eq!(
             tile_hover(en(), "Tiles", 21, 44, 13, 0x150),
-            "Tiles tile #21 (px 44,13, +0150)"
+            "Tiles tile #21 (px 44,13, +0x0150)"
         );
         assert_eq!(
             tile_hover(ja(), "Tiles", 21, 44, 13, 0x150),
-            "Tiles タイル #21 (px 44,13, +0150)"
+            "Tiles タイル #21 (px 44,13, +0x0150)"
         );
     }
 }

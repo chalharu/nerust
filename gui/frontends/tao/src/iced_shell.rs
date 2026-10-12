@@ -118,6 +118,16 @@ impl WindowScaffold {
     }
 }
 
+/// Logical layout bounds for a physical viewport and scale factor.
+/// One helper so every resize/scale path rebuilds with identical
+/// math instead of drifting copies.
+pub(crate) fn logical_bounds(viewport_physical: (u32, u32), scale_factor: f32) -> Size {
+    Viewport::with_physical_size(
+        Size::new(viewport_physical.0, viewport_physical.1),
+        scale_factor,
+    )
+    .logical_size()
+}
 /// Renderer triple both auxiliary windows share. Field names mirror
 /// the former per-window structs so call sites barely change.
 pub(crate) struct ShellRenderer {
@@ -200,6 +210,29 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     /// entry point shared by both viewers).
     pub fn push_message(&mut self, message: P::Message) {
         let _task = self.instance.update(message);
+    }
+
+    /// Rebuild the layout with new bounds unconditionally (resize and
+    /// scale-factor paths). Without this the widgets keep the
+    /// open-time size until the next message rebuilds them — the
+    /// reported "resize does nothing until something updates" bug.
+    pub fn rebuild(&mut self, window_id: iced::window::Id, bounds: Size, renderer: &mut Renderer) {
+        let placeholder = std::mem::replace(
+            &mut *self.ui,
+            Self::build_ui(
+                &self.instance,
+                window_id,
+                bounds,
+                Cache::default(),
+                renderer,
+            ),
+        );
+        let cache = placeholder.into_cache();
+        let stale = std::mem::replace(
+            &mut *self.ui,
+            Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
+        );
+        let _ = stale.into_cache();
     }
 
     pub fn process_messages(
@@ -298,5 +331,20 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
     );
     if let Err(error) = renderer.present(&viewport, style.background_color) {
         log::warn!("{log_tag} render present failed: {error}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logical_bounds_divide_by_scale() {
+        // Resize/scale rebuilds share this math: 2x shows half the
+        // logical pixels of the physical viewport.
+        let bounds = logical_bounds((1100, 800), 2.0);
+        assert_eq!((bounds.width, bounds.height), (550.0, 400.0));
+        let unit = logical_bounds((960, 720), 1.0);
+        assert_eq!((unit.width, unit.height), (960.0, 720.0));
     }
 }
