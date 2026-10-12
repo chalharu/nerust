@@ -1866,6 +1866,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gdkx11"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3caa00e14351bebbc8183b3c36690327eb77c49abc2268dd4bd36b856db3fbfe"
+dependencies = [
+ "gdk",
+ "gdkx11-sys",
+ "gio 0.18.4",
+ "glib 0.18.5",
+ "libc",
+ "x11",
+]
+
+[[package]]
 name = "gdkx11-sys"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3878,6 +3892,7 @@ version = "0.1.0-dev"
 name = "nerust_tao"
 version = "0.1.0-dev"
 dependencies = [
+ "gdkx11",
  "gtk",
  "iced",
  "iced_tiny_skia",

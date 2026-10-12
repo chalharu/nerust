@@ -1,5 +1,13 @@
 mod app_menu;
 pub(crate) mod debug_window;
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+mod gtk_content;
 pub(crate) mod iced_shell;
 pub(crate) mod ppu_window;
 pub(crate) mod settings;
