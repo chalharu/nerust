@@ -1207,14 +1207,23 @@ impl DebugWindowHandle {
         } else {
             None
         };
-        let mut messages = self.ui_state.pump(
+        let (mut messages, outcome) = self.ui_state.pump(
             mapped,
             self.cursor,
             &mut self.clipboard,
             &mut self.renderer.backend,
         );
         messages.extend(page);
-        if !messages.is_empty() {
+        match outcome {
+            crate::iced_shell::PumpOutcome::Rebuild => {
+                self.bridge.view_invalidated.store(true, Ordering::Release);
+            }
+            crate::iced_shell::PumpOutcome::Repaint => {
+                self.window.request_redraw();
+            }
+            crate::iced_shell::PumpOutcome::Idle => {}
+        }
+        if !messages.is_empty() || matches!(outcome, crate::iced_shell::PumpOutcome::Rebuild) {
             let bounds = Viewport::with_physical_size(
                 Size::new(self.viewport_physical.0, self.viewport_physical.1),
                 self.scale_factor,

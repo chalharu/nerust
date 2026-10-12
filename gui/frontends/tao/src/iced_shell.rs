@@ -18,8 +18,8 @@ use iced_tiny_skia::{
 use iced_winit::{
     Clipboard,
     graphics::Viewport,
-    program::{self, Program},
-    runtime::user_interface::{Cache, UserInterface},
+    program::{self, Program, core::window::RedrawRequest},
+    runtime::user_interface::{Cache, State, UserInterface},
 };
 use tao::{
     event_loop::EventLoopWindowTarget,
@@ -169,6 +169,32 @@ pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> 
     instance: program::Instance<P>,
 }
 
+/// What a pumped event needs after `update`: nothing, a repaint
+/// (wheel/drag/hover/caret move widget state but emit no messages),
+/// or a view rebuild (`State::Outdated`: the tree must be re-rendered
+/// from program state). Dropping the `update` return used to swallow
+/// every repaint request, freezing scrollbars, drags, and carets
+/// until some unrelated message repainted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PumpOutcome {
+    Idle,
+    Repaint,
+    Rebuild,
+}
+
+/// Map iced's update result onto [`PumpOutcome`]. Pure so the
+/// message-less paths (wheel scroll especially) stay covered by
+/// tests.
+pub(crate) fn pump_outcome(state: &State) -> PumpOutcome {
+    match state {
+        State::Outdated => PumpOutcome::Rebuild,
+        State::Updated { redraw_request, .. } if *redraw_request != RedrawRequest::Wait => {
+            PumpOutcome::Repaint
+        }
+        State::Updated { .. } => PumpOutcome::Idle,
+    }
+}
+
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     /// Build a UserInterface from instance state, transmuting the
     /// phantom lifetime to 'static. Safe because this shell's Drop
@@ -218,6 +244,24 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         let _task = self.instance.update(message);
     }
 
+    /// What a pumped event needs after `update`: nothing, a repaint
+    /// (wheel/drag/hover/caret move widget state but emit no
+    /// messages), or a view rebuild (`State::Outdated`: the tree must
+    /// be re-rendered from program state).
+    pub fn pump(
+        &mut self,
+        mapped: iced::Event,
+        cursor: mouse::Cursor,
+        clipboard: &mut Clipboard,
+        backend: &mut Renderer,
+    ) -> (Vec<P::Message>, PumpOutcome) {
+        let mut messages = Vec::new();
+        let (state, _) = self
+            .ui_mut()
+            .update(&[mapped], cursor, backend, clipboard, &mut messages);
+        (messages, pump_outcome(&state))
+    }
+
     /// Relayout for a new size: iced's own resize contract (the
     /// official shell calls `UserInterface::relayout` on resize).
     /// One layout pass reuses the retained element tree and widget
@@ -262,23 +306,6 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         let stale = std::mem::replace(self.ui_mut(), real_ui);
         let _ = stale.into_cache();
         invalidated.store(false, Ordering::Release);
-    }
-
-    /// Feed one iced event through the UI and collect the resulting
-    /// messages without rebuilding: the caller appends window-local
-    /// traffic (the debugger's paging), then calls
-    /// [`UiShell::process_messages`] itself.
-    pub fn pump(
-        &mut self,
-        mapped: iced::Event,
-        cursor: mouse::Cursor,
-        clipboard: &mut Clipboard,
-        backend: &mut Renderer,
-    ) -> Vec<P::Message> {
-        let mut messages = Vec::new();
-        self.ui_mut()
-            .update(&[mapped], cursor, backend, clipboard, &mut messages);
-        messages
     }
 }
 
@@ -346,5 +373,29 @@ mod tests {
         assert_eq!((bounds.width, bounds.height), (550.0, 400.0));
         let unit = logical_bounds((960, 720), 1.0);
         assert_eq!((unit.width, unit.height), (960.0, 720.0));
+    }
+
+    #[test]
+    fn pump_outcome_routes_widget_requests() {
+        use iced_winit::program::core::InputMethod;
+
+        let updated = |redraw_request| State::Updated {
+            mouse_interaction: mouse::Interaction::Idle,
+            redraw_request,
+            input_method: InputMethod::Disabled,
+            has_layout_changed: false,
+        };
+        // A widget asking for a view rebuild (rare) routes to one.
+        assert_eq!(pump_outcome(&State::Outdated), PumpOutcome::Rebuild);
+        // Message-less repaint requests (wheel/drag/hover/caret) must
+        // repaint: dropping them froze every scrollable.
+        assert_eq!(
+            pump_outcome(&updated(RedrawRequest::Wait)),
+            PumpOutcome::Idle
+        );
+        assert_eq!(
+            pump_outcome(&updated(RedrawRequest::NextFrame)),
+            PumpOutcome::Repaint
+        );
     }
 }
