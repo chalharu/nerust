@@ -8,7 +8,7 @@ use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuRenderer, RendererConfig},
 };
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use raw_window_handle::HasDisplayHandle;
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
 use tao::{
@@ -23,6 +23,10 @@ pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
     renderer: Option<Box<dyn GpuRenderer>>,
+    /// Native target the surface is attached to (`None` = toplevel).
+    /// The attach binds a drawable, so a target change needs a
+    /// recreate, not a resize.
+    surface_xid: Option<u64>,
 }
 
 impl WindowRuntime {
@@ -43,17 +47,14 @@ impl WindowRuntime {
             event_loop: Some(event_loop),
             host,
             renderer: None,
+            surface_xid: None,
         }
     }
 
     fn build_renderer_and_surface(&mut self, window: &tao::window::Window) -> Option<()> {
-        let size = window.inner_size();
+        let (raw_window_handle, size, xid) = self.host.surface_target()?;
         let session = self.host.session();
         let vsync = session.settings_snapshot().local.video.presentation.vsync;
-        let raw_window_handle = window
-            .window_handle()
-            .expect("failed to get window handle")
-            .as_raw();
         let raw_display_handle = window
             .display_handle()
             .expect("failed to get display handle")
@@ -75,6 +76,7 @@ impl WindowRuntime {
                 SurfaceSize::new(size.width, size.height),
             )
             .expect("failed to attach");
+        self.surface_xid = xid;
         self.renderer = Some(renderer);
         Some(())
     }
@@ -366,7 +368,17 @@ impl WindowRuntime {
             return;
         };
 
-        // Keep the output sized to the current window.
+        // Keep the output sized to the current target. A size change
+        // resizes in place, but a target change (toplevel fallback to
+        // content area once laid out) rebinds a drawable and needs a
+        // full recreate.
+        let current_xid = self.host.surface_xid();
+        if self.surface_xid != current_xid {
+            if let Some(window) = self.host.window().cloned() {
+                self.build_renderer_and_surface(&window);
+            }
+            return;
+        }
         if renderer.size() != window_size {
             renderer.resize(window_size);
         }

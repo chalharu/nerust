@@ -22,6 +22,7 @@ use nerust_render_traits::{
     renderer::{GpuFactory, RenderResult},
 };
 use nerust_settings_core::i18n::{UiText, text};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use rfd::FileDialog;
 use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
 use tao::{
@@ -63,6 +64,17 @@ pub(crate) struct HostState {
     /// Aux-window state (debugger + PPU viewer). Orchestration lives
     /// here; ownership lives there.
     pub(crate) debug: DebugWindows,
+    /// Linux render target below the muda menubar (`None` elsewhere).
+    /// When it yields no native target (Wayland, pre-layout) the
+    /// toplevel fallback applies and the menu stays occluded.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    content_area: Option<crate::gtk_content::ContentArea>,
 }
 
 impl HostState {
@@ -100,6 +112,14 @@ impl HostState {
             auto_paused: false,
             last_drain_paused: None,
             debug: DebugWindows::new(),
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd"
+            ))]
+            content_area: None,
         }
     }
 
@@ -161,6 +181,19 @@ impl HostState {
             .unwrap(),
         );
         self.app_menu.init_for_window(&window);
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
+        {
+            use tao::platform::unix::WindowExtUnix;
+            self.content_area = window.default_vbox().map(|vbox| {
+                crate::gtk_content::ContentArea::new(vbox, window.gtk_window(), &window)
+            });
+        }
         self.window = Some(window);
         self.sync_fullscreen_from_settings();
         self.sync_menu_state();
@@ -181,9 +214,49 @@ impl HostState {
     }
 
     pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
-        self.window
-            .as_ref()
-            .map(|window| window_surface_size(window.inner_size()))
+        self.surface_target().map(|(_, size, _)| size)
+    }
+
+    /// Native attach target for the game renderer: the content area
+    /// below the menubar when it has a native window, else the
+    /// toplevel (menu occluded, as before). The xid tags the target
+    /// so the runtime recreates the surface across target changes
+    /// instead of merely resizing into the wrong drawable.
+    pub(crate) fn surface_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
+        let window = self.window.as_ref()?;
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
+        if let Some(area) = self.content_area.as_ref()
+            && let Some((handle, size, xid)) = area.target()
+        {
+            return Some((handle, size, Some(xid)));
+        }
+        let handle = window.window_handle().ok()?.as_raw();
+        Some((handle, window_surface_size(window.inner_size()), None))
+    }
+
+    /// Xid the surface is currently attached to (`None` = toplevel
+    /// fallback). Mirrors [`HostState::surface_target`] without
+    /// rebuilding handles, for the runtime's recreate check.
+    pub(crate) fn surface_xid(&self) -> Option<u64> {
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
+        if let Some(area) = self.content_area.as_ref()
+            && let Some((_, _, xid)) = area.target()
+        {
+            return Some(xid);
+        }
+        None
     }
 
     /// Load a ROM, syncing menu/title/redraw on success. Returns
