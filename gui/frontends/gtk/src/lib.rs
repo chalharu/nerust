@@ -424,12 +424,14 @@ pub fn run(ctx: FrontendContext, _options: RunOptions) {
         let current_window = current_window.clone();
         let _ = app.connect_open(move |app, files, _| {
             let window = ensure_window(app, &gpu_factory, &state, &current_window);
+            // Present first: a failure dialog raised by load_path must
+            // stay above the main window.
+            window.window().present();
             if let Some(path) = files.iter().find_map(|file| file.path()) {
                 // One path for every open: failure dialog and action
                 // sync live in `Window::load_path`.
                 window.load_path(&path);
             }
-            window.window().present();
         });
     }
 

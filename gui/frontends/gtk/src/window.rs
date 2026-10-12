@@ -406,7 +406,11 @@ impl WindowExtend for Window {
     }
 
     fn load_path(&self, path: &Path) {
-        if let Err(detail) = self.state().borrow_mut().load_path(path) {
+        // End the state borrow before presenting: the dialog reads
+        // settings back through the same RefCell, so holding the
+        // guard across the call would panic on double-borrow.
+        let detail = self.state().borrow_mut().load_path(path).err();
+        if let Some(detail) = detail {
             show_rom_load_error(&self.window(), self.state(), &detail);
         }
         self.update_actions();
@@ -660,5 +664,5 @@ fn show_rom_load_error(parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>
     let _ = dialog.connect_response(move |_, _| {
         dialog_clone.hide();
     });
-    dialog.show();
+    dialog.present();
 }
