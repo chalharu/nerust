@@ -38,6 +38,11 @@ use crate::{
     emu_core::EmuCore, registry::SystemRegistry, session::persistence::PersistenceManager, settings,
 };
 
+/// Live PPU image batch: generation plus one `(label, width, height,
+/// rgba)` tuple per image. Aliased so the fetch signature stays
+/// readable (clippy `type_complexity`).
+pub type LiveImages = Option<(u64, Vec<(String, u32, u32, Vec<u8>)>)>;
+
 struct CoreRuntime {
     emu_core: EmuCore,
     gui_input: GuiInput,
@@ -467,10 +472,7 @@ impl SessionHandle {
     /// returned images (plus the paused/status chrome) and leaves the
     /// last paused sections alone. `None` when imageless or when the
     /// fetch fails.
-    pub fn debug_live_images(
-        &self,
-        need_images: bool,
-    ) -> Option<(u64, Vec<(String, u32, u32, Vec<u8>)>)> {
+    pub fn debug_live_images(&self, need_images: bool) -> LiveImages {
         if !need_images {
             return None;
         }

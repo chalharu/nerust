@@ -1895,6 +1895,12 @@ impl FrontendSession for AndroidFrontend {
         self.exec(SessionCommand::Reset);
     }
 
+    fn unload(&mut self) {
+        if let Err(error) = self.session.unload() {
+            log::warn!("ROM unload failed: {error}");
+        }
+    }
+
     fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,

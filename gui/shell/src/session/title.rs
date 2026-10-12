@@ -4,6 +4,8 @@ pub fn window_title(
     paused: bool,
     console_metrics: ConsoleMetrics,
     system_name: Option<&str>,
+    active_slot: Option<u64>,
+    slot_count: usize,
 ) -> String {
     let label = system_name.unwrap_or("");
     let state = if paused {
@@ -11,13 +13,18 @@ pub fn window_title(
     } else {
         label.to_string()
     };
+    let slot = match active_slot {
+        Some(id) => format!(" | Slot {id} ({slot_count} slots)"),
+        None if slot_count > 0 => format!(" | {slot_count} slots"),
+        None => String::new(),
+    };
     if console_metrics.loaded {
         format!(
-            "{state} | FPS {:.1} | Speed x{:.2}",
+            "{state}{slot} | FPS {:.1} | Speed x{:.2}",
             console_metrics.emulation_fps, console_metrics.speed_multiplier
         )
     } else {
-        format!("{state} | No ROM")
+        format!("{state}{slot} | No ROM")
     }
 }
 
@@ -38,15 +45,30 @@ mod tests {
                 ..ConsoleMetrics::default()
             },
             Some("Nes"),
+            Some(2),
+            3,
         );
 
         assert!(title.contains("FPS 59.9"));
         assert!(title.contains("Speed x1.01"));
+        assert!(title.contains("Slot 2"));
+        assert!(title.contains("3 slots"));
     }
 
     #[test]
     fn window_title_marks_no_rom() {
-        assert!(window_title(true, ConsoleMetrics::default(), Some("Nes")).contains("Paused"));
-        assert!(window_title(true, ConsoleMetrics::default(), Some("Nes")).contains("No ROM"));
+        assert!(
+            window_title(true, ConsoleMetrics::default(), Some("Nes"), None, 0).contains("Paused")
+        );
+        assert!(
+            window_title(true, ConsoleMetrics::default(), Some("Nes"), None, 0).contains("No ROM")
+        );
+    }
+
+    #[test]
+    fn window_title_surfaces_slot_count_without_active_slot() {
+        let title = window_title(false, ConsoleMetrics::default(), Some("Nes"), None, 2);
+        assert!(title.contains("2 slots"));
+        assert!(!title.contains("Slot"));
     }
 }

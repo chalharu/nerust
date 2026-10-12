@@ -221,16 +221,16 @@ mod tests {
 
     fn cached(rows: bool) -> DisplayCache {
         DisplayCache {
-            dump_rows: rows
-                .then(|| {
-                    vec![HexRow {
-                        addr: 0x10,
-                        valid: 1,
-                        bytes: [0xAB, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                    }]
-                })
-                .unwrap_or_default(),
-            regs: rows.then(|| vec![("a", 1)]).unwrap_or_default(),
+            dump_rows: if rows {
+                vec![HexRow {
+                    addr: 0x10,
+                    valid: 1,
+                    bytes: [0xAB, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                }]
+            } else {
+                Vec::new()
+            },
+            regs: if rows { vec![("a", 1)] } else { Vec::new() },
             status: vm::StatusMessage::Paused,
             paused: true,
             ..DisplayCache::default()

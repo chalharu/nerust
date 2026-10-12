@@ -182,16 +182,18 @@ impl HostState {
             .map(|window| window_surface_size(window.inner_size()))
     }
 
-    pub(crate) fn load_path(&mut self, path: &Path) -> bool {
-        let result = self.ctx.rom_loader.load_rom(path, &mut self.session);
-        match result {
+    /// Load a ROM, syncing menu/title/redraw on success. Returns
+    /// the failure detail on error; presenting it (dialog) is the
+    /// caller's job so the file-dialog and startup paths can differ.
+    pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
+        match self.ctx.rom_loader.load_rom(path, &mut self.session) {
             Ok(()) => {
                 self.after_rom_load();
-                true
+                Ok(())
             }
-            Err(e) => {
-                log::warn!("ROM load failed: {e}");
-                false
+            Err(error) => {
+                log::warn!("ROM load failed: {error}");
+                Err(error.to_string())
             }
         }
     }
@@ -220,6 +222,10 @@ impl HostState {
                 } else {
                     HostAction::None
                 }
+            }
+            MenuCommand::Close => {
+                self.close_rom();
+                HostAction::None
             }
             MenuCommand::Settings => {
                 self.open_settings_window(event_loop);
@@ -406,10 +412,27 @@ impl HostState {
                 dialog = dialog.add_filter(format!("{} ROM", factory.display_name()), extensions);
             }
         }
-        dialog.pick_file().is_some_and(|path| self.load_path(&path))
+        let Some(path) = dialog.pick_file() else {
+            return false;
+        };
+        if let Err(detail) = self.load_path(&path) {
+            show_rom_load_error(
+                self.session.settings_snapshot().shared.general.language,
+                &detail,
+            );
+            return false;
+        }
+        true
     }
 
     fn after_rom_load(&mut self) {
+        self.sync_menu_state();
+        self.request_redraw();
+        self.refresh_window_title();
+    }
+
+    fn close_rom(&mut self) {
+        FrontendSession::unload(self);
         self.sync_menu_state();
         self.request_redraw();
         self.refresh_window_title();
@@ -876,6 +899,11 @@ impl FrontendSession for HostState {
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
     }
+    fn unload(&mut self) {
+        if let Err(error) = self.session.unload() {
+            log::warn!("ROM unload failed: {error}");
+        }
+    }
     fn run_command(&mut self, command: SessionCommand) {
         let _ = self.session.run_command(command);
     }
@@ -909,6 +937,21 @@ fn create_window_builder(
         .with_title(title)
         .with_inner_size(size)
         .with_fullscreen(fullscreen_mode(fullscreen))
+}
+
+/// Surface ROM load failures in a modal dialog: the previous
+/// warn-only path left the empty window with no explanation.
+pub(super) fn show_rom_load_error(
+    language: nerust_gui_settings::language::AppLanguage,
+    detail: &str,
+) {
+    let title = text(language, UiText::RomLoadFailed);
+    rfd::MessageDialog::new()
+        .set_title(title)
+        .set_description(detail)
+        .set_level(rfd::MessageLevel::Error)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
 }
 
 fn window_is_fullscreen(window: &TaoWindow) -> bool {

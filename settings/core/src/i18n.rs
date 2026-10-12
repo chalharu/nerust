@@ -18,6 +18,8 @@ pub enum UiText {
     SaveSlot,
     LoadSlot,
     DeleteSlot,
+    NoSaveSlots,
+    Help,
     About,
     Settings,
     Preferences,
@@ -114,6 +116,7 @@ pub enum UiText {
     NothingToWrite,
     PausedState,
     RunningState,
+    RomLoadFailed,
 }
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
@@ -155,6 +158,8 @@ fn english_text(key: UiText) -> &'static str {
         UiText::SaveSlot => "Save Slot",
         UiText::LoadSlot => "Load Slot",
         UiText::DeleteSlot => "Delete Slot",
+        UiText::NoSaveSlots => "No save slots yet",
+        UiText::Help => "Help",
         UiText::About => "About",
         UiText::Settings => "Settings",
         UiText::Preferences => "Preferences",
@@ -253,6 +258,7 @@ fn english_text(key: UiText) -> &'static str {
         UiText::NothingToWrite => "nothing to write",
         UiText::PausedState => "paused",
         UiText::RunningState => "running",
+        UiText::RomLoadFailed => "Failed to load ROM",
     }
 }
 
@@ -274,6 +280,8 @@ fn japanese_text(key: UiText) -> &'static str {
         UiText::SaveSlot => "スロットを保存",
         UiText::LoadSlot => "スロットを読み込み",
         UiText::DeleteSlot => "スロットを削除",
+        UiText::NoSaveSlots => "セーブスロットがありません",
+        UiText::Help => "ヘルプ",
         UiText::About => "情報",
         UiText::Settings => "設定",
         UiText::Preferences => "設定",
@@ -372,7 +380,15 @@ fn japanese_text(key: UiText) -> &'static str {
         UiText::NothingToWrite => "書込内容がありません",
         UiText::PausedState => "一時停止中",
         UiText::RunningState => "実行中",
+        UiText::RomLoadFailed => "ROMの読み込みに失敗しました",
     }
+}
+
+/// Menu label with a shortcut hint (`Save Active Slot (F5)`).
+/// One helper so every frontend advertises the same shortcuts
+/// instead of drifting copies per shell.
+pub fn menu_label_with_shortcut(label: &str, shortcut: &str) -> String {
+    format!("{label} ({shortcut})")
 }
 
 /// Parameterized debugger messages. `text()` covers fixed labels;
@@ -574,6 +590,9 @@ mod tests {
             NothingToWrite,
             PausedState,
             RunningState,
+            NoSaveSlots,
+            Help,
+            RomLoadFailed,
         ] {
             assert!(!text(en(), key).is_empty());
             assert!(!text(ja(), key).is_empty());

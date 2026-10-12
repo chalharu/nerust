@@ -80,11 +80,27 @@ impl WindowRuntime {
     }
 
     pub(crate) fn load_path(&mut self, path: &Path) -> bool {
-        let loaded = self.host.load_path(path);
-        if loaded {
-            self.recreate_renderer();
+        match self.host.load_path(path) {
+            Ok(()) => {
+                self.recreate_renderer();
+                true
+            }
+            Err(detail) => {
+                // Startup runs before the main window exists, so the
+                // standalone dialog is the only explanation for a bad
+                // `--rom` path.
+                host::show_rom_load_error(
+                    self.host
+                        .session()
+                        .settings_snapshot()
+                        .shared
+                        .general
+                        .language,
+                    &detail,
+                );
+                false
+            }
         }
-        loaded
     }
 
     pub(crate) fn run(mut self) {
