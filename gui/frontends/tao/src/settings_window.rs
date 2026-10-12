@@ -309,15 +309,25 @@ impl SettingsWindowHandle {
             messages.push(Message::CaptureKey(key));
         }
 
-        self.ui_state.ui_mut().update(
+        let (ui_outcome, _) = self.ui_state.ui_mut().update(
             &[mapped],
             self.cursor,
             &mut self.renderer.backend,
             &mut self.clipboard,
             &mut messages,
         );
+        let outcome = crate::iced_shell::pump_outcome(&ui_outcome);
+        match outcome {
+            crate::iced_shell::PumpOutcome::Rebuild => {
+                self.ui_state.view_invalidated.set(true);
+            }
+            crate::iced_shell::PumpOutcome::Repaint => {
+                self.window.request_redraw();
+            }
+            crate::iced_shell::PumpOutcome::Idle => {}
+        }
 
-        if !messages.is_empty() {
+        if !messages.is_empty() || matches!(outcome, crate::iced_shell::PumpOutcome::Rebuild) {
             let bounds = Viewport::with_physical_size(
                 Size::new(self.viewport_physical.0, self.viewport_physical.1),
                 self.scale_factor,

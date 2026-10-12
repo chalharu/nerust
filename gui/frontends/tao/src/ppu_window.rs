@@ -278,13 +278,24 @@ impl PpuWindowHandle {
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
-        let messages = self.ui_state.pump(
+        let (messages, outcome) = self.ui_state.pump(
             mapped,
             self.cursor,
             &mut self.clipboard,
             &mut self.renderer.backend,
         );
-        if !messages.is_empty() {
+        match outcome {
+            crate::iced_shell::PumpOutcome::Rebuild => {
+                self.bridge
+                    .ppu_invalidated
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+            crate::iced_shell::PumpOutcome::Repaint => {
+                self.window.request_redraw();
+            }
+            crate::iced_shell::PumpOutcome::Idle => {}
+        }
+        if !messages.is_empty() || matches!(outcome, crate::iced_shell::PumpOutcome::Rebuild) {
             let bounds = Viewport::with_physical_size(
                 Size::new(self.viewport_physical.0, self.viewport_physical.1),
                 self.scale_factor,
