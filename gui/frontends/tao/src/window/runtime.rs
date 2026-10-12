@@ -142,9 +142,9 @@ impl WindowRuntime {
                         self.host.clear_auto_paused();
                     }
                     self.host.request_redraw();
-                    // Keep the debugger toolbar truthful: a focus
-                    // resume changes the pause state behind its back.
-                    self.host.run_debug_drain(&[]);
+                    // Keep the debugger toolbar truthful without
+                    // re-hitting the emu thread when nothing moved.
+                    self.host.sync_debug_chrome();
                 }
                 WindowEvent::Focused(false) => {
                     self.host.active = false;
@@ -153,10 +153,9 @@ impl WindowRuntime {
                         self.host.set_auto_paused();
                     }
                     self.host.clear_keys();
-                    // Same agreement in the other direction: the drain
-                    // re-reads paused state into the toolbar and syncs
-                    // the menu/title with it.
-                    self.host.run_debug_drain(&[]);
+                    // Same agreement in the other direction, still
+                    // without redundant round-trips.
+                    self.host.sync_debug_chrome();
                 }
                 WindowEvent::Resized(_) => {
                     self.host.sync_fullscreen_default_from_window();
@@ -246,7 +245,7 @@ impl WindowRuntime {
                     handle.handle_tao_event(event);
                 }
                 if refocused {
-                    self.host.run_debug_drain(&[]);
+                    self.host.sync_debug_chrome();
                 }
                 self.host.drain_debug_requests();
                 if self.host.take_ppu_open_request() {

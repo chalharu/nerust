@@ -57,6 +57,9 @@ pub(crate) struct HostState {
     pending_fullscreen_sync: Option<bool>,
     pub(crate) active: bool,
     auto_paused: bool,
+    /// Pause state at the last completed debug drain, for focus
+    /// coalescing below. `None` before the first drain.
+    last_drain_paused: Option<bool>,
     /// Aux-window state (debugger + PPU viewer). Orchestration lives
     /// here; ownership lives there.
     pub(crate) debug: DebugWindows,
@@ -95,6 +98,7 @@ impl HostState {
             pending_fullscreen_sync: None,
             active: true,
             auto_paused: false,
+            last_drain_paused: None,
             debug: DebugWindows::new(),
         }
     }
@@ -701,7 +705,12 @@ impl HostState {
                         self.debug.ppu_window.is_some(),
                     )
                 }
-                None => return,
+                None => {
+                    // No round-trip ran, so nothing could have moved:
+                    // still record truth for the focus gate below.
+                    self.last_drain_paused = Some(self.session.paused());
+                    return;
+                }
             };
         let input = DebugDrainInput {
             space,
@@ -738,6 +747,30 @@ impl HostState {
         // "two Pause statuses" bug).
         self.sync_menu_state();
         self.refresh_window_title();
+        // Post-drain truth (the drain may itself pause/resume): focus
+        // flips compare against this to skip redundant emu
+        // round-trips (see `sync_debug_chrome`).
+        self.last_drain_paused = Some(self.session.paused());
+    }
+
+    /// Focus-driven chrome sync. Menu/title refresh is cheap and
+    /// local, so it always runs; the emu round-trip snapshot only
+    /// runs when the pause state moved since the last drain. A focus
+    /// flip with no state change (the common window-switching case)
+    /// must not re-hit the emu thread: one empty drain is up to four
+    /// sequential 5s-timeout round-trips, and flips arrive in bursts
+    /// (main blur + aux focus), which used to wedge the UI for tens
+    /// of seconds when the thread was slow.
+    pub(crate) fn sync_debug_chrome(&mut self) {
+        self.sync_menu_state();
+        self.refresh_window_title();
+        if chrome_drain_due(
+            self.debug.debug_window.is_some(),
+            self.last_drain_paused,
+            self.session.paused(),
+        ) {
+            self.run_debug_drain(&[]);
+        }
     }
 
     pub(crate) fn close_settings_window(
@@ -844,6 +877,14 @@ impl HostState {
             log::warn!("failed to remember tao window size: {error}");
         }
     }
+}
+
+/// Focus-drain gate, pure for tests: a full snapshot runs only with
+/// an open debugger window whose pause state moved since the last
+/// drain. Everything else is menu/title truth, which the caller
+/// refreshes unconditionally.
+fn chrome_drain_due(debug_open: bool, last_drain_paused: Option<bool>, paused: bool) -> bool {
+    debug_open && last_drain_paused != Some(paused)
 }
 
 impl FrontendSession for HostState {
@@ -1028,7 +1069,10 @@ fn element_state_to_pressed(state: ElementState) -> Option<bool> {
 mod tests {
     use tao::{dpi::LogicalSize as TaoLogicalSize, window::Fullscreen};
 
-    use super::{NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync};
+    use super::{
+        NativeFullscreenSync, chrome_drain_due, create_window_builder,
+        derive_native_fullscreen_sync,
+    };
 
     #[test]
     fn window_builder_requests_initial_fullscreen_when_enabled() {
@@ -1080,5 +1124,22 @@ mod tests {
                 persist_setting: true,
             }
         );
+    }
+
+    #[test]
+    fn focus_chrome_drains_only_on_pause_transitions() {
+        // Closed debugger: never worth a round-trip.
+        assert!(!chrome_drain_due(false, None, false));
+        assert!(!chrome_drain_due(false, Some(true), false));
+        // First focus sync establishes the baseline.
+        assert!(chrome_drain_due(true, None, true));
+        assert!(chrome_drain_due(true, None, false));
+        // Steady state: focus flips stay local-only.
+        assert!(!chrome_drain_due(true, Some(true), true));
+        assert!(!chrome_drain_due(true, Some(false), false));
+        // A pause flip behind the toolbar's back (F9, auto-pause)
+        // re-arms exactly one drain.
+        assert!(chrome_drain_due(true, Some(true), false));
+        assert!(chrome_drain_due(true, Some(false), true));
     }
 }
