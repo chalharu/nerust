@@ -99,6 +99,21 @@ pub fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
     ]
 }
 
+/// Display label for an action's current binding (`F4`, `Space`),
+/// or `None` when the action is unbound. Menu builders use this so
+/// rebinding (or unbinding) in Settings updates the advertised
+/// shortcut instead of showing a stale hardcoded default.
+pub fn shortcut_key_label(
+    bindings: &[ShortcutBinding],
+    action: ShortcutAction,
+) -> Option<&'static str> {
+    bindings
+        .iter()
+        .find(|binding| binding.action == action)
+        .and_then(|binding| binding.key.as_ref())
+        .map(|key| key.label())
+}
+
 /// Migrate persisted shortcuts forward: append defaults for actions
 /// the file predates (e.g. `OpenDebugger` on files seeded before it
 /// existed). User bindings are never touched; when the default key is
@@ -245,5 +260,34 @@ mod tests {
             .find(|binding| binding.action == ShortcutAction::TogglePause)
             .expect("user binding");
         assert_eq!(pause.key, Some(Key::F4));
+    }
+
+    #[test]
+    fn shortcut_key_label_follows_rebinding() {
+        // Defaults advertise F4/F5.
+        let defaults = default_shortcut_bindings();
+        assert_eq!(
+            shortcut_key_label(&defaults, ShortcutAction::OpenDebugger),
+            Some("F4")
+        );
+        // A rebound action advertises the new key, never the default.
+        let rebound = vec![ShortcutBinding {
+            action: ShortcutAction::OpenDebugger,
+            key: Some(Key::F2),
+        }];
+        assert_eq!(
+            shortcut_key_label(&rebound, ShortcutAction::OpenDebugger),
+            Some("F2")
+        );
+        // Unbound actions (and unknown lookups) advertise nothing.
+        let unbound = vec![ShortcutBinding {
+            action: ShortcutAction::OpenDebugger,
+            key: None,
+        }];
+        assert_eq!(
+            shortcut_key_label(&unbound, ShortcutAction::OpenDebugger),
+            None
+        );
+        assert_eq!(shortcut_key_label(&unbound, ShortcutAction::Reset), None);
     }
 }

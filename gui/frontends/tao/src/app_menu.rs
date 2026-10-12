@@ -1,4 +1,6 @@
 use nerust_gui_runtime::slots::slot_label;
+use nerust_gui_settings::input::ShortcutBinding;
+use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_persistence::model::StateSlotSummary;
 use tao::window::Window as TaoWindow;
@@ -23,6 +25,19 @@ pub(crate) enum UserEvent {
     LiveTick,
 }
 
+/// One snapshot for a menu sync: a struct (not a long argument
+/// list) so adding a field never trips the arity lint. Shared by
+/// the real menu and the headless stub below.
+pub(crate) struct MenuSync<'a> {
+    pub(crate) loaded: bool,
+    pub(crate) paused: bool,
+    pub(crate) slots: &'a [StateSlotSummary],
+    pub(crate) active_slot: Option<u64>,
+    pub(crate) settings_open: bool,
+    pub(crate) language: AppLanguage,
+    pub(crate) shortcuts: &'a [ShortcutBinding],
+}
+
 #[cfg(any(
     target_os = "linux",
     target_os = "dragonfly",
@@ -44,6 +59,7 @@ pub(crate) mod imp {
     ))]
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
+    use nerust_gui_settings::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
     use nerust_gui_settings::language::AppLanguage;
     use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
     use tao::event_loop::EventLoopProxy;
@@ -60,7 +76,9 @@ pub(crate) mod imp {
     #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowExtWindows;
 
-    use super::{MenuCommand, SessionCommand, StateSlotSummary, TaoWindow, UserEvent, slot_label};
+    use super::{
+        MenuCommand, MenuSync, SessionCommand, StateSlotSummary, TaoWindow, UserEvent, slot_label,
+    };
 
     pub(crate) struct AppMenu {
         menu_bar: Menu,
@@ -118,14 +136,17 @@ pub(crate) mod imp {
             let open = MenuItem::new("Open ROM...", true, None);
             let close = MenuItem::new("Close", true, None);
             let settings = MenuItem::new("Settings...", true, None);
-            let debugger = MenuItem::new("Open Debugger (F4)", true, None);
+            // Shortcut hints are filled by `update` from the live
+            // bindings; the constructor keeps plain labels so a
+            // rebound key never flashes the stale default first.
+            let debugger = MenuItem::new("Open Debugger", true, None);
             let pause = MenuItem::new("Pause", true, None);
             let resume = MenuItem::new("Resume", false, None);
             let reset = MenuItem::new("Reset", true, None);
             let quit = MenuItem::new("Quit", true, None);
             let create_slot = MenuItem::new("Create New Slot", true, None);
-            let save_active = MenuItem::new("Save Active Slot (F5)", true, None);
-            let load_active = MenuItem::new("Load Active Slot (F8)", false, None);
+            let save_active = MenuItem::new("Save Active Slot", true, None);
+            let load_active = MenuItem::new("Load Active Slot", false, None);
 
             let open_id = open.id().clone();
             let close_id = close.id().clone();
@@ -249,28 +270,25 @@ pub(crate) mod imp {
             }
         }
 
-        pub(crate) fn update(
-            &mut self,
-            loaded: bool,
-            paused: bool,
-            slots: &[StateSlotSummary],
-            active_slot: Option<u64>,
-            settings_open: bool,
-            language: AppLanguage,
-        ) {
-            self.update_labels(language);
-            self.open.set_enabled(!settings_open);
-            self.close.set_enabled(!settings_open && loaded);
-            self.settings.set_enabled(!settings_open);
-            self.pause.set_enabled(!settings_open && loaded && !paused);
-            self.resume.set_enabled(!settings_open && loaded && paused);
-            self.reset.set_enabled(!settings_open && loaded);
-            self.debugger.set_enabled(!settings_open && loaded);
-            self.create_slot.set_enabled(!settings_open && loaded);
-            self.save_active.set_enabled(!settings_open && loaded);
+        pub(crate) fn update(&mut self, sync: MenuSync<'_>) {
+            self.update_labels(sync.language, sync.shortcuts);
+            self.open.set_enabled(!sync.settings_open);
+            self.close.set_enabled(!sync.settings_open && sync.loaded);
+            self.settings.set_enabled(!sync.settings_open);
+            self.pause
+                .set_enabled(!sync.settings_open && sync.loaded && !sync.paused);
+            self.resume
+                .set_enabled(!sync.settings_open && sync.loaded && sync.paused);
+            self.reset.set_enabled(!sync.settings_open && sync.loaded);
+            self.debugger
+                .set_enabled(!sync.settings_open && sync.loaded);
+            self.create_slot
+                .set_enabled(!sync.settings_open && sync.loaded);
+            self.save_active
+                .set_enabled(!sync.settings_open && sync.loaded);
             self.load_active
-                .set_enabled(!settings_open && loaded && active_slot.is_some());
-            self.rebuild_dynamic_slot_menus(slots, active_slot, language);
+                .set_enabled(!sync.settings_open && sync.loaded && sync.active_slot.is_some());
+            self.rebuild_dynamic_slot_menus(sync.slots, sync.active_slot, sync.language);
         }
 
         pub(crate) fn clear_event_handler(&self) {
@@ -335,7 +353,7 @@ pub(crate) mod imp {
                 .unwrap_or_else(|err| err.into_inner()) = commands;
         }
 
-        fn update_labels(&self, language: AppLanguage) {
+        fn update_labels(&self, language: AppLanguage, shortcuts: &[ShortcutBinding]) {
             self.file_menu.set_text(text(language, UiText::File));
             self.emulation_menu
                 .set_text(text(language, UiText::Emulation));
@@ -354,21 +372,38 @@ pub(crate) mod imp {
             self.close.set_text(text(language, UiText::Close));
             self.settings
                 .set_text(format!("{}...", text(language, UiText::Settings)));
-            self.debugger.set_text(text(language, UiText::OpenDebugger));
+            self.debugger.set_text(shortcut_hint(
+                text(language, UiText::OpenDebugger),
+                shortcuts,
+                ShortcutAction::OpenDebugger,
+            ));
             self.pause.set_text(text(language, UiText::Pause));
             self.resume.set_text(text(language, UiText::Resume));
             self.reset.set_text(text(language, UiText::Reset));
             self.quit.set_text(text(language, UiText::Quit));
             self.create_slot
                 .set_text(text(language, UiText::CreateSaveSlot));
-            self.save_active.set_text(menu_label_with_shortcut(
+            self.save_active.set_text(shortcut_hint(
                 text(language, UiText::SaveActiveSlot),
-                "F5",
+                shortcuts,
+                ShortcutAction::SaveActiveSlot,
             ));
-            self.load_active.set_text(menu_label_with_shortcut(
+            self.load_active.set_text(shortcut_hint(
                 text(language, UiText::LoadActiveSlot),
-                "F8",
+                shortcuts,
+                ShortcutAction::LoadActiveSlot,
             ));
+        }
+    }
+
+    /// Menu label with the action's *current* shortcut hint
+    /// (`Save Active Slot (F5)`), or the bare label when unbound.
+    /// Binding-driven so Settings rebinding never leaves a stale
+    /// hardcoded key in the menu.
+    fn shortcut_hint(base: &str, shortcuts: &[ShortcutBinding], action: ShortcutAction) -> String {
+        match shortcut_key_label(shortcuts, action) {
+            Some(key) => menu_label_with_shortcut(base, key),
+            None => base.to_string(),
         }
     }
 
@@ -392,7 +427,7 @@ pub(crate) mod imp {
     use nerust_gui_settings::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
 
-    use super::{StateSlotSummary, TaoWindow, UserEvent};
+    use super::{MenuSync, StateSlotSummary, TaoWindow, UserEvent};
 
     pub(crate) struct AppMenu;
 
@@ -403,16 +438,7 @@ pub(crate) mod imp {
 
         pub(crate) fn init_for_window(&self, _window: &TaoWindow) {}
 
-        pub(crate) fn update(
-            &mut self,
-            _loaded: bool,
-            _paused: bool,
-            _slots: &[StateSlotSummary],
-            _active_slot: Option<u64>,
-            _settings_open: bool,
-            _language: AppLanguage,
-        ) {
-        }
+        pub(crate) fn update(&mut self, _sync: MenuSync<'_>) {}
 
         pub(crate) fn clear_event_handler(&self) {}
     }

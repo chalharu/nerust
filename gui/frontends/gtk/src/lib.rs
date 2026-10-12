@@ -21,6 +21,7 @@ use gtk::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
+use nerust_gui_settings::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
 use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::{
     context::FrontendContext,
@@ -256,8 +257,17 @@ fn build_window(
     let delete_slot_menu = gio::Menu::new();
 
     let language = state.borrow().settings_snapshot().shared.general.language;
+    let shortcuts = state
+        .borrow()
+        .settings_snapshot()
+        .shared
+        .input
+        .shortcuts
+        .keyboard
+        .clone();
     let menu_model = build_menu_model(
         language,
+        &shortcuts,
         &state_menu,
         &select_active_slot_menu,
         &save_slot_menu,
@@ -322,8 +332,20 @@ fn build_window(
     )
 }
 
+/// Menu label with the action's *current* shortcut hint, or the
+/// bare label when unbound. Binding-driven (tao twin:
+/// `shortcut_hint`) so Settings rebinding never leaves a stale
+/// hardcoded key in the menu.
+fn shortcut_hint(base: &str, shortcuts: &[ShortcutBinding], action: ShortcutAction) -> String {
+    match shortcut_key_label(shortcuts, action) {
+        Some(key) => menu_label_with_shortcut(base, key),
+        None => base.to_string(),
+    }
+}
+
 pub(crate) fn build_menu_model(
     language: AppLanguage,
+    shortcuts: &[ShortcutBinding],
     state_menu: &gio::Menu,
     select_active_slot_menu: &gio::Menu,
     save_slot_menu: &gio::Menu,
@@ -336,16 +358,18 @@ pub(crate) fn build_menu_model(
         Some("win.state-create"),
     );
     state_menu.append(
-        Some(&menu_label_with_shortcut(
+        Some(&shortcut_hint(
             text(language, UiText::SaveActiveSlot),
-            "F5",
+            shortcuts,
+            ShortcutAction::SaveActiveSlot,
         )),
         Some("win.state-save-active"),
     );
     state_menu.append(
-        Some(&menu_label_with_shortcut(
+        Some(&shortcut_hint(
             text(language, UiText::LoadActiveSlot),
-            "F8",
+            shortcuts,
+            ShortcutAction::LoadActiveSlot,
         )),
         Some("win.state-load-active"),
     );
@@ -364,15 +388,19 @@ pub(crate) fn build_menu_model(
     file_menu.append(Some(text(language, UiText::Quit)), Some("app.quit"));
 
     // Order mirrors the tao frontend: Pause, Resume, Reset, Save
-    // States, Debugger. The debugger label carries its default
-    // shortcut like tao so both shells advertise F4/F5/F8.
+    // States, Debugger. The debugger label carries its live
+    // shortcut like tao so both shells advertise the same keys.
     let emulation_menu = gio::Menu::new();
     emulation_menu.append(Some(text(language, UiText::Pause)), Some("win.pause"));
     emulation_menu.append(Some(text(language, UiText::Resume)), Some("win.resume"));
     emulation_menu.append(Some(text(language, UiText::Reset)), Some("win.reset"));
     emulation_menu.append_submenu(Some(text(language, UiText::SaveStates)), state_menu);
     emulation_menu.append(
-        Some(text(language, UiText::OpenDebugger)),
+        Some(&shortcut_hint(
+            text(language, UiText::OpenDebugger),
+            shortcuts,
+            ShortcutAction::OpenDebugger,
+        )),
         Some("win.debugger"),
     );
 

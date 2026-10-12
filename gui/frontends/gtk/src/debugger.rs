@@ -1666,6 +1666,22 @@ mod tests {
     }
 
     #[test]
+    fn widget_close_request_hides_and_represents() {
+        let Some((_app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
+            return;
+        };
+        // A real window-manager close drives delete-event (not an
+        // external X destroy): the handler hides the window and the
+        // idempotent reopen path re-presents it. Both must survive
+        // without touching a dead drawable.
+        win.borrow().window.close();
+        assert!(!win.borrow().window.is_visible());
+        win.borrow().present();
+        assert!(win.borrow().window.is_visible());
+    }
+
+    #[test]
     fn widget_ppu_opens_and_represents() {
         let Some((_app, _main, win)) = open_test_window() else {
             eprintln!("SKIP: debugger widget test needs a display");
