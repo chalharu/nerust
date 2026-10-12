@@ -108,8 +108,11 @@ pub(crate) fn display_to_raw(display: &gdk::Display) -> Option<RawDisplayHandle>
         // GDK4 (unlike GDK3) does not support multiple X screens — the display
         // always has exactly one root window.  screen = 0 is therefore correct
         // for all GDK4 + X11 environments.
+        #[cfg(all(unix, not(target_os = "macos")))]
         let xdisplay =
             unsafe { gdk4_x11_sys::gdk_x11_display_get_xdisplay(display.as_ptr().cast()) };
+        #[cfg(target_os = "macos")]
+        let xdisplay = display.as_ptr();
         Some(RawDisplayHandle::Xlib(
             raw_window_handle::XlibDisplayHandle::new(NonNull::new(xdisplay.cast()), 0),
         ))
