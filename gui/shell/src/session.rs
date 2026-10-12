@@ -461,6 +461,31 @@ impl SessionHandle {
         snapshot
     }
 
+    /// Images-only refresh for the live PPU follow while the core
+    /// runs. Unlike [`SessionHandle::debug_snapshot`], this never
+    /// touches inspect or disassembly: those are paused-gated and come
+    /// back degenerate while running, which would blank the dump and
+    /// registers the user paused on. The live tick patches only the
+    /// returned images (plus the paused/status chrome) and leaves the
+    /// last paused sections alone. `None` when imageless or when the
+    /// fetch fails.
+    pub fn debug_live_images(
+        &self,
+        need_images: bool,
+    ) -> Option<(u64, Vec<(String, u32, u32, Vec<u8>)>)> {
+        if !need_images {
+            return None;
+        }
+        let core = self.emu_core.as_ref()?;
+        match core.debug_images() {
+            Ok(Ok((generation, images))) => Some((
+                generation,
+                images.iter().map(debug_vm::rgba_image).collect(),
+            )),
+            _ => None,
+        }
+    }
+
     /// Single-byte read for old-value display and watch values.
     pub fn debug_read_byte(
         &self,

@@ -15,6 +15,11 @@ pub(crate) enum MenuCommand {
 #[derive(Debug)]
 pub(crate) enum UserEvent {
     Menu(MenuCommand),
+    /// Periodic live-follow pulse for the PPU viewer (see
+    /// `WindowRuntime::run`): user events always wake a `Wait` loop,
+    /// unlike timer-based waits. The handler no-ops unless a running
+    /// core has the viewer open.
+    LiveTick,
 }
 
 #[cfg(any(

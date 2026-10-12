@@ -757,6 +757,33 @@ fn debug_snapshot_covers_loaded_mock_core() {
 }
 
 #[test]
+fn debug_live_images_follow_running_without_snapshot() {
+    use crate::debug::DebugAction;
+    let session = loaded_debug_session();
+    let input = drain_input(AppLanguage::English);
+    // Paused baseline carries dump rows.
+    let paused = session.debug_drain(&[DebugAction::Refresh], &input);
+    assert!(!paused.display.dump_rows.is_empty());
+    assert!(session.debug_live_images(false).is_none());
+    let paused_live = session.debug_live_images(true);
+    assert!(paused_live.is_some_and(|(_, images)| images.len() == 1));
+    // Resume: the full snapshot goes degenerate because the inspect
+    // is paused-gated (running reads cannot pin a frame)...
+    session.debug_drain(&[DebugAction::Resume], &input);
+    let running = session.debug_drain(&[], &input);
+    assert_eq!(running.display.status, "running");
+    assert!(
+        running.display.dump_rows.is_empty(),
+        "inspect refuses while running"
+    );
+    // ...but the live images path still flows, so the PPU follow
+    // never needs (or blanks) the snapshot sections.
+    let live = session.debug_live_images(true);
+    assert!(live.is_some_and(|(_, images)| images.len() == 1));
+    session.debug_drain(&[DebugAction::Pause], &input);
+}
+
+#[test]
 fn debug_drain_happy_path_reports_success() {
     use crate::debug::DebugAction;
     let session = loaded_debug_session();

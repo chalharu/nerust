@@ -90,6 +90,22 @@ impl WindowRuntime {
         self.host.resume_session();
         let event_loop = self.event_loop.take().unwrap();
 
+        // Live-follow pulse: a helper thread nudges the loop every
+        // interval so the PPU viewer tracks a running core even when
+        // no input or redraw events arrive (a sleeping `Wait` loop
+        // would otherwise collapse the cadence to zero). The pulse
+        // handler is throttle-guarded and no-ops when inactive; the
+        // thread exits once the loop is gone.
+        let tick_proxy = event_loop.create_proxy();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                if tick_proxy.send_event(UserEvent::LiveTick).is_err() {
+                    break;
+                }
+            }
+        });
+
         event_loop.run(move |event, event_loop, control_flow| match event {
             Event::NewEvents(StartCause::Init) => {
                 self.host.ensure_window(event_loop);
@@ -279,6 +295,7 @@ impl WindowRuntime {
             }
             Event::MainEventsCleared => self.host.update_control_flow(control_flow),
             Event::UserEvent(command) => match command {
+                UserEvent::LiveTick => self.host.live_tick(),
                 UserEvent::Menu(command) => {
                     let action = self.host.on_menu_command(command, event_loop);
                     match action {

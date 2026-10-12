@@ -330,11 +330,36 @@ impl HostState {
         self.maybe_refresh_window_title(Instant::now());
         self.maybe_live_ppu();
         *control_flow = ControlFlow::Wait;
+        // While the PPU follows a running core, wake for the next
+        // tick: plain Wait sleeps until the next input event, which
+        // would collapse the live cadence to zero whenever the aux
+        // windows (not the main one) hold focus.
+        if self.debug_window.is_some()
+            && self.ppu_window.is_some()
+            && self.session.loaded()
+            && !self.session.paused()
+        {
+            let next = self
+                .last_ppu_live
+                .map(|last| last + PPU_LIVE_INTERVAL)
+                .unwrap_or_else(Instant::now);
+            *control_flow = ControlFlow::WaitUntil(next);
+        }
 
         // On macOS, request_redraw() integrates with CVDisplayLink/vsync.
         // On other platforms, it fires on the next event loop iteration.
         // When inactive, no redraw is requested — event loop sleeps (CPU 0%).
-        if self.active
+        //
+        // Exception: while the PPU follows a running core, the main
+        // window keeps repainting too. That keeps the loop pumping so
+        // the live cadence above actually fires (a bare WaitUntil does
+        // not reliably wake the loop on its own); the cost is one
+        // running frame render, the same as normal play.
+        let live = self.debug_window.is_some()
+            && self.ppu_window.is_some()
+            && self.session.loaded()
+            && !self.session.paused();
+        if (self.active || live)
             && let Some(window) = self.window.as_ref()
         {
             window.request_redraw();
@@ -449,10 +474,19 @@ impl HostState {
         }
     }
 
-    /// Live PPU follow while the core runs: an empty drain every
-    /// interval re-reads (images included) so the viewer tracks the
-    /// running picture. Paused cores never change memory, so no
-    /// periodic work happens there — demand drains already refresh.
+    /// Live-follow pulse entry (timer thread via `UserEvent::LiveTick`).
+    /// Throttle-guarded inside; no-ops unless a running core has the
+    /// viewer open.
+    pub(crate) fn live_tick(&mut self) {
+        self.maybe_live_ppu();
+    }
+
+    /// Live PPU follow while the core runs: an images-only refresh
+    /// every interval so the viewer tracks the running picture. A full
+    /// drain is wrong here: the paused-gated inspect refuses while
+    /// running and would blank the dump/registers. Paused cores never
+    /// change memory, so no periodic work happens there — demand
+    /// drains already refresh.
     fn maybe_live_ppu(&mut self) {
         if self.ppu_window.is_none() || self.debug_window.is_none() {
             return;
@@ -468,7 +502,30 @@ impl HostState {
             return;
         }
         self.last_ppu_live = Some(now);
-        self.run_debug_drain(&[]);
+        let Some((generation, images)) = self.session.debug_live_images(true) else {
+            log::warn!("live tick: fetch-none");
+            return;
+        };
+        let Some(handle) = self.debug_window.as_mut() else {
+            return;
+        };
+        let language = handle.bridge.language;
+        {
+            let mut display = handle.bridge.display.lock().unwrap();
+            if display.images_gen == generation {
+                return;
+            }
+            display.images = images;
+            display.images_gen = generation;
+            display.paused = false;
+            display.status = text(language, UiText::RunningState).to_string();
+        }
+        // Rebuild, not just repaint: the patch lands in bridge state,
+        // and only a rebuild re-reads it into the widget tree.
+        handle.sync_from_bridge();
+        if let Some(ppu) = self.ppu_window.as_mut() {
+            ppu.sync_from_bridge();
+        }
     }
 
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
@@ -693,7 +750,15 @@ impl HostState {
             if let Some(selected) = output.reselected {
                 *handle.bridge.selected.lock().unwrap() = Some(selected);
             }
-            handle.set_display(output.display);
+            // Running drains come back section-degenerate (paused
+            // gate): restore the last paused rows so Resume keeps the
+            // inspectable state instead of blanking it.
+            let mut display = output.display;
+            {
+                let old = handle.bridge.display.lock().unwrap().clone();
+                nerust_gui_shell::debug::merge_running_sections(&old, &mut display);
+            }
+            handle.set_display(display);
         }
         // PPU viewer follows the same drain (one scale per drain).
         if let Some(ppu) = self.ppu_window.as_mut() {
