@@ -1233,10 +1233,9 @@ impl DebugWindowHandle {
 
     pub(crate) fn set_scale_factor(&mut self, scale_factor: f32) {
         self.scale_factor = scale_factor;
-        // Scale changes move every layout bound: rebuild like resize.
+        // Scale changes move every layout bound: relayout like resize.
         let bounds = crate::iced_shell::logical_bounds(self.viewport_physical, self.scale_factor);
-        self.ui_state
-            .rebuild(self.window_id, bounds, &mut self.renderer.backend);
+        self.ui_state.relayout(bounds, &mut self.renderer.backend);
         self.window.request_redraw();
     }
 
@@ -1259,11 +1258,10 @@ impl DebugWindowHandle {
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.viewport_physical = (width, height);
         self.renderer.resize(width, height);
-        // Rebuild with the new bounds now: otherwise the widgets keep
-        // the open-time layout until the next message arrives.
+        // Relayout only (no view rebuild): retained widgets reflow
+        // against the fresh bounds, so `Fill` tracks live resize.
         let bounds = crate::iced_shell::logical_bounds((width, height), self.scale_factor);
-        self.ui_state
-            .rebuild(self.window_id, bounds, &mut self.renderer.backend);
+        self.ui_state.relayout(bounds, &mut self.renderer.backend);
         self.window.request_redraw();
     }
 

@@ -316,19 +316,17 @@ impl PpuWindowHandle {
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.viewport_physical = (width, height);
         self.renderer.resize(width, height);
-        // Same rebuild-on-resize contract as the debugger: the tiles
-        // reflow immediately instead of waiting for the next Sync.
+        // Same relayout contract as the debugger: retained tiles
+        // reflow against the fresh bounds, no view rebuild.
         let bounds = crate::iced_shell::logical_bounds((width, height), self.scale_factor);
-        self.ui_state
-            .rebuild(self.window_id, bounds, &mut self.renderer.backend);
+        self.ui_state.relayout(bounds, &mut self.renderer.backend);
         self.window.request_redraw();
     }
 
     pub(crate) fn set_scale_factor(&mut self, sf: f32) {
         self.scale_factor = sf;
         let bounds = crate::iced_shell::logical_bounds(self.viewport_physical, self.scale_factor);
-        self.ui_state
-            .rebuild(self.window_id, bounds, &mut self.renderer.backend);
+        self.ui_state.relayout(bounds, &mut self.renderer.backend);
         self.window.request_redraw();
     }
 

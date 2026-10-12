@@ -37,8 +37,10 @@ use crate::{
 /// This makes the phantom lifetime safety explicit via Drop rather than
 /// relying on struct field declaration order.
 pub(crate) struct UiState {
-    ui: std::mem::ManuallyDrop<
-        UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
+    ui: Option<
+        std::mem::ManuallyDrop<
+            UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
+        >,
     >,
     instance: program::Instance<SettingsAppProgram>,
     view_invalidated: Rc<Cell<bool>>,
@@ -77,7 +79,7 @@ impl UiState {
     ) -> Self {
         let ui = Self::build_ui(&instance, window_id, bounds, Cache::default(), renderer);
         Self {
-            ui: std::mem::ManuallyDrop::new(ui),
+            ui: Some(std::mem::ManuallyDrop::new(ui)),
             instance,
             view_invalidated,
         }
@@ -86,35 +88,23 @@ impl UiState {
     fn ui_mut(
         &mut self,
     ) -> &mut UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer> {
-        &mut self.ui
+        self.ui
+            .as_deref_mut()
+            .expect("UiState used after a panicked relayout")
     }
 
-    /// Rebuild the layout with new bounds unconditionally (resize and
-    /// scale-factor paths share the debugger's contract: controls
-    /// reflow immediately instead of waiting for the next message).
-    fn rebuild(
-        &mut self,
-        window_id: iced::window::Id,
-        bounds: Size,
-        renderer: &mut iced_tiny_skia::Renderer,
-    ) {
-        let placeholder = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(
-                &self.instance,
-                window_id,
-                bounds,
-                Cache::default(),
-                renderer,
-            ),
-        );
-        let cache = placeholder.into_cache();
-        let stale = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
-        );
-        let _ = stale.into_cache();
-        self.view_invalidated.set(false);
+    /// Relayout for a new size (resize/scale paths): one layout pass
+    /// reusing the retained tree and widget state, mirroring the
+    /// debugger shell. Unlike the old rebuild this never clears a
+    /// pending view invalidation: program-state updates still rebuild
+    /// through `process_messages`.
+    fn relayout(&mut self, bounds: Size, renderer: &mut iced_tiny_skia::Renderer) {
+        let Some(owned) = self.ui.take() else {
+            return;
+        };
+        let inner = std::mem::ManuallyDrop::into_inner(owned);
+        let rebuilt = inner.relayout(bounds, renderer);
+        self.ui = Some(std::mem::ManuallyDrop::new(rebuilt));
     }
 
     /// Process messages, then conditionally rebuild UI.
@@ -134,16 +124,16 @@ impl UiState {
         }
 
         // Step 1: Replace UI with a placeholder, extract old cache.
-        let placeholder = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(
-                &self.instance,
-                window_id,
-                bounds,
-                Cache::default(),
-                renderer,
-            ),
+        // (Built first so the `&self.instance` borrow ends before the
+        // swap takes `&mut self`.)
+        let placeholder_ui = Self::build_ui(
+            &self.instance,
+            window_id,
+            bounds,
+            Cache::default(),
+            renderer,
         );
+        let placeholder = std::mem::replace(self.ui_mut(), placeholder_ui);
         let cache = placeholder.into_cache();
 
         // Step 2: Process messages (mutate instance state).
@@ -155,10 +145,8 @@ impl UiState {
         }
 
         // Step 3: Replace placeholder with real UI from new state + cache.
-        let stale = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
-        );
+        let real_ui = Self::build_ui(&self.instance, window_id, bounds, cache, renderer);
+        let stale = std::mem::replace(self.ui_mut(), real_ui);
         let _ = stale.into_cache(); // discard placeholder
 
         self.view_invalidated.set(false);
@@ -169,7 +157,10 @@ impl Drop for UiState {
     fn drop(&mut self) {
         // SAFETY: UI has a phantom lifetime tied to Instance.
         // Dropping UI before Instance prevents dangling reference.
-        unsafe { std::mem::ManuallyDrop::drop(&mut self.ui) };
+        // `None` only after a panicked relayout, with nothing left.
+        if let Some(mut ui) = self.ui.take() {
+            unsafe { std::mem::ManuallyDrop::drop(&mut ui) };
+        }
     }
 }
 
@@ -423,10 +414,9 @@ impl SettingsWindowHandle {
             self.viewport_physical.0 as f32 / self.scale_factor,
             self.viewport_physical.1 as f32 / self.scale_factor,
         );
-        let window_id = self.window_id;
         let bounds = self.viewport;
         let backend = &mut self.renderer.backend;
-        self.ui_state.rebuild(window_id, bounds, backend);
+        self.ui_state.relayout(bounds, backend);
         self.window.request_redraw();
     }
 }

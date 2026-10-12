@@ -158,10 +158,14 @@ impl ShellRenderer {
 }
 
 /// Program UI instance plus its manual lifetime. Generic over the
-/// program so the debugger and PPU viewer share build, rebuild, and
+/// program so the debugger and PPU viewer share build, relayout, and
 /// drop instead of mirroring them.
+///
+/// The interface lives behind `Option` so resize can *move* it out
+/// for iced's consuming `relayout` and store the result back: a panic
+/// mid-relayout leaves a valid `None`, never uninitialized memory.
 pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
-    ui: std::mem::ManuallyDrop<UserInterface<'static, P::Message, iced::Theme, Renderer>>,
+    ui: Option<std::mem::ManuallyDrop<UserInterface<'static, P::Message, iced::Theme, Renderer>>>,
     instance: program::Instance<P>,
 }
 
@@ -197,13 +201,15 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     ) -> Self {
         let ui = Self::build_ui(&instance, window_id, bounds, Cache::default(), renderer);
         Self {
-            ui: std::mem::ManuallyDrop::new(ui),
+            ui: Some(std::mem::ManuallyDrop::new(ui)),
             instance,
         }
     }
 
     pub fn ui_mut(&mut self) -> &mut UserInterface<'static, P::Message, iced::Theme, Renderer> {
-        &mut self.ui
+        self.ui
+            .as_deref_mut()
+            .expect("UiShell used after a panicked relayout")
     }
 
     /// Push one program message without a rebuild (Sync-style refresh
@@ -212,27 +218,19 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         let _task = self.instance.update(message);
     }
 
-    /// Rebuild the layout with new bounds unconditionally (resize and
-    /// scale-factor paths). Without this the widgets keep the
-    /// open-time size until the next message rebuilds them — the
-    /// reported "resize does nothing until something updates" bug.
-    pub fn rebuild(&mut self, window_id: iced::window::Id, bounds: Size, renderer: &mut Renderer) {
-        let placeholder = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(
-                &self.instance,
-                window_id,
-                bounds,
-                Cache::default(),
-                renderer,
-            ),
-        );
-        let cache = placeholder.into_cache();
-        let stale = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
-        );
-        let _ = stale.into_cache();
+    /// Relayout for a new size: iced's own resize contract (the
+    /// official shell calls `UserInterface::relayout` on resize).
+    /// One layout pass reuses the retained element tree and widget
+    /// state — scroll offsets, inputs, and focus survive resize, and
+    /// `Fill`/`FillPortion` resolve against the fresh bounds
+    /// automatically. No view re-invocation, no placeholder builds.
+    pub fn relayout(&mut self, bounds: Size, renderer: &mut Renderer) {
+        let Some(owned) = self.ui.take() else {
+            return;
+        };
+        let inner = std::mem::ManuallyDrop::into_inner(owned);
+        let rebuilt = inner.relayout(bounds, renderer);
+        self.ui = Some(std::mem::ManuallyDrop::new(rebuilt));
     }
 
     pub fn process_messages(
@@ -246,24 +244,22 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         if messages.is_empty() && !invalidated.load(Ordering::Acquire) {
             return;
         }
-        let placeholder = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(
-                &self.instance,
-                window_id,
-                bounds,
-                Cache::default(),
-                renderer,
-            ),
+        // Built first so the `&self.instance` borrow ends before the
+        // swap takes `&mut self`.
+        let placeholder_ui = Self::build_ui(
+            &self.instance,
+            window_id,
+            bounds,
+            Cache::default(),
+            renderer,
         );
+        let placeholder = std::mem::replace(self.ui_mut(), placeholder_ui);
         let cache = placeholder.into_cache();
         for msg in messages {
             let _task = self.instance.update(msg);
         }
-        let stale = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
-        );
+        let real_ui = Self::build_ui(&self.instance, window_id, bounds, cache, renderer);
+        let stale = std::mem::replace(self.ui_mut(), real_ui);
         let _ = stale.into_cache();
         invalidated.store(false, Ordering::Release);
     }
@@ -288,7 +284,11 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> Drop for UiShell<P> {
     fn drop(&mut self) {
-        unsafe { std::mem::ManuallyDrop::drop(&mut self.ui) };
+        // Drop the interface before the Instance it references; `None`
+        // only after a panicked relayout, where there is nothing left.
+        if let Some(mut ui) = self.ui.take() {
+            unsafe { std::mem::ManuallyDrop::drop(&mut ui) };
+        }
     }
 }
 
