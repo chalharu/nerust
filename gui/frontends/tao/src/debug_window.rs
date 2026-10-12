@@ -23,9 +23,6 @@ use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};
-
-#[cfg(target_os = "macos")]
-use tao::platform::macos::WindowBuilderExtMacOS;
 use tao::{
     event_loop::EventLoopWindowTarget, keyboard::ModifiersState as TaoModifiers,
     window::Window as TaoWindow,

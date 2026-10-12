@@ -17,8 +17,6 @@ use iced_winit::{
     program::{self, Program},
 };
 
-#[cfg(target_os = "macos")]
-use tao::platform::macos::WindowBuilderExtMacOS;
 use tao::{
     event_loop::EventLoopWindowTarget, keyboard::ModifiersState as TaoModifiers,
     window::Window as TaoWindow,
