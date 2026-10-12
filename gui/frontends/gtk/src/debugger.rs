@@ -13,7 +13,7 @@ use std::{cell::RefCell, rc::Rc};
 use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, SpaceId};
 use nerust_gui_settings::language::AppLanguage;
-use nerust_gui_shell::debug::{DebugAction, DebugDrainInput};
+use nerust_gui_shell::debug::{DebugAction, DebugDrainInput, merge_running_sections};
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text};
 
@@ -511,12 +511,11 @@ impl DebuggerWindowCore {
             window.set_visible(false);
             glib::Propagation::Stop
         });
-
         Self::act(&result, &[DebugAction::Pause, DebugAction::Refresh]);
         // Live PPU follow while the core runs (tao twin: `maybe_live_ppu`).
-        // An empty drain every interval re-reads so the viewer tracks
-        // the running picture; paused cores never change memory, so the
-        // tick skips them. The tick dies with the window.
+        // Images-only, never a full drain: the paused-gated inspect
+        // refuses while running and would blank the dump/registers.
+        // The tick dies with the window.
         let weak = Rc::downgrade(&result);
         glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
             let Some(win) = weak.upgrade() else {
@@ -528,7 +527,7 @@ impl DebuggerWindowCore {
                 session.loaded() && !session.paused()
             };
             if live {
-                Self::act(&win, &[]);
+                Self::live_tick(&win);
             }
             glib::ControlFlow::Continue
         });
@@ -536,6 +535,36 @@ impl DebuggerWindowCore {
         result
     }
 
+    /// Live-tick body: patch the image section and the pause chrome,
+    /// then sync the PPU viewer. Unchanged generations skip
+    /// everything; the debugger widgets are never rebuilt here, so
+    /// dump scroll positions survive the running follow.
+    fn live_tick(win: &DebuggerWindow) {
+        let (state, language) = {
+            let this = win.borrow();
+            (this.state.clone(), this.data.language)
+        };
+        let Some((generation, images)) = state.borrow().session.debug_live_images(true) else {
+            return;
+        };
+        let mut this = win.borrow_mut();
+        if generation == this.data.display.images_gen {
+            return;
+        }
+        this.data.display.images = images;
+        this.data.display.images_gen = generation;
+        this.data.display.paused = false;
+        this.data.display.status = text(language, UiText::RunningState).to_string();
+        // Light chrome only: a full rebuild would yank the dump scroll.
+        this.pause_button.set_label(text(language, UiText::Pause));
+        this.status_label
+            .set_label(&this.data.display.status.clone());
+        if let Some(ppu) = this.ppu_window.as_ref() {
+            let display = &this.data.display;
+            ppu.borrow_mut()
+                .sync(&display.images, display.images_gen, &display.panels);
+        }
+    }
     /// One wiring helper per section: each connects a single
     /// pane's callbacks, so `open` stays construction plus calls.
     fn wire_toolbar(win: &DebuggerWindow, ppu_button: &gtk::Button) {
@@ -717,7 +746,12 @@ impl DebuggerWindowCore {
         let output = state.borrow().session.debug_drain(actions, &input);
         {
             let mut this = win.borrow_mut();
-            this.data.display = output.display;
+            // Running drains come back section-degenerate (paused
+            // gate): restore the last paused rows so Resume keeps the
+            // inspectable state instead of blanking it.
+            let mut display = output.display;
+            merge_running_sections(&this.data.display, &mut display);
+            this.data.display = display;
             if let Some(selected) = output.reselected {
                 this.data.selected = Some(selected);
             }

@@ -66,6 +66,25 @@ pub struct DebugDrainOutput {
     pub reselected: Option<(u32, Option<u8>)>,
 }
 
+/// Restore the last paused sections over a running drain. The
+/// paused-gated inspect and disassembly refuse while the core runs,
+/// so Resume (or Refresh while running) would otherwise blank the
+/// dump, registers, and disassembly the user paused on. Images,
+/// status, and the pause chrome already carry fresh values and stay
+/// untouched: the rows read as last-paused under a "running" status,
+/// which is honest (no frame can be pinned while running).
+pub fn merge_running_sections(old: &DisplayCache, new: &mut DisplayCache) {
+    if new.paused {
+        return;
+    }
+    new.dump_rows.clone_from(&old.dump_rows);
+    new.regs.clone_from(&old.regs);
+    new.reg_names.clone_from(&old.reg_names);
+    new.disasm_lines.clone_from(&old.disasm_lines);
+    new.panels.clone_from(&old.panels);
+    new.diff.clone_from(&old.diff);
+}
+
 impl SessionHandle {
     /// Run one action batch and return the render-ready display.
     /// Phase order is load-bearing: execution first, then
@@ -199,5 +218,50 @@ impl SessionHandle {
             display,
             reselected,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nerust_core_traits::debugger::HexRow;
+
+    fn cached(rows: bool) -> DisplayCache {
+        DisplayCache {
+            dump_rows: rows
+                .then(|| {
+                    vec![HexRow {
+                        addr: 0x10,
+                        valid: 1,
+                        bytes: [0xAB, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    }]
+                })
+                .unwrap_or_default(),
+            regs: rows.then(|| vec![("a", 1)]).unwrap_or_default(),
+            status: "paused".to_string(),
+            paused: true,
+            ..DisplayCache::default()
+        }
+    }
+
+    #[test]
+    fn merge_restores_paused_sections_over_running_drain() {
+        let old = cached(true);
+        let mut new = DisplayCache {
+            paused: false,
+            status: "running".to_string(),
+            ..DisplayCache::default()
+        };
+        merge_running_sections(&old, &mut new);
+        assert_eq!(new.dump_rows.len(), 1);
+        assert_eq!(new.regs, vec![("a", 1)]);
+        assert_eq!(new.status, "running", "fresh chrome stays");
+        // Paused drains pass through untouched.
+        let mut paused_new = DisplayCache {
+            paused: true,
+            ..DisplayCache::default()
+        };
+        merge_running_sections(&old, &mut paused_new);
+        assert!(paused_new.dump_rows.is_empty());
     }
 }
