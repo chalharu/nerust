@@ -924,17 +924,12 @@ fn view_dis_col(
         dis_col = dis_col.push(text(ui_text(language, UiText::DisassemblyHint)).size(14));
     }
     for line in disasm_lines {
-        // The PC row carries a `>` marker like the dump selection;
-        // the pinned anchor row carries `@` so a line click reads
-        // back visibly even off-PC. Both highlight.
+        // Marker column is two chars wide for every row. The PC `>`
+        // already comes from `format_disasm_line`, so the PC row
+        // contributes blanks here; the pinned anchor row carries `@`.
+        // (Prepending another `"> "` double-marked the PC row.)
         let is_pinned = pinned == Some(line.addr);
-        let marker = if line.is_pc {
-            "> "
-        } else if is_pinned {
-            "@ "
-        } else {
-            "  "
-        };
+        let marker = disasm_marker(line.is_pc, is_pinned);
         let line_button = button(
             text(format!("{marker}{}", vm::format_disasm_line(line)))
                 .size(14)
@@ -1088,6 +1083,14 @@ fn shortcut_request(physical: &iced::keyboard::key::Physical) -> Option<DebugAct
         Physical::Code(Code::F9) => Some(DebugAction::TogglePause),
         _ => None,
     }
+}
+
+/// Two-char marker prefix for a disassembly row, kept out of the
+/// view so the width contract stays unit-tested. The PC `>` itself
+/// lives in [`vm::format_disasm_line`]; this only adds the pinned
+/// `@` (or blanks), so composing both never double-marks.
+fn disasm_marker(is_pc: bool, is_pinned: bool) -> &'static str {
+    if !is_pc && is_pinned { "@ " } else { "  " }
 }
 
 /// Cursor keys page the dump (Up = toward lower addresses). Pure
@@ -1654,6 +1657,32 @@ mod tests {
         drive(&bridge, DebugMessage::DisLineClicked(0x300));
         let _fixed = program.view(&state, iced::window::Id::unique());
         drop(_fixed);
+    }
+
+    #[test]
+    fn disasm_marker_never_double_marks_pc() {
+        use nerust_core_traits::debugger::DisasmLine;
+
+        let pc_line = DisasmLine {
+            addr: 0xC293,
+            bytes: [0x60, 0, 0, 0],
+            len: 1,
+            text: "RTS".to_string(),
+            is_pc: true,
+            target: None,
+        };
+        // The composed row carries exactly one `>`: the format owns
+        // it, the view prefix contributes blanks.
+        let composed = format!(
+            "{}{}",
+            disasm_marker(pc_line.is_pc, true),
+            vm::format_disasm_line(&pc_line)
+        );
+        assert!(composed.starts_with("  >0x"), "got {composed:?}");
+        // Pinned non-PC rows keep the `@` in the same column.
+        assert_eq!(disasm_marker(false, true), "@ ");
+        assert_eq!(disasm_marker(false, false), "  ");
+        assert_eq!(disasm_marker(true, false), "  ");
     }
 
     #[test]
