@@ -6,7 +6,7 @@ use gtk::{
     prelude::*,
 };
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_settings::{input::ShortcutAction, local::ScalingMode};
+use nerust_gui_settings::local::ScalingMode;
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::renderer::GpuFactory;
@@ -544,33 +544,11 @@ impl WindowExtend for Window {
     }
 
     fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut) {
+        use nerust_gui_shell::session::access::dispatch_session_action;
         match shortcut {
-            KeyboardShortcut::Session(action) => match action {
-                ShortcutAction::TogglePause => {
-                    self.state().borrow_mut().toggle_pause();
-                }
-                ShortcutAction::SaveActiveSlot => {
-                    self.state().borrow_mut().save_active_slot();
-                }
-                ShortcutAction::SelectNextSlot => {
-                    self.state().borrow_mut().select_next_slot();
-                }
-                ShortcutAction::SelectPreviousSlot => {
-                    self.state().borrow_mut().select_previous_slot();
-                }
-                ShortcutAction::LoadActiveSlot => {
-                    let _ = self.state().borrow_mut().load_active_slot();
-                }
-                ShortcutAction::Reset => {
-                    self.state().borrow_mut().reset();
-                }
-                ShortcutAction::ToggleFullscreen => {
-                    toggle_window_fullscreen(self);
-                }
-                // Unreachable: the session maps OpenDebugger to
-                // `KeyboardShortcut::OpenDebugger`, never `Session`.
-                ShortcutAction::OpenDebugger => (),
-            },
+            KeyboardShortcut::Session(action) => {
+                dispatch_session_action(&mut *self.state().borrow_mut(), action)
+            }
             KeyboardShortcut::ToggleFullscreen => {
                 toggle_window_fullscreen(self);
             }

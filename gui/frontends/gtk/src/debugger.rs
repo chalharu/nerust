@@ -14,7 +14,7 @@ use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, SpaceId};
 use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::debug::{DebugAction, DebugDrainInput, merge_running_sections};
-use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState};
+use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text};
 
 use super::State;
@@ -554,11 +554,11 @@ impl DebuggerWindowCore {
         this.data.display.images = images;
         this.data.display.images_gen = generation;
         this.data.display.paused = false;
-        this.data.display.status = text(language, UiText::RunningState).to_string();
+        this.data.display.status = StatusMessage::Running;
         // Light chrome only: a full rebuild would yank the dump scroll.
         this.pause_button.set_label(text(language, UiText::Pause));
         this.status_label
-            .set_label(&this.data.display.status.clone());
+            .set_label(&this.data.display.status.render(language));
         if let Some(ppu) = this.ppu_window.as_ref() {
             let display = &this.data.display;
             ppu.borrow_mut()
@@ -716,7 +716,6 @@ impl DebuggerWindowCore {
             reg_target,
             prev_dump_rows,
             need_images,
-            language,
         ) = {
             let this = win.borrow();
             (
@@ -729,7 +728,6 @@ impl DebuggerWindowCore {
                 this.data.reg_target,
                 this.data.display.dump_rows.clone(),
                 this.ppu_window.is_some(),
-                this.data.language,
             )
         };
         let input = DebugDrainInput {
@@ -741,7 +739,6 @@ impl DebuggerWindowCore {
             reg_target,
             prev_dump_rows: &prev_dump_rows,
             need_images,
-            language,
         };
         let output = state.borrow().session.debug_drain(actions, &input);
         {
@@ -760,7 +757,8 @@ impl DebuggerWindowCore {
     }
 
     fn set_status(win: &DebuggerWindow, status: String) {
-        win.borrow_mut().data.display.status = status;
+        // Frontend-local wording: stored verbatim, like the tao twin.
+        win.borrow_mut().data.display.status = StatusMessage::Local(status);
         Self::rebuild(win);
     }
 
@@ -1064,7 +1062,8 @@ impl DebuggerWindowCore {
         } else {
             text(language, UiText::Pause)
         });
-        this.status_label.set_label(&display.status);
+        this.status_label
+            .set_label(&display.status.render(language));
         // The title names the anchor: clicks pin it visibly instead
         // of silently moving the window.
         let dis_title = if nav.follow_pc() {
@@ -1223,9 +1222,9 @@ impl DebuggerWindowCore {
             Some((addr, _)) => format!("{} 0x{addr:08X}", text(language, UiText::Write)),
             None => text(language, UiText::Write).to_string(),
         });
-        match &display.pending_text {
+        match &display.pending {
             Some(pending) => {
-                this.confirm_label.set_label(pending);
+                this.confirm_label.set_label(&pending.render(language));
                 this.confirm_row.set_visible(true);
             }
             None => this.confirm_row.set_visible(false),
@@ -1514,8 +1513,12 @@ mod tests {
             watch_value: Some(0xAB),
             paused: true,
             reg_names: vec!["cpsr", "r0", "r1"],
-            status: "paused".to_string(),
-            pending_text: Some("write 42 to 0x00000100 (was AB)?".to_string()),
+            status: StatusMessage::Paused,
+            pending: Some(vm::PendingWrite {
+                addr: 0x100,
+                old: Some(0xAB),
+                value: 0x42,
+            }),
         }
     }
 
@@ -1567,7 +1570,10 @@ mod tests {
         assert_eq!(win.borrow().data.nav.mem_addr(), 0x100);
         win.borrow().mem_input.set_text("zz");
         DebuggerWindowCore::mem_go(&win);
-        assert!(win.borrow().data.display.status.contains("parse failed"));
+        assert!(matches!(
+            win.borrow().data.display.status,
+            StatusMessage::Local(ref text) if text.contains("parse failed")
+        ));
         DebuggerWindowCore::page_mem(&win, 1);
         DebuggerWindowCore::page_mem(&win, -1);
         // The stepper cycles the single mock space.
@@ -1635,13 +1641,13 @@ mod tests {
         win.borrow_mut().data.selected = Some((0x10, Some(0)));
         win.borrow().edit_input.set_text("42");
         DebuggerWindowCore::edit_write(&win);
-        assert!(win.borrow().data.display.pending_text.is_some());
+        assert!(win.borrow().data.display.pending.is_some());
         DebuggerWindowCore::confirm_write(&win);
-        assert_eq!(win.borrow().data.display.status, "no core");
+        assert_eq!(win.borrow().data.display.status, StatusMessage::NoCore);
         assert_eq!(win.borrow().edit_input.text().as_str(), "");
         DebuggerWindowCore::edit_write(&win);
         DebuggerWindowCore::cancel_write(&win);
-        assert!(win.borrow().data.display.pending_text.is_none());
+        assert!(win.borrow().data.display.pending.is_none());
         win.borrow_mut().data.selected = None;
         DebuggerWindowCore::edit_write(&win);
         win.borrow().edit_input.set_text("zz");
@@ -1652,7 +1658,7 @@ mod tests {
         assert_eq!(win.borrow().data.reg_target, Some("r0"));
         win.borrow().reg_input.set_text("7");
         DebuggerWindowCore::reg_set(&win);
-        assert_eq!(win.borrow().data.display.status, "no core");
+        assert_eq!(win.borrow().data.display.status, StatusMessage::NoCore);
         win.borrow().reg_input.set_text("zz");
         DebuggerWindowCore::reg_set(&win);
         win.borrow_mut().data.reg_target = None;

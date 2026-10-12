@@ -86,8 +86,39 @@ pub trait CorePersistence {
     fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError>;
 }
 
+/// Thread-transport port behind [`EmuCore`]. The application layer
+/// (session, drains) programs against this seam, not the concrete
+/// [`EmuThread`]: call sites never assume thread internals, and tests
+/// plug scripted transports without spawning threads. The production
+/// reality is one implementation; the trait exists so the direction
+/// of the dependency (application → abstraction) stays honest.
+pub trait EmuThreadPort: Send + std::fmt::Debug {
+    fn send(&self, cmd: EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>>;
+    fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>>;
+    fn frame_count(&self) -> u64;
+    fn fps(&self) -> f32;
+}
+
+impl EmuThreadPort for EmuThread {
+    fn send(&self, cmd: EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>> {
+        EmuThread::send(self, cmd)
+    }
+
+    fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
+        EmuThread::shared_frame_buffer(self)
+    }
+
+    fn frame_count(&self) -> u64 {
+        EmuThread::frame_count(self)
+    }
+
+    fn fps(&self) -> f32 {
+        EmuThread::fps(self)
+    }
+}
+
 pub struct EmuCore {
-    emu: EmuThread,
+    emu: Box<dyn EmuThreadPort>,
     render_profile: VideoRenderProfile,
     shared_fb: Arc<Mutex<FrameBuffer>>,
     disp_fb: FrameBuffer,
@@ -114,7 +145,7 @@ struct CachedImages {
 impl EmuCore {
     #[doc(hidden)]
     pub fn new(
-        emu: EmuThread,
+        emu: Box<dyn EmuThreadPort>,
         render_profile: VideoRenderProfile,
         shared_fb: Arc<Mutex<FrameBuffer>>,
         disp_fb: FrameBuffer,
@@ -185,7 +216,7 @@ impl EmuCore {
         );
         (
             Self {
-                emu,
+                emu: Box::new(emu),
                 render_profile: parts.render_profile,
                 shared_fb,
                 disp_fb,
@@ -420,7 +451,7 @@ impl EmuCore {
 
     /// Generate a preview frame from the EmuThread's shared frame buffer.
     pub fn generate_preview(&self) -> Option<crate::state::PreviewFrame> {
-        crate::state::generate_preview(&self.emu)
+        crate::state::generate_preview(&*self.emu)
     }
 
     /// Advance execution by one unit. The reply is the barrier: it arrives
@@ -717,6 +748,69 @@ mod tests {
         core.load(&media, None).expect("mock ROM loads");
         assert!(core.metrics().paused);
         core
+    }
+
+    /// Scripted transport: answers one query, refuses the rest. Proves
+    /// `EmuCore` programs against the port, never thread internals —
+    /// no thread spawns here.
+    #[derive(Debug)]
+    struct FakePort {
+        spaces: Vec<SpaceInfo>,
+    }
+
+    impl EmuThreadPort for FakePort {
+        fn send(&self, cmd: EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>> {
+            match cmd {
+                EmuCommand::DebuggerSpaces { reply } => {
+                    let _ = reply.send(self.spaces.clone());
+                    Ok(())
+                }
+                other => Err(mpsc::TrySendError::Disconnected(other)),
+            }
+        }
+
+        fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
+            panic!("no buffers behind the scripted port")
+        }
+
+        fn frame_count(&self) -> u64 {
+            0
+        }
+
+        fn fps(&self) -> f32 {
+            0.0
+        }
+    }
+
+    #[test]
+    fn port_seam_serves_queries_without_a_thread() {
+        use nerust_core_traits::debugger::{SpaceAccess, SpaceInfo};
+        let parts = build_test_core_parts();
+        let port = FakePort {
+            spaces: vec![SpaceInfo {
+                id: SpaceId(0),
+                key: "wram",
+                name: "WRAM",
+                address_bits: 8,
+                range: 0x0000..=0x00FF,
+                access: SpaceAccess::ReadWrite,
+            }],
+        };
+        let picture = || {
+            let mut fb = FrameBuffer::with_capacity(2, 1, PixelFormat::Rgba);
+            fb.resize(2, 1);
+            fb
+        };
+        let core = EmuCore::new(
+            Box::new(port),
+            parts.render_profile,
+            Arc::new(Mutex::new(picture())),
+            picture(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let spaces = core.memory_spaces().expect("port answers");
+        assert_eq!(spaces.len(), 1);
+        assert_eq!(spaces[0].name, "WRAM");
     }
 
     #[test]
