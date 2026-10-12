@@ -1,0 +1,15 @@
+# Scrub ambient link search paths on macOS targets for every process
+# Cargo spawns (build scripts, rustc including the final link step,
+# `cargo run` / `cargo test` binaries). A `LIBRARY_PATH` pointing at
+# Homebrew (or anywhere else) silently redirects `-l` resolution at
+# link time; this once shipped a macOS binary that loaded foreign
+# image codecs and crashed inside ImageIO on window resize. Linux
+# builds are deliberately left untouched: an ambient `LIBRARY_PATH`
+# can be load-bearing there (custom prefixes, Nix, conda envs).
+# Anyone who genuinely needs extra search paths on macOS can still
+# override per invocation, e.g.:
+#   cargo --config 'env.LIBRARY_PATH={value="/extra/lib"}' build
+[target.aarch64-apple-darwin.env]
+LIBRARY_PATH = { value = "", force = true }
+[target.x86_64-apple-darwin.env]
+LIBRARY_PATH = { value = "", force = true }
