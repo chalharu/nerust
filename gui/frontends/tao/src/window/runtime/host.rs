@@ -58,6 +58,13 @@ pub(crate) struct HostState {
     pending_fullscreen_sync: Option<bool>,
     pub(crate) active: bool,
     auto_paused: bool,
+    /// Deferred auto-pause: set when a window loses focus, cleared
+    /// when another of ours gains it in the same burst, executed at
+    /// `MainEventsCleared`. Telling "switched to our debugger" apart
+    /// from "switched to another app" needs the whole burst: pausing
+    /// eagerly on main blur would stop a deliberately-resumed session
+    /// just for moving focus to the debugger.
+    pending_auto_pause: bool,
     /// Pause state at the last completed debug drain, for focus
     /// coalescing below. `None` before the first drain.
     pub(crate) last_drain_paused: Option<bool>,
@@ -117,6 +124,7 @@ impl HostState {
             pending_fullscreen_sync: None,
             active: true,
             auto_paused: false,
+            pending_auto_pause: false,
             last_drain_paused: None,
             drain_flight: None,
             live_flight: None,
@@ -166,6 +174,33 @@ impl HostState {
 
     pub(crate) fn clear_auto_paused(&mut self) {
         self.auto_paused = false;
+    }
+
+    /// Arm a deferred auto-pause on focus loss. Execution waits for
+    /// `commit_pending_auto_pause` so a same-burst focus arrival on
+    /// another of our windows can cancel it first.
+    pub(crate) fn arm_pending_auto_pause(&mut self) {
+        self.pending_auto_pause = true;
+    }
+
+    /// Cancel a deferred auto-pause: focus arrived on another of our
+    /// windows, so the session stays as the user left it.
+    pub(crate) fn cancel_pending_auto_pause(&mut self) {
+        self.pending_auto_pause = false;
+    }
+
+    /// Execute a still-armed auto-pause at the end of the event burst.
+    /// Post-pause chrome sync keeps the menu/title truthful (the blur
+    /// path below only synced pre-pause truth).
+    pub(crate) fn commit_pending_auto_pause(&mut self) {
+        if !std::mem::take(&mut self.pending_auto_pause) {
+            return;
+        }
+        if self.session.can_pause() {
+            self.pause_session();
+            self.set_auto_paused();
+            self.sync_debug_chrome();
+        }
     }
 
     pub(crate) fn ensure_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
@@ -384,6 +419,9 @@ impl HostState {
     }
 
     pub(crate) fn update_control_flow(&mut self, control_flow: &mut ControlFlow) {
+        // End-of-burst auto-pause first: pause state settles before
+        // the title/live/drain logic below reads it.
+        self.commit_pending_auto_pause();
         self.sync_fullscreen_default_from_window();
         self.maybe_refresh_window_title(Instant::now());
         self.maybe_live_ppu();
