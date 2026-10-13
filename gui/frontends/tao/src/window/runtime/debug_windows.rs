@@ -41,13 +41,13 @@ impl DebugWindows {
     pub(crate) fn is_debug_window(&self, window_id: WindowId) -> bool {
         self.debug_window
             .as_ref()
-            .is_some_and(|h| h.window.id() == window_id)
+            .is_some_and(|h| h.shell.window.id() == window_id)
     }
 
     pub(crate) fn is_ppu_window(&self, window_id: WindowId) -> bool {
         self.ppu_window
             .as_ref()
-            .is_some_and(|h| h.window.id() == window_id)
+            .is_some_and(|h| h.shell.window.id() == window_id)
     }
 
     pub(crate) fn request_debug_open(&mut self) {

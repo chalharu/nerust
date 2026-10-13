@@ -11,27 +11,17 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use iced::{Size, Task, keyboard, mouse};
+use iced::Task;
 use iced_tiny_skia::Renderer;
-use iced_winit::{
-    Clipboard,
-    graphics::Viewport,
-    program::{self, Program},
-};
+use iced_winit::program::{self, Program};
 use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, HexRow, SpaceId};
 use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};
-use tao::{
-    event_loop::EventLoopWindowTarget, keyboard::ModifiersState as TaoModifiers,
-    window::Window as TaoWindow,
-};
+use tao::event_loop::EventLoopWindowTarget;
 
-use crate::{
-    iced_shell::{ShellRenderer, UiShell, WindowScaffold, aux_settings, aux_theme, render_ui},
-    tao_conversions::convert_tao_window_event,
-};
+use crate::iced_shell::{WindowScaffold, aux_settings, aux_theme};
 
 /// Initial debugger window size (verified Xvfb fit).
 pub(crate) const DEBUG_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
@@ -1059,17 +1049,8 @@ fn view_right_col(
 }
 
 pub(crate) struct DebugWindowHandle {
-    pub(crate) window: Arc<TaoWindow>,
-    window_id: iced::window::Id,
-    ui_state: UiShell<DebugProgram>,
-    renderer: ShellRenderer,
-    viewport_physical: (u32, u32),
-    pub(crate) scale_factor: f32,
-    pub(crate) modifiers: keyboard::Modifiers,
-    pub(crate) should_close: Arc<AtomicBool>,
+    pub(crate) shell: crate::iced_shell::AuxShell<DebugProgram>,
     pub(crate) bridge: Arc<DebugBridge>,
-    cursor: mouse::Cursor,
-    clipboard: Clipboard,
 }
 
 /// Window-scoped shortcuts on physical codes: F6 steps a frame,
@@ -1113,7 +1094,6 @@ impl DebugWindowHandle {
         event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
-        let should_close = Arc::new(AtomicBool::new(false));
         let bridge = Arc::new(DebugBridge::new(display, spaces, mem_addr, language));
         let title = ui_text(language, UiText::Debugger).to_string();
         let scaffold = WindowScaffold::open(
@@ -1124,39 +1104,12 @@ impl DebugWindowHandle {
             position,
             "debugger window",
         )?;
-        let crate::iced_shell::WindowScaffold {
-            window,
-            window_id,
-            scale_factor,
-            viewport_physical,
-            bounds,
-            compositor,
-            mut renderer,
-            surface,
-        } = scaffold;
         let program = DebugProgram {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let ui_state = UiShell::new(instance, window_id, bounds, &mut renderer);
-        window.request_redraw();
-        Some(Self {
-            window,
-            window_id,
-            ui_state,
-            renderer: ShellRenderer {
-                compositor,
-                surface,
-                backend: renderer,
-            },
-            viewport_physical,
-            scale_factor,
-            modifiers: keyboard::Modifiers::default(),
-            should_close,
-            bridge,
-            cursor: mouse::Cursor::default(),
-            clipboard: Clipboard::unconnected(),
-        })
+        let shell = crate::iced_shell::AuxShell::assemble(scaffold, instance);
+        Some(Self { shell, bridge })
     }
 
     pub(crate) fn set_display(&mut self, display: DisplayCache) {
@@ -1169,15 +1122,7 @@ impl DebugWindowHandle {
     }
 
     pub(crate) fn render(&mut self) {
-        render_ui(
-            &mut self.ui_state,
-            &mut self.renderer,
-            self.viewport_physical,
-            self.scale_factor,
-            self.cursor,
-            &mut self.clipboard,
-            "debugger",
-        );
+        self.shell.render("debugger");
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
@@ -1210,11 +1155,11 @@ impl DebugWindowHandle {
         } else {
             None
         };
-        let (mut messages, outcome) = self.ui_state.pump(
+        let (mut messages, outcome) = self.shell.ui_state.pump(
             mapped,
-            self.cursor,
-            &mut self.clipboard,
-            &mut self.renderer.backend,
+            self.shell.cursor,
+            &mut self.shell.clipboard,
+            &mut self.shell.renderer.backend,
         );
         messages.extend(page);
         match outcome {
@@ -1222,76 +1167,40 @@ impl DebugWindowHandle {
                 self.bridge.view_invalidated.store(true, Ordering::Release);
             }
             crate::iced_shell::PumpOutcome::Repaint => {
-                self.window.request_redraw();
+                self.shell.window.request_redraw();
             }
             crate::iced_shell::PumpOutcome::Idle => {}
         }
         if !messages.is_empty() || matches!(outcome, crate::iced_shell::PumpOutcome::Rebuild) {
-            let bounds = Viewport::with_physical_size(
-                Size::new(self.viewport_physical.0, self.viewport_physical.1),
-                self.scale_factor,
-            )
-            .logical_size();
-            self.ui_state.process_messages(
+            let bounds = self.shell.logical_bounds();
+            self.shell.ui_state.process_messages(
                 messages,
-                self.window_id,
+                self.shell.window_id,
                 bounds,
-                &mut self.renderer.backend,
+                &mut self.shell.renderer.backend,
                 &self.bridge.view_invalidated,
             );
-            self.window.request_redraw();
+            self.shell.window.request_redraw();
         }
     }
 
-    pub(crate) fn set_scale_factor(&mut self, scale_factor: f32) {
-        self.scale_factor = scale_factor;
-        // Scale changes move every layout bound: relayout like resize.
-        let bounds = crate::iced_shell::logical_bounds(self.viewport_physical, self.scale_factor);
-        self.ui_state.relayout(bounds, &mut self.renderer.backend);
-        self.window.request_redraw();
-    }
-
-    pub(crate) fn set_modifiers(&mut self, modifiers: TaoModifiers) {
-        self.modifiers = crate::tao_conversions::tao_modifiers_to_iced(modifiers);
-    }
-
     pub(crate) fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
-        if let Some(iced_event) = convert_tao_window_event(
-            event,
-            &mut self.cursor,
-            self.scale_factor,
-            &mut self.modifiers,
-            &self.should_close,
-        ) {
+        if let Some(iced_event) = self.shell.feed_tao_event(event) {
             self.handle_event(iced_event);
         }
     }
 
-    pub(crate) fn resize(&mut self, width: u32, height: u32) {
-        self.viewport_physical = (width, height);
-        self.renderer.resize(width, height);
-        // Relayout only (no view rebuild): retained widgets reflow
-        // against the fresh bounds, so `Fill` tracks live resize.
-        let bounds = crate::iced_shell::logical_bounds((width, height), self.scale_factor);
-        self.ui_state.relayout(bounds, &mut self.renderer.backend);
-        self.window.request_redraw();
-    }
-
     pub(crate) fn sync_from_bridge(&mut self) {
         self.bridge.view_invalidated.store(true, Ordering::Release);
-        let bounds = Viewport::with_physical_size(
-            Size::new(self.viewport_physical.0, self.viewport_physical.1),
-            self.scale_factor,
-        )
-        .logical_size();
-        self.ui_state.process_messages(
+        let bounds = self.shell.logical_bounds();
+        self.shell.ui_state.process_messages(
             Vec::new(),
-            self.window_id,
+            self.shell.window_id,
             bounds,
-            &mut self.renderer.backend,
+            &mut self.shell.renderer.backend,
             &self.bridge.view_invalidated,
         );
-        self.window.request_redraw();
+        self.shell.window.request_redraw();
     }
 }
 
