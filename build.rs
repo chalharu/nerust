@@ -19,7 +19,7 @@ fn main() {
     #[cfg(not(feature = "gtk"))]
     {
         let targeting_macos =
-            std::env::var("CARGO_CFG_TARGET_OS").map_or(false, |target| target == "macos");
+            std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|target| target == "macos");
         if targeting_macos && std::env::var("LIBRARY_PATH").is_ok_and(|value| !value.is_empty()) {
             println!("cargo:rustc-env=LIBRARY_PATH=");
         }
