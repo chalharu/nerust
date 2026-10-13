@@ -181,6 +181,14 @@ pub enum EmuCommand {
     DebuggerPc {
         reply: Sender<Result<Option<u32>, debugger::DebuggerError>>,
     },
+    /// Batched debugger snapshot (inspect + anchor + disassembly) in
+    /// one crossing. Same per-part contracts as the individual
+    /// commands; prefer over three sequential round trips wherever
+    /// the caller needs the whole set (debugger drains).
+    DebuggerSnapshot {
+        req: debugger::SnapshotRequest,
+        reply: Sender<Result<debugger::SnapshotResult, debugger::DebuggerError>>,
+    },
     /// Memory edit through the control path. Deliberately pause-ungated:
     /// `DebuggerError` has no not-paused variant by design (§5.2), so
     /// deterministic callers pause first and racing writes interleave

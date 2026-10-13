@@ -488,6 +488,25 @@ impl EmuCore {
         recv_debug_reply(reply_rx)
     }
 
+    /// Batched debugger snapshot (inspect + anchor + disassembly)
+    /// in one thread crossing. Same per-part contracts as the
+    /// individual calls; prefer wherever the caller needs the whole
+    /// set (debugger drains) over three sequential timeouts.
+    pub fn debug_snapshot_batch(
+        &self,
+        req: nerust_core_traits::debugger::SnapshotRequest,
+    ) -> Result<Result<nerust_core_traits::debugger::SnapshotResult, DebuggerError>, OperationError>
+    {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerSnapshot {
+                req,
+                reply: reply_tx,
+            })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        recv_debug_reply(reply_rx)
+    }
+
     /// On-demand disassembly through the emu thread. Cold path:
     /// callers hold pause for frame-consistent rows.
     pub fn disassemble(

@@ -439,6 +439,7 @@ pub struct ExecutionInfo {
 }
 
 /// Successful inspect response content.
+#[derive(Debug, Clone)]
 pub struct InspectResult {
     pub dump: MemoryDump,
     pub panels: Arc<[DebugPanel]>,
@@ -449,6 +450,7 @@ pub struct InspectResult {
     pub captured_at_frame: u64,
 }
 
+#[derive(Debug, Clone)]
 pub struct MemoryDump {
     pub space: SpaceId,
     pub base: u32,
@@ -483,6 +485,31 @@ pub struct MemoryWrite {
     pub addr: u32,
     pub width: u8,
     pub value: u64,
+}
+
+/// Batched debugger snapshot: inspect + anchor + disassembly in one
+/// thread crossing instead of three sequential round trips (each
+/// with its own timeout on the UI thread). Per-part contracts match
+/// the individual commands: paused-gated inspect, ungated PC and
+/// decode. Failure semantics are preserved exactly: an inspect
+/// failure skips the rest (as today), a PC failure yields no anchor
+/// and no disassembly, disassembly failure yields no rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapshotRequest {
+    pub inspect: InspectRequest,
+    /// Pinned anchor; `None` is follow-PC mode (anchor resolves via
+    /// the program counter inside the batch).
+    pub anchor: Option<u32>,
+    pub disasm_rows: u16,
+}
+
+/// Batched snapshot result. `disasm` is empty on skip/failure,
+/// mirroring the individual-call fallbacks (never an error).
+#[derive(Debug, Clone)]
+pub struct SnapshotResult {
+    pub inspect: Result<InspectResult, InspectError>,
+    pub anchor: Option<u32>,
+    pub disasm: Vec<DisasmLine>,
 }
 
 /// Debug-capability failure reasons.
