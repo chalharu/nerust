@@ -25,6 +25,28 @@ use super::State;
 /// Bookmark cap (window-local, no file yet).
 const BOOKMARK_CAP: usize = 8;
 
+/// Rebuild granularity for [`DebuggerWindowCore::rebuild_partial`].
+/// Handlers pick the smallest scope covering their data change;
+/// drain completions carry it from `act_scoped`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum RebuildScope {
+    /// Everything (execution, memory writes, full refreshes).
+    #[default]
+    All,
+    /// Dump rows plus the rows they drive (edit row, state).
+    Dump,
+    /// Disassembly list (navigation moved the anchor).
+    Disasm,
+    /// Registers, watch, and freeze labels.
+    State,
+    /// Staged-write confirm row.
+    Edit,
+    /// Bookmark list.
+    Bookmarks,
+    /// Status and title labels only.
+    Header,
+}
+
 /// Pure write-input resolution: selection plus a hex byte. Widget
 /// callbacks stay thin; the rules are unit-tested below (and the
 /// drain owns the transaction, never the widgets).
@@ -129,10 +151,11 @@ pub(crate) struct DebuggerWindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
     data: DebuggerData,
-    /// In-flight async drain: `act` starts it, the tick poller (plus
-    /// a short poller while pending) finishes it. A newer batch
-    /// supersedes the stored one; orphaned replies are ignored.
-    flight: Option<DrainFlight>,
+    /// In-flight async drain with its rebuild scope: `act_scoped`
+    /// starts it, the tick poller (plus a short poller while pending)
+    /// finishes it. A newer batch supersedes the stored one; orphaned
+    /// replies are ignored.
+    flight: Option<(DrainFlight, RebuildScope)>,
     /// In-flight async live-images fetch, same pattern for the 250ms
     /// PPU follow tick. At most one; a newer tick supersedes.
     live_flight: Option<LiveImagesFlight>,
@@ -803,6 +826,14 @@ impl DebuggerWindowCore {
     /// cached images) still applies synchronously, so coreless
     /// harnesses behave exactly as before.
     fn act(win: &DebuggerWindow, actions: &[DebugAction]) {
+        Self::act_scoped(win, actions, RebuildScope::All);
+    }
+
+    /// [`DebuggerWindowCore::act`] with a rebuild scope: the finished
+    /// drain refreshes only the sections its data moved (see
+    /// [`RebuildScope`]), so navigation and highlight gestures skip
+    /// the ~700-widget full rebuild.
+    fn act_scoped(win: &DebuggerWindow, actions: &[DebugAction], scope: RebuildScope) {
         let (
             state,
             space,
@@ -842,10 +873,10 @@ impl DebuggerWindowCore {
         let mut flight = state.borrow().session.debug_drain_begin(actions, &input);
         match flight.poll() {
             DrainPoll::Done(output) => {
-                Self::apply(win, *output);
+                Self::apply_scoped(win, *output, scope);
             }
             DrainPoll::Pending => {
-                win.borrow_mut().flight = Some(flight);
+                win.borrow_mut().flight = Some((flight, scope));
                 Self::watch_flight(win);
             }
         }
@@ -870,28 +901,32 @@ impl DebuggerWindowCore {
     }
 
     /// Poll the stored flight once. Returns whether one is still
-    /// pending: on completion the display applies and the widgets
-    /// rebuild, exactly like a synchronous drain.
+    /// pending: on completion the display applies and the scoped
+    /// widgets rebuild, exactly like a synchronous drain.
     fn poll_flight(win: &DebuggerWindow) -> bool {
-        let mut flight = match win.borrow_mut().flight.take() {
-            Some(flight) => flight,
+        let (mut flight, scope) = match win.borrow_mut().flight.take() {
+            Some(stored) => stored,
             None => return false,
         };
         match flight.poll() {
             DrainPoll::Done(output) => {
-                Self::apply(win, *output);
+                Self::apply_scoped(win, *output, scope);
                 false
             }
             DrainPoll::Pending => {
-                win.borrow_mut().flight = Some(flight);
+                win.borrow_mut().flight = Some((flight, scope));
                 true
             }
         }
     }
 
     /// Apply a finished drain: merge running sections, store the
-    /// selection, and rebuild every widget from the new display.
-    fn apply(win: &DebuggerWindow, output: nerust_gui_shell::debug::DebugDrainOutput) {
+    /// selection, and rebuild the scoped widgets from the new display.
+    fn apply_scoped(
+        win: &DebuggerWindow,
+        output: nerust_gui_shell::debug::DebugDrainOutput,
+        scope: RebuildScope,
+    ) {
         {
             let mut this = win.borrow_mut();
             // Running drains come back section-degenerate (paused
@@ -904,13 +939,16 @@ impl DebuggerWindowCore {
                 this.data.selected = Some(selected);
             }
         }
-        Self::rebuild(win);
+        Self::rebuild_partial(win, scope);
     }
 
+    /// Status-line-only refresh: parse errors and prompts never touch
+    /// the lists, so only the header (labels, no widget creation)
+    /// rebuilds.
     fn set_status(win: &DebuggerWindow, status: String) {
         // Frontend-local wording: stored verbatim, like the tao twin.
         win.borrow_mut().data.display.status = StatusMessage::Local(status);
-        Self::rebuild(win);
+        Self::rebuild_partial(win, RebuildScope::Header);
     }
 
     fn open_ppu(win: &DebuggerWindow) {
@@ -947,7 +985,7 @@ impl DebuggerWindowCore {
         match vm::parse_hex_addr(&input) {
             Some(addr) => {
                 win.borrow_mut().data.nav.go_mem(addr);
-                Self::act(win, &[DebugAction::MemNav]);
+                Self::act_scoped(win, &[DebugAction::MemNav], RebuildScope::Dump);
             }
             None => Self::set_status(win, ui_msg::parse_failed(language, &input)),
         }
@@ -958,7 +996,7 @@ impl DebuggerWindowCore {
             .data
             .nav
             .page_mem(delta * DEBUG_DUMP_PAGE_ROWS as i32 * DUMP_ROW_BYTES as i32);
-        Self::act(win, &[DebugAction::MemNav]);
+        Self::act_scoped(win, &[DebugAction::MemNav], RebuildScope::Dump);
     }
 
     fn cycle_space(win: &DebuggerWindow, delta: i32) {
@@ -969,7 +1007,7 @@ impl DebuggerWindowCore {
             this.data.nav.set_space(idx, start);
             this.data.selected = None;
             drop(this);
-            Self::act(win, &[DebugAction::Refresh]);
+            Self::act_scoped(win, &[DebugAction::Refresh], RebuildScope::Dump);
         }
     }
 
@@ -980,7 +1018,7 @@ impl DebuggerWindowCore {
             Some(addr) => {
                 let anchor = win.borrow().data.anchor();
                 win.borrow_mut().data.nav.navigate(anchor, addr);
-                Self::act(win, &[DebugAction::Refresh]);
+                Self::act_scoped(win, &[DebugAction::Refresh], RebuildScope::Disasm);
             }
             None => Self::set_status(win, ui_msg::parse_failed(language, &input)),
         }
@@ -988,7 +1026,7 @@ impl DebuggerWindowCore {
 
     fn dis_back(win: &DebuggerWindow) {
         if win.borrow_mut().data.nav.go_back().is_some() {
-            Self::act(win, &[DebugAction::Refresh]);
+            Self::act_scoped(win, &[DebugAction::Refresh], RebuildScope::Disasm);
         } else {
             let language = win.borrow().data.language;
             Self::set_status(win, text(language, UiText::BackEmpty).to_string());
@@ -998,13 +1036,13 @@ impl DebuggerWindowCore {
     fn follow_target(win: &DebuggerWindow, addr: u32) {
         let anchor = win.borrow().data.anchor();
         win.borrow_mut().data.nav.navigate(anchor, addr);
-        Self::act(win, &[DebugAction::Refresh]);
+        Self::act_scoped(win, &[DebugAction::Refresh], RebuildScope::Disasm);
     }
 
     fn dis_line_clicked(win: &DebuggerWindow, addr: u32) {
         let anchor = win.borrow().data.anchor();
         win.borrow_mut().data.nav.navigate(anchor, addr);
-        Self::act(win, &[DebugAction::Refresh]);
+        Self::act_scoped(win, &[DebugAction::Refresh], RebuildScope::Disasm);
     }
 
     fn bookmark_add(win: &DebuggerWindow) {
@@ -1030,22 +1068,22 @@ impl DebuggerWindowCore {
             }
             this.bookmark_input.set_text("");
         }
-        Self::rebuild(win);
+        Self::rebuild_partial(win, RebuildScope::Bookmarks);
     }
 
     fn bookmark_jump(win: &DebuggerWindow, addr: u32) {
         let anchor = win.borrow().data.anchor();
         win.borrow_mut().data.nav.navigate(anchor, addr);
-        Self::act(win, &[DebugAction::Refresh]);
+        Self::act_scoped(win, &[DebugAction::Refresh], RebuildScope::Disasm);
     }
 
     fn bookmark_delete(win: &DebuggerWindow, addr: u32) {
         win.borrow_mut().data.bookmarks.retain(|(a, _)| *a != addr);
-        Self::rebuild(win);
+        Self::rebuild_partial(win, RebuildScope::Bookmarks);
     }
 
     fn row_selected(win: &DebuggerWindow, addr: u32) {
-        Self::act(win, &[DebugAction::SelectRow(addr)]);
+        Self::act_scoped(win, &[DebugAction::SelectRow(addr)], RebuildScope::Dump);
     }
 
     fn reg_selected(win: &DebuggerWindow, name: &'static str) {
@@ -1055,7 +1093,7 @@ impl DebuggerWindowCore {
         // stall the main thread on up to five timeout round-trips
         // just to move a highlight).
         win.borrow_mut().data.reg_target = Some(name);
-        Self::rebuild(win);
+        Self::rebuild_partial(win, RebuildScope::State);
     }
 
     fn reg_set(win: &DebuggerWindow) {
@@ -1068,7 +1106,11 @@ impl DebuggerWindowCore {
         };
         match (target, vm::parse_hex_addr(&input)) {
             (Some(_), Some(value)) => {
-                Self::act(win, &[DebugAction::RegisterWrite(u64::from(value))]);
+                Self::act_scoped(
+                    win,
+                    &[DebugAction::RegisterWrite(u64::from(value))],
+                    RebuildScope::State,
+                );
             }
             (None, _) => {
                 let language = win.borrow().data.language;
@@ -1091,7 +1133,7 @@ impl DebuggerWindowCore {
         match selected {
             Some(addr) => {
                 win.borrow_mut().data.watch = Some(addr);
-                Self::act(win, &[DebugAction::Refresh]);
+                Self::act_scoped(win, &[DebugAction::Refresh], RebuildScope::State);
             }
             None => {
                 let language = win.borrow().data.language;
@@ -1105,7 +1147,7 @@ impl DebuggerWindowCore {
         this.data.watch = None;
         this.data.display.watch_value = None;
         drop(this);
-        Self::rebuild(win);
+        Self::rebuild_partial(win, RebuildScope::State);
     }
 
     fn freeze_set(win: &DebuggerWindow) {
@@ -1167,11 +1209,12 @@ impl DebuggerWindowCore {
             Ok((addr, value)) => {
                 // Re-select first: the batch prepares fresh state
                 // before staging, so Write also works after a cancel.
-                // GTK runs batches synchronously, so the authoritative
-                // confirm row is already in the display after act.
-                Self::act(
+                // The confirm row and the moved dump highlight render
+                // on completion; the lists are untouched.
+                Self::act_scoped(
                     win,
                     &[DebugAction::SelectRow(addr), DebugAction::EditStage(value)],
+                    RebuildScope::Dump,
                 );
             }
             Err(status) => Self::set_status(win, status),
@@ -1186,19 +1229,43 @@ impl DebuggerWindowCore {
     }
 
     fn cancel_write(win: &DebuggerWindow) {
-        Self::act(win, &[DebugAction::EditCancel]);
+        Self::act_scoped(win, &[DebugAction::EditCancel], RebuildScope::Edit);
     }
 
-    /// Rebuild every widget from `data`. Single refresh point; widget
-    /// callbacks never touch the session directly.
-    fn rebuild(win: &DebuggerWindow) {
+    /// Rebuild slice by slice. The header (labels only, no widget
+    /// creation) always refreshes; heavy lists rebuild only when
+    /// their data moved, so highlight-only gestures skip ~700 widget
+    /// creates. Drain completions pick the scope at `act_scoped`.
+    fn rebuild_partial(win: &DebuggerWindow, scope: RebuildScope) {
         let this = win.borrow();
         Self::rebuild_header(&this);
-        Self::rebuild_disasm(win, &this);
-        Self::rebuild_dump(win, &this);
-        Self::rebuild_edit_row(&this);
-        Self::rebuild_state(win, &this);
-        Self::rebuild_bookmarks(win, &this);
+        match scope {
+            RebuildScope::All => {
+                Self::rebuild_disasm(win, &this);
+                Self::rebuild_dump(win, &this);
+                Self::rebuild_edit_row(&this);
+                Self::rebuild_state(win, &this);
+                Self::rebuild_bookmarks(win, &this);
+            }
+            RebuildScope::Dump => {
+                Self::rebuild_dump(win, &this);
+                Self::rebuild_edit_row(&this);
+                Self::rebuild_state(win, &this);
+            }
+            RebuildScope::Disasm => {
+                Self::rebuild_disasm(win, &this);
+            }
+            RebuildScope::State => {
+                Self::rebuild_state(win, &this);
+            }
+            RebuildScope::Edit => {
+                Self::rebuild_edit_row(&this);
+            }
+            RebuildScope::Bookmarks => {
+                Self::rebuild_bookmarks(win, &this);
+            }
+            RebuildScope::Header => {}
+        }
 
         // The PPU viewer follows the same refresh (panels included).
         if let Some(ppu) = this.ppu_window.as_ref() {
@@ -1866,7 +1933,7 @@ mod tests {
             this.data.bookmarks = vec![(0x300, "BM1".to_string())];
             this.data.nav.navigate(0x300, 0x302);
         }
-        DebuggerWindowCore::rebuild(&win);
+        DebuggerWindowCore::rebuild_partial(&win, RebuildScope::All);
         assert!(win.borrow().disasm_title.label().contains("@0x00000302"));
         assert!(
             win.borrow()
