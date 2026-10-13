@@ -246,16 +246,40 @@ fn apply_settings_skips_rebuild_when_assignments_unchanged() {
 }
 
 #[test]
-fn apply_settings_rebuilds_when_latency_changes() {
+fn apply_settings_swaps_audio_without_rebuild_when_latency_changes() {
+    use crate::test_helpers::mock_core_creations;
+
     let mut session = test_session();
+    let options = session
+        .factory()
+        .expect("no active system")
+        .default_load_options();
+    let resolved = session
+        .factory()
+        .expect("no active system")
+        .resolve_load_request(&test_view(&session), options)
+        .unwrap();
+    session
+        .load_resolved(MediaObject::new(None, test_rom()), resolved)
+        .unwrap();
+    assert!(session.loaded());
+
     let mut next = session.settings_snapshot().clone();
     next.local.audio.latency_ms = 90;
 
+    let creations = mock_core_creations();
     let plan = session.apply_settings(next).unwrap();
     assert!(
-        plan.session_rebuild_required,
-        "latency change should require rebuild"
+        plan.audio_backend_changed,
+        "latency change should swap the backend"
     );
+    assert_eq!(
+        mock_core_creations(),
+        creations,
+        "live swap must not reconstruct the core"
+    );
+    assert!(session.loaded(), "swap keeps the loaded ROM");
+    assert_eq!(session.settings_snapshot().local.audio.latency_ms, 90);
 }
 
 #[test]
@@ -302,7 +326,8 @@ fn apply_settings_rolls_back_on_save_failure() {
         "assignments should be rolled back on save failure"
     );
 
-    // Core should still be present (rollback rebuild succeeded)
+    // Core should still be present (swap-back rollback succeeded without
+    // reconstructing anything)
     assert!(
         session.emu_core.is_some(),
         "core should be restored after rollback"
@@ -311,7 +336,7 @@ fn apply_settings_rolls_back_on_save_failure() {
 
 #[test]
 fn apply_settings_rebuilds_when_assignments_change() {
-    use crate::test_helpers::TEST_SLOT_P1;
+    use crate::test_helpers::{TEST_SLOT_P1, mock_core_creations};
     let mut session = test_session();
     let prev_pairs = session.current_assignments().to_string_pairs();
 
@@ -325,7 +350,13 @@ fn apply_settings_rebuilds_when_assignments_change() {
         )],
     );
 
+    let creations = mock_core_creations();
     let _ = session.apply_settings(next).unwrap();
+    assert_eq!(
+        mock_core_creations(),
+        creations + 1,
+        "reassignment still reconstructs the core"
+    );
 
     let new_pairs = session.current_assignments().to_string_pairs();
     assert_ne!(
