@@ -5,28 +5,15 @@
 //! window height. Scaled pictures derive once per drain (Sync); hover
 //! rebuilds clone the cached handles, never the bytes.
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Mutex, atomic::Ordering};
 
-use iced::{Length, Point, Size, Task, keyboard, mouse};
-use iced_winit::{
-    Clipboard,
-    graphics::Viewport,
-    program::{self, Program},
-};
+use iced::{Length, Point, Task};
+use iced_winit::program::{self, Program};
 
-use tao::{
-    event_loop::EventLoopWindowTarget, keyboard::ModifiersState as TaoModifiers,
-    window::Window as TaoWindow,
-};
+use tao::event_loop::EventLoopWindowTarget;
 
 use super::debug_window::DebugBridge;
-use crate::{
-    iced_shell::{ShellRenderer, UiShell, WindowScaffold, aux_settings, aux_theme, render_ui},
-    tao_conversions::convert_tao_window_event,
-};
+use crate::iced_shell::{WindowScaffold, aux_settings, aux_theme};
 
 /// Initial PPU viewer window size (verified Xvfb fit).
 pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
@@ -208,16 +195,7 @@ impl Program for PpuProgram {
 }
 
 pub(crate) struct PpuWindowHandle {
-    pub(crate) window: Arc<TaoWindow>,
-    window_id: iced::window::Id,
-    ui_state: UiShell<PpuProgram>,
-    renderer: ShellRenderer,
-    viewport_physical: (u32, u32),
-    pub(crate) scale_factor: f32,
-    pub(crate) modifiers: keyboard::Modifiers,
-    pub(crate) should_close: Arc<AtomicBool>,
-    cursor: mouse::Cursor,
-    clipboard: Clipboard,
+    pub(crate) shell: crate::iced_shell::AuxShell<PpuProgram>,
     bridge: Arc<DebugBridge>,
 }
 
@@ -229,7 +207,6 @@ impl PpuWindowHandle {
     ) -> Option<Self> {
         use nerust_settings_core::i18n::{UiText, text as ui_text};
         let language = bridge.language;
-        let should_close = Arc::new(AtomicBool::new(false));
         let title = ui_text(language, UiText::PpuViewer).to_string();
         let scaffold = WindowScaffold::open(
             event_loop,
@@ -239,50 +216,23 @@ impl PpuWindowHandle {
             position,
             "PPU viewer window",
         )?;
-        let crate::iced_shell::WindowScaffold {
-            window,
-            window_id,
-            scale_factor,
-            viewport_physical,
-            bounds,
-            compositor,
-            mut renderer,
-            surface,
-        } = scaffold;
         let program = PpuProgram {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let ui_state = UiShell::new(instance, window_id, bounds, &mut renderer);
-        window.request_redraw();
+        let shell = crate::iced_shell::AuxShell::assemble(scaffold, instance);
         // The viewer opens on demand from the debugger toolbar: take
         // focus so keyboard and wheel go straight to the tiles.
-        window.set_focus();
-        Some(Self {
-            window,
-            window_id,
-            ui_state,
-            renderer: ShellRenderer {
-                compositor,
-                surface,
-                backend: renderer,
-            },
-            viewport_physical,
-            scale_factor,
-            modifiers: keyboard::Modifiers::default(),
-            should_close,
-            cursor: mouse::Cursor::default(),
-            clipboard: Clipboard::unconnected(),
-            bridge,
-        })
+        shell.window.set_focus();
+        Some(Self { shell, bridge })
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
-        let (messages, outcome) = self.ui_state.pump(
+        let (messages, outcome) = self.shell.ui_state.pump(
             mapped,
-            self.cursor,
-            &mut self.clipboard,
-            &mut self.renderer.backend,
+            self.shell.cursor,
+            &mut self.shell.clipboard,
+            &mut self.shell.renderer.backend,
         );
         match outcome {
             crate::iced_shell::PumpOutcome::Rebuild => {
@@ -291,90 +241,47 @@ impl PpuWindowHandle {
                     .store(true, std::sync::atomic::Ordering::Release);
             }
             crate::iced_shell::PumpOutcome::Repaint => {
-                self.window.request_redraw();
+                self.shell.window.request_redraw();
             }
             crate::iced_shell::PumpOutcome::Idle => {}
         }
         if !messages.is_empty() || matches!(outcome, crate::iced_shell::PumpOutcome::Rebuild) {
-            let bounds = Viewport::with_physical_size(
-                Size::new(self.viewport_physical.0, self.viewport_physical.1),
-                self.scale_factor,
-            )
-            .logical_size();
-            self.ui_state.process_messages(
+            let bounds = self.shell.logical_bounds();
+            self.shell.ui_state.process_messages(
                 messages,
-                self.window_id,
+                self.shell.window_id,
                 bounds,
-                &mut self.renderer.backend,
+                &mut self.shell.renderer.backend,
                 &self.bridge.ppu_invalidated,
             );
-            self.window.request_redraw();
+            self.shell.window.request_redraw();
         }
     }
 
     pub(crate) fn render(&mut self) {
-        render_ui(
-            &mut self.ui_state,
-            &mut self.renderer,
-            self.viewport_physical,
-            self.scale_factor,
-            self.cursor,
-            &mut self.clipboard,
-            "PPU viewer",
-        );
-    }
-
-    pub(crate) fn resize(&mut self, width: u32, height: u32) {
-        self.viewport_physical = (width, height);
-        self.renderer.resize(width, height);
-        // Same relayout contract as the debugger: retained tiles
-        // reflow against the fresh bounds, no view rebuild.
-        let bounds = crate::iced_shell::logical_bounds((width, height), self.scale_factor);
-        self.ui_state.relayout(bounds, &mut self.renderer.backend);
-        self.window.request_redraw();
-    }
-
-    pub(crate) fn set_scale_factor(&mut self, sf: f32) {
-        self.scale_factor = sf;
-        let bounds = crate::iced_shell::logical_bounds(self.viewport_physical, self.scale_factor);
-        self.ui_state.relayout(bounds, &mut self.renderer.backend);
-        self.window.request_redraw();
-    }
-
-    pub(crate) fn set_modifiers(&mut self, modifiers: TaoModifiers) {
-        self.modifiers = crate::tao_conversions::tao_modifiers_to_iced(modifiers);
+        self.shell.render("PPU viewer");
     }
 
     pub(crate) fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
-        if let Some(iced_event) = convert_tao_window_event(
-            event,
-            &mut self.cursor,
-            self.scale_factor,
-            &mut self.modifiers,
-            &self.should_close,
-        ) {
+        if let Some(iced_event) = self.shell.feed_tao_event(event) {
             self.handle_event(iced_event);
         }
     }
 
     pub(crate) fn sync_from_bridge(&mut self) {
-        let bounds = Viewport::with_physical_size(
-            Size::new(self.viewport_physical.0, self.viewport_physical.1),
-            self.scale_factor,
-        )
-        .logical_size();
+        let bounds = self.shell.logical_bounds();
         // Derive cached bytes first (one scale per drain), then
         // rebuild the view from cache.
-        self.ui_state.push_message(PpuMessage::Sync);
+        self.shell.ui_state.push_message(PpuMessage::Sync);
         self.bridge.ppu_invalidated.store(true, Ordering::Release);
-        self.ui_state.process_messages(
+        self.shell.ui_state.process_messages(
             Vec::new(),
-            self.window_id,
+            self.shell.window_id,
             bounds,
-            &mut self.renderer.backend,
+            &mut self.shell.renderer.backend,
             &self.bridge.ppu_invalidated,
         );
-        self.window.request_redraw();
+        self.shell.window.request_redraw();
         // Deterministic pixels per drain: render synchronously
         // instead of depending on the next window event, so the
         // viewer never sits on a stale or blank frame.

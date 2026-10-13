@@ -319,6 +319,132 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> Drop for UiShell<P> {
     }
 }
 
+/// Window-system half shared by the debugger and PPU viewer
+/// (twins by design): native window, viewport, input state, renderer,
+/// and UI shell. The program-specific halves (bridge, messages,
+/// view) stay in the handles. One home for resize/relayout/scale/
+/// render/event-feed so the twins can never drift apart.
+pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
+    pub(crate) window: Arc<TaoWindow>,
+    pub(crate) window_id: iced::window::Id,
+    pub(crate) ui_state: UiShell<P>,
+    pub(crate) renderer: ShellRenderer,
+    pub(crate) viewport_physical: (u32, u32),
+    pub(crate) scale_factor: f32,
+    pub(crate) modifiers: iced::keyboard::Modifiers,
+    pub(crate) should_close: Arc<AtomicBool>,
+    pub(crate) cursor: mouse::Cursor,
+    pub(crate) clipboard: Clipboard,
+}
+
+impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
+    /// Assemble from a scaffold plus a program instance: builds the
+    /// UI shell, wraps the renderer, and paints the first frame.
+    /// Programs and bridges stay with the caller.
+    pub(crate) fn assemble(scaffold: WindowScaffold, instance: program::Instance<P>) -> Self {
+        let WindowScaffold {
+            window,
+            window_id,
+            scale_factor,
+            viewport_physical,
+            bounds,
+            compositor,
+            mut renderer,
+            surface,
+        } = scaffold;
+        let ui_state = UiShell::new(instance, window_id, bounds, &mut renderer);
+        window.request_redraw();
+        Self {
+            window,
+            window_id,
+            ui_state,
+            renderer: ShellRenderer {
+                compositor,
+                surface,
+                backend: renderer,
+            },
+            viewport_physical,
+            scale_factor,
+            modifiers: iced::keyboard::Modifiers::default(),
+            should_close: Arc::new(AtomicBool::new(false)),
+            cursor: mouse::Cursor::default(),
+            clipboard: Clipboard::unconnected(),
+        }
+    }
+
+    /// Resize the raster and relayout the retained tree against the
+    /// fresh bounds (no view rebuild): `Fill` tracks live resize.
+    pub(crate) fn resize(&mut self, width: u32, height: u32) {
+        self.viewport_physical = (width, height);
+        self.renderer.resize(width, height);
+        let bounds = logical_bounds((width, height), self.scale_factor);
+        self.ui_state.relayout(bounds, &mut self.renderer.backend);
+        self.window.request_redraw();
+    }
+
+    /// Scale changes move every layout bound: relayout like resize.
+    pub(crate) fn set_scale_factor(&mut self, scale_factor: f32) {
+        self.scale_factor = scale_factor;
+        let bounds = logical_bounds(self.viewport_physical, self.scale_factor);
+        self.ui_state.relayout(bounds, &mut self.renderer.backend);
+        self.window.request_redraw();
+    }
+
+    pub(crate) fn set_modifiers(&mut self, modifiers: tao::keyboard::ModifiersState) {
+        self.modifiers = crate::tao_conversions::tao_modifiers_to_iced(modifiers);
+    }
+
+    /// Shared event prelude for both twins (resize/scale/
+    /// modifiers/close): byte-identical in the debugger and the PPU
+    /// viewer, so it lives here instead of twice inline.
+    pub(crate) fn handle_common_event(&mut self, event: &tao::event::WindowEvent) {
+        match event {
+            tao::event::WindowEvent::Resized(size) => self.resize(size.width, size.height),
+            tao::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                self.set_scale_factor(*scale_factor as f32);
+            }
+            tao::event::WindowEvent::ModifiersChanged(state) => self.set_modifiers(*state),
+            tao::event::WindowEvent::CloseRequested => {
+                self.should_close
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+            _ => {}
+        }
+    }
+
+    /// Feed one native event, returning the converted iced event
+    /// for the window's own dispatcher (debugger paging vs PPU
+    /// hover). Returns the event instead of taking a closure so
+    /// callers never double-borrow the shell.
+    pub(crate) fn feed_tao_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
+        crate::tao_conversions::convert_tao_window_event(
+            event,
+            &mut self.cursor,
+            self.scale_factor,
+            &mut self.modifiers,
+            &self.should_close,
+        )
+    }
+
+    /// Logical layout bounds for the current viewport and scale.
+    pub(crate) fn logical_bounds(&self) -> Size {
+        logical_bounds(self.viewport_physical, self.scale_factor)
+    }
+
+    /// Full render through the shared pump; only the log tag differs.
+    pub(crate) fn render(&mut self, log_tag: &'static str) {
+        render_ui(
+            &mut self.ui_state,
+            &mut self.renderer,
+            self.viewport_physical,
+            self.scale_factor,
+            self.cursor,
+            &mut self.clipboard,
+            log_tag,
+        );
+    }
+}
+
 /// Shared full render: Light theme, redraw pump, draw, present.
 /// Both viewers call this; only the failure log tag differs.
 #[allow(clippy::too_many_arguments)]
@@ -373,6 +499,63 @@ mod tests {
         assert_eq!((bounds.width, bounds.height), (550.0, 400.0));
         let unit = logical_bounds((960, 720), 1.0);
         assert_eq!((unit.width, unit.height), (960.0, 720.0));
+    }
+
+    /// Full UI-shell lifecycle without a window: build, pump,
+    /// message-driven rebuild, relayout, draw. Everything here is
+    /// software rasterization plus program state, so it runs in any
+    /// CI job (including the display-less ones) and pins the paths
+    /// the widget tests also exercise. Refresh-style messages only
+    /// queue drain requests, so no emulator contact happens.
+    #[test]
+    fn uishell_headless_build_pump_relayout_draw() {
+        use crate::debug_window::{DebugBridge, DebugMessage, DebugProgram};
+        use nerust_gui_settings::language::AppLanguage;
+        use nerust_gui_viewmodel::debugger::DisplayCache;
+
+        let bridge = Arc::new(DebugBridge::new(
+            DisplayCache::default(),
+            Vec::new(),
+            0,
+            AppLanguage::English,
+        ));
+        let (instance, _task) = program::Instance::new(DebugProgram {
+            bridge: Arc::clone(&bridge),
+        });
+        let mut backend = Renderer::new(crate::tao_conversions::default_font(), iced::Pixels(16.0));
+        let bounds = Size::new(1100.0, 800.0);
+        let mut shell = UiShell::new(instance, iced::window::Id::unique(), bounds, &mut backend);
+        let mut clipboard = Clipboard::unconnected();
+        let (messages, _) = shell.pump(
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            )),
+            mouse::Cursor::default(),
+            &mut clipboard,
+            &mut backend,
+        );
+        assert!(messages.is_empty());
+        shell.push_message(DebugMessage::RefreshPressed);
+        let invalidated = AtomicBool::new(true);
+        shell.process_messages(
+            vec![DebugMessage::FollowPcToggle],
+            iced::window::Id::unique(),
+            bounds,
+            &mut backend,
+            &invalidated,
+        );
+        assert!(!invalidated.load(Ordering::Acquire));
+        shell.relayout(Size::new(900.0, 650.0), &mut backend);
+        let theme = iced::Theme::Light;
+        let style = <iced::Theme as theme::Base>::base(&theme);
+        shell.ui_mut().draw(
+            &mut backend,
+            &theme,
+            &renderer::Style {
+                text_color: style.text_color,
+            },
+            mouse::Cursor::default(),
+        );
     }
 
     #[test]

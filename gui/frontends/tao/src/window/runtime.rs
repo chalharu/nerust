@@ -252,19 +252,7 @@ impl WindowRuntime {
                     let Some(handle) = self.host.debug.debug_window.as_mut() else {
                         return;
                     };
-                    match &event {
-                        WindowEvent::Resized(size) => handle.resize(size.width, size.height),
-                        WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                            handle.set_scale_factor(*scale_factor as f32);
-                        }
-                        WindowEvent::ModifiersChanged(state) => handle.set_modifiers(*state),
-                        WindowEvent::CloseRequested => {
-                            handle
-                                .should_close
-                                .store(true, std::sync::atomic::Ordering::Release);
-                        }
-                        _ => {}
-                    }
+                    handle.shell.handle_common_event(&event);
                     handle.handle_tao_event(event);
                 }
                 if refocused {
@@ -279,6 +267,7 @@ impl WindowRuntime {
                 if let Some(handle) = self.host.debug.debug_window.as_mut() {
                     handle.render();
                     if handle
+                        .shell
                         .should_close
                         .load(std::sync::atomic::Ordering::Acquire)
                     {
@@ -315,22 +304,11 @@ impl WindowRuntime {
                 let Some(handle) = self.host.debug.ppu_window.as_mut() else {
                     return;
                 };
-                match &event {
-                    WindowEvent::Resized(size) => handle.resize(size.width, size.height),
-                    WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                        handle.set_scale_factor(*scale_factor as f32);
-                    }
-                    WindowEvent::ModifiersChanged(state) => handle.set_modifiers(*state),
-                    WindowEvent::CloseRequested => {
-                        handle
-                            .should_close
-                            .store(true, std::sync::atomic::Ordering::Release);
-                    }
-                    _ => {}
-                }
+                handle.shell.handle_common_event(&event);
                 handle.handle_tao_event(event);
                 handle.render();
                 if handle
+                    .shell
                     .should_close
                     .load(std::sync::atomic::Ordering::Acquire)
                 {
