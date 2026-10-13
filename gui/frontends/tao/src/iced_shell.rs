@@ -324,6 +324,9 @@ pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>>
     pub(crate) ui_state: UiShell<P>,
     pub(crate) renderer: ShellRenderer,
     pub(crate) viewport_physical: (u32, u32),
+    /// Last surface-configured size. Resize storms only relayout;
+    /// the realloc happens in `render`, once per presented frame.
+    surface_size: (u32, u32),
     pub(crate) scale_factor: f32,
     pub(crate) modifiers: iced::keyboard::Modifiers,
     pub(crate) should_close: Arc<AtomicBool>,
@@ -358,6 +361,8 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
                 backend: renderer,
             },
             viewport_physical,
+            // The scaffold builds the surface at this size.
+            surface_size: viewport_physical,
             scale_factor,
             modifiers: iced::keyboard::Modifiers::default(),
             should_close: Arc::new(AtomicBool::new(false)),
@@ -368,9 +373,17 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
 
     /// Resize the raster and relayout the retained tree against the
     /// fresh bounds (no view rebuild): `Fill` tracks live resize.
+    /// The surface realloc is deliberately deferred to `render`: a
+    /// live drag delivers resize storms, and reconfiguring per event
+    /// falls behind the drag — the backlog then unloads as a hang
+    /// proportional to the drag length on release. One configure per
+    /// presented frame keeps the loop ahead. Same-size events
+    /// (redundant during some drags) skip everything.
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
+        if self.viewport_physical == (width, height) {
+            return;
+        }
         self.viewport_physical = (width, height);
-        self.renderer.resize(width, height);
         let bounds = logical_bounds((width, height), self.scale_factor);
         self.ui_state.relayout(bounds, &mut self.renderer.backend);
         self.window.request_redraw();
@@ -427,6 +440,14 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
 
     /// Full render through the shared pump; only the log tag differs.
     pub(crate) fn render(&mut self, log_tag: &'static str) {
+        // Deferred surface configure (see `resize`): resize storms
+        // only relayout per event; the realloc lands here, at most
+        // once per presented frame.
+        if self.surface_size != self.viewport_physical {
+            self.renderer
+                .resize(self.viewport_physical.0, self.viewport_physical.1);
+            self.surface_size = self.viewport_physical;
+        }
         render_ui(
             &mut self.ui_state,
             &mut self.renderer,
