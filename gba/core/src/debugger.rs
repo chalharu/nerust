@@ -113,6 +113,83 @@ impl<'a> GbaDebugger<'a> {
         }
         out
     }
+
+    /// One Thumb row (or raw-byte fallback rows): pushes into `out`,
+    /// returns the cursor advance. A Thumb BL pair decodes as one
+    /// 4-byte row; lone halves stay `.HWORD` via the shared decoder.
+    fn thumb_row(
+        cursor: u32,
+        raw: [u8; 4],
+        have: u32,
+        is_pc: bool,
+        out: &mut Vec<DisasmLine>,
+    ) -> u32 {
+        use crate::disasm_gba::decode_thumb;
+        if have < 2 {
+            out.push(raw_db(cursor, raw[0], is_pc));
+            return 1;
+        }
+        let word = u16::from_le_bytes([raw[0], raw[1]]);
+        // BL pair: verify the second half before combining.
+        if (0xF000..0xF800).contains(&word) && have == 4 {
+            let next = u16::from_le_bytes([raw[2], raw[3]]);
+            if next >= 0xF800 {
+                let combined = (u32::from(word & 0x3FF) << 12) | (u32::from(next & 0x7FF) << 1);
+                let offset = ((combined << 9) as i32) >> 9;
+                let dest = cursor.wrapping_add(4).wrapping_add(offset as u32);
+                out.push(DisasmLine {
+                    addr: cursor,
+                    bytes: raw,
+                    len: 4,
+                    text: format!("BL ${dest:08X}"),
+                    is_pc,
+                    target: Some(dest),
+                });
+                return 4;
+            }
+        }
+        let decoded = decode_thumb(cursor, word);
+        out.push(DisasmLine {
+            addr: cursor,
+            bytes: [raw[0], raw[1], 0, 0],
+            len: 2,
+            text: decoded.text,
+            is_pc,
+            target: decoded.target,
+        });
+        2
+    }
+
+    /// One ARM row (or per-byte fallback rows): pushes into `out`,
+    /// returns the cursor advance. Fallback rows advance the address
+    /// per byte, mirroring the inline loop this replaces.
+    fn arm_row(
+        cursor: u32,
+        raw: [u8; 4],
+        have: u32,
+        pc: Option<u32>,
+        out: &mut Vec<DisasmLine>,
+    ) -> u32 {
+        use crate::disasm_gba::decode_arm;
+        let is_pc = pc == Some(cursor);
+        if have < 4 {
+            for (addr, b) in (cursor..).zip(raw.iter().take(have as usize)) {
+                out.push(raw_db(addr, *b, pc == Some(addr)));
+            }
+            return have;
+        }
+        let word = u32::from_le_bytes(raw);
+        let decoded = decode_arm(cursor, word);
+        out.push(DisasmLine {
+            addr: cursor,
+            bytes: raw,
+            len: 4,
+            text: decoded.text,
+            is_pc,
+            target: decoded.target,
+        });
+        4
+    }
 }
 
 impl Debugger for GbaDebugger<'_> {
@@ -204,7 +281,6 @@ impl Debugger for GbaDebugger<'_> {
     /// `0xF800-0xFFFF`) decodes as one 4-byte row; lone halves stay
     /// `.HWORD`.
     fn disassemble(&self, addr: u32, count: u16) -> Vec<DisasmLine> {
-        use crate::disasm_gba::{decode_arm, decode_thumb};
         let pc = self.program_counter();
         let thumb = self.system.cpu.registers().cpsr_t();
         let mut out = Vec::new();
@@ -229,63 +305,12 @@ impl Debugger for GbaDebugger<'_> {
                 break;
             }
             let is_pc = pc == Some(cursor);
-            if thumb {
-                if have < 2 {
-                    out.push(raw_db(cursor, raw[0], is_pc));
-                    cursor += 1;
-                    continue;
-                }
-                let word = u16::from_le_bytes([raw[0], raw[1]]);
-                // BL pair: verify the second half before combining.
-                if (0xF000..0xF800).contains(&word) && have == 4 {
-                    let next = u16::from_le_bytes([raw[2], raw[3]]);
-                    if next >= 0xF800 {
-                        let combined =
-                            (u32::from(word & 0x3FF) << 12) | (u32::from(next & 0x7FF) << 1);
-                        let offset = ((combined << 9) as i32) >> 9;
-                        let dest = cursor.wrapping_add(4).wrapping_add(offset as u32);
-                        out.push(DisasmLine {
-                            addr: cursor,
-                            bytes: raw,
-                            len: 4,
-                            text: format!("BL ${dest:08X}"),
-                            is_pc,
-                            target: Some(dest),
-                        });
-                        cursor += 4;
-                        continue;
-                    }
-                }
-                let decoded = decode_thumb(cursor, word);
-                out.push(DisasmLine {
-                    addr: cursor,
-                    bytes: [raw[0], raw[1], 0, 0],
-                    len: 2,
-                    text: decoded.text,
-                    is_pc,
-                    target: decoded.target,
-                });
-                cursor += 2;
+            let advance = if thumb {
+                Self::thumb_row(cursor, raw, have, is_pc, &mut out)
             } else {
-                if have < 4 {
-                    for b in raw.iter().take(have as usize) {
-                        out.push(raw_db(cursor, *b, pc == Some(cursor)));
-                        cursor += 1;
-                    }
-                    continue;
-                }
-                let word = u32::from_le_bytes(raw);
-                let decoded = decode_arm(cursor, word);
-                out.push(DisasmLine {
-                    addr: cursor,
-                    bytes: raw,
-                    len: 4,
-                    text: decoded.text,
-                    is_pc,
-                    target: decoded.target,
-                });
-                cursor += 4;
-            }
+                Self::arm_row(cursor, raw, have, pc, &mut out)
+            };
+            cursor += advance;
         }
         out
     }

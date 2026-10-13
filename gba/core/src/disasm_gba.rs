@@ -44,69 +44,124 @@ fn reg(n: u32) -> String {
 /// Decode one 16-bit Thumb halfword at `addr`.
 pub fn decode_thumb(addr: u32, word: u16) -> Decoded {
     let w = u32::from(word);
-    let text;
-    let mut target = None;
+    // First match wins: the groups below partition the halfword
+    // space exactly like the old flat chain, so behavior is
+    // identical. Anything unmatched stays a raw halfword: the
+    // debugger never fabricates a cross-halfword instruction.
+    let found = thumb_branch(addr, w)
+        .or_else(|| thumb_alu(w))
+        .or_else(|| thumb_mem(w))
+        .or_else(|| thumb_low(w));
+    match found {
+        Some((text, target)) => Decoded {
+            text,
+            target,
+            len: 2,
+        },
+        None => Decoded {
+            text: format!(".HWORD ${word:04X}"),
+            target: None,
+            len: 2,
+        },
+    }
+}
+
+/// Branches and exchanges: conditional (0xD000-0xDDFF),
+/// unconditional (0xE000-0xE800), BX/BLX (0x4700-0x47FF).
+/// Reserved 0xDE__ stays raw (THUMB_COND holds 14 entries).
+fn thumb_branch(addr: u32, w: u32) -> Option<(String, Option<u32>)> {
     // Conditional branch (0xD000-0xDDFF; 0xDE__ is a reserved
     // condition and 0xDFxx is SWI).
     if (0xD000..0xDE00).contains(&w) {
         let cond = THUMB_COND[((w >> 8) & 0xF) as usize];
         let offset = ((w & 0xFF) as i8 as i32 * 2).wrapping_add(addr.wrapping_add(4) as i32);
-        target = Some(offset as u32);
-        text = format!("B{cond} ${:08X}", offset as u32);
-    } else if (0xDE00..0xDF00).contains(&w) {
+        return Some((
+            format!("B{cond} ${:08X}", offset as u32),
+            Some(offset as u32),
+        ));
+    }
+    if (0xDE00..0xDF00).contains(&w) {
         // Reserved condition (NV): raw halfword, never fabricated
         // (indexing THUMB_COND here would panic: it holds 14).
-        text = format!(".HWORD ${w:04X}");
+        return None;
+    }
     // Unconditional branch: signed 11-bit field, doubled, from base+4.
-    } else if (0xE000..0xE800).contains(&w) {
+    if (0xE000..0xE800).contains(&w) {
         let raw = w & 0x7FF;
         let field = ((raw << 21) as i32) >> 21;
         let offset = field
             .wrapping_mul(2)
             .wrapping_add(addr.wrapping_add(4) as i32);
-        target = Some(offset as u32);
-        text = format!("B ${:08X}", offset as u32);
+        return Some((format!("B ${:08X}", offset as u32), Some(offset as u32)));
+    }
     // Branch/exchange (0x4700-0x47FF; H set selects BLX register).
-    } else if (0x4700..0x4800).contains(&w) {
+    if (0x4700..0x4800).contains(&w) {
         let rm = (w >> 3) & 0xF;
-        text = if w & 0x80 != 0 {
+        let text = if w & 0x80 != 0 {
             format!("BLX {}", reg(rm))
         } else {
             format!("BX {}", reg(rm))
         };
+        return Some((text, None));
+    }
+    None
+}
+
+/// ALU forms: hi-register (0x4400-0x46FF), ALU ops
+/// (0x4000-0x43FF), move/compare/add/sub immediate
+/// (0x2000-0x3FFF). None carries a code target.
+fn thumb_alu(w: u32) -> Option<(String, Option<u32>)> {
     // Hi-register ALU (0x4400-0x46FF): ADD/CMP/MOV.
-    } else if (0x4400..0x4700).contains(&w) {
+    if (0x4400..0x4700).contains(&w) {
         let op = ["ADD", "CMP", "MOV"][((w >> 8) & 3) as usize];
         let rd = (w & 7) | ((w >> 4) & 8);
         let rs = (w >> 3) & 0xF;
-        text = format!("{op} {}, {}", reg(rd), reg(rs));
+        return Some((format!("{op} {}, {}", reg(rd), reg(rs)), None));
+    }
     // ALU ops (0x4000-0x43FF).
-    } else if (0x4000..0x4400).contains(&w) {
+    if (0x4000..0x4400).contains(&w) {
         let op = THUMB_ALU[((w >> 6) & 0xF) as usize];
         let rs = (w >> 3) & 7;
         let rd = w & 7;
-        text = format!("{op} {}, {}", reg(rd), reg(rs));
+        return Some((format!("{op} {}, {}", reg(rd), reg(rs)), None));
+    }
     // Move/compare/add/sub immediate (0x2000-0x3FFF).
-    } else if (0x2000..0x4000).contains(&w) {
+    if (0x2000..0x4000).contains(&w) {
         let op = ["MOV", "CMP", "ADD", "SUB"][((w >> 11) & 3) as usize];
         let rd = (w >> 8) & 7;
-        text = format!("{op} {}, #${:02X}", reg(rd), w & 0xFF);
+        return Some((format!("{op} {}, #${:02X}", reg(rd), w & 0xFF), None));
+    }
+    None
+}
+
+/// Memory forms: PC-relative/absolute loads, register and
+/// immediate offsets, ADD PC/SP, ADD SP/PUSH/POP, and multiple
+/// load/store. Pool addresses are data, never code targets.
+fn thumb_mem(w: u32) -> Option<(String, Option<u32>)> {
     // PC-relative load (0x4800-0x4FFF): pool address is data, not code.
-    } else if (0x4800..0x5000).contains(&w) {
+    if (0x4800..0x5000).contains(&w) {
         let rd = (w >> 8) & 7;
-        text = format!("LDR {}, [PC, #${:02X}]", reg(rd), (w & 0xFF) * 4);
+        return Some((
+            format!("LDR {}, [PC, #${:02X}]", reg(rd), (w & 0xFF) * 4),
+            None,
+        ));
+    }
     // Register-offset load/store (0x5000-0x5FFF).
-    } else if (0x5000..0x6000).contains(&w) {
+    if (0x5000..0x6000).contains(&w) {
         let op =
             ["STR", "STRH", "STRB", "LDSB", "LDR", "LDRH", "LDRB", "LDSH"][((w >> 9) & 7) as usize];
-        text = format!(
-            "{op} {}, [{}, {}]",
-            reg(w & 7),
-            reg((w >> 3) & 7),
-            reg((w >> 6) & 7)
-        );
+        return Some((
+            format!(
+                "{op} {}, [{}, {}]",
+                reg(w & 7),
+                reg((w >> 3) & 7),
+                reg((w >> 6) & 7)
+            ),
+            None,
+        ));
+    }
     // Immediate-offset load/store, byte/halfword variants, SP-relative.
-    } else if (0x6000..0xA000).contains(&w) {
+    if (0x6000..0xA000).contains(&w) {
         let is_load = w & 0x0800 != 0;
         let (op, scale) = match (w >> 12) & 7 {
             0x6 => (if is_load { "LDR" } else { "STR" }, 4),
@@ -124,78 +179,108 @@ pub fn decode_thumb(addr: u32, word: u16) -> Decoded {
         } else {
             ((w >> 6) & 0x1F) * scale
         };
-        text = format!("{op} {}, [{base}, #${offset:02X}]", reg(w & 7));
+        return Some((
+            format!("{op} {}, [{base}, #${offset:02X}]", reg(w & 7)),
+            None,
+        ));
+    }
     // ADD to PC/SP (0xA000-0xAFFF).
-    } else if (0xA000..0xB000).contains(&w) {
+    if (0xA000..0xB000).contains(&w) {
         let dst = if w & 0x0800 != 0 { "SP" } else { "PC" };
-        text = format!(
-            "ADD {}, {}, #${:02X}",
-            reg((w >> 8) & 7),
-            dst,
-            (w & 0xFF) * 4
-        );
+        return Some((
+            format!(
+                "ADD {}, {}, #${:02X}",
+                reg((w >> 8) & 7),
+                dst,
+                (w & 0xFF) * 4
+            ),
+            None,
+        ));
+    }
     // ADD SP / PUSH / POP. PUSH is 1011 010L, POP 1011 110L:
     // bits 10-9 read 0b10 and bit 11 selects store/load.
-    } else if (0xB000..0xBE00).contains(&w) {
+    if (0xB000..0xBE00).contains(&w) {
         if w < 0xB100 {
             let off = (w & 0x7F) * 4;
-            text = if w & 0x80 != 0 {
+            let text = if w & 0x80 != 0 {
                 format!("ADD SP, #-${off:02X}")
             } else {
                 format!("ADD SP, #${off:02X}")
             };
-        } else if (w >> 9) & 3 == 2 {
+            return Some((text, None));
+        }
+        if (w >> 9) & 3 == 2 {
             let store = w & 0x0800 == 0;
             let mut list = reg_list(w, 8);
             if w & 0x0100 != 0 {
                 list.push(if store { "LR" } else { "PC" }.to_string());
             }
-            text = format!(
-                "{} {{{}}}",
-                if store { "PUSH" } else { "POP" },
-                list.join(", ")
-            );
-        } else {
-            text = format!(".HWORD ${word:04X}");
+            return Some((
+                format!(
+                    "{} {{{}}}",
+                    if store { "PUSH" } else { "POP" },
+                    list.join(", ")
+                ),
+                None,
+            ));
         }
+        return None;
+    }
     // Multiple load/store (0xC000-0xCFFF).
-    } else if (0xC000..0xD000).contains(&w) {
+    if (0xC000..0xD000).contains(&w) {
         let op = if w & 0x0800 != 0 { "LDMIA" } else { "STMIA" };
-        text = format!(
-            "{op} {}!, {{{}}}",
-            reg((w >> 8) & 7),
-            reg_list(w, 8).join(", ")
-        );
+        return Some((
+            format!(
+                "{op} {}!, {{{}}}",
+                reg((w >> 8) & 7),
+                reg_list(w, 8).join(", ")
+            ),
+            None,
+        ));
+    }
+    None
+}
+
+/// Low-halfword forms: shifts, small-immediate add/sub, and SWI.
+fn thumb_low(w: u32) -> Option<(String, Option<u32>)> {
     // Shift/add/sub small immediates and SWI.
-    } else if w < 0x2000 {
+    if w < 0x2000 {
         let rd = w & 7;
         let rs = (w >> 3) & 7;
         if w < 0x0800 {
-            text = format!("LSL {}, {}, #${:02X}", reg(rd), reg(rs), (w >> 6) & 0x1F);
-        } else if w < 0x1000 {
-            text = format!("LSR {}, {}, #${:02X}", reg(rd), reg(rs), (w >> 6) & 0x1F);
-        } else if w < 0x1800 {
-            text = format!("ASR {}, {}, #${:02X}", reg(rd), reg(rs), (w >> 6) & 0x1F);
-        } else {
-            let op = if w & 0x0400 != 0 { "SUB" } else { "ADD" };
-            if w & 0x0200 != 0 {
-                text = format!("{op} {}, {}, #${:02X}", reg(rd), reg(rs), (w >> 6) & 7);
-            } else {
-                text = format!("{op} {}, {}, {}", reg(rd), reg(rs), reg((w >> 6) & 7));
-            }
+            return Some((
+                format!("LSL {}, {}, #${:02X}", reg(rd), reg(rs), (w >> 6) & 0x1F),
+                None,
+            ));
         }
-    } else if (0xDF00..0xE000).contains(&w) {
-        text = format!("SWI #${:02X}", w & 0xFF);
-    // BL long-branch halves and everything else stay raw: the
-    // debugger never fabricates a cross-halfword instruction.
-    } else {
-        text = format!(".HWORD ${word:04X}");
+        if w < 0x1000 {
+            return Some((
+                format!("LSR {}, {}, #${:02X}", reg(rd), reg(rs), (w >> 6) & 0x1F),
+                None,
+            ));
+        }
+        if w < 0x1800 {
+            return Some((
+                format!("ASR {}, {}, #${:02X}", reg(rd), reg(rs), (w >> 6) & 0x1F),
+                None,
+            ));
+        }
+        let op = if w & 0x0400 != 0 { "SUB" } else { "ADD" };
+        if w & 0x0200 != 0 {
+            return Some((
+                format!("{op} {}, {}, #${:02X}", reg(rd), reg(rs), (w >> 6) & 7),
+                None,
+            ));
+        }
+        return Some((
+            format!("{op} {}, {}, {}", reg(rd), reg(rs), reg((w >> 6) & 7)),
+            None,
+        ));
     }
-    Decoded {
-        text,
-        target,
-        len: 2,
+    if (0xDF00..0xE000).contains(&w) {
+        return Some((format!("SWI #${:02X}", w & 0xFF), None));
     }
+    None
 }
 
 fn reg_list(bits: u32, count: u32) -> Vec<String> {
@@ -217,122 +302,172 @@ pub fn decode_arm(addr: u32, word: u32) -> Decoded {
             len: 4,
         };
     }
-    let mut target = None;
-    // B / BL: 24-bit signed offset scaled by 4 from addr + 8.
-    // The top nibble is the condition, so mask it before matching.
-    let branch = (word >> 24) & 0x0F;
-    if branch == 0x0A || branch == 0x0B {
-        let raw = word & 0xFFFFFF;
-        let offset = (((raw << 8) as i32) >> 6).wrapping_add(addr.wrapping_add(8) as i32);
-        target = Some(offset as u32);
-        let op = if branch == 0x0B { "BL" } else { "B" };
-        let cond = ARM_COND[cond_field];
-        return Decoded {
-            text: format!("{op}{cond} ${:08X}", offset as u32),
-            target,
-            len: 4,
-        };
+    if let Some(branch) = arm_branch(addr, word, cond_field) {
+        return branch;
     }
+    // First match wins, in the old chain order; anything unmatched
+    // stays a raw word, never a fabricated instruction.
     let cond = ARM_COND[cond_field];
-    let text = if word & 0x0FFFFFF0 == 0x012FFF10 {
-        // BX Rm (bit 4 selects BLX register on v5).
-        let rm = word & 0xF;
-        if word & 0xF0 == 0x30 {
-            format!("BLX{cond} {}", reg(rm))
-        } else {
-            format!("BX{cond} {}", reg(rm))
-        }
-    } else if (word >> 26) & 3 == 0
-        && word & 0x90 == 0x90
-        && word & 0x0FC00000 == 0
-        && (word & 0x00200000 != 0 || word & 0x0000F000 == 0)
+    let text = arm_bx(word, cond)
+        .or_else(|| arm_multiply(word, cond))
+        .or_else(|| arm_data_processing(word, cond))
+        .or_else(|| arm_single_transfer(word, cond))
+        .or_else(|| arm_block_transfer(word, cond))
+        .or_else(|| arm_swi(word, cond))
+        .unwrap_or_else(|| format!(".WORD ${word:08X}"));
+    Decoded {
+        text,
+        target: None,
+        len: 4,
+    }
+}
+
+/// B / BL: 24-bit signed offset scaled by 4 from addr + 8.
+/// The top nibble is the condition, so mask it before matching.
+fn arm_branch(addr: u32, word: u32, cond_field: usize) -> Option<Decoded> {
+    let branch = (word >> 24) & 0x0F;
+    if branch != 0x0A && branch != 0x0B {
+        return None;
+    }
+    let raw = word & 0xFFFFFF;
+    let offset = (((raw << 8) as i32) >> 6).wrapping_add(addr.wrapping_add(8) as i32);
+    let op = if branch == 0x0B { "BL" } else { "B" };
+    let cond = ARM_COND[cond_field];
+    Some(Decoded {
+        text: format!("{op}{cond} ${:08X}", offset as u32),
+        target: Some(offset as u32),
+        len: 4,
+    })
+}
+
+/// BX / BLX Rm (bit 4 selects the v5 register form). The mask
+/// accepts both tails: BX ends in 0x1, BLX in 0x3.
+fn arm_bx(word: u32, cond: &str) -> Option<String> {
+    let tail = word & 0x0FFFFFF0;
+    if tail != 0x012FFF10 && tail != 0x012FFF30 {
+        return None;
+    }
+    let rm = word & 0xF;
+    Some(if word & 0xF0 == 0x30 {
+        format!("BLX{cond} {}", reg(rm))
+    } else {
+        format!("BX{cond} {}", reg(rm))
+    })
+}
+
+/// Multiply: MUL / MLA (+S). Bits 27-22 read zero and the shifter
+/// tail reads 1001, which a data-processing op with a register LSL
+/// shift can also match — so MUL additionally requires Rn == 0
+/// (SBZ) while MLA (A set) takes any Rn.
+fn arm_multiply(word: u32, cond: &str) -> Option<String> {
+    if (word >> 26) & 3 != 0
+        || word & 0x90 != 0x90
+        || word & 0x0FC00000 != 0
+        || (word & 0x00200000 == 0 && word & 0x0000F000 != 0)
     {
-        // Multiply: MUL / MLA (+S). Bits 27-22 read zero and the
-        // shifter tail reads 1001, which a data-processing op with a
-        // register LSL shift can also match — so MUL additionally
-        // requires Rn == 0 (SBZ) while MLA (A set) takes any Rn.
-        // Multiply: MUL / MLA (+S).
-        let rd = (word >> 16) & 0xF;
-        let rs = (word >> 8) & 0xF;
-        let rm = word & 0xF;
-        let s = if word & 0x100000 != 0 { "S" } else { "" };
-        if word & 0x200000 != 0 {
-            let rn = (word >> 12) & 0xF;
-            format!(
-                "MLA{cond}{s} {}, {}, {}, {}",
-                reg(rd),
-                reg(rm),
-                reg(rs),
-                reg(rn)
-            )
-        } else {
-            format!("MUL{cond}{s} {}, {}, {}", reg(rd), reg(rm), reg(rs))
-        }
-    } else if (word >> 26) & 3 == 0 {
-        // Data processing: opcode + S + Rn + Rd + shifter operand.
-        let op = ARM_DP[((word >> 21) & 0xF) as usize];
-        let s = if word & 0x100000 != 0 { "S" } else { "" };
-        let rn = (word >> 16) & 0xF;
-        let rd = (word >> 12) & 0xF;
-        let operand = shifter_operand(word);
-        // Test/compare ops have no Rd; MOV/MVN have no Rn.
-        let opcode = (word >> 21) & 0xF;
-        if (0x8..0xC).contains(&opcode) {
-            format!("{op}{cond}{s} {}, {operand}", reg(rn))
-        } else if opcode == 0xD || opcode == 0xF {
-            format!("{op}{cond}{s} {}, {operand}", reg(rd))
-        } else {
-            format!("{op}{cond}{s} {}, {}, {operand}", reg(rd), reg(rn))
-        }
-    } else if (word >> 26) & 3 == 1 {
-        // Single data transfer: LDR/STR (+B). Bit 21 is writeback
-        // pre-indexed (!) but user-mode (T) post-indexed.
-        let op = if word & 0x100000 != 0 { "LDR" } else { "STR" };
-        let b = if word & 0x400000 != 0 { "B" } else { "" };
-        let rd = (word >> 12) & 0xF;
-        let rn = (word >> 16) & 0xF;
-        let negative = word & 0x800000 == 0;
-        let offset = if word & 0x2000000 != 0 {
-            let reg_off = shifter_operand(word);
-            if negative {
-                format!("-{reg_off}")
-            } else {
-                reg_off
-            }
-        } else if negative {
+        return None;
+    }
+    let rd = (word >> 16) & 0xF;
+    let rs = (word >> 8) & 0xF;
+    let rm = word & 0xF;
+    let s = if word & 0x100000 != 0 { "S" } else { "" };
+    Some(if word & 0x200000 != 0 {
+        let rn = (word >> 12) & 0xF;
+        format!(
+            "MLA{cond}{s} {}, {}, {}, {}",
+            reg(rd),
+            reg(rm),
+            reg(rs),
+            reg(rn)
+        )
+    } else {
+        format!("MUL{cond}{s} {}, {}, {}", reg(rd), reg(rm), reg(rs))
+    })
+}
+
+/// Data processing: opcode + S + Rn + Rd + shifter operand.
+/// Test/compare ops have no Rd; MOV/MVN have no Rn.
+fn arm_data_processing(word: u32, cond: &str) -> Option<String> {
+    if (word >> 26) & 3 != 0 {
+        return None;
+    }
+    let op = ARM_DP[((word >> 21) & 0xF) as usize];
+    let s = if word & 0x100000 != 0 { "S" } else { "" };
+    let rn = (word >> 16) & 0xF;
+    let rd = (word >> 12) & 0xF;
+    let operand = shifter_operand(word);
+    let opcode = (word >> 21) & 0xF;
+    Some(if (0x8..0xC).contains(&opcode) {
+        format!("{op}{cond}{s} {}, {operand}", reg(rn))
+    } else if opcode == 0xD || opcode == 0xF {
+        format!("{op}{cond}{s} {}, {operand}", reg(rd))
+    } else {
+        format!("{op}{cond}{s} {}, {}, {operand}", reg(rd), reg(rn))
+    })
+}
+
+/// Single data transfer: LDR/STR (+B). Bit 21 is writeback
+/// pre-indexed (!) but user-mode (T) post-indexed.
+fn arm_single_transfer(word: u32, cond: &str) -> Option<String> {
+    if (word >> 26) & 3 != 1 {
+        return None;
+    }
+    let op = if word & 0x100000 != 0 { "LDR" } else { "STR" };
+    let b = if word & 0x400000 != 0 { "B" } else { "" };
+    let rd = (word >> 12) & 0xF;
+    let rn = (word >> 16) & 0xF;
+    let negative = word & 0x800000 == 0;
+    let offset = if word & 0x2000000 == 0 {
+        if negative {
             format!("#-${:03X}", word & 0xFFF)
         } else {
             format!("#${:03X}", word & 0xFFF)
-        };
-        if word & 0x1000000 != 0 {
-            let wb = if word & 0x200000 != 0 { "!" } else { "" };
-            format!("{op}{cond}{b} {}, [{}, {offset}]{wb}", reg(rd), reg(rn))
-        } else {
-            let t = if word & 0x200000 != 0 { "T" } else { "" };
-            format!("{op}{cond}{b}{t} {}, [{}, {offset}]", reg(rd), reg(rn))
         }
-    } else if (word >> 26) & 3 == 2 {
-        // Block transfer: LDM/STM + addressing mode + register list.
-        let op = if word & 0x100000 != 0 { "LDM" } else { "STM" };
-        let mode = ["ED", "EA", "FD", "FA"][((word >> 23) & 3) as usize];
-        let rn = (word >> 16) & 0xF;
-        let wb = if word & 0x200000 != 0 { "!" } else { "" };
-        let s = if word & 0x400000 != 0 { "^" } else { "" };
-        format!(
-            "{op}{cond}{mode} {}({wb}), {{{}}}{s}",
-            reg(rn),
-            reg_list(word, 16).join(", ")
-        )
-    } else if (word >> 24) & 0x0F == 0x0F {
-        format!("SWI{cond} #${:06X}", word & 0xFFFFFF)
     } else {
-        format!(".WORD ${word:08X}")
+        // Bit 25 means opposite things in the two users of the
+        // barrel shifter: for data processing I=1 is an immediate,
+        // but for loads/stores I=1 is a *register* offset. The
+        // register-only formatter keeps this path honest; sharing
+        // `shifter_operand` here printed immediates.
+        let reg_off = shifter_register_operand(word);
+        if negative {
+            format!("-{reg_off}")
+        } else {
+            reg_off
+        }
     };
-    Decoded {
-        text,
-        target,
-        len: 4,
+    Some(if word & 0x1000000 != 0 {
+        let wb = if word & 0x200000 != 0 { "!" } else { "" };
+        format!("{op}{cond}{b} {}, [{}, {offset}]{wb}", reg(rd), reg(rn))
+    } else {
+        let t = if word & 0x200000 != 0 { "T" } else { "" };
+        format!("{op}{cond}{b}{t} {}, [{}, {offset}]", reg(rd), reg(rn))
+    })
+}
+
+/// Block transfer: LDM/STM + addressing mode + register list.
+fn arm_block_transfer(word: u32, cond: &str) -> Option<String> {
+    if (word >> 26) & 3 != 2 {
+        return None;
     }
+    let op = if word & 0x100000 != 0 { "LDM" } else { "STM" };
+    let mode = ["ED", "EA", "FD", "FA"][((word >> 23) & 3) as usize];
+    let rn = (word >> 16) & 0xF;
+    let wb = if word & 0x200000 != 0 { "!" } else { "" };
+    let s = if word & 0x400000 != 0 { "^" } else { "" };
+    Some(format!(
+        "{op}{cond}{mode} {}({wb}), {{{}}}{s}",
+        reg(rn),
+        reg_list(word, 16).join(", ")
+    ))
+}
+
+/// SWI immediate; anything else stays a raw word.
+fn arm_swi(word: u32, cond: &str) -> Option<String> {
+    if (word >> 24) & 0x0F != 0x0F {
+        return None;
+    }
+    Some(format!("SWI{cond} #${:06X}", word & 0xFFFFFF))
 }
 
 fn shifter_operand(word: u32) -> String {
@@ -346,22 +481,28 @@ fn shifter_operand(word: u32) -> String {
             format!("#${imm:02X}, ROR #{rot}")
         }
     } else {
-        let rm = word & 0xF;
-        let shift = (word >> 5) & 3;
-        let name = ["LSL", "LSR", "ASR", "ROR"][shift as usize];
-        if word & 0x10 == 0 {
-            // Immediate shift; amount 0 has shifted meanings.
-            let amount = (word >> 7) & 0x1F;
-            match (shift, amount) {
-                (0, 0) => reg(rm),
-                (1, 0) | (2, 0) => format!("{}, {name} #$20", reg(rm)),
-                (3, 0) => format!("{}, RRX", reg(rm)),
-                _ => format!("{}, {name} #${amount:02X}", reg(rm)),
-            }
-        } else {
-            // Register shift.
-            format!("{}, {name} {}", reg(rm), reg((word >> 8) & 0xF))
+        shifter_register_operand(word)
+    }
+}
+
+/// Register-shifted operand (loads/stores with I=1 share this;
+/// data processing reaches it through [`shifter_operand`]).
+fn shifter_register_operand(word: u32) -> String {
+    let rm = word & 0xF;
+    let shift = (word >> 5) & 3;
+    let name = ["LSL", "LSR", "ASR", "ROR"][shift as usize];
+    if word & 0x10 == 0 {
+        // Immediate shift; amount 0 has shifted meanings.
+        let amount = (word >> 7) & 0x1F;
+        match (shift, amount) {
+            (0, 0) => reg(rm),
+            (1, 0) | (2, 0) => format!("{}, {name} #$20", reg(rm)),
+            (3, 0) => format!("{}, RRX", reg(rm)),
+            _ => format!("{}, {name} #${amount:02X}", reg(rm)),
         }
+    } else {
+        // Register shift.
+        format!("{}, {name} {}", reg(rm), reg((word >> 8) & 0xF))
     }
 }
 
@@ -444,6 +585,30 @@ mod tests {
         let decoded = decode_arm(0x08000000, 0xEB000000);
         assert_eq!(decoded.text, "BL $08000008");
         assert_eq!(decoded.target, Some(0x08000008));
+    }
+
+    /// Helper-group coverage with independently derived vectors
+    /// (encodings verified against the ARM ISA, not against the old
+    /// table): BLX, MLA, negative/register-offset/writeback/T-suffix
+    /// loads, Thumb BLX/LDRB/SP-relative/LDMIA, rotated immediates.
+    #[test]
+    fn arm_and_thumb_helper_forms() {
+        // BLX r0: 0xE12FFF30 (v5 register form).
+        assert_eq!(decode_arm(0, 0xE12FFF30).text, "BLX r0");
+        // MLA r1, r2, r3, r0: A bit set, S clear.
+        assert_eq!(decode_arm(0, 0xE0210392).text, "MLA r1, r2, r3, r0");
+        // Negative, register-offset, writeback, and T-suffix loads.
+        assert_eq!(decode_arm(0, 0xE5110004).text, "LDR r0, [r1, #-$004]");
+        assert_eq!(decode_arm(0, 0xE7110002).text, "LDR r0, [r1, -r2]");
+        assert_eq!(decode_arm(0, 0xE5310004).text, "LDR r0, [r1, #-$004]!");
+        assert_eq!(decode_arm(0, 0xE4310004).text, "LDRT r0, [r1, #-$004]");
+        // Rotated immediate: MOV r0, #1 ROR #8.
+        assert_eq!(decode_arm(0, 0xE3A00401).text, "MOV r0, #$01, ROR #8");
+        // Thumb: BLX r9, byte load, SP-relative store, LDMIA.
+        assert_eq!(decode_thumb(0, 0x47C8).text, "BLX r9");
+        assert_eq!(decode_thumb(0, 0x7801).text, "LDRB r1, [r0, #$00]");
+        assert_eq!(decode_thumb(0, 0x9001).text, "STR r1, [SP, #$04]");
+        assert_eq!(decode_thumb(0, 0xC801).text, "LDMIA r0!, {r0}");
     }
 
     #[test]
