@@ -227,13 +227,22 @@ impl Debugger for GbaDebugger<'_> {
         // 4bpp tiles from the first two charblock pairs: 1024 tiles
         // each in a 32x32 grid (256x256). Bytes unreadable through
         // the peek path decode as blank; palette is BG 0.
+        //
+        // Bulk decode: the viewed 64KiB sit linearly at the VRAM base
+        // (`peek_vram`), so one slice replaces ~260k validated
+        // per-byte peeks per fetch — the live PPU follow runs this on
+        // the emu thread every tick, and the per-byte path stalled
+        // frame production by ~1ms each time.
         const TILES: u32 = 1024;
         const COLS: u32 = 32;
+        const TILES_BASE: u32 = 0x0600_0000;
+        const TILES_LEN: usize = 0x1_0000;
         let mut palette = Vec::with_capacity(16);
         for i in 0..16u32 {
             let raw = self.read(SPACE_MEMORY, 0x05000000 + 2 * i, 2).unwrap_or(0);
             palette.push(rgb555_to_rgb888(raw as u16));
         }
+        let vram: &[u8] = &self.system.bus.peek_vram()[..TILES_LEN];
         [("tiles-low", 0x06000000), ("tiles-high", 0x06008000)]
             .into_iter()
             .map(|(id, base)| {
@@ -243,8 +252,8 @@ impl Debugger for GbaDebugger<'_> {
                     let ty = (tile / COLS) * 8;
                     for row in 0..8u32 {
                         for col in 0..8u32 {
-                            let addr = base + tile * 32 + row * 4 + col / 2;
-                            let byte = self.read(SPACE_MEMORY, addr, 1).unwrap_or(0) as u8;
+                            let byte =
+                                vram[(base + tile * 32 + row * 4 + col / 2 - TILES_BASE) as usize];
                             let px = if col & 1 == 0 { byte & 0xF } else { byte >> 4 };
                             pixels[(ty + row) as usize * 256 + (tx + col) as usize] = px;
                         }
