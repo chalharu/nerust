@@ -8,16 +8,15 @@ use nerust_gui_runtime::{
 use nerust_gui_settings::app_state::RememberedWindowSize;
 use nerust_gui_shell::{
     context::FrontendContext,
-    debug::{DebugDrainOutput, DrainFlight, DrainPoll, LiveImagesFlight, LiveImagesPoll},
+    debug::{DrainFlight, LiveImagesFlight},
     session::{
-        KeyboardShortcut, LiveImages, SessionError, SessionHandle,
+        KeyboardShortcut, SessionError, SessionHandle,
         access::{FrontendSession, SettingsResult},
         commands::SessionCommand,
         lifecycle::WindowSize,
     },
     settings::scaling_factor,
 };
-use nerust_gui_viewmodel::debugger as debug_vm;
 use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, RenderResult},
@@ -49,7 +48,7 @@ const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
-    session: SessionHandle,
+    pub(crate) session: SessionHandle,
     ctx: FrontendContext,
     app_menu: AppMenu,
     shell: NativeShellState,
@@ -61,14 +60,14 @@ pub(crate) struct HostState {
     auto_paused: bool,
     /// Pause state at the last completed debug drain, for focus
     /// coalescing below. `None` before the first drain.
-    last_drain_paused: Option<bool>,
+    pub(crate) last_drain_paused: Option<bool>,
     /// In-flight async debug drain: `run_debug_drain` starts it, the
     /// event loop polls it (`poll_debug_flight`). A newer batch
     /// supersedes the stored one; orphaned replies are ignored.
-    drain_flight: Option<DrainFlight>,
+    pub(crate) drain_flight: Option<DrainFlight>,
     /// In-flight async live-images fetch: the live tick starts it,
     /// the event loop polls it. At most one; a newer tick supersedes.
-    live_flight: Option<LiveImagesFlight>,
+    pub(crate) live_flight: Option<LiveImagesFlight>,
     /// Aux-window state (debugger + PPU viewer). Orchestration lives
     /// here; ownership lives there.
     pub(crate) debug: DebugWindows,
@@ -350,14 +349,6 @@ impl HostState {
         }
     }
 
-    pub(crate) fn take_debug_open_request(&mut self) -> bool {
-        self.debug.take_debug_open_request()
-    }
-
-    pub(crate) fn take_ppu_open_request(&mut self) -> bool {
-        self.debug.take_ppu_open_request()
-    }
-
     pub(crate) fn clear_keys(&mut self) {
         self.session.clear_input();
     }
@@ -541,7 +532,7 @@ impl HostState {
         self.refresh_window_title();
     }
 
-    fn sync_menu_state(&mut self) {
+    pub(crate) fn sync_menu_state(&mut self) {
         let snapshot = self.session.settings_snapshot();
         let slots = self.session.slots();
         self.app_menu.update(crate::app_menu::MenuSync {
@@ -555,7 +546,7 @@ impl HostState {
         });
     }
 
-    fn refresh_window_title(&mut self) {
+    pub(crate) fn refresh_window_title(&mut self) {
         if let Some(window) = self.window.as_ref() {
             window.set_title(&self.session.window_title());
         }
@@ -564,90 +555,6 @@ impl HostState {
     fn maybe_refresh_window_title(&mut self, now: Instant) {
         if self.shell.should_refresh_title(now) {
             self.refresh_window_title();
-        }
-    }
-
-    /// Live follow is active: both aux windows open on a running
-    /// loaded core. Single predicate for the tick, the wake backstop,
-    /// and the redraw pump below.
-    fn live_follow_active(&self) -> bool {
-        self.debug.debug_window.is_some()
-            && self.debug.ppu_window.is_some()
-            && self.session.loaded()
-            && !self.session.paused()
-    }
-
-    /// Live-follow pulse entry (timer thread via `UserEvent::LiveTick`).
-    /// Throttle-guarded inside; no-ops unless a running core has the
-    /// viewer open.
-    pub(crate) fn live_tick(&mut self) {
-        self.maybe_live_ppu();
-    }
-
-    /// Live PPU follow while the core runs: an images-only refresh
-    /// every interval so the viewer tracks the running picture. A full
-    /// drain is wrong here: the paused-gated inspect refuses while
-    /// running and would blank the dump/registers. Paused cores never
-    /// change memory, so no periodic work happens there — demand
-    /// drains already refresh. The fetch runs as an async flight, so
-    /// a stalled emu thread never parks the event loop in the tick.
-    fn maybe_live_ppu(&mut self) {
-        // Settle any in-flight fetch first (non-blocking): a flight
-        // orphaned by pausing or closing still resolves harmlessly,
-        // and polling here needs no throttle gate.
-        if let Some(flight) = self.live_flight.as_mut() {
-            match flight.poll() {
-                LiveImagesPoll::Done(live) => {
-                    self.live_flight = None;
-                    self.apply_live_images(live);
-                }
-                LiveImagesPoll::Pending => return,
-            }
-        }
-        if !self.live_follow_active() {
-            return;
-        }
-        if !self.debug.live_due(Instant::now()) {
-            return;
-        }
-        let mut flight = self.session.debug_live_images_begin(true);
-        match flight.poll() {
-            LiveImagesPoll::Done(live) => self.apply_live_images(live),
-            LiveImagesPoll::Pending => {
-                self.live_flight = Some(flight);
-            }
-        }
-    }
-
-    /// Patch a finished live fetch into the viewer. Images apply when
-    /// newer regardless of pause (a paused frame is honest data); the
-    /// running chrome only applies while still running, so a
-    /// pause-in-flight never flips the status back to Running.
-    fn apply_live_images(&mut self, live: LiveImages) {
-        let Some((generation, images)) = live else {
-            return;
-        };
-        let running = !self.session.paused();
-        let Some(handle) = self.debug.debug_window.as_mut() else {
-            return;
-        };
-        {
-            let mut display = handle.bridge.display.lock().unwrap();
-            if display.images_gen == generation {
-                return;
-            }
-            display.images = images;
-            display.images_gen = generation;
-            if running {
-                display.paused = false;
-                display.status = nerust_gui_viewmodel::debugger::StatusMessage::Running;
-            }
-        }
-        // Rebuild, not just repaint: the patch lands in bridge state,
-        // and only a rebuild re-reads it into the widget tree.
-        handle.sync_from_bridge();
-        if let Some(ppu) = self.debug.ppu_window.as_mut() {
-            ppu.sync_from_bridge();
         }
     }
 
@@ -712,241 +619,6 @@ impl HostState {
                     self.sync_menu_state();
                 }
             }
-        }
-    }
-
-    /// Open the debugger (idempotent), and the PPU viewer only for
-    /// the toolbar button. Closing never resumes: resume is always
-    /// explicit.
-    ///
-    /// The first pause and snapshot run through the shared shell
-    /// drain, never around it: opening with an empty display and
-    /// draining `[Pause, Refresh]` keeps one phase order for every
-    /// path. Pause must precede the paused-gated inspect, and the
-    /// drain runs them in order.
-    ///
-    /// `focus_ppu` serves the toolbar PPU-viewer button: a missing
-    /// viewer is created, an already open one takes focus instead
-    /// of staying buried. The F4/menu path passes `false` so only
-    /// the debugger opens (the gtk twin never auto-opens either).
-    pub(crate) fn open_debug_windows(
-        &mut self,
-        event_loop: &EventLoopWindowTarget<UserEvent>,
-        focus_ppu: bool,
-    ) {
-        use nerust_gui_shell::debug::DebugAction;
-        if self.debug.debug_window.is_none() {
-            let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> = self
-                .session
-                .debug_spaces()
-                .into_iter()
-                .map(|info| (info.id, info.name.to_string(), *info.range.start()))
-                .collect();
-            if spaces.is_empty() {
-                log::warn!("debugger: no spaces (no core)");
-            }
-            let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
-            let position = self.debug.debug_window_pos();
-            let language = self.session.settings_snapshot().shared.general.language;
-            match crate::debug_window::DebugWindowHandle::new(
-                debug_vm::DisplayCache::default(),
-                spaces,
-                mem_addr,
-                language,
-                event_loop,
-                position,
-            ) {
-                Some(handle) => {
-                    self.debug.debug_window = Some(handle);
-                    self.run_debug_drain(&[DebugAction::Pause, DebugAction::Refresh]);
-                }
-                None => log::error!("failed to open debugger window"),
-            }
-        }
-        if focus_ppu
-            && self.debug.ppu_window.is_none()
-            && let Some(main) = self.debug.debug_window.as_ref()
-        {
-            let position = self.debug.ppu_window_pos();
-            match crate::ppu_window::PpuWindowHandle::new(
-                Arc::clone(&main.bridge),
-                event_loop,
-                position,
-            ) {
-                Some(handle) => {
-                    self.debug.ppu_window = Some(handle);
-                    // Populate the image cache immediately: the bridge
-                    // already carries images, but the viewer derives
-                    // its scaled cache only on Sync.
-                    if let Some(ppu) = self.debug.ppu_window.as_mut() {
-                        ppu.sync_from_bridge();
-                    }
-                    // The viewer is open now, so re-read with images:
-                    // the opening drain ran imageless.
-                    self.run_debug_drain(&[]);
-                }
-                None => log::error!("failed to open PPU viewer window"),
-            }
-        } else if focus_ppu && let Some(ppu) = self.debug.ppu_window.as_ref() {
-            // Second and later presses: the viewer exists, so take
-            // focus instead of no-op.
-            ppu.shell.window.set_focus();
-        }
-    }
-
-    /// Drain debugger requests and push one batched snapshot back.
-    /// Execution requests run before the re-read so one drain both
-    /// acts and refreshes. The phase order lives in the shared shell
-    /// drain; this only gathers frontend state and renders. A stored
-    /// flight polls first so rapid batches supersede in order.
-    pub(crate) fn drain_debug_requests(&mut self) {
-        use nerust_gui_shell::debug::DebugAction;
-        use std::sync::atomic::Ordering;
-        self.poll_debug_flight();
-        let requests: Vec<DebugAction> = match self.debug.debug_window.as_ref() {
-            Some(handle) => {
-                if handle.bridge.open_ppu.swap(false, Ordering::SeqCst) {
-                    self.debug.ppu_open_requested = true;
-                }
-                handle.take_requests()
-            }
-            None => return,
-        };
-        if requests.is_empty() {
-            return;
-        }
-        self.run_debug_drain(&requests);
-    }
-
-    /// Run one action batch through an async shell-drain flight and
-    /// push the display back once it lands. Empty batches are pure
-    /// re-reads (used after PPU (re)open so images populate
-    /// immediately). Only sends run here; the event loop polls the
-    /// flight (`poll_debug_flight`), so the UI thread never parks in
-    /// a thread round-trip. A batch that resolves without crossings
-    /// still applies synchronously.
-    pub(crate) fn run_debug_drain(&mut self, requests: &[nerust_gui_shell::debug::DebugAction]) {
-        use nerust_gui_shell::debug::DebugDrainInput;
-        let (space, mem_addr, dis_addr, watch, freeze, reg_target, prev_rows, need_images) =
-            match self.debug.debug_window.as_ref() {
-                Some(handle) => {
-                    let nav = handle.bridge.nav.lock().unwrap();
-                    let mem_addr = nav.mem_addr();
-                    let dis_addr = nav.dis_addr();
-                    let prev = handle.bridge.display.lock().unwrap().dump_rows.clone();
-                    drop(nav);
-                    (
-                        handle.bridge.selected_space(),
-                        mem_addr,
-                        dis_addr,
-                        *handle.bridge.watch.lock().unwrap(),
-                        *handle.bridge.freeze.lock().unwrap(),
-                        *handle.bridge.reg_target.lock().unwrap(),
-                        prev,
-                        self.debug.ppu_window.is_some(),
-                    )
-                }
-                None => {
-                    // No round-trip ran, so nothing could have moved:
-                    // still record truth for the focus gate below.
-                    self.last_drain_paused = Some(self.session.paused());
-                    return;
-                }
-            };
-        let input = DebugDrainInput {
-            space,
-            mem_addr,
-            dis_addr,
-            watch,
-            freeze,
-            reg_target,
-            prev_dump_rows: &prev_rows,
-            need_images,
-        };
-        // Supersede: a newer batch replaces the stored flight; the
-        // FIFO command order keeps the newest view correct.
-        let mut flight = self.session.debug_drain_begin(requests, &input);
-        match flight.poll() {
-            DrainPoll::Done(output) => self.apply_drain_output(*output),
-            DrainPoll::Pending => {
-                self.drain_flight = Some(flight);
-            }
-        }
-    }
-
-    /// Poll the stored drain flight once; applies on completion.
-    /// Called from the event loop (request sites and the control-flow
-    /// backstop) so every poll runs on the UI thread without ever
-    /// blocking it. Returns whether a flight is still pending.
-    pub(crate) fn poll_debug_flight(&mut self) -> bool {
-        let mut flight = match self.drain_flight.take() {
-            Some(flight) => flight,
-            None => return false,
-        };
-        match flight.poll() {
-            DrainPoll::Done(output) => {
-                self.apply_drain_output(*output);
-                false
-            }
-            DrainPoll::Pending => {
-                self.drain_flight = Some(flight);
-                true
-            }
-        }
-    }
-
-    /// Apply a finished drain: selection, running-sections merge, PPU
-    /// follow, and the pause-truth agreement point (menu, title, and
-    /// the focus gate below all follow the drained state).
-    fn apply_drain_output(&mut self, output: DebugDrainOutput) {
-        if let Some(handle) = self.debug.debug_window.as_mut() {
-            if let Some(selected) = output.reselected {
-                *handle.bridge.selected.lock().unwrap() = Some(selected);
-            }
-            // Running drains come back section-degenerate (paused
-            // gate): restore the last paused rows so Resume keeps the
-            // inspectable state instead of blanking it.
-            let mut display = output.display;
-            {
-                let old = handle.bridge.display.lock().unwrap().clone();
-                display.restore_paused_sections(&old);
-            }
-            handle.set_display(display);
-        }
-        // PPU viewer follows the same drain (one scale per drain).
-        if let Some(ppu) = self.debug.ppu_window.as_mut() {
-            ppu.sync_from_bridge();
-        }
-        // The drain is the single pause-truth agreement point: the
-        // toolbar label follows the drained state, so the menu and the
-        // title sync here too instead of drifting apart (the reported
-        // "two Pause statuses" bug).
-        self.sync_menu_state();
-        self.refresh_window_title();
-        // Post-drain truth (the drain may itself pause/resume): focus
-        // flips compare against this to skip redundant emu
-        // round-trips (see `sync_debug_chrome`).
-        self.last_drain_paused = Some(self.session.paused());
-    }
-
-    /// Focus-driven chrome sync. Menu/title refresh is cheap and
-    /// local, so it always runs; the emu round-trip snapshot only
-    /// runs when the pause state moved since the last drain. A focus
-    /// flip with no state change (the common window-switching case)
-    /// must not re-hit the emu thread: flips arrive in bursts (main
-    /// blur + aux focus), and a synchronous drain used to wedge the
-    /// UI for tens of seconds when the thread was slow. Drains are
-    /// async flights now, but the gate still skips the pointless
-    /// re-read.
-    pub(crate) fn sync_debug_chrome(&mut self) {
-        self.sync_menu_state();
-        self.refresh_window_title();
-        if chrome_drain_due(
-            self.debug.debug_window.is_some(),
-            self.last_drain_paused,
-            self.session.paused(),
-        ) {
-            self.run_debug_drain(&[]);
         }
     }
 
@@ -1060,9 +732,6 @@ impl HostState {
 /// an open debugger window whose pause state moved since the last
 /// drain. Everything else is menu/title truth, which the caller
 /// refreshes unconditionally.
-fn chrome_drain_due(debug_open: bool, last_drain_paused: Option<bool>, paused: bool) -> bool {
-    debug_open && last_drain_paused != Some(paused)
-}
 
 impl FrontendSession for HostState {
     fn pause(&mut self) {
@@ -1246,10 +915,7 @@ fn element_state_to_pressed(state: ElementState) -> Option<bool> {
 mod tests {
     use tao::{dpi::LogicalSize as TaoLogicalSize, window::Fullscreen};
 
-    use super::{
-        NativeFullscreenSync, chrome_drain_due, create_window_builder,
-        derive_native_fullscreen_sync,
-    };
+    use super::{NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync};
 
     #[test]
     fn window_builder_requests_initial_fullscreen_when_enabled() {
@@ -1301,22 +967,5 @@ mod tests {
                 persist_setting: true,
             }
         );
-    }
-
-    #[test]
-    fn focus_chrome_drains_only_on_pause_transitions() {
-        // Closed debugger: never worth a round-trip.
-        assert!(!chrome_drain_due(false, None, false));
-        assert!(!chrome_drain_due(false, Some(true), false));
-        // First focus sync establishes the baseline.
-        assert!(chrome_drain_due(true, None, true));
-        assert!(chrome_drain_due(true, None, false));
-        // Steady state: focus flips stay local-only.
-        assert!(!chrome_drain_due(true, Some(true), true));
-        assert!(!chrome_drain_due(true, Some(false), false));
-        // A pause flip behind the toolbar's back (F9, auto-pause)
-        // re-arms exactly one drain.
-        assert!(chrome_drain_due(true, Some(true), false));
-        assert!(chrome_drain_due(true, Some(false), true));
     }
 }
