@@ -31,6 +31,7 @@ pub(crate) struct MockConsoleCore {
     identity: Option<SystemIdentity>,
     mem: [u8; 256],
     regs: [(&'static str, u64); 2],
+    sample_rate: u32,
 }
 
 impl MockConsoleCore {
@@ -41,6 +42,7 @@ impl MockConsoleCore {
             identity: None,
             mem: [0; 256],
             regs: [("a", 1), ("b", 2)],
+            sample_rate: 48_000,
         }
     }
 }
@@ -179,6 +181,9 @@ impl ConsoleCore for MockConsoleCore {
     }
     fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
+    }
+    fn set_audio_sample_rate(&mut self, sample_rate: u32) {
+        self.sample_rate = sample_rate;
     }
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
         Ok(vec![])
