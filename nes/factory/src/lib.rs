@@ -58,6 +58,32 @@ impl CoreFactory for NesFactory {
         media.bytes.len() >= 4 && media.bytes[..4] == [0x4E, 0x45, 0x53, 0x1A]
     }
 
+    /// Filter-only deltas swap live: the core renders palette indices
+    /// identically under every filter, so only the profile + palette
+    /// (session buffers, frontend renderer) change. Anything else —
+    /// core options, missing sides — keeps the rebuild path.
+    fn presentation_swap_assets(
+        &self,
+        before: &FactorySettingsView,
+        after: &FactorySettingsView,
+    ) -> Option<(nerust_render_traits::VideoRenderProfile, Box<[u32]>)> {
+        let before_nes = before
+            .system_config
+            .as_deref()?
+            .downcast_ref::<NesSettings>()?;
+        let after_nes = after
+            .system_config
+            .as_deref()?
+            .downcast_ref::<NesSettings>()?;
+        if before_nes.core != after_nes.core || before_nes.video.filter == after_nes.video.filter
+        {
+            return None;
+        }
+        let filter = settings::filter_type_from_bytes(after.system_config.as_deref());
+        let (profile, palette) = builder::video_assets_for_filter(filter);
+        Some((profile, palette))
+    }
+
     fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
         settings::nes_settings_page(view)
     }
