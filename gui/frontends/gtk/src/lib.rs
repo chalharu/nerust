@@ -465,3 +465,67 @@ pub fn run(ctx: FrontendContext, _options: RunOptions) {
 
     let _ = app.run();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nerust_gui_settings::input::default_shortcut_bindings;
+
+    fn collect_labels(model: &gio::MenuModel, out: &mut Vec<String>) {
+        use gio::prelude::MenuModelExt;
+        for index in 0..model.n_items() {
+            if let Some(label) = model
+                .item_attribute_value(index, "label", None)
+                .and_then(|variant| variant.str().map(str::to_string))
+            {
+                out.push(label);
+            }
+            if let Some(submenu) = model.item_link(index, gio::MENU_LINK_SUBMENU) {
+                collect_labels(&submenu, out);
+            }
+        }
+    }
+
+    fn menu_labels(language: AppLanguage, shortcuts: &[ShortcutBinding]) -> Vec<String> {
+        use gio::glib::object::Cast;
+        let state_menu = gio::Menu::new();
+        let select = gio::Menu::new();
+        let save = gio::Menu::new();
+        let load = gio::Menu::new();
+        let delete = gio::Menu::new();
+        let model = build_menu_model(
+            language,
+            shortcuts,
+            &state_menu,
+            &select,
+            &save,
+            &load,
+            &delete,
+        );
+        let mut labels = Vec::new();
+        collect_labels(model.upcast_ref::<gio::MenuModel>(), &mut labels);
+        labels
+    }
+
+    #[test]
+    fn menu_labels_follow_live_shortcut_bindings() {
+        let labels = menu_labels(AppLanguage::English, &default_shortcut_bindings());
+        assert!(labels.iter().any(|label| label == "Save Active Slot (F5)"));
+        assert!(labels.iter().any(|label| label == "Open Debugger (F4)"));
+        // Rebound actions advertise the new key, never the default.
+        let rebound = vec![
+            ShortcutBinding {
+                action: ShortcutAction::SaveActiveSlot,
+                key: Some(nerust_keyboard::Key::F2),
+            },
+            ShortcutBinding {
+                action: ShortcutAction::OpenDebugger,
+                key: None,
+            },
+        ];
+        let labels = menu_labels(AppLanguage::English, &rebound);
+        assert!(labels.iter().any(|label| label == "Save Active Slot (F2)"));
+        assert!(labels.iter().any(|label| label == "Open Debugger"));
+        assert!(!labels.iter().any(|label| label.contains("(F4)")));
+    }
+}
