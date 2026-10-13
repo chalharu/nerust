@@ -28,8 +28,7 @@ impl SessionHandle {
     /// Volume/mute-only delta through the live gain control. Warn-only:
     /// a quiet failure must never block saving the setting.
     fn apply_live_volume(&self, next_settings: &nerust_gui_runtime::settings::SettingsSnapshot) {
-        let volume =
-            f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
+        let volume = f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
         let volume = if next_settings.local.audio.muted {
             0.0
         } else {
@@ -69,8 +68,7 @@ impl SessionHandle {
         let system_id = factory.system_id();
         let before_view = settings_view(previous, system_id.as_ref());
         let after_view = settings_view(next_settings, system_id.as_ref());
-        let Some((profile, palette)) =
-            factory.presentation_swap_assets(&before_view, &after_view)
+        let Some((profile, palette)) = factory.presentation_swap_assets(&before_view, &after_view)
         else {
             return Ok(false);
         };
@@ -210,14 +208,13 @@ impl SessionHandle {
         let mut rebuilt = false;
         if needs_rebuild {
             let mut swapped = false;
-            if visual_changed && !assignments_changed && self.emu_core.is_some() {
-                if let Some(ref factory) = factory {
-                    swapped = self.swap_presentation_for_settings(
-                        factory,
-                        &previous,
-                        &next_settings,
-                    )?;
-                }
+            if visual_changed
+                && !assignments_changed
+                && self.emu_core.is_some()
+                && let Some(ref factory) = factory
+            {
+                swapped =
+                    self.swap_presentation_for_settings(factory, &previous, &next_settings)?;
             }
             if swapped {
                 visual_swapped = true;
@@ -243,9 +240,7 @@ impl SessionHandle {
         }
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
-            if rebuilt
-                && let Err(e) = self.rebuild_for_settings(&previous, &previous_assignments)
-            {
+            if rebuilt && let Err(e) = self.rebuild_for_settings(&previous, &previous_assignments) {
                 log::warn!("failed to rollback settings rebuild: {e}");
             } else {
                 // Live swaps roll back through the same barriered path

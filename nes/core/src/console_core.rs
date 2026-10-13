@@ -418,8 +418,7 @@ mod tests {
             },
         );
         let mut audio = Vec::new();
-        core.render_frame(&mut fb, &mut audio)
-            .expect("frame ok");
+        core.render_frame(&mut fb, &mut audio).expect("frame ok");
         assert!(!audio.is_empty(), "frame must produce audio");
 
         // Re-basis: cached rate-baked DSP drops, machine state intact,

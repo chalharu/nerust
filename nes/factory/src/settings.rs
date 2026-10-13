@@ -245,9 +245,7 @@ mod tests {
             system_config: None,
         };
         assert!(
-            factory
-                .presentation_swap_assets(&empty, &view)
-                .is_none(),
+            factory.presentation_swap_assets(&empty, &view).is_none(),
             "missing side keeps the rebuild path"
         );
     }

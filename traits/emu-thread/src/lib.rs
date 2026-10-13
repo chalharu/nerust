@@ -136,12 +136,7 @@ impl EmuThread {
                                 let _ = reply.send(Err(DebuggerError::Unsupported));
                             }
                             EmuCommand::SwapAudio(cmd) => {
-                                handle_swap_audio(
-                                    &mut *core,
-                                    &mut audio,
-                                    &mut filter,
-                                    *cmd,
-                                );
+                                handle_swap_audio(&mut *core, &mut audio, &mut filter, *cmd);
                             }
                             EmuCommand::SwapFrameSlot(cmd) => {
                                 handle_swap_frame_slot(&mut frame_slot, *cmd);
@@ -513,10 +508,7 @@ fn handle_swap_audio(
 /// the session swaps its own buffers only after this reply lands, and
 /// (for the visual path) only while paused, so no frame straddles the
 /// two swaps.
-fn handle_swap_frame_slot(
-    frame_slot: &mut FrameBuffer,
-    cmd: SwapFrameSlotCommand,
-) {
+fn handle_swap_frame_slot(frame_slot: &mut FrameBuffer, cmd: SwapFrameSlotCommand) {
     *frame_slot = cmd.slot;
     // reply send failure: receiver dropped (timeout/abort) — expected
     let _ = cmd.reply.send(());
@@ -1070,9 +1062,10 @@ mod tests {
         slot.as_mut().fill(0xAB);
         let (tx, rx) = mpsc::channel();
         thread
-            .send(EmuCommand::SwapFrameSlot(Box::new(
-                SwapFrameSlotCommand { slot, reply: tx },
-            )))
+            .send(EmuCommand::SwapFrameSlot(Box::new(SwapFrameSlotCommand {
+                slot,
+                reply: tx,
+            })))
             .expect("slot send");
         rx.recv().expect("slot reply");
 
