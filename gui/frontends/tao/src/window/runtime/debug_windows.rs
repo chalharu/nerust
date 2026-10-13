@@ -133,7 +133,8 @@ mod tests {
     }
 
     #[test]
-    fn window_positions_remember() {        let mut windows = DebugWindows::new();
+    fn window_positions_remember() {
+        let mut windows = DebugWindows::new();
         assert_eq!(windows.debug_window_pos(), None);
         windows.remember_debug_window_pos(60, 20);
         windows.remember_ppu_window_pos(1250, 100);
