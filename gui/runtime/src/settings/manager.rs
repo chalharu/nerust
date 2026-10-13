@@ -4,7 +4,7 @@ use std::{
 };
 
 use nerust_core_traits::identity::{SystemId, SystemIdentity};
-use nerust_gui_settings::{
+use nerust_settings_core::model::{
     app_state::{DesktopAppState, RememberedWindowSize},
     input::ensure_default_shortcuts,
     local::HostBackendLocalSettings,
@@ -278,7 +278,7 @@ impl SettingsManager {
 mod tests {
     use std::{collections::HashMap, fs};
 
-    use nerust_gui_settings::{
+    use nerust_settings_core::model::{
         app_state::{DesktopAppState, RememberedWindowSize},
         input::{
             IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardProfile,
@@ -319,7 +319,7 @@ mod tests {
                 );
                 system
             })]),
-            shortcuts: nerust_gui_settings::input::ShortcutSettings {
+            shortcuts: nerust_settings_core::model::input::ShortcutSettings {
                 keyboard: vec![ShortcutBinding {
                     action: ShortcutAction::TogglePause,
                     key: Some(Key::Space),

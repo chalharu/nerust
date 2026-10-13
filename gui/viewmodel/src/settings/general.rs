@@ -1,4 +1,4 @@
-use nerust_gui_settings::{language::AppLanguage, shared::StoragePolicy};
+use nerust_settings_core::model::{language::AppLanguage, shared::StoragePolicy};
 use nerust_settings_core::i18n::{UiText, text as ui_text};
 use std::path::PathBuf;
 
@@ -54,7 +54,7 @@ impl GeneralSettingsViewModel {
 #[cfg(test)]
 mod tests {
     use crate::settings::test_support::test_vm;
-    use nerust_gui_settings::{language::AppLanguage, shared::StoragePolicy};
+    use nerust_settings_core::model::{language::AppLanguage, shared::StoragePolicy};
 
     #[test]
     fn set_language_updates_projection() {

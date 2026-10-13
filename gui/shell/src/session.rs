@@ -26,7 +26,7 @@ use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
-use nerust_gui_settings::input::ShortcutAction;
+use nerust_settings_core::model::input::ShortcutAction;
 use nerust_gui_viewmodel::debugger as debug_vm;
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
 use nerust_keyboard::Key;
@@ -569,10 +569,10 @@ pub(crate) mod test_util {
         let system_id = session.factory().expect("no active system").system_id();
         let snapshot = session.settings_snapshot();
         let language = match snapshot.shared.general.language {
-            nerust_gui_settings::language::AppLanguage::Japanese => {
+            nerust_settings_core::model::language::AppLanguage::Japanese => {
                 nerust_core_traits::factory::settings::Language::Japanese
             }
-            nerust_gui_settings::language::AppLanguage::English => {
+            nerust_settings_core::model::language::AppLanguage::English => {
                 nerust_core_traits::factory::settings::Language::English
             }
             _ => nerust_core_traits::factory::settings::Language::SystemDefault,

@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use nerust_core_traits::identity::SystemId;
 use nerust_settings_traits::SystemSettings as SystemSettingsTrait;
 
-use crate::{input::InputSettings, language::AppLanguage};
+use super::{input::InputSettings, language::AppLanguage};
 
 pub const DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION: u32 = 1;
 

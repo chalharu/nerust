@@ -1,5 +1,5 @@
 use nerust_core_traits::identity::SystemId;
-use nerust_gui_settings::{
+use crate::model::{
     input::{KeyboardBinding, PersistedAttachmentId, PersistedControlId, ShortcutAction},
     snapshot::SettingsSnapshot,
 };
@@ -98,7 +98,7 @@ pub fn apply_capture_target(
 #[cfg(test)]
 mod tests {
     use nerust_core_traits::declare_system_id;
-    use nerust_gui_settings::{
+    use crate::model::{
         app_state::DesktopAppState,
         input::{
             InputSettings, KeyboardBinding, PersistedControlId, ShortcutAction, ShortcutBinding,

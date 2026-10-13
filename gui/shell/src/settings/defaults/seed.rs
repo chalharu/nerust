@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use nerust_core_traits::factory::CoreFactory;
-use nerust_gui_settings::{
+use nerust_settings_core::model::{
     app_state::DesktopAppState, input::IMPLICIT_PROFILE_ID, local::HostBackendLocalSettings,
     shared::DesktopSharedSettings,
 };
@@ -19,7 +19,7 @@ pub fn default_shared_settings(factories: &[Arc<dyn CoreFactory>]) -> DesktopSha
         if let Some(attachment) = sd.default_input_attachment_id()
             && let Some(control_prefix) = sd.default_input_control_prefix()
         {
-            let mut input = nerust_gui_settings::input::SystemInputSettings::default();
+            let mut input = nerust_settings_core::model::input::SystemInputSettings::default();
             input.implicit_keyboard_profile_mut().bindings =
                 crate::keyboard_defaults::default_system_bindings(attachment, control_prefix);
             let _ = input
@@ -34,7 +34,7 @@ pub fn default_shared_settings(factories: &[Arc<dyn CoreFactory>]) -> DesktopSha
 }
 
 fn seed_global_shortcuts(settings: &mut DesktopSharedSettings) {
-    settings.input.shortcuts.keyboard = nerust_gui_settings::input::default_shortcut_bindings();
+    settings.input.shortcuts.keyboard = nerust_settings_core::model::input::default_shortcut_bindings();
 }
 
 pub fn default_local_settings() -> HostBackendLocalSettings {
@@ -47,7 +47,7 @@ pub fn default_app_state() -> DesktopAppState {
 
 #[cfg(test)]
 mod tests {
-    use nerust_gui_settings::input::ShortcutAction;
+    use nerust_settings_core::model::input::ShortcutAction;
     use nerust_keyboard::Key;
 
     use super::default_shared_settings;

@@ -4,7 +4,7 @@ use nerust_core_traits::{
     factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
     identity::SystemId,
 };
-use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
+use nerust_settings_core::model::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_input_traits::AttachmentId;
 use nerust_settings_core::editor::CaptureTarget;
 

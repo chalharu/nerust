@@ -5,7 +5,7 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_gui_settings::app_state::RememberedWindowSize;
+use nerust_settings_core::model::app_state::RememberedWindowSize;
 use nerust_gui_shell::{
     context::FrontendContext,
     debug::{DrainFlight, LiveImagesFlight},
@@ -824,7 +824,7 @@ fn create_window_builder(
 /// Surface ROM load failures in a modal dialog: the previous
 /// warn-only path left the empty window with no explanation.
 pub(super) fn show_rom_load_error(
-    language: nerust_gui_settings::language::AppLanguage,
+    language: nerust_settings_core::model::language::AppLanguage,
     detail: &str,
 ) {
     let title = text(language, UiText::RomLoadFailed);

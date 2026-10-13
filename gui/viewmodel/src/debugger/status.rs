@@ -1,7 +1,7 @@
 //! Debugger outcomes as data: the session reports *what*
 //! happened, frontends render wording in their own language.
 
-use nerust_gui_settings::language::AppLanguage;
+use nerust_settings_core::model::language::AppLanguage;
 
 use nerust_core_traits::debugger::{DebuggerError, SpaceId, SpaceTable};
 

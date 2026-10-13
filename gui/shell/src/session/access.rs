@@ -1,5 +1,5 @@
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_settings::input::ShortcutAction;
+use nerust_settings_core::model::input::ShortcutAction;
 
 use crate::session::SessionError;
 

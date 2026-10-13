@@ -1,15 +1,8 @@
-pub mod app_state;
-pub mod input;
-pub mod language;
-pub mod local;
-pub mod shared;
-pub mod snapshot;
-
 #[cfg(test)]
 mod tests {
     use nerust_keyboard::Key;
 
-    use super::{
+    use crate::model::{
         app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
         input::{ShortcutAction, ShortcutBinding},
         local::{

@@ -1,4 +1,4 @@
-use nerust_gui_settings::local::ScalingMode;
+use nerust_settings_core::model::local::ScalingMode;
 use nerust_settings_core::i18n::{UiText, text as ui_text};
 
 use super::{
@@ -87,7 +87,7 @@ fn project_view(state: &super::EditorState) -> VideoView {
 #[cfg(test)]
 mod tests {
     use crate::settings::test_support::test_vm;
-    use nerust_gui_settings::local::ScalingMode;
+    use nerust_settings_core::model::local::ScalingMode;
 
     #[test]
     fn set_fullscreen_default_updates_projection() {

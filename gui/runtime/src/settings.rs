@@ -4,9 +4,9 @@ use std::{collections::HashMap, env};
 
 #[cfg(test)]
 use nerust_core_traits::identity::SystemIdentity;
-use nerust_gui_settings::local::HostBackendLocalSettings;
+use nerust_settings_core::model::local::HostBackendLocalSettings;
 #[cfg(test)]
-use nerust_gui_settings::shared::DesktopSharedSettings;
+use nerust_settings_core::model::shared::DesktopSharedSettings;
 #[cfg(test)]
 use nerust_nes_settings::NesSettings;
 
@@ -79,8 +79,8 @@ pub struct SettingsPaths {
 }
 
 pub use manager::SettingsManager;
-/// Re-exported from nerust_gui_settings for backwards compatibility.
-pub use nerust_gui_settings::snapshot::SettingsSnapshot;
+/// Re-exported from the settings domain model for call-site stability.
+pub use nerust_settings_core::model::snapshot::SettingsSnapshot;
 
 /// Lossless Serde representation of the settings file.
 ///
@@ -212,8 +212,8 @@ fn value_at_path_mut<'a>(
     )
 }
 
-/// Re-exported from nerust_gui_settings for backwards compatibility.
-pub use nerust_gui_settings::snapshot::SettingsApplyPlan;
+/// Re-exported from the settings domain model for call-site stability.
+pub use nerust_settings_core::model::snapshot::SettingsApplyPlan;
 
 #[cfg(test)]
 pub(crate) fn tao_caps() -> HostBackendCapabilities {

@@ -11,11 +11,11 @@ version.workspace = true
 
 [dependencies]
 nerust_core_traits.workspace = true
-nerust_gui_settings.workspace = true
 nerust_input_traits.workspace = true
 nerust_keyboard.workspace = true
 nerust_settings_traits.workspace = true
+serde = { features = ["derive", "std"], workspace = true }
 
 [dev-dependencies]
-serde.workspace = true
+serde-saphyr.workspace = true
 typetag.workspace = true

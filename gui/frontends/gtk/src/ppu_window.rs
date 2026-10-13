@@ -6,7 +6,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::DebugPanel;
-use nerust_gui_settings::language::AppLanguage;
+use nerust_settings_core::model::language::AppLanguage;
 use nerust_gui_viewmodel::debugger::{format_panels, scale2x_nearest};
 use nerust_settings_core::i18n::{UiText, text, tile_hover};
 

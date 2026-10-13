@@ -1,4 +1,4 @@
-use nerust_gui_settings::language::AppLanguage;
+use crate::model::language::AppLanguage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiText {

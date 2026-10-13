@@ -173,7 +173,7 @@ mod tests {
         identity::SystemId,
     };
     use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_gui_settings::{
+    use nerust_settings_core::model::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
     use nerust_input_traits::{InputAssignments, InputSystemFactory};

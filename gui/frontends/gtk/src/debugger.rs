@@ -13,7 +13,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, SpaceId};
-use nerust_gui_settings::language::AppLanguage;
+use nerust_settings_core::model::language::AppLanguage;
 use nerust_gui_shell::debug::{
     DebugAction, DebugDrainInput, DrainFlight, DrainPoll, LiveImagesFlight, LiveImagesPoll,
 };
@@ -1560,7 +1560,7 @@ mod tests {
 
     #[test]
     fn write_input_parses_hex_byte_with_selection() {
-        use nerust_gui_settings::language::AppLanguage;
+        use nerust_settings_core::model::language::AppLanguage;
         assert_eq!(
             resolve_write_input(AppLanguage::English, Some((0x30, Some(0x00))), "42"),
             Ok((0x30, 0x42))
@@ -1574,7 +1574,7 @@ mod tests {
 
     #[test]
     fn write_input_rejects_missing_selection_and_bad_text() {
-        use nerust_gui_settings::language::AppLanguage;
+        use nerust_settings_core::model::language::AppLanguage;
         assert_eq!(
             resolve_write_input(AppLanguage::English, None, "42"),
             Err("write needs a selection".to_string())
@@ -1606,7 +1606,7 @@ mod tests {
 
     #[test]
     fn freeze_input_needs_row_and_byte_together() {
-        use nerust_gui_settings::language::AppLanguage;
+        use nerust_settings_core::model::language::AppLanguage;
         assert_eq!(
             resolve_freeze_input(AppLanguage::English, Some((0x10, Some(0x00))), "FF"),
             Ok((0x10, 0xFF))

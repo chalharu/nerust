@@ -12,7 +12,7 @@ use nerust_core_traits::{
 // through a method return type from another trait.
 #[allow(unused_imports)]
 use nerust_core_traits::factory::SystemDefaults;
-use nerust_gui_settings::{language::AppLanguage, snapshot::SettingsSnapshot};
+use crate::model::{language::AppLanguage, snapshot::SettingsSnapshot};
 
 fn language_to_factory_lang(lang: AppLanguage) -> Language {
     match lang {
@@ -80,7 +80,7 @@ mod tests {
         },
         identity::SystemId,
     };
-    use nerust_gui_settings::{
+    use crate::model::{
         app_state::DesktopAppState, language::AppLanguage, local::HostBackendLocalSettings,
         shared::DesktopSharedSettings, snapshot::SettingsSnapshot,
     };

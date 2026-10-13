@@ -20,7 +20,6 @@ jni.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
 nerust_gui_runtime.workspace = true
-nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
 nerust_gbc_factory.workspace = true
 nerust_gba_factory.workspace = true

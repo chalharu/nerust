@@ -1,8 +1,8 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use nerust_gui_settings::snapshot::SettingsSnapshot;
-use nerust_gui_settings::{
+use nerust_settings_core::model::snapshot::SettingsSnapshot;
+use nerust_settings_core::model::{
     app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
 };
 

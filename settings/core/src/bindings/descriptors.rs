@@ -1,5 +1,5 @@
 use nerust_core_traits::identity::SystemId;
-use nerust_gui_settings::input::ShortcutAction;
+use crate::model::input::ShortcutAction;
 use nerust_input_traits::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DigitalControlId,
     InputTopologyDescriptor, PortDescriptor,
@@ -134,7 +134,7 @@ pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
 
 #[cfg(test)]
 mod tests {
-    use nerust_gui_settings::input::ShortcutAction;
+    use crate::model::input::ShortcutAction;
     use nerust_input_traits::{
         AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
         DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor,

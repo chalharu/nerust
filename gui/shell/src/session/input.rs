@@ -1,7 +1,7 @@
 use std::{collections::HashMap, hash::Hash};
 
 use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
-use nerust_gui_settings::input::{KeyboardBinding, ShortcutAction};
+use nerust_settings_core::model::input::{KeyboardBinding, ShortcutAction};
 use nerust_input_traits::{
     AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent, InputAssignments, InputValue,
 };
@@ -198,7 +198,7 @@ impl SessionHandle {
 mod tests {
     use std::rc::Rc;
 
-    use nerust_gui_settings::input::PersistedControlId;
+    use nerust_settings_core::model::input::PersistedControlId;
     use nerust_input_traits::{
         AbstractKey, AttachmentId, ControlInfo, ControlKind, ControllerProfile, PortSet, ProfileId,
         SlotInfo,
