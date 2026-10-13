@@ -259,21 +259,26 @@ fn dis_back(bridge: &DebugBridge) {
 
 fn bookmark_add(bridge: &DebugBridge) {
     let label = bridge.bm_input.lock().unwrap().trim().to_string();
+    // Anchor on the PC row when following, else the pin. The PC
+    // row is snapshotted first and the guard dropped before
+    // `anchor()` runs: it locks nav→display, so nesting it under
+    // the display guard would invert the order and risk deadlock.
+    let pc_addr = {
+        bridge
+            .display
+            .lock()
+            .unwrap()
+            .disasm_lines
+            .iter()
+            .find(|line| line.is_pc)
+            .map(|line| line.addr)
+    };
+    let addr = pc_addr.unwrap_or_else(|| bridge.anchor());
     let mut marks = bridge.bookmarks.lock().unwrap();
     if marks.len() >= BOOKMARK_CAP {
         bridge.set_status(ui_text(bridge.language, UiText::BookmarkFull).to_string());
         return;
     }
-    // Anchor on the PC row when following, else the pin.
-    let addr = bridge
-        .display
-        .lock()
-        .unwrap()
-        .disasm_lines
-        .iter()
-        .find(|line| line.is_pc)
-        .map(|line| line.addr)
-        .unwrap_or_else(|| bridge.anchor());
     let n = marks.len() + 1;
     marks.push((
         addr,

@@ -512,6 +512,10 @@ impl GpuRenderer for SoftbufferRenderer {
         if frame.width() != self.render_profile.source_logical_size.width
             || frame.height() != self.render_profile.source_logical_size.height
         {
+            // Profile/frame races (e.g. right after a system switch)
+            // must skip, never render mismatched: every indexer below
+            // trusts these dimensions, and a panic here would take
+            // down the UI thread every frame until they agree again.
             error!(
                 "Frame size mismatch: expected {}x{}, got {}x{}",
                 self.render_profile.source_logical_size.width,
@@ -519,6 +523,7 @@ impl GpuRenderer for SoftbufferRenderer {
                 frame.width(),
                 frame.height()
             );
+            return RenderResult::Skipped;
         }
         let Some(surface) = self.surface.as_mut() else {
             return RenderResult::Skipped;
@@ -536,12 +541,34 @@ impl GpuRenderer for SoftbufferRenderer {
                 return RenderResult::Error;
             }
         };
+        // A failed surface resize (warned there, not fatal) leaves a
+        // stale-sized buffer behind: refuse instead of overrunning it.
+        if buffer.as_mut().len() < dst_w.saturating_mul(dst_h) {
+            warn!(
+                "softbuffer buffer too small: have {}, need {}x{}",
+                buffer.as_mut().len(),
+                dst_w,
+                dst_h
+            );
+            return RenderResult::Skipped;
+        }
 
         let src_stride = frame.stride();
         let src = frame.as_ref();
         let dst = buffer.as_mut();
         // let src_w = self.render_profile.source_logical_size.width;
         let src_h = self.render_profile.source_logical_size.height;
+        // Short source images would panic every indexer below (the
+        // profile match above only pins dimensions, not length).
+        if src.len() < src_stride.saturating_mul(src_h) {
+            warn!(
+                "softbuffer source too small: have {}, need stride {}x{}",
+                src.len(),
+                src_stride,
+                src_h
+            );
+            return RenderResult::Skipped;
+        }
 
         match frame.format() {
             PixelFormat::Rgba => {
@@ -575,13 +602,21 @@ impl GpuRenderer for SoftbufferRenderer {
                         &mut self.resize_buffer,
                     );
                 } else {
+                    // Out-of-range indices render black instead of
+                    // panicking the UI thread (see mismatch guard).
                     Self::rendering(
                         dst,
                         src_stride,
                         src_h,
                         dst_w,
                         dst_h,
-                        move |i| palette[src[i] as usize].to_le_bytes(),
+                        move |i| {
+                            palette
+                                .get(src.get(i).copied().unwrap_or(0) as usize)
+                                .copied()
+                                .unwrap_or(0)
+                                .to_le_bytes()
+                        },
                         &self.lut,
                         &mut self.resize_buffer,
                     );
@@ -609,5 +644,50 @@ impl GpuFactory for SoftbufferFactory {
         _display_handle: raw_window_handle::RawDisplayHandle,
     ) -> Result<Box<dyn GpuRenderer>, RendererError> {
         Ok(Box::new(SoftbufferRenderer::new(&config.render_profile)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nerust_render_traits::{VideoFrameFormat, logical::LogicalSize, physical::PhysicalSize};
+
+    fn test_profile() -> VideoRenderProfile {
+        VideoRenderProfile {
+            source_logical_size: LogicalSize {
+                width: 256,
+                height: 240,
+            },
+            logical_size: LogicalSize {
+                width: 256,
+                height: 240,
+            },
+            physical_size: PhysicalSize {
+                width: 256.0,
+                height: 240.0,
+            },
+            frame_format: VideoFrameFormat::Rgba,
+            ntsc_packed_rgba8: None,
+        }
+    }
+
+    #[test]
+    fn render_skips_mismatched_frame_instead_of_panicking() {
+        use nerust_render_traits::{FrameBuffer, PixelFormat};
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        // GBA-sized frame against an NES profile: must skip, and
+        // above all must not panic on the UI thread.
+        let mut frame = FrameBuffer::with_capacity(240, 160, PixelFormat::Rgba);
+        frame.resize(240, 160);
+        assert_eq!(renderer.render(&frame), RenderResult::Skipped);
+    }
+
+    #[test]
+    fn render_skips_without_surface() {
+        use nerust_render_traits::{FrameBuffer, PixelFormat};
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
+        frame.resize(256, 240);
+        assert_eq!(renderer.render(&frame), RenderResult::Skipped);
     }
 }
