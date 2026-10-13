@@ -41,271 +41,223 @@ impl AddrMode {
 }
 
 /// Decode one opcode to (mnemonic, mode).
+///
+/// Computed from the classic `aaa bbb cc` bit fields rather than a
+/// flat 256-arm table: the matrix is column-regular (modes depend
+/// only on `bbb` + `cc`, mnemonics only on `aaa`), with the
+/// irregular columns/rows called out explicitly. The golden test
+/// locks all 256 outputs, so any drift fails loudly.
 pub(crate) fn decode(op: u8) -> (&'static str, AddrMode) {
     use AddrMode as M;
-    match op {
-        // x0
-        0x00 => ("BRK", M::Implied),
-        0x01 => ("ORA", M::IndexedIndirect),
-        0x02 | 0x12 | 0x22 | 0x32 | 0x42 | 0x52 | 0x62 | 0x72 | 0x92 | 0xB2 | 0xC2 | 0xD2
-        | 0xE2 | 0xF2 => ("JAM", M::Jam),
-        0x03 => ("SLO", M::IndexedIndirect),
-        0x04 => ("NOP", M::ZeroPage),
-        0x05 => ("ORA", M::ZeroPage),
-        0x06 => ("ASL", M::ZeroPage),
-        0x07 => ("SLO", M::ZeroPage),
-        0x08 => ("PHP", M::Implied),
-        0x09 => ("ORA", M::Immediate),
-        0x0A => ("ASL", M::Accumulator),
-        0x0B | 0x2B => ("ANC", M::Immediate),
-        0x0C => ("NOP", M::Absolute),
-        0x0D => ("ORA", M::Absolute),
-        0x0E => ("ASL", M::Absolute),
-        0x0F => ("SLO", M::Absolute),
-        // x1
-        0x10 => ("BPL", M::Relative),
-        0x11 => ("ORA", M::IndirectIndexed),
-        0x13 => ("SLO", M::IndirectIndexed),
-        0x14 => ("NOP", M::ZeroPageX),
-        0x15 => ("ORA", M::ZeroPageX),
-        0x16 => ("ASL", M::ZeroPageX),
-        0x17 => ("SLO", M::ZeroPageX),
-        0x18 => ("CLC", M::Implied),
-        0x19 => ("ORA", M::AbsoluteY),
-        0x1A => ("NOP", M::Implied),
-        0x1B => ("SLO", M::AbsoluteY),
-        0x1C => ("NOP", M::AbsoluteX),
-        0x1D => ("ORA", M::AbsoluteX),
-        0x1E => ("ASL", M::AbsoluteX),
-        0x1F => ("SLO", M::AbsoluteX),
-        // x2
-        0x20 => ("JSR", M::Absolute),
-        0x21 => ("AND", M::IndexedIndirect),
-        0x23 => ("RLA", M::IndexedIndirect),
-        0x24 => ("BIT", M::ZeroPage),
-        0x25 => ("AND", M::ZeroPage),
-        0x26 => ("ROL", M::ZeroPage),
-        0x27 => ("RLA", M::ZeroPage),
-        0x28 => ("PLP", M::Implied),
-        0x29 => ("AND", M::Immediate),
-        0x2A => ("ROL", M::Accumulator),
-        0x2C => ("BIT", M::Absolute),
-        0x2D => ("AND", M::Absolute),
-        0x2E => ("ROL", M::Absolute),
-        0x2F => ("RLA", M::Absolute),
-        // x3
-        0x30 => ("BMI", M::Relative),
-        0x31 => ("AND", M::IndirectIndexed),
-        0x33 => ("RLA", M::IndirectIndexed),
-        0x34 => ("NOP", M::ZeroPageX),
-        0x35 => ("AND", M::ZeroPageX),
-        0x36 => ("ROL", M::ZeroPageX),
-        0x37 => ("RLA", M::ZeroPageX),
-        0x38 => ("SEC", M::Implied),
-        0x39 => ("AND", M::AbsoluteY),
-        0x3A => ("NOP", M::Implied),
-        0x3B => ("RLA", M::AbsoluteY),
-        0x3C => ("NOP", M::AbsoluteX),
-        0x3D => ("AND", M::AbsoluteX),
-        0x3E => ("ROL", M::AbsoluteX),
-        0x3F => ("RLA", M::AbsoluteX),
-        // x4
-        0x40 => ("RTI", M::Implied),
-        0x41 => ("EOR", M::IndexedIndirect),
-        0x43 => ("SRE", M::IndexedIndirect),
-        0x44 => ("NOP", M::ZeroPage),
-        0x45 => ("EOR", M::ZeroPage),
-        0x46 => ("LSR", M::ZeroPage),
-        0x47 => ("SRE", M::ZeroPage),
-        0x48 => ("PHA", M::Implied),
-        0x49 => ("EOR", M::Immediate),
-        0x4A => ("LSR", M::Accumulator),
-        0x4B => ("ALR", M::Immediate),
-        0x4C => ("JMP", M::Absolute),
-        0x4D => ("EOR", M::Absolute),
-        0x4E => ("LSR", M::Absolute),
-        0x4F => ("SRE", M::Absolute),
-        // x5
-        0x50 => ("BVC", M::Relative),
-        0x51 => ("EOR", M::IndirectIndexed),
-        0x53 => ("SRE", M::IndirectIndexed),
-        0x54 => ("NOP", M::ZeroPageX),
-        0x55 => ("EOR", M::ZeroPageX),
-        0x56 => ("LSR", M::ZeroPageX),
-        0x57 => ("SRE", M::ZeroPageX),
-        0x58 => ("CLI", M::Implied),
-        0x59 => ("EOR", M::AbsoluteY),
-        0x5A => ("NOP", M::Implied),
-        0x5B => ("SRE", M::AbsoluteY),
-        0x5C => ("NOP", M::AbsoluteX),
-        0x5D => ("EOR", M::AbsoluteX),
-        0x5E => ("LSR", M::AbsoluteX),
-        0x5F => ("SRE", M::AbsoluteX),
-        // x6
-        0x60 => ("RTS", M::Implied),
-        0x61 => ("ADC", M::IndexedIndirect),
-        0x63 => ("RRA", M::IndexedIndirect),
-        0x64 => ("NOP", M::ZeroPage),
-        0x65 => ("ADC", M::ZeroPage),
-        0x66 => ("ROR", M::ZeroPage),
-        0x67 => ("RRA", M::ZeroPage),
-        0x68 => ("PLA", M::Implied),
-        0x69 => ("ADC", M::Immediate),
-        0x6A => ("ROR", M::Accumulator),
-        0x6B => ("ARR", M::Immediate),
-        0x6C => ("JMP", M::Indirect),
-        0x6D => ("ADC", M::Absolute),
-        0x6E => ("ROR", M::Absolute),
-        0x6F => ("RRA", M::Absolute),
-        // x7
-        0x70 => ("BVS", M::Relative),
-        0x71 => ("ADC", M::IndirectIndexed),
-        0x73 => ("RRA", M::IndirectIndexed),
-        0x74 => ("NOP", M::ZeroPageX),
-        0x75 => ("ADC", M::ZeroPageX),
-        0x76 => ("ROR", M::ZeroPageX),
-        0x77 => ("RRA", M::ZeroPageX),
-        0x78 => ("SEI", M::Implied),
-        0x79 => ("ADC", M::AbsoluteY),
-        0x7A => ("NOP", M::Implied),
-        0x7B => ("RRA", M::AbsoluteY),
-        0x7C => ("NOP", M::AbsoluteX),
-        0x7D => ("ADC", M::AbsoluteX),
-        0x7E => ("ROR", M::AbsoluteX),
-        0x7F => ("RRA", M::AbsoluteX),
-        // x8
-        0x80 => ("NOP", M::Immediate),
-        0x81 => ("STA", M::IndexedIndirect),
-        0x82 => ("NOP", M::Immediate),
-        0x83 => ("SAX", M::IndexedIndirect),
-        0x84 => ("STY", M::ZeroPage),
-        0x85 => ("STA", M::ZeroPage),
-        0x86 => ("STX", M::ZeroPage),
-        0x87 => ("SAX", M::ZeroPage),
-        0x88 => ("DEY", M::Implied),
-        0x89 => ("NOP", M::Immediate),
-        0x8A => ("TXA", M::Implied),
-        0x8B => ("XAA", M::Immediate),
-        0x8C => ("STY", M::Absolute),
-        0x8D => ("STA", M::Absolute),
-        0x8E => ("STX", M::Absolute),
-        0x8F => ("SAX", M::Absolute),
-        // x9
-        0x90 => ("BCC", M::Relative),
-        0x91 => ("STA", M::IndirectIndexed),
-        0x93 => ("AHX", M::IndirectIndexed),
-        0x94 => ("STY", M::ZeroPageX),
-        0x95 => ("STA", M::ZeroPageX),
-        0x96 => ("STX", M::ZeroPageY),
-        0x97 => ("SAX", M::ZeroPageY),
-        0x98 => ("TYA", M::Implied),
-        0x99 => ("STA", M::AbsoluteY),
-        0x9A => ("TXS", M::Implied),
-        0x9B => ("TAS", M::AbsoluteY),
-        0x9C => ("SHY", M::AbsoluteX),
-        0x9D => ("STA", M::AbsoluteX),
-        0x9E => ("SHX", M::AbsoluteY),
-        0x9F => ("AHX", M::AbsoluteY),
-        // xA
-        0xA0 => ("LDY", M::Immediate),
-        0xA1 => ("LDA", M::IndexedIndirect),
-        0xA2 => ("LDX", M::Immediate),
-        0xA3 => ("LAX", M::IndexedIndirect),
-        0xA4 => ("LDY", M::ZeroPage),
-        0xA5 => ("LDA", M::ZeroPage),
-        0xA6 => ("LDX", M::ZeroPage),
-        0xA7 => ("LAX", M::ZeroPage),
-        0xA8 => ("TAY", M::Implied),
-        0xA9 => ("LDA", M::Immediate),
-        0xAA => ("TAX", M::Implied),
-        0xAB => ("LAX", M::Immediate),
-        0xAC => ("LDY", M::Absolute),
-        0xAD => ("LDA", M::Absolute),
-        0xAE => ("LDX", M::Absolute),
-        0xAF => ("LAX", M::Absolute),
-        // xB
-        0xB0 => ("BCS", M::Relative),
-        0xB1 => ("LDA", M::IndirectIndexed),
-        0xB3 => ("LAX", M::IndirectIndexed),
-        0xB4 => ("LDY", M::ZeroPageX),
-        0xB5 => ("LDA", M::ZeroPageX),
-        0xB6 => ("LDX", M::ZeroPageY),
-        0xB7 => ("LAX", M::ZeroPageY),
-        0xB8 => ("CLV", M::Implied),
-        0xB9 => ("LDA", M::AbsoluteY),
-        0xBA => ("TSX", M::Implied),
-        0xBB => ("LAS", M::AbsoluteY),
-        0xBC => ("LDY", M::AbsoluteX),
-        0xBD => ("LDA", M::AbsoluteX),
-        0xBE => ("LDX", M::AbsoluteY),
-        0xBF => ("LAX", M::AbsoluteY),
-        // xC
-        0xC0 => ("CPY", M::Immediate),
-        0xC1 => ("CMP", M::IndexedIndirect),
-        0xC3 => ("DCP", M::IndexedIndirect),
-        0xC4 => ("CPY", M::ZeroPage),
-        0xC5 => ("CMP", M::ZeroPage),
-        0xC6 => ("DEC", M::ZeroPage),
-        0xC7 => ("DCP", M::ZeroPage),
-        0xC8 => ("INY", M::Implied),
-        0xC9 => ("CMP", M::Immediate),
-        0xCA => ("DEX", M::Implied),
-        0xCB => ("AXS", M::Immediate),
-        0xCC => ("CPY", M::Absolute),
-        0xCD => ("CMP", M::Absolute),
-        0xCE => ("DEC", M::Absolute),
-        0xCF => ("DCP", M::Absolute),
-        // xD
-        0xD0 => ("BNE", M::Relative),
-        0xD1 => ("CMP", M::IndirectIndexed),
-        0xD3 => ("DCP", M::IndirectIndexed),
-        0xD4 => ("NOP", M::ZeroPageX),
-        0xD5 => ("CMP", M::ZeroPageX),
-        0xD6 => ("DEC", M::ZeroPageX),
-        0xD7 => ("DCP", M::ZeroPageX),
-        0xD8 => ("CLD", M::Implied),
-        0xD9 => ("CMP", M::AbsoluteY),
-        0xDA => ("NOP", M::Implied),
-        0xDB => ("DCP", M::AbsoluteY),
-        0xDC => ("NOP", M::AbsoluteX),
-        0xDD => ("CMP", M::AbsoluteX),
-        0xDE => ("DEC", M::AbsoluteX),
-        0xDF => ("DCP", M::AbsoluteX),
-        // xE
-        0xE0 => ("CPX", M::Immediate),
-        0xE1 => ("SBC", M::IndexedIndirect),
-        0xE3 => ("ISC", M::IndexedIndirect),
-        0xE4 => ("CPX", M::ZeroPage),
-        0xE5 => ("SBC", M::ZeroPage),
-        0xE6 => ("INC", M::ZeroPage),
-        0xE7 => ("ISC", M::ZeroPage),
-        0xE8 => ("INX", M::Implied),
-        0xE9 => ("SBC", M::Immediate),
-        0xEA => ("NOP", M::Implied),
-        0xEB => ("SBC", M::Immediate),
-        0xEC => ("CPX", M::Absolute),
-        0xED => ("SBC", M::Absolute),
-        0xEE => ("INC", M::Absolute),
-        0xEF => ("ISC", M::Absolute),
-        // xF
-        0xF0 => ("BEQ", M::Relative),
-        0xF1 => ("SBC", M::IndirectIndexed),
-        0xF3 => ("ISC", M::IndirectIndexed),
-        0xF4 => ("NOP", M::ZeroPageX),
-        0xF5 => ("SBC", M::ZeroPageX),
-        0xF6 => ("INC", M::ZeroPageX),
-        0xF7 => ("ISC", M::ZeroPageX),
-        0xF8 => ("SED", M::Implied),
-        0xF9 => ("SBC", M::AbsoluteY),
-        0xFA => ("NOP", M::Implied),
-        0xFB => ("ISC", M::AbsoluteY),
-        0xFC => ("NOP", M::AbsoluteX),
-        0xFD => ("SBC", M::AbsoluteX),
-        0xFE => ("INC", M::AbsoluteX),
-        0xFF => ("ISC", M::AbsoluteX),
+    let aaa = (op >> 5) & 7;
+    let bbb = (op >> 2) & 7;
+    match op & 3 {
+        // ALU operations: uniform columns; the immediate column
+        // keeps each row's own mnemonic (STA has none: NOP).
+        0b01 => {
+            if bbb == 2 {
+                const IMM: [&str; 8] = ["ORA", "AND", "EOR", "ADC", "NOP", "LDA", "CMP", "SBC"];
+                return (IMM[aaa as usize], M::Immediate);
+            }
+            const ALU: [&str; 8] = ["ORA", "AND", "EOR", "ADC", "STA", "LDA", "CMP", "SBC"];
+            const MODES: [AddrMode; 8] = [
+                M::IndexedIndirect,
+                M::ZeroPage,
+                M::Immediate,
+                M::Absolute,
+                M::IndirectIndexed,
+                M::ZeroPageX,
+                M::AbsoluteY,
+                M::AbsoluteX,
+            ];
+            (ALU[aaa as usize], MODES[bbb as usize])
+        }
+        // Shifts, transfers, increments: mostly column-regular with
+        // per-row mnemonics; the STX/LDX rows are fully explicit.
+        0b10 => decode_cc10(aaa, bbb),
+        // Combined ops: same columns as cc=01, same immediate
+        // column, Y-indexed tweaks for the STX/LDX-family rows.
+        0b11 => {
+            if bbb == 2 {
+                const IMM: [&str; 8] = ["ANC", "ANC", "ALR", "ARR", "XAA", "LAX", "AXS", "SBC"];
+                return (IMM[aaa as usize], M::Immediate);
+            }
+            const COMBINED: [&str; 8] = ["SLO", "RLA", "SRE", "RRA", "SAX", "LAX", "DCP", "ISC"];
+            const MODES: [AddrMode; 8] = [
+                M::IndexedIndirect,
+                M::ZeroPage,
+                M::Immediate,
+                M::Absolute,
+                M::IndirectIndexed,
+                M::ZeroPageX,
+                M::AbsoluteY,
+                M::AbsoluteX,
+            ];
+            let mnemonic = match (aaa, bbb) {
+                // Unstable writes: the cells where the row name
+                // does not apply.
+                (4, 4) | (4, 7) => "AHX",
+                (4, 6) => "TAS",
+                (5, 6) => "LAS",
+                _ => COMBINED[aaa as usize],
+            };
+            let mode = match (aaa, bbb) {
+                (4 | 5, 5) => M::ZeroPageY,
+                (4 | 5, 6 | 7) => M::AbsoluteY,
+                _ => MODES[bbb as usize],
+            };
+            (mnemonic, mode)
+        }
+        // Control group: fully irregular, one small table per bbb.
+        _ => decode_cc00(aaa, bbb),
     }
 }
 
+/// `cc = 10` rows: shifts (aaa 0-3), STX/LDX families (aaa 4-5),
+/// increments (aaa 6-7).
+fn decode_cc10(aaa: u8, bbb: u8) -> (&'static str, AddrMode) {
+    use AddrMode as M;
+    // STX row: transfers plus the oddballs.
+    if aaa == 4 {
+        return match bbb {
+            0 => ("NOP", M::Immediate),
+            1 => ("STX", M::ZeroPage),
+            2 => ("TXA", M::Implied),
+            3 => ("STX", M::Absolute),
+            4 => ("JAM", M::Jam),
+            5 => ("STX", M::ZeroPageY),
+            6 => ("TXS", M::Implied),
+            _ => ("SHX", M::AbsoluteY),
+        };
+    }
+    // LDX row: mirror image.
+    if aaa == 5 {
+        return match bbb {
+            0 => ("LDX", M::Immediate),
+            1 => ("LDX", M::ZeroPage),
+            2 => ("TAX", M::Implied),
+            3 => ("LDX", M::Absolute),
+            4 => ("JAM", M::Jam),
+            5 => ("LDX", M::ZeroPageY),
+            6 => ("TSX", M::Implied),
+            _ => ("LDX", M::AbsoluteY),
+        };
+    }
+    // Gap columns never decode: hard stop.
+    if bbb == 0 || bbb == 4 {
+        return ("JAM", M::Jam);
+    }
+    // Implied single-byte ops share the NOP sheet.
+    if bbb == 6 {
+        return ("NOP", M::Implied);
+    }
+    const SHIFT: [&str; 4] = ["ASL", "ROL", "LSR", "ROR"];
+    if aaa < 4 {
+        const MODES: [AddrMode; 8] = [
+            M::Jam,
+            M::ZeroPage,
+            M::Accumulator,
+            M::Absolute,
+            M::Jam,
+            M::ZeroPageX,
+            M::Implied,
+            M::AbsoluteX,
+        ];
+        return (SHIFT[aaa as usize], MODES[bbb as usize]);
+    }
+    // Increment rows: DEX for DEC, plain NOP for INC.
+    if bbb == 2 {
+        return (if aaa == 6 { "DEX" } else { "NOP" }, M::Implied);
+    }
+    const MODES: [AddrMode; 8] = [
+        M::Jam,
+        M::ZeroPage,
+        M::Implied,
+        M::Absolute,
+        M::Jam,
+        M::ZeroPageX,
+        M::Implied,
+        M::AbsoluteX,
+    ];
+    (if aaa == 6 { "DEC" } else { "INC" }, MODES[bbb as usize])
+}
+
+/// `cc = 00` control group, one small table per `bbb` column.
+fn decode_cc00(aaa: u8, bbb: u8) -> (&'static str, AddrMode) {
+    use AddrMode as M;
+    match bbb {
+        0 => match aaa {
+            0 => ("BRK", M::Implied),
+            1 => ("JSR", M::Absolute),
+            2 => ("RTI", M::Implied),
+            3 => ("RTS", M::Implied),
+            4 => ("NOP", M::Immediate),
+            5 => ("LDY", M::Immediate),
+            6 => ("CPY", M::Immediate),
+            _ => ("CPX", M::Immediate),
+        },
+        1 => match aaa {
+            0 => ("NOP", M::ZeroPage),
+            1 => ("BIT", M::ZeroPage),
+            2 => ("NOP", M::ZeroPage),
+            3 => ("NOP", M::ZeroPage),
+            4 => ("STY", M::ZeroPage),
+            5 => ("LDY", M::ZeroPage),
+            6 => ("CPY", M::ZeroPage),
+            _ => ("CPX", M::ZeroPage),
+        },
+        2 => match aaa {
+            0 => ("PHP", M::Implied),
+            1 => ("PLP", M::Implied),
+            2 => ("PHA", M::Implied),
+            3 => ("PLA", M::Implied),
+            4 => ("DEY", M::Implied),
+            5 => ("TAY", M::Implied),
+            6 => ("INY", M::Implied),
+            _ => ("INX", M::Implied),
+        },
+        3 => match aaa {
+            0 => ("NOP", M::Absolute),
+            1 => ("BIT", M::Absolute),
+            2 => ("JMP", M::Absolute),
+            3 => ("JMP", M::Indirect),
+            4 => ("STY", M::Absolute),
+            5 => ("LDY", M::Absolute),
+            6 => ("CPY", M::Absolute),
+            _ => ("CPX", M::Absolute),
+        },
+        4 => match aaa {
+            0 => ("BPL", M::Relative),
+            1 => ("BMI", M::Relative),
+            2 => ("BVC", M::Relative),
+            3 => ("BVS", M::Relative),
+            4 => ("BCC", M::Relative),
+            5 => ("BCS", M::Relative),
+            6 => ("BNE", M::Relative),
+            _ => ("BEQ", M::Relative),
+        },
+        5 => match aaa {
+            4 => ("STY", M::ZeroPageX),
+            5 => ("LDY", M::ZeroPageX),
+            _ => ("NOP", M::ZeroPageX),
+        },
+        6 => match aaa {
+            0 => ("CLC", M::Implied),
+            1 => ("SEC", M::Implied),
+            2 => ("CLI", M::Implied),
+            3 => ("SEI", M::Implied),
+            4 => ("TYA", M::Implied),
+            5 => ("CLV", M::Implied),
+            6 => ("CLD", M::Implied),
+            _ => ("SED", M::Implied),
+        },
+        _ => match aaa {
+            4 => ("SHY", M::AbsoluteX),
+            5 => ("LDY", M::AbsoluteX),
+            _ => ("NOP", M::AbsoluteX),
+        },
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,6 +278,26 @@ mod tests {
         for op in [0x02u8, 0x12, 0xD2, 0xF2] {
             assert_eq!(decode(op), ("JAM", AddrMode::Jam));
             assert_eq!(AddrMode::Jam.len(), 1);
+        }
+    }
+
+    /// Full-table behavior lock: every opcode decodes exactly as the
+    /// golden file records. Structural refactors must keep this
+    /// green; the golden file itself is data, not code.
+    #[test]
+    fn decode_matches_golden_table() {
+        for line in include_str!("disasm6502_golden.txt").lines() {
+            let mut parts = line.split('\t');
+            let op = u8::from_str_radix(parts.next().unwrap(), 16).unwrap();
+            let mnemonic = parts.next().unwrap();
+            let mode = parts.next().unwrap();
+            let (actual_mnemonic, actual_mode) = decode(op);
+            assert_eq!(actual_mnemonic, mnemonic, "mnemonic for opcode {op:02X}");
+            assert_eq!(
+                format!("{:?}", actual_mode),
+                mode,
+                "mode for opcode {op:02X}"
+            );
         }
     }
 }
