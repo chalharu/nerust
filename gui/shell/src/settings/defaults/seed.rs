@@ -34,7 +34,8 @@ pub fn default_shared_settings(factories: &[Arc<dyn CoreFactory>]) -> DesktopSha
 }
 
 fn seed_global_shortcuts(settings: &mut DesktopSharedSettings) {
-    settings.input.shortcuts.keyboard = nerust_settings_core::model::input::default_shortcut_bindings();
+    settings.input.shortcuts.keyboard =
+        nerust_settings_core::model::input::default_shortcut_bindings();
 }
 
 pub fn default_local_settings() -> HostBackendLocalSettings {
@@ -47,8 +48,8 @@ pub fn default_app_state() -> DesktopAppState {
 
 #[cfg(test)]
 mod tests {
-    use nerust_settings_core::model::input::ShortcutAction;
     use nerust_keyboard::Key;
+    use nerust_settings_core::model::input::ShortcutAction;
 
     use super::default_shared_settings;
 

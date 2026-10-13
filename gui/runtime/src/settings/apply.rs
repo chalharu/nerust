@@ -167,11 +167,11 @@ impl LocalSettingsExt for HostBackendLocalSettings {
 mod tests {
     use std::fs;
 
+    use nerust_nes_settings::{Mmc3IrqVariant, NesVideoFilter};
     use nerust_settings_core::model::{
         app_state::DesktopAppState, language::AppLanguage, local::ScalingMode,
         shared::StoragePolicy,
     };
-    use nerust_nes_settings::{Mmc3IrqVariant, NesVideoFilter};
 
     use crate::test::{DummyOtherSystemId, DummySystemId};
 

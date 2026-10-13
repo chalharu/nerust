@@ -1,5 +1,5 @@
-use nerust_core_traits::identity::SystemId;
 use crate::model::input::ShortcutAction;
+use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DigitalControlId,
     InputTopologyDescriptor, PortDescriptor,

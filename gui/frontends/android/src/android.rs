@@ -31,7 +31,6 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_settings_core::model::{local::RumbleTarget, shared::StoragePolicy};
 use nerust_gui_shell::{
     registry::SystemRegistry,
     session::{
@@ -45,6 +44,7 @@ use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
 };
+use nerust_settings_core::model::{local::RumbleTarget, shared::StoragePolicy};
 use sha2::{Digest, Sha256};
 use winit::{
     application::ApplicationHandler,

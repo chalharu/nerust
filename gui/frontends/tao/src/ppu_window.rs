@@ -320,8 +320,8 @@ mod tests {
     }
 
     fn ppu_bridge() -> Arc<DebugBridge> {
-        use nerust_settings_core::model::language::AppLanguage;
         use nerust_gui_viewmodel::debugger::DisplayCache;
+        use nerust_settings_core::model::language::AppLanguage;
         let display = DisplayCache {
             images: vec![("Tiles".to_string(), 2, 1, vec![0xFF; 8])],
             images_gen: 5,

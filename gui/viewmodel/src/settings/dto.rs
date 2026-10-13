@@ -4,9 +4,11 @@ use nerust_core_traits::{
     factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
     identity::SystemId,
 };
-use nerust_settings_core::model::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_input_traits::AttachmentId;
 use nerust_settings_core::editor::CaptureTarget;
+use nerust_settings_core::model::{
+    language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
+};
 
 /// A labeled choice for pick-list widgets.
 #[derive(Debug, Clone, PartialEq, Eq)]

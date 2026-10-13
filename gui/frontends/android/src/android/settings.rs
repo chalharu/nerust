@@ -15,12 +15,12 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_shell::registry::SystemRegistry;
+use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 use nerust_settings_core::model::{
     local::{RumbleTarget, ScreenOrientation, TouchOverlayVisibility},
     shared::StoragePolicy,
 };
-use nerust_gui_shell::registry::SystemRegistry;
-use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 use winit::platform::android::activity::AndroidApp;
 
 use super::{bridge, messages::SettingsDialogResult};
@@ -816,11 +816,11 @@ mod tests {
     use nerust_gbc_factory::GbcFactory;
     use nerust_gbc_settings::GbcSettings;
     use nerust_gui_runtime::settings::SettingsSnapshot;
+    use nerust_nes_factory::NesFactory;
+    use nerust_nes_settings::{NesSettings, NesVideoFilter};
     use nerust_settings_core::model::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
-    use nerust_nes_factory::NesFactory;
-    use nerust_nes_settings::{NesSettings, NesVideoFilter};
 
     use super::*;
 

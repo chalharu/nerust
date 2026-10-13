@@ -4,11 +4,11 @@ use std::{collections::HashMap, env};
 
 #[cfg(test)]
 use nerust_core_traits::identity::SystemIdentity;
+#[cfg(test)]
+use nerust_nes_settings::NesSettings;
 use nerust_settings_core::model::local::HostBackendLocalSettings;
 #[cfg(test)]
 use nerust_settings_core::model::shared::DesktopSharedSettings;
-#[cfg(test)]
-use nerust_nes_settings::NesSettings;
 
 #[cfg(test)]
 use crate::test::DummySystemId;

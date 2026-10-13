@@ -4,13 +4,13 @@ use std::{
 };
 
 use nerust_core_traits::identity::{SystemId, SystemIdentity};
+use nerust_persistence::sidecar::SidecarPaths;
 use nerust_settings_core::model::{
     app_state::{DesktopAppState, RememberedWindowSize},
     input::ensure_default_shortcuts,
     local::HostBackendLocalSettings,
     shared::DesktopSharedSettings,
 };
-use nerust_persistence::sidecar::SidecarPaths;
 
 use super::{
     SettingsDocument, SettingsError, SettingsPaths, SettingsSnapshot,
@@ -278,6 +278,8 @@ impl SettingsManager {
 mod tests {
     use std::{collections::HashMap, fs};
 
+    use nerust_keyboard::Key;
+    use nerust_nes_settings::NesVideoFilter;
     use nerust_settings_core::model::{
         app_state::{DesktopAppState, RememberedWindowSize},
         input::{
@@ -286,8 +288,6 @@ mod tests {
         },
         language::AppLanguage,
     };
-    use nerust_keyboard::Key;
-    use nerust_nes_settings::NesVideoFilter;
 
     use crate::test::DummySystemId;
 

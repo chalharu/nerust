@@ -7,9 +7,9 @@ use std::{
 };
 
 use nerust_core_traits::identity::SystemId;
-use nerust_settings_core::model::snapshot::SettingsSnapshot;
 use nerust_keyboard::Key;
 use nerust_settings_core::editor::CaptureTarget;
+use nerust_settings_core::model::snapshot::SettingsSnapshot;
 
 use super::{ValidationState, catalog::FactoryCatalog};
 

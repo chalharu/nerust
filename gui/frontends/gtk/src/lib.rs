@@ -21,8 +21,6 @@ use gtk::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
-use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
-use nerust_settings_core::model::language::AppLanguage;
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
@@ -36,6 +34,8 @@ use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
 use nerust_run_options::RunOptions;
 use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
+use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
+use nerust_settings_core::model::language::AppLanguage;
 
 use self::window::{StateMenus, Window, WindowExtend};
 

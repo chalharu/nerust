@@ -13,12 +13,12 @@ use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, SpaceId};
-use nerust_settings_core::model::language::AppLanguage;
 use nerust_gui_shell::debug::{
     DebugAction, DebugDrainInput, DrainFlight, DrainPoll, LiveImagesFlight, LiveImagesPoll,
 };
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text};
+use nerust_settings_core::model::language::AppLanguage;
 
 use super::State;
 
