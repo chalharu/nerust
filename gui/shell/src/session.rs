@@ -480,17 +480,20 @@ impl SessionHandle {
     /// returned images (plus the paused/status chrome) and leaves the
     /// last paused sections alone. `None` when imageless or when the
     /// fetch fails.
+    ///
+    /// Blocking (one UI-thread `recv_timeout` when the cache misses):
+    /// live ticks use [`SessionHandle::debug_live_images_begin`] plus
+    /// tick polling instead. This wrapper only spins flights for
+    /// tests and headless drivers.
     pub fn debug_live_images(&self, need_images: bool) -> LiveImages {
-        if !need_images {
-            return None;
-        }
-        let core = self.emu_core.as_ref()?;
-        match core.debug_images() {
-            Ok(Ok((generation, images))) => Some((
-                generation,
-                images.iter().map(debug_vm::rgba_image).collect(),
-            )),
-            _ => None,
+        let mut flight = self.debug_live_images_begin(need_images);
+        loop {
+            match flight.poll() {
+                crate::debug::LiveImagesPoll::Done(live) => return live,
+                crate::debug::LiveImagesPoll::Pending => {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
         }
     }
 

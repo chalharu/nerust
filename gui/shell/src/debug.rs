@@ -153,6 +153,15 @@ impl SessionHandle {
     ) -> DrainFlight {
         DrainFlight::begin(self.drain_ctx(), actions, input, deadline)
     }
+
+    /// Start one images-only live fetch without blocking: only the
+    /// cache lookup and a non-blocking send run here. Drive the
+    /// returned flight with `poll` on the live tick until
+    /// [`LiveImagesPoll::Done`]. Cache hits and coreless sessions
+    /// resolve on the first poll.
+    pub fn debug_live_images_begin(&self, need_images: bool) -> LiveImagesFlight {
+        LiveImagesFlight::begin(self.drain_ctx().core, need_images, DEBUG_DRAIN_TIMEOUT)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1032,6 +1041,107 @@ fn first_byte(reply: Result<InspectResult, InspectError>) -> Option<u8> {
     let inspected = reply.ok()?;
     let row = inspected.dump.rows.first()?;
     (row.valid > 0).then_some(row.bytes[0])
+}
+
+// ---------------------------------------------------------------------------
+// Async live-images flight
+// ---------------------------------------------------------------------------
+
+/// Poll result for [`LiveImagesFlight`]: either the fetch needs more
+/// ticks or it finished (`None` when imageless or failed, like the
+/// blocking refresh).
+pub enum LiveImagesPoll {
+    Pending,
+    Done(crate::session::LiveImages),
+}
+
+/// One images-only fetch as a tick-driven state machine: the live PPU
+/// follow's async half. `begin` only runs the cache lookup and the
+/// non-blocking send; `poll` only `try_recv`s, so the 250ms live tick
+/// never parks in a 5s image re-decode while the emu thread is
+/// stalled. Cache hits and coreless sessions resolve on the first
+/// poll, exactly like the old synchronous refresh.
+pub struct LiveImagesFlight {
+    core: Option<EmuCore>,
+    deadline: Duration,
+    state: Option<LiveImagesState>,
+}
+
+enum LiveImagesState {
+    Fetching {
+        rx: Receiver<Result<Vec<DebugImage>, DebuggerError>>,
+        sent_at: Instant,
+    },
+    Ready(crate::session::LiveImages),
+}
+
+impl LiveImagesFlight {
+    fn begin(core: Option<EmuCore>, need_images: bool, deadline: Duration) -> Self {
+        if !need_images {
+            return Self::ready(None, deadline);
+        }
+        let Some(core) = core else {
+            return Self::ready(None, deadline);
+        };
+        if let Some((generation, images)) = core.images_cache_lookup() {
+            return Self {
+                core: Some(core),
+                deadline,
+                state: Some(LiveImagesState::Ready(Some((
+                    generation,
+                    images.iter().map(vm::rgba_image).collect(),
+                )))),
+            };
+        }
+        match core.images_send() {
+            Ok(rx) => Self {
+                core: Some(core),
+                deadline,
+                state: Some(LiveImagesState::Fetching {
+                    rx,
+                    sent_at: Instant::now(),
+                }),
+            },
+            Err(_) => Self::ready(None, deadline),
+        }
+    }
+
+    fn ready(live: crate::session::LiveImages, deadline: Duration) -> Self {
+        Self {
+            core: None,
+            deadline,
+            state: Some(LiveImagesState::Ready(live)),
+        }
+    }
+
+    /// Advance the fetch without blocking: at most one `try_recv`.
+    /// A still-waiting fetch stays stored; anything else resolves to
+    /// `Done`, so orphaned flights from a closed viewer settle
+    /// harmlessly on the next tick.
+    pub fn poll(&mut self) -> LiveImagesPoll {
+        let state = self.state.take();
+        match state {
+            None | Some(LiveImagesState::Ready(None)) => LiveImagesPoll::Done(None),
+            Some(LiveImagesState::Ready(live)) => LiveImagesPoll::Done(live),
+            Some(LiveImagesState::Fetching { rx, sent_at }) => {
+                match await_reply(&rx, sent_at, self.deadline) {
+                    Awaited::Waiting => {
+                        self.state = Some(LiveImagesState::Fetching { rx, sent_at });
+                        LiveImagesPoll::Pending
+                    }
+                    Awaited::Ready(reply) => LiveImagesPoll::Done(self.store(reply)),
+                    Awaited::Lost => LiveImagesPoll::Done(None),
+                }
+            }
+        }
+    }
+
+    fn store(&self, reply: Result<Vec<DebugImage>, DebuggerError>) -> crate::session::LiveImages {
+        let images = reply.ok()?;
+        let core = self.core.as_ref()?;
+        let (generation, images) = core.images_store(images);
+        Some((generation, images.iter().map(vm::rgba_image).collect()))
+    }
 }
 
 #[cfg(test)]

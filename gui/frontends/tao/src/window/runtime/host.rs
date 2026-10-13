@@ -8,9 +8,9 @@ use nerust_gui_runtime::{
 use nerust_gui_settings::app_state::RememberedWindowSize;
 use nerust_gui_shell::{
     context::FrontendContext,
-    debug::{DebugDrainOutput, DrainFlight, DrainPoll},
+    debug::{DebugDrainOutput, DrainFlight, DrainPoll, LiveImagesFlight, LiveImagesPoll},
     session::{
-        KeyboardShortcut, SessionError, SessionHandle,
+        KeyboardShortcut, LiveImages, SessionError, SessionHandle,
         access::{FrontendSession, SettingsResult},
         commands::SessionCommand,
         lifecycle::WindowSize,
@@ -66,6 +66,9 @@ pub(crate) struct HostState {
     /// event loop polls it (`poll_debug_flight`). A newer batch
     /// supersedes the stored one; orphaned replies are ignored.
     drain_flight: Option<DrainFlight>,
+    /// In-flight async live-images fetch: the live tick starts it,
+    /// the event loop polls it. At most one; a newer tick supersedes.
+    live_flight: Option<LiveImagesFlight>,
     /// Aux-window state (debugger + PPU viewer). Orchestration lives
     /// here; ownership lives there.
     pub(crate) debug: DebugWindows,
@@ -117,6 +120,7 @@ impl HostState {
             auto_paused: false,
             last_drain_paused: None,
             drain_flight: None,
+            live_flight: None,
             debug: DebugWindows::new(),
             #[cfg(any(
                 target_os = "linux",
@@ -407,10 +411,10 @@ impl HostState {
         {
             *control_flow = ControlFlow::WaitUntil(next);
         }
-        // While a drain flight is pending, wake soon to poll it: the
-        // reply applies within ~30ms instead of waiting for the next
-        // input event.
-        if drain_pending {
+        // While a drain or live flight is pending, wake soon to poll
+        // it: the reply applies within ~30ms instead of waiting for
+        // the next input event.
+        if drain_pending || self.live_flight.is_some() {
             let soon = Instant::now() + std::time::Duration::from_millis(30);
             let earlier = match *control_flow {
                 ControlFlow::WaitUntil(at) => at.min(soon),
@@ -585,17 +589,45 @@ impl HostState {
     /// drain is wrong here: the paused-gated inspect refuses while
     /// running and would blank the dump/registers. Paused cores never
     /// change memory, so no periodic work happens there — demand
-    /// drains already refresh.
+    /// drains already refresh. The fetch runs as an async flight, so
+    /// a stalled emu thread never parks the event loop in the tick.
     fn maybe_live_ppu(&mut self) {
+        // Settle any in-flight fetch first (non-blocking): a flight
+        // orphaned by pausing or closing still resolves harmlessly,
+        // and polling here needs no throttle gate.
+        if let Some(flight) = self.live_flight.as_mut() {
+            match flight.poll() {
+                LiveImagesPoll::Done(live) => {
+                    self.live_flight = None;
+                    self.apply_live_images(live);
+                }
+                LiveImagesPoll::Pending => return,
+            }
+        }
         if !self.live_follow_active() {
             return;
         }
         if !self.debug.live_due(Instant::now()) {
             return;
         }
-        let Some((generation, images)) = self.session.debug_live_images(true) else {
+        let mut flight = self.session.debug_live_images_begin(true);
+        match flight.poll() {
+            LiveImagesPoll::Done(live) => self.apply_live_images(live),
+            LiveImagesPoll::Pending => {
+                self.live_flight = Some(flight);
+            }
+        }
+    }
+
+    /// Patch a finished live fetch into the viewer. Images apply when
+    /// newer regardless of pause (a paused frame is honest data); the
+    /// running chrome only applies while still running, so a
+    /// pause-in-flight never flips the status back to Running.
+    fn apply_live_images(&mut self, live: LiveImages) {
+        let Some((generation, images)) = live else {
             return;
         };
+        let running = !self.session.paused();
         let Some(handle) = self.debug.debug_window.as_mut() else {
             return;
         };
@@ -606,8 +638,10 @@ impl HostState {
             }
             display.images = images;
             display.images_gen = generation;
-            display.paused = false;
-            display.status = nerust_gui_viewmodel::debugger::StatusMessage::Running;
+            if running {
+                display.paused = false;
+                display.status = nerust_gui_viewmodel::debugger::StatusMessage::Running;
+            }
         }
         // Rebuild, not just repaint: the patch lands in bridge state,
         // and only a rebuild re-reads it into the widget tree.

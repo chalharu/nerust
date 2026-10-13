@@ -972,3 +972,33 @@ fn drain_flight_no_core_completes_on_first_poll() {
     assert_eq!(output.display.status, StatusMessage::NoCore);
     assert!(output.display.dump_rows.is_empty());
 }
+
+#[test]
+fn live_images_flight_completes_and_resolves_locally() {
+    use crate::debug::LiveImagesPoll;
+    use std::time::{Duration, Instant};
+    // Loaded core: spinning the flight serves the decode.
+    let session = loaded_debug_session();
+    let mut flight = session.debug_live_images_begin(true);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let live = loop {
+        match flight.poll() {
+            LiveImagesPoll::Done(live) => break live,
+            LiveImagesPoll::Pending => {
+                assert!(Instant::now() < deadline, "flight always terminates");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+    };
+    assert!(live.is_some_and(|(_, images)| images.len() == 1));
+    // Not requested: the first poll resolves without crossings.
+    let mut idle = session.debug_live_images_begin(false);
+    assert!(matches!(idle.poll(), LiveImagesPoll::Done(None)));
+    // No core: the first poll resolves too (tick polling never
+    // parks, so coreless viewers stay synchronous).
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let coreless = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    let mut flight = coreless.debug_live_images_begin(true);
+    assert!(matches!(flight.poll(), LiveImagesPoll::Done(None)));
+}
