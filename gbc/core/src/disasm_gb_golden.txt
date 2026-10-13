@@ -1,0 +1,256 @@
+00	NOP	None
+01	LD BC	Imm16
+02	LD (BC),A	None
+03	INC BC	None
+04	INC B	None
+05	DEC B	None
+06	LD B	Imm8
+07	RLCA	None
+08	LD (nn),SP	Imm16
+09	ADD HL,BC	None
+0A	LD A,(BC)	None
+0B	DEC BC	None
+0C	INC C	None
+0D	DEC C	None
+0E	LD C	Imm8
+0F	RRCA	None
+10	STOP	Imm8
+11	LD DE	Imm16
+12	LD (DE),A	None
+13	INC DE	None
+14	INC D	None
+15	DEC D	None
+16	LD D	Imm8
+17	RLA	None
+18	JR	Rel8
+19	ADD HL,DE	None
+1A	LD A,(DE)	None
+1B	DEC DE	None
+1C	INC E	None
+1D	DEC E	None
+1E	LD E	Imm8
+1F	RRA	None
+20	JR NZ	Rel8
+21	LD HL	Imm16
+22	LD (HL+),A	None
+23	INC HL	None
+24	INC H	None
+25	DEC H	None
+26	LD H	Imm8
+27	DAA	None
+28	JR Z	Rel8
+29	ADD HL,HL	None
+2A	LD A,(HL+)	None
+2B	DEC HL	None
+2C	INC L	None
+2D	DEC L	None
+2E	LD L	Imm8
+2F	CPL	None
+30	JR NC	Rel8
+31	LD SP	Imm16
+32	LD (HL-),A	None
+33	INC SP	None
+34	INC (HL)	None
+35	DEC (HL)	None
+36	LD (HL)	Imm8
+37	SCF	None
+38	JR C	Rel8
+39	ADD HL,SP	None
+3A	LD A,(HL-)	None
+3B	DEC SP	None
+3C	INC A	None
+3D	DEC A	None
+3E	LD A	Imm8
+3F	CCF	None
+40	LD B,B	None
+41	LD B,C	None
+42	LD B,D	None
+43	LD B,E	None
+44	LD B,H	None
+45	LD B,L	None
+46	LD B,(HL)	None
+47	LD B,A	None
+48	LD C,B	None
+49	LD C,C	None
+4A	LD C,D	None
+4B	LD C,E	None
+4C	LD C,H	None
+4D	LD C,L	None
+4E	LD C,(HL)	None
+4F	LD C,A	None
+50	LD D,B	None
+51	LD D,C	None
+52	LD D,D	None
+53	LD D,E	None
+54	LD D,H	None
+55	LD D,L	None
+56	LD D,(HL)	None
+57	LD D,A	None
+58	LD E,B	None
+59	LD E,C	None
+5A	LD E,D	None
+5B	LD E,E	None
+5C	LD E,H	None
+5D	LD E,L	None
+5E	LD E,(HL)	None
+5F	LD E,A	None
+60	LD H,B	None
+61	LD H,C	None
+62	LD H,D	None
+63	LD H,E	None
+64	LD H,H	None
+65	LD H,L	None
+66	LD H,(HL)	None
+67	LD H,A	None
+68	LD L,B	None
+69	LD L,C	None
+6A	LD L,D	None
+6B	LD L,E	None
+6C	LD L,H	None
+6D	LD L,L	None
+6E	LD L,(HL)	None
+6F	LD L,A	None
+70	LD (HL),B	None
+71	LD (HL),C	None
+72	LD (HL),D	None
+73	LD (HL),E	None
+74	LD (HL),H	None
+75	LD (HL),L	None
+76	HALT	None
+77	LD (HL),A	None
+78	LD A,B	None
+79	LD A,C	None
+7A	LD A,D	None
+7B	LD A,E	None
+7C	LD A,H	None
+7D	LD A,L	None
+7E	LD A,(HL)	None
+7F	LD A,A	None
+80	ADD A,B	None
+81	ADD A,C	None
+82	ADD A,D	None
+83	ADD A,E	None
+84	ADD A,H	None
+85	ADD A,L	None
+86	ADD A,(HL)	None
+87	ADD A,A	None
+88	ADC A,B	None
+89	ADC A,C	None
+8A	ADC A,D	None
+8B	ADC A,E	None
+8C	ADC A,H	None
+8D	ADC A,L	None
+8E	ADC A,(HL)	None
+8F	ADC A,A	None
+90	SUB B	None
+91	SUB C	None
+92	SUB D	None
+93	SUB E	None
+94	SUB H	None
+95	SUB L	None
+96	SUB (HL)	None
+97	SUB A	None
+98	SBC A,B	None
+99	SBC A,C	None
+9A	SBC A,D	None
+9B	SBC A,E	None
+9C	SBC A,H	None
+9D	SBC A,L	None
+9E	SBC A,(HL)	None
+9F	SBC A,A	None
+A0	AND B	None
+A1	AND C	None
+A2	AND D	None
+A3	AND E	None
+A4	AND H	None
+A5	AND L	None
+A6	AND (HL)	None
+A7	AND A	None
+A8	XOR B	None
+A9	XOR C	None
+AA	XOR D	None
+AB	XOR E	None
+AC	XOR H	None
+AD	XOR L	None
+AE	XOR (HL)	None
+AF	XOR A	None
+B0	OR B	None
+B1	OR C	None
+B2	OR D	None
+B3	OR E	None
+B4	OR H	None
+B5	OR L	None
+B6	OR (HL)	None
+B7	OR A	None
+B8	CP B	None
+B9	CP C	None
+BA	CP D	None
+BB	CP E	None
+BC	CP H	None
+BD	CP L	None
+BE	CP (HL)	None
+BF	CP A	None
+C0	RET NZ	None
+C1	POP BC	None
+C2	JP NZ	Imm16
+C3	JP	Imm16
+C4	CALL NZ	Imm16
+C5	PUSH BC	None
+C6	ADD A	Imm8
+C7	RST	None
+C8	RET Z	None
+C9	RET	None
+CA	JP Z	Imm16
+CB	<FALLTHROUGH>	<FALLTHROUGH>
+CC	CALL Z	Imm16
+CD	CALL	Imm16
+CE	ADC A	Imm8
+CF	RST	None
+D0	RET NC	None
+D1	POP DE	None
+D2	JP NC	Imm16
+D3	<FALLTHROUGH>	<FALLTHROUGH>
+D4	CALL NC	Imm16
+D5	PUSH DE	None
+D6	SUB	Imm8
+D7	RST	None
+D8	RET C	None
+D9	RETI	None
+DA	JP C	Imm16
+DB	<FALLTHROUGH>	<FALLTHROUGH>
+DC	CALL C	Imm16
+DD	<FALLTHROUGH>	<FALLTHROUGH>
+DE	SBC A	Imm8
+DF	RST	None
+E0	LDH (n),A	Imm8
+E1	POP HL	None
+E2	LD (C),A	None
+E3	<FALLTHROUGH>	<FALLTHROUGH>
+E4	<FALLTHROUGH>	<FALLTHROUGH>
+E5	PUSH HL	None
+E6	AND	Imm8
+E7	RST	None
+E8	ADD SP	Imm8
+E9	JP HL	None
+EA	LD (nn),A	Imm16
+EB	<FALLTHROUGH>	<FALLTHROUGH>
+EC	<FALLTHROUGH>	<FALLTHROUGH>
+ED	<FALLTHROUGH>	<FALLTHROUGH>
+EE	XOR	Imm8
+EF	RST	None
+F0	LDH A,(n)	Imm8
+F1	POP AF	None
+F2	LD A,(C)	None
+F3	DI	None
+F4	<FALLTHROUGH>	<FALLTHROUGH>
+F5	PUSH AF	None
+F6	OR	Imm8
+F7	RST	None
+F8	LD HL,SP	Imm8
+F9	LD SP,HL	None
+FA	LD A,(nn)	Imm16
+FB	EI	None
+FC	<FALLTHROUGH>	<FALLTHROUGH>
+FD	<FALLTHROUGH>	<FALLTHROUGH>
+FE	CP	Imm8
+FF	RST	None
