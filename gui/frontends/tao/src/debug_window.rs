@@ -15,7 +15,7 @@ use iced::Task;
 use iced_tiny_skia::Renderer;
 use iced_winit::program::{self, Program};
 use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, HexRow, SpaceId};
-use nerust_gui_settings::language::AppLanguage;
+use nerust_settings_core::model::language::AppLanguage;
 use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};

@@ -1,6 +1,6 @@
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_settings::input::ShortcutBinding;
-use nerust_gui_settings::language::AppLanguage;
+use nerust_settings_core::model::input::ShortcutBinding;
+use nerust_settings_core::model::language::AppLanguage;
 use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_persistence::model::StateSlotSummary;
 use tao::window::Window as TaoWindow;
@@ -59,8 +59,8 @@ pub(crate) mod imp {
     ))]
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
-    use nerust_gui_settings::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
-    use nerust_gui_settings::language::AppLanguage;
+    use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
+    use nerust_settings_core::model::language::AppLanguage;
     use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
     use tao::event_loop::EventLoopProxy;
     #[cfg(target_os = "macos")]
@@ -424,7 +424,7 @@ pub(crate) mod imp {
     target_os = "windows"
 )))]
 pub(crate) mod imp {
-    use nerust_gui_settings::language::AppLanguage;
+    use nerust_settings_core::model::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
 
     use super::{MenuSync, StateSlotSummary, TaoWindow, UserEvent};

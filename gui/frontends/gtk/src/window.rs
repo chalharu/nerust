@@ -6,7 +6,7 @@ use gtk::{
     prelude::*,
 };
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_settings::local::ScalingMode;
+use nerust_settings_core::model::local::ScalingMode;
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::renderer::GpuFactory;
@@ -624,7 +624,7 @@ fn rebuild_slot_menu(
     slots: &[StateSlotSummary],
     active_slot: Option<u64>,
     action: &str,
-    language: nerust_gui_settings::language::AppLanguage,
+    language: nerust_settings_core::model::language::AppLanguage,
 ) {
     use nerust_settings_core::i18n::{UiText, text};
     menu.remove_all();

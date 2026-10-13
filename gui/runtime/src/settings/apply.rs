@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use nerust_core_traits::identity::SystemId;
-use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy};
+use nerust_settings_core::model::shared::{DesktopSharedSettings, StoragePolicy};
 use nerust_settings_traits::SystemSettings;
 
 use super::{
@@ -167,7 +167,7 @@ impl LocalSettingsExt for HostBackendLocalSettings {
 mod tests {
     use std::fs;
 
-    use nerust_gui_settings::{
+    use nerust_settings_core::model::{
         app_state::DesktopAppState, language::AppLanguage, local::ScalingMode,
         shared::StoragePolicy,
     };

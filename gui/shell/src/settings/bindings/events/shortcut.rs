@@ -1,4 +1,4 @@
-use nerust_gui_settings::{input::ShortcutAction, shared::DesktopSharedSettings};
+use nerust_settings_core::model::{input::ShortcutAction, shared::DesktopSharedSettings};
 use nerust_keyboard::Key;
 
 #[cfg(test)]
@@ -40,7 +40,7 @@ fn shortcut_action_to_command(action: ShortcutAction) -> Option<SessionCommand> 
 
 #[cfg(test)]
 mod tests {
-    use nerust_gui_settings::input::ShortcutAction;
+    use nerust_settings_core::model::input::ShortcutAction;
     use nerust_keyboard::Key;
 
     use super::{shortcut_action_for_key, shortcut_command_for_key};

@@ -7,7 +7,7 @@ use std::{
 };
 
 use nerust_core_traits::identity::SystemId;
-use nerust_gui_settings::snapshot::SettingsSnapshot;
+use nerust_settings_core::model::snapshot::SettingsSnapshot;
 use nerust_keyboard::Key;
 use nerust_settings_core::editor::CaptureTarget;
 

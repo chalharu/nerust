@@ -3368,7 +3368,6 @@ dependencies = [
  "nerust_gbc_factory",
  "nerust_gbc_settings",
  "nerust_gui_runtime",
- "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_traits",
  "nerust_nes_factory",
@@ -3549,7 +3548,6 @@ dependencies = [
  "log",
  "nerust_core_traits",
  "nerust_gui_runtime",
- "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
  "nerust_input_traits",
@@ -3572,27 +3570,15 @@ dependencies = [
  "directories",
  "log",
  "nerust_core_traits",
- "nerust_gui_settings",
  "nerust_keyboard",
  "nerust_nes_settings",
  "nerust_persistence",
+ "nerust_settings_core",
  "nerust_settings_traits",
  "serde",
  "serde-saphyr",
  "serde-value",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "nerust_gui_settings"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_core_traits",
- "nerust_input_traits",
- "nerust_keyboard",
- "nerust_settings_traits",
- "serde",
- "serde-saphyr",
 ]
 
 [[package]]
@@ -3604,7 +3590,6 @@ dependencies = [
  "nerust_core_traits",
  "nerust_emu_thread",
  "nerust_gui_runtime",
- "nerust_gui_settings",
  "nerust_gui_viewmodel",
  "nerust_input_traits",
  "nerust_keyboard",
@@ -3623,7 +3608,6 @@ name = "nerust_gui_viewmodel"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
- "nerust_gui_settings",
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_settings_core",
@@ -3838,11 +3822,11 @@ name = "nerust_settings_core"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
- "nerust_gui_settings",
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_settings_traits",
  "serde",
+ "serde-saphyr",
  "typetag",
 ]
 
@@ -3900,7 +3884,6 @@ dependencies = [
  "muda",
  "nerust_core_traits",
  "nerust_gui_runtime",
- "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
  "nerust_input_traits",

@@ -1,4 +1,4 @@
-use nerust_gui_settings::input::{KeyboardBinding, PersistedControlId};
+use nerust_settings_core::model::input::{KeyboardBinding, PersistedControlId};
 use nerust_input_traits::AbstractKey;
 use nerust_keyboard::Key;
 

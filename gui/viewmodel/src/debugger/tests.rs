@@ -168,7 +168,7 @@ fn diff_rows_marks_changed_only() {
 
 #[test]
 fn pending_write_renders_in_both_languages() {
-    use nerust_gui_settings::language::AppLanguage;
+    use nerust_settings_core::model::language::AppLanguage;
     let staged = PendingWrite {
         addr: 0,
         old: Some(0xAB),
@@ -195,7 +195,7 @@ fn pending_write_renders_in_both_languages() {
 
 #[test]
 fn status_message_renders_every_variant() {
-    use nerust_gui_settings::language::AppLanguage;
+    use nerust_settings_core::model::language::AppLanguage;
     let en = AppLanguage::English;
     assert_eq!(StatusMessage::Empty.render(en), "");
     assert_eq!(StatusMessage::Paused.render(en), "paused");

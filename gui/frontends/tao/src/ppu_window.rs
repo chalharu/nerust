@@ -23,7 +23,7 @@ use nerust_gui_viewmodel::debugger::scale2x_nearest;
 /// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
 /// tile start (+16 per tile). Generic geometry, no per-system branch.
 fn tile_hover_text(
-    language: nerust_gui_settings::language::AppLanguage,
+    language: nerust_settings_core::model::language::AppLanguage,
     label: &str,
     width: u32,
     height: u32,
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn tile_hover_reports_index_and_offset() {
-        use nerust_gui_settings::language::AppLanguage;
+        use nerust_settings_core::model::language::AppLanguage;
         let line = tile_hover_text(
             AppLanguage::English,
             "Pattern left",
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn tile_hover_clamps_to_table() {
-        use nerust_gui_settings::language::AppLanguage;
+        use nerust_settings_core::model::language::AppLanguage;
         let line = tile_hover_text(
             AppLanguage::Japanese,
             "Pattern right",
@@ -320,7 +320,7 @@ mod tests {
     }
 
     fn ppu_bridge() -> Arc<DebugBridge> {
-        use nerust_gui_settings::language::AppLanguage;
+        use nerust_settings_core::model::language::AppLanguage;
         use nerust_gui_viewmodel::debugger::DisplayCache;
         let display = DisplayCache {
             images: vec![("Tiles".to_string(), 2, 1, vec![0xFF; 8])],

@@ -1,4 +1,4 @@
-use nerust_gui_settings::snapshot::SettingsSnapshot;
+use nerust_settings_core::model::snapshot::SettingsSnapshot;
 
 use super::{SettingsDocument, SettingsError, SettingsPaths};
 

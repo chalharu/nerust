@@ -15,7 +15,7 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_settings::{
+use nerust_settings_core::model::{
     local::{RumbleTarget, ScreenOrientation, TouchOverlayVisibility},
     shared::StoragePolicy,
 };
@@ -816,7 +816,7 @@ mod tests {
     use nerust_gbc_factory::GbcFactory;
     use nerust_gbc_settings::GbcSettings;
     use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_gui_settings::{
+    use nerust_settings_core::model::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
     use nerust_nes_factory::NesFactory;

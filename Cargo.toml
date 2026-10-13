@@ -7,7 +7,6 @@ members = [
   "gui/frontends/tao",
   "gui/run-options",
   "gui/runtime",
-  "gui/settings",
   "gui/shell",
   "gui/viewmodel",
   "gba/core",
@@ -177,7 +176,6 @@ nerust_gbc_settings = { path = "gbc/settings" }
 nerust_glwrap = { path = "render/glwrap" }
 nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_gui_runtime = { path = "gui/runtime" }
-nerust_gui_settings = { path = "gui/settings" }
 nerust_gui_shell = { path = "gui/shell" }
 nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }

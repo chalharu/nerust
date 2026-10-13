@@ -13,7 +13,7 @@ use nerust_core_traits::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsApplyPlan, SettingsManager, SettingsSnapshot,
 };
-use nerust_gui_settings::language::AppLanguage;
+use nerust_settings_core::model::language::AppLanguage;
 use nerust_gui_viewmodel::debugger::{PendingWrite, StatusMessage};
 use nerust_input_traits::{InputAssignments, InputSystemFactory};
 use nerust_settings_core::factory::settings_view;
@@ -113,7 +113,7 @@ fn shortcut_key_returns_shortcut_action_without_controller_event() {
     assert_eq!(
         session.handle_keyboard_key(nerust_keyboard::Key::Space, true),
         Some(KeyboardShortcut::Session(
-            nerust_gui_settings::input::ShortcutAction::TogglePause
+            nerust_settings_core::model::input::ShortcutAction::TogglePause
         )),
     );
     assert_eq!(

@@ -26,7 +26,7 @@ use nerust_settings_core::{
     i18n::{UiText, text as ui_text},
 };
 
-use nerust_gui_settings::{language::AppLanguage, local::ScalingMode};
+use nerust_settings_core::model::{language::AppLanguage, local::ScalingMode};
 
 use crate::{State, mapping::*};
 
@@ -1314,10 +1314,10 @@ mod tests {
         }
         use std::sync::Arc;
 
-        let snapshot = nerust_gui_settings::snapshot::SettingsSnapshot {
-            shared: nerust_gui_settings::shared::DesktopSharedSettings::default(),
-            local: nerust_gui_settings::local::HostBackendLocalSettings::default(),
-            app_state: nerust_gui_settings::app_state::DesktopAppState::default(),
+        let snapshot = nerust_settings_core::model::snapshot::SettingsSnapshot {
+            shared: nerust_settings_core::model::shared::DesktopSharedSettings::default(),
+            local: nerust_settings_core::model::local::HostBackendLocalSettings::default(),
+            app_state: nerust_settings_core::model::app_state::DesktopAppState::default(),
         };
         let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let supported_sample_rates: Arc<[u32]> = {
