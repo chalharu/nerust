@@ -305,7 +305,7 @@ impl EmuCore {
     /// cache are all `Arc`s, so the session's core and the flight
     /// observe the same pause truth and the same image generation.
     /// Only the display framebuffer (`disp_fb`, debugger-unused) is
-    /// physically copied.
+    /// reset to empty instead of copied (see the manual `Clone`).
     pub(crate) fn drain_core(&self) -> EmuCore {
         self.clone()
     }

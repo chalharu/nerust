@@ -1064,6 +1064,13 @@ impl LiveImagesFlight {
         let Some(core) = core else {
             return Self::ready(None, deadline);
         };
+        // A running core advances memory at any time: dirty first so
+        // the lookup below refetches (mirrors DrainFlight and
+        // EmuCore::debug_images). Without this the first stored decode
+        // serves forever and live follow freezes on one frame.
+        if !core.metrics().paused {
+            core.mark_images_dirty();
+        }
         if let Some((generation, images)) = core.images_cache_lookup() {
             return Self {
                 core: Some(core),

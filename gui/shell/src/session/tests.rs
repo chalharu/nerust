@@ -935,7 +935,12 @@ fn debug_live_images_follow_running_without_snapshot() {
     assert!(!paused.display.dump_rows.is_empty());
     assert!(session.debug_live_images(false).is_none());
     let paused_live = session.debug_live_images(true);
-    assert!(paused_live.is_some_and(|(_, images)| images.len() == 1));
+    let paused_gen = paused_live.as_ref().expect("paused fetch serves").0;
+    assert_eq!(
+        paused_live.map(|(_, images)| images.len()),
+        Some(1),
+        "paused baseline converts the decode"
+    );
     // Resume: the full snapshot goes degenerate because the inspect
     // is paused-gated (running reads cannot pin a frame)...
     session.debug_drain(&[DebugAction::Resume], &input);
@@ -946,9 +951,19 @@ fn debug_live_images_follow_running_without_snapshot() {
         "inspect refuses while running"
     );
     // ...but the live images path still flows, so the PPU follow
-    // never needs (or blanks) the snapshot sections.
+    // never needs (or blanks) the snapshot sections. Identical
+    // content reports the served generation with no payload (the
+    // content-hash skip): same pixels, same generation, zero UI work.
     let live = session.debug_live_images(true);
-    assert!(live.is_some_and(|(_, images)| images.len() == 1));
+    let (running_gen, running_images) = live.expect("running fetch serves");
+    assert_eq!(
+        running_gen, paused_gen,
+        "static tiles keep one generation while running"
+    );
+    assert!(
+        running_images.is_empty(),
+        "identical refetch skips the RGBA conversion"
+    );
     session.debug_drain(&[DebugAction::Pause], &input);
 }
 
@@ -1171,4 +1186,46 @@ fn live_images_flight_completes_and_resolves_locally() {
     let coreless = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
     let mut flight = coreless.debug_live_images_begin(true);
     assert!(matches!(flight.poll(), LiveImagesPoll::Done(None)));
+}
+
+#[test]
+fn live_images_flight_refetches_while_running() {
+    use crate::debug::LiveImagesPoll;
+    use std::time::{Duration, Instant};
+    // Regression: consecutive begins on a running core must refetch,
+    // not serve the first stored decode forever (live-freeze). The
+    // mock tiles never change, so the refetch collapses to the served
+    // generation with an empty payload — while the stale-cache bug
+    // would serve one converted image at the same generation.
+    let session = loaded_debug_session();
+    session.debug_resume();
+    assert!(!session.debug_paused());
+    fn fetch(session: &SessionHandle) -> (u64, usize) {
+        let mut flight = session.debug_live_images_begin(true);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match flight.poll() {
+                LiveImagesPoll::Done(live) => {
+                    break live.map(|(generation, images)| (generation, images.len()));
+                }
+                LiveImagesPoll::Pending => {
+                    assert!(Instant::now() < deadline, "flight always terminates");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }
+        .expect("running fetch serves")
+    }
+    let (first_gen, first_len) = fetch(&session);
+    assert_eq!(first_len, 1, "first fetch converts the decode");
+    let (second_gen, second_len) = fetch(&session);
+    assert_eq!(
+        second_gen, first_gen,
+        "static tiles keep one generation while running"
+    );
+    assert_eq!(
+        second_len, 0,
+        "second begin refetches (identical collapse) instead of serving the stale cache"
+    );
+    session.debug_pause();
 }
