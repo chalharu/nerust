@@ -140,6 +140,9 @@ impl WindowRuntime {
                 }
                 WindowEvent::Focused(true) => {
                     self.host.active = true;
+                    // A same-burst aux focus already cancelled any
+                    // pending pause; this is belt-and-braces.
+                    self.host.cancel_pending_auto_pause();
                     if self.host.auto_paused() {
                         self.host.resume_session();
                         self.host.clear_auto_paused();
@@ -151,10 +154,12 @@ impl WindowRuntime {
                 }
                 WindowEvent::Focused(false) => {
                     self.host.active = false;
-                    if self.host.session().can_pause() {
-                        self.host.pause_session();
-                        self.host.set_auto_paused();
-                    }
+                    // Deferred, not immediate: an aux window may take
+                    // focus in the same burst (same-app switch keeps
+                    // running); the pause lands at MainEventsCleared
+                    // only if focus truly left us (`can_pause` is
+                    // re-checked there).
+                    self.host.arm_pending_auto_pause();
                     self.host.clear_keys();
                     // Same agreement in the other direction, still
                     // without redundant round-trips.
@@ -187,6 +192,15 @@ impl WindowRuntime {
                         self.host.request_redraw();
                     }
                     return;
+                }
+                // Same-app focus moves cancel a pending auto-pause;
+                // leaving anywhere arms it (see the main arms). Runs
+                // before borrowing the handle below.
+                if matches!(event, WindowEvent::Focused(true)) {
+                    self.host.cancel_pending_auto_pause();
+                }
+                if matches!(event, WindowEvent::Focused(false)) {
+                    self.host.arm_pending_auto_pause();
                 }
                 let Some(handle) = self.host.settings_window.as_mut() else {
                     return;
@@ -247,6 +261,18 @@ impl WindowRuntime {
                 // External destroy without CloseRequested: drop the
                 // stale handle so a later F4 reopens instead of
                 // silently no-op'ing on a dead window.
+                if matches!(event, WindowEvent::Focused(true)) {
+                    // Same-app arrival: a pending auto-pause from our
+                    // main window losing focus is cancelled — the user
+                    // moved between our windows, not away.
+                    self.host.cancel_pending_auto_pause();
+                }
+                if matches!(event, WindowEvent::Focused(false)) {
+                    // Leaving for anywhere (including out of the app):
+                    // arm the deferred pause; another of our windows
+                    // taking focus in the same burst cancels it.
+                    self.host.arm_pending_auto_pause();
+                }
                 let refocused = matches!(event, WindowEvent::Focused(true));
                 if matches!(event, WindowEvent::Destroyed) {
                     self.host.debug.debug_window.take();
@@ -302,6 +328,14 @@ impl WindowRuntime {
                     self.host.debug.ppu_window.take();
                     self.host.request_redraw();
                     return;
+                }
+                // Same-app focus arrival cancels a pending auto-pause;
+                // leaving anywhere arms it (see the debugger arm).
+                if matches!(event, WindowEvent::Focused(true)) {
+                    self.host.cancel_pending_auto_pause();
+                }
+                if matches!(event, WindowEvent::Focused(false)) {
+                    self.host.arm_pending_auto_pause();
                 }
                 if let WindowEvent::Moved(position) = &event {
                     self.host

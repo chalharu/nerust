@@ -15,7 +15,7 @@ use super::State;
 pub(crate) type PpuWindow = Rc<RefCell<PpuWindowCore>>;
 
 pub(crate) struct PpuWindowCore {
-    window: gtk::ApplicationWindow,
+    pub(crate) window: gtk::ApplicationWindow,
     images_box: gtk::Box,
     hover_label: gtk::Label,
     language: AppLanguage,
@@ -30,7 +30,9 @@ pub(crate) struct PpuWindowCore {
 impl PpuWindowCore {
     pub(crate) fn open(
         app: &gtk::Application,
-        main_window: &gtk::ApplicationWindow,
+        // Independent toplevel like the tao twin (see the debugger):
+        // true dialogs stay transient, tool windows do not.
+        _main_window: &gtk::ApplicationWindow,
         _state: Rc<RefCell<State>>,
         images: Vec<(String, u32, u32, Vec<u8>)>,
         images_gen: u64,
@@ -43,7 +45,6 @@ impl PpuWindowCore {
             .default_width(560)
             .default_height(620)
             .build();
-        window.set_transient_for(Some(main_window));
         let images_box = gtk::Box::new(gtk::Orientation::Vertical, 12);
         images_box.set_margin_top(16);
         images_box.set_margin_bottom(16);

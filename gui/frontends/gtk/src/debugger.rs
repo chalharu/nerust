@@ -237,7 +237,11 @@ impl DebuggerWindowCore {
     /// stays explicit.
     pub(crate) fn open(
         app: &gtk::Application,
-        main_window: &gtk::ApplicationWindow,
+        // Independent toplevel like the tao twin: no transient-for
+        // parenting, so the main window keeps its own focus and
+        // position instead of dragging the debugger along with it.
+        // True dialogs (preferences, file/error) stay transient.
+        _main_window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
     ) -> DebuggerWindow {
         let data = DebuggerData::new(&state.borrow().session);
@@ -250,7 +254,6 @@ impl DebuggerWindowCore {
             // to show the panes plus the dump viewport.
             .default_height(920)
             .build();
-        window.set_transient_for(Some(main_window));
 
         let pause_button = action_button(text(language, UiText::Pause));
         let status_label = gtk::Label::new(None);
@@ -1778,6 +1781,10 @@ mod tests {
         assert!(win.borrow().data.selected_space().is_none());
         assert_eq!(win.borrow().data.selected_name(), "");
         assert_eq!(win.borrow().data.anchor(), 0);
+        // Independent toplevel like the tao twin: no transient-for
+        // parenting, so the main window keeps its own focus and
+        // position instead of dragging the debugger along with it.
+        assert!(win.borrow().window.transient_for().is_none());
     }
 
     #[test]
@@ -1919,6 +1926,9 @@ mod tests {
         DebuggerWindowCore::open_ppu(&win);
         assert!(win.borrow().ppu_window.is_some());
         DebuggerWindowCore::open_ppu(&win);
+        // Same independence as the debugger above.
+        let ppu = win.borrow().ppu_window.clone().expect("ppu open");
+        assert!(ppu.borrow().window.transient_for().is_none());
     }
 
     #[test]
