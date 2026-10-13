@@ -353,6 +353,8 @@ fn chrome_drain_due(debug_open: bool, last_drain_paused: Option<bool>, paused: b
 
 #[cfg(test)]
 mod tests {
+    use super::chrome_drain_due;
+
     #[test]
     fn focus_chrome_drains_only_on_pause_transitions() {
         // Closed debugger: never worth a round-trip.
