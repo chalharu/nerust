@@ -503,7 +503,13 @@ impl Program for DebugProgram {
         let back_len = nav.back_len();
         let watch_value = display.watch_value;
         let paused = display.paused;
-        let anchor = bridge.anchor();
+        // Same rule as `anchor()`, computed from the snapshot above
+        // instead of re-locking nav and display for a second time.
+        let anchor = if follow_pc {
+            disasm_lines.first().map(|line| line.addr).unwrap_or(0)
+        } else {
+            nav.dis_addr().unwrap_or(0)
+        };
         // Button hierarchy: one primary per flow (the Phase E
         // Confirm), secondary for toolbar/nav, text for list rows
         // and escape actions.
