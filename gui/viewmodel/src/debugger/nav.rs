@@ -1,7 +1,6 @@
 //! Debugger movement state: spaces, addresses, inputs, undo.
 //! Presentation-owned; the session never sees it.
 
-
 /// Disassembly undo depth (no$ Back adapted to buttons).
 pub const DISASM_BACK_CAP: usize = 32;
 
