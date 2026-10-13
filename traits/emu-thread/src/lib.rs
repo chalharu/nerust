@@ -10,7 +10,7 @@ use std::{
 };
 
 use nerust_core_traits::{
-    ConsoleCore, EmuCommand, LoadCommand,
+    ConsoleCore, EmuCommand, LoadCommand, SwapAudioCommand, SwapFrameSlotCommand,
     audio::{AudioBackend, StereoSample},
     debugger::{
         DUMP_ROW_BYTES, DebuggerError, HexRow, InspectError, InspectRequest, InspectResult,
@@ -135,6 +135,17 @@ impl EmuThread {
                             EmuCommand::WriteMemory { reply, .. } => {
                                 let _ = reply.send(Err(DebuggerError::Unsupported));
                             }
+                            EmuCommand::SwapAudio(cmd) => {
+                                handle_swap_audio(
+                                    &mut *core,
+                                    &mut audio,
+                                    &mut filter,
+                                    *cmd,
+                                );
+                            }
+                            EmuCommand::SwapFrameSlot(cmd) => {
+                                handle_swap_frame_slot(&mut frame_slot, *cmd);
+                            }
                             EmuCommand::WriteRegister { reply, .. } => {
                                 let _ = reply.send(Err(DebuggerError::Unsupported));
                             }
@@ -196,6 +207,12 @@ impl EmuThread {
                         EmuCommand::RestartAudio => {
                             audio.reconnect();
                             filter.reset();
+                        }
+                        EmuCommand::SwapAudio(cmd) => {
+                            handle_swap_audio(&mut *core, &mut audio, &mut filter, *cmd);
+                        }
+                        EmuCommand::SwapFrameSlot(cmd) => {
+                            handle_swap_frame_slot(&mut frame_slot, *cmd);
                         }
                         EmuCommand::SaveState { reply } => {
                             let result = core.save_state();
@@ -469,6 +486,42 @@ fn handle_load(
     loaded
 }
 
+/// Live audio-backend swap between frames (no pause needed: the drain
+/// processes commands only between frames, so no frame straddles the
+/// swap). Same lifecycle shape as `RestartAudio`, plus the new device
+/// parameters: the old backend quiets first, the new one starts under
+/// thread ownership, the core re-basis its nominal rate, and the
+/// rate-control filter drops stale queue observations.
+fn handle_swap_audio(
+    core: &mut dyn ConsoleCore,
+    audio: &mut Box<dyn AudioBackend + Send + 'static>,
+    filter: &mut DynamicRateFilter,
+    cmd: SwapAudioCommand,
+) {
+    audio.pause();
+    let mut next = cmd.backend;
+    next.start();
+    *audio = next;
+    core.set_audio_sample_rate(cmd.sample_rate);
+    filter.reset();
+    // reply send failure: receiver dropped (timeout/abort) — expected
+    let _ = cmd.reply.send(());
+}
+
+/// Live render-target swap between frames. Wholesale replacement keeps
+/// the slot, the shared buffer, and the display buffer on one format:
+/// the session swaps its own buffers only after this reply lands, and
+/// (for the visual path) only while paused, so no frame straddles the
+/// two swaps.
+fn handle_swap_frame_slot(
+    frame_slot: &mut FrameBuffer,
+    cmd: SwapFrameSlotCommand,
+) {
+    *frame_slot = cmd.slot;
+    // reply send failure: receiver dropped (timeout/abort) — expected
+    let _ = cmd.reply.send(());
+}
+
 /// Overwrite a nominal-audio tap with one frame's samples, when a tap
 /// is installed and the frame produced any. The tap always holds the
 /// latest frame only; accumulation is the reader's job.
@@ -642,12 +695,47 @@ mod tests {
         }
     }
 
+    /// Backend with a scripted rate that records `start()`: proves a
+    /// swap actually installs the new transport instead of just
+    /// replying.
+    struct ProbeBackend {
+        rate: u32,
+        started: Arc<AtomicBool>,
+    }
+
+    impl AudioBackend for ProbeBackend {
+        fn start(&mut self) {
+            self.started.store(true, Ordering::SeqCst);
+        }
+        fn pause(&mut self) {}
+        fn push(&mut self, _sample: StereoSample) {}
+        fn sample_rate(&self) -> u32 {
+            self.rate
+        }
+    }
+
+    fn swap_audio(thread: &EmuThread, rate: u32, started: &Arc<AtomicBool>) {
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::SwapAudio(Box::new(SwapAudioCommand {
+                backend: Box::new(ProbeBackend {
+                    rate,
+                    started: Arc::clone(started),
+                }),
+                sample_rate: rate,
+                reply: tx,
+            })))
+            .expect("swap send");
+        rx.recv().expect("swap reply");
+    }
+
     /// Minimal deterministic core: frames advance only via control.
     struct FakeCore {
         paused: bool,
         loaded: bool,
         stepped_frames: u64,
         mem: [u8; 256],
+        sample_rate: Arc<Mutex<u32>>,
     }
 
     static FAKE_SPACES: [SpaceInfo; 1] = [SpaceInfo {
@@ -789,6 +877,10 @@ mod tests {
             self.paused = paused;
         }
 
+        fn set_audio_sample_rate(&mut self, sample_rate: u32) {
+            *self.sample_rate.lock().unwrap() = sample_rate;
+        }
+
         fn save_state(&self) -> Result<Vec<u8>, CoreError> {
             Ok(Vec::new())
         }
@@ -816,6 +908,10 @@ mod tests {
     }
 
     fn spawn_bare() -> EmuThread {
+        spawn_bare_with_rate(Arc::new(Mutex::new(48_000)))
+    }
+
+    fn spawn_bare_with_rate(sample_rate: Arc<Mutex<u32>>) -> EmuThread {
         let fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
             256,
             240,
@@ -829,6 +925,7 @@ mod tests {
                 loaded: false,
                 stepped_frames: 0,
                 mem: std::array::from_fn(|i| i as u8),
+                sample_rate,
             }),
             Arc::clone(&fb),
             Arc::new(AtomicBool::new(false)),
@@ -917,6 +1014,75 @@ mod tests {
         // And stepping still works afterwards.
         assert!(step(&thread, StepUnit::Frame).is_ok());
         assert_eq!(thread.frame_count(), 1);
+    }
+
+    #[test]
+    fn swap_audio_restarts_backend_and_restamps_core() {
+        let rate = Arc::new(Mutex::new(48_000u32));
+        let thread = spawn_bare_with_rate(Arc::clone(&rate));
+
+        // Idle path (no ROM): the swap still installs and answers.
+        let started = Arc::new(AtomicBool::new(false));
+        swap_audio(&thread, 44_100, &started);
+        assert!(started.load(Ordering::SeqCst), "new backend started");
+        assert_eq!(*rate.lock().unwrap(), 44_100, "core re-based");
+
+        // Loaded path: same contract between frames, no reload involved.
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::Load(Box::new(LoadCommand {
+                rom: vec![0u8; 16],
+                config: CoreConfig {
+                    region: None,
+                    bios_paths: HashMap::new(),
+                    controllers: HashMap::new(),
+                    core_options: None,
+                    audio_sample_rate: None,
+                },
+                start_paused: true,
+                reply: tx,
+            })))
+            .expect("load send");
+        rx.recv().expect("load reply").expect("load ok");
+        let started = Arc::new(AtomicBool::new(false));
+        swap_audio(&thread, 22_050, &started);
+        assert!(started.load(Ordering::SeqCst), "new backend started");
+        assert_eq!(*rate.lock().unwrap(), 22_050, "core re-based");
+    }
+
+    #[test]
+    fn swap_frame_slot_publishes_through_next_frame() {
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Pause).expect("pause send");
+
+        // Marker-filled slot: FakeCore never touches pixels, so the
+        // next stepped frame publishes the slot verbatim — proving the
+        // thread parked on the replacement.
+        let mut slot = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0u32; 256]),
+            },
+        );
+        slot.resize(256, 240);
+        let len = slot.as_ref().len();
+        slot.as_mut().fill(0xAB);
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::SwapFrameSlot(Box::new(
+                SwapFrameSlotCommand { slot, reply: tx },
+            )))
+            .expect("slot send");
+        rx.recv().expect("slot reply");
+
+        assert!(step(&thread, StepUnit::Frame).is_ok());
+        let guard = thread.shared_frame_buffer().lock().unwrap();
+        assert_eq!(guard.as_ref().len(), len);
+        assert!(
+            guard.as_ref().iter().all(|&b| b == 0xAB),
+            "shared buffer carries the swapped slot"
+        );
     }
 
     #[test]

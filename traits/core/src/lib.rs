@@ -118,6 +118,42 @@ pub struct StateDataCommand {
     pub reply: Sender<Result<(), CoreError>>,
 }
 
+/// Boxed payload for `EmuCommand::SwapAudio`. Boxed like the other
+/// large payloads so the enum stays small. `backend` carries no
+/// `Debug` impl (audio backends never needed one), so this struct
+/// formats as the rate only — enough to identify a swap in logs.
+pub struct SwapAudioCommand {
+    /// Replacement backend, built session-side from the new settings
+    /// (volume/gain already applied). The thread `start()`s it on swap
+    /// and `pause()`s the old one: backend lifecycle stays thread-owned.
+    pub backend: Box<dyn audio::AudioBackend + Send>,
+    /// Device rate of `backend` (`backend.sample_rate()` at build).
+    /// Stamped into the core alongside the swap so nominal production
+    /// and the device agree again (ratio back near 1.0).
+    pub sample_rate: u32,
+    pub reply: Sender<()>,
+}
+
+impl std::fmt::Debug for SwapAudioCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SwapAudioCommand")
+            .field("sample_rate", &self.sample_rate)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Boxed payload for `EmuCommand::SwapFrameSlot`. The thread owns its
+/// render target exclusively, so even a same-size palette refresh must
+/// cross as a command: the reply is the barrier proving the thread
+/// parked on the new slot before the session swaps its own buffers.
+#[derive(Debug)]
+pub struct SwapFrameSlotCommand {
+    /// Fresh render target (geometry + pixel format + palette), built
+    /// session-side from the replacement video assets.
+    pub slot: FrameBuffer,
+    pub reply: Sender<()>,
+}
+
 #[derive(Debug)]
 pub enum EmuCommand {
     Pause,
@@ -131,6 +167,18 @@ pub enum EmuCommand {
     /// lifecycle transitions can kill audio streams; frontends send
     /// this on foreground resume.
     RestartAudio,
+    /// Live audio-backend swap for sample-rate/latency changes. Runs
+    /// synchronously between frames: pause the old backend, start the
+    /// new one, stamp `sample_rate` into the core, reset the
+    /// rate-control filter. No pause needed, no ROM reload, no state
+    /// round-trip — and on GBA no `AudioRateMismatch`, since no state
+    /// crosses a rate boundary at all.
+    SwapAudio(Box<SwapAudioCommand>),
+    /// Live render-target swap for presentation-only changes (video
+    /// filter). Runs synchronously between frames; callers pause first
+    /// so no frame straddles the session-side buffer swap that follows
+    /// the reply.
+    SwapFrameSlot(Box<SwapFrameSlotCommand>),
     SaveState {
         reply: Sender<Result<Vec<u8>, CoreError>>,
     },
@@ -263,6 +311,15 @@ pub trait ConsoleCore: Send + Downcast {
     // -- pause --
     fn paused(&self) -> bool;
     fn set_paused(&mut self, paused: bool);
+
+    // -- audio device rate --
+    /// Re-basis nominal audio production onto a new device rate without
+    /// reconstructing the core. The session calls this exactly once per
+    /// `EmuCommand::SwapAudio`, between frames, after swapping the
+    /// backend: re-derive anything rate-baked (resamplers, filter
+    /// coefficients, cached DSP states) here. Voice/machine state is
+    /// untouched — only the rate basis changes.
+    fn set_audio_sample_rate(&mut self, sample_rate: u32);
 
     // -- save states --
     fn save_state(&self) -> Result<Vec<u8>, CoreError>;

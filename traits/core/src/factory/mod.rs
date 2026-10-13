@@ -103,6 +103,21 @@ pub trait CoreFactory: Send + Sync {
         assignments: &InputAssignments,
     ) -> Result<CoreParts, FactoryError>;
 
+    /// Presentation-only delta, if the `before`→`after` settings change
+    /// needs no core reconstruction. Returns the replacement video
+    /// assets (render profile + palette) when a live presentation swap
+    /// covers the delta; `None` means the session must take the full
+    /// rebuild path (or nothing presentation-relevant changed). Default
+    /// is `None`, so systems without presentation-only settings keep
+    /// today's rebuild behavior untouched.
+    fn presentation_swap_assets(
+        &self,
+        _before: &FactorySettingsView,
+        _after: &FactorySettingsView,
+    ) -> Option<(nerust_render_traits::VideoRenderProfile, Box<[u32]>)> {
+        None
+    }
+
     /// Returns this factory's input system factory for negotiation.
     fn input_system_factory(&self) -> &dyn InputSystemFactory;
 
