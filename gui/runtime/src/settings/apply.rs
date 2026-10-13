@@ -42,13 +42,17 @@ pub fn derive_apply_plan(
     let audio_volume_changed = audio_changed
         && before.local.audio.sample_rate == after.local.audio.sample_rate
         && before.local.audio.latency_ms == after.local.audio.latency_ms;
-    let needs_rebuild = audio_changed && !audio_volume_changed;
+    // Rate/latency changes ride the live backend swap; only the
+    // session decides rebuild vs swap from here.
+    let audio_backend_changed = audio_changed && !audio_volume_changed;
+    let needs_rebuild = audio_backend_changed || visual_changed;
 
     SettingsApplyPlan {
         language_changed: before.shared.general != after.shared.general,
         bindings_changed: before.shared.input != after.shared.input,
         persistence_changed: before.shared.persistence != after.shared.persistence,
-        session_rebuild_required: needs_rebuild || visual_changed,
+        session_rebuild_required: needs_rebuild,
+        audio_backend_changed,
         audio_volume_changed,
         renderer_rebuild_required: audio_changed || visual_changed || backend_presentation_changed,
         window_settings_changed,
@@ -204,6 +208,7 @@ mod tests {
                 bindings_changed: false,
                 persistence_changed: false,
                 session_rebuild_required: true,
+                audio_backend_changed: true,
                 audio_volume_changed: false,
                 renderer_rebuild_required: true,
                 window_settings_changed: true,
@@ -213,6 +218,23 @@ mod tests {
                 fullscreen_default_changed: false,
             }
         );
+    }
+
+    #[test]
+    fn volume_only_change_marks_volume_without_backend_swap() {
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        let mut after = before.clone();
+        after.local.audio.master_volume_percent = 10;
+
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+
+        assert!(!plan.session_rebuild_required);
+        assert!(!plan.audio_backend_changed);
+        assert!(plan.audio_volume_changed);
     }
 
     #[test]

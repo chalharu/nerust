@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use nerust_core_traits::{
     audio::AudioBackend,
@@ -17,6 +20,16 @@ use crate::test_helpers::{
 };
 
 pub(crate) struct MockFactory;
+
+/// Core constructions through the mock factory. Session tests diff
+/// this around `apply_settings` to prove a delta swapped live (count
+/// unchanged) instead of rebuilding (count +1).
+static CORE_CREATIONS: AtomicUsize = AtomicUsize::new(0);
+
+pub(crate) fn mock_core_creations() -> usize {
+    CORE_CREATIONS.load(Ordering::SeqCst)
+}
+
 impl CoreFactory for MockFactory {
     fn system_id(&self) -> Box<dyn SystemId> {
         Box::new(DummySystemId)
@@ -30,6 +43,7 @@ impl CoreFactory for MockFactory {
         _speaker: Box<dyn AudioBackend>,
         _: &InputAssignments,
     ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
+        CORE_CREATIONS.fetch_add(1, Ordering::SeqCst);
         Ok(build_test_core_parts())
     }
     fn probe_media(&self, _: &MediaObject) -> bool {

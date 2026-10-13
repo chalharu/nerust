@@ -984,6 +984,35 @@ mod tests {
     }
 
     #[test]
+    fn apply_presentation_swaps_buffers_and_profile_on_running_core() {
+        let (mut core, _, _, _) = EmuCore::from_parts(build_test_core_parts());
+        core.resume().expect("resume for pause choreography");
+        assert!(!core.metrics().paused);
+
+        // NTSC-like assets: same source geometry, wider logical size,
+        // distinct palette.
+        let mut profile = core.render_profile().clone();
+        profile.logical_size.width = 602;
+        let palette: Box<[u32]> = (0..256).map(|i| 0xFF00_0000 | i).collect();
+        core.apply_presentation(profile, palette).expect("swap ok");
+
+        // Choreography restored the running state behind the barrier.
+        assert!(!core.metrics().paused, "running core resumes after swap");
+        assert_eq!(core.render_profile().logical_size.width, 602);
+        assert_eq!(
+            core.frame_buffer().palette().expect("palette rides the buffer")[0xAB],
+            0xFF00_00AB,
+            "display buffer carries the new palette"
+        );
+        // Shared slot agrees (next swap publishes new-format pixels).
+        let guard = core.emu.shared_frame_buffer().lock().unwrap();
+        assert_eq!(
+            guard.palette().expect("shared palette")[0xAB],
+            0xFF00_00AB
+        );
+    }
+
+    #[test]
     fn port_seam_serves_queries_without_a_thread() {
         use nerust_core_traits::debugger::{SpaceAccess, SpaceInfo};
         let parts = build_test_core_parts();
