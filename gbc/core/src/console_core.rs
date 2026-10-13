@@ -267,6 +267,15 @@ impl ConsoleCore for GbcConsoleCore {
         self.sync_rumble();
     }
 
+    fn set_audio_sample_rate(&mut self, sample_rate: u32) {
+        self.sample_rate = sample_rate;
+        // Re-basis the APU resampler + filters (same call as load);
+        // unloaded cores just carry the stamp for the next load.
+        if let Ok(loaded) = self.loaded_mut() {
+            loaded.system.bus.set_audio_sample_rate(sample_rate);
+        }
+    }
+
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
         let loaded = self.loaded_ref()?;
         persistence::export_machine_state(
@@ -532,6 +541,29 @@ mod tests {
             core_options: Some(Box::new(options)),
             ..config()
         }
+    }
+
+    #[test]
+    fn set_audio_sample_rate_rebasis_without_reconstruction() {
+        use nerust_core_traits::ConsoleCore;
+
+        let mut core = GbcConsoleCore::new_empty(input());
+        // Unloaded: stamps only, never panics.
+        core.set_audio_sample_rate(44_100);
+        assert_eq!(core.sample_rate, 44_100);
+
+        core.load(&rom(), &config()).unwrap();
+        let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+        let mut audio = Vec::new();
+        core.render_frame(&mut frame, &mut audio).unwrap();
+
+        // Loaded: APU re-basis, machine state intact, frames keep flowing.
+        core.set_audio_sample_rate(22_050);
+        assert_eq!(core.sample_rate, 22_050);
+        core.render_frame(&mut frame, &mut audio).unwrap();
+        assert!(audio.iter().all(|s| s.left.is_finite() && s.right.is_finite()));
+        let state = core.save_state().unwrap();
+        core.load_state(&state).unwrap();
     }
 
     #[test]

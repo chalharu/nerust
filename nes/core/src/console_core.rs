@@ -188,6 +188,15 @@ impl ConsoleCore for NesConsoleCore {
         self.paused = paused;
     }
 
+    fn set_audio_sample_rate(&mut self, sample_rate: u32) {
+        self.sample_rate = sample_rate;
+        // Re-basis the cached DSP at the new rate (rebuilt lazily next
+        // frame); voice state in the APU is untouched.
+        if let Some(core) = self.core.0.as_mut() {
+            core.drop_apu_state();
+        }
+    }
+
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
         let core = self.core_ref()?;
         core.export_machine_state().map_err(CoreError::Core)
@@ -383,6 +392,42 @@ mod tests {
         let mut audio = Vec::new();
         let result = core.render_frame(&mut fb, &mut audio);
         assert!(result.is_ok(), "render_frame should succeed: {:?}", result);
+        assert!(!audio.is_empty(), "frame must produce audio");
+    }
+
+    #[test]
+    fn set_audio_sample_rate_rebasis_without_reconstruction() {
+        let rom = test_rom();
+        let mut core = NesConsoleCore::new_empty(
+            ControllerCollection::new(vec![Box::new(MockController)]),
+            test_emu_input(),
+        );
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+            audio_sample_rate: Some(48_000),
+        };
+        core.load(&rom, &config).expect("load ok");
+        let mut fb = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0u32; 256]),
+            },
+        );
+        let mut audio = Vec::new();
+        core.render_frame(&mut fb, &mut audio)
+            .expect("frame ok");
+        assert!(!audio.is_empty(), "frame must produce audio");
+
+        // Re-basis: cached rate-baked DSP drops, machine state intact,
+        // frames keep flowing at the new rate.
+        core.set_audio_sample_rate(44_100);
+        assert_eq!(core.sample_rate, 44_100);
+        core.render_frame(&mut fb, &mut audio)
+            .expect("frames flow after re-basis");
         assert!(!audio.is_empty(), "frame must produce audio");
     }
 
