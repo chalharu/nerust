@@ -15,13 +15,13 @@
 
 fn main() {
     println!("cargo:rerun-if-env-changed=LIBRARY_PATH");
-    let targeting_macos = std::env::var("CARGO_CFG_TARGET_OS")
-        .map(|target| target == "macos")
-        .unwrap_or(false);
-    if !targeting_macos {
-        return;
-    }
-    if std::env::var("LIBRARY_PATH").is_ok_and(|value| !value.is_empty()) {
-        println!("cargo:rustc-env=LIBRARY_PATH=");
+
+    #[cfg(not(feature = "gtk"))]
+    {
+        let targeting_macos =
+            std::env::var("CARGO_CFG_TARGET_OS").map_or(false, |target| target == "macos");
+        if targeting_macos && std::env::var("LIBRARY_PATH").is_ok_and(|value| !value.is_empty()) {
+            println!("cargo:rustc-env=LIBRARY_PATH=");
+        }
     }
 }
