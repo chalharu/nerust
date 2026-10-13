@@ -240,6 +240,14 @@ impl Core {
         self.apu_state = None;
     }
 
+    /// Drop the cached rate-baked DSP (resampler + IIR coefficients) so
+    /// the next frame rebuilds it at the new rate. Voice state lives in
+    /// `apu` and is untouched — same split as `reset()`, minus the
+    /// machine reset. Called by the console's `set_audio_sample_rate`.
+    pub(crate) fn drop_apu_state(&mut self) {
+        self.apu_state = None;
+    }
+
     pub fn peek_work_ram(&self, address: usize) -> Option<u8> {
         self.cpu.peek_work_ram(address)
     }

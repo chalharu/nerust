@@ -198,6 +198,13 @@ impl ConsoleCore for GbaConsoleCore {
         self.paused = paused;
     }
 
+    fn set_audio_sample_rate(&mut self, sample_rate: u32) {
+        // The APU drain reads this rate every frame
+        // (`drain_resampled_into`), so a field write re-basis live
+        // production with no DSP cache to invalidate.
+        self.sample_rate = sample_rate;
+    }
+
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
         let loaded = self.loaded_ref()?;
         export_machine_state(
@@ -410,6 +417,17 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
             Box::new(|| Box::<GbaInputBuffer>::default()),
         )
+    }
+
+    #[test]
+    fn set_audio_sample_rate_rebasis_without_reconstruction() {
+        let mut console = load_console();
+        console.set_audio_sample_rate(44_100);
+        assert_eq!(console.sample_rate, 44_100);
+        // Machine intact, and the rate-coupled state envelope still
+        // round-trips (export and import agree on the new rate).
+        let state = console.save_state().expect("save ok");
+        console.load_state(&state).expect("load ok");
     }
 
     fn load_console() -> GbaConsoleCore {
