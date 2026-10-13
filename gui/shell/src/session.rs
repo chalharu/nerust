@@ -399,20 +399,31 @@ impl SessionHandle {
         watch: Option<u32>,
     ) -> debug_vm::DebugSnapshot {
         use nerust_core_traits::debugger::{
-            DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, InspectRequest,
+            DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, InspectRequest, SnapshotRequest,
         };
         let mut snapshot = debug_vm::DebugSnapshot::default();
         let core = match self.emu_core.as_ref() {
             Some(core) => core,
             None => return snapshot,
         };
-        let inspected = match core.inspect(InspectRequest {
-            space,
-            addr: space.map(|_| mem_addr),
-            rows: DEBUG_DUMP_PAGE_ROWS,
+        // One thread crossing for inspect + anchor + disassembly
+        // instead of three sequential timeouts on the UI thread.
+        // Per-part fallbacks below mirror the old individual calls.
+        let batch = match core.debug_snapshot_batch(SnapshotRequest {
+            inspect: InspectRequest {
+                space,
+                addr: space.map(|_| mem_addr),
+                rows: DEBUG_DUMP_PAGE_ROWS,
+            },
+            anchor: dis_addr,
+            disasm_rows: DEBUG_DISASM_ROWS,
         }) {
-            Ok(Ok(result)) => result,
+            Ok(Ok(batch)) => batch,
             Ok(Err(_)) | Err(_) => return snapshot,
+        };
+        let inspected = match batch.inspect {
+            Ok(inspected) => inspected,
+            Err(_) => return snapshot,
         };
         snapshot.available = true;
         snapshot.regs = inspected
@@ -424,23 +435,10 @@ impl SessionHandle {
         snapshot.dump_rows = inspected.dump.rows.iter().copied().collect();
         snapshot.panels = inspected.panels.iter().cloned().collect();
         // Anchor without name-scanning: explicit pin wins, otherwise
-        // the kernel program counter (one extra crossing, follow mode
-        // only).
-        let anchor = match dis_addr {
-            Some(addr) => Some(addr),
-            None => match core.program_counter() {
-                Ok(Ok(pc)) => pc,
-                _ => None,
-            },
-        };
+        // the batched program counter (follow mode only).
+        let anchor = batch.anchor;
         snapshot.pc = anchor;
-        snapshot.disasm_lines = match anchor {
-            Some(addr) => match core.disassemble(addr, DEBUG_DISASM_ROWS) {
-                Ok(Ok(rows)) => rows,
-                _ => Vec::new(),
-            },
-            None => Vec::new(),
-        };
+        snapshot.disasm_lines = batch.disasm;
         let (images_gen, images) = if need_images {
             match core.debug_images() {
                 Ok(Ok((generation, images))) => (generation, images),

@@ -288,23 +288,17 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         if messages.is_empty() && !invalidated.load(Ordering::Acquire) {
             return;
         }
-        // Built first so the `&self.instance` borrow ends before the
-        // swap takes `&mut self`.
-        let placeholder_ui = Self::build_ui(
-            &self.instance,
-            window_id,
-            bounds,
-            Cache::default(),
-            renderer,
-        );
-        let placeholder = std::mem::replace(self.ui_mut(), placeholder_ui);
-        let cache = placeholder.into_cache();
+        // Single build: take the old UI out (the `Option` left by
+        // the relayout change makes this a move, not a swap), harvest
+        // its cache, run the messages, and rebuild once. The old code
+        // built a throwaway placeholder plus the real UI per batch.
+        let old = self.ui.take().map(std::mem::ManuallyDrop::into_inner);
         for msg in messages {
             let _task = self.instance.update(msg);
         }
-        let real_ui = Self::build_ui(&self.instance, window_id, bounds, cache, renderer);
-        let stale = std::mem::replace(self.ui_mut(), real_ui);
-        let _ = stale.into_cache();
+        let cache = old.map_or_else(Cache::default, UserInterface::into_cache);
+        let rebuilt = Self::build_ui(&self.instance, window_id, bounds, cache, renderer);
+        self.ui = Some(std::mem::ManuallyDrop::new(rebuilt));
         invalidated.store(false, Ordering::Release);
     }
 }

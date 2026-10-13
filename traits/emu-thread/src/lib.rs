@@ -14,7 +14,7 @@ use nerust_core_traits::{
     audio::{AudioBackend, StereoSample},
     debugger::{
         DUMP_ROW_BYTES, DebuggerError, HexRow, InspectError, InspectRequest, InspectResult,
-        MAX_DUMP_BYTES, MemoryDump, StepUnit,
+        MAX_DUMP_BYTES, MemoryDump, SnapshotResult, StepUnit,
     },
 };
 use nerust_render_traits::FrameBuffer;
@@ -294,6 +294,44 @@ impl EmuThread {
                             let result = match core.debugger() {
                                 Some(debugger) => Ok(debugger.program_counter()),
                                 None => Err(DebuggerError::Unsupported),
+                            };
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::DebuggerSnapshot { req, reply } => {
+                            // One crossing for inspect + anchor +
+                            // disassembly (see the type docs for the
+                            // preserved failure semantics): callers
+                            // hold pause for frame-consistent rows.
+                            let frame = fc.load(Ordering::Relaxed);
+                            let result = match inspect_memory(&*core, &req.inspect, frame) {
+                                Err(error) => Ok(SnapshotResult {
+                                    inspect: Err(error),
+                                    anchor: None,
+                                    disasm: Vec::new(),
+                                }),
+                                Ok(inspected) => {
+                                    let anchor = match req.anchor {
+                                        Some(addr) => Some(addr),
+                                        None => match core.debugger() {
+                                            Some(debugger) => debugger.program_counter(),
+                                            None => None,
+                                        },
+                                    };
+                                    let disasm = match anchor {
+                                        Some(addr) => match core.debugger() {
+                                            Some(debugger) => {
+                                                debugger.disassemble(addr, req.disasm_rows)
+                                            }
+                                            None => Vec::new(),
+                                        },
+                                        None => Vec::new(),
+                                    };
+                                    Ok(SnapshotResult {
+                                        inspect: Ok(inspected),
+                                        anchor,
+                                        disasm,
+                                    })
+                                }
                             };
                             let _ = reply.send(result);
                         }
