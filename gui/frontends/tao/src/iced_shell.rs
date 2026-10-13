@@ -501,63 +501,6 @@ mod tests {
         assert_eq!((unit.width, unit.height), (960.0, 720.0));
     }
 
-    /// Full UI-shell lifecycle without a window: build, pump,
-    /// message-driven rebuild, relayout, draw. Everything here is
-    /// software rasterization plus program state, so it runs in any
-    /// CI job (including the display-less ones) and pins the paths
-    /// the widget tests also exercise. Refresh-style messages only
-    /// queue drain requests, so no emulator contact happens.
-    #[test]
-    fn uishell_headless_build_pump_relayout_draw() {
-        use crate::debug_window::{DebugBridge, DebugMessage, DebugProgram};
-        use nerust_gui_settings::language::AppLanguage;
-        use nerust_gui_viewmodel::debugger::DisplayCache;
-
-        let bridge = Arc::new(DebugBridge::new(
-            DisplayCache::default(),
-            Vec::new(),
-            0,
-            AppLanguage::English,
-        ));
-        let (instance, _task) = program::Instance::new(DebugProgram {
-            bridge: Arc::clone(&bridge),
-        });
-        let mut backend = Renderer::new(crate::tao_conversions::default_font(), iced::Pixels(16.0));
-        let bounds = Size::new(1100.0, 800.0);
-        let mut shell = UiShell::new(instance, iced::window::Id::unique(), bounds, &mut backend);
-        let mut clipboard = Clipboard::unconnected();
-        let (messages, _) = shell.pump(
-            iced::Event::Window(iced::window::Event::RedrawRequested(
-                std::time::Instant::now(),
-            )),
-            mouse::Cursor::default(),
-            &mut clipboard,
-            &mut backend,
-        );
-        assert!(messages.is_empty());
-        shell.push_message(DebugMessage::RefreshPressed);
-        let invalidated = AtomicBool::new(true);
-        shell.process_messages(
-            vec![DebugMessage::FollowPcToggle],
-            iced::window::Id::unique(),
-            bounds,
-            &mut backend,
-            &invalidated,
-        );
-        assert!(!invalidated.load(Ordering::Acquire));
-        shell.relayout(Size::new(900.0, 650.0), &mut backend);
-        let theme = iced::Theme::Light;
-        let style = <iced::Theme as theme::Base>::base(&theme);
-        shell.ui_mut().draw(
-            &mut backend,
-            &theme,
-            &renderer::Style {
-                text_color: style.text_color,
-            },
-            mouse::Cursor::default(),
-        );
-    }
-
     #[test]
     fn pump_outcome_routes_widget_requests() {
         use iced_winit::program::core::InputMethod;

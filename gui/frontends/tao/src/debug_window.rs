@@ -1620,4 +1620,62 @@ mod tests {
         ));
         assert!(cursor_page(&Physical::Code(Code::ArrowLeft)).is_none());
     }
+
+    /// Full UI-shell lifecycle without a window: build, pump,
+    /// message-driven rebuild, relayout, draw. Everything here is
+    /// software rasterization plus program state, so it runs in any
+    /// CI job (including the display-less ones) and pins the paths
+    /// the widget tests also exercise. Refresh-style messages only
+    /// queue drain requests, so no emulator contact happens.
+    ///
+    /// Lives here (not in `iced_shell`) so the module graph stays
+    /// acyclic: `iced_shell` must never depend on `debug_window`.
+    #[test]
+    fn uishell_headless_build_pump_relayout_draw() {
+        use crate::iced_shell::UiShell;
+
+        let bridge = Arc::new(DebugBridge::new(
+            DisplayCache::default(),
+            Vec::new(),
+            0,
+            AppLanguage::English,
+        ));
+        let (instance, _task) = program::Instance::new(DebugProgram {
+            bridge: Arc::clone(&bridge),
+        });
+        let mut backend = Renderer::new(crate::tao_conversions::default_font(), iced::Pixels(16.0));
+        let bounds = iced::Size::new(1100.0, 800.0);
+        let mut shell = UiShell::new(instance, iced::window::Id::unique(), bounds, &mut backend);
+        let mut clipboard = iced_winit::Clipboard::unconnected();
+        let (messages, _) = shell.pump(
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            )),
+            iced::mouse::Cursor::default(),
+            &mut clipboard,
+            &mut backend,
+        );
+        assert!(messages.is_empty());
+        shell.push_message(DebugMessage::RefreshPressed);
+        let invalidated = AtomicBool::new(true);
+        shell.process_messages(
+            vec![DebugMessage::FollowPcToggle],
+            iced::window::Id::unique(),
+            bounds,
+            &mut backend,
+            &invalidated,
+        );
+        assert!(!invalidated.load(Ordering::Acquire));
+        shell.relayout(iced::Size::new(900.0, 650.0), &mut backend);
+        let theme = iced::Theme::Light;
+        let style = <iced::Theme as iced::advanced::theme::Base>::base(&theme);
+        shell.ui_mut().draw(
+            &mut backend,
+            &theme,
+            &iced::advanced::renderer::Style {
+                text_color: style.text_color,
+            },
+            iced::mouse::Cursor::default(),
+        );
+    }
 }
