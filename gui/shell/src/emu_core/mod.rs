@@ -837,7 +837,7 @@ fn compact_rgba(frame: &FrameBuffer) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::test_helpers::build_test_core_parts;
-    use nerust_core_traits::debugger::SpaceId;
+    use nerust_core_traits::debugger::{DebugImage, SpaceId};
 
     #[test]
     fn compact_rgba_removes_aligned_row_padding() {
