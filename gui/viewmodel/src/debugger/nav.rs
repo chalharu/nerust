@@ -5,6 +5,7 @@
 /// Disassembly undo depth (no$ Back adapted to buttons).
 pub const DISASM_BACK_CAP: usize = 32;
 
+#[derive(Debug, Clone)]
 pub struct NavState {
     space_idx: usize,
     space_count: usize,
