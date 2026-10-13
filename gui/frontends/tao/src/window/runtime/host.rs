@@ -5,7 +5,6 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_settings_core::model::app_state::RememberedWindowSize;
 use nerust_gui_shell::{
     context::FrontendContext,
     debug::{DrainFlight, LiveImagesFlight},
@@ -22,6 +21,7 @@ use nerust_render_traits::{
     renderer::{GpuFactory, RenderResult},
 };
 use nerust_settings_core::i18n::{UiText, text};
+use nerust_settings_core::model::app_state::RememberedWindowSize;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use rfd::FileDialog;
 use std::{path::Path, rc::Rc, sync::Arc, time::Instant};

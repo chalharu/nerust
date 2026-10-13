@@ -1,8 +1,8 @@
-use nerust_core_traits::identity::SystemId;
 use crate::model::{
     input::{KeyboardBinding, PersistedAttachmentId, PersistedControlId, ShortcutAction},
     snapshot::SettingsSnapshot,
 };
+use nerust_core_traits::identity::SystemId;
 use nerust_keyboard::Key;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,7 +97,6 @@ pub fn apply_capture_target(
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::declare_system_id;
     use crate::model::{
         app_state::DesktopAppState,
         input::{
@@ -108,6 +107,7 @@ mod tests {
         shared::DesktopSharedSettings,
         snapshot::SettingsSnapshot,
     };
+    use nerust_core_traits::declare_system_id;
     use nerust_keyboard::Key;
 
     use super::*;

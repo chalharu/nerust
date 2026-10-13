@@ -1,8 +1,8 @@
 use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::{factory::CoreFactory, identity::SystemId};
-use nerust_settings_core::model::{language::AppLanguage, snapshot::SettingsSnapshot};
 use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo};
+use nerust_settings_core::model::{language::AppLanguage, snapshot::SettingsSnapshot};
 use nerust_settings_core::{
     bindings::descriptors::{KeyboardBindingDescriptor, ShortcutDescriptor, shortcut_descriptors},
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},

@@ -2,8 +2,8 @@ use std::{fs, path::Path};
 
 use crc::{CRC_32_ISO_HDLC, Crc};
 use nerust_core_traits::identity::{SystemId, SystemIdentity};
-use nerust_settings_core::model::shared::{DesktopSharedSettings, StoragePolicy};
 use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};
+use nerust_settings_core::model::shared::{DesktopSharedSettings, StoragePolicy};
 
 use super::{SettingsError, SettingsPaths};
 
@@ -260,8 +260,8 @@ fn copy_storage_contents(
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use nerust_settings_core::model::shared::StoragePolicy;
     use nerust_persistence::sidecar::resolve_sidecars;
+    use nerust_settings_core::model::shared::StoragePolicy;
 
     use crate::test::DummySystemId;
 

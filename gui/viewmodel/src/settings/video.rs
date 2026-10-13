@@ -1,5 +1,5 @@
-use nerust_settings_core::model::local::ScalingMode;
 use nerust_settings_core::i18n::{UiText, text as ui_text};
+use nerust_settings_core::model::local::ScalingMode;
 
 use super::{
     dto::{ChoiceView, VideoView},

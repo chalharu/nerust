@@ -13,10 +13,10 @@ use nerust_core_traits::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsApplyPlan, SettingsManager, SettingsSnapshot,
 };
-use nerust_settings_core::model::language::AppLanguage;
 use nerust_gui_viewmodel::debugger::{PendingWrite, StatusMessage};
 use nerust_input_traits::{InputAssignments, InputSystemFactory};
 use nerust_settings_core::factory::settings_view;
+use nerust_settings_core::model::language::AppLanguage;
 
 use super::test_util::*;
 use crate::test_helpers::*;
