@@ -691,7 +691,9 @@ impl HostState {
         self.refresh_window_title();
         self.request_redraw();
         Ok(SettingsResult {
-            renderer_needs_rebuild: plan.session_rebuild_required || plan.window_settings_changed,
+            renderer_needs_rebuild: plan.renderer_rebuild_required
+                || plan.session_rebuild_required
+                || plan.window_settings_changed,
             fullscreen_default_changed: plan.fullscreen_default_changed,
             scaling_changed: false,
         })
@@ -795,7 +797,12 @@ impl FrontendSession for HostState {
     ) -> Result<SettingsResult, SessionError> {
         let plan = self.session.apply_settings(settings)?;
         Ok(SettingsResult {
-            renderer_needs_rebuild: plan.session_rebuild_required || plan.window_settings_changed,
+            // The renderer follows presentation, not the session: a
+            // live filter swap rebuilds no core but still needs the new
+            // GPU assets (same rule as the android twin).
+            renderer_needs_rebuild: plan.renderer_rebuild_required
+                || plan.session_rebuild_required
+                || plan.window_settings_changed,
             fullscreen_default_changed: plan.fullscreen_default_changed,
             scaling_changed: plan.scaling_changed,
         })
@@ -803,7 +810,9 @@ impl FrontendSession for HostState {
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
         Ok(SettingsResult {
-            renderer_needs_rebuild: plan.session_rebuild_required || plan.window_settings_changed,
+            renderer_needs_rebuild: plan.renderer_rebuild_required
+                || plan.session_rebuild_required
+                || plan.window_settings_changed,
             fullscreen_default_changed: plan.fullscreen_default_changed,
             scaling_changed: false,
         })
