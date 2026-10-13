@@ -3013,6 +3013,17 @@ impl GbaMemoryBus {
         Some((word & 0xFF) as u8)
     }
 
+    /// Raw VRAM backing store for debugger bulk decode. The tile
+    /// viewer reads the first 64KiB linearly — offsets below
+    /// `VRAM_SIZE` never take the mirror branch of `vram_offset`, so
+    /// indexing `base[addr - 0x0600_0000]` is exactly what the
+    /// validated per-byte peek computes, minus ~260k table/range/match
+    /// validations per live fetch. Mirror-regime callers must keep
+    /// using [`Self::peek_byte`].
+    pub(crate) fn peek_vram(&self) -> &[u8; VRAM_SIZE] {
+        &self.vram
+    }
+
     /// BIOS read without the `&mut` guard wrapper: protected reads
     /// serve the prefetch latch (a `&self` field read); only
     /// unprotected reads touch the BIOS image.
