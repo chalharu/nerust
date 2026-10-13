@@ -476,6 +476,7 @@ impl Program for DebugProgram {
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::Length;
+        use iced::widget::lazy;
         use iced::widget::{button, column, row, scrollable, text};
         // Single coherent capture per rebuild; widgets read locals only.
         // Images stay out: the debugger view never renders them.
@@ -517,10 +518,22 @@ impl Program for DebugProgram {
         // Settings form language: fixed label column + stepper.
         let space_row = view_space_row(selected_name.as_deref().unwrap_or(""), language);
         let mem_nav = view_mem_nav(&mem_input, language);
-        let dump_col = view_dump_col(&dump_rows, &diff, selected);
+        // The three heavy lists ride `lazy`: keystrokes elsewhere
+        // (mem/dis/bookmark/freeze/edit inputs) leave their
+        // dependencies untouched, so the ~600-widget rebuild collapses
+        // to the header rows. Every visual input lives in the
+        // dependency tuple — a forgotten field would freeze its
+        // highlight, so keep the tuples exhaustive.
+        let dump_col = lazy((dump_rows, diff, selected), |(rows, diff, selected)| {
+            view_dump_col(rows, diff, *selected)
+        });
         let reg_target = *bridge.reg_target.lock().unwrap();
         let reg_input = bridge.reg_input.lock().unwrap().clone();
-        let regs_view = view_regs_section(&regs, reg_target, &reg_input, language);
+        let regs_view = lazy(
+            (regs, reg_target, reg_input, language),
+            |(regs, target, input, language)| view_regs_section(regs, *target, input, *language),
+        )
+        .into();
         // Two-phase write: select a dump row, type the new byte,
         // Write stages it, and the confirm row commits or cancels.
         let edit_row = view_edit_row(selected, &edit_input, language);
@@ -533,7 +546,10 @@ impl Program for DebugProgram {
         // targets offer follow buttons. In follow-PC mode nothing
         // is pinned, so no `@` shows.
         let pinned = if follow_pc { None } else { Some(anchor) };
-        let dis_col = view_dis_col(&disasm_lines, pinned, language);
+        let dis_col = lazy(
+            (disasm_lines, pinned, language),
+            |(lines, pinned, language)| view_dis_col(lines, *pinned, *language),
+        );
         // Cross-emulator canon: execution above disassembly on the
         // left, state on the right.
         let left_col = column![
