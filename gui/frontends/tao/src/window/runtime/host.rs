@@ -728,11 +728,6 @@ impl HostState {
     }
 }
 
-/// Focus-drain gate, pure for tests: a full snapshot runs only with
-/// an open debugger window whose pause state moved since the last
-/// drain. Everything else is menu/title truth, which the caller
-/// refreshes unconditionally.
-
 impl FrontendSession for HostState {
     fn pause(&mut self) {
         let _ = self.session.run_command(SessionCommand::Pause);
