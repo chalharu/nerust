@@ -122,8 +122,18 @@ mod tests {
     }
 
     #[test]
-    fn window_positions_remember() {
+    fn close_all_clears_without_windows() {
+        // Headless: no windows open, so this only proves the call
+        // is total and keeps the rest of the state intact.
         let mut windows = DebugWindows::new();
+        windows.remember_debug_window_pos(1, 2);
+        windows.close_all();
+        assert_eq!(windows.debug_window_pos(), Some((1, 2)));
+        assert!(!windows.take_debug_open_request());
+    }
+
+    #[test]
+    fn window_positions_remember() {        let mut windows = DebugWindows::new();
         assert_eq!(windows.debug_window_pos(), None);
         windows.remember_debug_window_pos(60, 20);
         windows.remember_ppu_window_pos(1250, 100);
