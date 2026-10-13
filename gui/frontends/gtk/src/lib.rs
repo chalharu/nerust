@@ -195,7 +195,10 @@ impl FrontendSession for State {
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
         let plan = self.session.apply_settings(settings)?;
-        if plan.session_rebuild_required || plan.window_settings_changed {
+        if plan.renderer_rebuild_required
+            || plan.session_rebuild_required
+            || plan.window_settings_changed
+        {
             self.renderer_reload_pending = true;
         }
         Ok(SettingsResult {
