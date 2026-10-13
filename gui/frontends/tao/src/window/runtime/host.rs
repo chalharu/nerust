@@ -8,6 +8,7 @@ use nerust_gui_runtime::{
 use nerust_gui_settings::app_state::RememberedWindowSize;
 use nerust_gui_shell::{
     context::FrontendContext,
+    debug::{DebugDrainOutput, DrainFlight, DrainPoll},
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
         access::{FrontendSession, SettingsResult},
@@ -61,6 +62,10 @@ pub(crate) struct HostState {
     /// Pause state at the last completed debug drain, for focus
     /// coalescing below. `None` before the first drain.
     last_drain_paused: Option<bool>,
+    /// In-flight async debug drain: `run_debug_drain` starts it, the
+    /// event loop polls it (`poll_debug_flight`). A newer batch
+    /// supersedes the stored one; orphaned replies are ignored.
+    drain_flight: Option<DrainFlight>,
     /// Aux-window state (debugger + PPU viewer). Orchestration lives
     /// here; ownership lives there.
     pub(crate) debug: DebugWindows,
@@ -111,6 +116,7 @@ impl HostState {
             active: true,
             auto_paused: false,
             last_drain_paused: None,
+            drain_flight: None,
             debug: DebugWindows::new(),
             #[cfg(any(
                 target_os = "linux",
@@ -386,6 +392,11 @@ impl HostState {
         self.sync_fullscreen_default_from_window();
         self.maybe_refresh_window_title(Instant::now());
         self.maybe_live_ppu();
+        // Poll a pending drain flight (non-blocking): the reply lands
+        // on a normal event without a dedicated wake in the common
+        // case, and the backstop below bounds the latency when the
+        // loop would otherwise sleep.
+        let drain_pending = self.poll_debug_flight();
         *control_flow = ControlFlow::Wait;
         // While the PPU follows a running core, wake for the next
         // tick: plain Wait sleeps until the next input event, which
@@ -395,6 +406,17 @@ impl HostState {
             && let Some(next) = self.debug.next_live_tick()
         {
             *control_flow = ControlFlow::WaitUntil(next);
+        }
+        // While a drain flight is pending, wake soon to poll it: the
+        // reply applies within ~30ms instead of waiting for the next
+        // input event.
+        if drain_pending {
+            let soon = Instant::now() + std::time::Duration::from_millis(30);
+            let earlier = match *control_flow {
+                ControlFlow::WaitUntil(at) => at.min(soon),
+                _ => soon,
+            };
+            *control_flow = ControlFlow::WaitUntil(earlier);
         }
 
         // On macOS, request_redraw() integrates with CVDisplayLink/vsync.
@@ -741,10 +763,12 @@ impl HostState {
     /// Drain debugger requests and push one batched snapshot back.
     /// Execution requests run before the re-read so one drain both
     /// acts and refreshes. The phase order lives in the shared shell
-    /// drain; this only gathers frontend state and renders.
+    /// drain; this only gathers frontend state and renders. A stored
+    /// flight polls first so rapid batches supersede in order.
     pub(crate) fn drain_debug_requests(&mut self) {
         use nerust_gui_shell::debug::DebugAction;
         use std::sync::atomic::Ordering;
+        self.poll_debug_flight();
         let requests: Vec<DebugAction> = match self.debug.debug_window.as_ref() {
             Some(handle) => {
                 if handle.bridge.open_ppu.swap(false, Ordering::SeqCst) {
@@ -760,9 +784,13 @@ impl HostState {
         self.run_debug_drain(&requests);
     }
 
-    /// Run one action batch through the shared shell drain and push
-    /// the display back. Empty batches are pure re-reads (used after
-    /// PPU (re)open so images populate immediately).
+    /// Run one action batch through an async shell-drain flight and
+    /// push the display back once it lands. Empty batches are pure
+    /// re-reads (used after PPU (re)open so images populate
+    /// immediately). Only sends run here; the event loop polls the
+    /// flight (`poll_debug_flight`), so the UI thread never parks in
+    /// a thread round-trip. A batch that resolves without crossings
+    /// still applies synchronously.
     pub(crate) fn run_debug_drain(&mut self, requests: &[nerust_gui_shell::debug::DebugAction]) {
         use nerust_gui_shell::debug::DebugDrainInput;
         let (space, mem_addr, dis_addr, watch, freeze, reg_target, prev_rows, need_images) =
@@ -801,7 +829,42 @@ impl HostState {
             prev_dump_rows: &prev_rows,
             need_images,
         };
-        let output = self.session.debug_drain(requests, &input);
+        // Supersede: a newer batch replaces the stored flight; the
+        // FIFO command order keeps the newest view correct.
+        let mut flight = self.session.debug_drain_begin(requests, &input);
+        match flight.poll() {
+            DrainPoll::Done(output) => self.apply_drain_output(*output),
+            DrainPoll::Pending => {
+                self.drain_flight = Some(flight);
+            }
+        }
+    }
+
+    /// Poll the stored drain flight once; applies on completion.
+    /// Called from the event loop (request sites and the control-flow
+    /// backstop) so every poll runs on the UI thread without ever
+    /// blocking it. Returns whether a flight is still pending.
+    pub(crate) fn poll_debug_flight(&mut self) -> bool {
+        let mut flight = match self.drain_flight.take() {
+            Some(flight) => flight,
+            None => return false,
+        };
+        match flight.poll() {
+            DrainPoll::Done(output) => {
+                self.apply_drain_output(*output);
+                false
+            }
+            DrainPoll::Pending => {
+                self.drain_flight = Some(flight);
+                true
+            }
+        }
+    }
+
+    /// Apply a finished drain: selection, running-sections merge, PPU
+    /// follow, and the pause-truth agreement point (menu, title, and
+    /// the focus gate below all follow the drained state).
+    fn apply_drain_output(&mut self, output: DebugDrainOutput) {
         if let Some(handle) = self.debug.debug_window.as_mut() {
             if let Some(selected) = output.reselected {
                 *handle.bridge.selected.lock().unwrap() = Some(selected);
@@ -836,10 +899,11 @@ impl HostState {
     /// local, so it always runs; the emu round-trip snapshot only
     /// runs when the pause state moved since the last drain. A focus
     /// flip with no state change (the common window-switching case)
-    /// must not re-hit the emu thread: one empty drain is up to four
-    /// sequential 5s-timeout round-trips, and flips arrive in bursts
-    /// (main blur + aux focus), which used to wedge the UI for tens
-    /// of seconds when the thread was slow.
+    /// must not re-hit the emu thread: flips arrive in bursts (main
+    /// blur + aux focus), and a synchronous drain used to wedge the
+    /// UI for tens of seconds when the thread was slow. Drains are
+    /// async flights now, but the gate still skips the pointless
+    /// re-read.
     pub(crate) fn sync_debug_chrome(&mut self) {
         self.sync_menu_state();
         self.refresh_window_title();

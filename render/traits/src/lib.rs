@@ -155,7 +155,7 @@ impl PixelFormat {
 /// GUI は `as_ref()` で読み取る。スレッド間の受け渡しは
 /// `Arc<Mutex<FrameBuffer>>` + `mem::swap` で行う（ゼロコピー）。
 /// stride とは 1行のバイト数で、RGBA 形式の場合は 256 バイト境界に揃える。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FrameBuffer {
     data: Vec<u8>,
     width: usize,

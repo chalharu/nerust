@@ -56,13 +56,17 @@ impl CorePersistenceError {
 }
 
 /// Bound for debugger query round-trips (inspect, disassembly,
-/// images, steps, writes). These run on the UI thread: an unbounded
-/// `recv` would freeze every window's input forever if the emu thread
-/// ever stalls (wedged audio, a panicked core that already dropped
-/// its reply). A timeout degrades to the existing loud `NoReply`
-/// failure instead, which every drain already reports in the status
-/// line. Five seconds is generous: the dearest path (a running GBA
-/// image re-decode) answers in milliseconds.
+/// images, steps, writes). Interactive drains never wait on it: they
+/// run as async flights (`DrainFlight`) that only `try_send`/`try_recv`
+/// on the UI thread and degrade per-await instead. This timeout only
+/// bounds the blocking wrappers kept for tests, headless drivers, and
+/// non-drain callers: an unbounded `recv` would freeze every window's
+/// input forever if the emu thread ever stalls (wedged audio, a
+/// panicked core that already dropped its reply). A timeout degrades
+/// to the existing loud `NoReply` failure instead, which every drain
+/// already reports in the status line. Five seconds is generous: the
+/// dearest path (a running GBA image re-decode) answers in
+/// milliseconds.
 const DEBUG_REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn recv_debug_reply<T>(reply_rx: std::sync::mpsc::Receiver<T>) -> Result<T, OperationError> {
@@ -117,14 +121,18 @@ impl EmuThreadPort for EmuThread {
     }
 }
 
+/// Clone shares the transport, metrics, frame slot, and image cache
+/// (`Arc`s); only the display framebuffer copies (debugger-unused).
+/// See `drain_core`.
+#[derive(Clone)]
 pub struct EmuCore {
-    emu: Box<dyn EmuThreadPort>,
+    emu: Arc<dyn EmuThreadPort>,
     render_profile: VideoRenderProfile,
     shared_fb: Arc<Mutex<FrameBuffer>>,
     disp_fb: FrameBuffer,
     frame_ready: Arc<AtomicBool>,
     metrics: Arc<Mutex<ConsoleMetrics>>,
-    image_cache: Mutex<CachedImages>,
+    image_cache: Arc<Mutex<CachedImages>>,
 }
 
 /// Cached system images (pattern tables) for the debugger PPU viewer.
@@ -135,7 +143,7 @@ pub struct EmuCore {
 /// write, load/unload/reset/state import, or a running core —
 /// marks the cache dirty instead. `generation` bumps on every dirty mark:
 /// PPU viewers compare generations instead of hashing megabytes.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 struct CachedImages {
     dirty: bool,
     generation: u64,
@@ -145,7 +153,7 @@ struct CachedImages {
 impl EmuCore {
     #[doc(hidden)]
     pub fn new(
-        emu: Box<dyn EmuThreadPort>,
+        emu: Arc<dyn EmuThreadPort>,
         render_profile: VideoRenderProfile,
         shared_fb: Arc<Mutex<FrameBuffer>>,
         disp_fb: FrameBuffer,
@@ -162,11 +170,11 @@ impl EmuCore {
             disp_fb,
             frame_ready,
             metrics,
-            image_cache: Mutex::new(CachedImages {
+            image_cache: Arc::new(Mutex::new(CachedImages {
                 dirty: true,
                 generation: 0,
                 images: Vec::new(),
-            }),
+            })),
         }
     }
 
@@ -216,7 +224,7 @@ impl EmuCore {
         );
         (
             Self {
-                emu: Box::new(emu),
+                emu: Arc::new(emu),
                 render_profile: parts.render_profile,
                 shared_fb,
                 disp_fb,
@@ -225,11 +233,11 @@ impl EmuCore {
                     paused: true,
                     ..ConsoleMetrics::default()
                 })),
-                image_cache: Mutex::new(CachedImages {
+                image_cache: Arc::new(Mutex::new(CachedImages {
                     dirty: true,
                     generation: 0,
                     images: Vec::new(),
-                }),
+                })),
             },
             parts.gui_input,
             field_map,
@@ -292,6 +300,17 @@ impl EmuCore {
         self.emu
             .send(EmuCommand::RestartAudio)
             .map_err(|_| OperationError::WorkerUnavailable)
+    }
+
+    /// Shareable clone for the async debug drain. The flight owns a
+    /// clone and polls it across UI ticks without borrowing the
+    /// session: the transport, metrics, frame buffer slot, and image
+    /// cache are all `Arc`s, so the session's core and the flight
+    /// observe the same pause truth and the same image generation.
+    /// Only the display framebuffer (`disp_fb`, debugger-unused) is
+    /// physically copied.
+    pub(crate) fn drain_core(&self) -> EmuCore {
+        self.clone()
     }
 
     pub fn resume(&self) -> Result<(), OperationError> {
@@ -378,7 +397,9 @@ impl EmuCore {
     /// Mark cached system images stale. Called by every path that
     /// advances or replaces memory; the next `debug_images` refetches.
     /// The generation bumps so viewers can compare generations.
-    fn mark_images_dirty(&self) {
+    /// `pub(crate)`: the async debug drain shares the same cache
+    /// through its cloned handles, so it marks through this too.
+    pub(crate) fn mark_images_dirty(&self) {
         if let Ok(mut cache) = self.image_cache.lock() {
             cache.dirty = true;
             cache.generation = cache.generation.wrapping_add(1);
@@ -458,6 +479,22 @@ impl EmuCore {
     /// after exactly one step. Returns thread errors outer, domain step
     /// errors inner.
     pub fn step(&self, unit: StepUnit) -> Result<Result<u64, DebuggerError>, OperationError> {
+        let reply_rx = self.step_send(unit)?;
+        let result = recv_debug_reply(reply_rx);
+        if matches!(result, Ok(Ok(_))) {
+            self.mark_images_dirty();
+        }
+        result
+    }
+
+    /// Send half of [`EmuCore::step`]: the command queues without
+    /// blocking, and the caller polls the receiver on its own tick.
+    /// The async debug drain pairs this with `mark_images_dirty` on
+    /// success, mirroring the blocking body above.
+    pub(crate) fn step_send(
+        &self,
+        unit: StepUnit,
+    ) -> Result<mpsc::Receiver<Result<u64, DebuggerError>>, OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::Step {
@@ -465,11 +502,7 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        let result = recv_debug_reply(reply_rx);
-        if matches!(result, Ok(Ok(_))) {
-            self.mark_images_dirty();
-        }
-        result
+        Ok(reply_rx)
     }
 
     /// On-demand inspect through the emu thread. Returns thread errors
@@ -478,6 +511,15 @@ impl EmuCore {
         &self,
         req: InspectRequest,
     ) -> Result<Result<InspectResult, InspectError>, OperationError> {
+        recv_debug_reply(self.inspect_send(req)?)
+    }
+
+    /// Send half of [`EmuCore::inspect`]: queues without blocking so
+    /// the async debug drain can poll the receiver on its own tick.
+    pub(crate) fn inspect_send(
+        &self,
+        req: InspectRequest,
+    ) -> Result<mpsc::Receiver<Result<InspectResult, InspectError>>, OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::DebuggerInspect {
@@ -485,7 +527,7 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        recv_debug_reply(reply_rx)
+        Ok(reply_rx)
     }
 
     /// Batched debugger snapshot (inspect + anchor + disassembly)
@@ -497,6 +539,18 @@ impl EmuCore {
         req: nerust_core_traits::debugger::SnapshotRequest,
     ) -> Result<Result<nerust_core_traits::debugger::SnapshotResult, DebuggerError>, OperationError>
     {
+        recv_debug_reply(self.snapshot_batch_send(req)?)
+    }
+
+    /// Send half of [`EmuCore::debug_snapshot_batch`]: queues without
+    /// blocking so the async debug drain can poll on its own tick.
+    pub(crate) fn snapshot_batch_send(
+        &self,
+        req: nerust_core_traits::debugger::SnapshotRequest,
+    ) -> Result<
+        mpsc::Receiver<Result<nerust_core_traits::debugger::SnapshotResult, DebuggerError>>,
+        OperationError,
+    > {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::DebuggerSnapshot {
@@ -504,7 +558,7 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        recv_debug_reply(reply_rx)
+        Ok(reply_rx)
     }
 
     /// On-demand disassembly through the emu thread. Cold path:
@@ -539,37 +593,65 @@ impl EmuCore {
         Result<(u64, Vec<nerust_core_traits::debugger::DebugImage>), DebuggerError>,
         OperationError,
     > {
-        if !self.metrics().paused {
-            self.mark_images_dirty();
+        if let Some(cached) = self.images_cache_lookup() {
+            return Ok(Ok(cached));
         }
-        let cached = self
-            .image_cache
-            .lock()
-            .ok()
-            .filter(|cache| !cache.dirty && !cache.images.is_empty())
-            .map(|cache| (cache.generation, cache.images.clone()));
-        if let Some((generation, images)) = cached {
-            return Ok(Ok((generation, images)));
-        }
-        let (reply_tx, reply_rx) = mpsc::channel();
-        self.emu
-            .send(EmuCommand::DebuggerImages { reply: reply_tx })
-            .map_err(|_| OperationError::WorkerUnavailable)?;
-        let result = recv_debug_reply(reply_rx);
+        let result = recv_debug_reply(self.images_send()?);
         let images = match result {
             Ok(Ok(images)) => images,
             Ok(Err(error)) => return Ok(Err(error)),
             Err(_) => return Err(OperationError::NoReply),
         };
-        // Poison recovery mirrors `metrics()`: a poisoned cache still
-        // serves this decode instead of failing the viewer.
+        Ok(Ok(self.images_store(images)))
+    }
+
+    /// Paused-cache lookup for [`EmuCore::debug_images`]: a fresh hit
+    /// serves without touching the emu thread. A running core advances
+    /// memory at any time, so the lookup dirties first (mirroring the
+    /// blocking body) and always misses.
+    pub(crate) fn images_cache_lookup(
+        &self,
+    ) -> Option<(u64, Vec<nerust_core_traits::debugger::DebugImage>)> {
+        if !self.metrics().paused {
+            self.mark_images_dirty();
+        }
+        self.image_cache
+            .lock()
+            .ok()
+            .filter(|cache| !cache.dirty && !cache.images.is_empty())
+            .map(|cache| (cache.generation, cache.images.clone()))
+    }
+
+    /// Send half of the [`EmuCore::debug_images`] fetch: queues without
+    /// blocking so the async debug drain can poll on its own tick.
+    pub(crate) fn images_send(
+        &self,
+    ) -> Result<
+        mpsc::Receiver<Result<Vec<nerust_core_traits::debugger::DebugImage>, DebuggerError>>,
+        OperationError,
+    > {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerImages { reply: reply_tx })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        Ok(reply_rx)
+    }
+
+    /// Store a fetched decode into the paused cache and report the
+    /// current generation with the pixels. Poison recovery mirrors
+    /// `metrics()`: a poisoned cache still serves this decode instead
+    /// of failing the viewer.
+    pub(crate) fn images_store(
+        &self,
+        images: Vec<nerust_core_traits::debugger::DebugImage>,
+    ) -> (u64, Vec<nerust_core_traits::debugger::DebugImage>) {
         let mut cache = self.image_cache.lock().unwrap_or_else(|e| {
             log::warn!("image cache mutex poisoned, recovering");
             e.into_inner()
         });
         cache.images.clone_from(&images);
         cache.dirty = false;
-        Ok(Ok((cache.generation, images)))
+        (cache.generation, images)
     }
 
     /// On-demand program counter through the emu thread. Ungated (a
@@ -588,6 +670,20 @@ impl EmuCore {
         &self,
         req: MemoryWrite,
     ) -> Result<Result<(), DebuggerError>, OperationError> {
+        let result = recv_debug_reply(self.write_memory_send(req)?);
+        if matches!(result, Ok(Ok(()))) {
+            self.mark_images_dirty();
+        }
+        result
+    }
+
+    /// Send half of [`EmuCore::write_memory`]: queues without blocking.
+    /// The async debug drain pairs this with `mark_images_dirty` on
+    /// success, mirroring the blocking body above.
+    pub(crate) fn write_memory_send(
+        &self,
+        req: MemoryWrite,
+    ) -> Result<mpsc::Receiver<Result<(), DebuggerError>>, OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::WriteMemory {
@@ -595,11 +691,7 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        let result = recv_debug_reply(reply_rx);
-        if matches!(result, Ok(Ok(()))) {
-            self.mark_images_dirty();
-        }
-        result
+        Ok(reply_rx)
     }
 
     /// Register edit through the emu thread. Same pause-ungated
@@ -609,6 +701,20 @@ impl EmuCore {
         name: &'static str,
         value: u64,
     ) -> Result<Result<(), DebuggerError>, OperationError> {
+        let result = recv_debug_reply(self.write_register_send(name, value)?);
+        if matches!(result, Ok(Ok(()))) {
+            self.mark_images_dirty();
+        }
+        result
+    }
+
+    /// Send half of [`EmuCore::write_register`]: queues without
+    /// blocking (dirty-marking stays with the poller, as above).
+    pub(crate) fn write_register_send(
+        &self,
+        name: &'static str,
+        value: u64,
+    ) -> Result<mpsc::Receiver<Result<(), DebuggerError>>, OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::WriteRegister {
@@ -617,11 +723,7 @@ impl EmuCore {
                 reply: reply_tx,
             })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        let result = recv_debug_reply(reply_rx);
-        if matches!(result, Ok(Ok(()))) {
-            self.mark_images_dirty();
-        }
-        result
+        Ok(reply_rx)
     }
 
     /// Install a nominal-audio tap: every rendered frame clones its
@@ -888,7 +990,7 @@ mod tests {
             fb
         };
         let core = EmuCore::new(
-            Box::new(port),
+            Arc::new(port),
             parts.render_profile,
             Arc::new(Mutex::new(picture())),
             picture(),

@@ -2,18 +2,21 @@
 //! register, watch, freeze, and bookmark state.
 //!
 //! Same semantics as the tao window, same shell APIs, same view-model
-//! formatters. GTK is synchronous, so there is no request queue: each
-//! action batch runs the shared shell drain
-//! ([`nerust_gui_shell::debug::SessionHandle::debug_drain`]) and then
-//! rebuilds the widgets. Paused pull-only like tao; the window opens
-//! paused and closing keeps the pause.
+//! formatters. Each action batch starts an async shell drain flight
+//! ([`nerust_gui_shell::debug::DrainFlight`]) and the window polls it
+//! on the GTK tick: the UI thread never parks in a thread round-trip,
+//! so a stalled emu thread degrades to stale data plus a status line
+//! instead of wedging input. Paused pull-only like tao; the window
+//! opens paused and closing keeps the pause.
 
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, SpaceId};
 use nerust_gui_settings::language::AppLanguage;
-use nerust_gui_shell::debug::{DebugAction, DebugDrainInput, merge_running_sections};
+use nerust_gui_shell::debug::{
+    DebugAction, DebugDrainInput, DrainFlight, DrainPoll, merge_running_sections,
+};
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text};
 
@@ -126,6 +129,10 @@ pub(crate) struct DebuggerWindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
     data: DebuggerData,
+    /// In-flight async drain: `act` starts it, the tick poller (plus
+    /// a short poller while pending) finishes it. A newer batch
+    /// supersedes the stored one; orphaned replies are ignored.
+    flight: Option<DrainFlight>,
     ppu_window: Option<super::ppu_window::PpuWindow>,
     pause_button: gtk::Button,
     write_button: gtk::Button,
@@ -264,6 +271,7 @@ impl DebuggerWindowCore {
             window: window.clone(),
             state: state.clone(),
             data,
+            flight: None,
             ppu_window: None,
             pause_button: pause_button.clone(),
             status_label: status_label.clone(),
@@ -521,6 +529,10 @@ impl DebuggerWindowCore {
             let Some(win) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
+            // Backstop for drain flights (the short poller in `act`
+            // normally finishes them first): poll here too so a
+            // missed watcher can never strand a pending display.
+            Self::poll_flight(&win);
             let live = win.borrow().window.is_visible() && win.borrow().ppu_window.is_some() && {
                 let state = win.borrow().state.clone();
                 let session = &state.borrow().session;
@@ -700,11 +712,15 @@ impl DebuggerWindowCore {
         Self::act(win, &[DebugAction::Refresh]);
     }
 
-    /// Run actions through the shared shell drain, then rebuild
-    /// every widget from the new display. Images are fetched only
-    /// while the PPU viewer is open. Inputs are copied out before
-    /// the blocking drain so the window borrow never spans the
-    /// thread round-trips.
+    /// Run actions through an async shell-drain flight, then rebuild
+    /// every widget from the new display once it lands. Images are
+    /// fetched only while the PPU viewer is open. Inputs are copied
+    /// out before the flight starts so the window borrow never spans
+    /// the thread round-trips — and neither does the UI thread: the
+    /// flight only sends here, and the tick poller applies the
+    /// display. A batch that resolves without crossings (no core,
+    /// cached images) still applies synchronously, so coreless
+    /// harnesses behave exactly as before.
     fn act(win: &DebuggerWindow, actions: &[DebugAction]) {
         let (
             state,
@@ -740,7 +756,61 @@ impl DebuggerWindowCore {
             prev_dump_rows: &prev_dump_rows,
             need_images,
         };
-        let output = state.borrow().session.debug_drain(actions, &input);
+        // Supersede: a newer batch replaces the stored flight; the
+        // FIFO command order keeps the newest view correct.
+        let mut flight = state.borrow().session.debug_drain_begin(actions, &input);
+        match flight.poll() {
+            DrainPoll::Done(output) => {
+                Self::apply(win, *output);
+            }
+            DrainPoll::Pending => {
+                win.borrow_mut().flight = Some(flight);
+                Self::watch_flight(win);
+            }
+        }
+    }
+
+    /// Short poller while a flight is pending: applies the display
+    /// within ~30ms of the reply instead of waiting for the 250ms
+    /// live tick. Dies with the window; extra pollers from rapid
+    /// batches see no flight and stop.
+    fn watch_flight(win: &DebuggerWindow) {
+        let weak = Rc::downgrade(win);
+        glib::timeout_add_local(std::time::Duration::from_millis(30), move || {
+            let Some(win) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if Self::poll_flight(&win) {
+                glib::ControlFlow::Continue
+            } else {
+                glib::ControlFlow::Break
+            }
+        });
+    }
+
+    /// Poll the stored flight once. Returns whether one is still
+    /// pending: on completion the display applies and the widgets
+    /// rebuild, exactly like a synchronous drain.
+    fn poll_flight(win: &DebuggerWindow) -> bool {
+        let mut flight = match win.borrow_mut().flight.take() {
+            Some(flight) => flight,
+            None => return false,
+        };
+        match flight.poll() {
+            DrainPoll::Done(output) => {
+                Self::apply(win, *output);
+                false
+            }
+            DrainPoll::Pending => {
+                win.borrow_mut().flight = Some(flight);
+                true
+            }
+        }
+    }
+
+    /// Apply a finished drain: merge running sections, store the
+    /// selection, and rebuild every widget from the new display.
+    fn apply(win: &DebuggerWindow, output: nerust_gui_shell::debug::DebugDrainOutput) {
         {
             let mut this = win.borrow_mut();
             // Running drains come back section-degenerate (paused
