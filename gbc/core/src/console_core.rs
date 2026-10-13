@@ -561,7 +561,11 @@ mod tests {
         core.set_audio_sample_rate(22_050);
         assert_eq!(core.sample_rate, 22_050);
         core.render_frame(&mut frame, &mut audio).unwrap();
-        assert!(audio.iter().all(|s| s.left.is_finite() && s.right.is_finite()));
+        assert!(
+            audio
+                .iter()
+                .all(|s| s.left.is_finite() && s.right.is_finite())
+        );
         let state = core.save_state().unwrap();
         core.load_state(&state).unwrap();
     }

@@ -348,8 +348,7 @@ impl EmuCore {
         if was_running {
             self.pause()?;
         }
-        let slot_result =
-            self.swap_frame_slot(fresh_frame_buffer(&profile, palette.as_ref()));
+        let slot_result = self.swap_frame_slot(fresh_frame_buffer(&profile, palette.as_ref()));
         if slot_result.is_err() {
             if was_running {
                 let _ = self.resume();
@@ -388,9 +387,10 @@ impl EmuCore {
     fn swap_frame_slot(&self, slot: FrameBuffer) -> Result<(), OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
-            .send(EmuCommand::SwapFrameSlot(Box::new(
-                SwapFrameSlotCommand { slot, reply: reply_tx },
-            )))
+            .send(EmuCommand::SwapFrameSlot(Box::new(SwapFrameSlotCommand {
+                slot,
+                reply: reply_tx,
+            })))
             .map_err(|_| OperationError::WorkerUnavailable)?;
         recv_debug_reply(reply_rx)
     }
@@ -1000,16 +1000,15 @@ mod tests {
         assert!(!core.metrics().paused, "running core resumes after swap");
         assert_eq!(core.render_profile().logical_size.width, 602);
         assert_eq!(
-            core.frame_buffer().palette().expect("palette rides the buffer")[0xAB],
+            core.frame_buffer()
+                .palette()
+                .expect("palette rides the buffer")[0xAB],
             0xFF00_00AB,
             "display buffer carries the new palette"
         );
         // Shared slot agrees (next swap publishes new-format pixels).
         let guard = core.emu.shared_frame_buffer().lock().unwrap();
-        assert_eq!(
-            guard.palette().expect("shared palette")[0xAB],
-            0xFF00_00AB
-        );
+        assert_eq!(guard.palette().expect("shared palette")[0xAB], 0xFF00_00AB);
     }
 
     #[test]

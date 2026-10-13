@@ -75,8 +75,7 @@ impl CoreFactory for NesFactory {
             .system_config
             .as_deref()?
             .downcast_ref::<NesSettings>()?;
-        if before_nes.core != after_nes.core || before_nes.video.filter == after_nes.video.filter
-        {
+        if before_nes.core != after_nes.core || before_nes.video.filter == after_nes.video.filter {
             return None;
         }
         let filter = settings::filter_type_from_bytes(after.system_config.as_deref());

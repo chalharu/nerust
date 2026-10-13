@@ -83,9 +83,7 @@ pub(crate) fn create_core_and_adapter(
 /// Shared by core construction and the live presentation swap: both
 /// derive the profile + palette from the same function, so a swapped
 /// filter can never disagree with a rebuilt one.
-pub(crate) fn video_assets_for_filter(
-    filter: FilterType,
-) -> (VideoRenderProfile, Box<[u32; 256]>) {
+pub(crate) fn video_assets_for_filter(filter: FilterType) -> (VideoRenderProfile, Box<[u32; 256]>) {
     let source_logical_size = LogicalSize {
         width: 256,
         height: 240,
