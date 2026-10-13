@@ -15,7 +15,8 @@ use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, SpaceId};
 use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::debug::{
-    DebugAction, DebugDrainInput, DrainFlight, DrainPoll, merge_running_sections,
+    DebugAction, DebugDrainInput, DrainFlight, DrainPoll, LiveImagesFlight, LiveImagesPoll,
+    merge_running_sections,
 };
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text};
@@ -133,6 +134,9 @@ pub(crate) struct DebuggerWindowCore {
     /// a short poller while pending) finishes it. A newer batch
     /// supersedes the stored one; orphaned replies are ignored.
     flight: Option<DrainFlight>,
+    /// In-flight async live-images fetch, same pattern for the 250ms
+    /// PPU follow tick. At most one; a newer tick supersedes.
+    live_flight: Option<LiveImagesFlight>,
     ppu_window: Option<super::ppu_window::PpuWindow>,
     pause_button: gtk::Button,
     write_button: gtk::Button,
@@ -272,6 +276,7 @@ impl DebuggerWindowCore {
             state: state.clone(),
             data,
             flight: None,
+            live_flight: None,
             ppu_window: None,
             pause_button: pause_button.clone(),
             status_label: status_label.clone(),
@@ -547,17 +552,92 @@ impl DebuggerWindowCore {
         result
     }
 
-    /// Live-tick body: patch the image section and the pause chrome,
-    /// then sync the PPU viewer. Unchanged generations skip
+    /// Live-tick body: settle any in-flight fetch, then start a new
+    /// one when the viewer follows a running core. The fetch runs as
+    /// an async flight, so a stalled emu thread never parks the GTK
+    /// main thread in the tick. Patch the image section and the pause
+    /// chrome, then sync the PPU viewer. Unchanged generations skip
     /// everything; the debugger widgets are never rebuilt here, so
     /// dump scroll positions survive the running follow.
     fn live_tick(win: &DebuggerWindow) {
-        let (state, language) = {
-            let this = win.borrow();
-            (this.state.clone(), this.data.language)
-        };
-        let Some((generation, images)) = state.borrow().session.debug_live_images(true) else {
+        if Self::poll_live_flight(win) {
+            // A fetch is still crossing: wait for its poller instead
+            // of stacking another one behind it.
             return;
+        }
+        let live = win.borrow().window.is_visible() && win.borrow().ppu_window.is_some() && {
+            let state = win.borrow().state.clone();
+            let session = &state.borrow().session;
+            session.loaded() && !session.paused()
+        };
+        if !live {
+            return;
+        }
+        let state = win.borrow().state.clone();
+        let mut flight = state.borrow().session.debug_live_images_begin(true);
+        match flight.poll() {
+            LiveImagesPoll::Done(live) => Self::apply_live_images(win, live),
+            LiveImagesPoll::Pending => {
+                win.borrow_mut().live_flight = Some(flight);
+                Self::watch_live_flight(win);
+            }
+        }
+    }
+
+    /// Short poller while a live fetch is pending, mirroring
+    /// `watch_flight`: applies within ~30ms of the reply instead of
+    /// waiting for the 250ms tick.
+    fn watch_live_flight(win: &DebuggerWindow) {
+        let weak = Rc::downgrade(win);
+        glib::timeout_add_local(std::time::Duration::from_millis(30), move || {
+            let Some(win) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if Self::poll_live_flight(&win) {
+                glib::ControlFlow::Continue
+            } else {
+                glib::ControlFlow::Break
+            }
+        });
+    }
+
+    /// Poll the stored live fetch once. Returns whether one is still
+    /// pending; on completion the images patch in like a synchronous
+    /// tick. Orphaned flights (paused or closed mid-fetch) settle
+    /// harmlessly: the generation guard skips stale data.
+    fn poll_live_flight(win: &DebuggerWindow) -> bool {
+        let mut flight = match win.borrow_mut().live_flight.take() {
+            Some(flight) => flight,
+            None => return false,
+        };
+        match flight.poll() {
+            LiveImagesPoll::Done(live) => {
+                Self::apply_live_images(win, live);
+                false
+            }
+            LiveImagesPoll::Pending => {
+                win.borrow_mut().live_flight = Some(flight);
+                true
+            }
+        }
+    }
+
+    /// Patch finished live images into the display. Images apply when
+    /// newer regardless of pause (a paused frame is honest data); the
+    /// running chrome only applies while still running, so a
+    /// pause-in-flight never flips the status back to Running.
+    fn apply_live_images(win: &DebuggerWindow, live: nerust_gui_shell::session::LiveImages) {
+        let Some((generation, images)) = live else {
+            return;
+        };
+        let (language, running) = {
+            let this = win.borrow();
+            let running = {
+                let state = this.state.clone();
+                let session = &state.borrow().session;
+                session.loaded() && !session.paused()
+            };
+            (this.data.language, running)
         };
         let mut this = win.borrow_mut();
         if generation == this.data.display.images_gen {
@@ -565,12 +645,14 @@ impl DebuggerWindowCore {
         }
         this.data.display.images = images;
         this.data.display.images_gen = generation;
-        this.data.display.paused = false;
-        this.data.display.status = StatusMessage::Running;
-        // Light chrome only: a full rebuild would yank the dump scroll.
-        this.pause_button.set_label(text(language, UiText::Pause));
-        this.status_label
-            .set_label(&this.data.display.status.render(language));
+        if running {
+            this.data.display.paused = false;
+            this.data.display.status = StatusMessage::Running;
+            // Light chrome only: a full rebuild would yank the dump scroll.
+            this.pause_button.set_label(text(language, UiText::Pause));
+            this.status_label
+                .set_label(&this.data.display.status.render(language));
+        }
         if let Some(ppu) = this.ppu_window.as_ref() {
             let display = &this.data.display;
             ppu.borrow_mut()
