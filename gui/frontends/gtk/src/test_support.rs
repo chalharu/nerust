@@ -1,11 +1,14 @@
 //! Shared gate for GTK widget tests: exactly one process-wide GTK
 //! init, skipped cleanly when the environment is hostile.
 //!
-//! Background (see preferences history): CI preloads legacy GTK,
-//! and any GTK4 init then aborts with SIGTRAP, so widget tests must
-//! probe `/proc/self/maps` *before* touching GTK. One shared
-//! [`OnceLock`] also guarantees at most one init even when the
-//! runner shares a process across tests (plain multithreaded
+//! Only an *initialized* legacy toolkit conflicts with GTK4: merely
+//! mapping `libgtk-3.so` (it appears in every process that links it,
+//! initialized or not) is harmless, and this crate's test closure
+//! does not even link it. So the gate attempts GTK4 init directly
+//! instead of scanning `/proc/self/maps`: success runs the tests, a
+//! real failure (no display, hostile container) skips them. One
+//! shared [`OnceLock`] also guarantees at most one init even when
+//! the runner shares a process across tests (plain multithreaded
 //! `cargo test`).
 
 #[cfg(target_os = "macos")]
@@ -18,27 +21,5 @@ pub(crate) fn ui_test_available() -> bool {
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn ui_test_available() -> bool {
     static GTK_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GTK_AVAILABLE.get_or_init(|| {
-        if has_legacy_gtk() {
-            return false;
-        }
-        gtk::init().is_ok() && gtk::gdk::Display::default().is_some()
-    })
-}
-
-#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
-fn has_legacy_gtk() -> bool {
-    false
-}
-
-#[cfg(target_os = "linux")]
-fn has_legacy_gtk() -> bool {
-    // On Linux, check /proc/self/maps for GTK 2/3 libraries that would
-    // cause GTK4's gtk_init() to abort with SIGTRAP.
-    std::fs::read_to_string("/proc/self/maps")
-        .map(|maps| {
-            maps.lines()
-                .any(|line| line.contains("libgtk-3.so") || line.contains("libgtk-2"))
-        })
-        .unwrap_or(false)
+    *GTK_AVAILABLE.get_or_init(|| gtk::init().is_ok() && gtk::gdk::Display::default().is_some())
 }
