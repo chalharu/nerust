@@ -187,6 +187,71 @@ mod tests {
         }
     }
 
+    fn view_with(nes: NesSettings) -> FactorySettingsView {
+        FactorySettingsView {
+            language: Language::SystemDefault,
+            system_config: Some(Box::new(nes)),
+        }
+    }
+
+    #[test]
+    fn presentation_swap_covers_filter_only_change() {
+        use nerust_core_traits::factory::CoreFactory;
+
+        let factory = crate::NesFactory;
+        let before = test_view();
+        let mut nes = NesSettings::default();
+        nes.video.filter = NesVideoFilter::NtscRgb;
+        let after = view_with(nes);
+
+        let (profile, palette) = factory
+            .presentation_swap_assets(&before, &after)
+            .expect("filter-only change swaps live");
+        // NTSC expands the logical width; the source stays 256 wide.
+        assert!(profile.logical_size.width > 256);
+        assert_eq!(profile.source_logical_size.width, 256);
+        assert_eq!(palette.len(), 256);
+    }
+
+    #[test]
+    fn presentation_swap_refuses_core_option_change() {
+        use nerust_core_traits::factory::CoreFactory;
+
+        let factory = crate::NesFactory;
+        let before = test_view();
+        let mut nes = NesSettings::default();
+        nes.video.filter = NesVideoFilter::NtscRgb;
+        nes.core.mmc3_irq_variant = Some(nerust_nes_settings::Mmc3IrqVariant::Nec);
+        let after = view_with(nes);
+
+        assert!(
+            factory.presentation_swap_assets(&before, &after).is_none(),
+            "core changes keep the rebuild path"
+        );
+    }
+
+    #[test]
+    fn presentation_swap_refuses_missing_or_unchanged() {
+        use nerust_core_traits::factory::CoreFactory;
+
+        let factory = crate::NesFactory;
+        let view = test_view();
+        assert!(
+            factory.presentation_swap_assets(&view, &view).is_none(),
+            "unchanged settings need no swap"
+        );
+        let empty = FactorySettingsView {
+            language: Language::SystemDefault,
+            system_config: None,
+        };
+        assert!(
+            factory
+                .presentation_swap_assets(&empty, &view)
+                .is_none(),
+            "missing side keeps the rebuild path"
+        );
+    }
+
     fn nec_options() -> Box<dyn DynSystemLoadOptions> {
         CommandLineOptions {
             mmc3_irq_variant: Some(crate::Mmc3IrqVariant::Nec),
