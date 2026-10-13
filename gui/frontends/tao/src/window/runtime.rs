@@ -206,7 +206,11 @@ impl WindowRuntime {
                 }
                 handle.update_modifiers_from_tao_event(&event);
                 handle.handle_tao_event(event);
-                handle.render();
+                // Coalesced present: every visual path above already
+                // requested a redraw; presenting here per event would
+                // serialize a full draw behind every drag/motion event
+                // and unload the backlog as a hang on release.
+                handle.window.request_redraw();
                 if handle
                     .should_close
                     .load(std::sync::atomic::Ordering::Acquire)
@@ -266,7 +270,9 @@ impl WindowRuntime {
                 }
                 // Closing never resumes: resume is always explicit.
                 if let Some(handle) = self.host.debug.debug_window.as_mut() {
-                    handle.render();
+                    // Coalesced present (see the settings arm): every
+                    // visual path above already requested a redraw.
+                    handle.shell.window.request_redraw();
                     if handle
                         .shell
                         .should_close
@@ -307,7 +313,7 @@ impl WindowRuntime {
                 };
                 handle.shell.handle_common_event(&event);
                 handle.handle_tao_event(event);
-                handle.render();
+                handle.shell.window.request_redraw();
                 if handle
                     .shell
                     .should_close
