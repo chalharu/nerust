@@ -8,7 +8,9 @@ use std::{
 };
 
 use nerust_core_traits::{
-    CoreConfig, CoreOptions, EmuCommand, LoadCommand, StateDataCommand,
+    CoreConfig, CoreOptions, EmuCommand, LoadCommand, StateDataCommand, SwapAudioCommand,
+    SwapFrameSlotCommand,
+    audio::AudioBackend,
     debugger::{
         DebuggerError, InspectError, InspectRequest, InspectResult, MemoryWrite, SpaceInfo,
         StepUnit,
@@ -202,20 +204,7 @@ impl EmuCore {
     ) {
         let field_map = parts.field_map;
         use std::sync::Mutex;
-        let src_w = parts.render_profile.source_logical_size.width;
-        let src_h = parts.render_profile.source_logical_size.height;
-        let pixel_format = match parts.render_profile.frame_format {
-            VideoFrameFormat::Palette => PixelFormat::PaletteIndex {
-                palette: parts.palette.clone(),
-            },
-            VideoFrameFormat::Rgba => PixelFormat::Rgba,
-        };
-
-        let new_buffer = || {
-            let mut fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format.clone());
-            fb.resize(src_w, src_h);
-            fb
-        };
+        let new_buffer = || fresh_frame_buffer(&parts.render_profile, &parts.palette);
         let shared_fb = Arc::new(Mutex::new(new_buffer()));
         let disp_fb = new_buffer();
         let frame_slot = new_buffer();
@@ -319,6 +308,91 @@ impl EmuCore {
     /// physically copied.
     pub(crate) fn drain_core(&self) -> EmuCore {
         self.clone()
+    }
+
+    /// Live audio-backend swap for sample-rate/latency changes.
+    /// Blocking with the debugger timeout: the reply is the barrier
+    /// proving the thread parked on the new backend before we return.
+    /// No pause needed (commands drain only between frames); no ROM
+    /// reload, no state round-trip. The backend carries the new
+    /// settings' volume/gain, so volume-only deltas ride along.
+    pub fn swap_audio_backend(
+        &self,
+        backend: Box<dyn AudioBackend>,
+        sample_rate: u32,
+    ) -> Result<(), OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::SwapAudio(Box::new(SwapAudioCommand {
+                backend,
+                sample_rate,
+                reply: reply_tx,
+            })))
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        recv_debug_reply(reply_rx)
+    }
+
+    /// Live presentation swap for filter-only changes: pause if
+    /// running, exchange the thread slot behind the reply barrier,
+    /// then swap the session buffers and profile while the thread is
+    /// parked, and resume if it paused. No ROM reload, no state
+    /// round-trip: the same machine keeps rendering into the new
+    /// target. The debugger image cache is dirtied (same palette the
+    /// PPU viewer decodes through).
+    pub fn apply_presentation(
+        &mut self,
+        profile: VideoRenderProfile,
+        palette: Box<[u32]>,
+    ) -> Result<(), OperationError> {
+        let was_running = !self.metrics().paused;
+        if was_running {
+            self.pause()?;
+        }
+        let slot_result =
+            self.swap_frame_slot(fresh_frame_buffer(&profile, palette.as_ref()));
+        if slot_result.is_err() {
+            if was_running {
+                let _ = self.resume();
+            }
+            return slot_result;
+        }
+        match self.shared_fb.lock() {
+            Ok(mut guard) => {
+                *guard = fresh_frame_buffer(&profile, palette.as_ref());
+            }
+            Err(error) => {
+                log::warn!("presentation swap: shared frame buffer lock failed: {error}");
+                if was_running {
+                    let _ = self.resume();
+                }
+                return Err(OperationError::Reply(
+                    "shared frame buffer lock poisoned during presentation swap".to_string(),
+                ));
+            }
+        }
+        self.disp_fb = fresh_frame_buffer(&profile, palette.as_ref());
+        self.render_profile = profile;
+        self.frame_ready.store(false, Ordering::Release);
+        self.mark_images_dirty();
+        if was_running {
+            self.resume()?;
+        }
+        Ok(())
+    }
+
+    /// Exchange the thread-owned render target behind a reply barrier.
+    /// The caller swaps the session-side buffers only after this
+    /// returns (and only while paused), so no frame straddles the two
+    /// swaps. Kept private: session code goes through
+    /// [`EmuCore::apply_presentation`], which owns the choreography.
+    fn swap_frame_slot(&self, slot: FrameBuffer) -> Result<(), OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::SwapFrameSlot(Box::new(
+                SwapFrameSlotCommand { slot, reply: reply_tx },
+            )))
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        recv_debug_reply(reply_rx)
     }
 
     pub fn resume(&self) -> Result<(), OperationError> {
@@ -777,6 +851,23 @@ fn op_to_persistence(e: OperationError) -> CorePersistenceError {
         OperationError::NoReply => CorePersistenceError::NoReply,
         OperationError::Reply(s) => CorePersistenceError::Core(s),
     }
+}
+
+/// Fresh render target for one profile + palette pair. Single
+/// construction path for core spawn and live presentation swaps, so a
+/// swapped filter can never disagree with a rebuilt one on geometry.
+fn fresh_frame_buffer(profile: &VideoRenderProfile, palette: &[u32]) -> FrameBuffer {
+    let pixel_format = match profile.frame_format {
+        VideoFrameFormat::Palette => PixelFormat::PaletteIndex {
+            palette: palette.to_vec().into_boxed_slice(),
+        },
+        VideoFrameFormat::Rgba => PixelFormat::Rgba,
+    };
+    let src_w = profile.source_logical_size.width;
+    let src_h = profile.source_logical_size.height;
+    let mut fb = FrameBuffer::with_capacity(src_w, src_h, pixel_format);
+    fb.resize(src_w, src_h);
+    fb
 }
 
 /// Generate a preview frame from the port's shared frame buffer.
