@@ -504,6 +504,17 @@ impl Program for DebugProgram {
         let back_len = nav.back_len();
         let watch_value = display.watch_value;
         let paused = display.paused;
+        // Coreless windows never drain, so the default Empty status
+        // would sit blank forever and the toggle would offer Pause
+        // against nothing. Read coreless as paused with an explicit
+        // "no core" status — the same agreement as the gtk twin.
+        let coreless = bridge.spaces.is_empty();
+        let paused = paused || coreless;
+        let status = if coreless && matches!(status, vm::StatusMessage::Empty) {
+            vm::StatusMessage::NoCore
+        } else {
+            status
+        };
         // Same rule as `anchor()`, computed from the snapshot above
         // instead of re-locking nav and display for a second time.
         let anchor = if follow_pc {
@@ -675,7 +686,9 @@ fn view_mem_nav(
         text_input(ui_text(language, UiText::AddrHex), mem_input)
             .on_input(DebugMessage::MemInputChanged)
             .on_submit(DebugMessage::MemGo)
-            .width(120),
+            // Wide enough for the longest placeholder in either
+            // language (JA "アドレス16進" clips at 120).
+            .width(150),
         button(text(ui_text(language, UiText::Go)))
             .style(button::secondary)
             .on_press(DebugMessage::MemGo),
@@ -913,7 +926,8 @@ fn view_dis_nav(
         text_input(ui_text(language, UiText::AddrHex), dis_input)
             .on_input(DebugMessage::DisInputChanged)
             .on_submit(DebugMessage::DisGo)
-            .width(100),
+            // Same JA placeholder width as the memory input above.
+            .width(150),
         button(text(ui_text(language, UiText::Go)))
             .style(button::secondary)
             .on_press(DebugMessage::DisGo),

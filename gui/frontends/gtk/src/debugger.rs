@@ -220,6 +220,10 @@ fn left_align(button: &gtk::Button) {
 fn entry(placeholder: Option<&str>) -> gtk::Entry {
     let entry = gtk::Entry::new();
     entry.set_placeholder_text(placeholder);
+    // Floor for hex inputs: sibling labels with hexpand (freeze row)
+    // would otherwise squeeze the entry below its placeholder in
+    // either language ("hex byte" / "16進バイト").
+    entry.set_width_chars(10);
     entry
 }
 
