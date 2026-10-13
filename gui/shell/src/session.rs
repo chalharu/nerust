@@ -107,7 +107,8 @@ pub struct SessionHandle {
     persistence: PersistenceManager,
     audio_registry: Arc<AudioBackendRegistry>,
     /// Shell-owned two-phase memory write transaction (Phase B).
-    debug_txn: Mutex<debug_vm::WriteTransaction>,
+    /// `Arc`: async debug-drain flights share it across UI ticks.
+    debug_txn: Arc<Mutex<debug_vm::WriteTransaction>>,
 }
 
 impl SessionHandle {
@@ -301,7 +302,7 @@ impl SessionHandle {
             loaded_media: None,
             persistence: PersistenceManager::new(),
             audio_registry,
-            debug_txn: Mutex::new(debug_vm::WriteTransaction::Empty),
+            debug_txn: Arc::new(Mutex::new(debug_vm::WriteTransaction::Empty)),
         };
         result.rebuild_key_field_map();
         Ok(result)
@@ -378,6 +379,15 @@ impl SessionHandle {
         self.emu_core
             .as_ref()
             .is_none_or(|core| core.metrics().paused)
+    }
+
+    /// Owned context for one async drain flight: a cloned core plus
+    /// the shared write transaction. See [`DrainCtx`].
+    pub(crate) fn drain_ctx(&self) -> crate::debug::DrainCtx {
+        crate::debug::DrainCtx::new(
+            self.emu_core.as_ref().map(EmuCore::drain_core),
+            Arc::clone(&self.debug_txn),
+        )
     }
 
     /// Single batched snapshot for one drain: one inspect (registers,

@@ -911,3 +911,64 @@ fn debug_drain_register_write_reports_loudly_without_core() {
     let idle = session.debug_drain(&[DebugAction::RegisterWrite(0x42)], &untargeted);
     assert_eq!(idle.display.status, StatusMessage::Paused);
 }
+
+#[test]
+fn drain_flight_poll_reaches_done_with_snapshot_sections() {
+    use crate::debug::{DebugAction, DrainPoll};
+    use std::time::{Duration, Instant};
+    let session = loaded_debug_session();
+    let input = drain_input();
+    let mut flight = session.debug_drain_begin(&[DebugAction::Refresh], &input);
+    // The UI-thread contract: one poll never blocks on the emu
+    // thread, no matter how slow it is.
+    let started = Instant::now();
+    let first = flight.poll();
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "first poll must not park on the thread"
+    );
+    let output = match first {
+        DrainPoll::Done(output) => output,
+        DrainPoll::Pending => {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                match flight.poll() {
+                    DrainPoll::Done(output) => break output,
+                    DrainPoll::Pending => {
+                        assert!(Instant::now() < deadline, "flight always terminates");
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }
+            }
+        }
+    };
+    assert!(!output.display.dump_rows.is_empty());
+    assert_eq!(output.display.status, StatusMessage::Paused);
+}
+
+#[test]
+fn drain_flight_no_core_completes_on_first_poll() {
+    use crate::debug::{DebugAction, DebugDrainInput, DrainPoll};
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    let input = DebugDrainInput {
+        space: None,
+        mem_addr: 0,
+        dis_addr: None,
+        watch: None,
+        freeze: None,
+        reg_target: None,
+        prev_dump_rows: &[],
+        need_images: false,
+    };
+    // No thread crossings exist without a core: every phase resolves
+    // locally, so one poll finishes (widget tests rely on this to
+    // keep `act` synchronous in the coreless harness).
+    let mut flight = session.debug_drain_begin(&[DebugAction::Pause, DebugAction::Refresh], &input);
+    let DrainPoll::Done(output) = flight.poll() else {
+        panic!("coreless flight must complete on the first poll");
+    };
+    assert_eq!(output.display.status, StatusMessage::NoCore);
+    assert!(output.display.dump_rows.is_empty());
+}
