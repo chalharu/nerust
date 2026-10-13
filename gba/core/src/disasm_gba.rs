@@ -160,6 +160,30 @@ fn thumb_mem(w: u32) -> Option<(String, Option<u32>)> {
             None,
         ));
     }
+    if let Some(found) = thumb_mem_offset(w) {
+        return Some(found);
+    }
+    if let Some(found) = thumb_mem_stack(w) {
+        return Some(found);
+    }
+    // Multiple load/store (0xC000-0xCFFF).
+    if (0xC000..0xD000).contains(&w) {
+        let op = if w & 0x0800 != 0 { "LDMIA" } else { "STMIA" };
+        return Some((
+            format!(
+                "{op} {}!, {{{}}}",
+                reg((w >> 8) & 7),
+                reg_list(w, 8).join(", ")
+            ),
+            None,
+        ));
+    }
+    None
+}
+
+/// Immediate-offset load/store, byte/halfword variants,
+/// SP-relative, and ADD to PC/SP.
+fn thumb_mem_offset(w: u32) -> Option<(String, Option<u32>)> {
     // Immediate-offset load/store, byte/halfword variants, SP-relative.
     if (0x6000..0xA000).contains(&w) {
         let is_load = w & 0x0800 != 0;
@@ -197,43 +221,35 @@ fn thumb_mem(w: u32) -> Option<(String, Option<u32>)> {
             None,
         ));
     }
-    // ADD SP / PUSH / POP. PUSH is 1011 010L, POP 1011 110L:
-    // bits 10-9 read 0b10 and bit 11 selects store/load.
-    if (0xB000..0xBE00).contains(&w) {
-        if w < 0xB100 {
-            let off = (w & 0x7F) * 4;
-            let text = if w & 0x80 != 0 {
-                format!("ADD SP, #-${off:02X}")
-            } else {
-                format!("ADD SP, #${off:02X}")
-            };
-            return Some((text, None));
-        }
-        if (w >> 9) & 3 == 2 {
-            let store = w & 0x0800 == 0;
-            let mut list = reg_list(w, 8);
-            if w & 0x0100 != 0 {
-                list.push(if store { "LR" } else { "PC" }.to_string());
-            }
-            return Some((
-                format!(
-                    "{} {{{}}}",
-                    if store { "PUSH" } else { "POP" },
-                    list.join(", ")
-                ),
-                None,
-            ));
-        }
+    None
+}
+
+/// ADD SP / PUSH / POP. PUSH is 1011 010L, POP 1011 110L:
+/// bits 10-9 read 0b10 and bit 11 selects store/load.
+fn thumb_mem_stack(w: u32) -> Option<(String, Option<u32>)> {
+    if !(0xB000..0xBE00).contains(&w) {
         return None;
     }
-    // Multiple load/store (0xC000-0xCFFF).
-    if (0xC000..0xD000).contains(&w) {
-        let op = if w & 0x0800 != 0 { "LDMIA" } else { "STMIA" };
+    if w < 0xB100 {
+        let off = (w & 0x7F) * 4;
+        let text = if w & 0x80 != 0 {
+            format!("ADD SP, #-${off:02X}")
+        } else {
+            format!("ADD SP, #${off:02X}")
+        };
+        return Some((text, None));
+    }
+    if (w >> 9) & 3 == 2 {
+        let store = w & 0x0800 == 0;
+        let mut list = reg_list(w, 8);
+        if w & 0x0100 != 0 {
+            list.push(if store { "LR" } else { "PC" }.to_string());
+        }
         return Some((
             format!(
-                "{op} {}!, {{{}}}",
-                reg((w >> 8) & 7),
-                reg_list(w, 8).join(", ")
+                "{} {{{}}}",
+                if store { "PUSH" } else { "POP" },
+                list.join(", ")
             ),
             None,
         ));

@@ -163,6 +163,11 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
       CARGO_TERM_COLOR: always
+      # Software rendering for the GTK widget tests: the CI image has
+      # no GL stack, and surface creation must not depend on it.
+      # X11 is forced because there is no Wayland compositor to probe.
+      GSK_RENDERER: cairo
+      GDK_BACKEND: x11
     permissions:
       contents: read
     steps:
