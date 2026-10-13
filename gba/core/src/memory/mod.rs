@@ -29,6 +29,13 @@ const PALETTE_SIZE: usize = 0x400;
 const VRAM_SIZE: usize = 0x18000;
 const OAM_SIZE: usize = 0x400;
 
+/// Tile-viewer window: first 64KiB of VRAM at the 0x0600_0000 base.
+/// Single source of truth for the debugger bulk decode (see
+/// `GbaDebugger::images`): offsets below `VRAM_SIZE` never take the
+/// mirror branch, so this window is always linear.
+pub(crate) const VRAM_TILE_WINDOW_BASE: u32 = 0x0600_0000;
+pub(crate) const VRAM_TILE_WINDOW_LEN: usize = 0x1_0000;
+
 /// GBA メモリバス。GbcMemoryBus と同様に全RAM/レジスタの唯一所有者であり、
 /// CPU は `&mut GbaMemoryBus` 経由でアクセスする。
 pub struct GbaMemoryBus {
@@ -3014,12 +3021,12 @@ impl GbaMemoryBus {
     }
 
     /// Raw VRAM backing store for debugger bulk decode. The tile
-    /// viewer reads the first 64KiB linearly — offsets below
-    /// `VRAM_SIZE` never take the mirror branch of `vram_offset`, so
-    /// indexing `base[addr - 0x0600_0000]` is exactly what the
-    /// validated per-byte peek computes, minus ~260k table/range/match
-    /// validations per live fetch. Mirror-regime callers must keep
-    /// using [`Self::peek_byte`].
+    /// viewer reads [`VRAM_TILE_WINDOW_BASE`]`+`[`VRAM_TILE_WINDOW_LEN`]
+    /// linearly — offsets below `VRAM_SIZE` never take the mirror
+    /// branch of `vram_offset`, so indexing the window is exactly what
+    /// the validated per-byte peek computes, minus ~260k
+    /// table/range/match validations per live fetch. Mirror-regime
+    /// callers must keep using [`Self::peek_byte`].
     pub(crate) fn peek_vram(&self) -> &[u8; VRAM_SIZE] {
         &self.vram
     }
