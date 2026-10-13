@@ -299,7 +299,7 @@ pub trait Debugger {
 /// A single disassembled instruction row. `bytes` holds up to 4
 /// instruction bytes (ARM needs 4, 6502 needs 3, Thumb needs 2),
 /// `len` the used prefix.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DisasmLine {
     /// Instruction address.
     pub addr: u32,
@@ -425,7 +425,7 @@ pub struct DebuggerSnapshot {
 
 /// One hex-dump row. `valid` counts readable bytes so a short final row
 /// is distinguishable from genuinely-zero memory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HexRow {
     pub addr: u32,
     pub valid: u8,

@@ -237,91 +237,102 @@ fn session_rebuild_reuses_previously_resolved_load_request() {
     assert!(session.loaded());
 }
 
-#[test]
-fn apply_settings_swaps_presentation_without_rebuild_on_visual_delta() {
-    use crate::test_helpers::mock_core_creations;
-    use nerust_render_traits::{VideoFrameFormat, logical::LogicalSize, physical::PhysicalSize};
-
-    /// Delegates everything to `MockFactory` but answers the
-    /// presentation query: pins the session seam (views → factory →
-    /// core) while the decision itself stays unit-tested at the real
-    /// factories.
-    struct LiveSwapFactory;
-    impl CoreFactory for LiveSwapFactory {
-        fn system_id(&self) -> Box<dyn SystemId> {
-            MockFactory.system_id()
-        }
-        fn display_name(&self) -> &'static str {
-            MockFactory.display_name()
-        }
-        fn probe_media(&self, media: &MediaObject) -> bool {
-            MockFactory.probe_media(media)
-        }
-        fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
-            MockFactory.settings_page(view)
-        }
-        fn apply_settings_choice(
-            &self,
-            view: &mut FactorySettingsView,
-            field: &SystemSettingsFieldId,
-            choice: &SystemSettingsChoiceId,
-        ) -> Result<(), FactoryError> {
-            MockFactory.apply_settings_choice(view, field, choice)
-        }
-        fn resolve_load_request(
-            &self,
-            view: &FactorySettingsView,
-            options: Box<dyn DynSystemLoadOptions>,
-        ) -> Result<ResolvedLoadRequest, FactoryError> {
-            MockFactory.resolve_load_request(view, options)
-        }
-        fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-            MockFactory.default_load_options()
-        }
-        fn load_options_schema(
-            &self,
-        ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
-            MockFactory.load_options_schema()
-        }
-        fn create_core_and_adapter_with_assignments(
-            &self,
-            view: &FactorySettingsView,
-            speaker: Box<dyn AudioBackend>,
-            assignments: &InputAssignments,
-        ) -> Result<CoreParts, FactoryError> {
-            MockFactory.create_core_and_adapter_with_assignments(view, speaker, assignments)
-        }
-        fn input_system_factory(&self) -> &dyn InputSystemFactory {
-            MockFactory.input_system_factory()
-        }
-        fn presentation_swap_assets(
-            &self,
-            _before: &FactorySettingsView,
-            _after: &FactorySettingsView,
-        ) -> Option<(nerust_render_traits::VideoRenderProfile, Box<[u32]>)> {
-            use nerust_render_traits::VideoRenderProfile;
-            Some((
-                VideoRenderProfile {
-                    source_logical_size: LogicalSize {
-                        width: 256,
-                        height: 240,
-                    },
-                    logical_size: LogicalSize {
-                        width: 602,
-                        height: 240,
-                    },
-                    physical_size: PhysicalSize {
-                        width: 602.0,
-                        height: 480.0,
-                    },
-                    frame_format: VideoFrameFormat::Palette,
-                    ntsc_packed_rgba8: None,
-                },
-                (0..256).map(|i| 0xFF00_0000 | i).collect(),
-            ))
-        }
+/// Delegates everything to `MockFactory` but answers the
+/// presentation query: pins the session seam (views → factory → core)
+/// while the decision itself stays unit-tested at the real factories.
+///
+/// Direction-aware by entry presence: forward (absent → present)
+/// serves the wide profile, rollback (present → absent) serves the
+/// narrow one. This pins the session passing `(before, after)` in the
+/// right order on both legs — swapping the args serves the wrong
+/// width and fails the tests below.
+struct LiveSwapFactory;
+impl CoreFactory for LiveSwapFactory {
+    fn system_id(&self) -> Box<dyn SystemId> {
+        MockFactory.system_id()
     }
+    fn display_name(&self) -> &'static str {
+        MockFactory.display_name()
+    }
+    fn probe_media(&self, media: &MediaObject) -> bool {
+        MockFactory.probe_media(media)
+    }
+    fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
+        MockFactory.settings_page(view)
+    }
+    fn apply_settings_choice(
+        &self,
+        view: &mut FactorySettingsView,
+        field: &SystemSettingsFieldId,
+        choice: &SystemSettingsChoiceId,
+    ) -> Result<(), FactoryError> {
+        MockFactory.apply_settings_choice(view, field, choice)
+    }
+    fn resolve_load_request(
+        &self,
+        view: &FactorySettingsView,
+        options: Box<dyn DynSystemLoadOptions>,
+    ) -> Result<ResolvedLoadRequest, FactoryError> {
+        MockFactory.resolve_load_request(view, options)
+    }
+    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+        MockFactory.default_load_options()
+    }
+    fn load_options_schema(
+        &self,
+    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+        MockFactory.load_options_schema()
+    }
+    fn create_core_and_adapter_with_assignments(
+        &self,
+        view: &FactorySettingsView,
+        speaker: Box<dyn AudioBackend>,
+        assignments: &InputAssignments,
+    ) -> Result<CoreParts, FactoryError> {
+        MockFactory.create_core_and_adapter_with_assignments(view, speaker, assignments)
+    }
+    fn input_system_factory(&self) -> &dyn InputSystemFactory {
+        MockFactory.input_system_factory()
+    }
+    fn presentation_swap_assets(
+        &self,
+        before: &FactorySettingsView,
+        after: &FactorySettingsView,
+    ) -> Option<(nerust_render_traits::VideoRenderProfile, Box<[u32]>)> {
+        use nerust_render_traits::{
+            VideoFrameFormat, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
+        };
+        let widened = after.system_config.is_some() && before.system_config.is_none();
+        let restored = before.system_config.is_some() && after.system_config.is_none();
+        let width = if widened {
+            602
+        } else if restored {
+            256
+        } else {
+            return None;
+        };
+        Some((
+            VideoRenderProfile {
+                source_logical_size: LogicalSize {
+                    width: 256,
+                    height: 240,
+                },
+                logical_size: LogicalSize { width, height: 240 },
+                physical_size: PhysicalSize {
+                    width: width as f32,
+                    height: 480.0,
+                },
+                frame_format: VideoFrameFormat::Palette,
+                ntsc_packed_rgba8: None,
+            },
+            (0..256).map(|i| 0xFF00_0000 | i).collect(),
+        ))
+    }
+}
 
+/// Loaded session behind `LiveSwapFactory` for the presentation-swap
+/// tests below.
+fn live_swap_session() -> SessionHandle {
     let factory: Arc<dyn CoreFactory> = Arc::new(LiveSwapFactory);
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
     let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
@@ -344,14 +355,27 @@ fn apply_settings_swaps_presentation_without_rebuild_on_visual_delta() {
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
     assert!(session.loaded());
+    session
+}
 
-    // A visual delta (filter flip on the active system's settings).
+/// Visual delta used by the presentation-swap tests: the active
+/// system gains settings it didn't have (absent → present).
+fn with_visual_delta(session: &SessionHandle) -> SettingsSnapshot {
     let mut next = session.settings_snapshot().clone();
     let mut nes = nerust_nes_settings::NesSettings::default();
     nes.video.filter = nerust_nes_settings::NesVideoFilter::NtscRgb;
     next.shared
         .systems
         .insert(Box::new(DummySystemId) as Box<dyn SystemId>, Box::new(nes));
+    next
+}
+
+#[test]
+fn apply_settings_swaps_presentation_without_rebuild_on_visual_delta() {
+    use crate::test_helpers::mock_core_creations;
+
+    let mut session = live_swap_session();
+    let next = with_visual_delta(&session);
 
     let creations = mock_core_creations();
     let plan = session.apply_settings(next).unwrap();
@@ -374,6 +398,54 @@ fn apply_settings_swaps_presentation_without_rebuild_on_visual_delta() {
         602,
         "swapped profile reaches the session"
     );
+}
+
+#[test]
+fn apply_settings_rolls_back_presentation_swap_on_save_failure() {
+    use crate::settings::defaults::seed::{
+        default_app_state, default_local_settings, default_shared_settings,
+    };
+    use nerust_gui_runtime::settings::repository::FailingStore;
+
+    let mut session = live_swap_session();
+    let next = with_visual_delta(&session);
+
+    // Replace settings manager with one using a FailingStore.
+    let registry = crate::registry::SystemRegistry::new(vec![]);
+    let shared = default_shared_settings(registry.all());
+    session.set_settings(SettingsManager::with_store(
+        shared,
+        default_local_settings(),
+        default_app_state(),
+        Box::new(FailingStore),
+    ));
+
+    // Save fails after the swap: the error surfaces and the previous
+    // assets swap back behind a fresh reply (narrow profile again).
+    let err = session.apply_settings(next).unwrap_err();
+    assert!(
+        matches!(err, SessionError::Settings(_)),
+        "expected Settings error, got {err:?}"
+    );
+    assert_eq!(
+        session
+            .render_profile()
+            .expect("profile")
+            .logical_size
+            .width,
+        256,
+        "rollback swaps the previous assets back"
+    );
+    assert!(
+        session
+            .settings_snapshot()
+            .shared
+            .systems
+            .get(&DummySystemId as &dyn SystemId)
+            .is_none(),
+        "snapshot keeps the previous (absent) settings"
+    );
+    assert!(session.loaded(), "rollback keeps the loaded ROM");
 }
 
 #[test]

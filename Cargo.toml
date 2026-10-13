@@ -155,6 +155,9 @@ iced = { default-features = false, features = [
   "x11",
   # PPU viewer pattern images (`iced::widget::image`).
   "image",
+  # Debugger heavy lists (`iced::widget::lazy`): keystrokes reuse the
+  # cached dump/disasm/regs subtrees instead of rebuilding ~600 widgets.
+  "lazy",
 ], version = "=0.14.0" }
 iced_tiny_skia = { version = "=0.14.1" }
 iced_winit = { version = "=0.14.1" }
