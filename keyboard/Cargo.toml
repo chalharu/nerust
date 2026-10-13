@@ -13,13 +13,11 @@ default = []
 error = ["dep:thiserror"]
 gdk = ["dep:gdk", "error"]
 iced = ["dep:iced", "error"]
-tao = ["dep:tao", "error"]
 
 [dependencies]
 gdk = { optional = true, workspace = true }
 iced = { optional = true, workspace = true }
 serde = { features = ["derive"], workspace = true }
-tao = { optional = true, workspace = true }
 thiserror = { optional = true, workspace = true }
 
 [dev-dependencies]

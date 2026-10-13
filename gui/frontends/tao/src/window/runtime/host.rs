@@ -333,7 +333,7 @@ impl HostState {
             return;
         }
         if let Some(pressed) = element_state_to_pressed(input.state)
-            && let Some(key) = input.physical_key.try_into().ok()
+            && let Some(key) = crate::tao_conversions::keycode_to_key(input.physical_key)
             && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
         {
             self.apply_keyboard_shortcut(shortcut);
