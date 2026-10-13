@@ -16,7 +16,6 @@ use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, SpaceId
 use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::debug::{
     DebugAction, DebugDrainInput, DrainFlight, DrainPoll, LiveImagesFlight, LiveImagesPoll,
-    merge_running_sections,
 };
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text};
@@ -899,7 +898,7 @@ impl DebuggerWindowCore {
             // gate): restore the last paused rows so Resume keeps the
             // inspectable state instead of blanking it.
             let mut display = output.display;
-            merge_running_sections(&this.data.display, &mut display);
+            display.restore_paused_sections(&this.data.display);
             this.data.display = display;
             if let Some(selected) = output.reselected {
                 this.data.selected = Some(selected);

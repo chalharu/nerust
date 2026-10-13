@@ -215,6 +215,26 @@ impl DisplayCache {
             pending: self.pending,
         }
     }
+
+    /// Restore the last paused sections over a running drain. The
+    /// paused-gated inspect and disassembly refuse while the core
+    /// runs, so Resume (or Refresh while running) would otherwise
+    /// blank the dump, registers, and disassembly the user paused on.
+    /// Images, status, and the pause chrome already carry fresh values
+    /// and stay untouched: the rows read as last-paused under a
+    /// "running" status, which is honest (no frame can be pinned while
+    /// running).
+    pub fn restore_paused_sections(&mut self, old: &DisplayCache) {
+        if self.paused {
+            return;
+        }
+        self.dump_rows.clone_from(&old.dump_rows);
+        self.regs.clone_from(&old.regs);
+        self.reg_names.clone_from(&old.reg_names);
+        self.disasm_lines.clone_from(&old.disasm_lines);
+        self.panels.clone_from(&old.panels);
+        self.diff.clone_from(&old.diff);
+    }
 }
 
 /// One debugger outcome, data only. The session and drain report
@@ -564,6 +584,45 @@ pub fn scale2x_nearest(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cached(rows: bool) -> DisplayCache {
+        DisplayCache {
+            dump_rows: if rows {
+                vec![HexRow {
+                    addr: 0x10,
+                    valid: 1,
+                    bytes: [0xAB, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                }]
+            } else {
+                Vec::new()
+            },
+            regs: if rows { vec![("a", 1)] } else { Vec::new() },
+            status: StatusMessage::Paused,
+            paused: true,
+            ..DisplayCache::default()
+        }
+    }
+
+    #[test]
+    fn restore_keeps_paused_sections_over_running_drain() {
+        let old = cached(true);
+        let mut new = DisplayCache {
+            paused: false,
+            status: StatusMessage::Running,
+            ..DisplayCache::default()
+        };
+        new.restore_paused_sections(&old);
+        assert_eq!(new.dump_rows.len(), 1);
+        assert_eq!(new.regs, vec![("a", 1)]);
+        assert_eq!(new.status, StatusMessage::Running, "fresh chrome stays");
+        // Paused drains pass through untouched.
+        let mut paused_new = DisplayCache {
+            paused: true,
+            ..DisplayCache::default()
+        };
+        paused_new.restore_paused_sections(&old);
+        assert!(paused_new.dump_rows.is_empty());
+    }
 
     #[test]
     fn ppu_hover_hint_is_canonical() {

@@ -909,7 +909,7 @@ impl HostState {
             let mut display = output.display;
             {
                 let old = handle.bridge.display.lock().unwrap().clone();
-                nerust_gui_shell::debug::merge_running_sections(&old, &mut display);
+                display.restore_paused_sections(&old);
             }
             handle.set_display(display);
         }

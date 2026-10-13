@@ -122,9 +122,24 @@ impl EmuThreadPort for EmuThread {
 }
 
 /// Clone shares the transport, metrics, frame slot, and image cache
-/// (`Arc`s); only the display framebuffer copies (debugger-unused).
-/// See `drain_core`.
-#[derive(Clone)]
+/// (`Arc`s); the display framebuffer is reset to empty instead of
+/// copied. Rationale: clones exist for debugger drain flights, which
+/// never touch `disp_fb` (no swap, no blit) — copying 61-164KB per
+/// drain begin would be pure waste.
+impl Clone for EmuCore {
+    fn clone(&self) -> Self {
+        Self {
+            emu: Arc::clone(&self.emu),
+            render_profile: self.render_profile.clone(),
+            shared_fb: Arc::clone(&self.shared_fb),
+            disp_fb: FrameBuffer::with_capacity(0, 0, PixelFormat::Rgba),
+            frame_ready: Arc::clone(&self.frame_ready),
+            metrics: Arc::clone(&self.metrics),
+            image_cache: Arc::clone(&self.image_cache),
+        }
+    }
+}
+
 pub struct EmuCore {
     emu: Arc<dyn EmuThreadPort>,
     render_profile: VideoRenderProfile,
@@ -148,6 +163,44 @@ struct CachedImages {
     dirty: bool,
     generation: u64,
     images: Vec<DebugImage>,
+    /// Content hash and generation of the last served decode, for the
+    /// identical-content skip in [`EmuCore::images_store`].
+    served_hash: Option<u64>,
+    served_generation: u64,
+}
+
+/// One stored image decode: the source generation, the pixels, and
+/// whether the content changed since the last serve. Unchanged
+/// refetches carry the served generation so viewers skip re-deriving.
+pub(crate) struct StoredImages {
+    pub(crate) generation: u64,
+    pub(crate) images: Vec<DebugImage>,
+    pub(crate) fresh: bool,
+}
+
+/// FNV-1a content hash over decoded image bytes. ~100ns per 64KB on
+/// modern cores: orders of magnitude cheaper than the 512KB RGBA
+/// blit it can skip, and dependency-free.
+fn hash_debug_images(images: &[DebugImage]) -> u64 {
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut hash = OFFSET;
+    let mut mix = |bytes: &[u8]| {
+        for &byte in bytes {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(PRIME);
+        }
+    };
+    for image in images {
+        mix(image.id.as_bytes());
+        mix(&image.width.to_le_bytes());
+        mix(&image.height.to_le_bytes());
+        for triple in &image.palette {
+            mix(triple);
+        }
+        mix(&image.pixels);
+    }
+    hash
 }
 
 impl EmuCore {
@@ -174,6 +227,8 @@ impl EmuCore {
                 dirty: true,
                 generation: 0,
                 images: Vec::new(),
+                served_hash: None,
+                served_generation: 0,
             })),
         }
     }
@@ -237,6 +292,8 @@ impl EmuCore {
                     dirty: true,
                     generation: 0,
                     images: Vec::new(),
+                    served_hash: None,
+                    served_generation: 0,
                 })),
             },
             parts.gui_input,
@@ -593,6 +650,9 @@ impl EmuCore {
         Result<(u64, Vec<nerust_core_traits::debugger::DebugImage>), DebuggerError>,
         OperationError,
     > {
+        if !self.metrics().paused {
+            self.mark_images_dirty();
+        }
         if let Some(cached) = self.images_cache_lookup() {
             return Ok(Ok(cached));
         }
@@ -602,19 +662,17 @@ impl EmuCore {
             Ok(Err(error)) => return Ok(Err(error)),
             Err(_) => return Err(OperationError::NoReply),
         };
-        Ok(Ok(self.images_store(images)))
+        let stored = self.images_store(images);
+        Ok(Ok((stored.generation, stored.images)))
     }
 
     /// Paused-cache lookup for [`EmuCore::debug_images`]: a fresh hit
-    /// serves without touching the emu thread. A running core advances
-    /// memory at any time, so the lookup dirties first (mirroring the
-    /// blocking body) and always misses.
+    /// serves without touching the emu thread. Pure query, no side
+    /// effects: callers mark dirty explicitly when memory may have
+    /// advanced (a running core always refetches).
     pub(crate) fn images_cache_lookup(
         &self,
     ) -> Option<(u64, Vec<nerust_core_traits::debugger::DebugImage>)> {
-        if !self.metrics().paused {
-            self.mark_images_dirty();
-        }
         self.image_cache
             .lock()
             .ok()
@@ -638,20 +696,45 @@ impl EmuCore {
     }
 
     /// Store a fetched decode into the paused cache and report the
-    /// current generation with the pixels. Poison recovery mirrors
-    /// `metrics()`: a poisoned cache still serves this decode instead
-    /// of failing the viewer.
+    /// source generation with the pixels, plus whether the content is
+    /// fresh. Content-identical refetches (common while running: the
+    /// dirty mark advances the generation on every lookup, but tiles
+    /// often stand still) report the *served* generation, so viewers
+    /// skip re-deriving: same pixels, same generation, zero UI work.
+    /// Poison recovery mirrors `metrics()`: a poisoned cache still
+    /// serves this decode instead of failing the viewer.
     pub(crate) fn images_store(
         &self,
         images: Vec<nerust_core_traits::debugger::DebugImage>,
-    ) -> (u64, Vec<nerust_core_traits::debugger::DebugImage>) {
+    ) -> StoredImages {
+        let hash = hash_debug_images(&images);
         let mut cache = self.image_cache.lock().unwrap_or_else(|e| {
             log::warn!("image cache mutex poisoned, recovering");
             e.into_inner()
         });
         cache.images.clone_from(&images);
         cache.dirty = false;
-        (cache.generation, images)
+        if cache.served_hash == Some(hash) {
+            // Identical content: collapse the dirty bump back to the
+            // served generation so cache hits agree with stores —
+            // otherwise viewers would flap between two generations of
+            // the same pixels. Same pixels, same generation, zero UI
+            // work, forever.
+            cache.generation = cache.served_generation;
+            StoredImages {
+                generation: cache.served_generation,
+                images,
+                fresh: false,
+            }
+        } else {
+            cache.served_hash = Some(hash);
+            cache.served_generation = cache.generation;
+            StoredImages {
+                generation: cache.generation,
+                images,
+                fresh: true,
+            }
+        }
     }
 
     /// On-demand program counter through the emu thread. Ungated (a
@@ -1016,14 +1099,47 @@ mod tests {
         })
         .expect("thread")
         .expect("writable");
-        let (gen2, _) = core.debug_images().expect("thread").expect("images");
-        assert!(gen2 > gen1, "writes dirty the cache generation");
-        // A running core always refetches: the metrics mirror says
-        // running, so the generation bumps on every call.
+        // The mock decode never changes, so the refetch serves the
+        // same pixels under the served generation: viewers skip
+        // re-deriving instead of churning on a bump.
+        let (gen2, images2) = core.debug_images().expect("thread").expect("images");
+        assert_eq!(images2.len(), 1);
+        assert_eq!(gen2, gen1, "identical content keeps the served generation");
+        // A running core always refetches; static content still keeps
+        // the served generation.
         core.resume().expect("thread");
         let (gen3, _) = core.debug_images().expect("thread").expect("images");
-        assert!(gen3 > gen2, "running refetches advance the generation");
+        assert_eq!(gen3, gen1, "running refetch of identical content skips too");
         core.pause().expect("thread");
+    }
+
+    #[test]
+    fn images_store_advances_only_on_changed_content() {
+        use nerust_core_traits::debugger::ImageFormat;
+        let core = loaded_core();
+        let picture = |pixels: Vec<u8>| {
+            vec![DebugImage {
+                id: "tiles",
+                label_id: "Tiles",
+                width: 2,
+                height: 1,
+                format: ImageFormat::Indexed2bpp,
+                palette: vec![[0, 0, 0], [255, 255, 255]],
+                pixels,
+            }]
+        };
+        let first = core.images_store(picture(vec![0, 1]));
+        assert!(first.fresh);
+        let served = first.generation;
+        // Identical content: same generation back, no freshness.
+        let repeat = core.images_store(picture(vec![0, 1]));
+        assert!(!repeat.fresh);
+        assert_eq!(repeat.generation, served);
+        // Changed byte: fresh with the current generation.
+        core.mark_images_dirty();
+        let changed = core.images_store(picture(vec![0, 2]));
+        assert!(changed.fresh);
+        assert!(changed.generation > served);
     }
 
     #[test]

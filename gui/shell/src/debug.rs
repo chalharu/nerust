@@ -81,25 +81,6 @@ pub struct DebugDrainOutput {
     pub reselected: Option<(u32, Option<u8>)>,
 }
 
-/// Restore the last paused sections over a running drain. The
-/// paused-gated inspect and disassembly refuse while the core runs,
-/// so Resume (or Refresh while running) would otherwise blank the
-/// dump, registers, and disassembly the user paused on. Images,
-/// status, and the pause chrome already carry fresh values and stay
-/// untouched: the rows read as last-paused under a "running" status,
-/// which is honest (no frame can be pinned while running).
-pub fn merge_running_sections(old: &DisplayCache, new: &mut DisplayCache) {
-    if new.paused {
-        return;
-    }
-    new.dump_rows.clone_from(&old.dump_rows);
-    new.regs.clone_from(&old.regs);
-    new.reg_names.clone_from(&old.reg_names);
-    new.disasm_lines.clone_from(&old.disasm_lines);
-    new.panels.clone_from(&old.panels);
-    new.diff.clone_from(&old.diff);
-}
-
 impl SessionHandle {
     /// Run one action batch and return the render-ready display.
     /// Phase order is load-bearing: execution first, then
@@ -356,20 +337,24 @@ impl DrainFlight {
             images: Vec::new(),
             watch_value: None,
         };
-        flight.queue_exec(actions);
-        flight.queue_commit(actions);
-        flight.queue_preps(actions);
+        flight.classify(actions);
         flight
     }
 
-    /// Execution traffic: fire-and-forget sends run now (they never
-    /// wait), steps queue for sequential awaits. Status wording
-    /// mirrors `SessionHandle::debug_pause` and friends.
-    fn queue_exec(&mut self, actions: &[DebugAction]) {
+    /// Single dispatch over the batch: fire-and-forget sends run now
+    /// (they never wait), remote ops queue for their phases in batch
+    /// order. One match, so a new action touches this pass only —
+    /// not three parallel queues. Status wording mirrors
+    /// `SessionHandle::debug_pause` and friends.
+    fn classify(&mut self, actions: &[DebugAction]) {
         for action in actions {
             match action {
-                DebugAction::Refresh | DebugAction::MemNav | DebugAction::SelectRow(_) => {
+                DebugAction::Refresh | DebugAction::MemNav => {
                     self.state_changing = true;
+                }
+                DebugAction::SelectRow(addr) => {
+                    self.state_changing = true;
+                    self.preps.push_back(PrepOp::Select(*addr));
                 }
                 DebugAction::Pause => {
                     self.status = Some(self.ctx.pause_mirror(true));
@@ -389,33 +374,17 @@ impl DrainFlight {
                     self.state_changing = true;
                     self.steps.push_back(StepUnit::Instruction);
                 }
-                DebugAction::EditStage(_)
-                | DebugAction::EditCancel
-                | DebugAction::WriteConfirm
-                | DebugAction::RegisterWrite(_) => {}
-            }
-        }
-    }
-
-    fn queue_commit(&mut self, actions: &[DebugAction]) {
-        for action in actions {
-            match action {
+                // Transaction traffic never kills: it builds the
+                // transaction the commit phase consumes. Cancel clears
+                // there; register writes carry no transaction state.
+                DebugAction::EditStage(value) => {
+                    self.preps.push_back(PrepOp::Stage(*value));
+                }
                 DebugAction::EditCancel => self.commits.push_back(CommitOp::Cancel),
                 DebugAction::WriteConfirm => self.commits.push_back(CommitOp::Confirm),
                 DebugAction::RegisterWrite(value) => {
                     self.commits.push_back(CommitOp::RegWrite(*value));
                 }
-                _ => {}
-            }
-        }
-    }
-
-    fn queue_preps(&mut self, actions: &[DebugAction]) {
-        for action in actions {
-            match action {
-                DebugAction::SelectRow(addr) => self.preps.push_back(PrepOp::Select(*addr)),
-                DebugAction::EditStage(value) => self.preps.push_back(PrepOp::Stage(*value)),
-                _ => {}
             }
         }
     }
@@ -765,6 +734,11 @@ impl DrainFlight {
             self.phase = FlightPhase::Watch;
             return;
         };
+        // A running core advances memory at any time: dirty first so
+        // the lookup below always refetches (mirrors `debug_images`).
+        if !core.metrics().paused {
+            core.mark_images_dirty();
+        }
         if let Some((generation, images)) = core.images_cache_lookup() {
             self.images_gen = generation;
             self.images = images;
@@ -918,9 +892,16 @@ impl DrainFlight {
             Err(_) => return,
         };
         if let Some(core) = self.ctx.core.as_ref() {
-            let (generation, images) = core.images_store(images);
-            self.images_gen = generation;
-            self.images = images;
+            let stored = core.images_store(images);
+            // Unchanged content reports the served generation: skip
+            // the RGBA conversion too, not just the viewer re-derive
+            // — the frontend generation guard drops the empty pixels.
+            self.images_gen = stored.generation;
+            self.images = if stored.fresh {
+                stored.images
+            } else {
+                Vec::new()
+            };
         }
     }
 
@@ -1139,54 +1120,21 @@ impl LiveImagesFlight {
     fn store(&self, reply: Result<Vec<DebugImage>, DebuggerError>) -> crate::session::LiveImages {
         let images = reply.ok()?;
         let core = self.core.as_ref()?;
-        let (generation, images) = core.images_store(images);
-        Some((generation, images.iter().map(vm::rgba_image).collect()))
+        let stored = core.images_store(images);
+        // Unchanged content skips the RGBA conversion like the drain
+        // flight: the served generation makes viewers drop it.
+        let items = if stored.fresh {
+            stored.images.iter().map(vm::rgba_image).collect()
+        } else {
+            Vec::new()
+        };
+        Some((stored.generation, items))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_core_traits::debugger::HexRow;
-    fn cached(rows: bool) -> DisplayCache {
-        DisplayCache {
-            dump_rows: if rows {
-                vec![HexRow {
-                    addr: 0x10,
-                    valid: 1,
-                    bytes: [0xAB, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                }]
-            } else {
-                Vec::new()
-            },
-            regs: if rows { vec![("a", 1)] } else { Vec::new() },
-            status: vm::StatusMessage::Paused,
-            paused: true,
-            ..DisplayCache::default()
-        }
-    }
-
-    #[test]
-    fn merge_restores_paused_sections_over_running_drain() {
-        let old = cached(true);
-        let mut new = DisplayCache {
-            paused: false,
-            status: vm::StatusMessage::Running,
-            ..DisplayCache::default()
-        };
-        merge_running_sections(&old, &mut new);
-        assert_eq!(new.dump_rows.len(), 1);
-        assert_eq!(new.regs, vec![("a", 1)]);
-        assert_eq!(new.status, vm::StatusMessage::Running, "fresh chrome stays");
-        // Paused drains pass through untouched.
-        let mut paused_new = DisplayCache {
-            paused: true,
-            ..DisplayCache::default()
-        };
-        merge_running_sections(&old, &mut paused_new);
-        assert!(paused_new.dump_rows.is_empty());
-    }
-
     #[test]
     fn await_reply_waits_readies_and_loses() {
         use std::sync::mpsc;
