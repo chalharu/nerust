@@ -1668,7 +1668,7 @@ mod tests {
         assert!(!invalidated.load(Ordering::Acquire));
         shell.relayout(iced::Size::new(900.0, 650.0), &mut backend);
         let theme = iced::Theme::Light;
-        let style = <iced::Theme as iced::advanced::theme::Base>::base(&theme);
+        let style = <iced::Theme as iced::theme::Base>::base(&theme);
         shell.ui_mut().draw(
             &mut backend,
             &theme,
