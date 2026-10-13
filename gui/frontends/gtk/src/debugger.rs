@@ -898,8 +898,13 @@ impl DebuggerWindowCore {
     }
 
     fn reg_selected(win: &DebuggerWindow, name: &'static str) {
+        // Highlight-only: the target feeds the next Set action and
+        // the register highlight, neither of which needs fresh emu
+        // data, so rebuild without a drain (a full drain here would
+        // stall the main thread on up to five timeout round-trips
+        // just to move a highlight).
         win.borrow_mut().data.reg_target = Some(name);
-        Self::act(win, &[DebugAction::Refresh]);
+        Self::rebuild(win);
     }
 
     fn reg_set(win: &DebuggerWindow) {
