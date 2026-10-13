@@ -3648,7 +3648,6 @@ dependencies = [
  "iced",
  "serde",
  "strum",
- "tao",
  "thiserror 2.0.21",
 ]
 
