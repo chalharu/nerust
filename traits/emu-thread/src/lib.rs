@@ -164,11 +164,8 @@ impl EmuThread {
                     continue;
                 }
 
-                // Park while paused with nothing pending: nothing renders
-                // here, so real-time pacing must not gate stepped frames
-                // (headless determinism runs flat-out, not at 60Hz), and
-                // the loop must not hot-spin on `try_recv`. The parked
-                // command is consumed by the drain below; disconnect
+                // Park while paused with nothing pending: no pacing gate
+                // (stepped frames run flat-out), no hot-spin. Disconnect
                 // exits, like the idle path.
                 if core.paused() && pending.is_none() {
                     match cmd_rx.recv() {
@@ -231,12 +228,9 @@ impl EmuThread {
                             let _ = reply.send(result);
                         }
                         EmuCommand::Step { unit, reply } => {
-                            // Synchronous barrier: each reply matches exactly
-                            // one executed step; callers pause first.
-                            // Frame steps run the frame block directly
-                            // (pixels must land in the shared framebuffer);
-                            // instruction steps delegate (cycles kept).
-                            // Unloaded stepping is refused.
+                            // Barrier: one reply per executed step; callers
+                            // pause first. Frame steps render inline;
+                            // instruction steps delegate.
                             let result = if !loaded {
                                 Err(DebuggerError::Unsupported)
                             } else {
@@ -466,12 +460,9 @@ fn handle_load(
     loaded
 }
 
-/// Live audio-backend swap between frames (no pause needed: the drain
-/// processes commands only between frames, so no frame straddles the
-/// swap). Same lifecycle shape as `RestartAudio`, plus the new device
-/// parameters: the old backend quiets first, the new one starts under
-/// thread ownership, the core re-basis its nominal rate, and the
-/// rate-control filter drops stale queue observations.
+/// Live audio-backend swap between frames (no pause: commands drain
+/// only between frames). Old backend quiets first, core re-basis its
+/// rate, filter drops stale observations.
 fn handle_swap_audio(
     core: &mut dyn ConsoleCore,
     audio: &mut Box<dyn AudioBackend + Send + 'static>,

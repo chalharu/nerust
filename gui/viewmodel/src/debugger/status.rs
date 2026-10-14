@@ -5,12 +5,9 @@ use nerust_settings_core::model::language::AppLanguage;
 
 use nerust_core_traits::debugger::{DebuggerError, SpaceId, SpaceTable};
 
-/// One debugger outcome, data only. The session and drain report
-/// *what* happened; frontends render the wording via
-/// [`StatusMessage::render`] in their own language. This keeps
-/// presentation (wording, language) out of the application layer:
-/// the drain no longer needs a language, and both languages are
-/// covered by construction.
+/// One debugger outcome, data only. Frontends render wording via
+/// [`StatusMessage::render`] in their own language; the drain needs
+/// no language.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum StatusMessage {
     /// Nothing to report yet (empty display).

@@ -167,12 +167,8 @@ pub enum EmuCommand {
     /// lifecycle transitions can kill audio streams; frontends send
     /// this on foreground resume.
     RestartAudio,
-    /// Live audio-backend swap for sample-rate/latency changes. Runs
-    /// synchronously between frames: pause the old backend, start the
-    /// new one, stamp `sample_rate` into the core, reset the
-    /// rate-control filter. No pause needed, no ROM reload, no state
-    /// round-trip — and on GBA no `AudioRateMismatch`, since no state
-    /// crosses a rate boundary at all.
+    /// Live audio-backend swap between frames. No pause, no reload;
+    /// on GBA no rate-boundary state crossing.
     SwapAudio(Box<SwapAudioCommand>),
     /// Live render-target swap for presentation-only changes (video
     /// filter). Runs synchronously between frames; callers pause first
@@ -306,12 +302,9 @@ pub trait ConsoleCore: Send + Downcast {
     fn set_paused(&mut self, paused: bool);
 
     // -- audio device rate --
-    /// Re-basis nominal audio production onto a new device rate without
-    /// reconstructing the core. The session calls this exactly once per
-    /// `EmuCommand::SwapAudio`, between frames, after swapping the
-    /// backend: re-derive anything rate-baked (resamplers, filter
-    /// coefficients, cached DSP states) here. Voice/machine state is
-    /// untouched — only the rate basis changes.
+    /// Re-basis nominal audio production onto a new device rate, once
+    /// per swap between frames. Only the rate basis changes; voice and
+    /// machine state are untouched.
     fn set_audio_sample_rate(&mut self, sample_rate: u32);
 
     // -- save states --
@@ -339,24 +332,15 @@ pub trait ConsoleCore: Send + Downcast {
     }
 
     // -- guest output channels (default: none) --
-    /// Names of the guest-output byte channels this core produces
-    /// (e.g. a link-cable serial stream, a guest debug-log sink).
-    /// Static topology: names are core-defined, data (manifests) may
-    /// reference them, generic drivers never invent them.
-    ///
-    /// Override PAIR checklist: `output_channels` and
-    /// `take_channel_bytes` must be overridden together. Listing a
-    /// channel without draining it (or vice versa) fails loudly at
-    /// read time, never at compile time, so keep the pair in sync.
+    /// Static channel topology: names are core-defined, never invented
+    /// by generic drivers. PAIR RULE: override with
+    /// `take_channel_bytes` together, or reads fail loudly.
     fn output_channels(&self) -> Vec<String> {
         Vec::new()
     }
-    /// Drain bytes the core produced on `channel` since the last call.
-    /// The session layer calls this once per rendered frame per tapped
-    /// channel; accumulation is the reader's job. Line-oriented sinks
-    /// flatten to newline-delimited bytes here (levels/prefixes are
-    /// the assert side's concern, if ever needed). Empty by default and
-    /// for unknown channels: cores stay silent unless they produce.
+    /// Drain bytes produced on `channel` since the last call (once per
+    /// frame per tapped channel). Empty by default and for unknown
+    /// channels.
     fn take_channel_bytes(&mut self, _channel: &str) -> Vec<u8> {
         Vec::new()
     }

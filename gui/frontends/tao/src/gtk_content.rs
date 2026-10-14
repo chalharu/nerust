@@ -68,12 +68,9 @@ fn x11_xid(gwin: &gtk::gdk::Window) -> Option<u64> {
     Some(xwin.xid())
 }
 
-/// Fill the toplevel background with the theme rendering. tao marks
-/// the window app-paintable (nothing paints it by default) and the
-/// game now only covers the content child, so without this the
-/// menubar strip shows uninitialized pixels. `Proceed` keeps children
-/// (menu, content) painting; the content child's own native window
-/// composites above regardless.
+/// Fill the toplevel background with the theme rendering so the
+/// menubar strip never shows uninitialized pixels. `Proceed` keeps
+/// children painting; the content child composites above.
 fn paint_window_background(gtk_window: &gtk::ApplicationWindow, _area: &gtk::EventBox) {
     gtk_window.connect_draw(|window, cr| {
         let context = window.style_context();

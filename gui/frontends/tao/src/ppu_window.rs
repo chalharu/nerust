@@ -1,9 +1,6 @@
-//! PPU viewer window: system pattern images at a fixed 2x integer
-//! scale plus panels and tile hover info.
-//!
-//! Display-only content scrolls so panels stay reachable in the fixed
-//! window height. Scaled pictures derive once per drain (Sync); hover
-//! rebuilds clone the cached handles, never the bytes.
+//! PPU viewer: fixed 2x system pattern images plus panels and
+//! tile hover info. Display-only content scrolls; scaled pictures
+//! derive once per drain, hover clones cached handles.
 
 use std::sync::{Arc, Mutex, atomic::Ordering};
 

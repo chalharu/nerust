@@ -1,15 +1,6 @@
-//! GBA disassembler (ARM + Thumb) for the debugger.
-//!
-//! Pure decode over already-fetched words: no bus access, no core
-//! state. The caller (`debugger.rs`) selects the set from the CPSR
-//! T-bit, fetches the word through the read-only observer, and owns
-//! the cursor advance. Unknown encodings decode as raw data
-//! directives (`.HWORD`/`.WORD`), never fabricated instructions.
-//!
-//! Branch targets use pipeline-adjusted bases (Thumb: `addr + 4`,
-//! ARM: `addr + 8`), matching hardware PC semantics. Only plain
-//! code addresses become follow targets; register-indirect (`BX`),
-//! literal-pool (`LDR [PC]`), and data forms stay `None`.
+//! Pure ARM+Thumb decode over caller-fetched words (no bus access).
+//! Unknown encodings become `.HWORD`/`.WORD` rows; branch targets use
+//! pipeline bases (Thumb +4, ARM +8), plain code addresses only.
 
 /// One decoded row: text, follow target (if a plain code address),
 /// and instruction length in bytes.

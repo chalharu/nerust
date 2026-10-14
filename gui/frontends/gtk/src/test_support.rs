@@ -1,17 +1,5 @@
-//! Shared gate for GTK widget tests: exactly one process-wide GTK
-//! init, skipped cleanly when the environment is hostile.
-//!
-//! Background: in CI, GTK4 init aborts with SIGTRAP
-//! (`Gtk-ERROR: GTK 2/3 symbols detected`), so widget tests must
-//! probe `/proc/self/maps` *before* touching GTK. Merely mapping
-//! the legacy library should be harmless in theory, but the CI
-//! container maps it into test processes (loader unknown), so the
-//! gate stays conservative: skip instead of risking the whole job.
-//! A software-rendering experiment (`GSK_RENDERER=cairo`) did not
-//! help: the abort fires at init, before any surface exists. One
-//! shared [`OnceLock`] also guarantees at most one init even when
-//! the runner shares a process across tests (plain multithreaded
-//! `cargo test`).
+//! Shared gate for GTK widget tests: one process-wide init,
+//! skipped cleanly when the environment maps legacy GTK.
 
 #[cfg(target_os = "macos")]
 pub(crate) fn ui_test_available() -> bool {

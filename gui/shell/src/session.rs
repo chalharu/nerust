@@ -488,12 +488,8 @@ impl RomLoadTarget for SessionHandle {
         let _ = SessionHandle::run_command(self, SessionCommand::Resume);
     }
 
-    /// Notifies the session of the detected system for the ROM being loaded.
-    ///
-    /// Called by `RegistryRomLoader` before loading the ROM into the session.
-    /// Rebuilds the `EmuCore` immediately with the correct factory so that
-    /// `load_resolved` (the next call) can load ROM data into a properly
-    /// configured core. This is the core entry-point for lazy system activation.
+    /// Records the detected system before ROM load so the core is
+    /// rebuilt with the right factory. Entry point for lazy activation.
     fn set_active_system(&mut self, system_id: &dyn SystemId) -> Result<(), SystemActivationError> {
         if self.active_system_id.as_ref().map(|x| x.as_ref()) == Some(system_id) {
             return Ok(());

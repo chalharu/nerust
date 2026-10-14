@@ -5,14 +5,9 @@ use nerust_core_traits::debugger::{DebugPanel, DisasmLine, HexRow};
 
 use super::{PendingWrite, StatusMessage};
 
-/// One rebuild's worth of display data. Written by the drain, read by
-/// view code; widgets never lock session state mid-build.
-///
-/// Registers, dump rows, and panels travel structured (kernel order
-/// kept): formatting to text is presentation's job, done per rebuild
-/// with the `format_*` helpers below. Outcomes travel structured too
-/// ([`StatusMessage`], [`PendingWrite`]: the session reports *what*
-/// happened, frontends render the wording in their own language.
+/// One rebuild's worth of display data. Written by the drain, read
+/// by view code; widgets never lock session state mid-build. Rows
+/// travel structured; text formatting is presentation's job.
 #[derive(Debug, Clone, Default)]
 pub struct DisplayCache {
     /// `(name, value)` in kernel order.
@@ -69,14 +64,9 @@ impl DisplayCache {
         }
     }
 
-    /// Restore the last paused sections over a running drain. The
-    /// paused-gated inspect and disassembly refuse while the core
-    /// runs, so Resume (or Refresh while running) would otherwise
-    /// blank the dump, registers, and disassembly the user paused on.
-    /// Images, status, and the pause chrome already carry fresh values
-    /// and stay untouched: the rows read as last-paused under a
-    /// "running" status, which is honest (no frame can be pinned while
-    /// running).
+    /// Restore the last paused sections over a running drain, so Resume
+    /// keeps inspectable state instead of blanking. Fresh images,
+    /// status, and pause chrome stay untouched.
     pub fn restore_paused_sections(&mut self, old: &DisplayCache) {
         if self.paused {
             return;

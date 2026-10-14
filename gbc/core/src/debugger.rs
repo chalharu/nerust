@@ -1,27 +1,6 @@
-//! GBC debugger address space.
-//!
-//! Deliberately a single space: regions are already distinguished by
-//! address, so extra ids would buy nothing — the reader dispatches on
-//! the address internally. The one trade-off is typo detection: gap
-//! addresses resolve inside the space and read as `None` (`OpenBus`)
-//! instead of failing loudly as `Unmapped`. Never assert `open_bus`
-//! on a gap address.
-//!
-//! Reader contract (for the next step; all verified against
-//! `memory.rs` decode):
-//!
-//! - Echo `0xE000..=0xFDFF` normalizes to `0xC000..=0xDDFF` (`-0x2000`).
-//! - `0xFFFF` serves the IE register, not the HRAM array.
-//! - The unusable gap `0xFEA0..=0xFEFF` reads `0x00` on hardware;
-//!   return `Some(0x00)` (mapped), not `None`.
-//! - `0xA000..=0xBFFF` reads `0xFF` when RAM is disabled or absent
-//!   (the MBC exposes no driven/floating mask): byte-exact, but
-//!   `open_bus` assertions are meaningless there.
-//! - CGB-only registers return their fixed DMG values; VRAM reads go
-//!   through `debug_read_vram` (no mode locks); OAM is readable —
-//!   frame steps always park in VBlank, so the value is deterministic.
-//! - All sub-reads are `&self` with no mutation (audited: APU, PPU,
-//!   serial, timer, interrupts, joypad).
+//! GBC debugger address space: one space for the whole 16-bit bus.
+//! Regions dispatch on address. Gap addresses read as open-bus `None`,
+//! never `Unmapped`: never assert `open_bus` on a gap address.
 
 use std::cell::OnceCell;
 

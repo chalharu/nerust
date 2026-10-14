@@ -49,12 +49,8 @@ pub trait FrontendSession {
     fn run_command(&mut self, command: crate::session::commands::SessionCommand);
 }
 
-/// Dispatch one schema session action to any frontend session. One
-/// match for every frontend: adding an action touches this function,
-/// not a copy per frontend. Window-chrome actions (debugger open,
-/// fullscreen toggle) are not session operations: they never arrive
-/// here (the session maps them to dedicated `KeyboardShortcut`
-/// variants), and the arms below document that invariant.
+/// Dispatch one schema session action to any frontend session.
+/// Window-chrome actions never arrive here (dedicated variants).
 pub fn dispatch_session_action(target: &mut dyn FrontendSession, action: ShortcutAction) {
     match action {
         ShortcutAction::TogglePause => target.toggle_pause(),
