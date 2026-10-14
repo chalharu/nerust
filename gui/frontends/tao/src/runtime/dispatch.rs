@@ -1,7 +1,7 @@
 //! Per-window event dispatch: one handler per window keeps the
-//! event-loop match in `super` a flat router. Bodies moved verbatim;
-//! shared aux-window focus/PPU-open steps live in helpers so the
-//! debugger and PPU arms cannot drift apart.
+//! event-loop match in `super` a flat router. Handlers mirror the old
+//! inline arms (debug/PPU focus agreement shares helpers); check the
+//! arm history before reordering Destroyed/focus guards.
 
 use tao::{
     event::WindowEvent,
@@ -141,13 +141,17 @@ impl WindowRuntime {
         // still refreshes the toolbar label.
         // External destroy without CloseRequested: drop the
         // stale handle so a later F4 reopens.
-        let refocused = matches!(event, WindowEvent::Focused(true));
-        self.note_aux_focus(refocused);
+        // External destroy without CloseRequested: drop the
+        // stale handle so a later F4 reopens. Checked before focus
+        // handling: a dead window arms no auto-pause (same order as
+        // the PPU arm).
         if matches!(event, WindowEvent::Destroyed) {
             self.host.debug.debug_window.take();
             self.host.request_redraw();
             return;
         }
+        let refocused = matches!(event, WindowEvent::Focused(true));
+        self.note_aux_focus(refocused);
         {
             let Some(handle) = self.host.debug.debug_window.as_mut() else {
                 return;

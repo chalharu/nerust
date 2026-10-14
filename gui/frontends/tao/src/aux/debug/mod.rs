@@ -7,7 +7,10 @@ mod tests;
 mod update;
 mod views;
 
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use iced::Task;
 use iced_tiny_skia::Renderer;
@@ -300,7 +303,11 @@ impl DebugWindowHandle {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let shell = crate::aux::shell::AuxShell::assemble(scaffold, instance);
+        let shell = crate::aux::shell::AuxShell::assemble(
+            scaffold,
+            instance,
+            Arc::new(AtomicBool::new(false)),
+        );
         Some(Self { shell, bridge })
     }
 

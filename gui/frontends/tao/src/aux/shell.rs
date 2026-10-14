@@ -331,8 +331,14 @@ pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>>
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     /// Assemble from a scaffold plus a program instance: builds the
     /// UI shell, wraps the renderer, and paints the first frame.
-    /// Programs and bridges stay with the caller.
-    pub(crate) fn assemble(scaffold: WindowScaffold, instance: program::Instance<P>) -> Self {
+    /// Programs and bridges stay with the caller. The close flag is
+    /// a parameter (not minted here) so programs sharing it — e.g.
+    /// settings Submit/Cancel — observe the same flag.
+    pub(crate) fn assemble(
+        scaffold: WindowScaffold,
+        instance: program::Instance<P>,
+        should_close: Arc<AtomicBool>,
+    ) -> Self {
         let WindowScaffold {
             window,
             window_id,
@@ -359,7 +365,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
             surface_size: viewport_physical,
             scale_factor,
             modifiers: iced::keyboard::Modifiers::default(),
-            should_close: Arc::new(AtomicBool::new(false)),
+            should_close,
             cursor: mouse::Cursor::default(),
             clipboard: Clipboard::unconnected(),
         }
