@@ -571,16 +571,9 @@ impl DebuggerWindowCore {
             }
             glib::ControlFlow::Continue
         });
-        window.present();
         #[cfg(target_os = "macos")]
-        {
-            // Belt-and-braces with the call below: the surface may only
-            // exist after first show on some systems.
-            window.connect_realize(|window| {
-                crate::gdk_raw::disallow_window_tabs(window);
-            });
-            crate::gdk_raw::disallow_window_tabs(&window);
-        }
+        crate::gdk_raw::guard_window_tabs(&window);
+        window.present();
         result
     }
 
