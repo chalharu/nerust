@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use nerust_core_traits::declare_system_id;
-use nerust_gui_settings::{
+use nerust_settings_core::model::{
     input::{IMPLICIT_PROFILE_ID, ShortcutAction, ShortcutBinding},
     shared::DesktopSharedSettings,
 };
@@ -18,7 +18,7 @@ pub fn test_nes_defaults() -> DesktopSharedSettings {
         Box::new(nerust_nes_settings::NesSettings::default())
             as Box<dyn nerust_settings_traits::SystemSettings>,
     );
-    let mut input = nerust_gui_settings::input::SystemInputSettings::default();
+    let mut input = nerust_settings_core::model::input::SystemInputSettings::default();
     input.implicit_keyboard_profile_mut().bindings =
         crate::keyboard_defaults::default_system_bindings("nes.attachment.player1", "nes.control");
     let _ = input

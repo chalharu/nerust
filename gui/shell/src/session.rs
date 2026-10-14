@@ -1,5 +1,6 @@
 pub mod access;
 pub mod commands;
+pub mod debug_ops;
 pub mod input;
 pub mod lifecycle;
 pub mod persistence;
@@ -9,7 +10,7 @@ pub mod title;
 
 use std::{
     collections::{BTreeSet, HashMap},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use nerust_core_traits::{
@@ -25,17 +26,23 @@ use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
-use nerust_gui_settings::input::ShortcutAction;
+use nerust_gui_viewmodel::debugger as debug_vm;
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
 use nerust_keyboard::Key;
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
+use nerust_settings_core::model::input::ShortcutAction;
 use thiserror::Error;
 
 use crate::{
     emu_core::EmuCore, registry::SystemRegistry, session::persistence::PersistenceManager, settings,
 };
+
+/// Live PPU image batch: generation plus one `(label, width, height,
+/// rgba)` tuple per image. Aliased so the fetch signature stays
+/// readable (clippy `type_complexity`).
+pub type LiveImages = Option<(u64, Vec<(String, u32, u32, Vec<u8>)>)>;
 
 struct CoreRuntime {
     emu_core: EmuCore,
@@ -77,6 +84,10 @@ pub struct SessionSnapshot {
 pub enum KeyboardShortcut {
     Session(ShortcutAction),
     ToggleFullscreen,
+    /// Open the debugger window. Not a session command: frontends
+    /// route it to their debugger-open path (schema first, so a user
+    /// binding wins over the F4 default).
+    OpenDebugger,
 }
 
 pub struct SessionHandle {
@@ -96,6 +107,9 @@ pub struct SessionHandle {
     loaded_media: Option<LoadedMedia>,
     persistence: PersistenceManager,
     audio_registry: Arc<AudioBackendRegistry>,
+    /// Shell-owned two-phase memory write transaction (Phase B).
+    /// `Arc`: async debug-drain flights share it across UI ticks.
+    debug_txn: Arc<Mutex<debug_vm::WriteTransaction>>,
 }
 
 impl SessionHandle {
@@ -289,6 +303,7 @@ impl SessionHandle {
             loaded_media: None,
             persistence: PersistenceManager::new(),
             audio_registry,
+            debug_txn: Arc::new(Mutex::new(debug_vm::WriteTransaction::Empty)),
         };
         result.rebuild_key_field_map();
         Ok(result)
@@ -473,12 +488,8 @@ impl RomLoadTarget for SessionHandle {
         let _ = SessionHandle::run_command(self, SessionCommand::Resume);
     }
 
-    /// Notifies the session of the detected system for the ROM being loaded.
-    ///
-    /// Called by `RegistryRomLoader` before loading the ROM into the session.
-    /// Rebuilds the `EmuCore` immediately with the correct factory so that
-    /// `load_resolved` (the next call) can load ROM data into a properly
-    /// configured core. This is the core entry-point for lazy system activation.
+    /// Records the detected system before ROM load so the core is
+    /// rebuilt with the right factory. Entry point for lazy activation.
     fn set_active_system(&mut self, system_id: &dyn SystemId) -> Result<(), SystemActivationError> {
         if self.active_system_id.as_ref().map(|x| x.as_ref()) == Some(system_id) {
             return Ok(());
@@ -554,10 +565,10 @@ pub(crate) mod test_util {
         let system_id = session.factory().expect("no active system").system_id();
         let snapshot = session.settings_snapshot();
         let language = match snapshot.shared.general.language {
-            nerust_gui_settings::language::AppLanguage::Japanese => {
+            nerust_settings_core::model::language::AppLanguage::Japanese => {
                 nerust_core_traits::factory::settings::Language::Japanese
             }
-            nerust_gui_settings::language::AppLanguage::English => {
+            nerust_settings_core::model::language::AppLanguage::English => {
                 nerust_core_traits::factory::settings::Language::English
             }
             _ => nerust_core_traits::factory::settings::Language::SystemDefault,

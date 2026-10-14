@@ -2,7 +2,7 @@ pub mod bindings;
 pub mod defaults;
 
 use nerust_core_traits::audio::{AudioBackend, AudioBackendRegistry, GainBackend};
-use nerust_gui_settings::local::{HostBackendLocalSettings, ScalingMode};
+use nerust_settings_core::model::local::{HostBackendLocalSettings, ScalingMode};
 
 pub fn build_speaker(
     registry: &AudioBackendRegistry,
@@ -45,7 +45,7 @@ pub fn scaling_factor(mode: ScalingMode) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use nerust_core_traits::audio::{AudioBackend, NullAudio, StereoSample};
-    use nerust_gui_settings::local::ScalingMode;
+    use nerust_settings_core::model::local::ScalingMode;
 
     use super::scaling_factor;
 

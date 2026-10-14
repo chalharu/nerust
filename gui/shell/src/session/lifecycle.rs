@@ -24,35 +24,175 @@ pub struct WindowSize {
     pub height: f32,
 }
 
+/// What `apply_live_runtime` did, so a failed settings save can undo
+/// exactly that (rebuild vs swap-back) instead of guessing.
+#[derive(Debug, Default)]
+struct RuntimeApplyOutcome {
+    rebuilt: bool,
+    audio_swapped: bool,
+    visual_swapped: bool,
+}
+
 impl SessionHandle {
-    fn apply_runtime_settings(
-        &mut self,
+    /// Volume/mute-only delta through the live gain control. Warn-only:
+    /// a quiet failure must never block saving the setting.
+    fn apply_live_volume(&self, next_settings: &nerust_gui_runtime::settings::SettingsSnapshot) {
+        let volume = f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
+        let volume = if next_settings.local.audio.muted {
+            0.0
+        } else {
+            volume
+        };
+        if let Some(ref core) = self.emu_core
+            && let Err(error) = core.set_volume(volume)
+        {
+            log::warn!("set_volume failed: {error}");
+        }
+    }
+
+    /// Sample-rate/latency delta through a live backend swap. The
+    /// replacement carries the new settings' volume, so volume-only
+    /// deltas ride along for free.
+    fn swap_audio_for_settings(
+        &self,
         next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
-        next_assignments: Option<&InputAssignments>,
-        previous_assignments: &InputAssignments,
-        needs_rebuild: bool,
-        audio_volume_changed: bool,
     ) -> Result<(), SessionError> {
+        let core = self.emu_core.as_ref().ok_or(SessionError::NoCore)?;
+        let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
+        let rate = speaker.sample_rate();
+        core.swap_audio_backend(speaker, rate)?;
+        Ok(())
+    }
+
+    /// Presentation-only visual delta through a live render-target
+    /// swap. Returns whether the swap covered the delta; `false` keeps
+    /// the full rebuild path (core behavior changed, or the factory
+    /// names no presentation-only delta).
+    fn swap_presentation_for_settings(
+        &mut self,
+        factory: &Arc<dyn CoreFactory>,
+        previous: &nerust_gui_runtime::settings::SettingsSnapshot,
+        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+    ) -> Result<bool, SessionError> {
+        let system_id = factory.system_id();
+        let before_view = settings_view(previous, system_id.as_ref());
+        let after_view = settings_view(next_settings, system_id.as_ref());
+        let Some((profile, palette)) = factory.presentation_swap_assets(&before_view, &after_view)
+        else {
+            return Ok(false);
+        };
+        let core = self.emu_core.as_mut().ok_or(SessionError::NoCore)?;
+        core.apply_presentation(profile, palette)?;
+        Ok(true)
+    }
+
+    /// Runtime half of `apply_settings`: live swaps first
+    /// (reply-barriered, no teardown, no ROM reload, no state
+    /// round-trip), full reconstruction only for core behavior changes
+    /// and reassignments.
+    fn apply_live_runtime(
+        &mut self,
+        plan: &nerust_gui_runtime::settings::SettingsApplyPlan,
+        factory: &Option<Arc<dyn CoreFactory>>,
+        previous: &nerust_gui_runtime::settings::SettingsSnapshot,
+        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        applied_assignments: &InputAssignments,
+        assignments_changed: bool,
+    ) -> Result<RuntimeApplyOutcome, SessionError> {
+        // `session_rebuild_required` folds the rate/latency and visual
+        // reasons; the live paths below absorb both, leaving only core
+        // behavior changes (and reassignments) on the rebuild path.
+        let visual_changed = plan.session_rebuild_required && !plan.audio_backend_changed;
+        let mut outcome = RuntimeApplyOutcome::default();
+        let mut needs_rebuild = visual_changed || assignments_changed;
+        if plan.audio_backend_changed
+            && !visual_changed
+            && !assignments_changed
+            && self.emu_core.is_some()
+        {
+            // Audio-only delta: the swap absorbs the rebuild entirely
+            // (the replacement backend carries the new volume too).
+            self.swap_audio_for_settings(next_settings)?;
+            outcome.audio_swapped = true;
+            needs_rebuild = false;
+        }
         if needs_rebuild {
-            self.rebuild_for_settings(
-                next_settings,
-                next_assignments.unwrap_or(previous_assignments),
-            )?;
-        } else if audio_volume_changed {
-            let volume =
-                f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
-            let volume = if next_settings.local.audio.muted {
-                0.0
-            } else {
-                volume
-            };
-            if let Some(ref mut core) = self.emu_core
-                && let Err(error) = core.set_volume(volume)
+            let mut swapped = false;
+            if visual_changed
+                && !assignments_changed
+                && self.emu_core.is_some()
+                && let Some(factory) = factory
             {
-                log::warn!("set_volume failed: {error}");
+                swapped = self.swap_presentation_for_settings(factory, previous, next_settings)?;
+            }
+            if swapped {
+                outcome.visual_swapped = true;
+                if plan.audio_backend_changed {
+                    self.swap_audio_for_settings(next_settings)?;
+                    outcome.audio_swapped = true;
+                }
+                if plan.audio_volume_changed {
+                    self.apply_live_volume(next_settings);
+                }
+            } else {
+                // Core behavior changed (or controllers reassigned):
+                // full reconstruction carries the new speaker too.
+                self.rebuild_for_settings(next_settings, applied_assignments)?;
+                outcome.rebuilt = true;
+            }
+        } else if plan.audio_volume_changed && !outcome.audio_swapped {
+            self.apply_live_volume(next_settings);
+        }
+        Ok(outcome)
+    }
+
+    /// Undo `apply_live_runtime` after a failed settings save.
+    /// Rebuilds roll back by reconstructing the previous core; live
+    /// swaps roll back through the same barriered path (cheap, no
+    /// reconstruction). Every leg is warn-only: the save already
+    /// failed, and a loud rollback must not mask it.
+    fn rollback_runtime_apply(
+        &mut self,
+        factory: &Option<Arc<dyn CoreFactory>>,
+        previous: &nerust_gui_runtime::settings::SettingsSnapshot,
+        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        previous_assignments: &InputAssignments,
+        outcome: &RuntimeApplyOutcome,
+    ) {
+        if outcome.rebuilt
+            && let Err(e) = self.rebuild_for_settings(previous, previous_assignments)
+        {
+            log::warn!("failed to rollback settings rebuild: {e}");
+            return;
+        }
+        if outcome.visual_swapped
+            && let Some(factory) = factory
+        {
+            let system_id = factory.system_id();
+            let before_view = settings_view(next_settings, system_id.as_ref());
+            let after_view = settings_view(previous, system_id.as_ref());
+            match factory.presentation_swap_assets(&before_view, &after_view) {
+                Some((profile, palette)) => {
+                    if let Some(core) = self.emu_core.as_mut()
+                        && let Err(e) = core.apply_presentation(profile, palette)
+                    {
+                        log::warn!("failed to rollback presentation swap: {e}");
+                    }
+                }
+                None => {
+                    log::warn!("presentation swap rollback uncovered; keeping new assets");
+                }
             }
         }
-        Ok(())
+        if outcome.audio_swapped {
+            let speaker = crate::settings::build_speaker(&self.audio_registry, &previous.local);
+            let rate = speaker.sample_rate();
+            if let Some(core) = self.emu_core.as_ref()
+                && let Err(e) = core.swap_audio_backend(speaker, rate)
+            {
+                log::warn!("failed to rollback audio swap: {e}");
+            }
+        }
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
@@ -76,7 +216,13 @@ impl SessionHandle {
     pub fn window_title(&self) -> String {
         let metrics = self.metrics();
         let name = self.active_factory().map(|f| f.display_name());
-        window_title(metrics.paused, metrics, name)
+        window_title(
+            metrics.paused,
+            metrics,
+            name,
+            self.active_slot_id(),
+            self.slots().len(),
+        )
     }
 
     pub fn loaded(&self) -> bool {
@@ -131,7 +277,6 @@ impl SessionHandle {
         let assignments_changed = next_assignments
             .as_ref()
             .is_some_and(|a| a.to_string_pairs() != previous_assignments.to_string_pairs());
-        let needs_rebuild = plan.session_rebuild_required || assignments_changed;
 
         if plan.persistence_changed
             && let Some(ref core) = self.emu_core
@@ -139,20 +284,23 @@ impl SessionHandle {
             self.persistence.flush_mapper_save(core)?;
         }
 
-        self.apply_runtime_settings(
+        let outcome = self.apply_live_runtime(
+            &plan,
+            &factory,
+            &previous,
             &next_settings,
-            next_assignments.as_ref(),
-            &previous_assignments,
-            needs_rebuild,
-            plan.audio_volume_changed,
+            next_assignments.as_ref().unwrap_or(&previous_assignments),
+            assignments_changed,
         )?;
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
-            if needs_rebuild
-                && let Err(e) = self.rebuild_for_settings(&previous, &previous_assignments)
-            {
-                log::warn!("failed to rollback settings rebuild: {e}");
-            }
+            self.rollback_runtime_apply(
+                &factory,
+                &previous,
+                &next_settings,
+                &previous_assignments,
+                &outcome,
+            );
             return Err(SessionError::Settings(error));
         }
 

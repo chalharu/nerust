@@ -7,7 +7,6 @@ members = [
   "gui/frontends/tao",
   "gui/run-options",
   "gui/runtime",
-  "gui/settings",
   "gui/shell",
   "gui/viewmodel",
   "gba/core",
@@ -154,6 +153,11 @@ iced = { default-features = false, features = [
   "tiny-skia",
   "wayland",
   "x11",
+  # PPU viewer pattern images (`iced::widget::image`).
+  "image",
+  # Debugger heavy lists (`iced::widget::lazy`): keystrokes reuse the
+  # cached dump/disasm/regs subtrees instead of rebuilding ~600 widgets.
+  "lazy",
 ], version = "=0.14.0" }
 iced_tiny_skia = { version = "=0.14.1" }
 iced_winit = { version = "=0.14.1" }
@@ -175,7 +179,6 @@ nerust_gbc_settings = { path = "gbc/settings" }
 nerust_glwrap = { path = "render/glwrap" }
 nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_gui_runtime = { path = "gui/runtime" }
-nerust_gui_settings = { path = "gui/settings" }
 nerust_gui_shell = { path = "gui/shell" }
 nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }

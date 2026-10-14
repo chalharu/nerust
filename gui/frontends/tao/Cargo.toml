@@ -17,12 +17,11 @@ log.workspace = true
 muda.workspace = true
 nerust_core_traits.workspace = true
 nerust_gui_runtime.workspace = true
-nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
 nerust_gui_viewmodel.workspace = true
 nerust_settings_core.workspace = true
 nerust_input_traits.workspace = true
-nerust_keyboard = { features = ["iced", "tao"], workspace = true }
+nerust_keyboard = { features = ["iced"], workspace = true }
 nerust_persistence.workspace = true
 nerust_render_traits.workspace = true
 nerust_run_options.workspace = true
@@ -32,3 +31,4 @@ tao.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
 gtk = "=0.18.2"
+gdkx11 = "=0.18.2"

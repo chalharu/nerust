@@ -1,5 +1,5 @@
+use crate::model::input::ShortcutAction;
 use nerust_core_traits::identity::SystemId;
-use nerust_gui_settings::input::ShortcutAction;
 use nerust_input_traits::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DigitalControlId,
     InputTopologyDescriptor, PortDescriptor,
@@ -28,7 +28,7 @@ pub struct ShortcutDescriptor {
     pub label: &'static str,
 }
 
-const SHORTCUT_DESCRIPTORS: [ShortcutDescriptor; 7] = [
+const SHORTCUT_DESCRIPTORS: [ShortcutDescriptor; 8] = [
     ShortcutDescriptor {
         action: ShortcutAction::TogglePause,
         label: "Toggle Pause",
@@ -56,6 +56,10 @@ const SHORTCUT_DESCRIPTORS: [ShortcutDescriptor; 7] = [
     ShortcutDescriptor {
         action: ShortcutAction::Reset,
         label: "Reset",
+    },
+    ShortcutDescriptor {
+        action: ShortcutAction::OpenDebugger,
+        label: "Open Debugger",
     },
 ];
 
@@ -130,7 +134,7 @@ pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
 
 #[cfg(test)]
 mod tests {
-    use nerust_gui_settings::input::ShortcutAction;
+    use crate::model::input::ShortcutAction;
     use nerust_input_traits::{
         AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
         DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor,
@@ -229,6 +233,12 @@ mod tests {
             shortcut_descriptors()
                 .iter()
                 .any(|descriptor| matches!(descriptor.action, ShortcutAction::ToggleFullscreen))
+        );
+        // The debugger open is user-rebindable through the same editor.
+        assert!(
+            shortcut_descriptors()
+                .iter()
+                .any(|descriptor| matches!(descriptor.action, ShortcutAction::OpenDebugger))
         );
     }
 }

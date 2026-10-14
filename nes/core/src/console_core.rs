@@ -1,7 +1,7 @@
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
     audio::{AudioBackend, StereoSample},
-    debugger::{DebugControl, DebuggerError, SpaceAccess, SpaceId, SpaceTable, StepUnit},
+    debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
 };
 use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
@@ -118,6 +118,17 @@ impl NesConsoleCore {
 
         Ok(cycles)
     }
+
+    /// Advance one instruction, reporting the cycles the core counted.
+    /// No input is taken and no audio is produced: stepping inspects a
+    /// frozen moment, it does not play it.
+    pub(crate) fn step_instruction_cycles(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+    ) -> Result<u64, CoreError> {
+        let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
+        Ok(core.step_instruction(frame_slot, &mut self.controller))
+    }
 }
 
 impl ConsoleCore for NesConsoleCore {
@@ -175,6 +186,15 @@ impl ConsoleCore for NesConsoleCore {
 
     fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
+    }
+
+    fn set_audio_sample_rate(&mut self, sample_rate: u32) {
+        self.sample_rate = sample_rate;
+        // Re-basis the cached DSP at the new rate (rebuilt lazily next
+        // frame); voice state in the APU is untouched.
+        if let Some(core) = self.core.0.as_mut() {
+            core.drop_apu_state();
+        }
     }
 
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
@@ -256,9 +276,10 @@ impl DebugControl for NesDebugControl<'_> {
                 .console
                 .render_frame_cycles(&mut self.frame_slot, &mut self.audio_sink)
                 .map_err(|_| DebuggerError::Unsupported),
-            // Instruction stepping is a required debug capability, but
-            // needs an instruction-boundary API in the CPU core first.
-            StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
+            StepUnit::Instruction => self
+                .console
+                .step_instruction_cycles(&mut self.frame_slot)
+                .map_err(|_| DebuggerError::Unsupported),
         }
     }
 
@@ -269,20 +290,9 @@ impl DebugControl for NesDebugControl<'_> {
         width: u8,
         value: u64,
     ) -> Result<(), DebuggerError> {
-        // Validation order matters: bad width first, so "width 0 with
-        // unknown SpaceId" does not mask as UnknownSpace.
-        if !SpaceTable::width_is_valid(width) {
-            return Err(DebuggerError::BadWidth(width));
-        }
-        let info = NES_SPACE_TABLE
-            .get(space)
-            .ok_or(DebuggerError::UnknownSpace(space))?;
-        if !NES_SPACE_TABLE.covers(space, addr, width) {
-            return Err(DebuggerError::UnmappedAddress { space, addr });
-        }
-        if info.access == SpaceAccess::ReadOnly {
-            return Err(DebuggerError::ReadOnlySpace(space));
-        }
+        // One table-owned gate: bad width, unknown space, unmapped
+        // address, then whole-space refusal, in that order.
+        NES_SPACE_TABLE.check_write(space, addr, width)?;
         let core = self
             .console
             .core_mut()
@@ -291,6 +301,18 @@ impl DebugControl for NesDebugControl<'_> {
             core.poke_work_ram((addr + i) as usize, (value >> (8 * i)) as u8);
         }
         Ok(())
+    }
+
+    fn write_register(&mut self, name: &str, value: u64) -> Result<(), DebuggerError> {
+        let core = self
+            .console
+            .core_mut()
+            .map_err(|_| DebuggerError::Unsupported)?;
+        if core.write_cpu_register(name, value) {
+            Ok(())
+        } else {
+            Err(DebuggerError::Unsupported)
+        }
     }
 }
 
@@ -374,6 +396,41 @@ mod tests {
     }
 
     #[test]
+    fn set_audio_sample_rate_rebasis_without_reconstruction() {
+        let rom = test_rom();
+        let mut core = NesConsoleCore::new_empty(
+            ControllerCollection::new(vec![Box::new(MockController)]),
+            test_emu_input(),
+        );
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+            audio_sample_rate: Some(48_000),
+        };
+        core.load(&rom, &config).expect("load ok");
+        let mut fb = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0u32; 256]),
+            },
+        );
+        let mut audio = Vec::new();
+        core.render_frame(&mut fb, &mut audio).expect("frame ok");
+        assert!(!audio.is_empty(), "frame must produce audio");
+
+        // Re-basis: cached rate-baked DSP drops, machine state intact,
+        // frames keep flowing at the new rate.
+        core.set_audio_sample_rate(44_100);
+        assert_eq!(core.sample_rate, 44_100);
+        core.render_frame(&mut fb, &mut audio)
+            .expect("frames flow after re-basis");
+        assert!(!audio.is_empty(), "frame must produce audio");
+    }
+
+    #[test]
     fn load_via_trait_method() {
         let rom = test_rom();
         let mut core = NesConsoleCore::new_empty(
@@ -432,10 +489,15 @@ mod tests {
         .expect("console");
         {
             let debugger = loaded.debugger().expect("debugger");
-            assert_eq!(debugger.spaces().len(), 3);
+            assert_eq!(debugger.spaces().len(), 4);
             assert!(
                 debugger
                     .read(crate::debugger::SPACE_WORK_RAM, 0, 1)
+                    .is_some()
+            );
+            assert!(
+                debugger
+                    .read(crate::debugger::SPACE_PRG_ROM, 0x8000, 1)
                     .is_some()
             );
         }
@@ -461,6 +523,30 @@ mod tests {
         assert_eq!(debugger.read(SPACE_WORK_RAM, 0x0100, 2), Some(0xBEEF));
         assert_eq!(debugger.read(SPACE_WORK_RAM, 0x0100, 1), Some(0xEF));
         assert_eq!(debugger.read(SPACE_WORK_RAM, 0x0101, 1), Some(0xBE));
+    }
+
+    #[test]
+    fn nes_register_write_roundtrips_and_refuses_unknown() {
+        let mut console = NesConsoleCore::new(
+            nrom_test_data(),
+            ControllerCollection::new(vec![]),
+            test_emu_input(),
+        )
+        .expect("console");
+        {
+            let mut control = NesDebugControl::new(&mut console);
+            control.write_register("a", 0x42).expect("a write");
+            control.write_register("pc", 0xC000).expect("pc write");
+            assert_eq!(
+                control.write_register("bogus", 0),
+                Err(DebuggerError::Unsupported)
+            );
+        }
+        let core = console.core_ref().expect("loaded");
+        let regs: std::collections::HashMap<&str, u64> =
+            core.cpu_registers().iter().copied().collect();
+        assert_eq!(regs["a"], 0x42);
+        assert_eq!(regs["pc"], 0xC000);
     }
 
     #[test]
@@ -495,11 +581,32 @@ mod tests {
                 addr: 0x1FFF
             })
         );
-        // Step has no cycle-accounted entry point yet: explicit, not silent.
-        assert_eq!(
-            boxed.step(StepUnit::Instruction),
-            Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
+        // Instruction stepping advances exactly one instruction and
+        // reports real cycles; the program counter moves by the
+        // decoded instruction length.
+        let pc_of = |console: &NesConsoleCore| {
+            console
+                .core_ref()
+                .expect("core")
+                .cpu_registers()
+                .iter()
+                .find(|(name, _)| *name == "pc")
+                .map(|(_, value)| *value as u32)
+                .expect("pc")
+        };
+        drop(boxed);
+        let pc_before = pc_of(&console);
+        let mut boxed: Box<dyn DebugControl + '_> = Box::new(NesDebugControl::new(&mut console));
+        let cycles = boxed.step(StepUnit::Instruction).expect("instr step");
+        assert!(cycles > 0);
+        assert!(cycles < crate::Core::MAX_INSTRUCTION_STEP_CYCLES);
+        drop(boxed);
+        let pc_after = pc_of(&console);
+        assert!(
+            pc_after.wrapping_sub(pc_before) <= 3,
+            "pc advanced one instruction: {pc_before:04X} -> {pc_after:04X}"
         );
+        let mut boxed: Box<dyn DebugControl + '_> = Box::new(NesDebugControl::new(&mut console));
         // Frame stepping reuses the render path and reports real cycles.
         let cycles = boxed.step(StepUnit::Frame).expect("frame step");
         assert!(cycles > 0);

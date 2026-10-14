@@ -1,12 +1,6 @@
-//! Kernel debugger types — read-only observation plus controlled execution.
-//!
-//! Design: `debugger-trait-design.md` v7.0. This module carries only
-//! value types and two traits; it owns no threads, no UI state, and no
-//! domain types beyond `&'static str` / `u64` / `bool` / `String`.
-//!
-//! The central asymmetry is intentional: observation (`Debugger`) is
-//! `&self` and non-invasive, while control (`DebugControl`) is a
-//! separate trait reached through `ConsoleCore` with `&mut self`.
+//! Kernel debugger types: read-only observation plus controlled execution.
+//! Value types and two traits only; observation is `&self`, control is a
+//! separate `&mut` trait.
 
 use std::ops::RangeInclusive;
 use std::sync::Arc;
@@ -27,10 +21,8 @@ pub enum SpaceAccess {
 
 /// Static description of one address space.
 ///
-/// `key` is a stable identifier for logs and error display, and for
-/// resolving ids from snapshots at configuration time (open, not per
-/// frame). It is never used for per-frame branching — branch on
-/// [`SpaceId`] instead.
+/// Stable identifier for logs, display, and snapshot resolution;
+/// never per-frame branching — branch on [`SpaceId`] instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpaceInfo {
     pub id: SpaceId,
@@ -62,6 +54,11 @@ pub enum SpaceError {
         id: SpaceId,
         index: usize,
     },
+    /// A `read_only` window names an unknown space, is empty, or
+    /// escapes its space's range.
+    ReadOnlyOutOfRange {
+        space: SpaceId,
+    },
 }
 
 /// Verify that a space list is sorted, disjoint, and id/index consistent.
@@ -92,17 +89,28 @@ pub fn validate_spaces(spaces: &[SpaceInfo]) -> Result<(), SpaceError> {
     Ok(())
 }
 
-/// Static address-space table. The address map is fixed per machine and
-/// never changes across load/unload, so the table is a `&'static` slice:
-/// no allocation, no ownership, no lifetime management.
+/// Static address-space table: fixed per machine, `&'static`, no ownership.
+/// Refusal is table data, not backend branches; check exact writability
+/// with [`SpaceTable::check_write`] instead of trusting `access` alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpaceTable {
     pub entries: &'static [SpaceInfo],
+    pub read_only: &'static [(SpaceId, u32, u32)],
 }
 
 impl SpaceTable {
     pub const fn build(entries: &'static [SpaceInfo]) -> Self {
-        Self { entries }
+        Self {
+            entries,
+            read_only: &[],
+        }
+    }
+
+    pub const fn build_with_read_only(
+        entries: &'static [SpaceInfo],
+        read_only: &'static [(SpaceId, u32, u32)],
+    ) -> Self {
+        Self { entries, read_only }
     }
 
     /// Return the space for `id`, checking id/index consistency.
@@ -113,7 +121,16 @@ impl SpaceTable {
 
     /// Sortedness / disjointness check. Call from each core's unit test.
     pub fn validate(&self) -> Result<(), SpaceError> {
-        validate_spaces(self.entries)
+        validate_spaces(self.entries)?;
+        for (space, start, end) in self.read_only {
+            let info = self
+                .get(*space)
+                .ok_or(SpaceError::ReadOnlyOutOfRange { space: *space })?;
+            if start > end || *start < *info.range.start() || *end > *info.range.end() {
+                return Err(SpaceError::ReadOnlyOutOfRange { space: *space });
+            }
+        }
+        Ok(())
     }
 
     /// `width` is 1, 2, or 4. Zero is invalid.
@@ -138,6 +155,32 @@ impl SpaceTable {
             _ => false,
         }
     }
+
+    /// Write-side validation in load-bearing order. The single home of
+    /// the refusal rules; every `DebugControl::write_memory` starts here.
+    pub fn check_write(&self, space: SpaceId, addr: u32, width: u8) -> Result<(), DebuggerError> {
+        if !Self::width_is_valid(width) {
+            return Err(DebuggerError::BadWidth(width));
+        }
+        let info = self.get(space).ok_or(DebuggerError::UnknownSpace(space))?;
+        if !self.covers(space, addr, width) {
+            return Err(DebuggerError::UnmappedAddress { space, addr });
+        }
+        if info.access == SpaceAccess::ReadOnly {
+            return Err(DebuggerError::ReadOnlySpace(space));
+        }
+        // `covers` pinned `addr + width - 1` without overflow, so the
+        // recomputation cannot wrap.
+        let end = addr + u32::from(width) - 1;
+        if self
+            .read_only
+            .iter()
+            .any(|(s, start, stop)| *s == space && addr <= *stop && end >= *start)
+        {
+            return Err(DebuggerError::ReadOnlySpace(space));
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -155,23 +198,9 @@ pub trait Debugger {
     /// Space covering `addr`, or `None` when unmapped.
     fn space_containing(&self, addr: u32) -> Option<SpaceId>;
 
-    /// Read `width` bytes (1 / 2 / 4) at `addr` in `space`.
-    ///
-    /// Contract, from measured hardware behavior:
-    ///
-    /// - Mapped regions return the same bytes an executed read would.
-    /// - Unmapped regions return the stable open-bus latch value.
-    /// - No wait-cycle charging, no bus-history updates.
-    /// - `addr` outside `space`'s range yields `None`: cross-space
-    ///   reads are never silently allowed. Range checking is the
-    ///   reader's duty — `space_containing` returning `None` alone
-    ///   does not guarantee it.
-    /// - Widths other than 1 / 2 / 4 (including 0), reads crossing the
-    ///   range end, and unknown `SpaceId`s yield `None`.
-    ///
-    /// `read` returns `Option`, not `Result`: it sits on the ROM-test
-    /// hot path, and an invalid width is intentionally not distinguished
-    /// from unmapped. `BadWidth` is a write-side-only error.
+    /// Hardware-faithful read; unmapped/out-of-range/bad widths yield
+    /// `None` (range checking is the reader's duty). `Option`, not
+    /// `Result`, for this hot path.
     fn read(&self, space: SpaceId, addr: u32, width: u8) -> Option<u64>;
 
     /// Contiguous byte read for hex dumps. Stops at the range end.
@@ -188,14 +217,64 @@ pub trait Debugger {
     }
 
     /// Name → value register list, borrowed, zero allocation.
-    ///
-    /// Contract: names in ascending order, so presentation never sorts.
+    /// Backend-defined stable order; anchor via
+    /// [`Debugger::program_counter`], never by name-scanning.
     fn registers(&self) -> &[(&'static str, u64)];
 
     /// System-specific observation tables. Not called per frame.
     fn panels(&self) -> Vec<DebugPanel> {
         Vec::new()
     }
+
+    /// Program counter for disassembly anchoring, if the system names
+    /// one. Defaults to `None`: presentation shows an explicit
+    /// unanchored degenerate instead of guessing. Register names stay
+    /// architectural (`r15`, never a `pc` alias); anchoring does not
+    /// go through the register list.
+    fn program_counter(&self) -> Option<u32> {
+        None
+    }
+
+    /// System images (pattern tables). Empty by default; cores with
+    /// image views override it. Cold path: allocation is expected,
+    /// and callers never invoke it per frame.
+    fn images(&self) -> Vec<DebugImage> {
+        Vec::new()
+    }
+
+    /// Disassemble `count` rows from `addr`. Empty by default; cores
+    /// with a disassembler override it. Short reads at the range end
+    /// decode as raw bytes: a truncated tail never panics and never
+    /// fabricates instructions. Cold path like `images`.
+    fn disassemble(&self, _addr: u32, _count: u16) -> Vec<DisasmLine> {
+        Vec::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Disassembly — one decoded instruction row
+// ---------------------------------------------------------------------------
+
+/// A single disassembled instruction row. `bytes` holds up to 4
+/// instruction bytes (ARM needs 4, 6502 needs 3, Thumb needs 2),
+/// `len` the used prefix.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DisasmLine {
+    /// Instruction address.
+    pub addr: u32,
+    /// Raw instruction bytes (first `len` entries valid).
+    pub bytes: [u8; 4],
+    /// Instruction length in bytes (1-4).
+    pub len: u8,
+    /// Human-readable text, e.g. `JMP $C5F5`.
+    pub text: String,
+    /// True when this row holds the current PC.
+    pub is_pc: bool,
+    /// Follow address for plain address operands, e.g. relative
+    /// branches and absolute jumps. Presentation navigates from this
+    /// and never scrapes `text`. `None` for immediates, indexed and
+    /// indirect forms, implied instructions, and raw bytes.
+    pub target: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +319,40 @@ pub enum CellValue {
     Bool(bool),
 }
 
+/// One system image. `pixels` are row-major indices into `palette`;
+/// the frontend blits mechanically with no system knowledge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugImage {
+    pub id: &'static str,
+    pub label_id: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub format: ImageFormat,
+    pub palette: Vec<[u8; 3]>,
+    pub pixels: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    /// 2 bits per pixel, values 0-3 into a 4-entry palette.
+    Indexed2bpp,
+    /// 4 bits per pixel, values 0-15 into a 16-entry palette.
+    Indexed4bpp,
+}
+
+/// Expand a 15-bit BGR color (Game Boy / GBA native) to RGB888.
+/// Shared tile-imaging helper; cores with paletted images use it so
+/// every viewer shows identical colors.
+pub fn rgb555_to_rgb888(value: u16) -> [u8; 3] {
+    // Bits 0-4 red, 5-9 green, 10-14 blue on both systems.
+    let expand = |v: u16| ((u32::from(v) * 255 + 15) / 31) as u8;
+    [
+        expand(value & 31),
+        expand((value >> 5) & 31),
+        expand((value >> 10) & 31),
+    ]
+}
+
 // ---------------------------------------------------------------------------
 // Snapshots — published observation results (pure data)
 // ---------------------------------------------------------------------------
@@ -248,6 +361,13 @@ pub enum CellValue {
 pub const MAX_DUMP_BYTES: usize = 4096;
 pub const DEFAULT_DUMP_ROWS: u16 = 32;
 pub const DUMP_ROW_BYTES: usize = 16;
+
+/// One debugger drain's page sizes. The drain fetches a scroll
+/// window (not just the visible rows) so both twins get native
+/// wheel/viewport scrolling: the viewport shows a slice, Prev/Next
+/// move by the whole window. Single-byte reads use `rows: 1`.
+pub const DEBUG_DUMP_PAGE_ROWS: u16 = 32;
+pub const DEBUG_DISASM_ROWS: u16 = 32;
 
 /// Per-frame published observation. Holds results only — staleness and
 /// last-error tracking live in the application layer.
@@ -264,7 +384,7 @@ pub struct DebuggerSnapshot {
 
 /// One hex-dump row. `valid` counts readable bytes so a short final row
 /// is distinguishable from genuinely-zero memory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HexRow {
     pub addr: u32,
     pub valid: u8,
@@ -278,6 +398,7 @@ pub struct ExecutionInfo {
 }
 
 /// Successful inspect response content.
+#[derive(Debug, Clone)]
 pub struct InspectResult {
     pub dump: MemoryDump,
     pub panels: Arc<[DebugPanel]>,
@@ -288,6 +409,7 @@ pub struct InspectResult {
     pub captured_at_frame: u64,
 }
 
+#[derive(Debug, Clone)]
 pub struct MemoryDump {
     pub space: SpaceId,
     pub base: u32,
@@ -324,11 +446,30 @@ pub struct MemoryWrite {
     pub value: u64,
 }
 
-/// Debug-capability failure reasons.
-///
-/// Errors carry their own data only; display keys resolve through
-/// [`DebuggerError::space_key`], so `UnknownSpace` never fabricates one.
-/// All variants are produced by domain (core) code alone.
+/// Batched debugger snapshot in one thread crossing. Per-part contracts
+/// match the individual commands; an inspect failure skips the rest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapshotRequest {
+    pub inspect: InspectRequest,
+    /// Pinned anchor; `None` is follow-PC mode (anchor resolves via
+    /// the program counter inside the batch).
+    pub anchor: Option<u32>,
+    pub disasm_rows: u16,
+}
+
+/// Batched snapshot result. `disasm` is empty on skip/failure,
+/// mirroring the individual-call fallbacks (never an error).
+#[derive(Debug, Clone)]
+pub struct SnapshotResult {
+    pub inspect: Result<InspectResult, InspectError>,
+    pub anchor: Option<u32>,
+    pub disasm: Vec<DisasmLine>,
+}
+
+/// Debug-capability failure reasons. Data-only; display resolves
+/// outside the kernel. `Unsupported` covers unimplemented and unknown
+/// register names alike; add a variant instead of overloading if the
+/// two must ever be told apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DebuggerError {
     /// The core supports neither debugger nor debug control.
@@ -346,25 +487,9 @@ pub enum DebuggerError {
     BadWidth(u8),
 }
 
-impl DebuggerError {
-    /// Resolve the display key. `None` for variants without a table entry.
-    pub fn space_key(&self, table: &SpaceTable) -> Option<&'static str> {
-        let id = match self {
-            Self::UnknownSpace(id) | Self::ReadOnlySpace(id) => *id,
-            Self::UnmappedAddress { space, .. } => *space,
-            _ => return None,
-        };
-        table.get(id).map(|s| s.key)
-    }
-}
-
-/// `EmuCommand::DebuggerInspect` failure reasons.
-///
-/// Defined in the kernel next to `EmuCommand` (not in `traits/emu-thread`
-/// as §5.2 sketched: the command type lives here, so its reply type must
-/// too — otherwise the crates cycle). The layering still holds: `NotPaused`
-/// is produced only by the loop guard (infrastructure), every other
-/// variant arrives wrapped from domain code.
+/// `EmuCommand::DebuggerInspect` failure reasons. Defined next to
+/// `EmuCommand` so the crates cannot cycle; `NotPaused` comes only
+/// from the loop guard, the rest wrap domain errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InspectError {
     /// Not paused, so inspection is refused. Produced by the loop guard;
@@ -375,12 +500,8 @@ pub enum InspectError {
 }
 
 /// Execution control and memory editing. Separate from [`Debugger`] so
-/// that `&self` observation never implies write permission, and so that
-/// cores with observation but no single-stepping stay expressible.
-///
-/// `Send` is intentionally not required: control objects are created
-/// and consumed inside emu-thread command handling and never cross
-/// threads.
+/// `&self` observation never implies write permission. `Send` is not
+/// required: controls never cross threads.
 pub trait DebugControl {
     /// Advance execution by one unit. Returns cycles advanced.
     fn step(&mut self, unit: StepUnit) -> Result<u64, DebuggerError>;
@@ -397,6 +518,13 @@ pub trait DebugControl {
         width: u8,
         value: u64,
     ) -> Result<(), DebuggerError>;
+
+    /// Edit one named register. `name` is one of
+    /// [`Debugger::registers`] names; backends mask to the width.
+    /// Unknown names report `Unsupported`; default is `Unsupported`.
+    fn write_register(&mut self, _name: &str, _value: u64) -> Result<(), DebuggerError> {
+        Err(DebuggerError::Unsupported)
+    }
 }
 
 #[cfg(test)]
@@ -415,6 +543,35 @@ mod tests {
     fn debug_control_is_dyn_compatible() {
         fn _assert_dyn<T: DebugControl + ?Sized>() {}
         let _f: fn(&mut dyn DebugControl) = |_| {};
+    }
+
+    struct EmptyDebugger;
+
+    impl Debugger for EmptyDebugger {
+        fn spaces(&self) -> &[SpaceInfo] {
+            &[]
+        }
+
+        fn space_containing(&self, _addr: u32) -> Option<SpaceId> {
+            None
+        }
+
+        fn read(&self, _space: SpaceId, _addr: u32, _width: u8) -> Option<u64> {
+            None
+        }
+
+        fn registers(&self) -> &[(&'static str, u64)] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn debugger_defaults_are_explicitly_empty() {
+        let debugger = EmptyDebugger;
+        assert_eq!(debugger.program_counter(), None);
+        assert!(debugger.images().is_empty());
+        assert!(debugger.disassemble(0xC000, 8).is_empty());
+        assert!(debugger.panels().is_empty());
     }
 
     #[test]
@@ -439,6 +596,63 @@ mod tests {
         // Overflow edge: addr near u32::MAX is false, never panic.
         assert!(!table.covers(SpaceId(0), 0xFFFF_FFFF, 4));
         assert!(!table.covers(SpaceId(0), 0xFFFF_FFFF, 1));
+    }
+
+    #[test]
+    fn check_write_orders_refusals_and_honors_read_only_windows() {
+        static ENTRIES: [SpaceInfo; 2] = [
+            SpaceInfo {
+                id: SpaceId(0),
+                key: "wram",
+                name: "WRAM",
+                address_bits: 13,
+                range: 0x0000..=0x1FFF,
+                access: SpaceAccess::ReadWrite,
+            },
+            SpaceInfo {
+                id: SpaceId(1),
+                key: "rom",
+                name: "ROM",
+                address_bits: 13,
+                range: 0x2000..=0x3FFF,
+                access: SpaceAccess::ReadOnly,
+            },
+        ];
+        static READ_ONLY: [(SpaceId, u32, u32); 1] = [(SpaceId(0), 0x0000, 0x00FF)];
+        let table = SpaceTable::build_with_read_only(&ENTRIES, &READ_ONLY);
+        assert!(table.validate().is_ok());
+        // Load-bearing order: bad width first, so it never masks as
+        // an unknown space.
+        assert_eq!(
+            table.check_write(SpaceId(9), 0x0100, 0),
+            Err(DebuggerError::BadWidth(0))
+        );
+        assert_eq!(
+            table.check_write(SpaceId(9), 0x0100, 1),
+            Err(DebuggerError::UnknownSpace(SpaceId(9)))
+        );
+        assert_eq!(
+            table.check_write(SpaceId(0), 0x2000, 1),
+            Err(DebuggerError::UnmappedAddress {
+                space: SpaceId(0),
+                addr: 0x2000
+            })
+        );
+        // Whole-space refusal, then window refusal.
+        assert_eq!(
+            table.check_write(SpaceId(1), 0x2000, 1),
+            Err(DebuggerError::ReadOnlySpace(SpaceId(1)))
+        );
+        assert_eq!(
+            table.check_write(SpaceId(0), 0x0010, 1),
+            Err(DebuggerError::ReadOnlySpace(SpaceId(0)))
+        );
+        // A write straddling a window refuses instead of half-landing.
+        assert_eq!(
+            table.check_write(SpaceId(0), 0x00FE, 4),
+            Err(DebuggerError::ReadOnlySpace(SpaceId(0)))
+        );
+        assert_eq!(table.check_write(SpaceId(0), 0x0100, 4), Ok(()));
     }
 
     #[test]
@@ -498,6 +712,28 @@ mod tests {
                 id: SpaceId(7),
                 index: 1
             })
+        );
+    }
+
+    #[test]
+    fn validate_rejects_escaping_read_only_windows() {
+        static ENTRIES: [SpaceInfo; 1] = [SpaceInfo {
+            id: SpaceId(0),
+            key: "wram",
+            name: "WRAM",
+            address_bits: 13,
+            range: 0x0000..=0x1FFF,
+            access: SpaceAccess::ReadWrite,
+        }];
+        static ESCAPING: [(SpaceId, u32, u32); 1] = [(SpaceId(0), 0x1000, 0x2000)];
+        static GHOST: [(SpaceId, u32, u32); 1] = [(SpaceId(9), 0x0010, 0x001F)];
+        assert_eq!(
+            SpaceTable::build_with_read_only(&ENTRIES, &ESCAPING).validate(),
+            Err(SpaceError::ReadOnlyOutOfRange { space: SpaceId(0) })
+        );
+        assert_eq!(
+            SpaceTable::build_with_read_only(&ENTRIES, &GHOST).validate(),
+            Err(SpaceError::ReadOnlyOutOfRange { space: SpaceId(9) })
         );
     }
 }

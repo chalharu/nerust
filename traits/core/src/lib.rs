@@ -118,6 +118,42 @@ pub struct StateDataCommand {
     pub reply: Sender<Result<(), CoreError>>,
 }
 
+/// Boxed payload for `EmuCommand::SwapAudio`. Boxed like the other
+/// large payloads so the enum stays small. `backend` carries no
+/// `Debug` impl (audio backends never needed one), so this struct
+/// formats as the rate only — enough to identify a swap in logs.
+pub struct SwapAudioCommand {
+    /// Replacement backend, built session-side from the new settings
+    /// (volume/gain already applied). The thread `start()`s it on swap
+    /// and `pause()`s the old one: backend lifecycle stays thread-owned.
+    pub backend: Box<dyn audio::AudioBackend + Send>,
+    /// Device rate of `backend` (`backend.sample_rate()` at build).
+    /// Stamped into the core alongside the swap so nominal production
+    /// and the device agree again (ratio back near 1.0).
+    pub sample_rate: u32,
+    pub reply: Sender<()>,
+}
+
+impl std::fmt::Debug for SwapAudioCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SwapAudioCommand")
+            .field("sample_rate", &self.sample_rate)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Boxed payload for `EmuCommand::SwapFrameSlot`. The thread owns its
+/// render target exclusively, so even a same-size palette refresh must
+/// cross as a command: the reply is the barrier proving the thread
+/// parked on the new slot before the session swaps its own buffers.
+#[derive(Debug)]
+pub struct SwapFrameSlotCommand {
+    /// Fresh render target (geometry + pixel format + palette), built
+    /// session-side from the replacement video assets.
+    pub slot: FrameBuffer,
+    pub reply: Sender<()>,
+}
+
 #[derive(Debug)]
 pub enum EmuCommand {
     Pause,
@@ -131,6 +167,14 @@ pub enum EmuCommand {
     /// lifecycle transitions can kill audio streams; frontends send
     /// this on foreground resume.
     RestartAudio,
+    /// Live audio-backend swap between frames. No pause, no reload;
+    /// on GBA no rate-boundary state crossing.
+    SwapAudio(Box<SwapAudioCommand>),
+    /// Live render-target swap for presentation-only changes (video
+    /// filter). Runs synchronously between frames; callers pause first
+    /// so no frame straddles the session-side buffer swap that follows
+    /// the reply.
+    SwapFrameSlot(Box<SwapFrameSlotCommand>),
     SaveState {
         reply: Sender<Result<Vec<u8>, CoreError>>,
     },
@@ -142,16 +186,9 @@ pub enum EmuCommand {
     Identity {
         reply: Sender<Result<identity::SystemIdentity, CoreError>>,
     },
-    /// Advance execution by one unit. Processed synchronously when the
-    /// command is drained, so receipt is the frame barrier: each reply
-    /// corresponds to exactly one executed step. Callers pause first
-    /// for determinism; stepping while running races free-run.
-    ///
-    /// The success value is the frame counter after the stepped frame
-    /// (barrier position), not a cycle count: the thread renders the
-    /// frame itself so pixels, tap, and swap stay on the shared path.
-    /// Cycle counts remain available through `DebugControl::step`
-    /// for direct-console drivers.
+    /// Advance execution by one unit. The reply is the frame counter
+    /// after the stepped frame (barrier position). Callers pause first;
+    /// stepping while running races free-run.
     Step {
         unit: debugger::StepUnit,
         reply: Sender<Result<u64, debugger::DebuggerError>>,
@@ -162,12 +199,48 @@ pub enum EmuCommand {
         req: debugger::InspectRequest,
         reply: Sender<Result<debugger::InspectResult, debugger::InspectError>>,
     },
+    /// On-demand disassembly. Cold path like [`EmuCommand::DebuggerInspect`]:
+    /// callers hold pause for frame-consistent rows; the thread does not
+    /// gate, since decoding is side-effect free by kernel contract.
+    DebuggerDisassemble {
+        addr: u32,
+        count: u16,
+        reply: Sender<Result<Vec<debugger::DisasmLine>, debugger::DebuggerError>>,
+    },
+    /// On-demand system images (pattern tables). Same cold-path contract
+    /// as [`EmuCommand::DebuggerDisassemble`].
+    DebuggerImages {
+        reply: Sender<Result<Vec<debugger::DebugImage>, debugger::DebuggerError>>,
+    },
+    /// On-demand program counter for disassembly anchoring. Answers
+    /// without pause gating (a single register read); `Ok(None)` means
+    /// the system names no anchor.
+    DebuggerPc {
+        reply: Sender<Result<Option<u32>, debugger::DebuggerError>>,
+    },
+    /// Batched debugger snapshot (inspect + anchor + disassembly) in
+    /// one crossing. Same per-part contracts as the individual
+    /// commands; prefer over three sequential round trips wherever
+    /// the caller needs the whole set (debugger drains).
+    DebuggerSnapshot {
+        req: debugger::SnapshotRequest,
+        reply: Sender<Result<debugger::SnapshotResult, debugger::DebuggerError>>,
+    },
     /// Memory edit through the control path. Deliberately pause-ungated:
     /// `DebuggerError` has no not-paused variant by design (§5.2), so
     /// deterministic callers pause first and racing writes interleave
     /// with free-run by contract.
     WriteMemory {
         req: debugger::MemoryWrite,
+        reply: Sender<Result<(), debugger::DebuggerError>>,
+    },
+    /// Register edit through the control path. `name` is one of the
+    /// backend's register names (`&'static str` travels the channel
+    /// without allocation). Same pause-ungated contract as
+    /// [`EmuCommand::WriteMemory`].
+    WriteRegister {
+        name: &'static str,
+        value: u64,
         reply: Sender<Result<(), debugger::DebuggerError>>,
     },
     /// Install a nominal-audio tap: every rendered frame clones its
@@ -228,6 +301,12 @@ pub trait ConsoleCore: Send + Downcast {
     fn paused(&self) -> bool;
     fn set_paused(&mut self, paused: bool);
 
+    // -- audio device rate --
+    /// Re-basis nominal audio production onto a new device rate, once
+    /// per swap between frames. Only the rate basis changes; voice and
+    /// machine state are untouched.
+    fn set_audio_sample_rate(&mut self, sample_rate: u32);
+
     // -- save states --
     fn save_state(&self) -> Result<Vec<u8>, CoreError>;
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError>;
@@ -253,24 +332,15 @@ pub trait ConsoleCore: Send + Downcast {
     }
 
     // -- guest output channels (default: none) --
-    /// Names of the guest-output byte channels this core produces
-    /// (e.g. a link-cable serial stream, a guest debug-log sink).
-    /// Static topology: names are core-defined, data (manifests) may
-    /// reference them, generic drivers never invent them.
-    ///
-    /// Override PAIR checklist: `output_channels` and
-    /// `take_channel_bytes` must be overridden together. Listing a
-    /// channel without draining it (or vice versa) fails loudly at
-    /// read time, never at compile time, so keep the pair in sync.
+    /// Static channel topology: names are core-defined, never invented
+    /// by generic drivers. PAIR RULE: override with
+    /// `take_channel_bytes` together, or reads fail loudly.
     fn output_channels(&self) -> Vec<String> {
         Vec::new()
     }
-    /// Drain bytes the core produced on `channel` since the last call.
-    /// The session layer calls this once per rendered frame per tapped
-    /// channel; accumulation is the reader's job. Line-oriented sinks
-    /// flatten to newline-delimited bytes here (levels/prefixes are
-    /// the assert side's concern, if ever needed). Empty by default and
-    /// for unknown channels: cores stay silent unless they produce.
+    /// Drain bytes produced on `channel` since the last call (once per
+    /// frame per tapped channel). Empty by default and for unknown
+    /// channels.
     fn take_channel_bytes(&mut self, _channel: &str) -> Vec<u8> {
         Vec::new()
     }

@@ -15,12 +15,12 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_settings::{
+use nerust_gui_shell::registry::SystemRegistry;
+use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
+use nerust_settings_core::model::{
     local::{RumbleTarget, ScreenOrientation, TouchOverlayVisibility},
     shared::StoragePolicy,
 };
-use nerust_gui_shell::registry::SystemRegistry;
-use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 use winit::platform::android::activity::AndroidApp;
 
 use super::{bridge, messages::SettingsDialogResult};
@@ -199,16 +199,9 @@ impl AndroidSettings {
     // Dialog encoding
     // -----------------------------------------------------------------------
 
-    /// One settings row: stable key, label, offered choices and current
-    /// choice index travel together in a single struct. Every dialog
-    /// array and codec below derives from [`Self::setting_defs`], so a
-    /// row can never drift apart from its own choices again (a past
-    /// parallel-arrays layout showed percentages on the visibility row
-    /// while the length check still passed).
-    ///
-    /// The single ordered source of truth for the settings dialog.
-    /// Positional codecs ([`Self::from_choice_indices`]) index into this
-    /// same list, so reordering rows here stays consistent everywhere.
+    /// One settings row: key, label, choices, and current index in one
+    /// struct. Sole source of truth; codecs index this same list, so
+    /// rows can never drift from their choices.
     pub(crate) fn setting_defs(&self) -> Vec<SettingDef> {
         let off_on = || vec!["Off".to_string(), "On".to_string()];
         let percent = |range: std::ops::RangeInclusive<u8>| {
@@ -384,15 +377,9 @@ impl AndroidSettings {
         self.setting_defs().into_iter().map(|def| def.key).collect()
     }
 
-    /// Build an `AndroidSettings` from a comma-separated list of choice indices
-    /// (as returned by the Kotlin callback).
-    ///
-    /// Positional contract: index N is the choice for `setting_defs()[N]`.
-    /// Callers must feed positions derived from the same defs list (as
-    /// [`Self::from_keyed_indices`] does), never a separately maintained
-    /// array.
-    ///
-    /// Returns `None` if the string is malformed or any index is out of range.
+    /// Build settings from a comma-separated list of choice indices.
+    /// Index N is the choice for `setting_defs()[N]`; positions must
+    /// come from the same defs list. `None` on malformed input.
     pub(crate) fn from_choice_indices(raw: &str, current: &Self) -> Option<Self> {
         let indices: Vec<usize> = raw
             .split(',')
@@ -752,12 +739,8 @@ fn publish_result(request_id: u64, result: SettingsDialogResult) {
     bridge::wake();
 }
 
-// ---------------------------------------------------------------------------
-// JNI callback – invoked by `MainActivity.onSettingsDialogResult`
-// ---------------------------------------------------------------------------
-//
-// * `result == null`  → dialog was dismissed
-// * `result` is a versioned JSON object containing request ID and keyed values.
+// JNI callback for the settings dialog result.
+// Null means dismissed; otherwise versioned JSON with ID and values.
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult(
@@ -816,11 +799,11 @@ mod tests {
     use nerust_gbc_factory::GbcFactory;
     use nerust_gbc_settings::GbcSettings;
     use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_gui_settings::{
-        app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
-    };
     use nerust_nes_factory::NesFactory;
     use nerust_nes_settings::{NesSettings, NesVideoFilter};
+    use nerust_settings_core::model::{
+        app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
+    };
 
     use super::*;
 

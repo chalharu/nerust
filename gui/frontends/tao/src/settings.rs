@@ -18,8 +18,10 @@ use iced::{
 use iced_winit::program::Program;
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gui_shell::registry::SystemRegistry;
+use nerust_settings_core::model::{
+    language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
+};
 
 use nerust_settings_core::{
     editor::CaptureTarget,
@@ -445,6 +447,7 @@ impl SettingsAppState {
         }
 
         let buttons = row![
+            iced::widget::Space::new().width(Length::Fill),
             button(ui_text(language, UiText::Cancel)).on_press(Message::Cancel),
             button(ui_text(language, UiText::Ok))
                 .on_press_maybe(can_submit.then_some(Message::Submit)),
@@ -750,7 +753,9 @@ fn labeled_pick_list<'a, T: Clone + PartialEq + Eq + 'static>(
 ) -> El<'a> {
     row![
         text(label.to_string()).width(Length::Fixed(220.0)),
-        pick_list(options, selected, on_select).width(Length::Shrink)
+        // Stretch to the pane: Shrink rows strand the fixed window
+        // (General shows two short rows in a 960px frame otherwise).
+        pick_list(options, selected, on_select).width(Length::Fill)
     ]
     .spacing(12)
     .align_y(Alignment::Center)
@@ -794,14 +799,14 @@ mod tests {
     use iced::keyboard::key::{Code, Physical};
     use nerust_core_traits::audio::AudioBackendRegistry;
     use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_gui_settings::{
+    use nerust_gui_shell::registry::SystemRegistry;
+    use nerust_gui_viewmodel::settings::dto::ChoiceView;
+    use nerust_keyboard::Key;
+    use nerust_settings_core::model::{
         app_state::DesktopAppState,
         local::{HostBackendLocalSettings, ScalingMode},
         shared::{DesktopSharedSettings, StoragePolicy},
     };
-    use nerust_gui_shell::registry::SystemRegistry;
-    use nerust_gui_viewmodel::settings::dto::ChoiceView;
-    use nerust_keyboard::Key;
     use std::sync::{Arc, atomic::Ordering};
 
     use super::*;
@@ -986,8 +991,9 @@ mod tests {
     #[test]
     fn capture_messages_update_capture_state() {
         let mut state = empty_state();
-        let target =
-            CaptureTarget::Shortcut(nerust_gui_settings::input::ShortcutAction::TogglePause);
+        let target = CaptureTarget::Shortcut(
+            nerust_settings_core::model::input::ShortcutAction::TogglePause,
+        );
 
         dispatch(&mut state, Message::StartCapture(target.clone()));
         let capture = state.vm.capture.view.get();

@@ -51,14 +51,9 @@ pub trait RomLoadTarget {
     }
 }
 
-/// Loads and resolves a ROM file into a [`RomLoadTarget`].
-///
-/// Implementations handle:
-/// - Reading the file from disk
-/// - Creating a `MediaObject` from the file contents
-/// - Resolving system-specific load options (e.g., MMC3 IRQ variant)
-/// - Calling `target.load_resolved()` to start emulation
-/// - Calling `SessionCommand::Resume` after successful load
+/// Loads a ROM file into a [`RomLoadTarget`] and resumes. Implementors
+/// read the disk file, build the `MediaObject`, resolve options, load,
+/// then resume.
 pub trait RomLoader {
     fn load_rom(
         &mut self,

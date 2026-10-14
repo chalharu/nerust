@@ -2,8 +2,8 @@ use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use crate::settings::catalog::FactoryCatalog;
 use nerust_core_traits::factory::CoreFactory;
-use nerust_gui_settings::shared::StoragePolicy;
-use nerust_gui_settings::snapshot::SettingsSnapshot;
+use nerust_settings_core::model::shared::StoragePolicy;
+use nerust_settings_core::model::snapshot::SettingsSnapshot;
 use nerust_settings_core::{bindings::conflicting_keys, input::build_topology};
 
 use super::{
@@ -252,8 +252,8 @@ mod tests {
 
     #[test]
     fn validator_detects_unknown_profile() {
-        use nerust_gui_settings::snapshot::SettingsSnapshot;
-        use nerust_gui_settings::{
+        use nerust_settings_core::model::snapshot::SettingsSnapshot;
+        use nerust_settings_core::model::{
             app_state::DesktopAppState, local::HostBackendLocalSettings,
             shared::DesktopSharedSettings,
         };

@@ -164,7 +164,7 @@ fn filter_unknown_controller_assignments(app_state: &Value, defaults: &SettingsS
 
 fn filter_unknown_systems(
     shared: &Value,
-    defaults: &nerust_gui_settings::shared::DesktopSharedSettings,
+    defaults: &nerust_settings_core::model::shared::DesktopSharedSettings,
 ) -> Value {
     let mut filtered = shared.clone();
     let Ok(defaults) = serde_value::to_value(defaults) else {

@@ -11,11 +11,13 @@ pub mod controller;
 pub mod core_options;
 mod cpu;
 pub mod debugger;
+pub(crate) mod disasm6502;
 pub mod input_types;
 mod interrupt;
 mod mapper;
 mod mapper_state;
 pub(crate) mod mirror;
+pub(crate) mod pattern_tables;
 mod persistence_codec;
 mod persistence_error;
 mod ppu;
@@ -238,6 +240,14 @@ impl Core {
         self.apu_state = None;
     }
 
+    /// Drop the cached rate-baked DSP (resampler + IIR coefficients) so
+    /// the next frame rebuilds it at the new rate. Voice state lives in
+    /// `apu` and is untouched — same split as `reset()`, minus the
+    /// machine reset. Called by the console's `set_audio_sample_rate`.
+    pub(crate) fn drop_apu_state(&mut self) {
+        self.apu_state = None;
+    }
+
     pub fn peek_work_ram(&self, address: usize) -> Option<u8> {
         self.cpu.peek_work_ram(address)
     }
@@ -263,9 +273,46 @@ impl Core {
         ]
     }
 
+    /// Debugger register poke. Values mask to the register width;
+    /// unknown names return `false`. Same `pub(crate)` setters the
+    /// core itself uses; `Register` stays crate-private.
+    pub(crate) fn write_cpu_register(&mut self, name: &str, value: u64) -> bool {
+        let r = self.cpu.register_mut();
+        match name {
+            "a" => r.set_a(value as u8),
+            "p" => r.set_p(value as u8),
+            "pc" => r.set_pc(value as u16),
+            "sp" => r.set_sp(value as u8),
+            "x" => r.set_x(value as u8),
+            "y" => r.set_y(value as u8),
+            _ => return false,
+        }
+        true
+    }
+
     pub fn peek_cartridge_ram(&self, address: usize) -> Option<OpenBusReadResult> {
         if (0x6000..=0x7FFF).contains(&address) {
             Some(self.cartridge.read(address))
+        } else {
+            None
+        }
+    }
+
+    /// PRG ROM byte for disassembly. Same mask rule as RAM peeks:
+    /// floating reads are open (None).
+    pub(crate) fn peek_prg_byte(&self, address: usize) -> Option<u8> {
+        if !(0x8000..=0xFFFF).contains(&address) {
+            return None;
+        }
+        let read = self.cartridge.read(address);
+        (read.mask == 0xFF).then_some(read.data)
+    }
+
+    /// Non-invasive CHR byte read ($0000-$1FFF) for the pattern-table
+    /// viewer: `&self` via the side-effect-free character path.
+    pub fn peek_chr_byte(&self, address: usize) -> Option<OpenBusReadResult> {
+        if address <= 0x1FFF {
+            Some(self.cartridge.read_character(address))
         } else {
             None
         }
@@ -307,6 +354,11 @@ impl Core {
 
     pub fn peek_ppu_vram(&self, address: usize) -> Option<u8> {
         self.ppu.peek_vram(address, self.cartridge.as_ref())
+    }
+
+    /// PPU register peek for the debugger's panels.
+    pub(crate) fn peek_ppu_debug_regs(&self) -> crate::ppu::PpuDebugRegs {
+        self.ppu.peek_debug_regs()
     }
 
     pub fn rom_identity(&self) -> RomIdentity {
@@ -460,7 +512,42 @@ impl Core {
         }
     }
 
-    #[inline(always)]
+    /// Cap for one instruction step: normal instructions retire in a
+    /// handful of cycles (DMA and interrupts extend into the
+    /// hundreds); a halted CPU (JAM) never reaches a boundary, so the
+    /// cap guarantees termination and the count stays honest.
+    pub(crate) const MAX_INSTRUCTION_STEP_CYCLES: u64 = 1_000_000;
+
+    /// Advance to the next instruction boundary, reporting core
+    /// cycles. Uses the exact per-cycle path (`step_cycle`), so
+    /// PPU/APU stay in lockstep. Audio samples are dropped: stepping
+    /// is a paused debugger operation, never audible output.
+    pub(crate) fn step_instruction(
+        &mut self,
+        screen: &mut FrameBuffer,
+        hub: &mut dyn ControllerHub,
+    ) -> u64 {
+        struct NullAudio;
+        impl AudioBackend for NullAudio {
+            fn start(&mut self) {}
+            fn pause(&mut self) {}
+            fn push(&mut self, _sample: StereoSample) {}
+        }
+        let mut mixer = NullAudio;
+        let sample_rate = mixer.sample_rate();
+        let mut cycles = 0;
+        while cycles < Self::MAX_INSTRUCTION_STEP_CYCLES {
+            cycles += 1;
+            // Frame completion mid-step is ignored: only the CPU
+            // boundary ends the step.
+            self.step_cycle(screen, hub, &mut mixer, sample_rate);
+            if self.cpu.is_instruction_boundary() {
+                break;
+            }
+        }
+        cycles
+    }
+
     fn step_cycle<M: AudioBackend>(
         &mut self,
         screen: &mut FrameBuffer,

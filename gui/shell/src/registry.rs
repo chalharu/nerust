@@ -76,12 +76,9 @@ impl SystemRegistry {
         self.by_id.get(id)
     }
 
-    /// Creates a `RomLoader` that auto-detects the system for each load.
-    ///
-    /// `pending_options` maps each system ID to CLI-provided load options.
-    /// Each option is consumed on the first
-    /// load of the corresponding system; subsequent loads fall back to
-    /// `RomLoadTarget::default_load_options()`.
+    /// Creates a `RomLoader` that auto-detects the system per load.
+    /// Each `pending_options` entry is consumed on its system's first
+    /// load; later loads use default options.
     pub fn create_loader(
         self: &Arc<Self>,
         pending_options: HashMap<Box<dyn SystemId>, Box<dyn DynSystemLoadOptions>>,
@@ -173,10 +170,10 @@ mod tests {
         identity::SystemId,
     };
     use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_gui_settings::{
+    use nerust_input_traits::{InputAssignments, InputSystemFactory};
+    use nerust_settings_core::model::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
-    use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
     use super::*;
 

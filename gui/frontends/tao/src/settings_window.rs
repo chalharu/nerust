@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex, atomic::AtomicBool},
 };
 
-use iced::{Event, Point, Size, advanced::renderer, keyboard, mouse, theme};
+use iced::{Size, advanced::renderer, keyboard, mouse, theme};
 use iced_tiny_skia::{
     Renderer,
     graphics::compositor::Compositor as _,
@@ -12,7 +12,6 @@ use iced_tiny_skia::{
 };
 use iced_winit::{
     Clipboard,
-    core::SmolStr,
     graphics::Viewport,
     program,
     runtime::user_interface::{Cache, UserInterface},
@@ -38,8 +37,10 @@ use crate::{
 /// This makes the phantom lifetime safety explicit via Drop rather than
 /// relying on struct field declaration order.
 pub(crate) struct UiState {
-    ui: std::mem::ManuallyDrop<
-        UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
+    ui: Option<
+        std::mem::ManuallyDrop<
+            UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
+        >,
     >,
     instance: program::Instance<SettingsAppProgram>,
     view_invalidated: Rc<Cell<bool>>,
@@ -78,7 +79,7 @@ impl UiState {
     ) -> Self {
         let ui = Self::build_ui(&instance, window_id, bounds, Cache::default(), renderer);
         Self {
-            ui: std::mem::ManuallyDrop::new(ui),
+            ui: Some(std::mem::ManuallyDrop::new(ui)),
             instance,
             view_invalidated,
         }
@@ -87,7 +88,23 @@ impl UiState {
     fn ui_mut(
         &mut self,
     ) -> &mut UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer> {
-        &mut self.ui
+        self.ui
+            .as_deref_mut()
+            .expect("UiState used after a panicked relayout")
+    }
+
+    /// Relayout for a new size (resize/scale paths): one layout pass
+    /// reusing the retained tree and widget state, mirroring the
+    /// debugger shell. Unlike the old rebuild this never clears a
+    /// pending view invalidation: program-state updates still rebuild
+    /// through `process_messages`.
+    fn relayout(&mut self, bounds: Size, renderer: &mut iced_tiny_skia::Renderer) {
+        let Some(owned) = self.ui.take() else {
+            return;
+        };
+        let inner = std::mem::ManuallyDrop::into_inner(owned);
+        let rebuilt = inner.relayout(bounds, renderer);
+        self.ui = Some(std::mem::ManuallyDrop::new(rebuilt));
     }
 
     /// Process messages, then conditionally rebuild UI.
@@ -106,33 +123,19 @@ impl UiState {
             return;
         }
 
-        // Step 1: Replace UI with a placeholder, extract old cache.
-        let placeholder = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(
-                &self.instance,
-                window_id,
-                bounds,
-                Cache::default(),
-                renderer,
-            ),
-        );
-        let cache = placeholder.into_cache();
-
-        // Step 2: Process messages (mutate instance state).
+        // Single build, mirroring AuxShell: take the old UI out, harvest
+        // its cache, run the messages, rebuild once. The old code built
+        // a throwaway placeholder plus the real UI per batch.
+        let old = self.ui.take().map(std::mem::ManuallyDrop::into_inner);
         // Note: SettingsAppState::update() always returns Task::none().
         // If a future handler returns a non-empty Task, it must be executed
         // (e.g., via block_on) rather than discarded here.
         for msg in messages {
             let _task = self.instance.update(msg);
         }
-
-        // Step 3: Replace placeholder with real UI from new state + cache.
-        let stale = std::mem::replace(
-            &mut *self.ui,
-            Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
-        );
-        let _ = stale.into_cache(); // discard placeholder
+        let cache = old.map_or_else(Cache::default, UserInterface::into_cache);
+        let rebuilt = Self::build_ui(&self.instance, window_id, bounds, cache, renderer);
+        self.ui = Some(std::mem::ManuallyDrop::new(rebuilt));
 
         self.view_invalidated.set(false);
     }
@@ -142,7 +145,10 @@ impl Drop for UiState {
     fn drop(&mut self) {
         // SAFETY: UI has a phantom lifetime tied to Instance.
         // Dropping UI before Instance prevents dangling reference.
-        unsafe { std::mem::ManuallyDrop::drop(&mut self.ui) };
+        // `None` only after a panicked relayout, with nothing left.
+        if let Some(mut ui) = self.ui.take() {
+            unsafe { std::mem::ManuallyDrop::drop(&mut ui) };
+        }
     }
 }
 
@@ -153,6 +159,10 @@ pub(crate) struct SettingsWindowHandle {
     renderer: SettingsRenderer,
     viewport: Size,
     viewport_physical: (u32, u32),
+    /// Last surface-configured size. Resize storms only relayout;
+    /// the realloc happens in `render`, once per presented frame.
+    /// Mirrors AuxShell.
+    surface_size: (u32, u32),
     pub(crate) scale_factor: f32,
     pub(crate) modifiers: keyboard::Modifiers,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
@@ -256,6 +266,14 @@ impl SettingsWindowHandle {
             Rc::clone(&view_invalidated),
         );
 
+        // Birth geometry is a placeholder on some compositors; record
+        // it to tell "born 0x0, never resized" apart from later traffic.
+        log::debug!(
+            "settings create: physical={}x{} scale={scale_factor} bounds={bounds:?}",
+            viewport_physical.0,
+            viewport_physical.1,
+        );
+
         window.request_redraw();
 
         Some(Self {
@@ -269,6 +287,8 @@ impl SettingsWindowHandle {
             },
             viewport,
             viewport_physical,
+            // The scaffold builds the surface at this size.
+            surface_size: viewport_physical,
             scale_factor,
             modifiers: keyboard::Modifiers::default(),
             pending_apply,
@@ -291,15 +311,25 @@ impl SettingsWindowHandle {
             messages.push(Message::CaptureKey(key));
         }
 
-        self.ui_state.ui_mut().update(
+        let (ui_outcome, _) = self.ui_state.ui_mut().update(
             &[mapped],
             self.cursor,
             &mut self.renderer.backend,
             &mut self.clipboard,
             &mut messages,
         );
+        let outcome = crate::iced_shell::pump_outcome(&ui_outcome);
+        match outcome {
+            crate::iced_shell::PumpOutcome::Rebuild => {
+                self.ui_state.view_invalidated.set(true);
+            }
+            crate::iced_shell::PumpOutcome::Repaint => {
+                self.window.request_redraw();
+            }
+            crate::iced_shell::PumpOutcome::Idle => {}
+        }
 
-        if !messages.is_empty() {
+        if !messages.is_empty() || matches!(outcome, crate::iced_shell::PumpOutcome::Rebuild) {
             let bounds = Viewport::with_physical_size(
                 Size::new(self.viewport_physical.0, self.viewport_physical.1),
                 self.scale_factor,
@@ -315,7 +345,27 @@ impl SettingsWindowHandle {
     }
 
     pub(crate) fn render(&mut self) {
-        let theme = iced::Theme::Dark;
+        // Same self-healing scale as the aux viewers: a stale factor
+        // lays out against the wrong bounds and the content stops
+        // agreeing with the frame.
+        let live_scale = self.window.scale_factor() as f32;
+        if live_scale != self.scale_factor {
+            log::debug!(
+                "settings render: scale drift {} -> {}; rebuild",
+                self.scale_factor,
+                live_scale
+            );
+            self.set_scale_factor(live_scale);
+        }
+        // Deferred surface configure (see `resize`): resize storms only
+        // relayout per event; the realloc lands here, at most once per
+        // presented frame. Mirrors AuxShell.
+        if self.surface_size != self.viewport_physical {
+            self.renderer
+                .resize(self.viewport_physical.0, self.viewport_physical.1);
+            self.surface_size = self.viewport_physical;
+        }
+        let theme = iced::Theme::Light;
         let style = <iced::Theme as theme::Base>::base(&theme);
         let vp = Viewport::with_physical_size(
             Size::new(self.viewport_physical.0, self.viewport_physical.1),
@@ -344,7 +394,7 @@ impl SettingsWindowHandle {
             self.cursor,
         );
 
-        if let Err(e) = self.renderer.present(&vp, iced::Color::BLACK) {
+        if let Err(e) = self.renderer.present(&vp, style.background_color) {
             log::warn!("settings render present failed: {e:?}");
         }
     }
@@ -355,6 +405,7 @@ impl SettingsWindowHandle {
 
     pub(crate) fn set_scale_factor(&mut self, sf: f32) {
         self.scale_factor = sf;
+        self.rebuild_with_current_bounds();
     }
 
     pub(crate) fn set_modifiers(&mut self, modifiers: TaoModifiers) {
@@ -383,97 +434,51 @@ impl SettingsWindowHandle {
 /// Convert Tao WindowEvent to iced Event, updating cursor/modifiers/should_close.
 /// Returns Some(event) for events that should be forwarded to handle_event(),
 /// None for events that are fully handled here (CursorLeft, CloseRequested, etc.).
-fn convert_tao_window_event(
-    event: tao::event::WindowEvent,
-    cursor: &mut mouse::Cursor,
-    scale_factor: f32,
-    modifiers: &mut keyboard::Modifiers,
-    should_close: &AtomicBool,
-) -> Option<iced::Event> {
-    use tao::event::WindowEvent;
-    match event {
-        WindowEvent::CursorMoved { position, .. } => {
-            let logical = position.to_logical::<f64>(scale_factor as f64);
-            let point = Point::new(logical.x as f32, logical.y as f32);
-            *cursor = mouse::Cursor::Available(point);
-            Some(Event::Mouse(mouse::Event::CursorMoved { position: point }))
-        }
-        WindowEvent::CursorLeft { .. } => {
-            *cursor = mouse::Cursor::Unavailable;
-            None
-        }
-        WindowEvent::KeyboardInput { event: ke, .. } => {
-            let iced_key = tao_key_to_iced_key(&ke.logical_key);
-            let physical_key =
-                keyboard::key::Physical::Code(tao_keycode_to_iced_code(ke.physical_key));
-            match ke.state {
-                tao::event::ElementState::Pressed => {
-                    Some(Event::Keyboard(keyboard::Event::KeyPressed {
-                        key: iced_key.clone(),
-                        modified_key: iced_key.clone(),
-                        physical_key,
-                        modifiers: *modifiers,
-                        location: keyboard::Location::Standard,
-                        text: ke.text.map(SmolStr::new),
-                        repeat: ke.repeat,
-                    }))
-                }
-                tao::event::ElementState::Released => {
-                    Some(Event::Keyboard(keyboard::Event::KeyReleased {
-                        key: iced_key.clone(),
-                        modified_key: iced_key,
-                        physical_key,
-                        modifiers: *modifiers,
-                        location: keyboard::Location::Standard,
-                    }))
-                }
-                _ => None,
-            }
-        }
-        WindowEvent::MouseInput { button, state, .. } => {
-            let btn = match button {
-                tao::event::MouseButton::Left => mouse::Button::Left,
-                tao::event::MouseButton::Right => mouse::Button::Right,
-                tao::event::MouseButton::Middle => mouse::Button::Middle,
-                _ => return None,
-            };
-            match state {
-                tao::event::ElementState::Pressed => {
-                    Some(Event::Mouse(mouse::Event::ButtonPressed(btn)))
-                }
-                tao::event::ElementState::Released => {
-                    Some(Event::Mouse(mouse::Event::ButtonReleased(btn)))
-                }
-                _ => None,
-            }
-        }
-        WindowEvent::ModifiersChanged(state) => {
-            *modifiers = tao_modifiers_to_iced(state);
-            None
-        }
-        WindowEvent::CloseRequested => {
-            should_close.store(true, std::sync::atomic::Ordering::Release);
-            None
-        }
-        // Touch, IME, axis motion, and other platform-specific events
-        // are not needed for the settings UI.
-        _ => None,
-    }
-}
-
 impl SettingsWindowHandle {
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
+        // Same-size events (redundant during some drags, and duplicate
+        // configures from some compositors) skip everything, mirroring
+        // AuxShell.
+        if self.viewport_physical == (width, height) {
+            return;
+        }
         self.viewport_physical = (width, height);
+        // The inner/outer cross-check tells event/client/frame apart
+        // (some compositors report the outer size as the event size).
+        // Window-system queries run only when something reads the log.
+        if log::log_enabled!(log::Level::Debug) {
+            let inner = self.window.inner_size();
+            let outer = self.window.outer_size();
+            log::debug!(
+                "settings resize: event={width}x{height} inner={}x{} outer={}x{} scale={} bounds={:?}",
+                inner.width,
+                inner.height,
+                outer.width,
+                outer.height,
+                self.scale_factor,
+                crate::iced_shell::logical_bounds((width, height), self.scale_factor)
+            );
+        }
+        // Surface realloc deferred to `render` (see there): per-event
+        // reconfigure falls behind live drags. Relayout only here.
+        self.rebuild_with_current_bounds();
+    }
+
+    fn rebuild_with_current_bounds(&mut self) {
         self.viewport = Size::new(
-            width as f32 / self.scale_factor,
-            height as f32 / self.scale_factor,
+            self.viewport_physical.0 as f32 / self.scale_factor,
+            self.viewport_physical.1 as f32 / self.scale_factor,
         );
-        self.renderer.resize(width, height);
+        let bounds = self.viewport;
+        let backend = &mut self.renderer.backend;
+        self.ui_state.relayout(bounds, backend);
+        self.window.request_redraw();
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use iced::{Event, Point};
     use tao::{dpi::PhysicalPosition, event::WindowEvent};
 
     use super::*;

@@ -10,11 +10,11 @@ use std::{
 };
 
 use nerust_core_traits::{
-    ConsoleCore, EmuCommand, LoadCommand,
+    ConsoleCore, EmuCommand, LoadCommand, SwapAudioCommand, SwapFrameSlotCommand,
     audio::{AudioBackend, StereoSample},
     debugger::{
         DUMP_ROW_BYTES, DebuggerError, HexRow, InspectError, InspectRequest, InspectResult,
-        MAX_DUMP_BYTES, MemoryDump, StepUnit,
+        MAX_DUMP_BYTES, MemoryDump, SnapshotResult, StepUnit,
     },
 };
 use nerust_render_traits::FrameBuffer;
@@ -62,16 +62,11 @@ impl fmt::Debug for EmuThread {
 }
 
 impl EmuThread {
-    /// `shared_fb` is swapped with the internal frame buffer after each render_frame.
-    /// `frame_ready` signals ConsoleVideo that a new frame is available.
-    /// `frame_slot` is the core's render target, built by the caller
-    /// from the factory-declared profile (size + frame format) — never
-    /// per-system constants here. `mem::swap` propagates its format
-    /// into `shared_fb` and onward, so all three buffers must agree
-    /// before the first swap; cores may still adjust it defensively.
-    /// `audio` is session-owned: the thread pumps core-produced samples
-    /// through the rate-control filter into it (transport separation:
-    /// cores never see the backend).
+    /// `shared_fb` swaps with the internal buffer after each render;
+    /// `frame_ready` signals ConsoleVideo. `frame_slot` (the core's
+    /// render target) comes from the factory profile, never per-system
+    /// constants, so all three buffers agree before the first swap.
+    /// `audio` is session-owned; cores never see the backend.
     pub fn spawn(
         mut core: Box<dyn ConsoleCore + Send + 'static>,
         shared_fb: Arc<Mutex<FrameBuffer>>,
@@ -123,7 +118,25 @@ impl EmuThread {
                                 let _ =
                                     reply.send(Err(InspectError::Core(DebuggerError::Unsupported)));
                             }
+                            EmuCommand::DebuggerDisassemble { reply, .. } => {
+                                let _ = reply.send(Err(DebuggerError::Unsupported));
+                            }
+                            EmuCommand::DebuggerImages { reply, .. } => {
+                                let _ = reply.send(Err(DebuggerError::Unsupported));
+                            }
+                            EmuCommand::DebuggerPc { reply, .. } => {
+                                let _ = reply.send(Err(DebuggerError::Unsupported));
+                            }
                             EmuCommand::WriteMemory { reply, .. } => {
+                                let _ = reply.send(Err(DebuggerError::Unsupported));
+                            }
+                            EmuCommand::SwapAudio(cmd) => {
+                                handle_swap_audio(&mut *core, &mut audio, &mut filter, *cmd);
+                            }
+                            EmuCommand::SwapFrameSlot(cmd) => {
+                                handle_swap_frame_slot(&mut frame_slot, *cmd);
+                            }
+                            EmuCommand::WriteRegister { reply, .. } => {
                                 let _ = reply.send(Err(DebuggerError::Unsupported));
                             }
                             EmuCommand::TapNominalAudio { tap, reply } => {
@@ -151,11 +164,8 @@ impl EmuThread {
                     continue;
                 }
 
-                // Park while paused with nothing pending: nothing renders
-                // here, so real-time pacing must not gate stepped frames
-                // (headless determinism runs flat-out, not at 60Hz), and
-                // the loop must not hot-spin on `try_recv`. The parked
-                // command is consumed by the drain below; disconnect
+                // Park while paused with nothing pending: no pacing gate
+                // (stepped frames run flat-out), no hot-spin. Disconnect
                 // exits, like the idle path.
                 if core.paused() && pending.is_none() {
                     match cmd_rx.recv() {
@@ -185,6 +195,12 @@ impl EmuThread {
                             audio.reconnect();
                             filter.reset();
                         }
+                        EmuCommand::SwapAudio(cmd) => {
+                            handle_swap_audio(&mut *core, &mut audio, &mut filter, *cmd);
+                        }
+                        EmuCommand::SwapFrameSlot(cmd) => {
+                            handle_swap_frame_slot(&mut frame_slot, *cmd);
+                        }
                         EmuCommand::SaveState { reply } => {
                             let result = core.save_state();
                             // reply send failure: receiver dropped (timeout/abort) — expected
@@ -212,22 +228,9 @@ impl EmuThread {
                             let _ = reply.send(result);
                         }
                         EmuCommand::Step { unit, reply } => {
-                            // Processed synchronously here, so receipt is
-                            // the barrier: each reply matches exactly one
-                            // executed step. Deterministic callers pause
-                            // first; stepping while running races free-run.
-                            //
-                            // Frame steps run the standard frame block
-                            // directly: the pixels must land in the shared
-                            // framebuffer, which a delegated control
-                            // cannot reach. The reply is the frame counter
-                            // after the step (barrier position).
-                            // Instruction steps carry no pixels, so they
-                            // delegate to the control (cycles kept).
-                            //
-                            // Stepping an unloaded core is refused: the
-                            // render block would silently succeed without
-                            // advancing anything observable.
+                            // Barrier: one reply per executed step; callers
+                            // pause first. Frame steps render inline;
+                            // instruction steps delegate.
                             let result = if !loaded {
                                 Err(DebuggerError::Unsupported)
                             } else {
@@ -262,6 +265,67 @@ impl EmuThread {
                             // reply send failure: receiver dropped (timeout/abort) — expected
                             let _ = reply.send(result);
                         }
+                        EmuCommand::DebuggerDisassemble { addr, count, reply } => {
+                            // Cold path, ungated like WriteMemory: callers
+                            // hold pause for frame-consistent rows.
+                            let result = match core.debugger() {
+                                Some(debugger) => Ok(debugger.disassemble(addr, count)),
+                                None => Err(DebuggerError::Unsupported),
+                            };
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::DebuggerImages { reply } => {
+                            let result = match core.debugger() {
+                                Some(debugger) => Ok(debugger.images()),
+                                None => Err(DebuggerError::Unsupported),
+                            };
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::DebuggerPc { reply } => {
+                            let result = match core.debugger() {
+                                Some(debugger) => Ok(debugger.program_counter()),
+                                None => Err(DebuggerError::Unsupported),
+                            };
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::DebuggerSnapshot { req, reply } => {
+                            // One crossing for inspect + anchor +
+                            // disassembly (see the type docs for the
+                            // preserved failure semantics): callers
+                            // hold pause for frame-consistent rows.
+                            let frame = fc.load(Ordering::Relaxed);
+                            let result = match inspect_memory(&*core, &req.inspect, frame) {
+                                Err(error) => Ok(SnapshotResult {
+                                    inspect: Err(error),
+                                    anchor: None,
+                                    disasm: Vec::new(),
+                                }),
+                                Ok(inspected) => {
+                                    let anchor = match req.anchor {
+                                        Some(addr) => Some(addr),
+                                        None => match core.debugger() {
+                                            Some(debugger) => debugger.program_counter(),
+                                            None => None,
+                                        },
+                                    };
+                                    let disasm = match anchor {
+                                        Some(addr) => match core.debugger() {
+                                            Some(debugger) => {
+                                                debugger.disassemble(addr, req.disasm_rows)
+                                            }
+                                            None => Vec::new(),
+                                        },
+                                        None => Vec::new(),
+                                    };
+                                    Ok(SnapshotResult {
+                                        inspect: Ok(inspected),
+                                        anchor,
+                                        disasm,
+                                    })
+                                }
+                            };
+                            let _ = reply.send(result);
+                        }
                         EmuCommand::WriteMemory { req, reply } => {
                             // Deliberately pause-ungated (see InspectError):
                             // deterministic callers pause first.
@@ -272,6 +336,14 @@ impl EmuThread {
                                 None => Err(DebuggerError::Unsupported),
                             };
                             // reply send failure: receiver dropped (timeout/abort) — expected
+                            let _ = reply.send(result);
+                        }
+                        EmuCommand::WriteRegister { name, value, reply } => {
+                            // Same pause-ungated contract as WriteMemory.
+                            let result = match core.debug_control() {
+                                Some(mut control) => control.write_register(name, value),
+                                None => Err(DebuggerError::Unsupported),
+                            };
                             let _ = reply.send(result);
                         }
                         EmuCommand::TapNominalAudio { tap, reply } => {
@@ -386,6 +458,36 @@ fn handle_load(
     let loaded = result.is_ok();
     let _ = cmd.reply.send(result);
     loaded
+}
+
+/// Live audio-backend swap between frames (no pause: commands drain
+/// only between frames). Old backend quiets first, core re-basis its
+/// rate, filter drops stale observations.
+fn handle_swap_audio(
+    core: &mut dyn ConsoleCore,
+    audio: &mut Box<dyn AudioBackend + Send + 'static>,
+    filter: &mut DynamicRateFilter,
+    cmd: SwapAudioCommand,
+) {
+    audio.pause();
+    let mut next = cmd.backend;
+    next.start();
+    *audio = next;
+    core.set_audio_sample_rate(cmd.sample_rate);
+    filter.reset();
+    // reply send failure: receiver dropped (timeout/abort) — expected
+    let _ = cmd.reply.send(());
+}
+
+/// Live render-target swap between frames. Wholesale replacement keeps
+/// the slot, the shared buffer, and the display buffer on one format:
+/// the session swaps its own buffers only after this reply lands, and
+/// (for the visual path) only while paused, so no frame straddles the
+/// two swaps.
+fn handle_swap_frame_slot(frame_slot: &mut FrameBuffer, cmd: SwapFrameSlotCommand) {
+    *frame_slot = cmd.slot;
+    // reply send failure: receiver dropped (timeout/abort) — expected
+    let _ = cmd.reply.send(());
 }
 
 /// Overwrite a nominal-audio tap with one frame's samples, when a tap
@@ -561,12 +663,47 @@ mod tests {
         }
     }
 
+    /// Backend with a scripted rate that records `start()`: proves a
+    /// swap actually installs the new transport instead of just
+    /// replying.
+    struct ProbeBackend {
+        rate: u32,
+        started: Arc<AtomicBool>,
+    }
+
+    impl AudioBackend for ProbeBackend {
+        fn start(&mut self) {
+            self.started.store(true, Ordering::SeqCst);
+        }
+        fn pause(&mut self) {}
+        fn push(&mut self, _sample: StereoSample) {}
+        fn sample_rate(&self) -> u32 {
+            self.rate
+        }
+    }
+
+    fn swap_audio(thread: &EmuThread, rate: u32, started: &Arc<AtomicBool>) {
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::SwapAudio(Box::new(SwapAudioCommand {
+                backend: Box::new(ProbeBackend {
+                    rate,
+                    started: Arc::clone(started),
+                }),
+                sample_rate: rate,
+                reply: tx,
+            })))
+            .expect("swap send");
+        rx.recv().expect("swap reply");
+    }
+
     /// Minimal deterministic core: frames advance only via control.
     struct FakeCore {
         paused: bool,
         loaded: bool,
         stepped_frames: u64,
         mem: [u8; 256],
+        sample_rate: Arc<Mutex<u32>>,
     }
 
     static FAKE_SPACES: [SpaceInfo; 1] = [SpaceInfo {
@@ -708,6 +845,10 @@ mod tests {
             self.paused = paused;
         }
 
+        fn set_audio_sample_rate(&mut self, sample_rate: u32) {
+            *self.sample_rate.lock().unwrap() = sample_rate;
+        }
+
         fn save_state(&self) -> Result<Vec<u8>, CoreError> {
             Ok(Vec::new())
         }
@@ -734,7 +875,11 @@ mod tests {
         }
     }
 
-    fn spawn_loaded() -> EmuThread {
+    fn spawn_bare() -> EmuThread {
+        spawn_bare_with_rate(Arc::new(Mutex::new(48_000)))
+    }
+
+    fn spawn_bare_with_rate(sample_rate: Arc<Mutex<u32>>) -> EmuThread {
         let fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
             256,
             240,
@@ -742,12 +887,13 @@ mod tests {
                 palette: Box::new([0u32; 256]),
             },
         )));
-        let thread = EmuThread::spawn(
+        EmuThread::spawn(
             Box::new(FakeCore {
                 paused: false,
                 loaded: false,
                 stepped_frames: 0,
                 mem: std::array::from_fn(|i| i as u8),
+                sample_rate,
             }),
             Arc::clone(&fb),
             Arc::new(AtomicBool::new(false)),
@@ -763,7 +909,11 @@ mod tests {
                 slot
             },
             Box::new(SilentBackend),
-        );
+        )
+    }
+
+    fn spawn_loaded() -> EmuThread {
+        let thread = spawn_bare();
         let (tx, rx) = mpsc::channel();
         thread
             .send(EmuCommand::Load(Box::new(LoadCommand {
@@ -808,35 +958,7 @@ mod tests {
 
     #[test]
     fn paused_load_runs_no_free_frames() {
-        let fb = Arc::new(Mutex::new(FrameBuffer::with_capacity(
-            256,
-            240,
-            PixelFormat::PaletteIndex {
-                palette: Box::new([0u32; 256]),
-            },
-        )));
-        let thread = EmuThread::spawn(
-            Box::new(FakeCore {
-                paused: false,
-                loaded: false,
-                stepped_frames: 0,
-                mem: std::array::from_fn(|i| i as u8),
-            }),
-            Arc::clone(&fb),
-            Arc::new(AtomicBool::new(false)),
-            {
-                let mut slot = FrameBuffer::with_capacity(
-                    256,
-                    240,
-                    PixelFormat::PaletteIndex {
-                        palette: Box::new([0u32; 256]),
-                    },
-                );
-                slot.resize(256, 240);
-                slot
-            },
-            Box::new(SilentBackend),
-        );
+        let thread = spawn_bare();
         let (tx, rx) = mpsc::channel();
         thread
             .send(EmuCommand::Load(Box::new(LoadCommand {
@@ -860,6 +982,76 @@ mod tests {
         // And stepping still works afterwards.
         assert!(step(&thread, StepUnit::Frame).is_ok());
         assert_eq!(thread.frame_count(), 1);
+    }
+
+    #[test]
+    fn swap_audio_restarts_backend_and_restamps_core() {
+        let rate = Arc::new(Mutex::new(48_000u32));
+        let thread = spawn_bare_with_rate(Arc::clone(&rate));
+
+        // Idle path (no ROM): the swap still installs and answers.
+        let started = Arc::new(AtomicBool::new(false));
+        swap_audio(&thread, 44_100, &started);
+        assert!(started.load(Ordering::SeqCst), "new backend started");
+        assert_eq!(*rate.lock().unwrap(), 44_100, "core re-based");
+
+        // Loaded path: same contract between frames, no reload involved.
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::Load(Box::new(LoadCommand {
+                rom: vec![0u8; 16],
+                config: CoreConfig {
+                    region: None,
+                    bios_paths: HashMap::new(),
+                    controllers: HashMap::new(),
+                    core_options: None,
+                    audio_sample_rate: None,
+                },
+                start_paused: true,
+                reply: tx,
+            })))
+            .expect("load send");
+        rx.recv().expect("load reply").expect("load ok");
+        let started = Arc::new(AtomicBool::new(false));
+        swap_audio(&thread, 22_050, &started);
+        assert!(started.load(Ordering::SeqCst), "new backend started");
+        assert_eq!(*rate.lock().unwrap(), 22_050, "core re-based");
+    }
+
+    #[test]
+    fn swap_frame_slot_publishes_through_next_frame() {
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Pause).expect("pause send");
+
+        // Marker-filled slot: FakeCore never touches pixels, so the
+        // next stepped frame publishes the slot verbatim — proving the
+        // thread parked on the replacement.
+        let mut slot = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0u32; 256]),
+            },
+        );
+        slot.resize(256, 240);
+        let len = slot.as_ref().len();
+        slot.as_mut().fill(0xAB);
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::SwapFrameSlot(Box::new(SwapFrameSlotCommand {
+                slot,
+                reply: tx,
+            })))
+            .expect("slot send");
+        rx.recv().expect("slot reply");
+
+        assert!(step(&thread, StepUnit::Frame).is_ok());
+        let guard = thread.shared_frame_buffer().lock().unwrap();
+        assert_eq!(guard.as_ref().len(), len);
+        assert!(
+            guard.as_ref().iter().all(|&b| b == 0xAB),
+            "shared buffer carries the swapped slot"
+        );
     }
 
     #[test]
@@ -888,6 +1080,22 @@ mod tests {
             .send(EmuCommand::WriteMemory { req, reply: tx })
             .expect("write send");
         rx.recv().expect("write reply")
+    }
+
+    fn write_register(
+        thread: &EmuThread,
+        name: &'static str,
+        value: u64,
+    ) -> Result<(), DebuggerError> {
+        let (tx, rx) = mpsc::channel();
+        thread
+            .send(EmuCommand::WriteRegister {
+                name,
+                value,
+                reply: tx,
+            })
+            .expect("register write send");
+        rx.recv().expect("register write reply")
     }
 
     fn paused_inspect_request() -> InspectRequest {
@@ -979,6 +1187,35 @@ mod tests {
                 },
             ),
             Err(DebuggerError::BadWidth(0))
+        );
+    }
+
+    #[test]
+    fn write_register_dispatch_reaches_control() {
+        let thread = spawn_loaded();
+        // FakeControl has no register file: the running arm reports
+        // the default Unsupported (the dispatch itself is pinned).
+        assert_eq!(
+            write_register(&thread, "a", 1),
+            Err(DebuggerError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn write_register_while_unloaded_is_unsupported() {
+        // Never loaded: the idle arm answers instead of hanging.
+        let thread = spawn_bare();
+        assert_eq!(
+            write_register(&thread, "a", 1),
+            Err(DebuggerError::Unsupported)
+        );
+        // Loaded then unloaded: the running arm reports the
+        // control-level refusal instead.
+        let thread = spawn_loaded();
+        thread.send(EmuCommand::Unload).expect("unload send");
+        assert_eq!(
+            write_register(&thread, "a", 1),
+            Err(DebuggerError::Unsupported)
         );
     }
 

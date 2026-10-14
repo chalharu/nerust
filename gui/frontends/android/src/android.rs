@@ -31,7 +31,6 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_gui_settings::{local::RumbleTarget, shared::StoragePolicy};
 use nerust_gui_shell::{
     registry::SystemRegistry,
     session::{
@@ -45,6 +44,7 @@ use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
 };
+use nerust_settings_core::model::{local::RumbleTarget, shared::StoragePolicy};
 use sha2::{Digest, Sha256};
 use winit::{
     application::ApplicationHandler,
@@ -218,13 +218,13 @@ fn save_failure_text(failure: Option<SlotOpFailure>) -> &'static str {
 
 fn configure_controls_overlay(
     app: &AndroidApp,
-    settings: &nerust_gui_settings::local::TouchOverlaySettings,
+    settings: &nerust_settings_core::model::local::TouchOverlaySettings,
     shoulders_visible: bool,
 ) {
     let visibility = match settings.visibility {
-        nerust_gui_settings::local::TouchOverlayVisibility::Always => "always",
-        nerust_gui_settings::local::TouchOverlayVisibility::Auto => "auto",
-        nerust_gui_settings::local::TouchOverlayVisibility::Hidden => "hidden",
+        nerust_settings_core::model::local::TouchOverlayVisibility::Always => "always",
+        nerust_settings_core::model::local::TouchOverlayVisibility::Auto => "auto",
+        nerust_settings_core::model::local::TouchOverlayVisibility::Hidden => "hidden",
     }
     .to_string();
     let opacity = i32::from(settings.opacity_percent);
@@ -1524,7 +1524,7 @@ impl AndroidFrontend {
             )
         });
         self.overlay = if overlay_settings.visibility
-            == nerust_gui_settings::local::TouchOverlayVisibility::Hidden
+            == nerust_settings_core::model::local::TouchOverlayVisibility::Hidden
         {
             None
         } else {
@@ -1893,6 +1893,12 @@ impl FrontendSession for AndroidFrontend {
 
     fn reset(&mut self) {
         self.exec(SessionCommand::Reset);
+    }
+
+    fn unload(&mut self) {
+        if let Err(error) = self.session.unload() {
+            log::warn!("ROM unload failed: {error}");
+        }
     }
 
     fn apply_settings(

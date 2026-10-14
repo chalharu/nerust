@@ -6,10 +6,10 @@ use gtk::{
     prelude::*,
 };
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_settings::{input::ShortcutAction, local::ScalingMode};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::renderer::GpuFactory;
+use nerust_settings_core::model::local::ScalingMode;
 
 use super::{
     State, TITLE_UPDATE_INTERVAL, build_menu_model,
@@ -29,9 +29,12 @@ pub(crate) struct WindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
     open_dialog: Option<gtk::FileChooserNative>,
+    debugger_window: Option<crate::debugger::DebuggerWindow>,
     close_action: gio::SimpleAction,
     pause_action: gio::SimpleAction,
     resume_action: gio::SimpleAction,
+    reset_action: gio::SimpleAction,
+    debugger_action: gio::SimpleAction,
     state_create_action: gio::SimpleAction,
     state_save_active_action: gio::SimpleAction,
     state_load_active_action: gio::SimpleAction,
@@ -58,6 +61,7 @@ pub(crate) trait WindowExtend {
     fn window(&self) -> gtk::ApplicationWindow;
     fn application(&self) -> gtk::Application;
     fn state(&self) -> Rc<RefCell<State>>;
+    fn open_debugger(&self);
     fn realize(&self);
     fn close_request(&self) -> bool;
     fn open(&self);
@@ -71,6 +75,7 @@ pub(crate) trait WindowExtend {
     fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut);
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum KeyEventState {
     Press,
     Release,
@@ -101,6 +106,8 @@ impl WindowExtend for Window {
         let close_action = gio::SimpleAction::new("close", None);
         let pause_action = gio::SimpleAction::new("pause", None);
         let resume_action = gio::SimpleAction::new("resume", None);
+        let reset_action = gio::SimpleAction::new("reset", None);
+        let debugger_action = gio::SimpleAction::new("debugger", None);
         let state_create_action = gio::SimpleAction::new("state-create", None);
         let state_save_active_action = gio::SimpleAction::new("state-save-active", None);
         let state_load_active_action = gio::SimpleAction::new("state-load-active", None);
@@ -119,9 +126,12 @@ impl WindowExtend for Window {
             window: window.clone(),
             state,
             open_dialog: None,
+            debugger_window: None,
             close_action: close_action.clone(),
             pause_action: pause_action.clone(),
             resume_action: resume_action.clone(),
+            reset_action: reset_action.clone(),
+            debugger_action: debugger_action.clone(),
             state_create_action: state_create_action.clone(),
             state_save_active_action: state_save_active_action.clone(),
             state_load_active_action: state_load_active_action.clone(),
@@ -208,6 +218,23 @@ impl WindowExtend for Window {
             });
         }
         window.add_action(&resume_action);
+
+        {
+            let result = result.clone();
+            let _ = reset_action.connect_activate(move |_, _| {
+                result.state().borrow_mut().reset();
+                result.update_actions();
+            });
+        }
+        window.add_action(&reset_action);
+
+        {
+            let result = result.clone();
+            let _ = debugger_action.connect_activate(move |_, _| {
+                result.open_debugger();
+            });
+        }
+        window.add_action(&debugger_action);
 
         {
             let result = result.clone();
@@ -318,6 +345,23 @@ impl WindowExtend for Window {
         result
     }
 
+    fn open_debugger(&self) {
+        // Idempotent open: an existing window refreshes and presents
+        // instead of duplicating.
+        if let Some(existing) = self.borrow().debugger_window.clone() {
+            crate::debugger::DebuggerWindowCore::refresh(&existing);
+            existing.borrow().present();
+            return;
+        }
+        let debugger = crate::debugger::DebuggerWindowCore::open(
+            &self.application(),
+            &self.window(),
+            self.state(),
+        );
+        self.borrow_mut().debugger_window = Some(debugger);
+        self.update_actions();
+    }
+
     fn open(&self) {
         let file_chooser_native = gtk::FileChooserNative::new(
             Some("Open File"),
@@ -362,12 +406,18 @@ impl WindowExtend for Window {
     }
 
     fn load_path(&self, path: &Path) {
-        self.state().borrow_mut().load_path(path);
+        // End the state borrow before presenting: the dialog reads
+        // settings back through the same RefCell, so holding the
+        // guard across the call would panic on double-borrow.
+        let detail = self.state().borrow_mut().load_path(path).err();
+        if let Some(detail) = detail {
+            show_rom_load_error(&self.window(), self.state(), &detail);
+        }
         self.update_actions();
     }
 
     fn close(&self) {
-        let _ = self.state().borrow_mut().unload();
+        self.state().borrow_mut().unload();
         self.update_actions();
     }
 
@@ -403,6 +453,11 @@ impl WindowExtend for Window {
         self.borrow().close_action.set_enabled(state.loaded());
         self.borrow().pause_action.set_enabled(state.can_pause());
         self.borrow().resume_action.set_enabled(state.can_resume());
+        self.borrow().reset_action.set_enabled(state.loaded());
+        // Coreless open is a designed state (NoCore status with
+        // guidance, same as F4): gating on `loaded` would disagree
+        // with the shortcut, so the action stays enabled.
+        self.borrow().debugger_action.set_enabled(true);
         self.borrow()
             .state_create_action
             .set_enabled(state.loaded());
@@ -425,44 +480,46 @@ impl WindowExtend for Window {
             .state_delete_slot_action
             .set_enabled(state.loaded() && !state.slots().is_empty());
 
+        let language = state.settings_snapshot().shared.general.language;
         rebuild_slot_menu(
             &self.borrow().select_active_slot_menu,
             state.slots(),
             state.active_slot_id(),
             "win.state-select-slot",
+            language,
         );
         rebuild_slot_menu(
             &self.borrow().save_slot_menu,
             state.slots(),
             state.active_slot_id(),
             "win.state-save-slot",
+            language,
         );
         rebuild_slot_menu(
             &self.borrow().load_slot_menu,
             state.slots(),
             state.active_slot_id(),
             "win.state-load-slot",
+            language,
         );
         rebuild_slot_menu(
             &self.borrow().delete_slot_menu,
             state.slots(),
             state.active_slot_id(),
             "win.state-delete-slot",
+            language,
         );
         drop(state);
         self.refresh_title();
     }
 
     fn rebuild_menubar(&self) {
-        let language = self
-            .state()
-            .borrow()
-            .settings_snapshot()
-            .shared
-            .general
-            .language;
+        let state = self.state();
+        let guarded = state.borrow();
+        let snapshot = guarded.settings_snapshot();
         let menu_model = build_menu_model(
-            language,
+            snapshot.shared.general.language,
+            &snapshot.shared.input.shortcuts.keyboard,
             &gio::Menu::new(),
             &self.borrow().select_active_slot_menu,
             &self.borrow().save_slot_menu,
@@ -495,6 +552,9 @@ impl WindowExtend for Window {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
+        // No hardcoded F-keys: the debugger open rides the shortcut
+        // schema (default F4, rebindable in Settings) like every other
+        // shortcut, so a user binding always wins.
         if let Ok(controller_input) = key.try_into() {
             let shortcut = self
                 .state()
@@ -508,32 +568,16 @@ impl WindowExtend for Window {
     }
 
     fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut) {
+        use nerust_gui_shell::session::access::dispatch_session_action;
         match shortcut {
-            KeyboardShortcut::Session(action) => match action {
-                ShortcutAction::TogglePause => {
-                    self.state().borrow_mut().toggle_pause();
-                }
-                ShortcutAction::SaveActiveSlot => {
-                    self.state().borrow_mut().save_active_slot();
-                }
-                ShortcutAction::SelectNextSlot => {
-                    self.state().borrow_mut().select_next_slot();
-                }
-                ShortcutAction::SelectPreviousSlot => {
-                    self.state().borrow_mut().select_previous_slot();
-                }
-                ShortcutAction::LoadActiveSlot => {
-                    let _ = self.state().borrow_mut().load_active_slot();
-                }
-                ShortcutAction::Reset => {
-                    self.state().borrow_mut().reset();
-                }
-                ShortcutAction::ToggleFullscreen => {
-                    toggle_window_fullscreen(self);
-                }
-            },
+            KeyboardShortcut::Session(action) => {
+                dispatch_session_action(&mut *self.state().borrow_mut(), action)
+            }
             KeyboardShortcut::ToggleFullscreen => {
                 toggle_window_fullscreen(self);
+            }
+            KeyboardShortcut::OpenDebugger => {
+                self.open_debugger();
             }
         }
         self.update_actions();
@@ -583,11 +627,42 @@ fn rebuild_slot_menu(
     slots: &[StateSlotSummary],
     active_slot: Option<u64>,
     action: &str,
+    language: nerust_settings_core::model::language::AppLanguage,
 ) {
+    use nerust_settings_core::i18n::{UiText, text};
     menu.remove_all();
+    if slots.is_empty() {
+        // An action-less item renders disabled: the empty submenu
+        // explains itself instead of showing a blank list.
+        let item = gio::MenuItem::new(Some(text(language, UiText::NoSaveSlots)), None);
+        menu.append_item(&item);
+        return;
+    }
     for slot in slots {
         let item = gio::MenuItem::new(Some(&slot_label(slot, active_slot)), None);
         item.set_action_and_target_value(Some(action), Some(&slot.slot_id.to_variant()));
         menu.append_item(&item);
     }
+}
+
+/// Modal error dialog for ROM load failures: mirrors the tao
+/// frontend so a bad file explains itself instead of failing
+/// silently.
+fn show_rom_load_error(parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>>, detail: &str) {
+    use gtk::prelude::*;
+    use nerust_settings_core::i18n::{UiText, text};
+    let language = state.borrow().settings_snapshot().shared.general.language;
+    let dialog = gtk::MessageDialog::builder()
+        .transient_for(parent)
+        .modal(true)
+        .message_type(gtk::MessageType::Error)
+        .buttons(gtk::ButtonsType::Close)
+        .text(text(language, UiText::RomLoadFailed))
+        .secondary_text(detail)
+        .build();
+    let dialog_clone = dialog.clone();
+    let _ = dialog.connect_response(move |_, _| {
+        dialog_clone.hide();
+    });
+    dialog.present();
 }

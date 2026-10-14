@@ -82,8 +82,8 @@ fn project_view(state: &super::EditorState) -> CaptureStateView {
 
 #[cfg(test)]
 mod tests {
-    use nerust_gui_settings::input::ShortcutAction;
     use nerust_keyboard::Key;
+    use nerust_settings_core::model::input::ShortcutAction;
 
     use super::CaptureTarget;
     use crate::settings::test_support::test_vm;

@@ -29,6 +29,13 @@ const PALETTE_SIZE: usize = 0x400;
 const VRAM_SIZE: usize = 0x18000;
 const OAM_SIZE: usize = 0x400;
 
+/// Tile-viewer window: first 64KiB of VRAM at the 0x0600_0000 base.
+/// Single source of truth for the debugger bulk decode (see
+/// `GbaDebugger::images`): offsets below `VRAM_SIZE` never take the
+/// mirror branch, so this window is always linear.
+pub(crate) const VRAM_TILE_WINDOW_BASE: u32 = 0x0600_0000;
+pub(crate) const VRAM_TILE_WINDOW_LEN: usize = 0x1_0000;
+
 /// GBA メモリバス。GbcMemoryBus と同様に全RAM/レジスタの唯一所有者であり、
 /// CPU は `&mut GbaMemoryBus` 経由でアクセスする。
 pub struct GbaMemoryBus {
@@ -992,20 +999,9 @@ impl GbaMemoryBus {
         (false, 1)
     }
 
-    /// Pure DMA delay-burn fold of [`tick_dma_fast`]: `k` ticks with no
-    /// word phase and no completion (the priority channel still burns
-    /// delay afterwards, or a transfer/completion tick follows, all
-    /// handled per-tick below). Pending latencies stay clear of expiry
-    /// (`k` is capped by the allowance, which caps `pending - 1`),
-    /// countdowns stay clear of completion the same way, and no frame
-    /// edge is crossed (PPU-capped).
-    ///
-    /// The `k` ticks include the current tick: [`tick`] already advanced
-    /// `current_tcycle` once on entry, so only `k - 1` remain here.
-    /// (`k >= 1`: the caller gates on a nonzero allowance and
-    /// `burn_remaining() > 1`.) Every other consumer (device phases,
-    /// delay counts, horizon remainder, returned advance) counts the
-    /// full `k`.
+    /// Delay-burn fold of [`tick_dma_fast`]: `k` ticks, no word phase, no
+    /// completion. `k` includes the current tick (already advanced on entry),
+    /// so only `k - 1` remain; every other consumer counts the full `k`.
     fn tick_dma_burn_fold(&mut self, allowance: u64, burn: u8) -> (bool, u64) {
         let k = allowance.min(u64::from(burn) - 1);
         self.dma_device_quiet -= k;
@@ -1887,19 +1883,9 @@ impl GbaMemoryBus {
                 let kept = u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) & !clear;
                 self.iwram[0x7FF8..0x7FFA].copy_from_slice(&kept.to_le_bytes());
             }
-            // A live-line wake pays the exit latency and stalls past
-            // line-rise so the wake dispatch runs before the thread
-            // resumes; an IME=0 wake stays free. IntrWait burns 48,
-            // plain Halt 32 (timer-source wakes cost 10: the timer
-            // IRQ line rises without the serial/DMA/video wake path;
-            // pinned by alyosha halt_pc t001 and mgba sio-timing).
-            // Video-source wakes (VBlank/HBlank/VCount) cost 5: the
-            // halted raster ISR must still land inside its scanline
-            // (mgba-suite Layer toggle 2: the HBlank ISR's DISPCNT
-            // write has to precede the line-end latch shift). SIO/DMA/
-            // keypad wakes keep 32 (mgba sio-timing pin). 5 also keeps
-            // the mgba-suite hblankBit poll phase (misc_edge Flip 4-6);
-            // neighboring values reshuffle it (2-4 and 10 fail there).
+            // Wake exit latency by source: IntrWait 48, plain Halt 32,
+            // timer-only 10, video-only 5; IME=0 wakes stay free. Live-line
+            // wakes stall past line-rise so wake dispatch runs first.
             let src = self.ie & self.sif & self.halt_irq_mask;
             let timer_only = src & 0x0078 != 0 && src & !0x0078 == 0;
             // Unmasked cause: an IntrWait halt awaiting VBlank still
@@ -2974,16 +2960,9 @@ impl GbaMemoryBus {
         }
     }
 
-    /// Side-effect-free byte read for the debugger (`&self`: no wait
-    /// charging, no N/S-tracker progress, no latch stores, no FIFO
-    /// pops). Mirrors the `read_internal` decode lane-by-lane at
-    /// width 1, except:
-    ///
-    /// - I/O serves the audited pure subset only ([`Self::peek_io_byte`]).
-    /// - SRAM answers only with a battery-backed chip present
-    ///   (EEPROM / no-cartridge reads are `None`: honest open bus).
-    /// - Unmapped regions are `None`: the dynamic prefetch-latch open
-    ///   bus of the CPU path is deliberately not reproduced.
+    /// Side-effect-free byte read for the debugger (`&self`): mirrors the
+    /// `read_internal` decode lane-by-lane at width 1, except I/O serves the
+    /// audited pure subset, SRAM needs a battery-backed chip, unmapped is `None`.
     pub(crate) fn peek_byte(&self, addr: u32) -> Option<u8> {
         let word = match addr {
             0x00000000..=0x00003FFF => self.peek_bios(addr),
@@ -3011,6 +2990,17 @@ impl GbaMemoryBus {
             _ => return None,
         };
         Some((word & 0xFF) as u8)
+    }
+
+    /// Raw VRAM backing store for debugger bulk decode. The tile
+    /// viewer reads [`VRAM_TILE_WINDOW_BASE`]`+`[`VRAM_TILE_WINDOW_LEN`]
+    /// linearly — offsets below `VRAM_SIZE` never take the mirror
+    /// branch of `vram_offset`, so indexing the window is exactly what
+    /// the validated per-byte peek computes, minus ~260k
+    /// table/range/match validations per live fetch. Mirror-regime
+    /// callers must keep using [`Self::peek_byte`].
+    pub(crate) fn peek_vram(&self) -> &[u8; VRAM_SIZE] {
+        &self.vram
     }
 
     /// BIOS read without the `&mut` guard wrapper: protected reads

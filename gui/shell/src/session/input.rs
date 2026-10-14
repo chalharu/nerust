@@ -1,12 +1,12 @@
 use std::{collections::HashMap, hash::Hash};
 
 use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
-use nerust_gui_settings::input::{KeyboardBinding, ShortcutAction};
 use nerust_input_traits::{
     AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent, InputAssignments, InputValue,
 };
 use nerust_keyboard::Key;
 use nerust_settings_core::factory::settings_view;
+use nerust_settings_core::model::input::{KeyboardBinding, ShortcutAction};
 
 use crate::{
     session::{KeyboardShortcut, SessionError, SessionHandle},
@@ -157,6 +157,8 @@ impl SessionHandle {
             return shortcut_action_for_key(&self.settings_snapshot.shared, key).map(|action| {
                 if matches!(action, ShortcutAction::ToggleFullscreen) {
                     KeyboardShortcut::ToggleFullscreen
+                } else if matches!(action, ShortcutAction::OpenDebugger) {
+                    KeyboardShortcut::OpenDebugger
                 } else {
                     KeyboardShortcut::Session(action)
                 }
@@ -196,11 +198,11 @@ impl SessionHandle {
 mod tests {
     use std::rc::Rc;
 
-    use nerust_gui_settings::input::PersistedControlId;
     use nerust_input_traits::{
         AbstractKey, AttachmentId, ControlInfo, ControlKind, ControllerProfile, PortSet, ProfileId,
         SlotInfo,
     };
+    use nerust_settings_core::model::input::PersistedControlId;
 
     use super::*;
 

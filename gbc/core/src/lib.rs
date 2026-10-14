@@ -20,6 +20,8 @@ pub(crate) mod cpu_opcodes;
 pub mod cpu_registers;
 pub mod debugger;
 #[allow(dead_code)]
+pub(crate) mod disasm_gb;
+#[allow(dead_code)]
 pub(crate) mod dma;
 #[allow(dead_code)]
 pub(crate) mod hdma;
