@@ -1,12 +1,6 @@
-//! Kernel debugger types — read-only observation plus controlled execution.
-//!
-//! Design: `debugger-trait-design.md` v7.0. This module carries only
-//! value types and two traits; it owns no threads, no UI state, and no
-//! domain types beyond `&'static str` / `u64` / `bool` / `String`.
-//!
-//! The central asymmetry is intentional: observation (`Debugger`) is
-//! `&self` and non-invasive, while control (`DebugControl`) is a
-//! separate trait reached through `ConsoleCore` with `&mut self`.
+//! Kernel debugger types: read-only observation plus controlled execution.
+//! Value types and two traits only; observation is `&self`, control is a
+//! separate `&mut` trait.
 
 use std::ops::RangeInclusive;
 use std::sync::Arc;
@@ -97,17 +91,9 @@ pub fn validate_spaces(spaces: &[SpaceInfo]) -> Result<(), SpaceError> {
     Ok(())
 }
 
-/// Static address-space table. The address map is fixed per machine and
-/// never changes across load/unload, so the table is a `&'static` slice:
-/// no allocation, no ownership, no lifetime management.
-///
-/// Write refusal is table data, not backend branches: `entries` carry
-/// the space-level capability while `read_only` lists hardware windows
-/// (BIOS, ROM) where stores vanish, as `(space, start, end)` inclusive.
-/// `SpaceInfo.access` stays honest — a `ReadWrite` space with
-/// read-only windows is still writable elsewhere — and generic
-/// consumers check exact writability with [`SpaceTable::check_write`]
-/// instead of trusting `access` alone.
+/// Static address-space table: fixed per machine, `&'static`, no ownership.
+/// Refusal is table data, not backend branches; check exact writability
+/// with [`SpaceTable::check_write`] instead of trusting `access` alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpaceTable {
     pub entries: &'static [SpaceInfo],
@@ -172,14 +158,8 @@ impl SpaceTable {
         }
     }
 
-    /// Write-side validation in load-bearing order: `BadWidth`, then
-    /// `UnknownSpace`, then `UnmappedAddress`, then `ReadOnlySpace`.
-    /// The single home of the refusal rules so the three backends
-    /// cannot diverge: every `DebugControl::write_memory` starts here.
-    ///
-    /// A write touching a `read_only` window refuses even when it
-    /// starts outside: straddling stores would half-land on hardware,
-    /// so refusing loudly is the honest answer.
+    /// Write-side validation in load-bearing order. The single home of
+    /// the refusal rules; every `DebugControl::write_memory` starts here.
     pub fn check_write(&self, space: SpaceId, addr: u32, width: u8) -> Result<(), DebuggerError> {
         if !Self::width_is_valid(width) {
             return Err(DebuggerError::BadWidth(width));
@@ -222,21 +202,11 @@ pub trait Debugger {
 
     /// Read `width` bytes (1 / 2 / 4) at `addr` in `space`.
     ///
-    /// Contract, from measured hardware behavior:
-    ///
-    /// - Mapped regions return the same bytes an executed read would.
-    /// - Unmapped regions return the stable open-bus latch value.
-    /// - No wait-cycle charging, no bus-history updates.
-    /// - `addr` outside `space`'s range yields `None`: cross-space
-    ///   reads are never silently allowed. Range checking is the
-    ///   reader's duty — `space_containing` returning `None` alone
-    ///   does not guarantee it.
-    /// - Widths other than 1 / 2 / 4 (including 0), reads crossing the
-    ///   range end, and unknown `SpaceId`s yield `None`.
-    ///
-    /// `read` returns `Option`, not `Result`: it sits on the ROM-test
-    /// hot path, and an invalid width is intentionally not distinguished
-    /// from unmapped. `BadWidth` is a write-side-only error.
+    /// Hardware-faithful: mapped reads match executed reads, unmapped
+    /// yields the stable latch, no side effects. Out-of-range, straddling,
+    /// and unknown spaces/widths yield `None`; range checking is the
+    /// reader's duty. `Option`, not `Result`: invalid width is not
+    /// distinguished from unmapped on this hot path.
     fn read(&self, space: SpaceId, addr: u32, width: u8) -> Option<u64>;
 
     /// Contiguous byte read for hex dumps. Stops at the range end.
@@ -253,13 +223,8 @@ pub trait Debugger {
     }
 
     /// Name → value register list, borrowed, zero allocation.
-    ///
-    /// Contract: the order is backend-defined and stable across
-    /// snapshots, so presentation never sorts. Backends use ascending
-    /// architectural order where the architecture has one (GBC, NES);
-    /// GBA deliberately leads with `cpsr` and omits a `pc` alias
-    /// (`r15` is the anchor). Anchoring never goes through this list:
-    /// use [`Debugger::program_counter`] instead of name-scanning.
+    /// Backend-defined stable order; anchor via
+    /// [`Debugger::program_counter`], never by name-scanning.
     fn registers(&self) -> &[(&'static str, u64)];
 
     /// System-specific observation tables. Not called per frame.
@@ -512,18 +477,10 @@ pub struct SnapshotResult {
     pub disasm: Vec<DisasmLine>,
 }
 
-/// Debug-capability failure reasons.
-///
-/// Errors carry their own data only; display keys resolve outside
-/// the kernel (see `nerust_gui_viewmodel::debugger::space_key`),
-/// so `UnknownSpace` never fabricates one.
-/// All variants are produced by domain (core) code alone.
-///
-/// `Unsupported` covers both "not implemented" and "unknown
-/// register name" for `write_register`: the name travels as data
-/// and the refusal stays one word. If callers ever need to tell
-/// the two apart, add a dedicated variant here (and thread it
-/// through every `DebugControl` backend) instead of overloading.
+/// Debug-capability failure reasons. Data-only; display resolves
+/// outside the kernel. `Unsupported` covers unimplemented and unknown
+/// register names alike; add a variant instead of overloading if the
+/// two must ever be told apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DebuggerError {
     /// The core supports neither debugger nor debug control.
