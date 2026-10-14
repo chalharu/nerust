@@ -384,6 +384,11 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
             return;
         }
         self.viewport_physical = (width, height);
+        log::debug!(
+            "aux resize: physical={width}x{height} scale={} bounds={:?}",
+            self.scale_factor,
+            logical_bounds((width, height), self.scale_factor)
+        );
         let bounds = logical_bounds((width, height), self.scale_factor);
         self.ui_state.relayout(bounds, &mut self.renderer.backend);
         self.window.request_redraw();
@@ -440,6 +445,22 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
 
     /// Full render through the shared pump; only the log tag differs.
     pub(crate) fn render(&mut self, log_tag: &'static str) {
+        // Self-healing scale: if the live factor drifted from the
+        // stored one (missed/late ScaleFactorChanged, e.g. unmapped
+        // windows or backend quirks), layout and surface would
+        // permanently disagree — content overflowing a misaligned
+        // frame. Re-querying here re-converges on the next frame.
+        let live_scale = self.window.scale_factor() as f32;
+        if live_scale != self.scale_factor {
+            log::debug!(
+                "{log_tag} render: scale drift {} -> {}; relayout",
+                self.scale_factor,
+                live_scale
+            );
+            self.scale_factor = live_scale;
+            let bounds = logical_bounds(self.viewport_physical, self.scale_factor);
+            self.ui_state.relayout(bounds, &mut self.renderer.backend);
+        }
         // Deferred surface configure (see `resize`): resize storms
         // only relayout per event; the realloc lands here, at most
         // once per presented frame.

@@ -343,6 +343,18 @@ impl SettingsWindowHandle {
     }
 
     pub(crate) fn render(&mut self) {
+        // Same self-healing scale as the aux viewers: a stale factor
+        // lays out against the wrong bounds and the content stops
+        // agreeing with the frame.
+        let live_scale = self.window.scale_factor() as f32;
+        if live_scale != self.scale_factor {
+            log::debug!(
+                "settings render: scale drift {} -> {}; rebuild",
+                self.scale_factor,
+                live_scale
+            );
+            self.set_scale_factor(live_scale);
+        }
         let theme = iced::Theme::Light;
         let style = <iced::Theme as theme::Base>::base(&theme);
         let vp = Viewport::with_physical_size(
