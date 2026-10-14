@@ -10,13 +10,13 @@ use tao::window::WindowId;
 /// running picture instead of freezing on the open-time frame.
 /// Ticks are images-only empty batches (never kill staged
 /// transactions).
-pub(crate) const PPU_LIVE_INTERVAL: Duration = Duration::from_millis(250);
+pub(super) const PPU_LIVE_INTERVAL: Duration = Duration::from_millis(250);
 
-pub(crate) struct DebugWindows {
-    pub(crate) debug_window: Option<crate::aux::debug::DebugWindowHandle>,
-    pub(crate) ppu_window: Option<crate::aux::ppu::PpuWindowHandle>,
+pub(super) struct DebugWindows {
+    pub(super) debug_window: Option<crate::aux::debug::DebugWindowHandle>,
+    pub(super) ppu_window: Option<crate::aux::ppu::PpuWindowHandle>,
     debug_open_requested: bool,
-    pub(crate) ppu_open_requested: bool,
+    ppu_open_requested: bool,
     debug_window_pos: Option<(i32, i32)>,
     ppu_window_pos: Option<(i32, i32)>,
     last_ppu_live: Option<Instant>,
@@ -57,6 +57,23 @@ impl DebugWindows {
 
     pub(crate) fn take_ppu_open_request(&mut self) -> bool {
         std::mem::take(&mut self.ppu_open_requested)
+    }
+
+    pub(super) fn request_ppu_open(&mut self) {
+        self.ppu_open_requested = true;
+    }
+
+    /// Drain one batch from the debugger window: queued requests plus
+    /// the toolbar PPU-open flag. `None` with no debugger open.
+    pub(super) fn take_debug_batch(
+        &mut self,
+    ) -> Option<(bool, Vec<nerust_gui_shell::debug::DebugAction>)> {
+        let handle = self.debug_window.as_ref()?;
+        let open = handle
+            .bridge
+            .open_ppu
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
+        Some((open, handle.take_requests()))
     }
 
     pub(crate) fn debug_window_pos(&self) -> Option<(i32, i32)> {
@@ -140,7 +157,7 @@ mod tests {
         assert!(!windows.take_debug_open_request());
         assert!(!windows.take_ppu_open_request());
         windows.request_debug_open();
-        windows.ppu_open_requested = true;
+        windows.request_ppu_open();
         assert!(windows.take_debug_open_request());
         assert!(windows.take_ppu_open_request());
         assert!(!windows.take_debug_open_request());

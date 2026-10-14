@@ -177,18 +177,13 @@ impl HostState {
     /// Execution requests run before the re-read so one drain both
     /// acts and refreshes.
     pub(crate) fn drain_debug_requests(&mut self) {
-        use nerust_gui_shell::debug::DebugAction;
-        use std::sync::atomic::Ordering;
         self.poll_debug_flight();
-        let requests: Vec<DebugAction> = match self.debug.debug_window.as_ref() {
-            Some(handle) => {
-                if handle.bridge.open_ppu.swap(false, Ordering::SeqCst) {
-                    self.debug.ppu_open_requested = true;
-                }
-                handle.take_requests()
-            }
-            None => return,
+        let Some((open_ppu, requests)) = self.debug.take_debug_batch() else {
+            return;
         };
+        if open_ppu {
+            self.debug.request_ppu_open();
+        }
         if requests.is_empty() {
             return;
         }

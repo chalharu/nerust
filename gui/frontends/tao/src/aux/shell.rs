@@ -495,6 +495,8 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
         log::warn!("aux window ui unavailable after panicked relayout");
         return;
     };
+    // Redraw-only pump: widget rebuild requests wait for the next
+    // event-driven pump (`pump_outcome` mapping lives there).
     let _ = ui.update(
         &[redraw_event],
         cursor,
