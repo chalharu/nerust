@@ -409,6 +409,18 @@ pub(crate) mod imp {
             let _ = menu.remove_at(0);
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::try_append;
+
+        #[test]
+        fn try_append_tolerates_failure() {
+            // A failing append logs and continues instead of panicking.
+            try_append(|| Err(muda::Error::NotAChildOfThisMenu));
+            try_append(|| Ok(()));
+        }
+    }
 }
 
 #[cfg(not(any(

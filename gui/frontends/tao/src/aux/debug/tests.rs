@@ -453,3 +453,37 @@ fn uishell_headless_build_pump_relayout_draw() {
         iced::mouse::Cursor::default(),
     );
 }
+
+#[test]
+fn capture_view_marks_coreless_as_paused_no_core() {
+    use nerust_gui_viewmodel::debugger::StatusMessage;
+    let bridge = Arc::new(DebugBridge::new(
+        DisplayCache::default(),
+        Vec::new(),
+        0,
+        AppLanguage::English,
+    ));
+    let snap = views::capture_view(&bridge);
+    assert!(snap.paused);
+    assert!(matches!(snap.status, StatusMessage::NoCore));
+}
+
+#[test]
+fn capture_view_anchors_to_first_line_in_follow_mode() {
+    // full_bridge starts in follow-PC mode (NavState default).
+    let bridge = full_bridge();
+    let snap = views::capture_view(&bridge);
+    assert_eq!(snap.anchor, 0x0800_27D2);
+}
+
+#[test]
+fn capture_view_anchors_to_pin_once_navigated() {
+    let bridge = full_bridge();
+    lock_recovered(&bridge.nav).navigate(0x0800_27D2, 0x0300);
+    let snap = views::capture_view(&bridge);
+    assert_eq!(snap.anchor, 0x0300);
+    // Snapshot carries the window contents through untouched.
+    assert_eq!(snap.dump_rows.len(), 2);
+    assert_eq!(snap.diff, vec![0x100]);
+    assert_eq!(snap.regs.len(), 2);
+}
