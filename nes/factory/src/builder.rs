@@ -64,7 +64,7 @@ pub(crate) fn create_core_and_adapter(
 ) -> Result<CoreParts, FactoryError> {
     let filter = crate::settings::filter_type_from_bytes(view.system_config.as_deref());
 
-    let (render_profile, palette) = compute_render_profile(filter);
+    let (render_profile, palette) = video_assets_for_filter(filter);
     let mut speaker = speaker;
     speaker.start();
     let core = NesConsoleCore::new_empty(controller_collection, emu_input);
@@ -79,13 +79,17 @@ pub(crate) fn create_core_and_adapter(
     })
 }
 
-fn compute_render_profile(filter_type: FilterType) -> (VideoRenderProfile, Box<[u32; 256]>) {
+/// Video assets for one filter choice, without building a core.
+/// Shared by core construction and the live presentation swap: both
+/// derive the profile + palette from the same function, so a swapped
+/// filter can never disagree with a rebuilt one.
+pub(crate) fn video_assets_for_filter(filter: FilterType) -> (VideoRenderProfile, Box<[u32; 256]>) {
     let source_logical_size = LogicalSize {
         width: 256,
         height: 240,
     };
-    let layout = filter_type.layout(source_logical_size);
-    let assets = filter_type.palette_console_video_assets();
+    let layout = filter.layout(source_logical_size);
+    let assets = filter.palette_console_video_assets();
     let ntsc_packed_rgba8 = assets
         .packed_ntsc_rgba8()
         .map(|data| data.to_vec().into_boxed_slice());

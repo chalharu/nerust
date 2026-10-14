@@ -327,13 +327,15 @@ impl SoftbufferRenderer {
                     .filter_map(|&x| x)
                     .map(|(i, w)| {
                         let src_index = src_y_index + i as usize;
+                        // Callers supply [R, G, B, A]; repack to
+                        // [B, G, R, A] for the vertical pass below.
                         let src_val = src_f(src_index);
                         // 重みを適用する
                         [
-                            ((src_val[1] as u16 * w).saturating_add(0x80) >> 8) as u8, // Blue
-                            ((src_val[2] as u16 * w).saturating_add(0x80) >> 8) as u8, // Green
-                            ((src_val[3] as u16 * w).saturating_add(0x80) >> 8) as u8, // Red
-                            ((src_val[0] as u16 * w).saturating_add(0x80) >> 8) as u8, // Alpha
+                            ((src_val[2] as u16 * w).saturating_add(0x80) >> 8) as u8, // Blue
+                            ((src_val[1] as u16 * w).saturating_add(0x80) >> 8) as u8, // Green
+                            ((src_val[0] as u16 * w).saturating_add(0x80) >> 8) as u8, // Red
+                            ((src_val[3] as u16 * w).saturating_add(0x80) >> 8) as u8, // Alpha
                         ]
                     })
                     .reduce(|acc, val| {
@@ -351,16 +353,21 @@ impl SoftbufferRenderer {
             }
         }
 
-        // 縦方向に拡大
+        // 縦方向に拡大。タップは最大2件のため行毎の確保はしない。
         for y in 0..dst_h {
             let lut_index = y * lut.lut_pixel_size();
-            let lut_values: Vec<_> = lut.y_lut[lut_index..lut_index + lut.lut_pixel_size()]
-                .iter()
-                .filter_map(|&x| x)
-                .collect();
+            let mut taps = [(0u16, 0u16); 2];
+            let mut tap_count = 0;
+            for &tap in &lut.y_lut[lut_index..lut_index + lut.lut_pixel_size()] {
+                if let Some(tap) = tap {
+                    taps[tap_count] = tap;
+                    tap_count += 1;
+                }
+            }
+            let taps = &taps[..tap_count];
             for x in 0..dst_w {
                 let dst_index = y * dst_w + x;
-                let c = lut_values
+                let c = taps
                     .iter()
                     .copied()
                     .map(|(i, w)| {
@@ -512,6 +519,10 @@ impl GpuRenderer for SoftbufferRenderer {
         if frame.width() != self.render_profile.source_logical_size.width
             || frame.height() != self.render_profile.source_logical_size.height
         {
+            // Profile/frame races (e.g. right after a system switch)
+            // must skip, never render mismatched: every indexer below
+            // trusts these dimensions, and a panic here would take
+            // down the UI thread every frame until they agree again.
             error!(
                 "Frame size mismatch: expected {}x{}, got {}x{}",
                 self.render_profile.source_logical_size.width,
@@ -519,6 +530,7 @@ impl GpuRenderer for SoftbufferRenderer {
                 frame.width(),
                 frame.height()
             );
+            return RenderResult::Skipped;
         }
         let Some(surface) = self.surface.as_mut() else {
             return RenderResult::Skipped;
@@ -536,18 +548,43 @@ impl GpuRenderer for SoftbufferRenderer {
                 return RenderResult::Error;
             }
         };
+        // A failed surface resize (warned there, not fatal) leaves a
+        // stale-sized buffer behind: refuse instead of overrunning it.
+        if buffer.as_mut().len() < dst_w.saturating_mul(dst_h) {
+            warn!(
+                "softbuffer buffer too small: have {}, need {}x{}",
+                buffer.as_mut().len(),
+                dst_w,
+                dst_h
+            );
+            return RenderResult::Skipped;
+        }
 
         let src_stride = frame.stride();
         let src = frame.as_ref();
         let dst = buffer.as_mut();
         // let src_w = self.render_profile.source_logical_size.width;
         let src_h = self.render_profile.source_logical_size.height;
+        // Short source images would panic every indexer below (the
+        // profile match above only pins dimensions, not length).
+        if src.len() < src_stride.saturating_mul(src_h) {
+            warn!(
+                "softbuffer source too small: have {}, need stride {}x{}",
+                src.len(),
+                src_stride,
+                src_h
+            );
+            return RenderResult::Skipped;
+        }
 
         match frame.format() {
             PixelFormat::Rgba => {
+                // Stride is bytes; the indexer below counts pixels
+                // (the closure scales by 4), so convert once here.
+                // PaletteIndex is 1bpp and needs no conversion.
                 Self::rendering(
                     dst,
-                    src_stride,
+                    src_stride / 4,
                     src_h,
                     dst_w,
                     dst_h,
@@ -570,18 +607,26 @@ impl GpuRenderer for SoftbufferRenderer {
                         src_h,
                         dst_w,
                         dst_h,
-                        |i| self.ntsc_buffer[i].to_ne_bytes(),
+                        |i| self.ntsc_buffer[i].to_be_bytes(),
                         &self.lut,
                         &mut self.resize_buffer,
                     );
                 } else {
+                    // Out-of-range indices render black instead of
+                    // panicking the UI thread (see mismatch guard).
                     Self::rendering(
                         dst,
                         src_stride,
                         src_h,
                         dst_w,
                         dst_h,
-                        move |i| palette[src[i] as usize].to_le_bytes(),
+                        move |i| {
+                            palette
+                                .get(src.get(i).copied().unwrap_or(0) as usize)
+                                .copied()
+                                .unwrap_or(0)
+                                .to_be_bytes()
+                        },
                         &self.lut,
                         &mut self.resize_buffer,
                     );
@@ -609,5 +654,143 @@ impl GpuFactory for SoftbufferFactory {
         _display_handle: raw_window_handle::RawDisplayHandle,
     ) -> Result<Box<dyn GpuRenderer>, RendererError> {
         Ok(Box::new(SoftbufferRenderer::new(&config.render_profile)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nerust_render_traits::{VideoFrameFormat, logical::LogicalSize, physical::PhysicalSize};
+
+    fn test_profile() -> VideoRenderProfile {
+        VideoRenderProfile {
+            source_logical_size: LogicalSize {
+                width: 256,
+                height: 240,
+            },
+            logical_size: LogicalSize {
+                width: 256,
+                height: 240,
+            },
+            physical_size: PhysicalSize {
+                width: 256.0,
+                height: 240.0,
+            },
+            frame_format: VideoFrameFormat::Rgba,
+            ntsc_packed_rgba8: None,
+        }
+    }
+
+    #[test]
+    fn render_skips_mismatched_frame_instead_of_panicking() {
+        use nerust_render_traits::{FrameBuffer, PixelFormat};
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        // GBA-sized frame against an NES profile: must skip, and
+        // above all must not panic on the UI thread.
+        let mut frame = FrameBuffer::with_capacity(240, 160, PixelFormat::Rgba);
+        frame.resize(240, 160);
+        assert_eq!(renderer.render(&frame), RenderResult::Skipped);
+    }
+
+    #[test]
+    fn render_skips_without_surface() {
+        use nerust_render_traits::{FrameBuffer, PixelFormat};
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
+        frame.resize(256, 240);
+        assert_eq!(renderer.render(&frame), RenderResult::Skipped);
+    }
+
+    #[test]
+    fn rgba_render_survives_byte_stride() {
+        // Regression: the Rgba indexer counts pixels while `stride()`
+        // is bytes; a 256-byte-aligned stride once overran the source
+        // and panicked the UI thread (GBA-sized Rgba frames).
+        let mut lut = LutEntry::new();
+        lut.resize_lut(
+            SurfaceSize {
+                width: 4,
+                height: 4,
+            },
+            1.0,
+            SurfaceSize {
+                width: 8,
+                height: 8,
+            },
+        );
+        let stride = 256usize;
+        let mut src = vec![0u8; stride * 4];
+        for y in 0..4 {
+            for x in 0..4 {
+                let o = y * stride + x * 4;
+                src[o..o + 4].copy_from_slice(&[0x10, 0x20, 0x30, 0xFF]);
+            }
+        }
+        let mut resize_buffer = vec![0u32; 8 * 4];
+        let mut dst = vec![0u32; 8 * 8];
+        SoftbufferRenderer::rendering(
+            &mut dst,
+            stride / 4,
+            4,
+            8,
+            8,
+            |i| src[i * 4..i * 4 + 4].try_into().unwrap(),
+            &lut,
+            &mut resize_buffer,
+        );
+        // Uniform input stays uniform in the interior: bilinear weights
+        // sum to one (edges may go black where taps fall outside).
+        let mut center = Vec::new();
+        for y in 2..6 {
+            for x in 2..6 {
+                center.push(dst[y * 8 + x]);
+            }
+        }
+        assert!(!center.is_empty() && center.iter().all(|&p| p == center[0] && p != 0));
+    }
+
+    #[test]
+    fn rgba_render_preserves_channel_order() {
+        // Regression: the horizontal pass once read [R, G, B, A] as
+        // [A, B, G, R], turning blue into yellow and black into red.
+        let mut lut = LutEntry::new();
+        lut.resize_lut(
+            SurfaceSize {
+                width: 4,
+                height: 4,
+            },
+            1.0,
+            SurfaceSize {
+                width: 8,
+                height: 8,
+            },
+        );
+        for (input, expected) in [
+            ([0x00u8, 0x00, 0xFF, 0xFF], 0xFF00_00FFu32),
+            ([0x00u8, 0x00, 0x00, 0xFF], 0xFF00_0000u32),
+            ([0xFFu8, 0x00, 0x00, 0xFF], 0xFFFF_0000u32),
+        ] {
+            let mut src = [0u8; 4 * 4 * 4];
+            for px in src.as_chunks_mut::<4>().0 {
+                *px = input;
+            }
+            let mut resize_buffer = vec![0u32; 8 * 4];
+            let mut dst = vec![0u32; 8 * 8];
+            SoftbufferRenderer::rendering(
+                &mut dst,
+                4,
+                4,
+                8,
+                8,
+                |i| src[i * 4..i * 4 + 4].try_into().unwrap(),
+                &lut,
+                &mut resize_buffer,
+            );
+            for y in 2..6 {
+                for x in 2..6 {
+                    assert_eq!(dst[y * 8 + x], expected, "input {input:02X?}");
+                }
+            }
+        }
     }
 }

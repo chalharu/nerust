@@ -1,8 +1,12 @@
+mod debugger;
 mod gdk_raw;
 pub mod mapping;
+mod ppu_window;
 mod preferences;
 mod renderer;
 mod surface;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod window;
 
 use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
@@ -17,7 +21,6 @@ use gtk::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
-use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
@@ -30,7 +33,9 @@ use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
 use nerust_run_options::RunOptions;
-use nerust_settings_core::i18n::{UiText, text};
+use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
+use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
+use nerust_settings_core::model::language::AppLanguage;
 
 use self::window::{StateMenus, Window, WindowExtend};
 
@@ -89,13 +94,18 @@ impl State {
         self.session.can_resume()
     }
 
-    pub(crate) fn load_path(&mut self, path: &Path) {
-        if let Err(e) = self.ctx.rom_loader.load_rom(path, &mut self.session) {
-            log::warn!("ROM load failed: {e}");
+    /// Load a ROM, flagging a renderer rebuild on success.
+    /// Returns the failure detail on error; presenting it (dialog)
+    /// is the caller's job so no error state is stashed here.
+    pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
+        if let Err(error) = self.ctx.rom_loader.load_rom(path, &mut self.session) {
+            log::warn!("ROM load failed: {error}");
+            return Err(error.to_string());
         }
         if self.session.loaded() {
             self.renderer_reload_pending = true;
         }
+        Ok(())
     }
 
     pub(crate) fn loaded(&self) -> bool {
@@ -108,10 +118,6 @@ impl State {
 
     pub(crate) fn title(&self) -> String {
         self.session.window_title()
-    }
-
-    pub(crate) fn unload(&mut self) -> bool {
-        self.session.unload().is_ok()
     }
 
     pub(crate) fn flush_before_exit(&mut self) {
@@ -176,6 +182,11 @@ impl FrontendSession for State {
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
     }
+    fn unload(&mut self) {
+        if let Err(error) = self.session.unload() {
+            log::warn!("ROM unload failed: {error}");
+        }
+    }
     fn run_command(&mut self, command: SessionCommand) {
         let _ = self.session.run_command(command);
     }
@@ -184,7 +195,10 @@ impl FrontendSession for State {
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
         let plan = self.session.apply_settings(settings)?;
-        if plan.session_rebuild_required || plan.window_settings_changed {
+        if plan.renderer_rebuild_required
+            || plan.session_rebuild_required
+            || plan.window_settings_changed
+        {
             self.renderer_reload_pending = true;
         }
         Ok(SettingsResult {
@@ -246,8 +260,17 @@ fn build_window(
     let delete_slot_menu = gio::Menu::new();
 
     let language = state.borrow().settings_snapshot().shared.general.language;
+    let shortcuts = state
+        .borrow()
+        .settings_snapshot()
+        .shared
+        .input
+        .shortcuts
+        .keyboard
+        .clone();
     let menu_model = build_menu_model(
         language,
+        &shortcuts,
         &state_menu,
         &select_active_slot_menu,
         &save_slot_menu,
@@ -312,8 +335,20 @@ fn build_window(
     )
 }
 
+/// Menu label with the action's *current* shortcut hint, or the
+/// bare label when unbound. Binding-driven (tao twin:
+/// `shortcut_hint`) so Settings rebinding never leaves a stale
+/// hardcoded key in the menu.
+fn shortcut_hint(base: &str, shortcuts: &[ShortcutBinding], action: ShortcutAction) -> String {
+    match shortcut_key_label(shortcuts, action) {
+        Some(key) => menu_label_with_shortcut(base, key),
+        None => base.to_string(),
+    }
+}
+
 pub(crate) fn build_menu_model(
     language: AppLanguage,
+    shortcuts: &[ShortcutBinding],
     state_menu: &gio::Menu,
     select_active_slot_menu: &gio::Menu,
     save_slot_menu: &gio::Menu,
@@ -326,11 +361,19 @@ pub(crate) fn build_menu_model(
         Some("win.state-create"),
     );
     state_menu.append(
-        Some(text(language, UiText::SaveActiveSlot)),
+        Some(&shortcut_hint(
+            text(language, UiText::SaveActiveSlot),
+            shortcuts,
+            ShortcutAction::SaveActiveSlot,
+        )),
         Some("win.state-save-active"),
     );
     state_menu.append(
-        Some(text(language, UiText::LoadActiveSlot)),
+        Some(&shortcut_hint(
+            text(language, UiText::LoadActiveSlot),
+            shortcuts,
+            ShortcutAction::LoadActiveSlot,
+        )),
         Some("win.state-load-active"),
     );
     state_menu.append_submenu(
@@ -347,10 +390,22 @@ pub(crate) fn build_menu_model(
     file_menu.append(Some(text(language, UiText::Settings)), Some("win.settings"));
     file_menu.append(Some(text(language, UiText::Quit)), Some("app.quit"));
 
+    // Order mirrors the tao frontend: Pause, Resume, Reset, Save
+    // States, Debugger. The debugger label carries its live
+    // shortcut like tao so both shells advertise the same keys.
     let emulation_menu = gio::Menu::new();
     emulation_menu.append(Some(text(language, UiText::Pause)), Some("win.pause"));
     emulation_menu.append(Some(text(language, UiText::Resume)), Some("win.resume"));
+    emulation_menu.append(Some(text(language, UiText::Reset)), Some("win.reset"));
     emulation_menu.append_submenu(Some(text(language, UiText::SaveStates)), state_menu);
+    emulation_menu.append(
+        Some(&shortcut_hint(
+            text(language, UiText::OpenDebugger),
+            shortcuts,
+            ShortcutAction::OpenDebugger,
+        )),
+        Some("win.debugger"),
+    );
 
     let help_menu = gio::Menu::new();
     help_menu.append(Some(text(language, UiText::About)), Some("app.about"));
@@ -358,7 +413,7 @@ pub(crate) fn build_menu_model(
     let menu = gio::Menu::new();
     menu.append_submenu(Some(text(language, UiText::File)), &file_menu);
     menu.append_submenu(Some(text(language, UiText::Emulation)), &emulation_menu);
-    menu.append_submenu(Some(text(language, UiText::About)), &help_menu);
+    menu.append_submenu(Some(text(language, UiText::Help)), &help_menu);
     menu
 }
 
@@ -400,13 +455,80 @@ pub fn run(ctx: FrontendContext, _options: RunOptions) {
         let current_window = current_window.clone();
         let _ = app.connect_open(move |app, files, _| {
             let window = ensure_window(app, &gpu_factory, &state, &current_window);
-            if let Some(path) = files.iter().find_map(|file| file.path()) {
-                state.borrow_mut().load_path(&path);
-                window.update_actions();
-            }
+            // Present first: a failure dialog raised by load_path must
+            // stay above the main window.
             window.window().present();
+            if let Some(path) = files.iter().find_map(|file| file.path()) {
+                // One path for every open: failure dialog and action
+                // sync live in `Window::load_path`.
+                window.load_path(&path);
+            }
         });
     }
 
     let _ = app.run();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nerust_settings_core::model::input::default_shortcut_bindings;
+
+    fn collect_labels(model: &gio::MenuModel, out: &mut Vec<String>) {
+        use gio::prelude::MenuModelExt;
+        for index in 0..model.n_items() {
+            if let Some(label) = model
+                .item_attribute_value(index, "label", None)
+                .and_then(|variant| variant.str().map(str::to_string))
+            {
+                out.push(label);
+            }
+            if let Some(submenu) = model.item_link(index, gio::MENU_LINK_SUBMENU) {
+                collect_labels(&submenu, out);
+            }
+        }
+    }
+
+    fn menu_labels(language: AppLanguage, shortcuts: &[ShortcutBinding]) -> Vec<String> {
+        use gio::glib::object::Cast;
+        let state_menu = gio::Menu::new();
+        let select = gio::Menu::new();
+        let save = gio::Menu::new();
+        let load = gio::Menu::new();
+        let delete = gio::Menu::new();
+        let model = build_menu_model(
+            language,
+            shortcuts,
+            &state_menu,
+            &select,
+            &save,
+            &load,
+            &delete,
+        );
+        let mut labels = Vec::new();
+        collect_labels(model.upcast_ref::<gio::MenuModel>(), &mut labels);
+        labels
+    }
+
+    #[test]
+    fn menu_labels_follow_live_shortcut_bindings() {
+        let labels = menu_labels(AppLanguage::English, &default_shortcut_bindings());
+        assert!(labels.iter().any(|label| label == "Save Active Slot (F5)"));
+        assert!(labels.iter().any(|label| label == "Open Debugger (F4)"));
+        // Rebound actions advertise the new key, never the default.
+        let rebound = vec![
+            ShortcutBinding {
+                action: ShortcutAction::SaveActiveSlot,
+                key: Some(nerust_keyboard::Key::F2),
+            },
+            ShortcutBinding {
+                action: ShortcutAction::OpenDebugger,
+                key: None,
+            },
+        ];
+        let labels = menu_labels(AppLanguage::English, &rebound);
+        assert!(labels.iter().any(|label| label == "Save Active Slot (F2)"));
+        assert!(labels.iter().any(|label| label == "Open Debugger"));
+        assert!(!labels.iter().any(|label| label.contains("(F4)")));
+    }
 }

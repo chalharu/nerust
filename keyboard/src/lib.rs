@@ -1,7 +1,6 @@
 mod error;
 mod gdk;
 mod iced;
-mod tao;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,

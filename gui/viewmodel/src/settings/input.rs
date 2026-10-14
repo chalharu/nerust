@@ -1,8 +1,8 @@
 use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::{factory::CoreFactory, identity::SystemId};
-use nerust_gui_settings::{language::AppLanguage, snapshot::SettingsSnapshot};
 use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo};
+use nerust_settings_core::model::{language::AppLanguage, snapshot::SettingsSnapshot};
 use nerust_settings_core::{
     bindings::descriptors::{KeyboardBindingDescriptor, ShortcutDescriptor, shortcut_descriptors},
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
@@ -429,8 +429,8 @@ mod tests {
     #[test]
     fn change_one_slot_preserves_other() {
         use crate::settings::test_support::{P1_SLOT, P2_SLOT, TestCoreFactory, TestInputFactory};
-        use nerust_gui_settings::snapshot::SettingsSnapshot;
-        use nerust_gui_settings::{
+        use nerust_settings_core::model::snapshot::SettingsSnapshot;
+        use nerust_settings_core::model::{
             app_state::DesktopAppState, local::HostBackendLocalSettings,
             shared::DesktopSharedSettings,
         };
@@ -499,8 +499,8 @@ mod tests {
     fn set_slot_missing_from_persisted_pairs_adds_it() {
         use crate::settings::test_support::{P1_SLOT, P2_SLOT, TestCoreFactory, TestInputFactory};
         use nerust_core_traits::factory::CoreFactory;
-        use nerust_gui_settings::snapshot::SettingsSnapshot;
-        use nerust_gui_settings::{
+        use nerust_settings_core::model::snapshot::SettingsSnapshot;
+        use nerust_settings_core::model::{
             app_state::DesktopAppState, local::HostBackendLocalSettings,
             shared::DesktopSharedSettings,
         };

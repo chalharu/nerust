@@ -4,12 +4,13 @@ use std::{
 };
 
 use nerust_core_traits::identity::{SystemId, SystemIdentity};
-use nerust_gui_settings::{
+use nerust_persistence::sidecar::SidecarPaths;
+use nerust_settings_core::model::{
     app_state::{DesktopAppState, RememberedWindowSize},
+    input::ensure_default_shortcuts,
     local::HostBackendLocalSettings,
     shared::DesktopSharedSettings,
 };
-use nerust_persistence::sidecar::SidecarPaths;
 
 use super::{
     SettingsDocument, SettingsError, SettingsPaths, SettingsSnapshot,
@@ -53,7 +54,11 @@ impl SettingsManager {
             local: local_defaults,
             app_state: app_state_defaults,
         };
-        let (current, document) = load_settings(&paths.settings_file, &defaults);
+        let (mut current, document) = load_settings(&paths.settings_file, &defaults);
+        // Forward migration: files seeded before a shortcut action
+        // existed (e.g. OpenDebugger) gain its default without
+        // touching user bindings.
+        ensure_default_shortcuts(&mut current.shared.input.shortcuts);
         Ok(Self {
             inner: Arc::new(RwLock::new(SettingsState {
                 defaults: defaults.clone(),
@@ -106,7 +111,8 @@ impl SettingsManager {
         paths: SettingsPaths,
         defaults: &SettingsSnapshot,
     ) -> Result<Self, SettingsError> {
-        let (current, document) = load_settings(&paths.settings_file, defaults);
+        let (mut current, document) = load_settings(&paths.settings_file, defaults);
+        ensure_default_shortcuts(&mut current.shared.input.shortcuts);
         Ok(Self {
             inner: Arc::new(RwLock::new(SettingsState {
                 defaults: defaults.clone(),
@@ -272,7 +278,9 @@ impl SettingsManager {
 mod tests {
     use std::{collections::HashMap, fs};
 
-    use nerust_gui_settings::{
+    use nerust_keyboard::Key;
+    use nerust_nes_settings::NesVideoFilter;
+    use nerust_settings_core::model::{
         app_state::{DesktopAppState, RememberedWindowSize},
         input::{
             IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardProfile,
@@ -280,8 +288,6 @@ mod tests {
         },
         language::AppLanguage,
     };
-    use nerust_keyboard::Key;
-    use nerust_nes_settings::NesVideoFilter;
 
     use crate::test::DummySystemId;
 
@@ -313,7 +319,7 @@ mod tests {
                 );
                 system
             })]),
-            shortcuts: nerust_gui_settings::input::ShortcutSettings {
+            shortcuts: nerust_settings_core::model::input::ShortcutSettings {
                 keyboard: vec![ShortcutBinding {
                     action: ShortcutAction::TogglePause,
                     key: Some(Key::Space),

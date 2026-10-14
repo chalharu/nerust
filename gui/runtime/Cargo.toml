@@ -10,12 +10,14 @@ crc.workspace = true
 directories.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
-nerust_gui_settings.workspace = true
 nerust_keyboard = { default-features = false, workspace = true }
-nerust_nes_settings.workspace = true
 nerust_persistence.workspace = true
+nerust_settings_core.workspace = true
 nerust_settings_traits.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
 serde-value.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+nerust_nes_settings.workspace = true

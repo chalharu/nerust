@@ -3,7 +3,7 @@ use std::{sync::Arc, time::SystemTime};
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
     audio::StereoSample,
-    debugger::{DebugControl, DebuggerError, SpaceAccess, SpaceId, SpaceTable, StepUnit},
+    debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
     peripheral::{
         AccelerometerInputPort, RumbleOutputPort, RumbleState, accelerometer_channel,
@@ -14,7 +14,7 @@ use nerust_input_traits::EmuInput;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
-    cartridge_descriptor::detect_cartridge, core_options::GbcCoreOptions,
+    cartridge_descriptor::detect_cartridge, core_options::GbcCoreOptions, cpu_core::Phase,
     debugger::GBC_SPACE_TABLE, input_types::GbcInputBuffer, persistence,
     rom_identity::GbcRomIdentity, system::GbcSystem,
 };
@@ -112,6 +112,31 @@ impl GbcConsoleCore {
 
     fn loaded_mut(&mut self) -> Result<&mut LoadedGbc, CoreError> {
         self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)
+    }
+
+    /// Advance to the next instruction boundary via `step_tcycle`, reporting
+    /// consumed T-cycles. A halted CPU waits bounded for its wake interrupt;
+    /// STOP (no wake source while paused) returns zero immediately.
+    pub(crate) fn step_instruction(&mut self) -> Result<u64, CoreError> {
+        let loaded = self.loaded_mut()?;
+        if loaded.system.bus.is_stopped() {
+            return Ok(0);
+        }
+        let mut elapsed = 0u64;
+        loop {
+            loaded.system.bus.step_tcycle(&mut loaded.system.cpu);
+            elapsed += 1;
+            if elapsed >= 1_000_000 {
+                break;
+            }
+            if loaded.system.bus.is_halted_or_stopped() {
+                continue;
+            }
+            if matches!(loaded.system.cpu.phase(), Phase::FetchOpcode) {
+                break;
+            }
+        }
+        Ok(elapsed)
     }
 
     /// Advance one frame, reporting the T-cycles the bus counted.
@@ -235,6 +260,15 @@ impl ConsoleCore for GbcConsoleCore {
         self.sync_rumble();
     }
 
+    fn set_audio_sample_rate(&mut self, sample_rate: u32) {
+        self.sample_rate = sample_rate;
+        // Re-basis the APU resampler + filters (same call as load);
+        // unloaded cores just carry the stamp for the next load.
+        if let Ok(loaded) = self.loaded_mut() {
+            loaded.system.bus.set_audio_sample_rate(sample_rate);
+        }
+    }
+
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
         let loaded = self.loaded_ref()?;
         persistence::export_machine_state(
@@ -319,8 +353,9 @@ impl ConsoleCore for GbcConsoleCore {
 /// Holds the console: frame stepping reuses the exact `render_frame`
 /// path and reports the T-cycles it counted. The scratch buffer is
 /// display-irrelevant; stepped frames are not published to any shared
-/// framebuffer here. All spaces are read-only in phase 1, so every
-/// in-range write is refused as `ReadOnlySpace`.
+/// framebuffer here. Debugger pokes land where hardware is writable
+/// (VRAM/OAM bypass the PPU mode locks); ROM refuses as
+/// `ReadOnlySpace` instead of driving MBC commands.
 pub struct GbcDebugControl<'a> {
     console: &'a mut GbcConsoleCore,
     frame_slot: FrameBuffer,
@@ -346,7 +381,10 @@ impl DebugControl for GbcDebugControl<'_> {
                 .console
                 .render_frame_cycles(&mut self.frame_slot, &mut self.audio_sink)
                 .map_err(|_| DebuggerError::Unsupported),
-            StepUnit::Instruction => Err(DebuggerError::UnsupportedStepUnit(unit)),
+            StepUnit::Instruction => self
+                .console
+                .step_instruction()
+                .map_err(|_| DebuggerError::Unsupported),
         }
     }
 
@@ -355,23 +393,50 @@ impl DebugControl for GbcDebugControl<'_> {
         space: SpaceId,
         addr: u32,
         width: u8,
-        _value: u64,
+        value: u64,
     ) -> Result<(), DebuggerError> {
-        // Validation order matters: bad width first, so "width 0 with
-        // unknown SpaceId" does not mask as UnknownSpace.
-        if !SpaceTable::width_is_valid(width) {
-            return Err(DebuggerError::BadWidth(width));
+        // One table-owned gate: bad width, unknown space, unmapped
+        // address, then ROM refusal, in that order. The cast below is
+        // safe: check_write pins addr + width - 1.
+        GBC_SPACE_TABLE.check_write(space, addr, width)?;
+        let loaded = self
+            .console
+            .loaded
+            .as_mut()
+            .ok_or(DebuggerError::Unsupported)?;
+        for i in 0..width as u32 {
+            loaded
+                .system
+                .bus
+                .debug_write((addr + i) as u16, (value >> (8 * i)) as u8);
         }
-        let info = GBC_SPACE_TABLE
-            .get(space)
-            .ok_or(DebuggerError::UnknownSpace(space))?;
-        if !GBC_SPACE_TABLE.covers(space, addr, width) {
-            return Err(DebuggerError::UnmappedAddress { space, addr });
+        Ok(())
+    }
+
+    fn write_register(&mut self, name: &str, value: u64) -> Result<(), DebuggerError> {
+        let loaded = self
+            .console
+            .loaded
+            .as_mut()
+            .ok_or(DebuggerError::Unsupported)?;
+        // Values mask to the register width; unknown names refuse.
+        // A mid-instruction poke applies immediately and the next
+        // boundary normalizes, same as a memory poke.
+        let regs = loaded.system.cpu.registers_mut();
+        match name {
+            "a" => regs.set_a(value as u8),
+            "b" => regs.set_b(value as u8),
+            "c" => regs.set_c(value as u8),
+            "d" => regs.set_d(value as u8),
+            "e" => regs.set_e(value as u8),
+            "f" => regs.set_f(value as u8),
+            "h" => regs.set_h(value as u8),
+            "l" => regs.set_l(value as u8),
+            "pc" => regs.set_pc(value as u16),
+            "sp" => regs.set_sp(value as u16),
+            _ => return Err(DebuggerError::Unsupported),
         }
-        if info.access == SpaceAccess::ReadOnly {
-            return Err(DebuggerError::ReadOnlySpace(space));
-        }
-        Err(DebuggerError::ReadOnlySpace(space))
+        Ok(())
     }
 }
 
@@ -469,6 +534,33 @@ mod tests {
             core_options: Some(Box::new(options)),
             ..config()
         }
+    }
+
+    #[test]
+    fn set_audio_sample_rate_rebasis_without_reconstruction() {
+        use nerust_core_traits::ConsoleCore;
+
+        let mut core = GbcConsoleCore::new_empty(input());
+        // Unloaded: stamps only, never panics.
+        core.set_audio_sample_rate(44_100);
+        assert_eq!(core.sample_rate, 44_100);
+
+        core.load(&rom(), &config()).unwrap();
+        let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+        let mut audio = Vec::new();
+        core.render_frame(&mut frame, &mut audio).unwrap();
+
+        // Loaded: APU re-basis, machine state intact, frames keep flowing.
+        core.set_audio_sample_rate(22_050);
+        assert_eq!(core.sample_rate, 22_050);
+        core.render_frame(&mut frame, &mut audio).unwrap();
+        assert!(
+            audio
+                .iter()
+                .all(|s| s.left.is_finite() && s.right.is_finite())
+        );
+        let state = core.save_state().unwrap();
+        core.load_state(&state).unwrap();
     }
 
     #[test]
@@ -645,20 +737,27 @@ mod tests {
                 addr: 0x10000
             })
         );
-        // Phase 1 is read-only: even WRAM refuses.
+        // Writes land where hardware is writable; ROM refuses
+        // loudly instead of driving MBC commands.
+        assert_eq!(boxed.write_memory(SPACE_MEMORY, 0xC000, 1, 0x42), Ok(()));
         assert_eq!(
-            boxed.write_memory(SPACE_MEMORY, 0xC000, 1, 0),
+            boxed.write_memory(SPACE_MEMORY, 0x0100, 1, 0x42),
             Err(DebuggerError::ReadOnlySpace(SPACE_MEMORY))
         );
-        // No instruction stepping yet: explicit, not silent.
-        assert_eq!(
-            boxed.step(StepUnit::Instruction),
-            Err(DebuggerError::UnsupportedStepUnit(StepUnit::Instruction))
-        );
+        // Instruction stepping runs one instruction with real cycles.
+        let instr_cycles = boxed.step(StepUnit::Instruction).expect("instr step");
+        assert!(instr_cycles > 0);
+        assert!(instr_cycles <= 10_000);
         // Frame stepping reuses the render path and reports real cycles.
         let cycles = boxed.step(StepUnit::Frame).expect("frame step");
         assert!(cycles > 0);
         assert!(cycles <= 70_224);
+        // Round trip through the debugger read path. The frame step
+        // above runs guest code, so re-poke first for determinism.
+        assert_eq!(boxed.write_memory(SPACE_MEMORY, 0xC010, 1, 0xA5), Ok(()));
+        drop(boxed);
+        let debugger = console.debugger().expect("debugger");
+        assert_eq!(debugger.read(SPACE_MEMORY, 0xC010, 1), Some(0xA5));
     }
 
     #[test]
@@ -674,5 +773,47 @@ mod tests {
         empty.unload();
         assert!(empty.debugger().is_none());
         assert!(empty.debug_control().is_none());
+    }
+
+    #[test]
+    fn gbc_register_write_roundtrips_and_refuses_unknown() {
+        let mut console = GbcConsoleCore::new_empty(input());
+        console.load(&rom(), &config()).expect("test ROM loads");
+        {
+            let mut boxed: Box<dyn DebugControl + '_> =
+                Box::new(GbcDebugControl::new(&mut console));
+            boxed.write_register("a", 0x42).expect("a write");
+            boxed.write_register("pc", 0x1234).expect("pc write");
+            assert_eq!(
+                boxed.write_register("bogus", 0),
+                Err(DebuggerError::Unsupported)
+            );
+        }
+        let debugger = console.debugger().expect("debugger");
+        let regs: std::collections::HashMap<&str, u64> =
+            debugger.registers().iter().copied().collect();
+        assert_eq!(regs["a"], 0x42);
+        assert_eq!(regs["pc"], 0x1234);
+    }
+
+    #[test]
+    fn gbc_debugger_truncated_tail_degrades_to_raw_db() {
+        let mut console = GbcConsoleCore::new_empty(input());
+        console.load(&rom(), &config()).expect("test ROM loads");
+        // Park a two-byte prefix at the range end through the control
+        // path: the missing tail byte must degrade to raw instead of
+        // fabricating or panicking.
+        {
+            let mut boxed: Box<dyn DebugControl + '_> =
+                Box::new(GbcDebugControl::new(&mut console));
+            boxed
+                .write_memory(SPACE_MEMORY, 0xFFFF, 1, 0xCB)
+                .expect("range end takes the prefix");
+        }
+        let debugger = console.debugger().expect("debugger");
+        let tail = debugger.disassemble(0xFFFF, 2);
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].addr, 0xFFFF);
+        assert!(tail[0].text.starts_with(".DB"));
     }
 }

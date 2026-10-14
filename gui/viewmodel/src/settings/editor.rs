@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use nerust_gui_settings::snapshot::SettingsSnapshot;
+use nerust_settings_core::model::snapshot::SettingsSnapshot;
 
 use super::{
     ValidationState,
@@ -169,7 +169,7 @@ impl Drop for NotificationGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_gui_settings::{
+    use nerust_settings_core::model::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
 

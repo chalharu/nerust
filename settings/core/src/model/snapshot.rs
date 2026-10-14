@@ -1,4 +1,4 @@
-use crate::{
+use super::{
     app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
 };
 
@@ -23,6 +23,9 @@ pub struct SettingsApplyPlan {
     pub bindings_changed: bool,
     pub persistence_changed: bool,
     pub session_rebuild_required: bool,
+    /// Sample-rate/latency (not volume/mute) changed: the session
+    /// swaps the audio backend live instead of rebuilding the core.
+    pub audio_backend_changed: bool,
     pub audio_volume_changed: bool,
     pub renderer_rebuild_required: bool,
     pub window_settings_changed: bool,

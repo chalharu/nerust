@@ -325,6 +325,28 @@ impl GbcMemoryBus {
         }
     }
 
+    /// Debugger poke: stores land where hardware is writable. VRAM
+    /// and OAM bypass the PPU mode locks (like `debug_read`); WRAM
+    /// (including echo), cart RAM, I/O, and HRAM follow the CPU
+    /// store path. ROM has no store path by design — the control
+    /// layer refuses it before calling here. Gap lanes vanish.
+    pub fn debug_write(&mut self, addr: u16, value: u8) {
+        match addr {
+            0x8000..=0x9FFF => self.ppu.debug_write_vram(addr, value),
+            0xA000..=0xBFFF => self.cartridge.write_ram(addr, value),
+            0xC000..=0xDFFF => self.write_wram(addr, value),
+            0xE000..=0xFDFF => self.write_wram(addr - 0x2000, value),
+            0xFE00..=0xFE9F => self.ppu.debug_write_oam((addr & 0xFF) as u8, value),
+            0xFF00..=0xFFFF => self.write_io(addr, value),
+            _ => {}
+        }
+    }
+
+    /// PPU handle for tile imaging. Debugger-only.
+    pub(crate) fn debug_ppu(&self) -> &GbcPpu {
+        &self.ppu
+    }
+
     /// Cartridge, VRAM, WRAM, and HRAM — shared between
     /// `read()` (CPU access) and `read_raw()` (DMA access).
     fn read_storage(&self, addr: u16) -> u8 {
@@ -516,16 +538,9 @@ impl GbcMemoryBus {
         done
     }
 
-    /// Advance ALL devices (including CPU) by 1 T-cycle.
-    /// Advance one PPU dot (= 1 step). Each step is 2 T-cycles, where a
-    /// T-cycle is one CGB master clock (8.39 MHz, fixed rate).
-    ///
-    /// Timing model:
-    /// - Normal speed: CPU clock = master/2. 1 M-cycle = 4 CPU clocks =
-    ///   8 T-cycles = 4 steps; 1 dot = 2 T-cycles = 1 step.
-    /// - Double speed (KEY1): CPU clock = master. 1 M-cycle = 4 CPU clocks =
-    ///   4 T-cycles = 2 steps; the dot rate (2 T-cycles/dot) is unchanged.
-    ///
+    /// Advance ALL devices (including CPU) by 1 T-cycle (1 step = 1 PPU dot
+    /// = 2 T-cycles at a fixed 8.39 MHz master clock). Normal speed: 1 M-cycle
+    /// = 4 steps; double speed: 1 M-cycle = 2 steps; dot rate is unchanged.
     /// A frame always spans 70224 steps.
     ///
     /// Returns true if a PPU frame completed.
@@ -820,6 +835,10 @@ impl GbcMemoryBus {
 
     pub fn is_halted_or_stopped(&self) -> bool {
         self.interrupt.is_halted_or_stopped()
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.interrupt.is_stopped()
     }
 
     pub fn is_halt_bug_active(&self) -> bool {

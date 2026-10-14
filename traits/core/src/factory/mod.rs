@@ -44,13 +44,9 @@ pub struct CoreParts {
     pub host_peripherals: crate::peripheral::HostPeripheralHandles,
 }
 
-/// システム（NES/SNES）の全知識をカプセル化する factory。
-///
-/// frontend はこの trait を通じてのみシステムと対話する。
-/// 各システムの実装は `factory/{nes,snes}/` クレートで行う。
-///
-/// `FactorySettingsView` を介して設定を受け取ることで、
-/// gui/runtime の `SettingsSnapshot` への依存を回避している。
+/// Factory encapsulating all per-system knowledge. Frontends talk to
+/// systems only through this trait; settings arrive via
+/// `FactorySettingsView` (no snapshot dependency).
 pub trait CoreFactory: Send + Sync {
     fn system_id(&self) -> Box<dyn SystemId>;
 
@@ -102,6 +98,17 @@ pub trait CoreFactory: Send + Sync {
         speaker: Box<dyn AudioBackend>,
         assignments: &InputAssignments,
     ) -> Result<CoreParts, FactoryError>;
+
+    /// Presentation-only delta needing no core rebuild. Returns the
+    /// replacement video assets, or `None` for the full rebuild path.
+    /// Default `None` keeps today's rebuild behavior.
+    fn presentation_swap_assets(
+        &self,
+        _before: &FactorySettingsView,
+        _after: &FactorySettingsView,
+    ) -> Option<(nerust_render_traits::VideoRenderProfile, Box<[u32]>)> {
+        None
+    }
 
     /// Returns this factory's input system factory for negotiation.
     fn input_system_factory(&self) -> &dyn InputSystemFactory;

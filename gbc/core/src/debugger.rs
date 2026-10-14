@@ -1,36 +1,12 @@
-//! GBC debugger address space.
-//!
-//! Staged introduction: this module currently owns only the static
-//! [`SpaceTable`]. The `Debugger`/`DebugControl` implementation that
-//! reads through it lands next; the table is fixed first because every
-//! read, write, and dump resolves against it.
-//!
-//! Deliberately a single space: regions are already distinguished by
-//! address, so extra ids would buy nothing — the reader dispatches on
-//! the address internally. The one trade-off is typo detection: gap
-//! addresses resolve inside the space and read as `None` (`OpenBus`)
-//! instead of failing loudly as `Unmapped`. Never assert `open_bus`
-//! on a gap address.
-//!
-//! Reader contract (for the next step; all verified against
-//! `memory.rs` decode):
-//!
-//! - Echo `0xE000..=0xFDFF` normalizes to `0xC000..=0xDDFF` (`-0x2000`).
-//! - `0xFFFF` serves the IE register, not the HRAM array.
-//! - The unusable gap `0xFEA0..=0xFEFF` reads `0x00` on hardware;
-//!   return `Some(0x00)` (mapped), not `None`.
-//! - `0xA000..=0xBFFF` reads `0xFF` when RAM is disabled or absent
-//!   (the MBC exposes no driven/floating mask): byte-exact, but
-//!   `open_bus` assertions are meaningless there.
-//! - CGB-only registers return their fixed DMG values; VRAM reads go
-//!   through `debug_read_vram` (no mode locks); OAM is readable —
-//!   frame steps always park in VBlank, so the value is deterministic.
-//! - All sub-reads are `&self` with no mutation (audited: APU, PPU,
-//!   serial, timer, interrupts, joypad).
+//! GBC debugger address space: one space for the whole 16-bit bus.
+//! Regions dispatch on address. Gap addresses read as open-bus `None`,
+//! never `Unmapped`: never assert `open_bus` on a gap address.
 
 use std::cell::OnceCell;
 
-use nerust_core_traits::debugger::{Debugger, SpaceAccess, SpaceId, SpaceInfo, SpaceTable};
+use nerust_core_traits::debugger::{
+    DebugImage, Debugger, DisasmLine, ImageFormat, SpaceAccess, SpaceId, SpaceInfo, SpaceTable,
+};
 
 use crate::system::GbcSystem;
 
@@ -43,18 +19,25 @@ static GBC_SPACES: [SpaceInfo; 1] = [SpaceInfo {
     name: "Memory",
     address_bits: 16,
     range: 0x0000..=0xFFFF,
-    access: SpaceAccess::ReadOnly,
+    access: SpaceAccess::ReadWrite,
 }];
 
 /// Validated GBC memory-space table.
-pub(crate) static GBC_SPACE_TABLE: SpaceTable = SpaceTable::build(&GBC_SPACES);
+///
+/// ROM is not pokeable: a CPU store there drives MBC commands. The
+/// window lives in the table so the write gate and the UI read the
+/// same data.
+pub(crate) static GBC_SPACE_TABLE: SpaceTable =
+    SpaceTable::build_with_read_only(&GBC_SPACES, &[(SPACE_MEMORY, 0x0000, 0x7FFF)]);
 
-/// Read-only GBC observer.
+/// GBC observer.
 ///
 /// Built per use (built, read, dropped); `registers()` borrows a buffer
-/// filled lazily on first use. In phase 1 every decoded address is driven —
+/// filled lazily on first use. Every decoded address is driven —
 /// there are no floating reads — so `read` is `Some` for the whole
-/// range and `None` only outside it.
+/// range and `None` only outside it. Writes land where hardware is
+/// writable (VRAM/OAM bypass the PPU mode locks); ROM refuses as
+/// `ReadOnlySpace` instead of driving MBC commands.
 pub struct GbcDebugger<'a> {
     system: &'a GbcSystem,
     /// Lazily filled on first `registers()`: screen/memory-only
@@ -120,6 +103,139 @@ impl Debugger for GbcDebugger<'_> {
 
     fn registers(&self) -> &[(&'static str, u64)] {
         self.regs.get_or_init(|| self.snapshot_registers())
+    }
+
+    fn program_counter(&self) -> Option<u32> {
+        self.registers()
+            .iter()
+            .find(|(name, _)| *name == "pc")
+            .map(|(_, value)| *value as u32)
+    }
+
+    fn disassemble(&self, addr: u32, count: u16) -> Vec<DisasmLine> {
+        use crate::disasm_gb::{decode, instr_len};
+        let pc = self.program_counter();
+        let mut out = Vec::new();
+        let mut cursor = addr;
+        for _ in 0..count {
+            if cursor > 0xFFFF {
+                break;
+            }
+            let op = match self.read(SPACE_MEMORY, cursor, 1) {
+                Some(op) => op as u8,
+                None => break,
+            };
+            // Up to 2 operand bytes; fewer means the range end.
+            let mut raw = [op, 0, 0];
+            let mut have = 1u32;
+            while have < 3 {
+                match self.read(SPACE_MEMORY, cursor + have, 1) {
+                    Some(v) => {
+                        raw[have as usize] = v as u8;
+                        have += 1;
+                    }
+                    None => break,
+                }
+            }
+            let want = u32::from(instr_len(op));
+            if have < want {
+                // Truncated tail: raw bytes, never fabricated.
+                for b in raw.iter().take(have as usize) {
+                    out.push(raw_db(cursor, *b, pc == Some(cursor)));
+                    cursor += 1;
+                }
+                continue;
+            }
+            let is_pc = pc == Some(cursor);
+            if op == 0xCB {
+                // The prefix needs its sub-opcode: at the range end
+                // the tail byte was never read, so degrade to raw
+                // instead of fabricating a decode from zero.
+                if have < 2 {
+                    out.push(raw_db(cursor, op, is_pc));
+                    cursor += 1;
+                    continue;
+                }
+                let decoded = decode(cursor, op, raw[1], 0);
+                out.push(DisasmLine {
+                    addr: cursor,
+                    bytes: [op, raw[1], 0, 0],
+                    len: 2,
+                    text: decoded.text,
+                    is_pc,
+                    target: None,
+                });
+                cursor += 2;
+                continue;
+            }
+            let decoded = decode(cursor, op, raw[1], raw[2]);
+            let mut bytes = [0u8; 4];
+            bytes[..decoded.len as usize].copy_from_slice(&raw[..decoded.len as usize]);
+            out.push(DisasmLine {
+                addr: cursor,
+                bytes,
+                len: decoded.len,
+                text: decoded.text,
+                is_pc,
+                target: decoded.target,
+            });
+            cursor += u32::from(decoded.len);
+        }
+        out
+    }
+
+    fn images(&self) -> Vec<DebugImage> {
+        // One image per VRAM bank: 384 tiles in a 16x24 grid
+        // (128x192). Bank reads bypass VBK state; palette is BG 0.
+        const TILES: u16 = 384;
+        const COLS: u16 = 16;
+        let ppu = self.system.bus.debug_ppu();
+        let palette = ppu.debug_bg_palette();
+        [("tiles-bank0", 0), ("tiles-bank1", 1)]
+            .into_iter()
+            .map(|(id, bank)| {
+                let mut pixels = vec![0u8; 128 * 192];
+                for tile in 0..TILES {
+                    let tx = (tile % COLS) * 8;
+                    let ty = (tile / COLS) * 8;
+                    for row in 0..8u16 {
+                        let base = tile * 16 + row * 2;
+                        let lo = ppu.debug_read_vram_bank(bank, base);
+                        let hi = ppu.debug_read_vram_bank(bank, base + 1);
+                        for col in 0..8u16 {
+                            let bit = 7 - col;
+                            let px = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+                            pixels[(ty + row) as usize * 128 + (tx + col) as usize] = px;
+                        }
+                    }
+                }
+                DebugImage {
+                    id,
+                    label_id: if bank == 0 {
+                        "Tiles bank 0"
+                    } else {
+                        "Tiles bank 1"
+                    },
+                    width: 128,
+                    height: 192,
+                    format: ImageFormat::Indexed2bpp,
+                    palette: palette.to_vec(),
+                    pixels,
+                }
+            })
+            .collect()
+    }
+}
+
+/// Single raw byte row for truncated tails.
+fn raw_db(addr: u32, byte: u8, is_pc: bool) -> DisasmLine {
+    DisasmLine {
+        addr,
+        bytes: [byte, 0, 0, 0],
+        len: 1,
+        text: format!(".DB ${byte:02X}"),
+        is_pc,
+        target: None,
     }
 }
 
@@ -215,5 +331,56 @@ mod tests {
         assert_eq!(boxed.read(SPACE_MEMORY, 0xC000, 0), None);
         assert_eq!(boxed.read(SPACE_MEMORY, 0xC000, 3), None);
         assert_eq!(boxed.read(SpaceId(9), 0xC000, 1), None);
+    }
+
+    #[test]
+    fn gbc_debugger_images_tile_banks() {
+        let system = live_system();
+        let debugger = GbcDebugger::new(&system);
+        let images = debugger.images();
+        assert_eq!(images.len(), 2);
+        for image in &images {
+            assert_eq!((image.width, image.height), (128, 192));
+            assert_eq!(image.format, ImageFormat::Indexed2bpp);
+            assert_eq!(image.palette.len(), 4);
+            assert_eq!(image.pixels.len(), 128 * 192);
+            assert!(image.pixels.iter().all(|&p| p < 4));
+        }
+        assert_eq!(images[0].id, "tiles-bank0");
+        assert_eq!(images[1].id, "tiles-bank1");
+    }
+
+    #[test]
+    fn gbc_debugger_disassembles_jr_cb_and_truncated_tail() {
+        // Custom ROM: JR at 0x100 (as usual), a CB prefix at 0x200,
+        // and a 3-byte LD at 0xFFFE straddling the range end.
+        let mut rom = rom();
+        rom[0x0200] = 0xCB;
+        rom[0x0201] = 0x11; // RL C
+        let descriptor = crate::cartridge_descriptor::detect_cartridge(&rom).expect("header");
+        let system = GbcSystem::from_descriptor(
+            crate::core_options::GbcCoreOptions::default().hardware_model,
+            rom,
+            &descriptor,
+        )
+        .expect("system builds");
+        let debugger = GbcDebugger::new(&system);
+        // The program counter always resolves (register scan).
+        assert!(debugger.program_counter().is_some());
+        let jr = &debugger.disassemble(0x0100, 1)[0];
+        assert_eq!((jr.addr, jr.len), (0x0100, 2));
+        assert!(jr.text.starts_with("JR"));
+        // CB prefix decodes two bytes with no follow target.
+        let cb = &debugger.disassemble(0x0200, 1)[0];
+        assert_eq!((cb.len, cb.target), (2, None));
+        assert_eq!(cb.bytes[0], 0xCB);
+        // The range end yields its final row, then stops: one row
+        // at 0xFFFF, never a spill past the bus.
+        let tail = debugger.disassemble(0xFFFF, 2);
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].addr, 0xFFFF);
+        // Empty window past the end stays empty, never panics.
+        assert!(debugger.disassemble(0x1_0000, 4).is_empty());
+        assert!(debugger.panels().is_empty());
     }
 }

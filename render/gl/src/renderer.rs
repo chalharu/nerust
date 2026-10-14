@@ -26,6 +26,8 @@ pub struct GlRenderer {
     gl_surface: Option<glutin::surface::Surface<WindowSurface>>,
     expected_frame_len: usize,
     size: SurfaceSize,
+    /// Fixed-size staging for the pre-GLES3 pack path (see `render`).
+    tight: Vec<u8>,
 }
 
 impl std::fmt::Debug for GlRenderer {
@@ -178,11 +180,61 @@ impl GpuRenderer for GlRenderer {
         if let Some(p) = frame_buffer.palette_as_rgba8() {
             view.update_palette_texture(&p);
         }
-        let bytes = frame_buffer.as_ref();
-        let bytes = bytes
-            .get(..self.expected_frame_len)
-            .expect("frame buffer too small");
-        view.on_update(bytes);
+        // Stride-padded Rgba rows (256-byte aligned) upload as-is
+        // via UNPACK_ROW_LENGTH; pre-GLES3 packs into fixed staging
+        // like wgpu's pitch-mismatch path. Short data refuses instead
+        // of panicking the UI thread.
+        let fs = match self.render_profile.frame_format {
+            VideoFrameFormat::Rgba => self.render_profile.logical_size,
+            VideoFrameFormat::Palette => self.render_profile.source_logical_size,
+        };
+        let bpp = self.render_profile.frame_format.bytes_per_pixel();
+        let row_bytes = fs.width * bpp;
+        let stride = frame_buffer.stride();
+        if row_bytes == 0 || fs.height == 0 || stride == 0 {
+            log::warn!("GlRenderer: empty frame");
+            return RenderResult::Skipped;
+        }
+        let data = frame_buffer.as_ref();
+        if view.supports_unpack_row_length() {
+            let stride_px = stride / bpp;
+            let need = fs
+                .height
+                .checked_sub(1)
+                .map_or(0, |rows| rows * stride + row_bytes);
+            match data.get(..need) {
+                Some(bytes) => view.on_update(bytes, stride_px as i32),
+                None => {
+                    log::warn!("GlRenderer: frame buffer too small");
+                    return RenderResult::Skipped;
+                }
+            }
+        } else if stride == row_bytes {
+            match data.get(..self.expected_frame_len) {
+                Some(bytes) => view.on_update(bytes, fs.width as i32),
+                None => {
+                    log::warn!("GlRenderer: frame buffer too small");
+                    return RenderResult::Skipped;
+                }
+            }
+        } else {
+            if self.tight.len() != self.expected_frame_len {
+                self.tight.resize(self.expected_frame_len, 0);
+            }
+            let src_need = match stride.checked_mul(fs.height) {
+                Some(need) => need,
+                None => {
+                    log::warn!("GlRenderer: frame dimensions overflow");
+                    return RenderResult::Skipped;
+                }
+            };
+            if data.len() < src_need {
+                log::warn!("GlRenderer: frame buffer too small");
+                return RenderResult::Skipped;
+            }
+            pack_rows_stripped(data, stride, fs.height, &mut self.tight, row_bytes);
+            view.on_update(&self.tight, fs.width as i32);
+        };
         if let Err(e) = surf.swap_buffers(ctx) {
             log::warn!("GlRenderer: swap_buffers failed: {e}");
             return RenderResult::Error;
@@ -277,6 +329,45 @@ impl GpuFactory for GlFactory {
             gl_surface: None,
             expected_frame_len: 0,
             size: SurfaceSize::new(0, 0),
+            tight: Vec::new(),
         }))
+    }
+}
+
+/// Strip source row padding into a tight destination, mirroring
+/// wgpu's `pack_frame_rows` pitch-mismatch path. Callers guarantee
+/// `source.len() >= source_stride * height`, `destination.len() >=
+/// `row_bytes * height`, and nonzero pitches.
+fn pack_rows_stripped(
+    source: &[u8],
+    source_stride: usize,
+    height: usize,
+    destination: &mut [u8],
+    row_bytes: usize,
+) {
+    for (source_row, destination_row) in source
+        .chunks_exact(source_stride)
+        .zip(destination.chunks_exact_mut(row_bytes))
+        .take(height)
+    {
+        destination_row.copy_from_slice(&source_row[..row_bytes]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pack_rows_stripped;
+
+    #[test]
+    fn pack_rows_stripped_removes_source_padding() {
+        let source = [
+            1_u8, 2, 3, 4, 99, 99, //
+            5, 6, 7, 8, 88, 88,
+        ];
+        let mut destination = [0_u8; 8];
+
+        pack_rows_stripped(&source, 6, 2, &mut destination, 4);
+
+        assert_eq!(destination, [1, 2, 3, 4, 5, 6, 7, 8]);
     }
 }

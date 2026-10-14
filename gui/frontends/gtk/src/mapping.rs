@@ -4,7 +4,9 @@
 //! without a display server. They are used by PreferencesBinding to
 //! populate widgets and handle signal responses.
 
-use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
+use nerust_settings_core::model::{
+    language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
+};
 
 // ── Forward: enum → GTK id ──────────────────────────────────────────────
 

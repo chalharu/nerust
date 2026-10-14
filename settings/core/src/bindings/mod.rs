@@ -2,8 +2,8 @@ pub mod descriptors;
 
 use std::collections::BTreeMap;
 
+use crate::model::shared::DesktopSharedSettings;
 use nerust_core_traits::identity::SystemId;
-use nerust_gui_settings::shared::DesktopSharedSettings;
 use nerust_input_traits::InputTopologyDescriptor;
 use nerust_keyboard::Key;
 
@@ -59,11 +59,11 @@ pub fn conflicting_keys(
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::declare_system_id;
-    use nerust_gui_settings::{
+    use crate::model::{
         input::{KeyboardBinding, PersistedControlId, SystemInputSettings},
         shared::DesktopSharedSettings,
     };
+    use nerust_core_traits::declare_system_id;
     use nerust_input_traits::{
         AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
         DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor,

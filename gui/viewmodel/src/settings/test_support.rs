@@ -157,8 +157,8 @@ impl CoreFactory for TestCoreFactory {
 
 /// Helper to create a SettingsViewModel with a test factory.
 pub fn test_vm() -> SettingsViewModel {
-    use nerust_gui_settings::snapshot::SettingsSnapshot;
-    use nerust_gui_settings::{
+    use nerust_settings_core::model::snapshot::SettingsSnapshot;
+    use nerust_settings_core::model::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
     let snapshot = SettingsSnapshot {

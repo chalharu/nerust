@@ -132,6 +132,29 @@ impl GbaSystem {
         self.frame_buffer()
     }
 
+    /// Advance to the next instruction boundary, returning consumed
+    /// T-cycles. Devices tick with the CPU through the untouched
+    /// `step_tcycle` body, so timers/DMA/PPU stay consistent. A
+    /// halted CPU waits for its IRQ instead of hanging the debugger;
+    /// the wait is bounded by one generous frame-plus budget.
+    pub fn step_instruction(&mut self) -> u64 {
+        let mut elapsed = 0u64;
+        loop {
+            let (_, n) = self.step_tcycle();
+            elapsed += n;
+            if elapsed >= 1_000_000 {
+                break;
+            }
+            if self.bus.is_halted() {
+                continue;
+            }
+            if !self.cpu.micro_pending() && self.cpu_cycles_remaining == 0 {
+                break;
+            }
+        }
+        elapsed
+    }
+
     /// Advance up to `max` T-cycles with horizon batching, returning
     /// `(advanced, frame_complete)`. Cycles that need full per-cycle
     /// processing (CPU bus access, device events, pipeline deadlines) run

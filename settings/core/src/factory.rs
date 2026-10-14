@@ -10,9 +10,9 @@ use nerust_core_traits::{
 // CoreFactory::as_system_defaults() → Option<&dyn SystemDefaults>.
 // `#[allow]` suppresses clippy FP when the trait is only used
 // through a method return type from another trait.
+use crate::model::{language::AppLanguage, snapshot::SettingsSnapshot};
 #[allow(unused_imports)]
 use nerust_core_traits::factory::SystemDefaults;
-use nerust_gui_settings::{language::AppLanguage, snapshot::SettingsSnapshot};
 
 fn language_to_factory_lang(lang: AppLanguage) -> Language {
     match lang {
@@ -68,6 +68,10 @@ pub fn resolve_label(label_id: &str, language: AppLanguage, factory: &dyn CoreFa
 
 #[cfg(test)]
 mod tests {
+    use crate::model::{
+        app_state::DesktopAppState, language::AppLanguage, local::HostBackendLocalSettings,
+        shared::DesktopSharedSettings, snapshot::SettingsSnapshot,
+    };
     use nerust_core_traits::{
         declare_system_id,
         factory::{
@@ -79,10 +83,6 @@ mod tests {
             settings::{FactorySettingsView, Language},
         },
         identity::SystemId,
-    };
-    use nerust_gui_settings::{
-        app_state::DesktopAppState, language::AppLanguage, local::HostBackendLocalSettings,
-        shared::DesktopSharedSettings, snapshot::SettingsSnapshot,
     };
     use nerust_settings_traits::SystemSettings;
     use std::sync::Arc;
