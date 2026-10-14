@@ -280,8 +280,10 @@ pub(crate) mod imp {
             self.resume
                 .set_enabled(!sync.settings_open && sync.loaded && sync.paused);
             self.reset.set_enabled(!sync.settings_open && sync.loaded);
-            self.debugger
-                .set_enabled(!sync.settings_open && sync.loaded);
+            // Coreless open is a designed state (NoCore status with
+            // guidance, same as F4): gating on `loaded` would disagree
+            // with the shortcut, so only the settings-open guard stays.
+            self.debugger.set_enabled(!sync.settings_open);
             self.create_slot
                 .set_enabled(!sync.settings_open && sync.loaded);
             self.save_active

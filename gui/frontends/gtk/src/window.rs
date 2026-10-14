@@ -454,7 +454,10 @@ impl WindowExtend for Window {
         self.borrow().pause_action.set_enabled(state.can_pause());
         self.borrow().resume_action.set_enabled(state.can_resume());
         self.borrow().reset_action.set_enabled(state.loaded());
-        self.borrow().debugger_action.set_enabled(state.loaded());
+        // Coreless open is a designed state (NoCore status with
+        // guidance, same as F4): gating on `loaded` would disagree
+        // with the shortcut, so the action stays enabled.
+        self.borrow().debugger_action.set_enabled(true);
         self.borrow()
             .state_create_action
             .set_enabled(state.loaded());
