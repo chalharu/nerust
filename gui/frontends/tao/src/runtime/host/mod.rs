@@ -41,6 +41,8 @@ mod presentation;
 mod settings;
 mod window;
 
+use self::focus::FocusState;
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {
     None,
@@ -63,15 +65,8 @@ pub(crate) struct HostState {
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
-    pub(super) active: bool,
-    auto_paused: bool,
-    /// Deferred auto-pause: armed on main blur, cancelled when our own
-    /// window takes focus in the same burst, executed at
-    /// `MainEventsCleared`.
-    pending_auto_pause: bool,
-    /// Pause state at the last completed debug drain, for focus
-    /// coalescing below. `None` before the first drain.
-    pub(super) last_drain_paused: Option<bool>,
+    /// Focus truth plus the deferred auto-pause protocol.
+    pub(super) focus: FocusState,
     /// In-flight async debug drain: `run_debug_drain` starts it, the
     /// event loop polls it (`poll_debug_flight`). A newer batch
     /// supersedes the stored one; orphaned replies are ignored.
@@ -127,10 +122,7 @@ impl HostState {
             settings_open: false,
             resume_after_settings: false,
             pending_fullscreen_sync: None,
-            active: true,
-            auto_paused: false,
-            pending_auto_pause: false,
-            last_drain_paused: None,
+            focus: FocusState::new(),
             drain_flight: None,
             live_flight: None,
             debug: DebugWindows::new(),

@@ -24,13 +24,10 @@ impl WindowRuntime {
                 *control_flow = ControlFlow::Exit;
             }
             WindowEvent::Focused(true) => {
-                self.host.active = true;
                 // A same-burst aux focus already cancelled any
                 // pending pause; this is belt-and-braces.
-                self.host.cancel_pending_auto_pause();
-                if self.host.auto_paused() {
+                if self.host.focus.arrive_main() {
                     self.host.resume_session();
-                    self.host.clear_auto_paused();
                 }
                 self.host.request_redraw();
                 // Keep the debugger toolbar truthful without
@@ -38,11 +35,10 @@ impl WindowRuntime {
                 self.host.sync_debug_chrome();
             }
             WindowEvent::Focused(false) => {
-                self.host.active = false;
                 // Deferred: an aux window may take focus in the same
                 // burst, so the pause lands at MainEventsCleared only
                 // if focus truly left us.
-                self.host.arm_pending_auto_pause();
+                self.host.focus.leave_main();
                 self.host.clear_keys();
                 // Same agreement in the other direction, still
                 // without redundant round-trips.
@@ -80,10 +76,10 @@ impl WindowRuntime {
         // leaving anywhere arms it (see the main arms). Runs
         // before borrowing the handle below.
         if matches!(event, WindowEvent::Focused(true)) {
-            self.host.cancel_pending_auto_pause();
+            self.host.focus.cancel_pending();
         }
         if matches!(event, WindowEvent::Focused(false)) {
-            self.host.arm_pending_auto_pause();
+            self.host.focus.leave_aux();
         }
         let Some(handle) = self.host.settings_window.as_mut() else {
             return;
@@ -210,13 +206,11 @@ impl WindowRuntime {
     /// system-paused session; leaving anywhere arms it.
     fn note_aux_focus(&mut self, focused: bool) {
         if focused {
-            self.host.cancel_pending_auto_pause();
-            if self.host.auto_paused() {
+            if self.host.focus.arrive_aux() {
                 self.host.resume_session();
-                self.host.clear_auto_paused();
             }
         } else {
-            self.host.arm_pending_auto_pause();
+            self.host.focus.leave_aux();
         }
     }
 
