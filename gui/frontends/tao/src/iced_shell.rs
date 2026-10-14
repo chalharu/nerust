@@ -157,24 +157,16 @@ impl ShellRenderer {
     }
 }
 
-/// Program UI instance plus its manual lifetime. Generic over the
-/// program so the debugger and PPU viewer share build, relayout, and
-/// drop instead of mirroring them.
-///
-/// The interface lives behind `Option` so resize can *move* it out
-/// for iced's consuming `relayout` and store the result back: a panic
-/// mid-relayout leaves a valid `None`, never uninitialized memory.
+/// Program UI instance plus its manual lifetime. Shared by the
+/// debugger and PPU viewer. `Option` lets resize move the interface
+/// through consuming `relayout` (panic leaves `None`, never garbage).
 pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     ui: Option<std::mem::ManuallyDrop<UserInterface<'static, P::Message, iced::Theme, Renderer>>>,
     instance: program::Instance<P>,
 }
 
-/// What a pumped event needs after `update`: nothing, a repaint
-/// (wheel/drag/hover/caret move widget state but emit no messages),
-/// or a view rebuild (`State::Outdated`: the tree must be re-rendered
-/// from program state). Dropping the `update` return used to swallow
-/// every repaint request, freezing scrollbars, drags, and carets
-/// until some unrelated message repainted.
+/// What a pumped event needs after `update`: nothing, a repaint,
+/// or a view rebuild (`State::Outdated`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PumpOutcome {
     Idle,
@@ -262,12 +254,9 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         (messages, pump_outcome(&state))
     }
 
-    /// Relayout for a new size: iced's own resize contract (the
-    /// official shell calls `UserInterface::relayout` on resize).
-    /// One layout pass reuses the retained element tree and widget
-    /// state — scroll offsets, inputs, and focus survive resize, and
-    /// `Fill`/`FillPortion` resolve against the fresh bounds
-    /// automatically. No view re-invocation, no placeholder builds.
+    /// Relayout for a new size: one layout pass reusing the retained
+    /// tree and widget state (scroll, inputs, focus survive). No view
+    /// re-invocation.
     pub fn relayout(&mut self, bounds: Size, renderer: &mut Renderer) {
         let Some(owned) = self.ui.take() else {
             return;

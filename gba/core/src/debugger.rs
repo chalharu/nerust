@@ -1,39 +1,6 @@
-//! GBA debugger address space.
-//!
-//! Deliberately a single space: regions are already distinguished by
-//! address, so extra ids would buy nothing — the reader dispatches on
-//! the address internally. The one trade-off is typo detection: gap
-//! addresses resolve inside the space and read as `None` (`OpenBus`)
-//! instead of failing loudly as `Unmapped`. Never assert `open_bus`
-//! on a gap address.
-//!
-//! Reader contract (for the next step; all verified against
-//! `memory/mod.rs` decode):
-//!
-//! - New `&self` peek only: the existing `read8/16/32` are `&mut` and
-//!   charge wait cycles plus N/S-tracker progress. The region readers
-//!   underneath (`read_ewram/iwram/palette/vram/oam/rom/sram`,
-//!   `read_bios`) are already `&self` and reusable as-is.
-//! - BIOS guard reproduced without mutation: protected reads serve the
-//!   `bios_prefetch` latch (`&self` field read); only unprotected
-//!   reads touch `read_bios`.
-//! - OAM without the `cpu_bus` latch store that `read_mapped` performs.
-//! - `0x0D` window: EEPROM cartridges serve `eeprom_peek_bit` (existing
-//!   `&self` peek); plain ROMs mirror WS2 through `read_rom`. GPIO
-//!   overlays apply in the same order as `read_rom`.
-//! - SRAM answers only with a battery-backed chip: EEPROM cartridges
-//!   and no-cartridge reads are `None` (honest open bus), never a
-//!   fabricated `0xFF`.
-//! - I/O (`0x04000000..=0x04000803`) serves the audited pure subset —
-//!   PPU/APU/timers/key/IRQ fields, DMA CNT, constant holes — and
-//!   returns `None` for the stateful SIO block (UART latch clear, FIFO
-//!   pop), write-only registers, and gap lanes. Timer reads reuse the
-//!   stamped cycle (no re-stamp, no mutation). Unmapped I/O is dynamic
-//!   prefetch-latch open bus on hardware; the debugger does not
-//!   reproduce it.
-//! - Widths 2/4 compose physical bytes little-endian. CPU aligned-ROR
-//!   semantics deliberately do not apply: the debugger shows physical
-//!   contents.
+//! GBA debugger address space: one space for the whole decoded bus.
+//! Regions dispatch on address. Gap addresses read as open-bus `None`,
+//! never `Unmapped`: never assert `open_bus` on a gap address.
 
 use std::cell::OnceCell;
 
@@ -70,19 +37,9 @@ pub(crate) static GBA_SPACE_TABLE: SpaceTable = SpaceTable::build_with_read_only
     ],
 );
 
-/// GBA observer.
-///
-/// Built per use (built, read, dropped); `registers()` borrows a buffer
-/// filled once in `new`.
-///
-/// Register names are plain `r0`-`r15` plus `cpsr`, in that order. This
-/// deliberately bends the kernel's ascending-order clause at `r10`
-/// (`"r10" < "r2"` lexically): conventional names won over padding.
-/// Presentation must not re-sort.
-///
-/// `r()` ORs the user bank during the post-LDM conflict window: the
-/// list reports what the register reads as, transient included —
-/// deterministic at a fixed pause point all the same.
+/// GBA observer, built per use; `registers()` borrows a lazily filled buffer.
+/// Order is `cpsr` first, then `r0`-`r15` unpadded; presentation must not re-sort.
+/// `r()` reports the post-LDM transient (user bank ORed), fixed per pause point.
 pub struct GbaDebugger<'a> {
     system: &'a GbaSystem,
     /// Lazily filled on first `registers()`: screen/memory-only

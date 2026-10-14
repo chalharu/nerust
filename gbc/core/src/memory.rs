@@ -538,16 +538,9 @@ impl GbcMemoryBus {
         done
     }
 
-    /// Advance ALL devices (including CPU) by 1 T-cycle.
-    /// Advance one PPU dot (= 1 step). Each step is 2 T-cycles, where a
-    /// T-cycle is one CGB master clock (8.39 MHz, fixed rate).
-    ///
-    /// Timing model:
-    /// - Normal speed: CPU clock = master/2. 1 M-cycle = 4 CPU clocks =
-    ///   8 T-cycles = 4 steps; 1 dot = 2 T-cycles = 1 step.
-    /// - Double speed (KEY1): CPU clock = master. 1 M-cycle = 4 CPU clocks =
-    ///   4 T-cycles = 2 steps; the dot rate (2 T-cycles/dot) is unchanged.
-    ///
+    /// Advance ALL devices (including CPU) by 1 T-cycle (1 step = 1 PPU dot
+    /// = 2 T-cycles at a fixed 8.39 MHz master clock). Normal speed: 1 M-cycle
+    /// = 4 steps; double speed: 1 M-cycle = 2 steps; dot rate is unchanged.
     /// A frame always spans 70224 steps.
     ///
     /// Returns true if a PPU frame completed.

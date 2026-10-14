@@ -285,13 +285,8 @@ pub fn menu_label_with_shortcut(label: &str, shortcut: &str) -> String {
     format!("{label} ({shortcut})")
 }
 
-/// Parameterized debugger messages. `text()` covers fixed labels;
-/// these carry addresses, values, and error detail, so one helper
-/// per message keeps both languages side by side instead of
-/// scattering `format!` across the frontends.
-///
-/// Branch helper: one match instead of fifteen copies (arms stay
-/// lazy like a hand-written match).
+/// Parameterized debugger messages: one helper per message keeps both
+/// languages side by side instead of scattering `format!`.
 macro_rules! localized {
     ($language:expr, $en:expr, $ja:expr) => {
         match resolve_language($language) {

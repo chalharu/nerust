@@ -1,9 +1,6 @@
-//! Debugger and PPU-viewer window state. `HostState` orchestrates
-//! (drains, menu sync, focus policy); this struct owns the aux-window
-//! handles, positions, open-request flags, and the live-follow
-//! throttle. Splitting state from orchestration keeps the host
-//! focused on the main window and session instead of growing into a
-//! god object.
+//! Debugger and PPU-viewer window state: aux handles, positions,
+//! open-request flags, and the live-follow throttle. `HostState`
+//! orchestrates; this struct owns.
 
 use std::time::{Duration, Instant};
 

@@ -1,13 +1,7 @@
 //! Pattern-table producer for the debugger's image views.
-//!
-//! Validates the kernel `DebugImage` shape and the CHR/palette read
-//! paths.
-//!
-//! Palette decision: tiles decode to 2-bit indices; the 4-entry palette
-//! comes from PPU palette RAM $3F00-$3F03 resolved through the
-//! canonical 2C02 master table embedded below. Emphasis bits,
-//! color-bit masking ($3F00 & $30), and filter consistency are out of
-//! scope.
+//! Tiles decode to 2-bit indices, colored from PPU palette RAM `$3F00-$3F03`
+//! via the canonical 2C02 master table below. Emphasis and color-bit
+//! masking are out of scope.
 
 use nerust_core_traits::debugger::{DebugImage, ImageFormat};
 use nerust_input_traits::OpenBusReadResult;

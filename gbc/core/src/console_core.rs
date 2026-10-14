@@ -114,16 +114,9 @@ impl GbcConsoleCore {
         self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)
     }
 
-    /// Advance to the next instruction boundary, reporting consumed
-    /// T-cycles. Devices tick with the CPU through the untouched
-    /// `step_tcycle` body, so PPU/timers/APU stay consistent. A
-    /// halted/stopped CPU waits for its wake interrupt instead of
-    /// hanging the debugger; the wait is bounded.
-    ///
-    /// STOP has no wake source in the debugger (joypad only, never
-    /// delivered while paused), so it returns zero immediately
-    /// instead of burning the bound. HALT keeps the bounded wait:
-    /// timers keep ticking and can raise the wake interrupt.
+    /// Advance to the next instruction boundary via `step_tcycle`, reporting
+    /// consumed T-cycles. A halted CPU waits bounded for its wake interrupt;
+    /// STOP (no wake source while paused) returns zero immediately.
     pub(crate) fn step_instruction(&mut self) -> Result<u64, CoreError> {
         let loaded = self.loaded_mut()?;
         if loaded.system.bus.is_stopped() {

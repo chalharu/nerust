@@ -1,9 +1,5 @@
-//! Paused system-image cache for the debugger PPU viewer.
-//!
-//! Decode is the drain's dearest pass (GBA re-reads 131k bus bytes per
-//! fetch) while paused memory never changes, so repeats serve from
-//! here. Split from the transport facade: cache policy lives with the
-//! cache, not with every `EmuCore` caller.
+//! Paused system-image cache for the debugger PPU viewer: repeats
+//! while paused serve here; memory moves mark dirty.
 
 use std::sync::mpsc;
 
@@ -15,14 +11,9 @@ use nerust_emu_thread::OperationError;
 
 use super::{EmuCore, recv_debug_reply};
 
-/// Cached system images (pattern tables) for the debugger PPU viewer.
-///
-/// Decode is the drain's dearest pass (GBA re-reads 131k bus bytes
-/// per fetch) while paused memory never changes, so repeats serve
-/// from here. Anything that advances or replaces memory — step,
-/// write, load/unload/reset/state import, or a running core —
-/// marks the cache dirty instead. `generation` bumps on every dirty mark:
-/// PPU viewers compare generations instead of hashing megabytes.
+/// Cached system images for the debugger PPU viewer. Anything
+/// advancing or replacing memory marks dirty; viewers compare
+/// `generation` instead of hashing.
 #[derive(Debug, Clone)]
 pub(crate) struct CachedImages {
     pub(crate) dirty: bool,
@@ -81,13 +72,9 @@ impl EmuCore {
         }
     }
 
-    /// On-demand system images through the emu thread. Same cold-path
-    /// contract as [`EmuCore::disassemble`], plus a pause-frozen
-    /// cache: repeats while paused serve the stored decode, so page
-    /// and refresh drains skip the tile re-read. A running core
-    /// advances memory at any time and always refetches. Returns the
-    /// source generation with the pixels: viewers skip re-deriving
-    /// when the generation they already show comes back.
+    /// On-demand system images through the emu thread, cached while
+    /// paused; a running core always refetches. Returns the source
+    /// generation so viewers skip re-deriving known generations.
     pub fn debug_images(
         &self,
     ) -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError> {

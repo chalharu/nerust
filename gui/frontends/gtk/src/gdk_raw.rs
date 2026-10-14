@@ -5,12 +5,8 @@ use gio::glib::object::ObjectType as _;
 use gtk::gdk;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-/// Extract handles and call `f` within a scope where the native objects are
-/// guaranteed alive.
-///
-/// On macOS the NSWindow/NSView are retained for the duration of the closure,
-/// then released.  Other platforms pass the raw handles through directly since
-/// they are borrowed from GDK objects whose lifetime is bounded by the caller.
+/// Extract handles and call `f` while the native objects stay alive.
+/// macOS retains for the closure; elsewhere handles borrow from GDK.
 #[cfg(target_os = "macos")]
 pub(crate) fn with_raw_handles<R>(
     surface: &gdk::Surface,
@@ -102,12 +98,8 @@ fn surface_to_raw(surface: &gdk::Surface) -> Option<RawWindowHandle> {
 pub(crate) fn display_to_raw(display: &gdk::Display) -> Option<RawDisplayHandle> {
     let backend = display.backend();
     if backend.is_x11() {
-        // The raw handle needs the underlying Xlib `Display*`, not the
-        // `GdkDisplay*`: passing the GDK object pointer makes the
-        // backend dereference garbage and segfault in native code.
-        // GDK4 (unlike GDK3) does not support multiple X screens — the display
-        // always has exactly one root window.  screen = 0 is therefore correct
-        // for all GDK4 + X11 environments.
+        // Needs the Xlib `Display*`, never the `GdkDisplay*`.
+        // GDK4 has one screen per display, so screen = 0 always.
         #[cfg(all(unix, not(target_os = "macos")))]
         let xdisplay =
             unsafe { gdk4_x11_sys::gdk_x11_display_get_xdisplay(display.as_ptr().cast()) };

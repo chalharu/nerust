@@ -575,13 +575,9 @@ impl DebuggerWindowCore {
         result
     }
 
-    /// Live-tick body: settle any in-flight fetch, then start a new
-    /// one when the viewer follows a running core. The fetch runs as
-    /// an async flight, so a stalled emu thread never parks the GTK
-    /// main thread in the tick. Patch the image section and the pause
-    /// chrome, then sync the PPU viewer. Unchanged generations skip
-    /// everything; the debugger widgets are never rebuilt here, so
-    /// dump scroll positions survive the running follow.
+    /// Live-tick body: settle the in-flight fetch, then start a new
+    /// one when following a running core. Patches images and pause
+    /// chrome only; never rebuilds debugger widgets (scroll survives).
     fn live_tick(win: &DebuggerWindow) {
         if Self::poll_live_flight(win) {
             // A fetch is still crossing: wait for its poller instead

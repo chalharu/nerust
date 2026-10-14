@@ -1,10 +1,6 @@
 //! Debugger window: two-pane memory/disassembly probe plus register,
-//! watch, freeze, and bookmark state.
-//!
-//! Read-only in Phase C; Phase E adds the two-phase write (select,
-//! stage, confirm/cancel) with the shell-owned transaction. The
-//! program stays pure; the host drain executes requests against the
-//! session and refreshes the display cache.
+//! watch, freeze, and bookmark state. Pure view; the host drain runs
+//! requests and refreshes the display cache.
 
 use std::sync::{
     Arc, Mutex,
@@ -529,12 +525,9 @@ impl Program for DebugProgram {
         // Settings form language: fixed label column + stepper.
         let space_row = view_space_row(selected_name.as_deref().unwrap_or(""), language);
         let mem_nav = view_mem_nav(&mem_input, language);
-        // The three heavy lists ride `lazy`: keystrokes elsewhere
-        // (mem/dis/bookmark/freeze/edit inputs) leave their
-        // dependencies untouched, so the ~600-widget rebuild collapses
-        // to the header rows. Every visual input lives in the
-        // dependency tuple — a forgotten field would freeze its
-        // highlight, so keep the tuples exhaustive.
+        // Heavy lists ride `lazy` so unrelated keystrokes only rebuild
+        // headers. Keep every visual input in the dependency tuples or
+        // its highlight freezes.
         let dump_col = lazy((dump_rows, diff, selected), |(rows, diff, selected)| {
             view_dump_col(rows, diff, *selected)
         });
@@ -1161,12 +1154,8 @@ impl DebugWindowHandle {
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
-        // Window-scoped shortcuts on physical codes (F6 step frame,
-        // F7 step instruction, F9 pause toggle). Slot switching owns
-        // no F-keys; the debugger open rides the settings schema
-        // (default F4), not a hardcoded key, so no conflict either.
-        // NOTE: `physical_key` binds by reference through `&mapped`;
-        // dereference before matching or no arm ever hits.
+        // Window-scoped shortcuts on physical codes (F6/F7/F9).
+        // Dereference `physical_key` before matching (binds by ref).
         if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
             physical_key,
             repeat: false,

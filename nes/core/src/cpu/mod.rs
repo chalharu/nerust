@@ -150,16 +150,6 @@ pub(crate) struct Core {
     cpu_stepfunc: CpuStepStateFunc,
 }
 
-// pub(crate) struct State {
-//     memory: Memory,
-//     register: Register,
-//     internal_stat: InternalStat,
-//     interrupt: Interrupt,
-//     cycles: u64,
-//     oam_dma: OamDmaState,
-//     cpu_states: CpuStates,
-// }
-
 macro_rules! cpu_stepfunc_entries {
     ($with_entries:ident) => {
         $with_entries! {

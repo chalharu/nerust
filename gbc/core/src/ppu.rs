@@ -401,17 +401,10 @@ impl GbcPpu {
         self.stat_signal = signal;
     }
 
-    /// The combined STAT interrupt signal level (TCAGBD 8.7):
-    ///   (LY=LYC && bit 6) || (mode 0 && bit 3) || (mode 2 && bit 5)
-    ///   || (mode 1 && (bit 4 || bit 5))
-    /// The mode used here is the internal "mode for interrupt", which differs
-    /// slightly from the mode visible in STAT reads: HBlank extends a few
-    /// T-cycles into the following line (so the signal does not drop between
-    /// HBlank and OAM search), VBlank starts 4 T-cycles into line 144, and
-    /// the mode-2 condition also pulses during VBlank lines (low for the
-    /// first 4 T-cycles of each VBlank line, then high — except on CGB
-    /// hardware, where it is high from clock 0 of line 144 so the mode-2
-    /// STAT fires one M-cycle before the VBL interrupt).
+    /// Combined STAT interrupt signal level (TCAGBD 8.7):
+    /// `(LY=LYC && bit 6) || (mode 0 && bit 3) || (mode 2 && bit 5)`
+    /// `|| (mode 1 && (bit 4 || bit 5))`, evaluated on the interrupt-mode
+    /// (HBlank extends into the next line; VBlank starts 4 T-cycles into line 144).
     fn stat_signal_level(&self) -> bool {
         if self.lcdc & 0x80 == 0 {
             return false;

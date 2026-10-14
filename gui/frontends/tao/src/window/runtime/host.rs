@@ -58,12 +58,9 @@ pub(crate) struct HostState {
     pending_fullscreen_sync: Option<bool>,
     pub(crate) active: bool,
     auto_paused: bool,
-    /// Deferred auto-pause: set when a window loses focus, cleared
-    /// when another of ours gains it in the same burst, executed at
-    /// `MainEventsCleared`. Telling "switched to our debugger" apart
-    /// from "switched to another app" needs the whole burst: pausing
-    /// eagerly on main blur would stop a deliberately-resumed session
-    /// just for moving focus to the debugger.
+    /// Deferred auto-pause: armed on main blur, cancelled when our own
+    /// window takes focus in the same burst, executed at
+    /// `MainEventsCleared`.
     pending_auto_pause: bool,
     /// Pause state at the last completed debug drain, for focus
     /// coalescing below. `None` before the first drain.

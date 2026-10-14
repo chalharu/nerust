@@ -1,10 +1,5 @@
 //! Shared debugger action drain: one phase order for every frontend.
-//!
-//! Both frontends map widgets to [`DebugAction`]; [`SessionHandle::debug_drain`]
-//! owns the load-bearing phase order (see below) so tao and GTK stay
-//! identical by construction and testable without a GUI. [`DrainFlight`]
-//! is the same drain as a non-blocking state machine for the UI thread;
-//! the blocking wrapper only spins flights for tests and headless drivers.
+//! Blocking wrapper spins flights; frontends use begin-plus-poll.
 
 use std::{
     collections::VecDeque,
@@ -74,13 +69,9 @@ pub struct DebugDrainOutput {
 
 impl SessionHandle {
     /// Run one action batch and return the render-ready display.
-    /// Phase order is load-bearing: execution first, then
-    /// cancel/commit, then the stale-kill (before prepare/stage),
-    /// then selection prepare and staging, freeze re-apply, and a
-    /// single batched snapshot last.
-    ///
-    /// Frontends use the non-blocking begin-plus-poll flight instead;
-    /// this wrapper only spins flights for tests and headless drivers.
+    /// Phase order: execution, cancel/commit, stale-kill, prepare and
+    /// staging, freeze re-apply, single batched snapshot last.
+    /// Tests/headless only; frontends use the flight.
     pub fn debug_drain(
         &self,
         actions: &[DebugAction],
@@ -95,13 +86,9 @@ impl SessionHandle {
         }
     }
 
-    /// Start one action batch without blocking: only non-blocking
-    /// `try_send`s run here (plus local mutex work), so this is safe
-    /// on the UI thread. Drive the returned flight with `poll` on the
-    /// frontend tick until [`DrainPoll::Done`]; superseding (a newer
-    /// batch while one is in flight) just drops the old flight —
-    /// orphaned replies are ignored and the FIFO command order keeps
-    /// the newest batch's view correct.
+    /// Start one action batch without blocking (`try_send`s only):
+    /// safe on the UI thread. Poll to `Done`; a newer batch drops the
+    /// old flight (FIFO order keeps the newest view correct).
     pub fn debug_drain_begin(
         &self,
         actions: &[DebugAction],
@@ -1023,12 +1010,9 @@ pub enum LiveImagesPoll {
     Done(crate::session::LiveImages),
 }
 
-/// One images-only fetch as a tick-driven state machine: the live PPU
-/// follow's async half. `begin` only runs the cache lookup and the
-/// non-blocking send; `poll` only `try_recv`s, so the 250ms live tick
-/// never parks in a 5s image re-decode while the emu thread is
-/// stalled. Cache hits and coreless sessions resolve on the first
-/// poll, exactly like the old synchronous refresh.
+/// One images-only fetch as a tick-driven state machine. `begin`
+/// sends without blocking; `poll` receives without blocking. Cache
+/// hits and coreless sessions resolve on the first poll.
 pub struct LiveImagesFlight {
     core: Option<EmuCore>,
     deadline: Duration,

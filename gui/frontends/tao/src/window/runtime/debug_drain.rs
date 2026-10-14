@@ -1,9 +1,5 @@
 //! Debugger and live-follow orchestration for `HostState`.
-//!
-//! Split from `host.rs`: drains, flights, aux-window management, and
-//! the live PPU follow live here; the host keeps the main window,
-//! menus, settings, and session lifecycle. Same type, same behavior —
-//! only the address changed.
+//! Drains, flights, aux-window management, and live PPU follow.
 
 use std::{sync::Arc, time::Instant};
 
@@ -44,13 +40,9 @@ impl HostState {
         self.maybe_live_ppu();
     }
 
-    /// Live PPU follow while the core runs: an images-only refresh
-    /// every interval so the viewer tracks the running picture. A full
-    /// drain is wrong here: the paused-gated inspect refuses while
-    /// running and would blank the dump/registers. Paused cores never
-    /// change memory, so no periodic work happens there — demand
-    /// drains already refresh. The fetch runs as an async flight, so
-    /// a stalled emu thread never parks the event loop in the tick.
+    /// Live PPU follow while the core runs: images-only refresh each
+    /// interval. Never a full drain (paused-gated inspect would blank
+    /// the dump); paused cores need no periodic work; async flight.
     pub(crate) fn maybe_live_ppu(&mut self) {
         // Settle any in-flight fetch first (non-blocking): a flight
         // orphaned by pausing or closing still resolves harmlessly,
@@ -204,13 +196,9 @@ impl HostState {
         self.run_debug_drain(&requests);
     }
 
-    /// Run one action batch through an async shell-drain flight and
-    /// push the display back once it lands. Empty batches are pure
-    /// re-reads (used after PPU (re)open so images populate
-    /// immediately). Only sends run here; the event loop polls the
-    /// flight (`poll_debug_flight`), so the UI thread never parks in
-    /// a thread round-trip. A batch that resolves without crossings
-    /// still applies synchronously.
+    /// Run one action batch through an async shell-drain flight.
+    /// Empty batches are pure re-reads. Sends only; the event loop
+    /// polls, so the UI thread never blocks.
     pub(crate) fn run_debug_drain(&mut self, requests: &[nerust_gui_shell::debug::DebugAction]) {
         use nerust_gui_shell::debug::DebugDrainInput;
         let (space, mem_addr, dis_addr, watch, freeze, reg_target, prev_rows, need_images) =

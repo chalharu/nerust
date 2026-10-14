@@ -1,11 +1,6 @@
-//! Settings domain model: language, input bindings, shared/local/app
-//! state, and the composite snapshot. Pure data with serde shapes;
-//! interpretation lives in the sibling modules (`bindings`, `editor`,
-//! `factory`, `i18n`).
-//!
-//! Moved down from `nerust_gui_settings` so the dependency points
-//! inward (domain logic and GUI alike consume the model; nothing in
-//! the model names a GUI toolkit).
+//! Settings domain model: language, bindings, shared/local/app state.
+//! Pure data; interpretation lives in the sibling modules. GUI-agnostic
+//! so the dependency points inward.
 
 pub mod app_state;
 pub mod input;
