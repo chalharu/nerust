@@ -98,12 +98,6 @@ impl HostState {
         true
     }
 
-    pub(super) fn after_rom_load(&mut self) {
-        self.sync_menu_state();
-        self.request_redraw();
-        self.refresh_window_title();
-    }
-
     fn close_rom(&mut self) {
         FrontendSession::unload(self);
         self.sync_menu_state();

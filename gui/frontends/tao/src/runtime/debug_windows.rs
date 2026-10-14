@@ -99,6 +99,35 @@ impl DebugWindows {
     pub(crate) fn next_live_tick(&self) -> Option<Instant> {
         self.last_ppu_live.map(|last| last + PPU_LIVE_INTERVAL)
     }
+
+    /// Drop a dead handle (external destroy without CloseRequested):
+    /// a stale handle must not linger and block reopening.
+    pub(super) fn drop_debug_window(&mut self) {
+        self.debug_window.take();
+    }
+
+    /// Same guard for the PPU viewer.
+    pub(super) fn drop_ppu_window(&mut self) {
+        self.ppu_window.take();
+    }
+
+    /// Close-request flag raised by the debugger window itself.
+    pub(super) fn debug_close_requested(&self) -> bool {
+        self.debug_window.as_ref().is_some_and(|h| {
+            h.shell
+                .should_close
+                .load(std::sync::atomic::Ordering::Acquire)
+        })
+    }
+
+    /// Same flag for the PPU viewer.
+    pub(super) fn ppu_close_requested(&self) -> bool {
+        self.ppu_window.as_ref().is_some_and(|h| {
+            h.shell
+                .should_close
+                .load(std::sync::atomic::Ordering::Acquire)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -150,5 +179,16 @@ mod tests {
         assert!(!windows.live_due(first));
         assert!(!windows.live_due(first + PPU_LIVE_INTERVAL - Duration::from_nanos(1)));
         assert!(windows.live_due(first + PPU_LIVE_INTERVAL));
+    }
+
+    #[test]
+    fn drop_and_close_flags_total_on_empty() {
+        // Headless: no windows open; drops are no-ops and no close
+        // is ever reported.
+        let mut windows = DebugWindows::new();
+        windows.drop_debug_window();
+        windows.drop_ppu_window();
+        assert!(!windows.debug_close_requested());
+        assert!(!windows.ppu_close_requested());
     }
 }

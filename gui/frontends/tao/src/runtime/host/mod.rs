@@ -33,11 +33,12 @@ use tao::{
 use crate::event::{MenuCommand, UserEvent};
 use crate::menu::imp::AppMenu;
 
-use super::debug::DebugWindows;
+use super::debug_windows::DebugWindows;
 
-mod chrome;
 mod commands;
 mod focus;
+mod presentation;
+mod settings;
 mod window;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

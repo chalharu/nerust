@@ -1,4 +1,4 @@
-mod debug;
+mod debug_windows;
 mod dispatch;
 mod drain;
 mod host;

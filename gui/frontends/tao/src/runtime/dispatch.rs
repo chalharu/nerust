@@ -140,13 +140,11 @@ impl WindowRuntime {
         // Focus re-reads, never force-pauses; the empty batch
         // still refreshes the toolbar label.
         // External destroy without CloseRequested: drop the
-        // stale handle so a later F4 reopens.
-        // External destroy without CloseRequested: drop the
         // stale handle so a later F4 reopens. Checked before focus
         // handling: a dead window arms no auto-pause (same order as
         // the PPU arm).
         if matches!(event, WindowEvent::Destroyed) {
-            self.host.debug.debug_window.take();
+            self.host.debug.drop_debug_window();
             self.host.request_redraw();
             return;
         }
@@ -168,14 +166,10 @@ impl WindowRuntime {
             // Coalesced present (see the settings arm): every
             // visual path above already requested a redraw.
             handle.shell.window.request_redraw();
-            if handle
-                .shell
-                .should_close
-                .load(std::sync::atomic::Ordering::Acquire)
-            {
-                self.host.debug.debug_window.take();
-                self.host.request_redraw();
-            }
+        }
+        if self.host.debug.debug_close_requested() {
+            self.host.debug.drop_debug_window();
+            self.host.request_redraw();
         }
     }
 
@@ -190,7 +184,7 @@ impl WindowRuntime {
         // Same external-destroy guard as the debugger: a dead
         // handle must not linger and block reopening.
         if matches!(event, WindowEvent::Destroyed) {
-            self.host.debug.ppu_window.take();
+            self.host.debug.drop_ppu_window();
             self.host.request_redraw();
             return;
         }
@@ -202,18 +196,16 @@ impl WindowRuntime {
                 .debug
                 .remember_ppu_window_pos(position.x, position.y);
         }
-        let Some(handle) = self.host.debug.ppu_window.as_mut() else {
-            return;
-        };
-        handle.shell.handle_common_event(&event);
-        handle.handle_tao_event(event);
-        handle.shell.window.request_redraw();
-        if handle
-            .shell
-            .should_close
-            .load(std::sync::atomic::Ordering::Acquire)
         {
-            self.host.debug.ppu_window.take();
+            let Some(handle) = self.host.debug.ppu_window.as_mut() else {
+                return;
+            };
+            handle.shell.handle_common_event(&event);
+            handle.handle_tao_event(event);
+            handle.shell.window.request_redraw();
+        }
+        if self.host.debug.ppu_close_requested() {
+            self.host.debug.drop_ppu_window();
             self.host.request_redraw();
         }
     }
