@@ -216,6 +216,9 @@ impl SettingsWindowHandle {
         #[cfg(target_os = "macos")]
         {
             wb = wb.with_automatic_window_tabbing(false);
+            // Distinct from the aux windows (see WindowScaffold): shared
+            // identifiers merge into tabs under macOS "Prefer tabs".
+            wb = wb.with_tabbing_identifier("preferences");
         }
         let window = Arc::new(match wb.build(event_loop) {
             Ok(w) => w,

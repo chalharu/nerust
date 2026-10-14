@@ -351,16 +351,21 @@ impl SoftbufferRenderer {
             }
         }
 
-        // 縦方向に拡大
+        // 縦方向に拡大。タップは最大2件のため行毎の確保はしない。
         for y in 0..dst_h {
             let lut_index = y * lut.lut_pixel_size();
-            let lut_values: Vec<_> = lut.y_lut[lut_index..lut_index + lut.lut_pixel_size()]
-                .iter()
-                .filter_map(|&x| x)
-                .collect();
+            let mut taps = [(0u16, 0u16); 2];
+            let mut tap_count = 0;
+            for &tap in &lut.y_lut[lut_index..lut_index + lut.lut_pixel_size()] {
+                if let Some(tap) = tap {
+                    taps[tap_count] = tap;
+                    tap_count += 1;
+                }
+            }
+            let taps = &taps[..tap_count];
             for x in 0..dst_w {
                 let dst_index = y * dst_w + x;
-                let c = lut_values
+                let c = taps
                     .iter()
                     .copied()
                     .map(|(i, w)| {

@@ -136,6 +136,7 @@ impl HostState {
             ) {
                 Some(handle) => {
                     self.debug.debug_window = Some(handle);
+                    self.debug.sync_tick_fast();
                     self.run_debug_drain(&[DebugAction::Pause, DebugAction::Refresh]);
                 }
                 None => log::error!("failed to open debugger window"),
@@ -153,6 +154,7 @@ impl HostState {
             ) {
                 Some(handle) => {
                     self.debug.ppu_window = Some(handle);
+                    self.debug.sync_tick_fast();
                     // Populate the image cache immediately: the bridge
                     // already carries images, but the viewer derives
                     // its scaled cache only on Sync.

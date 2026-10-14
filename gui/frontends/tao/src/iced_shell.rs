@@ -78,6 +78,11 @@ impl WindowScaffold {
         #[cfg(target_os = "macos")]
         {
             builder = builder.with_automatic_window_tabbing(false);
+            // Distinct tabbing identifiers per window kind: macOS merges
+            // same-identifier windows into tabs (system "Prefer tabs"
+            // included), and the default identifier is shared. The log
+            // tag is already unique per kind, so it doubles as the id.
+            builder = builder.with_tabbing_identifier(log_tag);
         }
         if let Some((x, y)) = position {
             builder = builder.with_position(tao::dpi::LogicalPosition::new(x as f64, y as f64));
