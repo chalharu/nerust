@@ -5,15 +5,7 @@ use nerust_settings_core::model::input::ShortcutBinding;
 use nerust_settings_core::model::language::AppLanguage;
 use tao::window::Window as TaoWindow;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum MenuCommand {
-    Open,
-    Close,
-    Settings,
-    Debugger,
-    Session(SessionCommand),
-    Quit,
-}
+pub(crate) use crate::event::MenuCommand;
 
 /// One snapshot for a menu sync: a struct (not a long argument
 /// list) so adding a field never trips the arity lint. Shared by
