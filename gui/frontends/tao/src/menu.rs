@@ -5,8 +5,6 @@ use nerust_settings_core::model::input::ShortcutBinding;
 use nerust_settings_core::model::language::AppLanguage;
 use tao::window::Window as TaoWindow;
 
-pub(crate) use crate::event::MenuCommand;
-
 /// One snapshot for a menu sync: a struct (not a long argument
 /// list) so adding a field never trips the arity lint. Shared by
 /// the real menu and the headless stub below.
@@ -58,7 +56,8 @@ pub(crate) mod imp {
     #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowExtWindows;
 
-    use super::{MenuCommand, MenuSync, SessionCommand, StateSlotSummary, TaoWindow, slot_label};
+    use super::{MenuSync, SessionCommand, StateSlotSummary, TaoWindow, slot_label};
+    use crate::event::MenuCommand;
     use crate::event::UserEvent;
 
     pub(crate) struct AppMenu {
@@ -391,7 +390,9 @@ pub(crate) mod imp {
     }
 
     fn clear_submenu(menu: &Submenu) {
-        while !menu.items().is_empty() {
+        // Bounded: remove_at can fail (leaving the item in place),
+        // so a while-is-not-empty loop could spin forever.
+        for _ in 0..menu.items().len() {
             let _ = menu.remove_at(0);
         }
     }
