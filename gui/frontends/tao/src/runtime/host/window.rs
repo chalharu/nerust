@@ -212,4 +212,55 @@ impl HostState {
         self.session.flush_before_exit();
         true
     }
+    pub(super) fn startup_window_size(&self) -> TaoLogicalSize<f64> {
+        match scaling_factor(self.session.settings_snapshot().local.video.window.scaling) {
+            Some(scale) => logical_window_size(self.session.window_size(), Some(scale)),
+            None => self
+                .remembered_fit_window_size()
+                .map(logical_size_from_remembered)
+                .unwrap_or_else(default_fit_window_size),
+        }
+    }
+
+    pub(super) fn update_window_size_for_scaling(&self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let Some(scale) =
+            scaling_factor(self.session.settings_snapshot().local.video.window.scaling)
+        else {
+            return;
+        };
+        window.set_inner_size(logical_window_size(self.session.window_size(), Some(scale)));
+    }
+
+    fn remembered_fit_window_size(&self) -> Option<RememberedWindowSize> {
+        self.session
+            .settings_snapshot()
+            .app_state
+            .window_size("main")
+    }
+
+    pub(super) fn remember_fit_window_size(&self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        if window_is_fullscreen(window)
+            || scaling_factor(self.session.settings_snapshot().local.video.window.scaling).is_some()
+        {
+            return;
+        }
+
+        let logical_size = window.inner_size().to_logical::<f64>(window.scale_factor());
+        let width = logical_size.width.round().max(1.0) as u32;
+        let height = logical_size.height.round().max(1.0) as u32;
+
+        if let Err(error) = self
+            .session
+            .settings_manager()
+            .update_window_size(width, height)
+        {
+            log::warn!("failed to remember tao window size: {error}");
+        }
+    }
 }
