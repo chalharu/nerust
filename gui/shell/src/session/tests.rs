@@ -437,12 +437,11 @@ fn apply_settings_rolls_back_presentation_swap_on_save_failure() {
         "rollback swaps the previous assets back"
     );
     assert!(
-        session
+        !session
             .settings_snapshot()
             .shared
             .systems
-            .get(&DummySystemId as &dyn SystemId)
-            .is_none(),
+            .contains_key(&DummySystemId as &dyn SystemId),
         "snapshot keeps the previous (absent) settings"
     );
     assert!(session.loaded(), "rollback keeps the loaded ROM");
