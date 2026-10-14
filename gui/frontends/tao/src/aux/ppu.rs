@@ -54,9 +54,7 @@ pub(crate) struct PpuState {
     scaled: Mutex<Vec<(String, u32, u32, iced::widget::image::Handle)>>,
     panels_cache: Mutex<String>,
     hover_cache: Mutex<String>,
-    /// Generation of the source images behind `scaled`. Sync
-    /// re-derives only when the drain reports a new generation:
-    /// drains while paused re-run Sync with identical memory. Starts
+    /// Generation of the source images behind `scaled`. Starts
     /// impossibly high so the first Sync always derives (generation
     /// zero is a valid first fetch).
     source_gen: Mutex<u64>,

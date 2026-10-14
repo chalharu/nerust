@@ -311,11 +311,10 @@ fn edit_write(bridge: &DebugBridge) {
         vm::parse_hex_addr(&input).filter(|value| *value <= 0xFF),
     ) {
         (Some((addr, _)), Some(value)) => {
-            // Re-select first: the drain prepares fresh state
-            // (old byte) before staging, so Write also works
-            // after a cancel (which empties the transaction).
-            // The confirm row comes back authoritatively from
-            // the drain (same as GTK): no optimistic text.
+            // Re-select first: the drain stages fresh state, so Write
+            // also works after a cancel empties the transaction.
+            // The confirm row comes back from the drain, never
+            // optimistically from here.
             bridge.push(DebugAction::SelectRow(addr));
             bridge.push(DebugAction::EditStage(value as u64));
         }

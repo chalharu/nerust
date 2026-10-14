@@ -68,10 +68,8 @@ impl HostState {
     }
 
     /// Native attach target for the game renderer: the content area
-    /// below the menubar when it has a native window, else the
-    /// toplevel (menu occluded, as before). The xid tags the target
-    /// so the runtime recreates the surface across target changes
-    /// instead of merely resizing into the wrong drawable.
+    /// below the menubar when available, else the toplevel. The xid
+    /// tags the target so a target change recreates the surface.
     pub(crate) fn surface_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
         let window = self.window.as_ref()?;
         #[cfg(any(

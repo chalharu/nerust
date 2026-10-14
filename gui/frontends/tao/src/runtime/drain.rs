@@ -175,9 +175,7 @@ impl HostState {
 
     /// Drain debugger requests and push one batched snapshot back.
     /// Execution requests run before the re-read so one drain both
-    /// acts and refreshes. The phase order lives in the shared shell
-    /// drain; this only gathers frontend state and renders. A stored
-    /// flight polls first so rapid batches supersede in order.
+    /// acts and refreshes.
     pub(crate) fn drain_debug_requests(&mut self) {
         use nerust_gui_shell::debug::DebugAction;
         use std::sync::atomic::Ordering;
