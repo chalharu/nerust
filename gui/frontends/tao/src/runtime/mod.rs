@@ -32,7 +32,7 @@ pub(crate) struct WindowRuntime {
 }
 
 impl WindowRuntime {
-    pub(crate) fn new(ctx: FrontendContext) -> Self {
+    pub(crate) fn new(ctx: FrontendContext) -> Result<Self, String> {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {
@@ -43,24 +43,27 @@ impl WindowRuntime {
         let proxy = event_loop.create_proxy();
         let app_menu = AppMenu::new(proxy);
 
-        let host = HostState::new(ctx, app_menu);
+        let host = HostState::new(ctx, app_menu)?;
 
-        Self {
+        Ok(Self {
             event_loop: Some(event_loop),
             host,
             renderer: None,
             surface_xid: None,
-        }
+        })
     }
 
     fn build_renderer_and_surface(&mut self, window: &tao::window::Window) -> Option<()> {
         let (raw_window_handle, size, xid) = self.host.surface_target()?;
         let session = self.host.session();
         let vsync = session.settings_snapshot().local.video.presentation.vsync;
-        let raw_display_handle = window
-            .display_handle()
-            .expect("failed to get display handle")
-            .as_raw();
+        let raw_display_handle = match window.display_handle() {
+            Ok(handle) => handle.as_raw(),
+            Err(e) => {
+                log::error!("failed to get display handle: {e}");
+                return None;
+            }
+        };
         let render_profile = session.render_profile().cloned()?;
         let config = RendererConfig {
             render_profile,
@@ -70,18 +73,25 @@ impl WindowRuntime {
         // context current: GL object names die with their context, and
         // a fresh context reuses the same ids.
         self.renderer = None;
-        let mut renderer = self
+        let mut renderer = match self
             .host
             .gpu_factory()
             .create_renderer(&config, raw_display_handle)
-            .expect("failed to create renderer");
-        renderer
-            .attach(
-                raw_window_handle,
-                raw_display_handle,
-                SurfaceSize::new(size.width, size.height),
-            )
-            .expect("failed to attach");
+        {
+            Ok(renderer) => renderer,
+            Err(e) => {
+                log::error!("failed to create renderer: {e}");
+                return None;
+            }
+        };
+        if let Err(e) = renderer.attach(
+            raw_window_handle,
+            raw_display_handle,
+            SurfaceSize::new(size.width, size.height),
+        ) {
+            log::error!("failed to attach renderer: {e}");
+            return None;
+        }
         self.surface_xid = xid;
         self.renderer = Some(renderer);
         Some(())
@@ -215,6 +225,7 @@ impl WindowRuntime {
                     WindowEvent::ModifiersChanged(state) => handle.set_modifiers(*state),
                     WindowEvent::CloseRequested => {
                         handle
+                            .shell
                             .should_close
                             .store(true, std::sync::atomic::Ordering::Release);
                     }
@@ -226,12 +237,15 @@ impl WindowRuntime {
                 // requested a redraw; presenting here per event would
                 // serialize a full draw behind every drag/motion event
                 // and unload the backlog as a hang on release.
-                handle.window.request_redraw();
+                handle.shell.window.request_redraw();
                 if handle
+                    .shell
                     .should_close
                     .load(std::sync::atomic::Ordering::Acquire)
                 {
-                    let handle = self.host.settings_window.take().unwrap();
+                    let Some(handle) = self.host.settings_window.take() else {
+                        return;
+                    };
                     let plan = self.host.close_settings_window(handle);
                     if plan.is_some_and(|p| p.renderer_needs_rebuild) {
                         self.recreate_renderer();

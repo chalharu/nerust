@@ -12,6 +12,7 @@ use nerust_gui_shell::{
 use nerust_gui_viewmodel::debugger as debug_vm;
 
 use super::host::HostState;
+use crate::aux::bridge::lock_recovered;
 use crate::event::UserEvent;
 
 impl HostState {
@@ -84,7 +85,7 @@ impl HostState {
             return;
         };
         {
-            let mut display = handle.bridge.display.lock().unwrap();
+            let mut display = lock_recovered(&handle.bridge.display);
             if display.images_gen == generation {
                 return;
             }
@@ -204,18 +205,18 @@ impl HostState {
         let (space, mem_addr, dis_addr, watch, freeze, reg_target, prev_rows, need_images) =
             match self.debug.debug_window.as_ref() {
                 Some(handle) => {
-                    let nav = handle.bridge.nav.lock().unwrap();
+                    let nav = lock_recovered(&handle.bridge.nav);
                     let mem_addr = nav.mem_addr();
                     let dis_addr = nav.dis_addr();
-                    let prev = handle.bridge.display.lock().unwrap().dump_rows.clone();
+                    let prev = lock_recovered(&handle.bridge.display).dump_rows.clone();
                     drop(nav);
                     (
                         handle.bridge.selected_space(),
                         mem_addr,
                         dis_addr,
-                        *handle.bridge.watch.lock().unwrap(),
-                        *handle.bridge.freeze.lock().unwrap(),
-                        *handle.bridge.reg_target.lock().unwrap(),
+                        *lock_recovered(&handle.bridge.watch),
+                        *lock_recovered(&handle.bridge.freeze),
+                        *lock_recovered(&handle.bridge.reg_target),
                         prev,
                         self.debug.ppu_window.is_some(),
                     )
@@ -275,7 +276,7 @@ impl HostState {
     fn apply_drain_output(&mut self, output: DebugDrainOutput) {
         if let Some(handle) = self.debug.debug_window.as_mut() {
             if let Some(selected) = output.reselected {
-                *handle.bridge.selected.lock().unwrap() = Some(selected);
+                *lock_recovered(&handle.bridge.selected) = Some(selected);
             }
             // Running drains come back section-degenerate (paused
             // gate): restore the last paused rows so Resume keeps the
@@ -285,7 +286,7 @@ impl HostState {
                 // Images excluded: `restore_paused_sections` only reads
                 // the six small paused fields, so dragging up to 512KB
                 // of RGBA through every drain is pure waste.
-                let old = handle.bridge.display.lock().unwrap().clone_without_images();
+                let old = lock_recovered(&handle.bridge.display).clone_without_images();
                 display.restore_paused_sections(&old);
             }
             handle.set_display(display);
