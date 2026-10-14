@@ -87,12 +87,8 @@ pub trait CorePersistence {
     fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError>;
 }
 
-/// Thread-transport port behind [`EmuCore`]. The application layer
-/// (session, drains) programs against this seam, not the concrete
-/// [`EmuThread`]: call sites never assume thread internals, and tests
-/// plug scripted transports without spawning threads. The production
-/// reality is one implementation; the trait exists so the direction
-/// of the dependency (application → abstraction) stays honest.
+/// Thread-transport port behind [`EmuCore`]: application code
+/// programs against this seam, tests plug scripted transports.
 pub trait EmuThreadPort: Send + std::fmt::Debug {
     fn send(&self, cmd: EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>>;
     fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>>;
@@ -177,12 +173,8 @@ impl EmuCore {
         }
     }
 
-    /// Wrap `CoreParts` (from a factory) into an `EmuCore`.
-    /// Returns (EmuCore, GuiInput, field_map).
-    ///
-    /// Buffer geometry comes from the factory-declared render profile,
-    /// never per-system constants; the thread slot is built identically
-    /// so all three buffers agree before the first swap.
+    /// Wrap `CoreParts` into an `EmuCore`. Buffer geometry comes from
+    /// the factory render profile so all buffers agree pre-swap.
     pub fn from_parts(
         parts: CoreParts,
     ) -> (
@@ -288,23 +280,15 @@ impl EmuCore {
             .map_err(|_| OperationError::WorkerUnavailable)
     }
 
-    /// Shareable clone for the async debug drain. The flight owns a
-    /// clone and polls it across UI ticks without borrowing the
-    /// session: the transport, metrics, frame buffer slot, and image
-    /// cache are all `Arc`s, so the session's core and the flight
-    /// observe the same pause truth and the same image generation.
-    /// Only the display framebuffer (`disp_fb`, debugger-unused) is
-    /// reset to empty instead of copied (see the manual `Clone`).
+    /// Shareable clone for the async debug drain: owns a clone and
+    /// polls across UI ticks. Shared `Arc`s see the same pause truth
+    /// and image generation; `disp_fb` stays empty (unused).
     pub(crate) fn drain_core(&self) -> EmuCore {
         self.clone()
     }
 
-    /// Live audio-backend swap for sample-rate/latency changes.
-    /// Blocking with the debugger timeout: the reply is the barrier
-    /// proving the thread parked on the new backend before we return.
-    /// No pause needed (commands drain only between frames); no ROM
-    /// reload, no state round-trip. The backend carries the new
-    /// settings' volume/gain, so volume-only deltas ride along.
+    /// Live audio-backend swap. Blocks for the reply barrier; no pause,
+    /// no reload. Volume-only deltas ride with the new backend.
     pub fn swap_audio_backend(
         &self,
         backend: Box<dyn AudioBackend>,
@@ -321,13 +305,9 @@ impl EmuCore {
         recv_debug_reply(reply_rx)
     }
 
-    /// Live presentation swap for filter-only changes: pause if
-    /// running, exchange the thread slot behind the reply barrier,
-    /// then swap the session buffers and profile while the thread is
-    /// parked, and resume if it paused. No ROM reload, no state
-    /// round-trip: the same machine keeps rendering into the new
-    /// target. The debugger image cache is dirtied (same palette the
-    /// PPU viewer decodes through).
+    /// Live presentation swap for filter-only changes: pause if running,
+    /// swap behind the reply barrier, resume if paused. No ROM reload,
+    /// no state round-trip; dirties the debugger image cache.
     pub fn apply_presentation(
         &mut self,
         profile: VideoRenderProfile,
@@ -859,13 +839,8 @@ fn fresh_frame_buffer(profile: &VideoRenderProfile, palette: &[u32]) -> FrameBuf
     fb
 }
 
-/// Generate a preview frame from the port's shared frame buffer.
-/// Caller should hold no lock on the shared frame buffer.
-///
-/// Lives here (not in `state`) so the module graph stays acyclic:
-/// `state` owns the [`crate::state::PreviewFrame`] DTO, `emu_core`
-/// owns the port it reads from — neither imports the other for
-/// behavior.
+/// Preview frame from the port's shared frame buffer. Caller holds
+/// no lock on it. Lives here to keep the module graph acyclic.
 fn generate_preview_frame(emu: &dyn EmuThreadPort) -> Option<crate::state::PreviewFrame> {
     let Ok(guard) = emu.shared_frame_buffer().lock() else {
         log::warn!("generate_preview: shared frame buffer lock failed");
@@ -919,6 +894,7 @@ mod tests {
     use crate::test_helpers::build_test_core_parts;
     use nerust_core_traits::debugger::{DebugImage, SpaceId};
 
+    #[serial_test::serial]
     #[test]
     fn compact_rgba_removes_aligned_row_padding() {
         let mut frame = FrameBuffer::with_capacity(3, 2, PixelFormat::Rgba);
@@ -972,6 +948,7 @@ mod tests {
         }
     }
 
+    #[serial_test::serial]
     #[test]
     fn apply_presentation_swaps_buffers_and_profile_on_running_core() {
         let (mut core, _, _, _) = EmuCore::from_parts(build_test_core_parts());
@@ -1000,6 +977,7 @@ mod tests {
         assert_eq!(guard.palette().expect("shared palette")[0xAB], 0xFF00_00AB);
     }
 
+    #[serial_test::serial]
     #[test]
     fn port_seam_serves_queries_without_a_thread() {
         use nerust_core_traits::debugger::{SpaceAccess, SpaceInfo};
@@ -1031,6 +1009,7 @@ mod tests {
         assert_eq!(spaces[0].name, "WRAM");
     }
 
+    #[serial_test::serial]
     #[test]
     fn debug_images_cache_serves_paused_repeats() {
         let core = loaded_core();
@@ -1060,6 +1039,7 @@ mod tests {
         core.pause().expect("thread");
     }
 
+    #[serial_test::serial]
     #[test]
     fn images_store_advances_only_on_changed_content() {
         use nerust_core_traits::debugger::ImageFormat;
@@ -1089,6 +1069,7 @@ mod tests {
         assert!(changed.generation > served);
     }
 
+    #[serial_test::serial]
     #[test]
     fn debug_registers_roundtrip_and_refuse() {
         let core = loaded_core();
@@ -1110,6 +1091,7 @@ mod tests {
         ));
     }
 
+    #[serial_test::serial]
     #[test]
     fn debug_observation_paths_answer() {
         let core = loaded_core();

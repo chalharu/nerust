@@ -107,6 +107,7 @@ impl<T: CoreFactory> CoreFactory for FailingOnceFactory<T> {
     }
 }
 
+#[serial_test::serial]
 #[test]
 fn shortcut_key_returns_shortcut_action_without_controller_event() {
     let mut session = test_session();
@@ -122,6 +123,7 @@ fn shortcut_key_returns_shortcut_action_without_controller_event() {
     );
 }
 
+#[serial_test::serial]
 #[test]
 fn system_load_options_flow_into_session_load() {
     let mut session = test_session();
@@ -143,6 +145,7 @@ fn system_load_options_flow_into_session_load() {
     );
 }
 
+#[serial_test::serial]
 #[test]
 fn session_commands_drive_pause_resume_toggle_and_reset() {
     let mut session = test_session();
@@ -186,6 +189,7 @@ fn session_commands_drive_pause_resume_toggle_and_reset() {
     assert!(session.run_command(SessionCommand::Reset).unwrap().executed);
 }
 
+#[serial_test::serial]
 #[test]
 fn session_commands_report_missing_core_and_empty_slots() {
     let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
@@ -212,6 +216,7 @@ fn session_commands_report_missing_core_and_empty_slots() {
     assert!(!session.load_hidden_lifecycle_state());
 }
 
+#[serial_test::serial]
 #[test]
 fn session_rebuild_reuses_previously_resolved_load_request() {
     let mut session = test_session();
@@ -237,15 +242,9 @@ fn session_rebuild_reuses_previously_resolved_load_request() {
     assert!(session.loaded());
 }
 
-/// Delegates everything to `MockFactory` but answers the
-/// presentation query: pins the session seam (views → factory → core)
-/// while the decision itself stays unit-tested at the real factories.
-///
-/// Direction-aware by entry presence: forward (absent → present)
-/// serves the wide profile, rollback (present → absent) serves the
-/// narrow one. This pins the session passing `(before, after)` in the
-/// right order on both legs — swapping the args serves the wrong
-/// width and fails the tests below.
+/// `MockFactory` delegate answering the presentation query.
+/// Direction-aware by entry presence (absent→present wide,
+/// present→absent narrow); pins the session's `(before, after)` order.
 struct LiveSwapFactory;
 impl CoreFactory for LiveSwapFactory {
     fn system_id(&self) -> Box<dyn SystemId> {
@@ -370,6 +369,7 @@ fn with_visual_delta(session: &SessionHandle) -> SettingsSnapshot {
     next
 }
 
+#[serial_test::serial]
 #[test]
 fn apply_settings_swaps_presentation_without_rebuild_on_visual_delta() {
     use crate::test_helpers::mock_core_creations;
@@ -400,6 +400,7 @@ fn apply_settings_swaps_presentation_without_rebuild_on_visual_delta() {
     );
 }
 
+#[serial_test::serial]
 #[test]
 fn apply_settings_rolls_back_presentation_swap_on_save_failure() {
     use crate::settings::defaults::seed::{
@@ -447,6 +448,7 @@ fn apply_settings_rolls_back_presentation_swap_on_save_failure() {
     assert!(session.loaded(), "rollback keeps the loaded ROM");
 }
 
+#[serial_test::serial]
 #[test]
 fn apply_settings_skips_rebuild_when_assignments_unchanged() {
     let mut session = test_session();
@@ -455,6 +457,7 @@ fn apply_settings_skips_rebuild_when_assignments_unchanged() {
     assert!(!plan.session_rebuild_required);
 }
 
+#[serial_test::serial]
 #[test]
 fn apply_settings_swaps_audio_without_rebuild_when_latency_changes() {
     use crate::test_helpers::mock_core_creations;
@@ -492,6 +495,7 @@ fn apply_settings_swaps_audio_without_rebuild_when_latency_changes() {
     assert_eq!(session.settings_snapshot().local.audio.latency_ms, 90);
 }
 
+#[serial_test::serial]
 #[test]
 fn apply_settings_rolls_back_on_save_failure() {
     use crate::settings::defaults::seed::{
@@ -544,6 +548,7 @@ fn apply_settings_rolls_back_on_save_failure() {
     );
 }
 
+#[serial_test::serial]
 #[test]
 fn apply_settings_rebuilds_when_assignments_change() {
     use crate::test_helpers::{TEST_SLOT_P1, mock_core_creations};
@@ -581,6 +586,7 @@ fn apply_settings_rebuilds_when_assignments_change() {
     );
 }
 
+#[serial_test::serial]
 #[test]
 fn set_fullscreen_default_updates_snapshot_and_plan() {
     let mut session = test_session();
@@ -610,6 +616,7 @@ fn set_fullscreen_default_updates_snapshot_and_plan() {
     assert_eq!(second, SettingsApplyPlan::default());
 }
 
+#[serial_test::serial]
 #[test]
 fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
     let failing = Arc::new(FailingOnceFactory::new(Arc::new(MockFactory)));
@@ -644,6 +651,7 @@ fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
     );
 }
 
+#[serial_test::serial]
 #[test]
 fn session_factory_uses_primary_initially() {
     let factory = Arc::new(MockFactory);
@@ -657,6 +665,7 @@ fn session_factory_uses_primary_initially() {
     assert_eq!(session.factory().expect("no active system").system_id(), id);
 }
 
+#[serial_test::serial]
 #[test]
 fn set_active_system_rejects_unknown_id() {
     let factory = Arc::new(MockFactory);
@@ -670,6 +679,7 @@ fn set_active_system_rejects_unknown_id() {
     assert!(session.factory().is_none());
 }
 
+#[serial_test::serial]
 #[test]
 fn switching_system_discards_previous_loaded_runtime_state() {
     let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
@@ -709,6 +719,7 @@ fn test_capabilities() -> HostBackendCapabilities {
     }
 }
 
+#[serial_test::serial]
 #[test]
 fn registry_all_produces_settings_page_for_registered_system() {
     use crate::settings::defaults::seed::{
@@ -736,6 +747,7 @@ fn registry_all_produces_settings_page_for_registered_system() {
     );
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_snapshot_without_core_is_unavailable() {
     let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
@@ -756,6 +768,7 @@ fn debug_snapshot_without_core_is_unavailable() {
     );
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_write_transaction_without_core() {
     use nerust_core_traits::debugger::SpaceId;
@@ -785,6 +798,7 @@ fn debug_write_transaction_without_core() {
     assert_eq!(session.debug_commit_write(), StatusMessage::NothingToWrite);
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_traffic_kill_flows_through_session() {
     use nerust_core_traits::debugger::SpaceId;
@@ -805,6 +819,7 @@ fn debug_traffic_kill_flows_through_session() {
     assert_eq!(session.debug_pending_text(), None);
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_drain_select_then_stage_yields_pending() {
     use crate::debug::{DebugAction, DebugDrainInput};
@@ -842,6 +857,7 @@ fn debug_drain_select_then_stage_yields_pending() {
     assert!(output.display.images.is_empty());
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_drain_kills_stale_values_before_prepare() {
     use crate::debug::{DebugAction, DebugDrainInput};
@@ -871,6 +887,7 @@ fn debug_drain_kills_stale_values_before_prepare() {
     assert_eq!(killed.reselected, None);
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_drain_cancel_and_commit_consume() {
     use crate::debug::{DebugAction, DebugDrainInput};
@@ -904,6 +921,7 @@ fn debug_drain_cancel_and_commit_consume() {
     assert_eq!(committed.display.pending, None);
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_drain_propagates_execution_outcomes() {
     use crate::debug::{DebugAction, DebugDrainInput};
@@ -925,6 +943,7 @@ fn debug_drain_propagates_execution_outcomes() {
     assert_eq!(stepped.display.status, StatusMessage::NoCore);
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_control_without_core_reports_loudly() {
     let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
@@ -938,6 +957,7 @@ fn debug_control_without_core_reports_loudly() {
     );
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_write_byte_without_core_is_silent() {
     use nerust_core_traits::debugger::SpaceId;
@@ -976,6 +996,7 @@ fn drain_input() -> crate::debug::DebugDrainInput<'static> {
     }
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_snapshot_covers_loaded_mock_core() {
     use nerust_core_traits::debugger::SpaceId;
@@ -996,6 +1017,7 @@ fn debug_snapshot_covers_loaded_mock_core() {
     assert!(snapshot.panels.is_empty());
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_live_images_follow_running_without_snapshot() {
     use crate::debug::DebugAction;
@@ -1038,6 +1060,7 @@ fn debug_live_images_follow_running_without_snapshot() {
     session.debug_drain(&[DebugAction::Pause], &input);
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_drain_happy_path_reports_success() {
     use crate::debug::DebugAction;
@@ -1134,6 +1157,7 @@ fn debug_drain_happy_path_reports_success() {
     assert_eq!(after.regs[0], ("a", 7));
 }
 
+#[serial_test::serial]
 #[test]
 fn debug_drain_register_write_reports_loudly_without_core() {
     use crate::debug::{DebugAction, DebugDrainInput};
@@ -1168,6 +1192,7 @@ fn debug_drain_register_write_reports_loudly_without_core() {
     assert_eq!(idle.display.status, StatusMessage::Paused);
 }
 
+#[serial_test::serial]
 #[test]
 fn drain_flight_poll_reaches_done_with_snapshot_sections() {
     use crate::debug::{DebugAction, DrainPoll};
@@ -1202,6 +1227,7 @@ fn drain_flight_poll_reaches_done_with_snapshot_sections() {
     assert_eq!(output.display.status, StatusMessage::Paused);
 }
 
+#[serial_test::serial]
 #[test]
 fn drain_flight_no_core_completes_on_first_poll() {
     use crate::debug::{DebugAction, DebugDrainInput, DrainPoll};
@@ -1229,6 +1255,7 @@ fn drain_flight_no_core_completes_on_first_poll() {
     assert!(output.display.dump_rows.is_empty());
 }
 
+#[serial_test::serial]
 #[test]
 fn live_images_flight_completes_and_resolves_locally() {
     use crate::debug::LiveImagesPoll;
@@ -1259,6 +1286,7 @@ fn live_images_flight_completes_and_resolves_locally() {
     assert!(matches!(flight.poll(), LiveImagesPoll::Done(None)));
 }
 
+#[serial_test::serial]
 #[test]
 fn live_images_flight_refetches_while_running() {
     use crate::debug::LiveImagesPoll;

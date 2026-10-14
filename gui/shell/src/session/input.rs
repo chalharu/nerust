@@ -281,6 +281,7 @@ mod tests {
         }
     }
 
+    #[serial_test::serial]
     #[test]
     fn clear_multi_port_does_nothing_for_single_port() {
         let profile = MockSinglePort;
@@ -291,6 +292,7 @@ mod tests {
         assert!(assignments[0].1.is_some());
     }
 
+    #[serial_test::serial]
     #[test]
     fn clear_multi_port_clears_other_ports() {
         let profile = MockMultiPort;
@@ -305,6 +307,7 @@ mod tests {
         assert!(assignments[1].1.is_none(), "P2 should be cleared");
     }
 
+    #[serial_test::serial]
     #[test]
     fn clear_multi_port_does_not_clear_unrelated() {
         let profile = MockMultiPort;
@@ -322,6 +325,7 @@ mod tests {
         assert!(assignments[2].1.is_none(), "P2 cleared");
     }
 
+    #[serial_test::serial]
     #[test]
     fn build_topology_returns_empty_model_without_controllers() {
         let topology = build_topology(&[], &[]);
@@ -330,6 +334,7 @@ mod tests {
         assert!(topology.devices.is_empty());
     }
 
+    #[serial_test::serial]
     #[test]
     fn build_topology_describes_assigned_controller() {
         let slot = AttachmentId::new("test.topology.slot");
@@ -349,6 +354,7 @@ mod tests {
         assert_eq!(topology.devices[0].controls.len(), 1);
     }
 
+    #[serial_test::serial]
     #[test]
     fn rebuild_input_map_maps_matching_keyboard_binding() {
         let attachment = AttachmentId::new("test.topology.slot");
@@ -366,6 +372,7 @@ mod tests {
         assert_eq!(key_map, HashMap::from([(Key::KeyA, 7)]));
     }
 
+    #[serial_test::serial]
     #[test]
     fn touch_overlay_uses_assigned_profile_controls() {
         let mut session = crate::session::test_util::test_session();
@@ -382,6 +389,7 @@ mod tests {
         assert_eq!(overlay.controls[0].label, "A");
     }
 
+    #[serial_test::serial]
     #[test]
     fn touch_role_maps_shoulder_buttons() {
         assert_eq!(
@@ -399,6 +407,7 @@ mod tests {
         assert_eq!(touch_role_for_abstract_key(AbstractKey::Guide), None);
     }
 
+    #[serial_test::serial]
     #[test]
     fn device_kind_delegates_to_profile_method() {
         let profile = MockSinglePort;
