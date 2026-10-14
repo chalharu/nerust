@@ -1,5 +1,19 @@
-mod app_menu;
-pub(crate) mod debug_window;
+//! tao frontend: native window + iced (tiny-skia) UI.
+//!
+//! Module map (inner -> outer):
+//! - [`convert`]: tao<->iced value conversions (keys, modifiers, events).
+//! - [`menu`]: native application menu (muda) and its sync snapshot.
+//! - [`aux`]: iced-based auxiliary windows (debugger, PPU viewer,
+//!   settings) on the generic [`aux::shell`] host.
+//! - [`runtime`]: tao event loop ([`runtime::WindowRuntime`]), the main
+//!   window ([`runtime::HostState`]), and the debug drain.
+//! - [`app`]: thin [`app::Window`] facade over the runtime.
+//!
+//! Platform glue:
+//! - [`gtk_embed`]: Linux/BSD render target below the menubar.
+
+mod app;
+mod convert;
 #[cfg(any(
     target_os = "linux",
     target_os = "dragonfly",
@@ -7,19 +21,17 @@ pub(crate) mod debug_window;
     target_os = "netbsd",
     target_os = "openbsd"
 ))]
-mod gtk_content;
-pub(crate) mod iced_shell;
-pub(crate) mod ppu_window;
-pub(crate) mod settings;
-pub mod settings_window;
-mod tao_conversions;
-pub mod window;
+mod gtk_embed;
+mod menu;
+
+pub(crate) mod aux;
+pub(crate) mod runtime;
 
 use nerust_gui_shell::context::FrontendContext;
 use nerust_run_options::RunOptions;
 
 pub fn run(ctx: FrontendContext, options: RunOptions) {
-    let mut window = window::Window::new(ctx);
+    let mut window = app::Window::new(ctx);
     if let Some(path) = options.rom_path {
         let _ = window.load_path(&path);
     }

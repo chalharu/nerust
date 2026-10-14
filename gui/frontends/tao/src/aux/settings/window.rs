@@ -28,10 +28,8 @@ use tao::{
     window::{Window as TaoWindow, WindowBuilder},
 };
 
-use crate::{
-    settings::{Message, SettingsAppProgram},
-    tao_conversions::*,
-};
+use super::program::{Message, SettingsAppProgram};
+use crate::convert::*;
 
 /// Owns Instance + Cache + UI, ensuring UI is dropped before Instance.
 /// This makes the phantom lifetime safety explicit via Drop rather than
@@ -203,7 +201,7 @@ impl SettingsWindowHandle {
         snapshot: SettingsSnapshot,
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
-        event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
+        event_loop: &EventLoopWindowTarget<crate::runtime::UserEvent>,
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
         let pending_apply = Arc::new(Mutex::new(None));
@@ -306,7 +304,8 @@ impl SettingsWindowHandle {
             repeat: false,
             ..
         }) = &mapped
-            && let Some(key) = crate::settings::keyboard_key_from_physical(*physical_key)
+            && let Some(key) =
+                crate::aux::settings::program::keyboard_key_from_physical(*physical_key)
         {
             messages.push(Message::CaptureKey(key));
         }
@@ -318,18 +317,18 @@ impl SettingsWindowHandle {
             &mut self.clipboard,
             &mut messages,
         );
-        let outcome = crate::iced_shell::pump_outcome(&ui_outcome);
+        let outcome = crate::aux::shell::pump_outcome(&ui_outcome);
         match outcome {
-            crate::iced_shell::PumpOutcome::Rebuild => {
+            crate::aux::shell::PumpOutcome::Rebuild => {
                 self.ui_state.view_invalidated.set(true);
             }
-            crate::iced_shell::PumpOutcome::Repaint => {
+            crate::aux::shell::PumpOutcome::Repaint => {
                 self.window.request_redraw();
             }
-            crate::iced_shell::PumpOutcome::Idle => {}
+            crate::aux::shell::PumpOutcome::Idle => {}
         }
 
-        if !messages.is_empty() || matches!(outcome, crate::iced_shell::PumpOutcome::Rebuild) {
+        if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
             let bounds = Viewport::with_physical_size(
                 Size::new(self.viewport_physical.0, self.viewport_physical.1),
                 self.scale_factor,
@@ -456,7 +455,7 @@ impl SettingsWindowHandle {
                 outer.width,
                 outer.height,
                 self.scale_factor,
-                crate::iced_shell::logical_bounds((width, height), self.scale_factor)
+                crate::aux::shell::logical_bounds((width, height), self.scale_factor)
             );
         }
         // Surface realloc deferred to `render` (see there): per-event

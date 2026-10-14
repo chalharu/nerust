@@ -32,9 +32,10 @@ use tao::{
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
 
-use crate::app_menu::{MenuCommand, UserEvent, imp::AppMenu};
+use super::UserEvent;
+use crate::menu::{MenuCommand, imp::AppMenu};
 
-use super::debug_windows::DebugWindows;
+use super::aux::DebugWindows;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {
@@ -52,7 +53,7 @@ pub(crate) struct HostState {
     ctx: FrontendContext,
     app_menu: AppMenu,
     shell: NativeShellState,
-    pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
+    pub(crate) settings_window: Option<crate::aux::settings::window::SettingsWindowHandle>,
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
@@ -85,7 +86,7 @@ pub(crate) struct HostState {
         target_os = "netbsd",
         target_os = "openbsd"
     ))]
-    content_area: Option<crate::gtk_content::ContentArea>,
+    content_area: Option<crate::gtk_embed::ContentArea>,
 }
 
 impl HostState {
@@ -231,9 +232,9 @@ impl HostState {
         ))]
         {
             use tao::platform::unix::WindowExtUnix;
-            self.content_area = window.default_vbox().map(|vbox| {
-                crate::gtk_content::ContentArea::new(vbox, window.gtk_window(), &window)
-            });
+            self.content_area = window
+                .default_vbox()
+                .map(|vbox| crate::gtk_embed::ContentArea::new(vbox, window.gtk_window(), &window));
         }
         self.window = Some(window);
         self.sync_fullscreen_from_settings();
@@ -374,7 +375,7 @@ impl HostState {
             return;
         }
         if let Some(pressed) = element_state_to_pressed(input.state)
-            && let Some(key) = crate::tao_conversions::keycode_to_key(input.physical_key)
+            && let Some(key) = crate::convert::keycode_to_key(input.physical_key)
             && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
         {
             self.apply_keyboard_shortcut(shortcut);
@@ -569,7 +570,7 @@ impl HostState {
     pub(crate) fn sync_menu_state(&mut self) {
         let snapshot = self.session.settings_snapshot();
         let slots = self.session.slots();
-        self.app_menu.update(crate::app_menu::MenuSync {
+        self.app_menu.update(crate::menu::MenuSync {
             loaded: self.session.loaded(),
             paused: self.session.paused(),
             slots,
@@ -637,7 +638,7 @@ impl HostState {
             self.sync_menu_state();
         }
 
-        match crate::settings_window::SettingsWindowHandle::new(
+        match crate::aux::settings::window::SettingsWindowHandle::new(
             self.session.settings_snapshot().clone(),
             self.ctx.registry.clone(),
             self.ctx.audio_registry.clone(),
@@ -658,7 +659,7 @@ impl HostState {
 
     pub(crate) fn close_settings_window(
         &mut self,
-        mut handle: crate::settings_window::SettingsWindowHandle,
+        mut handle: crate::aux::settings::window::SettingsWindowHandle,
     ) -> Option<SettingsResult> {
         let pending = handle.take_pending_apply();
         drop(handle);

@@ -9,8 +9,8 @@ use iced_winit::program::{self, Program};
 
 use tao::event_loop::EventLoopWindowTarget;
 
-use super::debug_window::DebugBridge;
-use crate::iced_shell::{WindowScaffold, aux_settings, aux_theme};
+use super::debug::DebugBridge;
+use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 
 /// Initial PPU viewer window size (verified Xvfb fit).
 pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
@@ -192,14 +192,14 @@ impl Program for PpuProgram {
 }
 
 pub(crate) struct PpuWindowHandle {
-    pub(crate) shell: crate::iced_shell::AuxShell<PpuProgram>,
+    pub(crate) shell: crate::aux::shell::AuxShell<PpuProgram>,
     bridge: Arc<DebugBridge>,
 }
 
 impl PpuWindowHandle {
     pub(crate) fn new(
         bridge: Arc<DebugBridge>,
-        event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
+        event_loop: &EventLoopWindowTarget<crate::runtime::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
         use nerust_settings_core::i18n::{UiText, text as ui_text};
@@ -217,7 +217,7 @@ impl PpuWindowHandle {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let shell = crate::iced_shell::AuxShell::assemble(scaffold, instance);
+        let shell = crate::aux::shell::AuxShell::assemble(scaffold, instance);
         // The viewer opens on demand from the debugger toolbar: take
         // focus so keyboard and wheel go straight to the tiles.
         shell.window.set_focus();
@@ -232,17 +232,17 @@ impl PpuWindowHandle {
             &mut self.shell.renderer.backend,
         );
         match outcome {
-            crate::iced_shell::PumpOutcome::Rebuild => {
+            crate::aux::shell::PumpOutcome::Rebuild => {
                 self.bridge
                     .ppu_invalidated
                     .store(true, std::sync::atomic::Ordering::Release);
             }
-            crate::iced_shell::PumpOutcome::Repaint => {
+            crate::aux::shell::PumpOutcome::Repaint => {
                 self.shell.window.request_redraw();
             }
-            crate::iced_shell::PumpOutcome::Idle => {}
+            crate::aux::shell::PumpOutcome::Idle => {}
         }
-        if !messages.is_empty() || matches!(outcome, crate::iced_shell::PumpOutcome::Rebuild) {
+        if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
             let bounds = self.shell.logical_bounds();
             self.shell.ui_state.process_messages(
                 messages,
