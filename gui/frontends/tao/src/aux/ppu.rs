@@ -264,7 +264,7 @@ impl PpuWindowHandle {
         self.shell.render("PPU viewer");
     }
 
-    pub(crate) fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
+    fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
         if let Some(iced_event) = self.shell.feed_tao_event(event) {
             self.handle_event(iced_event);
         }

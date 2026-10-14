@@ -20,6 +20,9 @@ pub(super) struct DebugWindows {
     debug_window_pos: Option<(i32, i32)>,
     ppu_window_pos: Option<(i32, i32)>,
     last_ppu_live: Option<Instant>,
+    /// Pause state at the last completed debug drain, for focus
+    /// coalescing. `None` before the first drain.
+    last_drain_paused: Option<bool>,
 }
 
 impl DebugWindows {
@@ -32,6 +35,7 @@ impl DebugWindows {
             debug_window_pos: None,
             ppu_window_pos: None,
             last_ppu_live: None,
+            last_drain_paused: None,
         }
     }
 
@@ -61,6 +65,14 @@ impl DebugWindows {
 
     pub(super) fn request_ppu_open(&mut self) {
         self.ppu_open_requested = true;
+    }
+
+    pub(super) fn last_drain_paused(&self) -> Option<bool> {
+        self.last_drain_paused
+    }
+
+    pub(super) fn set_last_drain_paused(&mut self, paused: bool) {
+        self.last_drain_paused = Some(paused);
     }
 
     /// Drain one batch from the debugger window: queued requests plus

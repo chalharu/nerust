@@ -217,7 +217,7 @@ impl HostState {
                 None => {
                     // No round-trip ran, so nothing could have moved:
                     // still record truth for the focus gate below.
-                    self.focus.set_last_drain_paused(self.session.paused());
+                    self.debug.set_last_drain_paused(self.session.paused());
                     return;
                 }
             };
@@ -297,7 +297,7 @@ impl HostState {
         // Post-drain truth (the drain may itself pause/resume): focus
         // flips compare against this to skip redundant emu
         // round-trips (see `sync_debug_chrome`).
-        self.focus.set_last_drain_paused(self.session.paused());
+        self.debug.set_last_drain_paused(self.session.paused());
     }
 
     /// Focus-driven chrome sync. Menu/title refresh always runs; the
@@ -308,7 +308,7 @@ impl HostState {
         self.refresh_window_title();
         if chrome_drain_due(
             self.debug.debug_window.is_some(),
-            self.focus.last_drain_paused(),
+            self.debug.last_drain_paused(),
             self.session.paused(),
         ) {
             self.run_debug_drain(&[]);

@@ -4,7 +4,7 @@ use iced_winit::program;
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
-use tao::{event_loop::EventLoopWindowTarget, keyboard::ModifiersState as TaoModifiers};
+use tao::event_loop::EventLoopWindowTarget;
 
 use super::program::{Message, SettingsAppProgram, find_duplicate_system_id};
 use crate::aux::bridge::lock_recovered;
@@ -128,17 +128,7 @@ impl SettingsWindowHandle {
         lock_recovered(&self.pending_apply).take()
     }
 
-    pub(crate) fn set_modifiers(&mut self, modifiers: TaoModifiers) {
-        self.shell.set_modifiers(modifiers);
-    }
-
-    pub(crate) fn update_modifiers_from_tao_event(&mut self, event: &tao::event::WindowEvent) {
-        if let tao::event::WindowEvent::ModifiersChanged(state) = event {
-            self.set_modifiers(*state);
-        }
-    }
-
-    pub(crate) fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
+    fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
         if let Some(iced_event) = convert_tao_window_event(
             event,
             &mut self.shell.cursor,
@@ -153,8 +143,10 @@ impl SettingsWindowHandle {
 
 impl crate::aux::shell::AuxWindow for SettingsWindowHandle {
     fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
+        // Modifiers/close ride the shared prelude; convert repeats
+        // both idempotently inside `handle_tao_event`, so no second
+        // pass is needed here.
         self.shell.handle_common_event(&event);
-        self.update_modifiers_from_tao_event(&event);
         self.handle_tao_event(event);
         self.shell.window.request_redraw();
     }
