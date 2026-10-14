@@ -327,13 +327,15 @@ impl SoftbufferRenderer {
                     .filter_map(|&x| x)
                     .map(|(i, w)| {
                         let src_index = src_y_index + i as usize;
+                        // Callers supply [R, G, B, A]; repack to
+                        // [B, G, R, A] for the vertical pass below.
                         let src_val = src_f(src_index);
                         // 重みを適用する
                         [
-                            ((src_val[1] as u16 * w).saturating_add(0x80) >> 8) as u8, // Blue
-                            ((src_val[2] as u16 * w).saturating_add(0x80) >> 8) as u8, // Green
-                            ((src_val[3] as u16 * w).saturating_add(0x80) >> 8) as u8, // Red
-                            ((src_val[0] as u16 * w).saturating_add(0x80) >> 8) as u8, // Alpha
+                            ((src_val[2] as u16 * w).saturating_add(0x80) >> 8) as u8, // Blue
+                            ((src_val[1] as u16 * w).saturating_add(0x80) >> 8) as u8, // Green
+                            ((src_val[0] as u16 * w).saturating_add(0x80) >> 8) as u8, // Red
+                            ((src_val[3] as u16 * w).saturating_add(0x80) >> 8) as u8, // Alpha
                         ]
                     })
                     .reduce(|acc, val| {
@@ -605,7 +607,7 @@ impl GpuRenderer for SoftbufferRenderer {
                         src_h,
                         dst_w,
                         dst_h,
-                        |i| self.ntsc_buffer[i].to_ne_bytes(),
+                        |i| self.ntsc_buffer[i].to_be_bytes(),
                         &self.lut,
                         &mut self.resize_buffer,
                     );
@@ -623,7 +625,7 @@ impl GpuRenderer for SoftbufferRenderer {
                                 .get(src.get(i).copied().unwrap_or(0) as usize)
                                 .copied()
                                 .unwrap_or(0)
-                                .to_le_bytes()
+                                .to_be_bytes()
                         },
                         &self.lut,
                         &mut self.resize_buffer,
@@ -745,5 +747,50 @@ mod tests {
             }
         }
         assert!(!center.is_empty() && center.iter().all(|&p| p == center[0] && p != 0));
+    }
+
+    #[test]
+    fn rgba_render_preserves_channel_order() {
+        // Regression: the horizontal pass once read [R, G, B, A] as
+        // [A, B, G, R], turning blue into yellow and black into red.
+        let mut lut = LutEntry::new();
+        lut.resize_lut(
+            SurfaceSize {
+                width: 4,
+                height: 4,
+            },
+            1.0,
+            SurfaceSize {
+                width: 8,
+                height: 8,
+            },
+        );
+        for (input, expected) in [
+            ([0x00u8, 0x00, 0xFF, 0xFF], 0xFF00_00FFu32),
+            ([0x00u8, 0x00, 0x00, 0xFF], 0xFF00_0000u32),
+            ([0xFFu8, 0x00, 0x00, 0xFF], 0xFFFF_0000u32),
+        ] {
+            let mut src = [0u8; 4 * 4 * 4];
+            for px in src.as_chunks_mut::<4>().0 {
+                *px = input;
+            }
+            let mut resize_buffer = vec![0u32; 8 * 4];
+            let mut dst = vec![0u32; 8 * 8];
+            SoftbufferRenderer::rendering(
+                &mut dst,
+                4,
+                4,
+                8,
+                8,
+                |i| src[i * 4..i * 4 + 4].try_into().unwrap(),
+                &lut,
+                &mut resize_buffer,
+            );
+            for y in 2..6 {
+                for x in 2..6 {
+                    assert_eq!(dst[y * 8 + x], expected, "input {input:02X?}");
+                }
+            }
+        }
     }
 }
