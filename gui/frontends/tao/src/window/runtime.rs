@@ -110,21 +110,13 @@ impl WindowRuntime {
         self.host.resume_session();
         let event_loop = self.event_loop.take().unwrap();
 
-        // Live-follow pulse: fast cadence while any aux window exists,
-        // slow heartbeat otherwise (no aux windows need no ticks). The
-        // flag mirrors aux-open state exactly, so slowing down only
-        // skips no-op ticks, never stalls the follow. Throttled;
+        // Live-follow pulse: nudges the loop each interval so the PPU
+        // viewer tracks a running core with no input events. Throttled;
         // exits when the loop is gone.
         let tick_proxy = event_loop.create_proxy();
-        let tick_fast = std::sync::Arc::clone(&self.host.debug.tick_fast);
         std::thread::spawn(move || {
             loop {
-                let fast = tick_fast.load(std::sync::atomic::Ordering::Relaxed);
-                std::thread::sleep(std::time::Duration::from_millis(if fast {
-                    250
-                } else {
-                    5000
-                }));
+                std::thread::sleep(std::time::Duration::from_millis(250));
                 if tick_proxy.send_event(UserEvent::LiveTick).is_err() {
                     break;
                 }
@@ -275,7 +267,6 @@ impl WindowRuntime {
                 let refocused = matches!(event, WindowEvent::Focused(true));
                 if matches!(event, WindowEvent::Destroyed) {
                     self.host.debug.debug_window.take();
-                    self.host.debug.sync_tick_fast();
                     self.host.request_redraw();
                     return;
                 }
@@ -305,7 +296,6 @@ impl WindowRuntime {
                         .load(std::sync::atomic::Ordering::Acquire)
                     {
                         self.host.debug.debug_window.take();
-                        self.host.debug.sync_tick_fast();
                         self.host.request_redraw();
                     }
                 }
@@ -327,7 +317,6 @@ impl WindowRuntime {
                 // handle must not linger and block reopening.
                 if matches!(event, WindowEvent::Destroyed) {
                     self.host.debug.ppu_window.take();
-                    self.host.debug.sync_tick_fast();
                     self.host.request_redraw();
                     return;
                 }
@@ -356,7 +345,6 @@ impl WindowRuntime {
                     .load(std::sync::atomic::Ordering::Acquire)
                 {
                     self.host.debug.ppu_window.take();
-                    self.host.debug.sync_tick_fast();
                     self.host.request_redraw();
                 }
             }

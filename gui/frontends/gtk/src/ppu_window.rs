@@ -74,6 +74,8 @@ impl PpuWindowCore {
         }));
         result.borrow_mut().sync(&images, images_gen, &panels);
         window.present();
+        #[cfg(target_os = "macos")]
+        crate::gdk_raw::disallow_window_tabs(&window);
         result
     }
 
