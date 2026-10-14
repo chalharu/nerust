@@ -48,18 +48,18 @@ pub(crate) fn aux_settings() -> iced::Settings {
 /// size, optional minimum, position, compositor, renderer, surface,
 /// and initial bounds. Programs and UI instances stay per-window.
 pub(crate) struct WindowScaffold {
-    pub window: Arc<TaoWindow>,
-    pub window_id: iced::window::Id,
-    pub scale_factor: f32,
-    pub viewport_physical: (u32, u32),
-    pub bounds: Size,
-    pub compositor: Compositor,
-    pub renderer: Renderer,
-    pub surface: Surface,
+    pub(crate) window: Arc<TaoWindow>,
+    pub(crate) window_id: iced::window::Id,
+    pub(crate) scale_factor: f32,
+    pub(crate) viewport_physical: (u32, u32),
+    pub(crate) bounds: Size,
+    pub(crate) compositor: Compositor,
+    pub(crate) renderer: Renderer,
+    pub(crate) surface: Surface,
 }
 
 impl WindowScaffold {
-    pub fn open(
+    pub(crate) fn open(
         event_loop: &EventLoopWindowTarget<UserEvent>,
         title: &str,
         size: (f64, f64),
@@ -129,13 +129,13 @@ pub(crate) fn logical_bounds(viewport_physical: (u32, u32), scale_factor: f32) -
 /// Renderer triple both auxiliary windows share. Field names mirror
 /// the former per-window structs so call sites barely change.
 pub(crate) struct ShellRenderer {
-    pub compositor: Compositor,
-    pub surface: Surface,
-    pub backend: Renderer,
+    pub(crate) compositor: Compositor,
+    pub(crate) surface: Surface,
+    pub(crate) backend: Renderer,
 }
 
 impl ShellRenderer {
-    pub fn present(
+    pub(crate) fn present(
         &mut self,
         viewport: &Viewport,
         background_color: iced::Color,
@@ -149,7 +149,7 @@ impl ShellRenderer {
         )
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+    pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.compositor
             .configure_surface(&mut self.surface, width, height);
     }
@@ -209,7 +209,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         }
     }
 
-    pub fn new(
+    pub(crate) fn new(
         instance: program::Instance<P>,
         window_id: iced::window::Id,
         bounds: Size,
@@ -224,7 +224,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
 
     /// Borrow the live interface, or `None` after a panicked
     /// relayout dropped it. Callers log and bail; never unwrap.
-    pub fn ui_mut(
+    pub(crate) fn ui_mut(
         &mut self,
     ) -> Option<&mut UserInterface<'static, P::Message, iced::Theme, Renderer>> {
         self.ui.as_deref_mut()
@@ -233,7 +233,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     /// Push one program message without a rebuild (Sync-style refresh
     /// entry point shared by both viewers). The task is intentionally
     /// dropped: every aux program returns `Task::none` (sync-only).
-    pub fn push_message(&mut self, message: P::Message) {
+    pub(crate) fn push_message(&mut self, message: P::Message) {
         let _task = self.instance.update(message);
     }
 
@@ -241,7 +241,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     /// (wheel/drag/hover/caret move widget state but emit no
     /// messages), or a view rebuild (`State::Outdated`: the tree must
     /// be re-rendered from program state).
-    pub fn pump(
+    pub(crate) fn pump(
         &mut self,
         mapped: iced::Event,
         cursor: mouse::Cursor,
@@ -260,7 +260,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     /// Relayout for a new size: one layout pass reusing the retained
     /// tree and widget state (scroll, inputs, focus survive). No view
     /// re-invocation.
-    pub fn relayout(&mut self, bounds: Size, renderer: &mut Renderer) {
+    pub(crate) fn relayout(&mut self, bounds: Size, renderer: &mut Renderer) {
         let Some(owned) = self.ui.take() else {
             return;
         };
@@ -269,7 +269,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         self.ui = Some(std::mem::ManuallyDrop::new(rebuilt));
     }
 
-    pub fn process_messages(
+    pub(crate) fn process_messages(
         &mut self,
         messages: Vec<P::Message>,
         window_id: iced::window::Id,

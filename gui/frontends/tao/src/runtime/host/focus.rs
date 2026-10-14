@@ -1,8 +1,9 @@
 //! Deferred auto-pause protocol as a behavior-carrying type.
 //! Invariants: a pause lands only via [`HostState::commit_pending_auto_pause`]
-//! after [`FocusState::arm`] without an intervening [`FocusState::cancel`];
-//! [`FocusState::arrive`] reports a resume at most once per armed pause
-//! (the flag is consumed). Explicit user pauses never set the flag.
+//! after arming (`leave_main`/`leave_aux`) without an intervening cancel
+//! (`cancel_pending`/`arrive_*`); arrival reports a resume at most once
+//! per armed pause (the flag is consumed). Explicit user pauses never
+//! set the flag.
 
 use super::HostState;
 use nerust_gui_shell::session::access::FrontendSession;
@@ -39,9 +40,6 @@ pub(crate) struct FocusState {
     auto_paused: bool,
     /// Blur armed a pause; committed at burst end unless cancelled.
     pending: bool,
-    /// Pause state at the last completed debug drain, for focus
-    /// coalescing. `None` before the first drain.
-    last_drain_paused: Option<bool>,
 }
 
 impl FocusState {
@@ -50,7 +48,6 @@ impl FocusState {
             main_active: true,
             auto_paused: false,
             pending: false,
-            last_drain_paused: None,
         }
     }
 
@@ -97,14 +94,6 @@ impl FocusState {
     /// Record a protocol-driven pause (user pauses never set this).
     fn mark_auto_paused(&mut self) {
         self.auto_paused = true;
-    }
-
-    pub(crate) fn last_drain_paused(&self) -> Option<bool> {
-        self.last_drain_paused
-    }
-
-    pub(crate) fn set_last_drain_paused(&mut self, paused: bool) {
-        self.last_drain_paused = Some(paused);
     }
 
     /// Shared arrival core: cancel pending, consume the resume flag.
@@ -173,10 +162,14 @@ mod tests {
     }
 
     #[test]
-    fn last_drain_paused_round_trips() {
+    fn settings_arrival_preserves_resume_for_main_return() {
+        // Settings arrival cancels without resuming; a prior
+        // protocol pause still resumes on the next main arrival.
         let mut focus = FocusState::new();
-        assert_eq!(focus.last_drain_paused(), None);
-        focus.set_last_drain_paused(true);
-        assert_eq!(focus.last_drain_paused(), Some(true));
+        focus.leave_aux();
+        assert!(focus.take_armed());
+        focus.mark_auto_paused();
+        focus.cancel_pending();
+        assert!(focus.arrive_main());
     }
 }
