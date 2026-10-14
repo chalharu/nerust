@@ -13,8 +13,8 @@ use tao::window::WindowId;
 pub(crate) const PPU_LIVE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(crate) struct DebugWindows {
-    pub(crate) debug_window: Option<crate::debug_window::DebugWindowHandle>,
-    pub(crate) ppu_window: Option<crate::ppu_window::PpuWindowHandle>,
+    pub(crate) debug_window: Option<crate::aux::debug::DebugWindowHandle>,
+    pub(crate) ppu_window: Option<crate::aux::ppu::PpuWindowHandle>,
     debug_open_requested: bool,
     pub(crate) ppu_open_requested: bool,
     debug_window_pos: Option<(i32, i32)>,

@@ -11,8 +11,8 @@ use nerust_gui_shell::{
 };
 use nerust_gui_viewmodel::debugger as debug_vm;
 
+use super::UserEvent;
 use super::host::HostState;
-use crate::app_menu::UserEvent;
 
 impl HostState {
     pub(crate) fn take_debug_open_request(&mut self) -> bool {
@@ -126,7 +126,7 @@ impl HostState {
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
             let position = self.debug.debug_window_pos();
             let language = self.session.settings_snapshot().shared.general.language;
-            match crate::debug_window::DebugWindowHandle::new(
+            match crate::aux::debug::DebugWindowHandle::new(
                 debug_vm::DisplayCache::default(),
                 spaces,
                 mem_addr,
@@ -146,7 +146,7 @@ impl HostState {
             && let Some(main) = self.debug.debug_window.as_ref()
         {
             let position = self.debug.ppu_window_pos();
-            match crate::ppu_window::PpuWindowHandle::new(
+            match crate::aux::ppu::PpuWindowHandle::new(
                 Arc::clone(&main.bridge),
                 event_loop,
                 position,

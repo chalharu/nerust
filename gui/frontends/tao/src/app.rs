@@ -1,9 +1,8 @@
-mod runtime;
-
 use std::path::Path;
 
 use nerust_gui_shell::context::FrontendContext;
-use runtime::WindowRuntime;
+
+use crate::runtime::WindowRuntime;
 
 pub struct Window {
     runtime: Box<WindowRuntime>,

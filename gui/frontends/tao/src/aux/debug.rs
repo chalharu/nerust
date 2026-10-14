@@ -17,7 +17,7 @@ use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};
 use nerust_settings_core::model::language::AppLanguage;
 use tao::event_loop::EventLoopWindowTarget;
 
-use crate::iced_shell::{WindowScaffold, aux_settings, aux_theme};
+use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 
 /// Initial debugger window size (verified Xvfb fit).
 pub(crate) const DEBUG_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
@@ -1077,7 +1077,7 @@ fn view_right_col(
 }
 
 pub(crate) struct DebugWindowHandle {
-    pub(crate) shell: crate::iced_shell::AuxShell<DebugProgram>,
+    pub(crate) shell: crate::aux::shell::AuxShell<DebugProgram>,
     pub(crate) bridge: Arc<DebugBridge>,
 }
 
@@ -1119,7 +1119,7 @@ impl DebugWindowHandle {
         spaces: Vec<(SpaceId, String, u32)>,
         mem_addr: u32,
         language: AppLanguage,
-        event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
+        event_loop: &EventLoopWindowTarget<crate::runtime::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
         let bridge = Arc::new(DebugBridge::new(display, spaces, mem_addr, language));
@@ -1136,7 +1136,7 @@ impl DebugWindowHandle {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let shell = crate::iced_shell::AuxShell::assemble(scaffold, instance);
+        let shell = crate::aux::shell::AuxShell::assemble(scaffold, instance);
         Some(Self { shell, bridge })
     }
 
@@ -1187,15 +1187,15 @@ impl DebugWindowHandle {
         );
         messages.extend(page);
         match outcome {
-            crate::iced_shell::PumpOutcome::Rebuild => {
+            crate::aux::shell::PumpOutcome::Rebuild => {
                 self.bridge.view_invalidated.store(true, Ordering::Release);
             }
-            crate::iced_shell::PumpOutcome::Repaint => {
+            crate::aux::shell::PumpOutcome::Repaint => {
                 self.shell.window.request_redraw();
             }
-            crate::iced_shell::PumpOutcome::Idle => {}
+            crate::aux::shell::PumpOutcome::Idle => {}
         }
-        if !messages.is_empty() || matches!(outcome, crate::iced_shell::PumpOutcome::Rebuild) {
+        if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
             let bounds = self.shell.logical_bounds();
             self.shell.ui_state.process_messages(
                 messages,
@@ -1651,7 +1651,7 @@ mod tests {
     /// free of `debug_window` imports.
     #[test]
     fn uishell_headless_build_pump_relayout_draw() {
-        use crate::iced_shell::UiShell;
+        use crate::aux::shell::UiShell;
 
         let bridge = Arc::new(DebugBridge::new(
             DisplayCache::default(),
@@ -1662,7 +1662,7 @@ mod tests {
         let (instance, _task) = program::Instance::new(DebugProgram {
             bridge: Arc::clone(&bridge),
         });
-        let mut backend = Renderer::new(crate::tao_conversions::default_font(), iced::Pixels(16.0));
+        let mut backend = Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
         let bounds = iced::Size::new(1100.0, 800.0);
         let mut shell = UiShell::new(instance, iced::window::Id::unique(), bounds, &mut backend);
         let mut clipboard = iced_winit::Clipboard::unconnected();

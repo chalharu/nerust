@@ -29,7 +29,7 @@ use tao::{
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 
-use crate::{app_menu::UserEvent, tao_conversions::default_font};
+use crate::{convert::default_font, runtime::UserEvent};
 
 /// Light theme for OS light-theme nativeness. Every auxiliary
 /// program shares it (the flagged duplication was five copies).
@@ -388,7 +388,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     }
 
     pub(crate) fn set_modifiers(&mut self, modifiers: tao::keyboard::ModifiersState) {
-        self.modifiers = crate::tao_conversions::tao_modifiers_to_iced(modifiers);
+        self.modifiers = crate::convert::tao_modifiers_to_iced(modifiers);
     }
 
     /// Shared event prelude for both twins (resize/scale/
@@ -414,7 +414,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     /// hover). Returns the event instead of taking a closure so
     /// callers never double-borrow the shell.
     pub(crate) fn feed_tao_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
-        crate::tao_conversions::convert_tao_window_event(
+        crate::convert::convert_tao_window_event(
             event,
             &mut self.cursor,
             self.scale_factor,

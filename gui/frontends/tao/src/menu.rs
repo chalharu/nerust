@@ -15,16 +15,6 @@ pub(crate) enum MenuCommand {
     Quit,
 }
 
-#[derive(Debug)]
-pub(crate) enum UserEvent {
-    Menu(MenuCommand),
-    /// Periodic live-follow pulse for the PPU viewer (see
-    /// `WindowRuntime::run`): user events always wake a `Wait` loop,
-    /// unlike timer-based waits. The handler no-ops unless a running
-    /// core has the viewer open.
-    LiveTick,
-}
-
 /// One snapshot for a menu sync: a struct (not a long argument
 /// list) so adding a field never trips the arity lint. Shared by
 /// the real menu and the headless stub below.
@@ -76,9 +66,8 @@ pub(crate) mod imp {
     #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowExtWindows;
 
-    use super::{
-        MenuCommand, MenuSync, SessionCommand, StateSlotSummary, TaoWindow, UserEvent, slot_label,
-    };
+    use super::{MenuCommand, MenuSync, SessionCommand, StateSlotSummary, TaoWindow, slot_label};
+    use crate::runtime::UserEvent;
 
     pub(crate) struct AppMenu {
         menu_bar: Menu,
@@ -429,7 +418,8 @@ pub(crate) mod imp {
     use nerust_settings_core::model::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
 
-    use super::{MenuSync, StateSlotSummary, TaoWindow, UserEvent};
+    use super::{MenuSync, StateSlotSummary, TaoWindow};
+    use crate::runtime::UserEvent;
 
     pub(crate) struct AppMenu;
 
