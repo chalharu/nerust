@@ -1,5 +1,4 @@
 use std::{
-    cell::Cell,
     rc::Rc,
     sync::{
         Arc, Mutex,
@@ -8,7 +7,7 @@ use std::{
 };
 
 use iced::{
-    Font, Length, Task, Theme,
+    Length, Task, Theme,
     alignment::Alignment,
     widget::{
         Column, button, checkbox, column, container, pick_list, radio, row, scrollable, slider,
@@ -35,6 +34,8 @@ use nerust_input_traits::AttachmentId;
 use nerust_keyboard::Key;
 
 use rfd::FileDialog;
+
+use crate::convert::default_font;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
 
@@ -94,7 +95,7 @@ pub(crate) struct SettingsAppProgram {
     pub(crate) audio_registry: Arc<AudioBackendRegistry>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) view_invalidated: Rc<Cell<bool>>,
+    pub(crate) view_invalidated: Arc<AtomicBool>,
 }
 
 impl Program for SettingsAppProgram {
@@ -152,7 +153,7 @@ impl Program for SettingsAppProgram {
 pub(crate) struct SettingsAppState {
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) view_invalidated: Rc<Cell<bool>>,
+    pub(crate) view_invalidated: Arc<AtomicBool>,
     pub vm: SettingsViewModel,
     _revision_subscription: nerust_gui_viewmodel::settings::Subscription,
     page: SettingsPage,
@@ -161,6 +162,44 @@ pub(crate) struct SettingsAppState {
     input_section: InputPageSection,
     storage_directory_input: String,
     error_message: Option<String>,
+}
+
+fn system_id_key(factory: &Arc<dyn nerust_core_traits::factory::CoreFactory>) -> String {
+    factory.system_id().to_string()
+}
+
+/// First duplicate SystemId in registration order, if any.
+pub(crate) fn find_duplicate_system_id(registry: &SystemRegistry) -> Option<String> {
+    let mut seen = std::collections::HashSet::new();
+    registry
+        .all()
+        .iter()
+        .map(system_id_key)
+        .find(|id| !seen.insert(id.clone()))
+}
+
+/// Factories deduped first-wins by [`system_id_key`]; later
+/// duplicates are logged and dropped.
+fn deduped_factories(
+    registry: &SystemRegistry,
+) -> Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>> {
+    let mut seen = std::collections::HashSet::new();
+    registry
+        .all()
+        .iter()
+        .filter(|factory| {
+            if seen.insert(system_id_key(factory)) {
+                true
+            } else {
+                log::warn!(
+                    "ignoring factory '{}' with duplicate SystemId",
+                    factory.display_name()
+                );
+                false
+            }
+        })
+        .map(Arc::clone)
+        .collect()
 }
 
 impl SettingsAppState {
@@ -174,7 +213,7 @@ impl SettingsAppState {
             snapshot,
             registry,
             audio_registry,
-            Rc::new(Cell::new(false)),
+            Arc::new(AtomicBool::new(false)),
         )
     }
 
@@ -182,7 +221,7 @@ impl SettingsAppState {
         snapshot: &SettingsSnapshot,
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
-        view_invalidated: Rc<Cell<bool>>,
+        view_invalidated: Arc<AtomicBool>,
     ) -> Self {
         let supported_sample_rates: Arc<[u32]> = {
             let rates = audio_registry.supported_rates();
@@ -212,18 +251,21 @@ impl SettingsAppState {
             }
         }
 
-        let factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>> =
-            registry.all().iter().map(Arc::clone).collect();
+        // First-wins dedupe by the `find_duplicate_system_id` key.
+        let factories = deduped_factories(&registry);
+        // Impossibility guard: `factories` was deduped first-wins above by the
+        // same key `find_duplicate_system_id` checks, which `SettingsWindowHandle::new`
+        // runs before `Instance::new` (boot); a duplicate here is unreachable.
         let vm = SettingsViewModel::new(
             snapshot.clone(),
             factories,
             supported_sample_rates,
             Rc::new(FsStoragePathValidator) as Rc<dyn StoragePathValidator>,
         )
-        .expect("duplicate SystemId in factory catalog");
-        let invalidated = Rc::clone(&view_invalidated);
+        .expect("deduped factory catalog contains a duplicate SystemId");
+        let invalidated = Arc::clone(&view_invalidated);
         let _revision_subscription = vm.revision.observe(move |_| {
-            invalidated.set(true);
+            invalidated.store(true, Ordering::Release);
         });
         let has_systems = !vm.systems().is_empty();
         Self {
@@ -253,7 +295,7 @@ impl SettingsAppState {
         audio_registry: Arc<AudioBackendRegistry>,
         should_close: Arc<AtomicBool>,
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-        view_invalidated: Rc<Cell<bool>>,
+        view_invalidated: Arc<AtomicBool>,
     ) -> Self {
         let mut state =
             Self::new_with_invalidation(snapshot, registry, audio_registry, view_invalidated);
@@ -327,23 +369,23 @@ impl SettingsAppState {
 
     fn select_page(&mut self, page: SettingsPage) {
         self.page = page;
-        self.view_invalidated.set(true);
+        self.view_invalidated.store(true, Ordering::Release);
     }
 
     fn select_input_section(&mut self, section: InputPageSection) {
         self.input_section = section;
-        self.view_invalidated.set(true);
+        self.view_invalidated.store(true, Ordering::Release);
     }
 
     fn select_system_tab(&mut self, index: usize) {
         self.system_tab_index = Some(index);
-        self.view_invalidated.set(true);
+        self.view_invalidated.store(true, Ordering::Release);
     }
 
     fn select_input_tab(&mut self, index: usize) {
         self.input_tab_index = Some(index);
         self.input_section = InputPageSection::Attachment(0);
-        self.view_invalidated.set(true);
+        self.view_invalidated.store(true, Ordering::Release);
     }
 
     fn set_storage_directory(&mut self, value: String) {
@@ -517,52 +559,23 @@ impl SettingsAppState {
         let view = input_vm.view.get();
 
         let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![];
-
-        // Tab buttons
-        let names: Vec<String> = inputs
-            .iter()
-            .map(|vm| vm.display_name().to_string())
-            .collect();
-        let tab_row = row(names.iter().enumerate().map(|(i, name)| {
-            let btn_text = text(name.clone()).size(14);
-            if Some(i) == self.input_tab_index {
-                button(btn_text).style(button::primary).into()
-            } else {
-                button(btn_text).on_press(Message::SelectInputTab(i)).into()
-            }
-        }))
-        .spacing(4);
-        content = content.push(tab_row);
+        content = content.push(input_tab_row(inputs, self.input_tab_index));
 
         // Conflicts
         for conflict in &view.conflicts {
             content = content.push(text(conflict.message.clone()));
         }
+        content = push_controller_slots(content, &view.slots);
 
-        // Controller slots
-        for slot in &view.slots {
-            if slot.occupied_by_other_slot {
-                content = content.push(text(format!("{} — (occupied)", slot.label)));
-                continue;
-            }
-            let current = slot.selected_profile_id.as_ref().and_then(|id| {
-                slot.choices
-                    .iter()
-                    .find(|c| c.value.as_deref() == Some(id.as_str()))
-                    .cloned()
-            });
-            let slot_id = slot.slot_id;
-            let pick = pick_list(
-                slot.choices.clone(),
-                current,
-                move |choice: ChoiceView<Option<String>>| Message::SetControllerSlot {
-                    slot: slot_id,
-                    controller_id: choice.value,
-                },
-            );
-            content = content.push(text(slot.label.clone())).push(pick);
-        }
+        let input_section_content = self.input_nav_section(&view);
+        content.push(input_section_content).spacing(16).into()
+    }
 
+    /// Navigation radios plus the selected binding section.
+    fn input_nav_section(
+        &self,
+        view: &nerust_gui_viewmodel::settings::dto::InputTabView,
+    ) -> El<'_> {
         // Build navigation tabs as owned data to avoid lifetime issues
         let section_labels: Vec<String> = view.sections.iter().map(|s| s.label.clone()).collect();
         let mut navigation = row![].spacing(16).align_y(Alignment::Center);
@@ -587,12 +600,7 @@ impl SettingsAppState {
                 }
             }
         };
-
-        content
-            .push(navigation)
-            .push(input_section_content)
-            .spacing(16)
-            .into()
+        column![navigation, input_section_content].into()
     }
 
     fn binding_section(
@@ -690,17 +698,11 @@ impl SettingsAppState {
         let mut content = column![];
 
         // Tab buttons
-        let tab_row = row(systems.iter().enumerate().map(|(i, vm)| {
-            let btn_text = text(vm.display_name()).size(14);
-            if Some(i) == self.system_tab_index {
-                button(btn_text).style(button::primary).into()
-            } else {
-                button(btn_text)
-                    .on_press(Message::SelectSystemTab(i))
-                    .into()
-            }
-        }))
-        .spacing(4);
+        let names = systems
+            .iter()
+            .map(|vm| vm.display_name().to_string())
+            .collect();
+        let tab_row = tab_row(self.system_tab_index, names, Message::SelectSystemTab);
         content = content.push(tab_row);
 
         // Fields
@@ -727,8 +729,70 @@ impl SettingsAppState {
 }
 
 // ---------------------------------------------------------------------------
-// Helper functions (shared between old and new paths)
+// Helper functions
 // ---------------------------------------------------------------------------
+
+/// System tab buttons across the registered cores.
+fn input_tab_row(
+    inputs: &[nerust_gui_viewmodel::settings::InputSettingsViewModel],
+    selected: Option<usize>,
+) -> El<'static> {
+    let names = inputs
+        .iter()
+        .map(|vm| vm.display_name().to_string())
+        .collect();
+    tab_row(selected, names, Message::SelectInputTab)
+}
+
+/// Tab-button row from owned labels; children are all owned.
+fn tab_row(
+    selected: Option<usize>,
+    names: Vec<String>,
+    select: impl Fn(usize) -> Message,
+) -> El<'static> {
+    row(names.iter().enumerate().map(|(i, name)| {
+        let btn_text = text(name.clone()).size(14);
+        if Some(i) == selected {
+            button(btn_text).style(button::primary).into()
+        } else {
+            button(btn_text).on_press(select(i)).into()
+        }
+    }))
+    .spacing(4)
+    .into()
+}
+
+/// Controller-slot pick lists appended to the page column.
+/// Slot data is cloned into widgets, so the slot borrow never
+/// escapes into the returned column (separate lifetimes).
+fn push_controller_slots<'a>(
+    mut content: Column<'a, Message, Theme, iced_tiny_skia::Renderer>,
+    slots: &[nerust_gui_viewmodel::settings::dto::ControllerSlotView],
+) -> Column<'a, Message, Theme, iced_tiny_skia::Renderer> {
+    for slot in slots {
+        if slot.occupied_by_other_slot {
+            content = content.push(text(format!("{} — (occupied)", slot.label)));
+            continue;
+        }
+        let current = slot.selected_profile_id.as_ref().and_then(|id| {
+            slot.choices
+                .iter()
+                .find(|c| c.value.as_deref() == Some(id.as_str()))
+                .cloned()
+        });
+        let slot_id = slot.slot_id;
+        let pick = pick_list(
+            slot.choices.clone(),
+            current,
+            move |choice: ChoiceView<Option<String>>| Message::SetControllerSlot {
+                slot: slot_id,
+                controller_id: choice.value,
+            },
+        );
+        content = content.push(text(slot.label.clone())).push(pick);
+    }
+    content
+}
 
 fn page_radio(
     language: AppLanguage,
@@ -780,16 +844,6 @@ fn pick_selected<T: Clone + PartialEq + Eq>(
     options.iter().find(|c| &c.value == value).cloned()
 }
 
-#[cfg(target_os = "windows")]
-fn default_font() -> Font {
-    Font::with_name("Yu Gothic UI")
-}
-
-#[cfg(not(target_os = "windows"))]
-fn default_font() -> Font {
-    Font::DEFAULT
-}
-
 pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical) -> Option<Key> {
     physical.try_into().ok()
 }
@@ -832,17 +886,15 @@ mod tests {
     }
 
     #[test]
-    fn revision_callback_shares_external_view_invalidated_cell() {
-        use std::cell::Cell;
-
-        let external = Rc::new(Cell::new(false));
+    fn revision_callback_shares_external_view_invalidated_flag() {
+        let external = Arc::new(AtomicBool::new(false));
         let mut state = SettingsAppState::new_with_shared(
             &empty_snapshot(),
             Arc::new(SystemRegistry::new(Vec::new())),
             Arc::new(AudioBackendRegistry::new()),
             Arc::new(AtomicBool::new(false)),
             Arc::new(Mutex::new(None)),
-            Rc::clone(&external),
+            Arc::clone(&external),
         );
 
         dispatch(
@@ -854,8 +906,8 @@ mod tests {
         );
 
         assert!(
-            external.get(),
-            "revision callback should have set the externally-shared cell"
+            external.load(Ordering::Acquire),
+            "revision callback should have set the externally-shared flag"
         );
     }
 

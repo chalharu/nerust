@@ -49,6 +49,8 @@ const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
+    /// Window creation failure: the loop exits gracefully.
+    fatal_error: Option<String>,
     pub(crate) session: SessionHandle,
     ctx: FrontendContext,
     app_menu: AppMenu,
@@ -90,7 +92,7 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
-    pub(crate) fn new(ctx: FrontendContext, app_menu: AppMenu) -> Self {
+    pub(crate) fn new(ctx: FrontendContext, app_menu: AppMenu) -> Result<Self, String> {
         let capabilities = HostBackendCapabilities {
             window: HostWindowCapabilities {
                 remembers_window_size: true,
@@ -106,12 +108,13 @@ impl HostState {
             ctx.registry.clone(),
             ctx.audio_registry.clone(),
         )
-        .unwrap_or_else(|e| {
+        .map_err(|e| {
             log::error!("failed to create core: {e}");
-            std::process::exit(1);
-        });
-        Self {
+            e.to_string()
+        })?;
+        Ok(Self {
             window: None,
+            fatal_error: None,
             session,
             ctx,
             app_menu,
@@ -135,7 +138,7 @@ impl HostState {
                 target_os = "openbsd"
             ))]
             content_area: None,
-        }
+        })
     }
 
     pub(crate) fn gpu_factory(&self) -> &Rc<dyn GpuFactory> {
@@ -213,15 +216,20 @@ impl HostState {
             .video
             .window
             .fullscreen_default;
-        let window = Arc::new(
-            create_window_builder(
-                self.startup_window_size(),
-                self.session.window_title(),
-                fullscreen,
-            )
-            .build(event_loop)
-            .unwrap(),
-        );
+        let window = match create_window_builder(
+            self.startup_window_size(),
+            self.session.window_title(),
+            fullscreen,
+        )
+        .build(event_loop)
+        {
+            Ok(window) => Arc::new(window),
+            Err(e) => {
+                log::error!("failed to create window: {e}");
+                self.fatal_error = Some(e.to_string());
+                return;
+            }
+        };
         self.app_menu.init_for_window(&window);
         #[cfg(any(
             target_os = "linux",
@@ -252,7 +260,7 @@ impl HostState {
     pub(crate) fn is_settings_window(&self, window_id: WindowId) -> bool {
         self.settings_window
             .as_ref()
-            .is_some_and(|h| h.window.id() == window_id)
+            .is_some_and(|h| h.shell.window.id() == window_id)
     }
 
     pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
@@ -417,6 +425,12 @@ impl HostState {
     }
 
     pub(crate) fn update_control_flow(&mut self, control_flow: &mut ControlFlow) {
+        // Window creation failed: exit instead of running headless.
+        if let Some(detail) = self.fatal_error.as_deref() {
+            log::error!("exiting after window creation failure: {detail}");
+            *control_flow = ControlFlow::Exit;
+            return;
+        }
         // End-of-burst auto-pause first: pause state settles before
         // the title/live/drain logic below reads it.
         self.commit_pending_auto_pause();
@@ -767,13 +781,19 @@ impl HostState {
 
 impl FrontendSession for HostState {
     fn pause(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Pause);
+        if let Err(e) = self.session.run_command(SessionCommand::Pause) {
+            log::warn!("session command failed: {e}");
+        }
     }
     fn resume(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Resume);
+        if let Err(e) = self.session.run_command(SessionCommand::Resume) {
+            log::warn!("session command failed: {e}");
+        }
     }
     fn toggle_pause(&mut self) {
-        let _ = self.session.run_command(SessionCommand::TogglePause);
+        if let Err(e) = self.session.run_command(SessionCommand::TogglePause) {
+            log::warn!("session command failed: {e}");
+        }
     }
     fn save_active_slot(&mut self) -> bool {
         self.session
@@ -788,10 +808,14 @@ impl FrontendSession for HostState {
             .executed
     }
     fn select_next_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
+        if let Err(e) = self.session.run_command(SessionCommand::SelectNextSlot) {
+            log::warn!("session command failed: {e}");
+        }
     }
     fn select_previous_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
+        if let Err(e) = self.session.run_command(SessionCommand::SelectPreviousSlot) {
+            log::warn!("session command failed: {e}");
+        }
     }
     fn load_slot(&mut self, slot_id: u64) -> bool {
         self.session
@@ -800,23 +824,35 @@ impl FrontendSession for HostState {
             .executed
     }
     fn save_slot(&mut self, slot_id: u64) {
-        let _ = self.session.run_command(SessionCommand::SaveSlot(slot_id));
+        if let Err(e) = self.session.run_command(SessionCommand::SaveSlot(slot_id)) {
+            log::warn!("session command failed: {e}");
+        }
     }
     fn delete_slot(&mut self, slot_id: u64) {
-        let _ = self
+        if let Err(e) = self
             .session
-            .run_command(SessionCommand::DeleteSlot(slot_id));
+            .run_command(SessionCommand::DeleteSlot(slot_id))
+        {
+            log::warn!("session command failed: {e}");
+        }
     }
     fn select_slot(&mut self, slot_id: u64) {
-        let _ = self
+        if let Err(e) = self
             .session
-            .run_command(SessionCommand::SelectActiveSlot(slot_id));
+            .run_command(SessionCommand::SelectActiveSlot(slot_id))
+        {
+            log::warn!("session command failed: {e}");
+        }
     }
     fn create_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::CreateSlot);
+        if let Err(e) = self.session.run_command(SessionCommand::CreateSlot) {
+            log::warn!("session command failed: {e}");
+        }
     }
     fn reset(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Reset);
+        if let Err(e) = self.session.run_command(SessionCommand::Reset) {
+            log::warn!("session command failed: {e}");
+        }
     }
     fn unload(&mut self) {
         if let Err(error) = self.session.unload() {
@@ -824,7 +860,9 @@ impl FrontendSession for HostState {
         }
     }
     fn run_command(&mut self, command: SessionCommand) {
-        let _ = self.session.run_command(command);
+        if let Err(e) = self.session.run_command(command) {
+            log::warn!("session command failed: {e}");
+        }
     }
     fn apply_settings(
         &mut self,

@@ -224,14 +224,17 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         }
     }
 
-    pub fn ui_mut(&mut self) -> &mut UserInterface<'static, P::Message, iced::Theme, Renderer> {
-        self.ui
-            .as_deref_mut()
-            .expect("UiShell used after a panicked relayout")
+    /// Borrow the live interface, or `None` after a panicked
+    /// relayout dropped it. Callers log and bail; never unwrap.
+    pub fn ui_mut(
+        &mut self,
+    ) -> Option<&mut UserInterface<'static, P::Message, iced::Theme, Renderer>> {
+        self.ui.as_deref_mut()
     }
 
     /// Push one program message without a rebuild (Sync-style refresh
-    /// entry point shared by both viewers).
+    /// entry point shared by both viewers). The task is intentionally
+    /// dropped: every aux program returns `Task::none` (sync-only).
     pub fn push_message(&mut self, message: P::Message) {
         let _task = self.instance.update(message);
     }
@@ -248,9 +251,11 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         backend: &mut Renderer,
     ) -> (Vec<P::Message>, PumpOutcome) {
         let mut messages = Vec::new();
-        let (state, _) = self
-            .ui_mut()
-            .update(&[mapped], cursor, backend, clipboard, &mut messages);
+        let Some(ui) = self.ui_mut() else {
+            log::warn!("aux window ui unavailable after panicked relayout");
+            return (messages, PumpOutcome::Idle);
+        };
+        let (state, _) = ui.update(&[mapped], cursor, backend, clipboard, &mut messages);
         (messages, pump_outcome(&state))
     }
 
@@ -488,14 +493,18 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
     let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
         std::time::Instant::now(),
     ));
-    let _ = ui.ui_mut().update(
+    let Some(ui) = ui.ui_mut() else {
+        log::warn!("aux window ui unavailable after panicked relayout");
+        return;
+    };
+    let _ = ui.update(
         &[redraw_event],
         cursor,
         &mut renderer.backend,
         clipboard,
         &mut std::vec::Vec::new(),
     );
-    ui.ui_mut().draw(
+    ui.draw(
         &mut renderer.backend,
         &theme,
         &renderer::Style {
