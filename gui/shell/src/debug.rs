@@ -265,6 +265,7 @@ pub struct DrainFlight {
 /// `None` while unavailable (no core, refused inspect, lost reply):
 /// the build then carries degenerates, exactly like the blocking
 /// drain's early return.
+#[derive(Default)]
 struct StoredSnapshot {
     regs: Vec<(&'static str, u64)>,
     reg_names: Vec<&'static str>,
@@ -879,49 +880,30 @@ impl DrainFlight {
         }
     }
 
-    fn finish(&self) -> DebugDrainOutput {
-        let regs = self
-            .snap
-            .as_ref()
-            .map(|s| s.regs.clone())
-            .unwrap_or_default();
-        let reg_names = self
-            .snap
-            .as_ref()
-            .map(|s| s.reg_names.clone())
-            .unwrap_or_default();
-        let dump_rows = self
-            .snap
-            .as_ref()
-            .map(|s| s.dump_rows.clone())
-            .unwrap_or_default();
-        let panels = self
-            .snap
-            .as_ref()
-            .map(|s| s.panels.clone())
-            .unwrap_or_default();
-        let disasm_lines = self
-            .snap
-            .as_ref()
-            .map(|s| s.disasm.clone())
-            .unwrap_or_default();
+    fn finish(&mut self) -> DebugDrainOutput {
+        // Move out of the stored snapshot: the flight is done, so the
+        // vecs travel instead of cloning (same output, no second copy).
+        let snap = self.snap.take().unwrap_or_default();
         let paused = self.ctx.paused_mirror();
-        let status = self.status.clone().unwrap_or(if paused {
+        let status = self.status.take().unwrap_or(if paused {
             vm::StatusMessage::Paused
         } else {
             vm::StatusMessage::Running
         });
         let display = DisplayCache {
-            regs,
-            diff: vm::diff_rows(&self.prev_dump_rows, &dump_rows),
-            dump_rows,
-            disasm_lines,
-            panels,
-            images: self.images.iter().map(vm::rgba_image).collect(),
+            regs: snap.regs,
+            diff: vm::diff_rows(&self.prev_dump_rows, &snap.dump_rows),
+            dump_rows: snap.dump_rows,
+            disasm_lines: snap.disasm,
+            panels: snap.panels,
+            images: std::mem::take(&mut self.images)
+                .iter()
+                .map(vm::rgba_image)
+                .collect(),
             images_gen: self.images_gen,
             watch_value: self.watch_value,
             paused,
-            reg_names,
+            reg_names: snap.reg_names,
             status,
             pending: self.ctx.txn.lock().unwrap().pending(),
         };

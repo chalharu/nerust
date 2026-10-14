@@ -27,7 +27,7 @@ std::thread_local! {
 /// Constructions so far on this thread; tests diff it around
 /// `apply_settings` to prove live swap vs rebuild.
 pub(crate) fn mock_core_creations() -> usize {
-    CORE_CREATIONS.with(|c| c.get())
+    CORE_CREATIONS.with(std::cell::Cell::get)
 }
 
 impl CoreFactory for MockFactory {

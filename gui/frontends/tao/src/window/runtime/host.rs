@@ -853,10 +853,20 @@ fn create_window_builder(
     title: String,
     fullscreen: bool,
 ) -> WindowBuilder {
-    WindowBuilder::new()
+    #[cfg(target_os = "macos")]
+    use tao::platform::macos::WindowBuilderExtMacOS;
+    #[cfg_attr(not(target_os = "macos"), expect(unused_mut))]
+    let mut builder = WindowBuilder::new()
         .with_title(title)
         .with_inner_size(size)
-        .with_fullscreen(fullscreen_mode(fullscreen))
+        .with_fullscreen(fullscreen_mode(fullscreen));
+    #[cfg(target_os = "macos")]
+    {
+        // Distinct from the aux windows: shared identifiers merge into
+        // tabs under macOS "Prefer tabs".
+        builder = builder.with_tabbing_identifier("main");
+    }
+    builder
 }
 
 /// Surface ROM load failures in a modal dialog: the previous

@@ -2,7 +2,13 @@
 //! open-request flags, and the live-follow throttle. `HostState`
 //! orchestrates; this struct owns.
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 use tao::window::WindowId;
 
@@ -20,6 +26,9 @@ pub(crate) struct DebugWindows {
     debug_window_pos: Option<(i32, i32)>,
     ppu_window_pos: Option<(i32, i32)>,
     last_ppu_live: Option<Instant>,
+    /// Pulse-thread cadence mirror: fast while any aux window exists,
+    /// slow heartbeat otherwise. Always recomputed, never latched.
+    pub(crate) tick_fast: Arc<AtomicBool>,
 }
 
 impl DebugWindows {
@@ -32,6 +41,7 @@ impl DebugWindows {
             debug_window_pos: None,
             ppu_window_pos: None,
             last_ppu_live: None,
+            tick_fast: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -78,6 +88,19 @@ impl DebugWindows {
     pub(crate) fn close_all(&mut self) {
         self.debug_window.take();
         self.ppu_window.take();
+        self.sync_tick_fast();
+    }
+
+    /// Mirror aux-open state to the pulse thread: fast cadence while
+    /// any aux window exists, slow heartbeat otherwise. Recomputed
+    /// from the handles after every open/close mutation, so a stale
+    /// value can only waste wakeups, never stall the follow (opens
+    /// set it before the window can need a tick).
+    pub(crate) fn sync_tick_fast(&self) {
+        self.tick_fast.store(
+            self.debug_window.is_some() || self.ppu_window.is_some(),
+            Ordering::Relaxed,
+        );
     }
 
     /// Throttle gate for the live follow: true at most once per
@@ -127,6 +150,14 @@ mod tests {
         windows.close_all();
         assert_eq!(windows.debug_window_pos(), Some((1, 2)));
         assert!(!windows.take_debug_open_request());
+    }
+
+    #[test]
+    fn tick_fast_mirrors_aux_open_state() {
+        use std::sync::atomic::Ordering;
+        let windows = DebugWindows::new();
+        windows.sync_tick_fast();
+        assert!(!windows.tick_fast.load(Ordering::Relaxed));
     }
 
     #[test]
