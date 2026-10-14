@@ -131,14 +131,9 @@ impl EmuCore {
         Ok(reply_rx)
     }
 
-    /// Store a fetched decode into the paused cache and report the
-    /// source generation with the pixels, plus whether the content is
-    /// fresh. Content-identical refetches (common while running: the
-    /// dirty mark advances the generation on every lookup, but tiles
-    /// often stand still) report the *served* generation, so viewers
-    /// skip re-deriving: same pixels, same generation, zero UI work.
-    /// Poison recovery mirrors `metrics()`: a poisoned cache still
-    /// serves this decode instead of failing the viewer.
+    /// Store a fetched decode and report freshness. Content-identical
+    /// refetches report the *served* generation so viewers skip
+    /// re-deriving; a poisoned cache still serves instead of failing.
     pub(crate) fn images_store(&self, images: Vec<DebugImage>) -> StoredImages {
         let hash = hash_debug_images(&images);
         let mut cache = self.image_cache.lock().unwrap_or_else(|e| {

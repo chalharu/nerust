@@ -452,15 +452,9 @@ impl HostState {
             *control_flow = ControlFlow::WaitUntil(earlier);
         }
 
-        // On macOS, request_redraw() integrates with CVDisplayLink/vsync.
-        // On other platforms, it fires on the next event loop iteration.
-        // When inactive, no redraw is requested — event loop sleeps (CPU 0%).
-        //
-        // Exception: while the PPU follows a running core, the main
-        // window keeps repainting too. That keeps the loop pumping so
-        // the live cadence above actually fires (a bare WaitUntil does
-        // not reliably wake the loop on its own); the cost is one
-        // running frame render, the same as normal play.
+        // Inactive loop sleeps (redraw only while the PPU follows a
+        // running core; a bare WaitUntil alone would not reliably wake
+        // it, at the cost of one running frame render).
         let live = self.live_follow_active();
         if (self.active || live)
             && let Some(window) = self.window.as_ref()

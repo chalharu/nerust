@@ -1,19 +1,7 @@
-//! Linux render target below the muda menubar.
-//!
-//! Background: on tao's gtk backend the muda menu is packed into the
-//! toplevel's `default_vbox`, but the game renderer used to attach to
-//! the toplevel window itself, so every present painted over the menu
-//! (Windows puts the menu in the non-client area and macOS uses the
-//! global menubar, so neither ever hit this). The fix renders into a
-//! dedicated `EventBox` child: the menu keeps its own native pixels,
-//! the game keeps everything below it.
-//!
-//! The `EventBox` owns a real X window on X11, so the existing
-//! backends (softbuffer/wgpu/opengl) attach to it like any toplevel.
-//! On Wayland there is no XID and before the first layout there is no
-//! `GdkWindow` yet: both cases report `None` and callers fall back to
-//! the toplevel (menu occluded, as before) instead of failing. A
-//! later frame upgrades once the area materializes.
+//! Linux render target below the muda menubar: the game renders into
+//! a dedicated `EventBox` child so presents never paint over the menu.
+//! Falls back to the toplevel (menu occluded, as before) until the
+//! area materializes; a later frame upgrades.
 
 use std::sync::Arc;
 

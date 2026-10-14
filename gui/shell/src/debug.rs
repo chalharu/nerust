@@ -1,19 +1,10 @@
 //! Shared debugger action drain: one phase order for every frontend.
 //!
 //! Both frontends map widgets to [`DebugAction`]; [`SessionHandle::debug_drain`]
-//! owns the load-bearing phase order (execution, cancel/commit,
-//! stale-kill, prepare/stage, freeze, snapshot). Keeping this in one
-//! place keeps tao and GTK behavior identical by construction and
-//! makes the order unit-testable without a GUI.
-//!
-//! [`DrainFlight`] is the same drain as a UI-thread-friendly state
-//! machine: `debug_drain_begin` only ever *sends* (the transport send
-//! is a non-blocking `try_send`), and `poll` advances through the
-//! replies with `try_recv`, so the UI thread never parks in a 5s
-//! `recv_timeout` while the emu thread is stalled. Phase order,
-//! fallbacks, and status wording are identical to the blocking
-//! [`SessionHandle::debug_drain`], which now just spins a flight for
-//! tests and headless drivers.
+//! owns the load-bearing phase order (see below) so tao and GTK stay
+//! identical by construction and testable without a GUI. [`DrainFlight`]
+//! is the same drain as a non-blocking state machine for the UI thread;
+//! the blocking wrapper only spins flights for tests and headless drivers.
 
 use std::{
     collections::VecDeque,
@@ -88,12 +79,8 @@ impl SessionHandle {
     /// then selection prepare and staging, freeze re-apply, and a
     /// single batched snapshot last.
     ///
-    /// Blocking (one UI-thread `recv_timeout` per remote phase):
-    /// frontends use [`SessionHandle::debug_drain_begin`] plus tick
-    /// polling instead, so a stalled emu thread never wedges input.
-    /// This wrapper only spins flights for tests and headless
-    /// drivers; every await carries the same deadline, so it always
-    /// terminates with the same fallbacks.
+    /// Frontends use the non-blocking begin-plus-poll flight instead;
+    /// this wrapper only spins flights for tests and headless drivers.
     pub fn debug_drain(
         &self,
         actions: &[DebugAction],

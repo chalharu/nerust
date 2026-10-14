@@ -1,15 +1,7 @@
-//! Debugger view-model: descriptor interpreter plus structured cache.
+//! Debugger view-model: toolkit-independent snapshots in, intents out.
 //!
-//! Toolkit-independent: frontends render from snapshots and report
-//! intents back. Movement state ([`NavState`]) and display data
-//! ([`DisplayCache`]) are owned separately; navigation never reaches
-//! into display locks and view code never parses kernel text.
-//! Execution and writes stay in the shell session (later phases);
-//! this module owns pure interpretation only.
-//!
-//! One concern per file: `nav` (movement), `display` (DTO + diff),
-//! `status` (outcomes), `transaction` (write staging), `snapshot`
-//! (drain data), `format` (text), `images` (blit/scale). Everything is
+//! Movement state ([`NavState`]) and display data ([`DisplayCache`])
+//! are owned separately. One concern per file; everything is
 //! re-exported here so the module path is unchanged.
 
 pub mod display;

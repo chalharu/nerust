@@ -1,13 +1,7 @@
-//! GTK debugger window: two-pane memory/disassembly probe plus
-//! register, watch, freeze, and bookmark state.
-//!
-//! Same semantics as the tao window, same shell APIs, same view-model
-//! formatters. Each action batch starts an async shell drain flight
-//! ([`nerust_gui_shell::debug::DrainFlight`]) and the window polls it
-//! on the GTK tick: the UI thread never parks in a thread round-trip,
-//! so a stalled emu thread degrades to stale data plus a status line
-//! instead of wedging input. Paused pull-only like tao; the window
-//! opens paused and closing keeps the pause.
+//! GTK debugger window: same semantics, shell APIs, and view-model
+//! formatters as the tao twin. Action batches run as async shell-drain
+//! flights polled on the GTK tick; paused pull-only, opens paused,
+//! closing keeps the pause.
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -823,15 +817,10 @@ impl DebuggerWindowCore {
         Self::act(win, &[DebugAction::Refresh]);
     }
 
-    /// Run actions through an async shell-drain flight, then rebuild
-    /// every widget from the new display once it lands. Images are
-    /// fetched only while the PPU viewer is open. Inputs are copied
-    /// out before the flight starts so the window borrow never spans
-    /// the thread round-trips — and neither does the UI thread: the
-    /// flight only sends here, and the tick poller applies the
-    /// display. A batch that resolves without crossings (no core,
-    /// cached images) still applies synchronously, so coreless
-    /// harnesses behave exactly as before.
+    /// Run actions through an async drain flight, then rebuild from the
+    /// new display. Inputs are copied out first so the window borrow
+    /// never spans the round-trip; the flight only sends, the tick
+    /// poller applies.
     fn act(win: &DebuggerWindow, actions: &[DebugAction]) {
         Self::act_scoped(win, actions, RebuildScope::All);
     }

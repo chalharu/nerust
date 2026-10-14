@@ -251,16 +251,10 @@ impl WindowRuntime {
                         .debug
                         .remember_debug_window_pos(position.x, position.y);
                 }
-                // Focus re-reads, never force-pauses: the main window's
-                // auto-pause already paused when the debugger took
-                // focus, and re-pausing here would surprise a running
-                // session (and overwrite a meaningful status like
-                // "stepped N" with a bare "paused"). The empty batch
-                // still refreshes the toolbar label so it agrees with
-                // the menu.
+                // Focus re-reads, never force-pauses; the empty batch
+                // still refreshes the toolbar label.
                 // External destroy without CloseRequested: drop the
-                // stale handle so a later F4 reopens instead of
-                // silently no-op'ing on a dead window.
+                // stale handle so a later F4 reopens.
                 if matches!(event, WindowEvent::Focused(true)) {
                     // Same-app arrival: a pending auto-pause from our
                     // main window losing focus is cancelled — the user
