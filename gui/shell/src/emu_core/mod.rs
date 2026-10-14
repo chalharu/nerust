@@ -894,7 +894,6 @@ mod tests {
     use crate::test_helpers::build_test_core_parts;
     use nerust_core_traits::debugger::{DebugImage, SpaceId};
 
-    #[serial_test::serial]
     #[test]
     fn compact_rgba_removes_aligned_row_padding() {
         let mut frame = FrameBuffer::with_capacity(3, 2, PixelFormat::Rgba);
@@ -948,7 +947,6 @@ mod tests {
         }
     }
 
-    #[serial_test::serial]
     #[test]
     fn apply_presentation_swaps_buffers_and_profile_on_running_core() {
         let (mut core, _, _, _) = EmuCore::from_parts(build_test_core_parts());
@@ -977,7 +975,6 @@ mod tests {
         assert_eq!(guard.palette().expect("shared palette")[0xAB], 0xFF00_00AB);
     }
 
-    #[serial_test::serial]
     #[test]
     fn port_seam_serves_queries_without_a_thread() {
         use nerust_core_traits::debugger::{SpaceAccess, SpaceInfo};
@@ -1009,7 +1006,6 @@ mod tests {
         assert_eq!(spaces[0].name, "WRAM");
     }
 
-    #[serial_test::serial]
     #[test]
     fn debug_images_cache_serves_paused_repeats() {
         let core = loaded_core();
@@ -1039,7 +1035,6 @@ mod tests {
         core.pause().expect("thread");
     }
 
-    #[serial_test::serial]
     #[test]
     fn images_store_advances_only_on_changed_content() {
         use nerust_core_traits::debugger::ImageFormat;
@@ -1069,7 +1064,6 @@ mod tests {
         assert!(changed.generation > served);
     }
 
-    #[serial_test::serial]
     #[test]
     fn debug_registers_roundtrip_and_refuse() {
         let core = loaded_core();
@@ -1091,7 +1085,6 @@ mod tests {
         ));
     }
 
-    #[serial_test::serial]
     #[test]
     fn debug_observation_paths_answer() {
         let core = loaded_core();

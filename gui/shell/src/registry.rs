@@ -305,14 +305,12 @@ mod tests {
         std::env::temp_dir().join(format!("nerust-registry-{}-{name}", std::process::id()))
     }
 
-    #[serial_test::serial]
     #[test]
     fn empty_registry_all_returns_empty_slice() {
         let registry = SystemRegistry::new(vec![]);
         assert_eq!(registry.all().len(), 0);
     }
 
-    #[serial_test::serial]
     #[test]
     fn all_preserves_registration_order() {
         let a = stub_factory();
@@ -324,7 +322,6 @@ mod tests {
         assert_eq!(registry.all()[1].system_id(), b.system_id());
     }
 
-    #[serial_test::serial]
     #[test]
     fn find_by_id_returns_factory() {
         let factory = stub_factory();
@@ -334,14 +331,12 @@ mod tests {
         assert!(registry.find_by_id(&DummyOtherSystemId).is_none());
     }
 
-    #[serial_test::serial]
     #[test]
     #[should_panic(expected = "duplicate system_id")]
     fn duplicate_system_id_is_rejected() {
         SystemRegistry::new(vec![stub_factory(), stub_factory()]);
     }
 
-    #[serial_test::serial]
     #[test]
     fn detect_returns_none_when_no_factory_matches() {
         let registry = SystemRegistry::new(vec![stub_factory()]);
@@ -349,7 +344,6 @@ mod tests {
         assert!(registry.detect(&media).unwrap().is_none());
     }
 
-    #[serial_test::serial]
     #[test]
     fn detect_returns_matching_factory() {
         let fallback = stub_factory();
@@ -363,7 +357,6 @@ mod tests {
         );
     }
 
-    #[serial_test::serial]
     #[test]
     fn detect_rejects_ambiguous_media() {
         let first: Arc<dyn CoreFactory> =
@@ -380,7 +373,6 @@ mod tests {
         ));
     }
 
-    #[serial_test::serial]
     #[test]
     fn create_loader_accepts_options() {
         let factory = stub_factory();
@@ -391,7 +383,6 @@ mod tests {
             .unwrap();
     }
 
-    #[serial_test::serial]
     #[test]
     fn create_loader_rejects_options_for_unregistered_system() {
         let registry = Arc::new(SystemRegistry::new(vec![stub_factory()]));
@@ -403,7 +394,6 @@ mod tests {
         ));
     }
 
-    #[serial_test::serial]
     #[test]
     fn loader_detects_loads_and_resumes_target() {
         let factory: Arc<dyn CoreFactory> =
@@ -430,7 +420,6 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
-    #[serial_test::serial]
     #[test]
     fn loader_rejects_unsupported_media_without_resuming() {
         let registry = Arc::new(SystemRegistry::new(vec![stub_factory()]));
@@ -448,7 +437,6 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
-    #[serial_test::serial]
     #[test]
     fn loader_reports_missing_rom_as_io_error() {
         let registry = Arc::new(SystemRegistry::new(vec![stub_factory()]));
