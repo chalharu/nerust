@@ -172,7 +172,7 @@ impl HostState {
         // debugger while the game runs): frames keep coming and must
         // show. Paused, unfocused, and unfollowed sleeps.
         let running = self.session.loaded() && !self.session.paused();
-        if (self.active || live || running)
+        if (self.focus.main_active() || live || running)
             && let Some(window) = self.window.as_ref()
         {
             window.request_redraw();
