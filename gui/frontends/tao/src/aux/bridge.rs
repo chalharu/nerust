@@ -196,15 +196,17 @@ mod tests {
     #[test]
     fn anchor_uses_pin_without_follow() {
         use nerust_core_traits::debugger::DisasmLine;
-        let mut display = DisplayCache::default();
-        display.disasm_lines = vec![DisasmLine {
-            addr: 0x1234,
-            bytes: [0; 4],
-            len: 2,
-            text: "NOP".to_string(),
-            is_pc: true,
-            target: None,
-        }];
+        let display = DisplayCache {
+            disasm_lines: vec![DisasmLine {
+                addr: 0x1234,
+                bytes: [0; 4],
+                len: 2,
+                text: "NOP".to_string(),
+                is_pc: true,
+                target: None,
+            }],
+            ..DisplayCache::default()
+        };
         let bridge = DebugBridge::new(display, vec![], 0, AppLanguage::English);
         // Pinning an address leaves follow mode: the stored pin wins
         // over the first visible line.
@@ -215,15 +217,17 @@ mod tests {
     #[test]
     fn anchor_uses_first_line_in_follow_mode() {
         use nerust_core_traits::debugger::DisasmLine;
-        let mut display = DisplayCache::default();
-        display.disasm_lines = vec![DisasmLine {
-            addr: 0x0800_27D2,
-            bytes: [0; 4],
-            len: 2,
-            text: "POP".to_string(),
-            is_pc: true,
-            target: None,
-        }];
+        let display = DisplayCache {
+            disasm_lines: vec![DisasmLine {
+                addr: 0x0800_27D2,
+                bytes: [0; 4],
+                len: 2,
+                text: "POP".to_string(),
+                is_pc: true,
+                target: None,
+            }],
+            ..DisplayCache::default()
+        };
         let bridge = DebugBridge::new(display, vec![], 0, AppLanguage::English);
         lock_recovered(&bridge.nav).follow();
         assert_eq!(bridge.anchor(), 0x0800_27D2);
