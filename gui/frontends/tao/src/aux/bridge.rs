@@ -3,7 +3,7 @@
 //! siblings instead of one depending on the other.
 
 use std::sync::{
-    Mutex,
+    Mutex, MutexGuard,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -11,6 +11,16 @@ use nerust_core_traits::debugger::SpaceId;
 use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::model::language::AppLanguage;
+
+/// Poison-safe mutex lock: recovers the inner value after a panic
+/// instead of propagating the poison. Recovered state may be stale;
+/// the next drain refresh overwrites it.
+pub(crate) fn lock_recovered<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| {
+        log::warn!("mutex recovered after poisoning; state may be stale");
+        e.into_inner()
+    })
+}
 
 /// Shared bridge between the iced program and the host drain.
 /// Movement state and display cache are owned separately; user lists
@@ -71,13 +81,19 @@ impl DebugBridge {
         }
     }
 
+    /// Lock nav-then-display in one place. Every dual access must
+    /// go through here so the order never inverts and deadlocks.
+    pub(crate) fn nav_display(&self) -> (MutexGuard<'_, NavState>, MutexGuard<'_, DisplayCache>) {
+        (lock_recovered(&self.nav), lock_recovered(&self.display))
+    }
+
     pub(crate) fn selected_space(&self) -> Option<SpaceId> {
-        let idx = self.nav.lock().unwrap().space_idx();
+        let idx = lock_recovered(&self.nav).space_idx();
         self.spaces.get(idx).map(|(id, _, _)| *id)
     }
 
     pub(crate) fn selected_name(&self) -> Option<String> {
-        let idx = self.nav.lock().unwrap().space_idx();
+        let idx = lock_recovered(&self.nav).space_idx();
         self.spaces.get(idx).map(|(_, name, _)| name.clone())
     }
 
@@ -85,27 +101,27 @@ impl DebugBridge {
         // Frontend-local wording (parse errors, prompts): stored
         // verbatim. Drain outcomes arrive structured and never pass
         // through here.
-        self.display.lock().unwrap().status = StatusMessage::Local(status);
+        lock_recovered(&self.display).status = StatusMessage::Local(status);
         self.view_invalidated.store(true, Ordering::Release);
     }
 
     pub(crate) fn take_requests(&self) -> Vec<DebugAction> {
-        std::mem::take(&mut *self.outbox.lock().unwrap())
+        std::mem::take(&mut *lock_recovered(&self.outbox))
     }
 
     pub(crate) fn push(&self, request: DebugAction) {
-        self.outbox.lock().unwrap().push(request);
+        lock_recovered(&self.outbox).push(request);
         self.view_invalidated.store(true, Ordering::Release);
     }
 
     /// Displayed disassembly anchor: first visible line in follow-PC
     /// mode (the stored pin is stale there), else the pin.
     pub(crate) fn anchor(&self) -> u32 {
-        let nav = self.nav.lock().unwrap();
+        // Nav-then-display order via `nav_display`; never nest a
+        // display guard under a nav guard elsewhere.
+        let (nav, display) = self.nav_display();
         if nav.follow_pc() {
-            self.display
-                .lock()
-                .unwrap()
+            display
                 .disasm_lines
                 .first()
                 .map(|line| line.addr)

@@ -9,7 +9,7 @@ use iced_winit::program::{self, Program};
 
 use tao::event_loop::EventLoopWindowTarget;
 
-use super::bridge::DebugBridge;
+use super::bridge::{DebugBridge, lock_recovered};
 use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 
 /// Initial PPU viewer window size (verified Xvfb fit).
@@ -103,14 +103,14 @@ impl Program for PpuProgram {
         let bridge = &state.bridge;
         match message {
             PpuMessage::Hovered(line) => {
-                *bridge.ppu_hover.lock().unwrap() = line.clone();
-                *state.hover_cache.lock().unwrap() = line;
+                *lock_recovered(&bridge.ppu_hover) = line.clone();
+                *lock_recovered(&state.hover_cache) = line;
                 bridge.ppu_invalidated.store(true, Ordering::Release);
             }
             PpuMessage::Sync => {
-                let display = bridge.display.lock().unwrap();
+                let display = lock_recovered(&bridge.display);
                 let generation = display.images_gen;
-                let mut source_gen = state.source_gen.lock().unwrap();
+                let mut source_gen = lock_recovered(&state.source_gen);
                 if *source_gen != generation {
                     let mut scaled = Vec::with_capacity(display.images.len());
                     for (label, width, height, rgba) in &display.images {
@@ -122,10 +122,10 @@ impl Program for PpuProgram {
                             iced::widget::image::Handle::from_rgba(width * 2, height * 2, bytes),
                         ));
                     }
-                    *state.scaled.lock().unwrap() = scaled;
+                    *lock_recovered(&state.scaled) = scaled;
                     *source_gen = generation;
                 }
-                *state.panels_cache.lock().unwrap() =
+                *lock_recovered(&state.panels_cache) =
                     nerust_gui_viewmodel::debugger::format_panels(&display.panels);
             }
         }
@@ -142,9 +142,9 @@ impl Program for PpuProgram {
         // Single coherent capture; scaled bytes come from the Sync
         // cache, never re-derived here.
         let language = state.bridge.language;
-        let scaled = state.scaled.lock().unwrap().clone();
-        let panels = state.panels_cache.lock().unwrap().clone();
-        let hover = state.hover_cache.lock().unwrap().clone();
+        let scaled = lock_recovered(&state.scaled).clone();
+        let panels = lock_recovered(&state.panels_cache).clone();
+        let hover = lock_recovered(&state.hover_cache).clone();
         let mut content = column![
             text(ui_text(language, UiText::PpuViewer)).size(18),
             text(if hover.is_empty() {
@@ -351,20 +351,20 @@ mod tests {
         let mut state = ppu_state(&bridge);
         let _ = program.update(&mut state, PpuMessage::Sync);
         // First sync derives: one 2x image plus the generation.
-        assert_eq!(state.scaled.lock().unwrap().len(), 1);
-        assert_eq!(*state.source_gen.lock().unwrap(), 5);
-        assert_eq!(state.scaled.lock().unwrap()[0].1, 4);
-        assert_eq!(state.scaled.lock().unwrap()[0].2, 2);
+        assert_eq!(lock_recovered(&state.scaled).len(), 1);
+        assert_eq!(*lock_recovered(&state.source_gen), 5);
+        assert_eq!(lock_recovered(&state.scaled)[0].1, 4);
+        assert_eq!(lock_recovered(&state.scaled)[0].2, 2);
         // Identical generation re-runs Sync without re-deriving.
         let _ = program.update(&mut state, PpuMessage::Sync);
-        assert_eq!(*state.source_gen.lock().unwrap(), 5);
+        assert_eq!(*lock_recovered(&state.source_gen), 5);
         // Hover only records the line, never re-derives.
         let _ = program.update(
             &mut state,
             PpuMessage::Hovered("Tiles tile #0 (px 0,0, +0000)".to_string()),
         );
         assert_eq!(
-            *state.hover_cache.lock().unwrap(),
+            *lock_recovered(&state.hover_cache),
             "Tiles tile #0 (px 0,0, +0000)"
         );
         assert!(bridge.ppu_invalidated.load(Ordering::Acquire));

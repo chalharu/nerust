@@ -7,16 +7,18 @@ use std::sync::{Arc, atomic::Ordering};
 use iced::Task;
 use iced_tiny_skia::Renderer;
 use iced_winit::program::{self, Program};
-use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, HexRow, SpaceId};
+use nerust_core_traits::debugger::{
+    DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, DisasmLine, HexRow, SpaceId,
+};
 use nerust_gui_shell::debug::DebugAction;
-use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, StatusMessage};
+use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, PendingWrite, StatusMessage};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};
 use nerust_settings_core::model::language::AppLanguage;
 use tao::event_loop::EventLoopWindowTarget;
 
 use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 
-use super::bridge::DebugBridge;
+use super::bridge::{DebugBridge, lock_recovered};
 
 /// Initial debugger window size (verified Xvfb fit).
 pub(crate) const DEBUG_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
@@ -75,15 +77,153 @@ pub(crate) struct DebugProgram {
     pub(crate) bridge: Arc<DebugBridge>,
 }
 
+/// Message dispatch, one family per function so `update` stays a
+/// flat router. Each returns whether it handled the message; bodies
+/// are moved verbatim from the old monolithic match.
+fn update_toolbar(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+    match message {
+        DebugMessage::RefreshPressed => bridge.push(DebugAction::Refresh),
+        DebugMessage::SpacePrev => cycle_space(bridge, -1),
+        DebugMessage::SpaceNext => cycle_space(bridge, 1),
+        DebugMessage::TogglePausePressed => bridge.push(DebugAction::TogglePause),
+        DebugMessage::StepFramePressed => bridge.push(DebugAction::StepFrame),
+        DebugMessage::StepInstrPressed => bridge.push(DebugAction::StepInstr),
+        DebugMessage::PpuOpenPressed => {
+            bridge.open_ppu.store(true, Ordering::Release);
+            bridge.push(DebugAction::Refresh);
+        }
+        _ => return false,
+    }
+    true
+}
+
+fn update_memory(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+    match message {
+        DebugMessage::MemInputChanged(text) => {
+            lock_recovered(&bridge.nav).set_mem_input(text.clone());
+            bridge.view_invalidated.store(true, Ordering::Release);
+        }
+        DebugMessage::MemGo => mem_go(bridge),
+        DebugMessage::MemPage(delta) => mem_page(bridge, *delta),
+        DebugMessage::RowSelected(addr) => {
+            bridge.push(DebugAction::SelectRow(*addr));
+        }
+        _ => return false,
+    }
+    true
+}
+
+fn update_disasm(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+    match message {
+        DebugMessage::DisInputChanged(text) => {
+            lock_recovered(&bridge.nav).set_dis_input(text.clone());
+            bridge.view_invalidated.store(true, Ordering::Release);
+        }
+        DebugMessage::DisGo => dis_go(bridge),
+        DebugMessage::FollowPcToggle => {
+            lock_recovered(&bridge.nav).follow();
+            bridge.push(DebugAction::Refresh);
+        }
+        DebugMessage::DisLineClicked(addr) => navigate_to(bridge, *addr),
+        DebugMessage::FollowTarget(addr) => navigate_to(bridge, *addr),
+        DebugMessage::DisBack => dis_back(bridge),
+        _ => return false,
+    }
+    true
+}
+
+fn update_bookmarks(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+    match message {
+        DebugMessage::BookmarkInputChanged(text) => {
+            *lock_recovered(&bridge.bm_input) = text.clone();
+            bridge.view_invalidated.store(true, Ordering::Release);
+        }
+        DebugMessage::BookmarkAdd => bookmark_add(bridge),
+        DebugMessage::BookmarkJump(addr) => navigate_to(bridge, *addr),
+        DebugMessage::BookmarkDelete(addr) => {
+            lock_recovered(&bridge.bookmarks).retain(|(a, _)| *a != *addr);
+            bridge.view_invalidated.store(true, Ordering::Release);
+        }
+        _ => return false,
+    }
+    true
+}
+
+fn update_watch_freeze(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+    match message {
+        DebugMessage::WatchSet => watch_set(bridge),
+        DebugMessage::WatchClear => {
+            *lock_recovered(&bridge.watch) = None;
+            lock_recovered(&bridge.display).watch_value = None;
+            bridge.view_invalidated.store(true, Ordering::Release);
+        }
+        DebugMessage::FreezeInputChanged(text) => {
+            *lock_recovered(&bridge.freeze_input) = text.clone();
+            bridge.view_invalidated.store(true, Ordering::Release);
+        }
+        DebugMessage::FreezeSet => {
+            let input = lock_recovered(&bridge.freeze_input).clone();
+            apply_freeze(bridge, &input);
+        }
+        DebugMessage::EditFreezeSet => {
+            let input = lock_recovered(&bridge.edit_input).trim().to_string();
+            apply_freeze(bridge, &input);
+        }
+        DebugMessage::FreezeClear => {
+            *lock_recovered(&bridge.freeze) = None;
+            bridge.set_status(ui_text(bridge.language, UiText::FreezeCleared).to_string());
+        }
+        _ => return false,
+    }
+    true
+}
+
+fn update_staged_write(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+    match message {
+        DebugMessage::EditInputChanged(text) => {
+            *lock_recovered(&bridge.edit_input) = text.clone();
+            bridge.view_invalidated.store(true, Ordering::Release);
+        }
+        DebugMessage::EditWrite => edit_write(bridge),
+        DebugMessage::ConfirmWrite => {
+            bridge.push(DebugAction::WriteConfirm);
+            // Commit consumes the transaction; the input clears.
+            *lock_recovered(&bridge.edit_input) = String::new();
+        }
+        DebugMessage::CancelWrite => {
+            bridge.push(DebugAction::EditCancel);
+            lock_recovered(&bridge.display).pending = None;
+        }
+        _ => return false,
+    }
+    true
+}
+
+fn update_registers(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+    match message {
+        DebugMessage::RegSelected(name) => {
+            *lock_recovered(&bridge.reg_target) = Some(*name);
+            bridge.view_invalidated.store(true, Ordering::Release);
+        }
+        DebugMessage::RegInputChanged(text) => {
+            *lock_recovered(&bridge.reg_input) = text.clone();
+            bridge.view_invalidated.store(true, Ordering::Release);
+        }
+        DebugMessage::RegSet => reg_set(bridge),
+        _ => return false,
+    }
+    true
+}
+
 /// Shared freeze staging: selection plus a hex byte. The top
 /// Freeze row and the edit-row Freeze button differ only in which
 /// input they read; the rules live here, not in the widgets.
 fn apply_freeze(bridge: &DebugBridge, input: &str) {
     let language = bridge.language;
-    let selected = bridge.selected.lock().unwrap().map(|(addr, _)| addr);
+    let selected = lock_recovered(&bridge.selected).map(|(addr, _)| addr);
     match (selected, vm::parse_hex_addr(input).filter(|v| *v <= 0xFF)) {
         (Some(addr), Some(value)) => {
-            *bridge.freeze.lock().unwrap() = Some((addr, value as u8));
+            *lock_recovered(&bridge.freeze) = Some((addr, value as u8));
             bridge.set_status(ui_msg::frozen(language, addr, value as u8));
             bridge.push(DebugAction::Refresh);
         }
@@ -95,22 +235,22 @@ fn apply_freeze(bridge: &DebugBridge, input: &str) {
 // headless Xvfb, and fixed spaces suit Prev/Next cycling. The
 // dropdown decision is revisited with evidence in the design notes.
 fn cycle_space(bridge: &DebugBridge, delta: i32) {
-    let mut nav = bridge.nav.lock().unwrap();
+    let mut nav = lock_recovered(&bridge.nav);
     if let Some(idx) = nav.cycle_space(delta) {
         let start = bridge.spaces[idx].2;
         nav.set_space(idx, start);
         drop(nav);
-        *bridge.selected.lock().unwrap() = None;
+        *lock_recovered(&bridge.selected) = None;
         bridge.push(DebugAction::Refresh);
     }
 }
 
 fn mem_go(bridge: &DebugBridge) {
     let language = bridge.language;
-    let input = bridge.nav.lock().unwrap().mem_input().to_string();
+    let input = lock_recovered(&bridge.nav).mem_input().to_string();
     match vm::parse_hex_addr(&input) {
         Some(addr) => {
-            bridge.nav.lock().unwrap().go_mem(addr);
+            lock_recovered(&bridge.nav).go_mem(addr);
             bridge.push(DebugAction::MemNav);
         }
         None => bridge.set_status(ui_msg::parse_failed(language, &input)),
@@ -118,17 +258,14 @@ fn mem_go(bridge: &DebugBridge) {
 }
 
 fn mem_page(bridge: &DebugBridge, delta: i32) {
-    bridge
-        .nav
-        .lock()
-        .unwrap()
+    lock_recovered(&bridge.nav)
         .page_mem(delta * DEBUG_DUMP_PAGE_ROWS as i32 * DUMP_ROW_BYTES as i32);
     bridge.push(DebugAction::MemNav);
 }
 
 fn dis_go(bridge: &DebugBridge) {
     let language = bridge.language;
-    let input = bridge.nav.lock().unwrap().dis_input().to_string();
+    let input = lock_recovered(&bridge.nav).dis_input().to_string();
     match vm::parse_hex_addr(&input) {
         Some(addr) => navigate_to(bridge, addr),
         None => bridge.set_status(ui_msg::parse_failed(language, &input)),
@@ -137,35 +274,32 @@ fn dis_go(bridge: &DebugBridge) {
 
 fn navigate_to(bridge: &DebugBridge, addr: u32) {
     let anchor = bridge.anchor();
-    bridge.nav.lock().unwrap().navigate(anchor, addr);
+    lock_recovered(&bridge.nav).navigate(anchor, addr);
     bridge.push(DebugAction::Refresh);
 }
 
 fn dis_back(bridge: &DebugBridge) {
-    match bridge.nav.lock().unwrap().go_back() {
+    match lock_recovered(&bridge.nav).go_back() {
         Some(_) => bridge.push(DebugAction::Refresh),
         None => bridge.set_status(ui_text(bridge.language, UiText::BackEmpty).to_string()),
     }
 }
 
 fn bookmark_add(bridge: &DebugBridge) {
-    let label = bridge.bm_input.lock().unwrap().trim().to_string();
+    let label = lock_recovered(&bridge.bm_input).trim().to_string();
     // Anchor on the PC row when following, else the pin. The PC
     // row is snapshotted first and the guard dropped before
     // `anchor()` runs: it locks nav→display, so nesting it under
     // the display guard would invert the order and risk deadlock.
     let pc_addr = {
-        bridge
-            .display
-            .lock()
-            .unwrap()
+        lock_recovered(&bridge.display)
             .disasm_lines
             .iter()
             .find(|line| line.is_pc)
             .map(|line| line.addr)
     };
     let addr = pc_addr.unwrap_or_else(|| bridge.anchor());
-    let mut marks = bridge.bookmarks.lock().unwrap();
+    let mut marks = lock_recovered(&bridge.bookmarks);
     if marks.len() >= BOOKMARK_CAP {
         bridge.set_status(ui_text(bridge.language, UiText::BookmarkFull).to_string());
         return;
@@ -179,15 +313,15 @@ fn bookmark_add(bridge: &DebugBridge) {
             label
         },
     ));
-    bridge.bm_input.lock().unwrap().clear();
+    lock_recovered(&bridge.bm_input).clear();
     bridge.view_invalidated.store(true, Ordering::Release);
 }
 
 fn watch_set(bridge: &DebugBridge) {
-    let selected = bridge.selected.lock().unwrap().map(|(addr, _)| addr);
+    let selected = lock_recovered(&bridge.selected).map(|(addr, _)| addr);
     match selected {
         Some(addr) => {
-            *bridge.watch.lock().unwrap() = Some(addr);
+            *lock_recovered(&bridge.watch) = Some(addr);
             bridge.push(DebugAction::Refresh);
         }
         None => {
@@ -197,8 +331,8 @@ fn watch_set(bridge: &DebugBridge) {
 }
 
 fn edit_write(bridge: &DebugBridge) {
-    let input = bridge.edit_input.lock().unwrap().trim().to_string();
-    let selected = *bridge.selected.lock().unwrap();
+    let input = lock_recovered(&bridge.edit_input).trim().to_string();
+    let selected = *lock_recovered(&bridge.selected);
     match (
         selected,
         vm::parse_hex_addr(&input).filter(|value| *value <= 0xFF),
@@ -223,8 +357,8 @@ fn edit_write(bridge: &DebugBridge) {
 /// click), the value parses as a full-width hex number; the backend
 /// masks to the register width.
 fn reg_set(bridge: &DebugBridge) {
-    let input = bridge.reg_input.lock().unwrap().trim().to_string();
-    let target = *bridge.reg_target.lock().unwrap();
+    let input = lock_recovered(&bridge.reg_input).trim().to_string();
+    let target = *lock_recovered(&bridge.reg_target);
     match (target, vm::parse_hex_addr(&input)) {
         (Some(_), Some(value)) => {
             bridge.push(DebugAction::RegisterWrite(u64::from(value)));
@@ -270,94 +404,14 @@ impl Program for DebugProgram {
 
     fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
         let bridge = &state.bridge;
-        match message {
-            DebugMessage::RefreshPressed => bridge.push(DebugAction::Refresh),
-            DebugMessage::SpacePrev => cycle_space(bridge, -1),
-            DebugMessage::SpaceNext => cycle_space(bridge, 1),
-            DebugMessage::TogglePausePressed => bridge.push(DebugAction::TogglePause),
-            DebugMessage::StepFramePressed => bridge.push(DebugAction::StepFrame),
-            DebugMessage::StepInstrPressed => bridge.push(DebugAction::StepInstr),
-            DebugMessage::PpuOpenPressed => {
-                bridge.open_ppu.store(true, Ordering::Release);
-                bridge.push(DebugAction::Refresh);
-            }
-            DebugMessage::MemInputChanged(text) => {
-                bridge.nav.lock().unwrap().set_mem_input(text);
-                bridge.view_invalidated.store(true, Ordering::Release);
-            }
-            DebugMessage::MemGo => mem_go(bridge),
-            DebugMessage::MemPage(delta) => mem_page(bridge, delta),
-            DebugMessage::DisInputChanged(text) => {
-                bridge.nav.lock().unwrap().set_dis_input(text);
-                bridge.view_invalidated.store(true, Ordering::Release);
-            }
-            DebugMessage::DisGo => dis_go(bridge),
-            DebugMessage::FollowPcToggle => {
-                bridge.nav.lock().unwrap().follow();
-                bridge.push(DebugAction::Refresh);
-            }
-            DebugMessage::DisLineClicked(addr) => navigate_to(bridge, addr),
-            DebugMessage::FollowTarget(addr) => navigate_to(bridge, addr),
-            DebugMessage::DisBack => dis_back(bridge),
-            DebugMessage::BookmarkInputChanged(text) => {
-                *bridge.bm_input.lock().unwrap() = text;
-                bridge.view_invalidated.store(true, Ordering::Release);
-            }
-            DebugMessage::BookmarkAdd => bookmark_add(bridge),
-            DebugMessage::BookmarkJump(addr) => navigate_to(bridge, addr),
-            DebugMessage::BookmarkDelete(addr) => {
-                bridge.bookmarks.lock().unwrap().retain(|(a, _)| *a != addr);
-                bridge.view_invalidated.store(true, Ordering::Release);
-            }
-            DebugMessage::WatchSet => watch_set(bridge),
-            DebugMessage::WatchClear => {
-                *bridge.watch.lock().unwrap() = None;
-                bridge.display.lock().unwrap().watch_value = None;
-                bridge.view_invalidated.store(true, Ordering::Release);
-            }
-            DebugMessage::FreezeInputChanged(text) => {
-                *bridge.freeze_input.lock().unwrap() = text;
-                bridge.view_invalidated.store(true, Ordering::Release);
-            }
-            DebugMessage::FreezeSet => {
-                let input = bridge.freeze_input.lock().unwrap().clone();
-                apply_freeze(bridge, &input);
-            }
-            DebugMessage::EditFreezeSet => {
-                let input = bridge.edit_input.lock().unwrap().trim().to_string();
-                apply_freeze(bridge, &input);
-            }
-            DebugMessage::FreezeClear => {
-                *bridge.freeze.lock().unwrap() = None;
-                bridge.set_status(ui_text(bridge.language, UiText::FreezeCleared).to_string());
-            }
-            DebugMessage::RowSelected(addr) => {
-                bridge.push(DebugAction::SelectRow(addr));
-            }
-            DebugMessage::EditInputChanged(text) => {
-                *bridge.edit_input.lock().unwrap() = text;
-                bridge.view_invalidated.store(true, Ordering::Release);
-            }
-            DebugMessage::EditWrite => edit_write(bridge),
-            DebugMessage::ConfirmWrite => {
-                bridge.push(DebugAction::WriteConfirm);
-                // Commit consumes the transaction; the input clears.
-                *bridge.edit_input.lock().unwrap() = String::new();
-            }
-            DebugMessage::RegSelected(name) => {
-                *bridge.reg_target.lock().unwrap() = Some(name);
-                bridge.view_invalidated.store(true, Ordering::Release);
-            }
-            DebugMessage::RegInputChanged(text) => {
-                *bridge.reg_input.lock().unwrap() = text;
-                bridge.view_invalidated.store(true, Ordering::Release);
-            }
-            DebugMessage::RegSet => reg_set(bridge),
-            DebugMessage::CancelWrite => {
-                bridge.push(DebugAction::EditCancel);
-                bridge.display.lock().unwrap().pending = None;
-            }
-        }
+        // First handler wins; the chain only routes.
+        let _handled = update_toolbar(bridge, &message)
+            || update_memory(bridge, &message)
+            || update_disasm(bridge, &message)
+            || update_bookmarks(bridge, &message)
+            || update_watch_freeze(bridge, &message)
+            || update_staged_write(bridge, &message)
+            || update_registers(bridge, &message);
         Task::none()
     }
 
@@ -371,48 +425,32 @@ impl Program for DebugProgram {
         use iced::widget::{button, column, row, scrollable, text};
         // Single coherent capture per rebuild; widgets read locals only.
         // Images stay out: the debugger view never renders them.
-        let bridge = &state.bridge;
-        let language = bridge.language;
-        let nav = bridge.nav.lock().unwrap().clone();
-        let display = bridge.display.lock().unwrap().clone_without_images();
-        let bookmarks = bridge.bookmarks.lock().unwrap().clone();
-        let bm_input = bridge.bm_input.lock().unwrap().clone();
-        let watch = *bridge.watch.lock().unwrap();
-        let freeze = *bridge.freeze.lock().unwrap();
-        let freeze_input = bridge.freeze_input.lock().unwrap().clone();
-        let selected = *bridge.selected.lock().unwrap();
-        let edit_input = bridge.edit_input.lock().unwrap().clone();
-        let pending = display.pending;
-        let selected_name = bridge.selected_name();
-        let regs = display.regs;
-        let dump_rows = display.dump_rows;
-        let diff = display.diff;
-        let disasm_lines = display.disasm_lines;
-        let status = display.status;
-        let mem_input = nav.mem_input().to_string();
-        let dis_input = nav.dis_input().to_string();
-        let follow_pc = nav.follow_pc();
-        let back_len = nav.back_len();
-        let watch_value = display.watch_value;
-        let paused = display.paused;
-        // Coreless windows never drain, so the default Empty status
-        // would sit blank forever and the toggle would offer Pause
-        // against nothing. Read coreless as paused with an explicit
-        // "no core" status — the same agreement as the gtk twin.
-        let coreless = bridge.spaces.is_empty();
-        let paused = paused || coreless;
-        let status = if coreless && matches!(status, vm::StatusMessage::Empty) {
-            vm::StatusMessage::NoCore
-        } else {
-            status
-        };
-        // Same rule as `anchor()`, computed from the snapshot above
-        // instead of re-locking nav and display for a second time.
-        let anchor = if follow_pc {
-            disasm_lines.first().map(|line| line.addr).unwrap_or(0)
-        } else {
-            nav.dis_addr().unwrap_or(0)
-        };
+        let ViewSnapshot {
+            language,
+            mem_input,
+            dis_input,
+            follow_pc,
+            back_len,
+            anchor,
+            bookmarks,
+            bm_input,
+            watch,
+            watch_value,
+            freeze,
+            freeze_input,
+            selected,
+            edit_input,
+            pending,
+            selected_name,
+            regs,
+            dump_rows,
+            diff,
+            disasm_lines,
+            status,
+            paused,
+            reg_target,
+            reg_input,
+        } = capture_view(&state.bridge);
         // Button hierarchy: one primary per flow (the Phase E
         // Confirm), secondary for toolbar/nav, text for list rows
         // and escape actions.
@@ -426,9 +464,7 @@ impl Program for DebugProgram {
         let dump_col = lazy((dump_rows, diff, selected), |(rows, diff, selected)| {
             view_dump_col(rows, diff, *selected)
         });
-        let reg_target = *bridge.reg_target.lock().unwrap();
-        let reg_input = bridge.reg_input.lock().unwrap().clone();
-        let regs_view = lazy(
+        let regs_view: iced::Element<'static, DebugMessage, iced::Theme, Renderer> = lazy(
             (regs, reg_target, reg_input, language),
             |(regs, target, input, language)| view_regs_section(regs, *target, input, *language),
         )
@@ -459,17 +495,24 @@ impl Program for DebugProgram {
         ]
         .spacing(12)
         .width(Length::Fill);
-        let right_col = view_right_col(
-            status,
+        let right_col = column![
+            text(status.render(language)).size(14).width(Length::Fill),
+            text(ui_text(language, UiText::Registers)).size(16),
             regs_view,
-            watch,
-            watch_value,
-            freeze,
-            &freeze_input,
-            &bm_input,
-            &bookmarks,
-            language,
-        );
+            text(ui_text(language, UiText::Watch)).size(16),
+            view_watch_row(watch, watch_value, language),
+            text(ui_text(language, UiText::Freeze)).size(16),
+            view_freeze_row(freeze, &freeze_input, language),
+            view_bookmark_section(&bm_input, &bookmarks, language),
+        ]
+        .spacing(12)
+        .width(Length::Fixed(STATE_COLUMN_WIDTH))
+        // Right breathing room for the overlay scrollbar: without it the
+        // rail sits on top of the register text (tall GBA lists scroll).
+        .padding(iced::Padding {
+            right: 16.0,
+            ..Default::default()
+        });
         // Tall state (GBA: 17 registers) scrolls inside the panes
         // instead of pushing Bookmarks and Memory out of view. The
         // panes row takes the remaining window height so the scroll
@@ -503,8 +546,115 @@ impl Program for DebugProgram {
     }
 }
 
+/// Owned view snapshot: one rebuild sees one instant. Built by
+/// `capture_view` (the only place that locks the bridge); `view`
+/// destructures it into plain locals and assembles widgets.
+struct ViewSnapshot {
+    language: AppLanguage,
+    mem_input: String,
+    dis_input: String,
+    follow_pc: bool,
+    back_len: usize,
+    anchor: u32,
+    bookmarks: Vec<(u32, String)>,
+    bm_input: String,
+    watch: Option<u32>,
+    watch_value: Option<u8>,
+    freeze: Option<(u32, u8)>,
+    freeze_input: String,
+    selected: Option<(u32, Option<u8>)>,
+    edit_input: String,
+    pending: Option<PendingWrite>,
+    selected_name: Option<String>,
+    regs: Vec<(&'static str, u64)>,
+    dump_rows: Vec<HexRow>,
+    diff: Vec<u32>,
+    disasm_lines: Vec<DisasmLine>,
+    status: StatusMessage,
+    paused: bool,
+    reg_target: Option<&'static str>,
+    reg_input: String,
+}
+
+/// Lock the bridge once and clone an owned snapshot out of it.
+/// No widget code runs here; see `anchor()` for the anchor rule.
+fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
+    let language = bridge.language;
+    let nav = lock_recovered(&bridge.nav).clone();
+    let display = lock_recovered(&bridge.display).clone_without_images();
+    let bookmarks = lock_recovered(&bridge.bookmarks).clone();
+    let bm_input = lock_recovered(&bridge.bm_input).clone();
+    let watch = *lock_recovered(&bridge.watch);
+    let freeze = *lock_recovered(&bridge.freeze);
+    let freeze_input = lock_recovered(&bridge.freeze_input).clone();
+    let selected = *lock_recovered(&bridge.selected);
+    let edit_input = lock_recovered(&bridge.edit_input).clone();
+    let pending = display.pending;
+    let selected_name = bridge.selected_name();
+    let regs = display.regs;
+    let dump_rows = display.dump_rows;
+    let diff = display.diff;
+    let disasm_lines = display.disasm_lines;
+    let status = display.status;
+    let mem_input = nav.mem_input().to_string();
+    let dis_input = nav.dis_input().to_string();
+    let follow_pc = nav.follow_pc();
+    let back_len = nav.back_len();
+    let watch_value = display.watch_value;
+    let paused = display.paused;
+    // Coreless windows never drain, so the default Empty status
+    // would sit blank forever and the toggle would offer Pause
+    // against nothing. Read coreless as paused with an explicit
+    // "no core" status — the same agreement as the gtk twin.
+    let coreless = bridge.spaces.is_empty();
+    let paused = paused || coreless;
+    let status = if coreless && matches!(status, vm::StatusMessage::Empty) {
+        vm::StatusMessage::NoCore
+    } else {
+        status
+    };
+    // Same rule as `anchor()`, computed from the snapshot above
+    // instead of re-locking nav and display for a second time.
+    let anchor = if follow_pc {
+        disasm_lines.first().map(|line| line.addr).unwrap_or(0)
+    } else {
+        nav.dis_addr().unwrap_or(0)
+    };
+    let reg_target = *lock_recovered(&bridge.reg_target);
+    let reg_input = lock_recovered(&bridge.reg_input).clone();
+    ViewSnapshot {
+        language,
+        mem_input,
+        dis_input,
+        follow_pc,
+        back_len,
+        anchor,
+        bookmarks,
+        bm_input,
+        watch,
+        watch_value,
+        freeze,
+        freeze_input,
+        selected,
+        edit_input,
+        pending,
+        selected_name,
+        regs,
+        dump_rows,
+        diff,
+        disasm_lines,
+        status,
+        paused,
+        reg_target,
+        reg_input,
+    }
+}
+
 /// One pane builders: each renders a single debugger section from
 /// plain locals. `view` stays a capture-and-assemble pass.
+///
+/// A single coherent snapshot per rebuild: widgets read the struct,
+/// never the live bridge, so one rebuild sees one instant.
 ///
 /// The toolbar carries a single Pause/Resume toggle (not two
 /// buttons): the label follows the drained pause state.
@@ -872,28 +1022,64 @@ fn view_dis_col(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn view_right_col(
-    status: StatusMessage,
-    regs_view: iced::Element<'static, DebugMessage, iced::Theme, Renderer>,
+fn view_watch_row(
     watch: Option<u32>,
     watch_value: Option<u8>,
-    freeze: Option<(u32, u8)>,
-    freeze_input: &str,
-    bm_input: &str,
-    bookmarks: &[(u32, String)],
     language: AppLanguage,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
-    use iced::Length;
-    use iced::widget::{button, column, row, text, text_input};
+    use iced::widget::{button, row, text};
     let watch_text = match (watch, watch_value) {
         (Some(addr), Some(value)) => ui_msg::watch_value(language, addr, Some(value)),
         (Some(addr), None) => ui_msg::watch_value(language, addr, None),
         (None, _) => ui_text(language, UiText::WatchNone).to_string(),
     };
+    row![
+        button(text(ui_text(language, UiText::Watch)))
+            .style(button::secondary)
+            .on_press(DebugMessage::WatchSet),
+        text(watch_text).size(14).width(iced::Length::Fill),
+        button(text(ui_text(language, UiText::Clear)))
+            .style(button::text)
+            .on_press(DebugMessage::WatchClear),
+    ]
+    .spacing(12)
+    .align_y(iced::Alignment::Center)
+    .into()
+}
+
+fn view_freeze_row(
+    freeze: Option<(u32, u8)>,
+    freeze_input: &str,
+    language: AppLanguage,
+) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
+    use iced::widget::{button, row, text, text_input};
     let freeze_text = match freeze {
         Some((addr, value)) => ui_msg::frozen(language, addr, value),
         None => ui_text(language, UiText::FreezeNone).to_string(),
     };
+    row![
+        text_input(ui_text(language, UiText::HexByte), freeze_input)
+            .on_input(DebugMessage::FreezeInputChanged)
+            .width(100),
+        button(text(ui_text(language, UiText::Freeze)))
+            .style(button::secondary)
+            .on_press(DebugMessage::FreezeSet),
+        text(freeze_text).size(14).width(iced::Length::Fill),
+        button(text(ui_text(language, UiText::Clear)))
+            .style(button::text)
+            .on_press(DebugMessage::FreezeClear),
+    ]
+    .spacing(12)
+    .align_y(iced::Alignment::Center)
+    .into()
+}
+
+fn view_bookmark_section(
+    bm_input: &str,
+    bookmarks: &[(u32, String)],
+    language: AppLanguage,
+) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
+    use iced::widget::{button, column, row, text, text_input};
     let mut bookmarks_col = column![].spacing(2);
     for (addr, label) in bookmarks {
         bookmarks_col = bookmarks_col.push(
@@ -916,42 +1102,12 @@ fn view_right_col(
         );
     }
     column![
-        text(status.render(language)).size(14).width(Length::Fill),
-        text(ui_text(language, UiText::Registers)).size(16),
-        regs_view,
-        text(ui_text(language, UiText::Watch)).size(16),
-        row![
-            button(text(ui_text(language, UiText::Watch)))
-                .style(button::secondary)
-                .on_press(DebugMessage::WatchSet),
-            text(watch_text).size(14).width(Length::Fill),
-            button(text(ui_text(language, UiText::Clear)))
-                .style(button::text)
-                .on_press(DebugMessage::WatchClear),
-        ]
-        .spacing(12)
-        .align_y(iced::Alignment::Center),
-        text(ui_text(language, UiText::Freeze)).size(16),
-        row![
-            text_input(ui_text(language, UiText::HexByte), freeze_input)
-                .on_input(DebugMessage::FreezeInputChanged)
-                .width(100),
-            button(text(ui_text(language, UiText::Freeze)))
-                .style(button::secondary)
-                .on_press(DebugMessage::FreezeSet),
-            text(freeze_text).size(14).width(Length::Fill),
-            button(text(ui_text(language, UiText::Clear)))
-                .style(button::text)
-                .on_press(DebugMessage::FreezeClear),
-        ]
-        .spacing(12)
-        .align_y(iced::Alignment::Center),
         text(ui_text(language, UiText::Bookmarks)).size(16),
         row![
             text_input(ui_text(language, UiText::Label), bm_input)
                 .on_input(DebugMessage::BookmarkInputChanged)
                 .on_submit(DebugMessage::BookmarkAdd)
-                .width(Length::Fill),
+                .width(iced::Length::Fill),
             button(text(ui_text(language, UiText::Add)))
                 .style(button::secondary)
                 .on_press(DebugMessage::BookmarkAdd),
@@ -961,13 +1117,6 @@ fn view_right_col(
         bookmarks_col,
     ]
     .spacing(12)
-    .width(Length::Fixed(STATE_COLUMN_WIDTH))
-    // Right breathing room for the overlay scrollbar: without it the
-    // rail sits on top of the register text (tall GBA lists scroll).
-    .padding(iced::Padding {
-        right: 16.0,
-        ..Default::default()
-    })
     .into()
 }
 
@@ -1036,7 +1185,7 @@ impl DebugWindowHandle {
     }
 
     pub(crate) fn set_display(&mut self, display: DisplayCache) {
-        *self.bridge.display.lock().unwrap() = display;
+        *lock_recovered(&self.bridge.display) = display;
         self.sync_from_bridge();
     }
 
@@ -1134,9 +1283,9 @@ mod tests {
             0,
             AppLanguage::English,
         ));
-        *bridge.selected.lock().unwrap() = Some((0x0200_0010, Some(0x00)));
-        *bridge.freeze_input.lock().unwrap() = "FF".to_string();
-        *bridge.edit_input.lock().unwrap() = "AA".to_string();
+        *lock_recovered(&bridge.selected) = Some((0x0200_0010, Some(0x00)));
+        *lock_recovered(&bridge.freeze_input) = "FF".to_string();
+        *lock_recovered(&bridge.edit_input) = "AA".to_string();
         bridge
     }
 
@@ -1170,7 +1319,7 @@ mod tests {
             drive(&bridge, message);
         }
         assert!(
-            bridge.outbox.lock().unwrap().is_empty(),
+            lock_recovered(&bridge.outbox).is_empty(),
             "typing never blocks on the emu thread"
         );
         assert!(bridge.view_invalidated.load(Ordering::Acquire));
@@ -1180,9 +1329,9 @@ mod tests {
     fn edit_freeze_set_reads_edit_input() {
         let bridge = freeze_bridge();
         drive(&bridge, DebugMessage::EditFreezeSet);
-        assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x0200_0010, 0xAA)));
+        assert_eq!(*lock_recovered(&bridge.freeze), Some((0x0200_0010, 0xAA)));
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("frozen 0x02000010=AA".to_string())
         );
     }
@@ -1191,9 +1340,9 @@ mod tests {
     fn freeze_set_reads_top_input() {
         let bridge = freeze_bridge();
         drive(&bridge, DebugMessage::FreezeSet);
-        assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x0200_0010, 0xFF)));
+        assert_eq!(*lock_recovered(&bridge.freeze), Some((0x0200_0010, 0xFF)));
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("frozen 0x02000010=FF".to_string())
         );
     }
@@ -1242,10 +1391,10 @@ mod tests {
             0,
             AppLanguage::English,
         ));
-        *bridge.selected.lock().unwrap() = Some((0x100, Some(0xAB)));
-        *bridge.edit_input.lock().unwrap() = "42".to_string();
-        *bridge.reg_input.lock().unwrap() = "7".to_string();
-        *bridge.freeze_input.lock().unwrap() = "FF".to_string();
+        *lock_recovered(&bridge.selected) = Some((0x100, Some(0xAB)));
+        *lock_recovered(&bridge.edit_input) = "42".to_string();
+        *lock_recovered(&bridge.reg_input) = "7".to_string();
+        *lock_recovered(&bridge.freeze_input) = "FF".to_string();
         bridge
     }
 
@@ -1266,19 +1415,19 @@ mod tests {
             drive(&bridge, message);
         }
         assert!(bridge.open_ppu.load(Ordering::Acquire));
-        assert!(!bridge.outbox.lock().unwrap().is_empty());
+        assert!(!lock_recovered(&bridge.outbox).is_empty());
         // Space stepper with one space cycles and clears selection.
         drive(&bridge, DebugMessage::SpaceNext);
-        assert!(bridge.selected.lock().unwrap().is_none());
+        assert!(lock_recovered(&bridge.selected).is_none());
         drive(&bridge, DebugMessage::SpacePrev);
         // Memory Go resolves valid hex, rejects the rest.
         drive(&bridge, DebugMessage::MemInputChanged("100".to_string()));
         drive(&bridge, DebugMessage::MemGo);
-        assert_eq!(bridge.nav.lock().unwrap().mem_addr(), 0x100);
+        assert_eq!(lock_recovered(&bridge.nav).mem_addr(), 0x100);
         drive(&bridge, DebugMessage::MemInputChanged("zz".to_string()));
         drive(&bridge, DebugMessage::MemGo);
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("parse failed: zz".to_string())
         );
     }
@@ -1288,28 +1437,28 @@ mod tests {
         let bridge = full_bridge();
         // Line click pins the anchor and leaves follow mode.
         drive(&bridge, DebugMessage::DisLineClicked(0x300));
-        assert!(!bridge.nav.lock().unwrap().follow_pc());
+        assert!(!lock_recovered(&bridge.nav).follow_pc());
         drive(&bridge, DebugMessage::FollowTarget(0x308));
         // Back pops twice, then reports the empty stack.
         drive(&bridge, DebugMessage::DisBack);
         drive(&bridge, DebugMessage::DisBack);
         drive(&bridge, DebugMessage::DisBack);
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("back stack is empty".to_string())
         );
         // Go resolves valid hex, rejects the rest.
         drive(&bridge, DebugMessage::DisInputChanged("200".to_string()));
         drive(&bridge, DebugMessage::DisGo);
-        assert!(!bridge.nav.lock().unwrap().follow_pc());
+        assert!(!lock_recovered(&bridge.nav).follow_pc());
         drive(&bridge, DebugMessage::DisInputChanged("zz".to_string()));
         drive(&bridge, DebugMessage::DisGo);
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("parse failed: zz".to_string())
         );
         drive(&bridge, DebugMessage::FollowPcToggle);
-        assert!(bridge.nav.lock().unwrap().follow_pc());
+        assert!(lock_recovered(&bridge.nav).follow_pc());
     }
 
     #[test]
@@ -1320,52 +1469,48 @@ mod tests {
             DebugMessage::BookmarkInputChanged("start".to_string()),
         );
         drive(&bridge, DebugMessage::BookmarkAdd);
-        assert_eq!(bridge.bookmarks.lock().unwrap().len(), 1);
+        assert_eq!(lock_recovered(&bridge.bookmarks).len(), 1);
         // PC row anchors the bookmark while following.
-        assert_eq!(bridge.bookmarks.lock().unwrap()[0].0, 0x0800_27D2);
+        assert_eq!(lock_recovered(&bridge.bookmarks)[0].0, 0x0800_27D2);
         drive(&bridge, DebugMessage::BookmarkJump(0x0800_27D2));
         drive(&bridge, DebugMessage::BookmarkDelete(0x0800_27D2));
-        assert!(bridge.bookmarks.lock().unwrap().is_empty());
+        assert!(lock_recovered(&bridge.bookmarks).is_empty());
         // A full list refuses loudly.
-        bridge
-            .bookmarks
-            .lock()
-            .unwrap()
-            .extend((0..8).map(|i| (0x100 + i, format!("BM{i}"))));
+        lock_recovered(&bridge.bookmarks).extend((0..8).map(|i| (0x100 + i, format!("BM{i}"))));
         drive(&bridge, DebugMessage::BookmarkAdd);
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("bookmark list full".to_string())
         );
         // Watch follows the selection, then clears.
         drive(&bridge, DebugMessage::WatchSet);
-        assert_eq!(*bridge.watch.lock().unwrap(), Some(0x100));
+        assert_eq!(*lock_recovered(&bridge.watch), Some(0x100));
         drive(&bridge, DebugMessage::WatchClear);
-        assert!(bridge.watch.lock().unwrap().is_none());
-        *bridge.selected.lock().unwrap() = None;
+        assert!(lock_recovered(&bridge.watch).is_none());
+        *lock_recovered(&bridge.selected) = None;
         drive(&bridge, DebugMessage::WatchSet);
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("watch needs a selection".to_string())
         );
         // Freeze reads the top input, the edit input, then clears.
-        *bridge.selected.lock().unwrap() = Some((0x100, Some(0xAB)));
+        *lock_recovered(&bridge.selected) = Some((0x100, Some(0xAB)));
         drive(&bridge, DebugMessage::FreezeInputChanged("00".to_string()));
         drive(&bridge, DebugMessage::FreezeSet);
-        assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x100, 0x00)));
+        assert_eq!(*lock_recovered(&bridge.freeze), Some((0x100, 0x00)));
         drive(&bridge, DebugMessage::EditFreezeSet);
-        assert_eq!(*bridge.freeze.lock().unwrap(), Some((0x100, 0x42)));
+        assert_eq!(*lock_recovered(&bridge.freeze), Some((0x100, 0x42)));
         drive(&bridge, DebugMessage::FreezeClear);
-        assert!(bridge.freeze.lock().unwrap().is_none());
+        assert!(lock_recovered(&bridge.freeze).is_none());
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("freeze cleared".to_string())
         );
         // Rejections stay loud.
-        *bridge.selected.lock().unwrap() = None;
+        *lock_recovered(&bridge.selected) = None;
         drive(&bridge, DebugMessage::FreezeSet);
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("freeze needs a selected row and hex byte".to_string())
         );
     }
@@ -1376,37 +1521,37 @@ mod tests {
         // EditWrite stages SelectRow plus EditStage in one batch.
         drive(&bridge, DebugMessage::EditInputChanged("42".to_string()));
         drive(&bridge, DebugMessage::EditWrite);
-        assert_eq!(bridge.outbox.lock().unwrap().len(), 2);
+        assert_eq!(lock_recovered(&bridge.outbox).len(), 2);
         // Confirm consumes the transaction and clears the input.
         drive(&bridge, DebugMessage::ConfirmWrite);
-        assert!(bridge.edit_input.lock().unwrap().is_empty());
+        assert!(lock_recovered(&bridge.edit_input).is_empty());
         // Cancel clears the optimistic text.
         drive(&bridge, DebugMessage::CancelWrite);
-        assert!(bridge.display.lock().unwrap().pending.is_none());
+        assert!(lock_recovered(&bridge.display).pending.is_none());
         // Register pick then Set pushes one register write.
         drive(&bridge, DebugMessage::RegSelected("r0"));
-        assert_eq!(*bridge.reg_target.lock().unwrap(), Some("r0"));
+        assert_eq!(*lock_recovered(&bridge.reg_target), Some("r0"));
         drive(&bridge, DebugMessage::RegInputChanged("7".to_string()));
         drive(&bridge, DebugMessage::RegSet);
-        assert_eq!(bridge.outbox.lock().unwrap().len(), 5);
+        assert_eq!(lock_recovered(&bridge.outbox).len(), 5);
         // Rejections stay loud.
-        *bridge.reg_target.lock().unwrap() = None;
+        *lock_recovered(&bridge.reg_target) = None;
         drive(&bridge, DebugMessage::RegSet);
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("register write needs a register".to_string())
         );
-        *bridge.selected.lock().unwrap() = None;
+        *lock_recovered(&bridge.selected) = None;
         drive(&bridge, DebugMessage::EditWrite);
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("write needs a selection".to_string())
         );
         drive(&bridge, DebugMessage::RegInputChanged("zz".to_string()));
-        *bridge.reg_target.lock().unwrap() = Some("r0");
+        *lock_recovered(&bridge.reg_target) = Some("r0");
         drive(&bridge, DebugMessage::RegSet);
         assert_eq!(
-            bridge.display.lock().unwrap().status,
+            lock_recovered(&bridge.display).status,
             StatusMessage::Local("parse failed: zz".to_string())
         );
     }
@@ -1415,8 +1560,8 @@ mod tests {
     fn view_builders_construct_every_section() {
         let bridge = full_bridge();
         let language = AppLanguage::English;
-        let display = bridge.display.lock().unwrap().clone_without_images();
-        let selected = *bridge.selected.lock().unwrap();
+        let display = lock_recovered(&bridge.display).clone_without_images();
+        let selected = *lock_recovered(&bridge.selected);
         let _ = view_toolbar(true, language);
         let _ = view_toolbar(false, language);
         let _ = view_space_row("Memory", language);
@@ -1443,28 +1588,12 @@ mod tests {
         let _ = view_dis_col(&[], None, language);
         let _ = view_dis_col(&display.disasm_lines, None, language);
         let _ = view_dis_col(&display.disasm_lines, Some(0x0800_27D2E), language);
-        let _ = view_right_col(
-            StatusMessage::Paused,
-            view_regs_section(&display.regs, None, "", language),
-            Some(0x100),
-            Some(0xAB),
-            Some((0x100, 0xFF)),
-            "FF",
-            "tag",
-            &[(0x200, "BM1".to_string())],
-            language,
-        );
-        let _ = view_right_col(
-            StatusMessage::Empty,
-            view_regs_section(&[], None, "", language),
-            None,
-            None,
-            None,
-            "",
-            "",
-            &[],
-            language,
-        );
+        let _ = view_watch_row(Some(0x100), Some(0xAB), language);
+        let _ = view_freeze_row(Some((0x100, 0xFF)), "FF", language);
+        let _ = view_bookmark_section("tag", &[(0x200, "BM1".to_string())], language);
+        let _ = view_watch_row(None, None, language);
+        let _ = view_freeze_row(None, "", language);
+        let _ = view_bookmark_section("", &[], language);
         // Disassembly lines exercise the target follow button.
         assert_eq!(display.disasm_lines.len(), 2);
     }
@@ -1585,7 +1714,10 @@ mod tests {
         shell.relayout(iced::Size::new(900.0, 650.0), &mut backend);
         let theme = iced::Theme::Light;
         let style = <iced::Theme as iced::theme::Base>::base(&theme);
-        shell.ui_mut().draw(
+        let Some(ui) = shell.ui_mut() else {
+            panic!("UiShell unavailable after relayout in test");
+        };
+        ui.draw(
             &mut backend,
             &theme,
             &iced::advanced::renderer::Style {

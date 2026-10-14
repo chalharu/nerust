@@ -9,10 +9,10 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(ctx: FrontendContext) -> Self {
-        Self {
-            runtime: Box::new(WindowRuntime::new(ctx)),
-        }
+    pub fn new(ctx: FrontendContext) -> Result<Self, String> {
+        Ok(Self {
+            runtime: Box::new(WindowRuntime::new(ctx)?),
+        })
     }
 
     pub fn load_path(&mut self, path: &Path) -> bool {

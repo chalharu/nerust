@@ -40,7 +40,7 @@ impl ContentArea {
         // already target it; layout still arrives with the first map
         // and the per-frame size check converges then.
         area.realize();
-        paint_window_background(gtk_window, &area);
+        paint_window_background(gtk_window);
         Self { area }
     }
 
@@ -60,8 +60,10 @@ impl ContentArea {
     }
 }
 
-/// XID of a `GdkWindow`, or `None` outside X11. The downcast (not a
-/// backend sniff) decides: Wayland windows simply fail it.
+/// XID of a `GdkWindow`, or `None` on Wayland. The downcast (not a
+/// backend sniff) decides: non-X11 windows simply fail it. This file
+/// only builds on Linux/BSD (see `lib.rs`), so macOS/Windows are out
+/// of scope by construction.
 fn x11_xid(gwin: &gtk::gdk::Window) -> Option<u64> {
     use gtk::glib::object::Cast;
     let xwin: gdkx11::X11Window = gwin.clone().downcast().ok()?;
@@ -71,7 +73,7 @@ fn x11_xid(gwin: &gtk::gdk::Window) -> Option<u64> {
 /// Fill the toplevel background with the theme rendering so the
 /// menubar strip never shows uninitialized pixels. `Proceed` keeps
 /// children painting; the content child composites above.
-fn paint_window_background(gtk_window: &gtk::ApplicationWindow, _area: &gtk::EventBox) {
+fn paint_window_background(gtk_window: &gtk::ApplicationWindow) {
     gtk_window.connect_draw(|window, cr| {
         let context = window.style_context();
         let alloc = window.allocation();
@@ -85,11 +87,10 @@ fn paint_window_background(gtk_window: &gtk::ApplicationWindow, _area: &gtk::Eve
         );
         gtk::glib::Propagation::Proceed
     });
-    // Startup draws run pre-map (both windows are already mapped by
-    // the time we connect) and an unobscured window gets no
-    // follow-up expose, so re-queue once from the main loop: by then
-    // mapping has completed and the paint sticks. Later exposes and
-    // resizes maintain it from there.
+    // The draw handler connects after mapping, so an unobscured
+    // window gets no follow-up expose; re-queue once from the main
+    // loop and the paint sticks. Later exposes and resizes
+    // maintain it from there.
     let pending = gtk_window.clone();
     gtk::glib::timeout_add_local(std::time::Duration::from_millis(300), move || {
         pending.queue_draw();

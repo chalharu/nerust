@@ -33,7 +33,19 @@ use nerust_gui_shell::context::FrontendContext;
 use nerust_run_options::RunOptions;
 
 pub fn run(ctx: FrontendContext, options: RunOptions) {
-    let mut window = app::Window::new(ctx);
+    let mut window = match app::Window::new(ctx) {
+        Ok(window) => window,
+        Err(detail) => {
+            log::error!("failed to initialise tao frontend: {detail}");
+            rfd::MessageDialog::new()
+                .set_title("nerust")
+                .set_description(&detail)
+                .set_level(rfd::MessageLevel::Error)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+            return;
+        }
+    };
     if let Some(path) = options.rom_path {
         let _ = window.load_path(&path);
     }
