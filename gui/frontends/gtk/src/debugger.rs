@@ -573,7 +573,14 @@ impl DebuggerWindowCore {
         });
         window.present();
         #[cfg(target_os = "macos")]
-        crate::gdk_raw::disallow_window_tabs(&window);
+        {
+            // Belt-and-braces with the call below: the surface may only
+            // exist after first show on some systems.
+            window.connect_realize(|window| {
+                crate::gdk_raw::disallow_window_tabs(window);
+            });
+            crate::gdk_raw::disallow_window_tabs(&window);
+        }
         result
     }
 

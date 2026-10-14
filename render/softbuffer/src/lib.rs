@@ -577,9 +577,12 @@ impl GpuRenderer for SoftbufferRenderer {
 
         match frame.format() {
             PixelFormat::Rgba => {
+                // Stride is bytes; the indexer below counts pixels
+                // (the closure scales by 4), so convert once here.
+                // PaletteIndex is 1bpp and needs no conversion.
                 Self::rendering(
                     dst,
-                    src_stride,
+                    src_stride / 4,
                     src_h,
                     dst_w,
                     dst_h,
@@ -694,5 +697,53 @@ mod tests {
         let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
         frame.resize(256, 240);
         assert_eq!(renderer.render(&frame), RenderResult::Skipped);
+    }
+
+    #[test]
+    fn rgba_render_survives_byte_stride() {
+        // Regression: the Rgba indexer counts pixels while `stride()`
+        // is bytes; a 256-byte-aligned stride once overran the source
+        // and panicked the UI thread (GBA-sized Rgba frames).
+        let mut lut = LutEntry::new();
+        lut.resize_lut(
+            SurfaceSize {
+                width: 4,
+                height: 4,
+            },
+            1.0,
+            SurfaceSize {
+                width: 8,
+                height: 8,
+            },
+        );
+        let stride = 256usize;
+        let mut src = vec![0u8; stride * 4];
+        for y in 0..4 {
+            for x in 0..4 {
+                let o = y * stride + x * 4;
+                src[o..o + 4].copy_from_slice(&[0x10, 0x20, 0x30, 0xFF]);
+            }
+        }
+        let mut resize_buffer = vec![0u32; 8 * 4];
+        let mut dst = vec![0u32; 8 * 8];
+        SoftbufferRenderer::rendering(
+            &mut dst,
+            stride / 4,
+            4,
+            8,
+            8,
+            |i| src[i * 4..i * 4 + 4].try_into().unwrap(),
+            &lut,
+            &mut resize_buffer,
+        );
+        // Uniform input stays uniform in the interior: bilinear weights
+        // sum to one (edges may go black where taps fall outside).
+        let mut center = Vec::new();
+        for y in 2..6 {
+            for x in 2..6 {
+                center.push(dst[y * 8 + x]);
+            }
+        }
+        assert!(!center.is_empty() && center.iter().all(|&p| p == center[0] && p != 0));
     }
 }

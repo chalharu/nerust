@@ -257,6 +257,13 @@ impl WindowRuntime {
                     // main window losing focus is cancelled — the user
                     // moved between our windows, not away.
                     self.host.cancel_pending_auto_pause();
+                    // Mirror the main window: a system-paused session
+                    // resumes when the user comes back. Explicit pauses
+                    // carry no flag and stay paused.
+                    if self.host.auto_paused() {
+                        self.host.resume_session();
+                        self.host.clear_auto_paused();
+                    }
                 }
                 if matches!(event, WindowEvent::Focused(false)) {
                     // Leaving for anywhere (including out of the app):
@@ -322,8 +329,14 @@ impl WindowRuntime {
                 }
                 // Same-app focus arrival cancels a pending auto-pause;
                 // leaving anywhere arms it (see the debugger arm).
+                // A system-paused session resumes like on main focus;
+                // explicit pauses stay paused.
                 if matches!(event, WindowEvent::Focused(true)) {
                     self.host.cancel_pending_auto_pause();
+                    if self.host.auto_paused() {
+                        self.host.resume_session();
+                        self.host.clear_auto_paused();
+                    }
                 }
                 if matches!(event, WindowEvent::Focused(false)) {
                     self.host.arm_pending_auto_pause();
