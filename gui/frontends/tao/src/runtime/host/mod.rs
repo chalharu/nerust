@@ -55,15 +55,15 @@ pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
     /// Window creation failure: the loop exits gracefully.
     fatal_error: Option<String>,
-    pub(crate) session: SessionHandle,
+    pub(super) session: SessionHandle,
     ctx: FrontendContext,
     app_menu: AppMenu,
     shell: NativeShellState,
-    pub(crate) settings_window: Option<crate::aux::settings::window::SettingsWindowHandle>,
+    pub(super) settings_window: Option<crate::aux::settings::window::SettingsWindowHandle>,
     settings_open: bool,
     resume_after_settings: bool,
     pending_fullscreen_sync: Option<bool>,
-    pub(crate) active: bool,
+    pub(super) active: bool,
     auto_paused: bool,
     /// Deferred auto-pause: armed on main blur, cancelled when our own
     /// window takes focus in the same burst, executed at
@@ -71,17 +71,17 @@ pub(crate) struct HostState {
     pending_auto_pause: bool,
     /// Pause state at the last completed debug drain, for focus
     /// coalescing below. `None` before the first drain.
-    pub(crate) last_drain_paused: Option<bool>,
+    pub(super) last_drain_paused: Option<bool>,
     /// In-flight async debug drain: `run_debug_drain` starts it, the
     /// event loop polls it (`poll_debug_flight`). A newer batch
     /// supersedes the stored one; orphaned replies are ignored.
-    pub(crate) drain_flight: Option<DrainFlight>,
+    pub(super) drain_flight: Option<DrainFlight>,
     /// In-flight async live-images fetch: the live tick starts it,
     /// the event loop polls it. At most one; a newer tick supersedes.
-    pub(crate) live_flight: Option<LiveImagesFlight>,
+    pub(super) live_flight: Option<LiveImagesFlight>,
     /// Aux-window state (debugger + PPU viewer). Orchestration lives
     /// here; ownership lives there.
-    pub(crate) debug: DebugWindows,
+    pub(super) debug: DebugWindows,
     /// Linux render target below the muda menubar (`None` elsewhere).
     /// When it yields no native target (Wayland, pre-layout) the
     /// toplevel fallback applies and the menu stays occluded.

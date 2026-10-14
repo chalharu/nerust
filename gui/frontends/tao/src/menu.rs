@@ -203,8 +203,10 @@ pub(crate) mod imp {
                             (event.id() == id).then_some(MenuCommand::Session(*command))
                         })
                 };
-                if let Some(command) = command {
-                    let _ = proxy.send_event(UserEvent::Menu(command));
+                if let Some(command) = command
+                    && let Err(error) = proxy.send_event(UserEvent::Menu(command))
+                {
+                    log::debug!("menu event dropped after loop exit: {error}");
                 }
             }));
 

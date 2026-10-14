@@ -36,8 +36,10 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
             return;
         }
     };
-    if let Some(path) = options.rom_path {
-        let _ = window.load_path(&path);
+    if let Some(path) = options.rom_path
+        && !window.load_path(&path)
+    {
+        log::info!("starting without a ROM (bad --rom path)");
     }
     window.run();
 }
