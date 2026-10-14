@@ -29,7 +29,7 @@ use tao::{
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 
-use crate::{convert::default_font, runtime::UserEvent};
+use crate::{convert::default_font, event::UserEvent};
 
 /// Light theme for OS light-theme nativeness. Every auxiliary
 /// program shares it (the flagged duplication was five copies).

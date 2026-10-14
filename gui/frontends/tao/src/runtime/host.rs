@@ -32,7 +32,7 @@ use tao::{
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
 
-use super::UserEvent;
+use crate::event::UserEvent;
 use crate::menu::{MenuCommand, imp::AppMenu};
 
 use super::aux::DebugWindows;

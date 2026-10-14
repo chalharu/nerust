@@ -201,7 +201,7 @@ impl SettingsWindowHandle {
         snapshot: SettingsSnapshot,
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
-        event_loop: &EventLoopWindowTarget<crate::runtime::UserEvent>,
+        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
         let pending_apply = Arc::new(Mutex::new(None));

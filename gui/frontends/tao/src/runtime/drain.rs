@@ -11,8 +11,8 @@ use nerust_gui_shell::{
 };
 use nerust_gui_viewmodel::debugger as debug_vm;
 
-use super::UserEvent;
 use super::host::HostState;
+use crate::event::UserEvent;
 
 impl HostState {
     pub(crate) fn take_debug_open_request(&mut self) -> bool {

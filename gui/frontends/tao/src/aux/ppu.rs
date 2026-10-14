@@ -9,7 +9,7 @@ use iced_winit::program::{self, Program};
 
 use tao::event_loop::EventLoopWindowTarget;
 
-use super::debug::DebugBridge;
+use super::bridge::DebugBridge;
 use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 
 /// Initial PPU viewer window size (verified Xvfb fit).
@@ -199,7 +199,7 @@ pub(crate) struct PpuWindowHandle {
 impl PpuWindowHandle {
     pub(crate) fn new(
         bridge: Arc<DebugBridge>,
-        event_loop: &EventLoopWindowTarget<crate::runtime::UserEvent>,
+        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
         use nerust_settings_core::i18n::{UiText, text as ui_text};

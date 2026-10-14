@@ -1,9 +1,10 @@
 //! tao frontend: native window + iced (tiny-skia) UI.
 //!
 //! Module map (inner -> outer):
+//! - [`event`]: event-loop user events (leaf: menu and runtime share it).
 //! - [`convert`]: tao<->iced value conversions (keys, modifiers, events).
 //! - [`menu`]: native application menu (muda) and its sync snapshot.
-//! - [`aux`]: iced-based auxiliary windows (debugger, PPU viewer,
+//! - [`aux`]: iced-based auxiliary windows (bridge, debugger, PPU viewer,
 //!   settings) on the generic [`aux::shell`] host.
 //! - [`runtime`]: tao event loop ([`runtime::WindowRuntime`]), the main
 //!   window ([`runtime::HostState`]), and the debug drain.
@@ -14,6 +15,7 @@
 
 mod app;
 mod convert;
+mod event;
 #[cfg(any(
     target_os = "linux",
     target_os = "dragonfly",
