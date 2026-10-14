@@ -447,6 +447,7 @@ impl SettingsAppState {
         }
 
         let buttons = row![
+            iced::widget::Space::new().width(Length::Fill),
             button(ui_text(language, UiText::Cancel)).on_press(Message::Cancel),
             button(ui_text(language, UiText::Ok))
                 .on_press_maybe(can_submit.then_some(Message::Submit)),
@@ -752,7 +753,9 @@ fn labeled_pick_list<'a, T: Clone + PartialEq + Eq + 'static>(
 ) -> El<'a> {
     row![
         text(label.to_string()).width(Length::Fixed(220.0)),
-        pick_list(options, selected, on_select).width(Length::Shrink)
+        // Stretch to the pane: Shrink rows strand the fixed window
+        // (General shows two short rows in a 960px frame otherwise).
+        pick_list(options, selected, on_select).width(Length::Fill)
     ]
     .spacing(12)
     .align_y(Alignment::Center)
