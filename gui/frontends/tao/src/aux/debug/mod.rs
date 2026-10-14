@@ -398,3 +398,11 @@ impl DebugWindowHandle {
         self.shell.window.request_redraw();
     }
 }
+
+impl crate::aux::shell::AuxWindow for DebugWindowHandle {
+    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
+        self.shell.handle_common_event(&event);
+        self.handle_tao_event(event);
+        self.shell.window.request_redraw();
+    }
+}

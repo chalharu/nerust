@@ -128,14 +128,6 @@ impl SettingsWindowHandle {
         lock_recovered(&self.pending_apply).take()
     }
 
-    pub(crate) fn resize(&mut self, width: u32, height: u32) {
-        self.shell.resize(width, height);
-    }
-
-    pub(crate) fn set_scale_factor(&mut self, sf: f32) {
-        self.shell.set_scale_factor(sf);
-    }
-
     pub(crate) fn set_modifiers(&mut self, modifiers: TaoModifiers) {
         self.shell.set_modifiers(modifiers);
     }
@@ -156,6 +148,15 @@ impl SettingsWindowHandle {
         ) {
             self.handle_event(iced_event);
         }
+    }
+}
+
+impl crate::aux::shell::AuxWindow for SettingsWindowHandle {
+    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
+        self.shell.handle_common_event(&event);
+        self.update_modifiers_from_tao_event(&event);
+        self.handle_tao_event(event);
+        self.shell.window.request_redraw();
     }
 }
 #[cfg(test)]
