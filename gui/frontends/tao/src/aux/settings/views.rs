@@ -197,7 +197,6 @@ impl SettingsAppState {
     }
 
     fn system_page(&self) -> El<'_> {
-        let _language = self.language();
         let system_tab_index = self.system_tab_index;
         let Some(system_tab_index) = system_tab_index else {
             return column![text("No systems available").size(14)].into();

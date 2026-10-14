@@ -15,21 +15,45 @@ use crate::aux::bridge::{DebugBridge, lock_recovered};
 /// Bookmark cap (window-local, no file yet).
 const BOOKMARK_CAP: usize = 8;
 
-/// First handler wins; the chain only routes.
+/// First handler wins; the chain only routes. Messages travel by
+/// value so payloads move without cloning; an unhandled variant is a
+/// programmer error (every family ends in `Err`), surfaced as a
+/// warning instead of a silent drop.
 pub(super) fn update_message(bridge: &DebugBridge, message: DebugMessage) {
-    let _handled = update_toolbar(bridge, &message)
-        || update_memory(bridge, &message)
-        || update_disasm(bridge, &message)
-        || update_bookmarks(bridge, &message)
-        || update_watch_freeze(bridge, &message)
-        || update_staged_write(bridge, &message)
-        || update_registers(bridge, &message);
+    let message = match update_toolbar(bridge, message) {
+        Ok(()) => return,
+        Err(message) => message,
+    };
+    let message = match update_memory(bridge, message) {
+        Ok(()) => return,
+        Err(message) => message,
+    };
+    let message = match update_disasm(bridge, message) {
+        Ok(()) => return,
+        Err(message) => message,
+    };
+    let message = match update_bookmarks(bridge, message) {
+        Ok(()) => return,
+        Err(message) => message,
+    };
+    let message = match update_watch_freeze(bridge, message) {
+        Ok(()) => return,
+        Err(message) => message,
+    };
+    let message = match update_staged_write(bridge, message) {
+        Ok(()) => return,
+        Err(message) => message,
+    };
+    let Err(unhandled) = update_registers(bridge, message) else {
+        return;
+    };
+    log::warn!("unhandled debugger message: {unhandled:?}");
 }
 
 /// Message dispatch, one family per function so `update` stays a
 /// flat router. Each returns whether it handled the message; bodies
 /// are moved verbatim from the old monolithic match.
-fn update_toolbar(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+fn update_toolbar(bridge: &DebugBridge, message: DebugMessage) -> Result<(), DebugMessage> {
     match message {
         DebugMessage::RefreshPressed => bridge.push(DebugAction::Refresh),
         DebugMessage::SpacePrev => cycle_space(bridge, -1),
@@ -41,31 +65,31 @@ fn update_toolbar(bridge: &DebugBridge, message: &DebugMessage) -> bool {
             bridge.open_ppu.store(true, Ordering::Release);
             bridge.push(DebugAction::Refresh);
         }
-        _ => return false,
+        _ => return Err(message),
     }
-    true
+    Ok(())
 }
 
-fn update_memory(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+fn update_memory(bridge: &DebugBridge, message: DebugMessage) -> Result<(), DebugMessage> {
     match message {
         DebugMessage::MemInputChanged(text) => {
-            lock_recovered(&bridge.nav).set_mem_input(text.clone());
+            lock_recovered(&bridge.nav).set_mem_input(text);
             bridge.view_invalidated.store(true, Ordering::Release);
         }
         DebugMessage::MemGo => mem_go(bridge),
-        DebugMessage::MemPage(delta) => mem_page(bridge, *delta),
+        DebugMessage::MemPage(delta) => mem_page(bridge, delta),
         DebugMessage::RowSelected(addr) => {
-            bridge.push(DebugAction::SelectRow(*addr));
+            bridge.push(DebugAction::SelectRow(addr));
         }
-        _ => return false,
+        _ => return Err(message),
     }
-    true
+    Ok(())
 }
 
-fn update_disasm(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+fn update_disasm(bridge: &DebugBridge, message: DebugMessage) -> Result<(), DebugMessage> {
     match message {
         DebugMessage::DisInputChanged(text) => {
-            lock_recovered(&bridge.nav).set_dis_input(text.clone());
+            lock_recovered(&bridge.nav).set_dis_input(text);
             bridge.view_invalidated.store(true, Ordering::Release);
         }
         DebugMessage::DisGo => dis_go(bridge),
@@ -73,32 +97,32 @@ fn update_disasm(bridge: &DebugBridge, message: &DebugMessage) -> bool {
             lock_recovered(&bridge.nav).follow();
             bridge.push(DebugAction::Refresh);
         }
-        DebugMessage::DisLineClicked(addr) => navigate_to(bridge, *addr),
-        DebugMessage::FollowTarget(addr) => navigate_to(bridge, *addr),
+        DebugMessage::DisLineClicked(addr) => navigate_to(bridge, addr),
+        DebugMessage::FollowTarget(addr) => navigate_to(bridge, addr),
         DebugMessage::DisBack => dis_back(bridge),
-        _ => return false,
+        _ => return Err(message),
     }
-    true
+    Ok(())
 }
 
-fn update_bookmarks(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+fn update_bookmarks(bridge: &DebugBridge, message: DebugMessage) -> Result<(), DebugMessage> {
     match message {
         DebugMessage::BookmarkInputChanged(text) => {
-            *lock_recovered(&bridge.bm_input) = text.clone();
+            *lock_recovered(&bridge.bm_input) = text;
             bridge.view_invalidated.store(true, Ordering::Release);
         }
         DebugMessage::BookmarkAdd => bookmark_add(bridge),
-        DebugMessage::BookmarkJump(addr) => navigate_to(bridge, *addr),
+        DebugMessage::BookmarkJump(addr) => navigate_to(bridge, addr),
         DebugMessage::BookmarkDelete(addr) => {
-            lock_recovered(&bridge.bookmarks).retain(|(a, _)| *a != *addr);
+            lock_recovered(&bridge.bookmarks).retain(|(a, _)| *a != addr);
             bridge.view_invalidated.store(true, Ordering::Release);
         }
-        _ => return false,
+        _ => return Err(message),
     }
-    true
+    Ok(())
 }
 
-fn update_watch_freeze(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+fn update_watch_freeze(bridge: &DebugBridge, message: DebugMessage) -> Result<(), DebugMessage> {
     match message {
         DebugMessage::WatchSet => watch_set(bridge),
         DebugMessage::WatchClear => {
@@ -107,7 +131,7 @@ fn update_watch_freeze(bridge: &DebugBridge, message: &DebugMessage) -> bool {
             bridge.view_invalidated.store(true, Ordering::Release);
         }
         DebugMessage::FreezeInputChanged(text) => {
-            *lock_recovered(&bridge.freeze_input) = text.clone();
+            *lock_recovered(&bridge.freeze_input) = text;
             bridge.view_invalidated.store(true, Ordering::Release);
         }
         DebugMessage::FreezeSet => {
@@ -122,15 +146,15 @@ fn update_watch_freeze(bridge: &DebugBridge, message: &DebugMessage) -> bool {
             *lock_recovered(&bridge.freeze) = None;
             bridge.set_status(ui_text(bridge.language, UiText::FreezeCleared).to_string());
         }
-        _ => return false,
+        _ => return Err(message),
     }
-    true
+    Ok(())
 }
 
-fn update_staged_write(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+fn update_staged_write(bridge: &DebugBridge, message: DebugMessage) -> Result<(), DebugMessage> {
     match message {
         DebugMessage::EditInputChanged(text) => {
-            *lock_recovered(&bridge.edit_input) = text.clone();
+            *lock_recovered(&bridge.edit_input) = text;
             bridge.view_invalidated.store(true, Ordering::Release);
         }
         DebugMessage::EditWrite => edit_write(bridge),
@@ -143,25 +167,25 @@ fn update_staged_write(bridge: &DebugBridge, message: &DebugMessage) -> bool {
             bridge.push(DebugAction::EditCancel);
             lock_recovered(&bridge.display).pending = None;
         }
-        _ => return false,
+        _ => return Err(message),
     }
-    true
+    Ok(())
 }
 
-fn update_registers(bridge: &DebugBridge, message: &DebugMessage) -> bool {
+fn update_registers(bridge: &DebugBridge, message: DebugMessage) -> Result<(), DebugMessage> {
     match message {
         DebugMessage::RegSelected(name) => {
-            *lock_recovered(&bridge.reg_target) = Some(*name);
+            *lock_recovered(&bridge.reg_target) = Some(name);
             bridge.view_invalidated.store(true, Ordering::Release);
         }
         DebugMessage::RegInputChanged(text) => {
-            *lock_recovered(&bridge.reg_input) = text.clone();
+            *lock_recovered(&bridge.reg_input) = text;
             bridge.view_invalidated.store(true, Ordering::Release);
         }
         DebugMessage::RegSet => reg_set(bridge),
-        _ => return false,
+        _ => return Err(message),
     }
-    true
+    Ok(())
 }
 
 /// Shared freeze staging: selection plus a hex byte. The top

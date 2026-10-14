@@ -2,7 +2,10 @@
 //! tile hover info. Display-only content scrolls; scaled pictures
 //! derive once per drain, hover clones cached handles.
 
-use std::sync::{Arc, Mutex, atomic::Ordering};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use iced::{Length, Point, Task};
 use iced_winit::program::{self, Program};
@@ -217,7 +220,11 @@ impl PpuWindowHandle {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let shell = crate::aux::shell::AuxShell::assemble(scaffold, instance);
+        let shell = crate::aux::shell::AuxShell::assemble(
+            scaffold,
+            instance,
+            Arc::new(AtomicBool::new(false)),
+        );
         // The viewer opens on demand from the debugger toolbar: take
         // focus so keyboard and wheel go straight to the tiles.
         shell.window.set_focus();

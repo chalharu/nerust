@@ -19,9 +19,13 @@ pub(super) fn disasm_marker(is_pc: bool, is_pinned: bool) -> &'static str {
     if !is_pc && is_pinned { "@ " } else { "  " }
 }
 
-/// Owned view snapshot: one rebuild sees one instant. Built by
-/// `capture_view` (the only place that locks the bridge); `view`
-/// destructures it into plain locals and assembles widgets.
+/// Owned view snapshot: one rebuild sees one consistent read.
+/// Built by `capture_view` (the only place that locks the bridge);
+/// `view` destructures it into plain locals and assembles widgets.
+/// Locks are taken sequentially, so a concurrent drain could land
+/// between two of them; in practice the drain only runs on explicit
+/// user batches, and the snapshot is still strictly more coherent
+/// than per-widget locking.
 pub(super) struct ViewSnapshot {
     pub(super) language: AppLanguage,
     pub(super) mem_input: String,

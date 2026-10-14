@@ -62,8 +62,7 @@ impl SettingsWindowHandle {
             scaffold.scale_factor,
             scaffold.bounds,
         );
-        let mut shell = AuxShell::assemble(scaffold, instance);
-        shell.should_close = should_close;
+        let shell = AuxShell::assemble(scaffold, instance, should_close);
         Some(Self {
             shell,
             view_invalidated,

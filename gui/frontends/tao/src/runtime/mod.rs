@@ -124,7 +124,10 @@ impl WindowRuntime {
 
     pub(crate) fn run(mut self) {
         self.host.resume_session();
-        let event_loop = self.event_loop.take().unwrap();
+        let event_loop = self
+            .event_loop
+            .take()
+            .expect("WindowRuntime::run() called more than once");
 
         // Live-follow pulse: nudges the loop each interval so the PPU
         // viewer tracks a running core with no input events. Throttled;
