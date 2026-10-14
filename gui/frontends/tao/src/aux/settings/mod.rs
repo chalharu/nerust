@@ -2,4 +2,5 @@
 //! views), [`window`] is the tao handle hosting it on [`crate::aux::shell`].
 
 pub(crate) mod program;
+pub(crate) mod views;
 pub(crate) mod window;
