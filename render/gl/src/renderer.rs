@@ -26,6 +26,8 @@ pub struct GlRenderer {
     gl_surface: Option<glutin::surface::Surface<WindowSurface>>,
     expected_frame_len: usize,
     size: SurfaceSize,
+    /// Scratch for stride-padded frames (see `render`).
+    tight: Vec<u8>,
 }
 
 impl std::fmt::Debug for GlRenderer {
@@ -178,10 +180,39 @@ impl GpuRenderer for GlRenderer {
         if let Some(p) = frame_buffer.palette_as_rgba8() {
             view.update_palette_texture(&p);
         }
-        let bytes = frame_buffer.as_ref();
-        let bytes = bytes
-            .get(..self.expected_frame_len)
-            .expect("frame buffer too small");
+        // The texture upload assumes tight packing, but frame rows may
+        // carry stride padding (Rgba aligns to 256 bytes). Repack row by
+        // row into the scratch buffer; short data refuses instead of
+        // panicking the UI thread.
+        let fs = match self.render_profile.frame_format {
+            VideoFrameFormat::Rgba => self.render_profile.logical_size,
+            VideoFrameFormat::Palette => self.render_profile.source_logical_size,
+        };
+        let row_bytes = fs.width * self.render_profile.frame_format.bytes_per_pixel();
+        let stride = frame_buffer.stride();
+        let data = frame_buffer.as_ref();
+        let bytes = if stride == row_bytes {
+            match data.get(..self.expected_frame_len) {
+                Some(bytes) => bytes,
+                None => {
+                    log::warn!("GlRenderer: frame buffer too small");
+                    return RenderResult::Skipped;
+                }
+            }
+        } else {
+            self.tight.clear();
+            self.tight.reserve(self.expected_frame_len);
+            for row in 0..fs.height {
+                match data.get(row * stride..row * stride + row_bytes) {
+                    Some(line) => self.tight.extend_from_slice(line),
+                    None => {
+                        log::warn!("GlRenderer: frame buffer too small");
+                        return RenderResult::Skipped;
+                    }
+                }
+            }
+            &self.tight
+        };
         view.on_update(bytes);
         if let Err(e) = surf.swap_buffers(ctx) {
             log::warn!("GlRenderer: swap_buffers failed: {e}");
@@ -277,6 +308,7 @@ impl GpuFactory for GlFactory {
             gl_surface: None,
             expected_frame_len: 0,
             size: SurfaceSize::new(0, 0),
+            tight: Vec::new(),
         }))
     }
 }

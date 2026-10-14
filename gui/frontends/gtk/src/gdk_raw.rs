@@ -62,6 +62,18 @@ pub(crate) fn disallow_window_tabs(window: &gtk::ApplicationWindow) {
     }
 }
 
+/// Guard an aux window against macOS tabbing at every stage: hook
+/// `realize` (fires when the native surface is created, possibly
+/// before first show) and try immediately (covers already-realized).
+/// Both paths are idempotent.
+#[cfg(target_os = "macos")]
+pub(crate) fn guard_window_tabs(window: &gtk::ApplicationWindow) {
+    window.connect_realize(|window| {
+        disallow_window_tabs(window);
+    });
+    disallow_window_tabs(window);
+}
+
 /// Extract handles and call `f` — GDK owns the objects, no retain needed.
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn with_raw_handles<R>(

@@ -73,14 +73,9 @@ impl PpuWindowCore {
             last_panels: Vec::new(),
         }));
         result.borrow_mut().sync(&images, images_gen, &panels);
-        window.present();
         #[cfg(target_os = "macos")]
-        {
-            window.connect_realize(|window| {
-                crate::gdk_raw::disallow_window_tabs(window);
-            });
-            crate::gdk_raw::disallow_window_tabs(&window);
-        }
+        crate::gdk_raw::guard_window_tabs(&window);
+        window.present();
         result
     }
 
