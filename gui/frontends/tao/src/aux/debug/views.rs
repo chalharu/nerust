@@ -19,13 +19,9 @@ pub(super) fn disasm_marker(is_pc: bool, is_pinned: bool) -> &'static str {
     if !is_pc && is_pinned { "@ " } else { "  " }
 }
 
-/// Owned view snapshot: one rebuild sees one consistent read.
-/// Built by `capture_view` (the only place that locks the bridge);
-/// `view` destructures it into plain locals and assembles widgets.
-/// Locks are taken sequentially, so a concurrent drain could land
-/// between two of them; in practice the drain only runs on explicit
-/// user batches, and the snapshot is still strictly more coherent
-/// than per-widget locking.
+/// Owned per-rebuild snapshot: widgets read locals, never the live
+/// bridge. Locks are sequential, so it is one consistent read in
+/// practice, strictly more coherent than per-widget locking.
 pub(super) struct ViewSnapshot {
     pub(super) language: AppLanguage,
     pub(super) mem_input: String,
@@ -128,13 +124,8 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
 }
 
 /// One pane builders: each renders a single debugger section from
-/// plain locals. `view` stays a capture-and-assemble pass.
-///
-/// A single coherent snapshot per rebuild: widgets read the struct,
-/// never the live bridge, so one rebuild sees one instant.
-///
-/// The toolbar carries a single Pause/Resume toggle (not two
-/// buttons): the label follows the drained pause state.
+/// plain locals (`view` stays a capture-and-assemble pass). The toolbar
+/// carries a single Pause/Resume toggle following the drained pause.
 pub(super) fn view_toolbar(
     paused: bool,
     language: AppLanguage,
@@ -279,11 +270,9 @@ pub(super) fn view_dump_col(
     scrollable(dump_col).height(Length::Fill).into()
 }
 
-/// Registers flow into two clickable columns so tall lists (GBA:
-/// 17) cost half the height. Pure text split, no system branches.
-/// Row click picks the write target (highlighted); the Set row
-/// below writes the parsed hex value through the drain. Lines are
-/// formatted here from the structured snapshot, never scraped.
+/// Registers flow into two clickable columns so tall lists cost
+/// half the height. Row click picks the write target; the Set row
+/// writes the parsed hex value through the drain.
 pub(super) fn view_regs_section(
     regs: &[(&'static str, u64)],
     reg_target: Option<&'static str>,

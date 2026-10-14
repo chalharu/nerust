@@ -1,8 +1,6 @@
 //! Shared iced-on-tao auxiliary-window shell: the debugger and PPU
-//! viewer run the same tiny-skia lifecycle (builder, compositor,
-//! UI instance, event pump, render) over different programs.
-//! Splitting it out keeps the two windows' twins from drifting and
-//! keeps the pattern in one place for the next auxiliary window.
+//! viewer run the same tiny-skia lifecycle over different programs,
+//! keeping the twins from drifting.
 
 use std::sync::{
     Arc,
@@ -309,9 +307,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> Drop for UiShell<P> {
 
 /// Window-system half shared by the debugger and PPU viewer
 /// (twins by design): native window, viewport, input state, renderer,
-/// and UI shell. The program-specific halves (bridge, messages,
-/// view) stay in the handles. One home for resize/relayout/scale/
-/// render/event-feed so the twins can never drift apart.
+/// and UI shell. Program-specific halves stay in the handles.
 pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     pub(crate) window: Arc<TaoWindow>,
     pub(crate) window_id: iced::window::Id,
@@ -329,11 +325,9 @@ pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>>
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
-    /// Assemble from a scaffold plus a program instance: builds the
-    /// UI shell, wraps the renderer, and paints the first frame.
-    /// Programs and bridges stay with the caller. The close flag is
-    /// a parameter (not minted here) so programs sharing it — e.g.
-    /// settings Submit/Cancel — observe the same flag.
+    /// Assemble from a scaffold plus a program instance. The close
+    /// flag is a parameter (not minted here) so sharing programs
+    /// observe the same flag.
     pub(crate) fn assemble(
         scaffold: WindowScaffold,
         instance: program::Instance<P>,
@@ -441,11 +435,9 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
 
     /// Full render through the shared pump; only the log tag differs.
     pub(crate) fn render(&mut self, log_tag: &'static str) {
-        // Self-healing scale: if the live factor drifted from the
-        // stored one (missed/late ScaleFactorChanged, e.g. unmapped
-        // windows or backend quirks), layout and surface would
-        // permanently disagree — content overflowing a misaligned
-        // frame. Re-querying here re-converges on the next frame.
+        // Self-healing scale: re-query the live factor and relayout
+        // on drift (missed/late ScaleFactorChanged), so layout and
+        // surface re-converge on the next frame.
         let live_scale = self.window.scale_factor() as f32;
         if live_scale != self.scale_factor {
             log::debug!(

@@ -39,11 +39,9 @@ impl WindowRuntime {
             }
             WindowEvent::Focused(false) => {
                 self.host.active = false;
-                // Deferred, not immediate: an aux window may take
-                // focus in the same burst (same-app switch keeps
-                // running); the pause lands at MainEventsCleared
-                // only if focus truly left us (`can_pause` is
-                // re-checked there).
+                // Deferred: an aux window may take focus in the same
+                // burst, so the pause lands at MainEventsCleared only
+                // if focus truly left us.
                 self.host.arm_pending_auto_pause();
                 self.host.clear_keys();
                 // Same agreement in the other direction, still
@@ -66,8 +64,8 @@ impl WindowRuntime {
 
     pub(super) fn on_settings_event(&mut self, event: WindowEvent) {
         // External destroy without CloseRequested: the window
-        // is already gone, so skip event/render and run the
-        // normal close path (pending apply still commits).
+        // is already gone, so run the normal close path (pending
+        // apply still commits).
         if matches!(event, WindowEvent::Destroyed) {
             if let Some(handle) = self.host.settings_window.take() {
                 let plan = self.host.close_settings_window(handle);
@@ -137,12 +135,9 @@ impl WindowRuntime {
                 .debug
                 .remember_debug_window_pos(position.x, position.y);
         }
-        // Focus re-reads, never force-pauses; the empty batch
-        // still refreshes the toolbar label.
-        // External destroy without CloseRequested: drop the
-        // stale handle so a later F4 reopens. Checked before focus
-        // handling: a dead window arms no auto-pause (same order as
-        // the PPU arm).
+        // Focus re-reads, never force-pauses. External destroy
+        // drops the handle so a later F4 reopens; checked before
+        // focus handling so a dead window arms no auto-pause.
         if matches!(event, WindowEvent::Destroyed) {
             self.host.debug.drop_debug_window();
             self.host.request_redraw();
@@ -210,11 +205,9 @@ impl WindowRuntime {
         }
     }
 
-    /// Aux-window focus agreement, shared by the debugger and PPU
-    /// arms: same-app arrival cancels a pending auto-pause (the user
-    /// moved between our windows, not away) and resumes a
-    /// system-paused session; leaving anywhere arms the deferred
-    /// pause. Explicit pauses carry no flag and stay paused.
+    /// Aux-window focus agreement, shared by debugger and PPU:
+    /// same-app arrival cancels a pending auto-pause and resumes a
+    /// system-paused session; leaving anywhere arms it.
     fn note_aux_focus(&mut self, focused: bool) {
         if focused {
             self.host.cancel_pending_auto_pause();

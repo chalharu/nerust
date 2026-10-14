@@ -1,10 +1,5 @@
-//! iced-based auxiliary windows, hosted on [`shell::AuxShell`].
-//!
-//! - [`shell`]: generic tao+iced window scaffold (`UiShell`/`AuxShell`).
-//! - [`bridge`]: shared program<->drain bridge (used by `debug`, `ppu`).
-//! - [`debug`]: debugger window (program + views).
-//! - [`ppu`]: PPU (pattern-table) viewer.
-//! - [`settings`]: settings dialog (program + tao handle).
+//! iced-based auxiliary windows on [`shell::AuxShell`]: [`shell`]
+//! scaffold, [`bridge`] shared state, [`debug`], [`ppu`], [`settings`].
 
 pub(crate) mod bridge;
 pub(crate) mod debug;

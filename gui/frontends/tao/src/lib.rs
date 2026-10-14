@@ -1,17 +1,7 @@
-//! tao frontend: native window + iced (tiny-skia) UI.
-//!
-//! Module map (inner -> outer):
-//! - [`event`]: event-loop user events (leaf: menu and runtime share it).
-//! - [`convert`]: tao<->iced value conversions (keys, modifiers, events).
-//! - [`menu`]: native application menu (muda) and its sync snapshot.
-//! - [`aux`]: iced-based auxiliary windows (bridge, debugger, PPU viewer,
-//!   settings) on the generic [`aux::shell`] host.
-//! - [`runtime`]: tao event loop ([`runtime::WindowRuntime`]), the main
-//!   window ([`runtime::HostState`]), and the debug drain.
-//! - [`app`]: thin [`app::Window`] facade over the runtime.
-//!
-//! Platform glue:
-//! - [`gtk_embed`]: Linux/BSD render target below the menubar.
+//! tao frontend: native window + iced (tiny-skia) UI. Modules,
+//! inner -> outer: [`event`] loop events, [`convert`] tao<->iced values,
+//! [`menu`] native menu, [`aux`] iced aux windows, [`runtime`] event loop,
+//! [`app`] facade. [`gtk_embed`] is the Linux/BSD render target.
 
 mod app;
 mod convert;
