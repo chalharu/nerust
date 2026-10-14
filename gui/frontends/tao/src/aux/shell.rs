@@ -432,7 +432,6 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     pub(crate) fn logical_bounds(&self) -> Size {
         logical_bounds(self.viewport_physical, self.scale_factor)
     }
-
     /// Full render through the shared pump; only the log tag differs.
     pub(crate) fn render(&mut self, log_tag: &'static str) {
         // Self-healing scale: re-query the live factor and relayout
@@ -467,6 +466,13 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
             log_tag,
         );
     }
+}
+
+/// Uniform aux-window event feed: shell prelude, program dispatch,
+/// redraw request. Each handle keeps its own routing inside, so
+/// dispatch arms stay orchestration-only (focus/drain/close).
+pub(crate) trait AuxWindow {
+    fn pump_window_event(&mut self, event: tao::event::WindowEvent);
 }
 
 /// Shared full render: Light theme, redraw pump, draw, present.

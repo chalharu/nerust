@@ -8,6 +8,7 @@ use tao::{
     event_loop::{ControlFlow, EventLoopWindowTarget},
 };
 
+use crate::aux::shell::AuxWindow;
 use crate::event::UserEvent;
 
 use super::WindowRuntime;
@@ -84,27 +85,11 @@ impl WindowRuntime {
         let Some(handle) = self.host.settings_window.as_mut() else {
             return;
         };
-        match &event {
-            WindowEvent::Resized(size) => handle.resize(size.width, size.height),
-            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                handle.set_scale_factor(*scale_factor as f32);
-            }
-            WindowEvent::ModifiersChanged(state) => handle.set_modifiers(*state),
-            WindowEvent::CloseRequested => {
-                handle
-                    .shell
-                    .should_close
-                    .store(true, std::sync::atomic::Ordering::Release);
-            }
-            _ => {}
-        }
-        handle.update_modifiers_from_tao_event(&event);
-        handle.handle_tao_event(event);
+        handle.pump_window_event(event);
         // Coalesced present: every visual path above already
         // requested a redraw; presenting here per event would
         // serialize a full draw behind every drag/motion event
         // and unload the backlog as a hang on release.
-        handle.shell.window.request_redraw();
         if handle
             .shell
             .should_close
@@ -145,8 +130,7 @@ impl WindowRuntime {
             let Some(handle) = self.host.debug.debug_window.as_mut() else {
                 return;
             };
-            handle.shell.handle_common_event(&event);
-            handle.handle_tao_event(event);
+            handle.pump_window_event(event);
         }
         if refocused {
             self.host.sync_debug_chrome();
@@ -191,9 +175,7 @@ impl WindowRuntime {
             let Some(handle) = self.host.debug.ppu_window.as_mut() else {
                 return;
             };
-            handle.shell.handle_common_event(&event);
-            handle.handle_tao_event(event);
-            handle.shell.window.request_redraw();
+            handle.pump_window_event(event);
         }
         if self.host.debug.ppu_close_requested() {
             self.host.debug.drop_ppu_window();

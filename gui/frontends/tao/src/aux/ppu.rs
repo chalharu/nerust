@@ -291,6 +291,14 @@ impl PpuWindowHandle {
     }
 }
 
+impl crate::aux::shell::AuxWindow for PpuWindowHandle {
+    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
+        self.shell.handle_common_event(&event);
+        self.handle_tao_event(event);
+        self.shell.window.request_redraw();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
