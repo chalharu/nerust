@@ -67,7 +67,7 @@ pub(crate) mod imp {
     use tao::platform::windows::WindowExtWindows;
 
     use super::{MenuCommand, MenuSync, SessionCommand, StateSlotSummary, TaoWindow, slot_label};
-    use crate::runtime::UserEvent;
+    use crate::event::UserEvent;
 
     pub(crate) struct AppMenu {
         menu_bar: Menu,
@@ -419,7 +419,7 @@ pub(crate) mod imp {
     use tao::event_loop::EventLoopProxy;
 
     use super::{MenuSync, StateSlotSummary, TaoWindow};
-    use crate::runtime::UserEvent;
+    use crate::event::UserEvent;
 
     pub(crate) struct AppMenu;
 
