@@ -282,7 +282,10 @@ impl HostState {
             // inspectable state instead of blanking it.
             let mut display = output.display;
             {
-                let old = handle.bridge.display.lock().unwrap().clone();
+                // Images excluded: `restore_paused_sections` only reads
+                // the six small paused fields, so dragging up to 512KB
+                // of RGBA through every drain is pure waste.
+                let old = handle.bridge.display.lock().unwrap().clone_without_images();
                 display.restore_paused_sections(&old);
             }
             handle.set_display(display);
