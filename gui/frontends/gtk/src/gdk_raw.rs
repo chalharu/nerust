@@ -37,6 +37,31 @@ pub(crate) fn with_raw_handles<R>(
     // ns_window (and ns_view) drop here — the pointer is no longer used.
 }
 
+/// Opt an aux window out of macOS automatic window tabbing: same-app
+/// windows merge into tabs under the system "Prefer tabs" setting.
+/// No-op when headless (no native surface yet).
+#[cfg(target_os = "macos")]
+pub(crate) fn disallow_window_tabs(window: &gtk::ApplicationWindow) {
+    use gio::prelude::Cast;
+    use gtk::prelude::NativeExt as _;
+
+    let Some(surface) = window.surface() else {
+        return;
+    };
+    let Some(macos) = surface.downcast_ref::<gdk_macos::MacosSurface>() else {
+        return;
+    };
+    let ns_window = macos.native();
+    // SAFETY: setter only, on the UI thread; the live surface keeps
+    // the NSWindow alive for the call.
+    unsafe {
+        let retained = objc2::rc::Retained::<objc2_app_kit::NSWindow>::retain(ns_window.cast());
+        if let Some(retained) = retained {
+            retained.setTabbingMode(objc2_app_kit::NSWindowTabbingMode::Disallowed);
+        }
+    }
+}
+
 /// Extract handles and call `f` — GDK owns the objects, no retain needed.
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn with_raw_handles<R>(
