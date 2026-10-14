@@ -32,10 +32,10 @@ use tao::{
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
 
-use crate::event::UserEvent;
-use crate::menu::{MenuCommand, imp::AppMenu};
+use crate::event::{MenuCommand, UserEvent};
+use crate::menu::imp::AppMenu;
 
-use super::aux::DebugWindows;
+use super::debug::DebugWindows;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {

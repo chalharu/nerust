@@ -1,4 +1,4 @@
-mod aux;
+mod debug;
 mod drain;
 mod host;
 
