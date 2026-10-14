@@ -68,6 +68,7 @@ pub(crate) fn disallow_window_tabs(window: &gtk::ApplicationWindow) {
 /// Both paths are idempotent.
 #[cfg(target_os = "macos")]
 pub(crate) fn guard_window_tabs(window: &gtk::ApplicationWindow) {
+    use gtk::prelude::WidgetExt as _;
     window.connect_realize(|window| {
         disallow_window_tabs(window);
     });
