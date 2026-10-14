@@ -43,6 +43,7 @@ pub struct GlView {
     ntsc_enabled: bool,
     shader: Option<Shader>,
     use_vao: bool,
+    unpack_row_length: bool,
     vba: Option<VertexArray>,
     vbo: Option<Rc<VertexBuffer>>,
     logical_width: i32,
@@ -61,6 +62,7 @@ impl GlView {
             ntsc_enabled: false,
             shader: None,
             use_vao: false,
+            unpack_row_length: false,
             vba: None,
             vbo: None,
             logical_width: 0,
@@ -88,7 +90,12 @@ impl GlView {
         self.logical_height = frame_size.height as i32;
 
         let bpp: usize = if self.is_palette_format { 1 } else { 4 };
-        let shader = compile_shader_program(self.is_palette_format);
+        let version = gl_string(gl::VERSION);
+        let is_gles = is_gles_context(version.as_deref());
+        // Stride-padded rows upload as-is via UNPACK_ROW_LENGTH
+        // (desktop GL, or GLES3+); older ES repacks instead.
+        self.unpack_row_length = supports_unpack_row_length(version.as_deref());
+        let shader = compile_shader_program(self.is_palette_format, is_gles);
         shader.use_program();
         clear_color(0.0, 0.0, 0.0, 1.0).unwrap();
 
@@ -277,12 +284,19 @@ impl GlView {
         active_texture(gl::TEXTURE0).unwrap();
     }
 
-    pub fn on_update(&self, screen: &[u8]) {
+    pub fn on_update(&self, screen: &[u8], row_length: i32) {
         let screen_ptr = screen.as_ptr().cast();
         self.shader.as_ref().unwrap().use_program();
 
         active_texture(gl::TEXTURE0).unwrap();
         bind_texture(gl::TEXTURE_2D, self.frame_texture).unwrap();
+
+        // Padded rows upload as-is; row length is global pixel-store
+        // state, so restore the default right after the upload.
+        let padded = row_length != self.logical_width;
+        if padded {
+            pixel_storei(gl::UNPACK_ROW_LENGTH, row_length).unwrap();
+        }
 
         if self.is_palette_format {
             active_texture(gl::TEXTURE1).unwrap();
@@ -327,7 +341,15 @@ impl GlView {
             )
             .unwrap();
         }
+        if padded {
+            pixel_storei(gl::UNPACK_ROW_LENGTH, 0).unwrap();
+        }
         draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
+    }
+
+    /// Whether the context accepts UNPACK_ROW_LENGTH (no CPU repack).
+    pub fn supports_unpack_row_length(&self) -> bool {
+        self.unpack_row_length
     }
 
     pub fn on_resize(&mut self, viewport_width: i32, viewport_height: i32) {
@@ -480,10 +502,9 @@ fn compose_glsl_source(version_line: &str, extra_preamble: &[&str], parts: &[&st
     output
 }
 
-fn compile_shader_program(is_palette: bool) -> Shader {
+fn compile_shader_program(is_palette: bool, is_gles: bool) -> Shader {
     let context_version = gl_string(gl::VERSION);
     let shading_version = gl_string(gl::SHADING_LANGUAGE_VERSION);
-    let is_gles = is_gles_context(context_version.as_deref());
 
     log::info!(
         "initializing OpenGL renderer with context {:?} and shading language {:?} (palette={is_palette})",
@@ -566,15 +587,43 @@ fn is_gles_context(version: Option<&str>) -> bool {
     version.is_some_and(|value| value.contains("OpenGL ES"))
 }
 
+/// UNPACK_ROW_LENGTH is core on desktop GL and arrived in GLES3;
+/// older ES has no row stride control, so frames repack on CPU.
+fn supports_unpack_row_length(version: Option<&str>) -> bool {
+    let Some(value) = version else {
+        return false;
+    };
+    if !value.contains("OpenGL ES") {
+        return true;
+    }
+    value.contains("OpenGL ES 3")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build_glsl_source, compose_glsl_source, is_gles_context};
+    use super::{
+        build_glsl_source, compose_glsl_source, is_gles_context, supports_unpack_row_length,
+    };
 
     #[test]
     fn detects_gles_context_strings() {
         assert!(is_gles_context(Some("OpenGL ES 3.2 Mesa 24.1.0")));
         assert!(!is_gles_context(Some("4.6 (Core Profile) Mesa 24.1.0")));
         assert!(!is_gles_context(None));
+    }
+
+    #[test]
+    fn detects_unpack_row_length_support() {
+        assert!(supports_unpack_row_length(Some(
+            "4.5 (Core Profile) Mesa 26.0.8"
+        )));
+        assert!(supports_unpack_row_length(Some(
+            "OpenGL ES 3.2 Mesa 24.1.0"
+        )));
+        assert!(!supports_unpack_row_length(Some(
+            "OpenGL ES 2.0 Mesa 24.1.0"
+        )));
+        assert!(!supports_unpack_row_length(None));
     }
 
     #[test]
