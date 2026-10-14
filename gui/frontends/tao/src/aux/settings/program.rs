@@ -252,7 +252,9 @@ impl SettingsAppState {
         let factories = deduped_factories(&registry);
         // Impossibility guard: `factories` was deduped first-wins above by the
         // same key `find_duplicate_system_id` checks, which `SettingsWindowHandle::new`
-        // runs before `Instance::new` (boot); a duplicate here is unreachable.
+        // runs before `Instance::new` (boot). `SystemRegistry` is immutable after
+        // construction (`all()` borrows, no mutation API), so no thread can
+        // introduce a duplicate between the pre-check and this call.
         let vm = SettingsViewModel::new(
             snapshot.clone(),
             factories,

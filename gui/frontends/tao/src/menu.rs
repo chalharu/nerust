@@ -60,6 +60,15 @@ pub(crate) mod imp {
     use crate::event::MenuCommand;
     use crate::event::UserEvent;
 
+    /// Best-effort menu construction: a failed append (torn-down
+    /// native menu) logs and leaves a partial menu instead of
+    /// aborting the whole frontend at startup.
+    fn try_append(append: impl FnOnce() -> muda::Result<()>) {
+        if let Err(error) = append() {
+            log::error!("failed to add menu item: {error}");
+        }
+    }
+
     pub(crate) struct AppMenu {
         menu_bar: Menu,
         file_menu: Submenu,
@@ -97,8 +106,8 @@ pub(crate) mod imp {
             #[cfg(target_os = "macos")]
             {
                 let app_menu = Submenu::new("App", true);
-                app_menu
-                    .append_items(&[
+                try_append(|| {
+                    app_menu.append_items(&[
                         &muda::PredefinedMenuItem::about(None, None),
                         &muda::PredefinedMenuItem::separator(),
                         &muda::PredefinedMenuItem::services(None),
@@ -109,8 +118,8 @@ pub(crate) mod imp {
                         &muda::PredefinedMenuItem::separator(),
                         &muda::PredefinedMenuItem::quit(None),
                     ])
-                    .unwrap();
-                menu_bar.append(&app_menu).unwrap();
+                });
+                try_append(|| menu_bar.append(&app_menu));
             }
 
             let open = MenuItem::new("Open ROM...", true, None);
@@ -142,25 +151,25 @@ pub(crate) mod imp {
             let dynamic_commands = Arc::new(RwLock::new(Vec::<(MenuId, SessionCommand)>::new()));
             let dynamic_commands_handler = dynamic_commands.clone();
 
-            file_menu.append(&open).unwrap();
-            file_menu.append(&close).unwrap();
-            file_menu.append(&settings).unwrap();
-            file_menu.append(&quit).unwrap();
-            state_menu.append(&create_slot).unwrap();
-            state_menu.append(&save_active).unwrap();
-            state_menu.append(&load_active).unwrap();
-            state_menu.append(&active_slot_menu).unwrap();
-            state_menu.append(&save_slot_menu).unwrap();
-            state_menu.append(&load_slot_menu).unwrap();
-            state_menu.append(&delete_slot_menu).unwrap();
-            emulation_menu.append(&pause).unwrap();
-            emulation_menu.append(&resume).unwrap();
-            emulation_menu.append(&reset).unwrap();
-            emulation_menu.append(&state_menu).unwrap();
-            emulation_menu.append(&debugger).unwrap();
+            try_append(|| file_menu.append(&open));
+            try_append(|| file_menu.append(&close));
+            try_append(|| file_menu.append(&settings));
+            try_append(|| file_menu.append(&quit));
+            try_append(|| state_menu.append(&create_slot));
+            try_append(|| state_menu.append(&save_active));
+            try_append(|| state_menu.append(&load_active));
+            try_append(|| state_menu.append(&active_slot_menu));
+            try_append(|| state_menu.append(&save_slot_menu));
+            try_append(|| state_menu.append(&load_slot_menu));
+            try_append(|| state_menu.append(&delete_slot_menu));
+            try_append(|| emulation_menu.append(&pause));
+            try_append(|| emulation_menu.append(&resume));
+            try_append(|| emulation_menu.append(&reset));
+            try_append(|| emulation_menu.append(&state_menu));
+            try_append(|| emulation_menu.append(&debugger));
 
-            menu_bar.append(&file_menu).unwrap();
-            menu_bar.append(&emulation_menu).unwrap();
+            try_append(|| menu_bar.append(&file_menu));
+            try_append(|| menu_bar.append(&emulation_menu));
 
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
                 let command = if event.id() == &open_id {
@@ -226,7 +235,9 @@ pub(crate) mod imp {
         pub(crate) fn init_for_window(&self, window: &TaoWindow) {
             #[cfg(target_os = "windows")]
             unsafe {
-                self.menu_bar.init_for_hwnd(window.hwnd() as _).unwrap();
+                if let Err(error) = self.menu_bar.init_for_hwnd(window.hwnd() as _) {
+                    log::error!("failed to attach menu to window: {error}");
+                }
             }
 
             #[cfg(any(
@@ -237,9 +248,12 @@ pub(crate) mod imp {
                 target_os = "openbsd"
             ))]
             {
-                self.menu_bar
+                if let Err(error) = self
+                    .menu_bar
                     .init_for_gtk_window(window.gtk_window(), window.default_vbox())
-                    .unwrap();
+                {
+                    log::error!("failed to attach menu to window: {error}");
+                }
                 window.gtk_window().show_all();
             }
 
@@ -296,8 +310,7 @@ pub(crate) mod imp {
                     &self.load_slot_menu,
                     &self.delete_slot_menu,
                 ] {
-                    menu.append(&MenuItem::new(placeholder, false, None))
-                        .unwrap();
+                    try_append(|| menu.append(&MenuItem::new(placeholder, false, None)));
                 }
             }
             for slot in slots {
@@ -306,28 +319,28 @@ pub(crate) mod imp {
                     select_item.id().clone(),
                     SessionCommand::SelectActiveSlot(slot.slot_id),
                 ));
-                self.active_slot_menu.append(&select_item).unwrap();
+                try_append(|| self.active_slot_menu.append(&select_item));
 
                 let save_item = MenuItem::new(slot_label(slot, active_slot), true, None);
                 commands.push((
                     save_item.id().clone(),
                     SessionCommand::SaveSlot(slot.slot_id),
                 ));
-                self.save_slot_menu.append(&save_item).unwrap();
+                try_append(|| self.save_slot_menu.append(&save_item));
 
                 let load_item = MenuItem::new(slot_label(slot, active_slot), true, None);
                 commands.push((
                     load_item.id().clone(),
                     SessionCommand::LoadSlot(slot.slot_id),
                 ));
-                self.load_slot_menu.append(&load_item).unwrap();
+                try_append(|| self.load_slot_menu.append(&load_item));
 
                 let delete_item = MenuItem::new(slot_label(slot, active_slot), true, None);
                 commands.push((
                     delete_item.id().clone(),
                     SessionCommand::DeleteSlot(slot.slot_id),
                 ));
-                self.delete_slot_menu.append(&delete_item).unwrap();
+                try_append(|| self.delete_slot_menu.append(&delete_item));
             }
             *self
                 .dynamic_commands
