@@ -32,6 +32,7 @@ use nerust_keyboard::Key;
 
 use rfd::FileDialog;
 
+use crate::aux::bridge::lock_recovered;
 use crate::convert::default_font;
 
 pub(super) type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
@@ -450,7 +451,7 @@ impl SettingsAppState {
 
     fn submit(&mut self) {
         if let Ok(snapshot) = self.vm.finish() {
-            *self.pending_apply.lock().expect("pending apply mutex") = Some(snapshot);
+            *lock_recovered(&self.pending_apply) = Some(snapshot);
             self.should_close.store(true, Ordering::Release);
         }
     }
@@ -692,12 +693,12 @@ mod tests {
         dispatch(&mut submitted, Message::Submit);
 
         assert!(submitted.should_close.load(Ordering::Acquire));
-        assert!(submitted.pending_apply.lock().unwrap().is_some());
+        assert!(lock_recovered(&submitted.pending_apply).is_some());
 
         let mut cancelled = empty_state();
         dispatch(&mut cancelled, Message::Cancel);
         assert!(cancelled.should_close.load(Ordering::Acquire));
-        assert!(cancelled.pending_apply.lock().unwrap().is_none());
+        assert!(lock_recovered(&cancelled.pending_apply).is_none());
     }
 
     #[test]
@@ -707,7 +708,7 @@ mod tests {
         // No custom directory and default policy is sidecar — no storage error
         // Submit should succeed (empty snapshot)
         dispatch(&mut state, Message::Submit);
-        assert!(state.pending_apply.lock().unwrap().is_some());
+        assert!(lock_recovered(&state.pending_apply).is_some());
     }
 
     #[test]
