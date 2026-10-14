@@ -65,6 +65,10 @@ impl WindowRuntime {
             render_profile,
             vsync,
         };
+        // Drop the old renderer before the new attach makes its own
+        // context current: GL object names die with their context, and
+        // a fresh context reuses the same ids.
+        self.renderer = None;
         let mut renderer = self
             .host
             .gpu_factory()
