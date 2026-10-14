@@ -123,31 +123,19 @@ impl UiState {
             return;
         }
 
-        // Step 1: Replace UI with a placeholder, extract old cache.
-        // (Built first so the `&self.instance` borrow ends before the
-        // swap takes `&mut self`.)
-        let placeholder_ui = Self::build_ui(
-            &self.instance,
-            window_id,
-            bounds,
-            Cache::default(),
-            renderer,
-        );
-        let placeholder = std::mem::replace(self.ui_mut(), placeholder_ui);
-        let cache = placeholder.into_cache();
-
-        // Step 2: Process messages (mutate instance state).
+        // Single build, mirroring AuxShell: take the old UI out, harvest
+        // its cache, run the messages, rebuild once. The old code built
+        // a throwaway placeholder plus the real UI per batch.
+        let old = self.ui.take().map(std::mem::ManuallyDrop::into_inner);
         // Note: SettingsAppState::update() always returns Task::none().
         // If a future handler returns a non-empty Task, it must be executed
         // (e.g., via block_on) rather than discarded here.
         for msg in messages {
             let _task = self.instance.update(msg);
         }
-
-        // Step 3: Replace placeholder with real UI from new state + cache.
-        let real_ui = Self::build_ui(&self.instance, window_id, bounds, cache, renderer);
-        let stale = std::mem::replace(self.ui_mut(), real_ui);
-        let _ = stale.into_cache(); // discard placeholder
+        let cache = old.map_or_else(Cache::default, UserInterface::into_cache);
+        let rebuilt = Self::build_ui(&self.instance, window_id, bounds, cache, renderer);
+        self.ui = Some(std::mem::ManuallyDrop::new(rebuilt));
 
         self.view_invalidated.set(false);
     }
@@ -171,6 +159,10 @@ pub(crate) struct SettingsWindowHandle {
     renderer: SettingsRenderer,
     viewport: Size,
     viewport_physical: (u32, u32),
+    /// Last surface-configured size. Resize storms only relayout;
+    /// the realloc happens in `render`, once per presented frame.
+    /// Mirrors AuxShell.
+    surface_size: (u32, u32),
     pub(crate) scale_factor: f32,
     pub(crate) modifiers: keyboard::Modifiers,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
@@ -296,6 +288,8 @@ impl SettingsWindowHandle {
             },
             viewport,
             viewport_physical,
+            // The scaffold builds the surface at this size.
+            surface_size: viewport_physical,
             scale_factor,
             modifiers: keyboard::Modifiers::default(),
             pending_apply,
@@ -363,6 +357,14 @@ impl SettingsWindowHandle {
                 live_scale
             );
             self.set_scale_factor(live_scale);
+        }
+        // Deferred surface configure (see `resize`): resize storms only
+        // relayout per event; the realloc lands here, at most once per
+        // presented frame. Mirrors AuxShell.
+        if self.surface_size != self.viewport_physical {
+            self.renderer
+                .resize(self.viewport_physical.0, self.viewport_physical.1);
+            self.surface_size = self.viewport_physical;
         }
         let theme = iced::Theme::Light;
         let style = <iced::Theme as theme::Base>::base(&theme);
@@ -435,25 +437,35 @@ impl SettingsWindowHandle {
 /// None for events that are fully handled here (CursorLeft, CloseRequested, etc.).
 impl SettingsWindowHandle {
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
+        // Same-size events (redundant during some drags, and duplicate
+        // configures from some compositors) skip everything, mirroring
+        // AuxShell.
+        if self.viewport_physical == (width, height) {
+            return;
+        }
         self.viewport_physical = (width, height);
         // Same geometry cabling as the aux twins: creation reads a
         // synchronous placeholder on some compositors (0x0 initial
-        // configure on Wayland), so every resize lands in the log.
+        // configure on Wayland), so every real resize lands in the log.
         // The inner/outer cross-check tells event/client/frame apart:
         // WSLg has been seen reporting the outer (frame+translucency)
         // size as the event size while the client stays 960x720.
-        let inner = self.window.inner_size();
-        let outer = self.window.outer_size();
-        log::debug!(
-            "settings resize: event={width}x{height} inner={}x{} outer={}x{} scale={} bounds={:?}",
-            inner.width,
-            inner.height,
-            outer.width,
-            outer.height,
-            self.scale_factor,
-            crate::iced_shell::logical_bounds((width, height), self.scale_factor)
-        );
-        self.renderer.resize(width, height);
+        // Window-system queries run only when something reads the log.
+        if log::log_enabled!(log::Level::Debug) {
+            let inner = self.window.inner_size();
+            let outer = self.window.outer_size();
+            log::debug!(
+                "settings resize: event={width}x{height} inner={}x{} outer={}x{} scale={} bounds={:?}",
+                inner.width,
+                inner.height,
+                outer.width,
+                outer.height,
+                self.scale_factor,
+                crate::iced_shell::logical_bounds((width, height), self.scale_factor)
+            );
+        }
+        // Surface realloc deferred to `render` (see there): per-event
+        // reconfigure falls behind live drags. Relayout only here.
         self.rebuild_with_current_bounds();
     }
 
