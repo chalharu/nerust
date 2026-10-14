@@ -274,6 +274,15 @@ impl SettingsWindowHandle {
             Rc::clone(&view_invalidated),
         );
 
+        // Birth geometry: synchronous inner_size() is a placeholder on
+        // some compositors, so record it to tell "born 0x0, never
+        // resized" apart from later resize traffic.
+        log::debug!(
+            "settings create: physical={}x{} scale={scale_factor} bounds={bounds:?}",
+            viewport_physical.0,
+            viewport_physical.1,
+        );
+
         window.request_redraw();
 
         Some(Self {
@@ -427,6 +436,14 @@ impl SettingsWindowHandle {
 impl SettingsWindowHandle {
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.viewport_physical = (width, height);
+        // Same geometry cabling as the aux twins: creation reads a
+        // synchronous placeholder on some compositors (0x0 initial
+        // configure on Wayland), so every resize lands in the log.
+        log::debug!(
+            "settings resize: physical={width}x{height} scale={} bounds={:?}",
+            self.scale_factor,
+            crate::iced_shell::logical_bounds((width, height), self.scale_factor)
+        );
         self.renderer.resize(width, height);
         self.rebuild_with_current_bounds();
     }
