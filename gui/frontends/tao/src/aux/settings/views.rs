@@ -356,3 +356,57 @@ fn pick_selected<T: Clone + PartialEq + Eq>(
 ) -> Option<ChoiceView<T>> {
     options.iter().find(|c| &c.value == value).cloned()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex, atomic::AtomicBool};
+
+    use nerust_core_traits::audio::AudioBackendRegistry;
+    use nerust_gui_runtime::settings::SettingsSnapshot;
+    use nerust_gui_shell::registry::SystemRegistry;
+    use nerust_settings_core::model::{
+        app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
+    };
+
+    use super::super::program::SettingsAppState;
+    use super::*;
+
+    fn empty_state() -> SettingsAppState {
+        let snapshot = SettingsSnapshot {
+            shared: DesktopSharedSettings::default(),
+            local: HostBackendLocalSettings::default(),
+            app_state: DesktopAppState::default(),
+        };
+        SettingsAppState::new_with_shared(
+            &snapshot,
+            Arc::new(SystemRegistry::new(Vec::new())),
+            Arc::new(AudioBackendRegistry::new()),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(Mutex::new(None)),
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    #[test]
+    fn page_builders_construct_on_empty_registry() {
+        let state = empty_state();
+        let _ = state.page_content();
+        let _ = state.general_page();
+        let _ = state.input_page();
+        let _ = state.video_page();
+        let _ = state.audio_page();
+        let _ = state.system_page();
+        let _ = state.binding_section("Title".to_string(), Vec::new());
+    }
+
+    #[test]
+    fn tab_and_slot_helpers_construct() {
+        let state = empty_state();
+        let inputs = state.vm.inputs();
+        let _ = input_tab_row(inputs, None);
+        let _ = tab_row(None, vec!["A".to_string()], |_| {
+            crate::aux::settings::program::Message::SelectInputTab(0)
+        });
+        let _ = push_controller_slots(iced::widget::column![], &[]);
+    }
+}

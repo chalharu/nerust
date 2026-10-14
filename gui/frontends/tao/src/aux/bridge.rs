@@ -131,3 +131,101 @@ impl DebugBridge {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_bridge() -> DebugBridge {
+        DebugBridge::new(
+            DisplayCache::default(),
+            vec![(SpaceId(0), "Memory".to_string(), 0)],
+            0,
+            AppLanguage::English,
+        )
+    }
+
+    #[test]
+    fn lock_recovered_returns_guard_on_clean_mutex() {
+        let mutex = Mutex::new(42u32);
+        assert_eq!(*lock_recovered(&mutex), 42);
+    }
+
+    #[test]
+    fn lock_recovered_recovers_value_after_poison() {
+        let mutex = Mutex::new(7u32);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = mutex.lock().unwrap();
+            panic!("intentional poison");
+        }));
+        assert!(mutex.is_poisoned());
+        // Recovery keeps the pre-panic value instead of panicking.
+        assert_eq!(*lock_recovered(&mutex), 7);
+    }
+
+    #[test]
+    fn outbox_push_and_take_round_trip() {
+        let bridge = test_bridge();
+        assert!(bridge.take_requests().is_empty());
+        bridge.push(DebugAction::Refresh);
+        bridge.push(DebugAction::TogglePause);
+        let requests = bridge.take_requests();
+        assert_eq!(requests.len(), 2);
+        // take drains: second call sees nothing.
+        assert!(bridge.take_requests().is_empty());
+    }
+
+    #[test]
+    fn set_status_stores_local_message_and_invalidates() {
+        let bridge = test_bridge();
+        bridge.set_status("parse failed: zz".to_string());
+        assert!(matches!(
+            lock_recovered(&bridge.display).status,
+            StatusMessage::Local(_)
+        ));
+        assert!(bridge.view_invalidated.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn selected_space_and_name_follow_nav_index() {
+        let bridge = test_bridge();
+        assert_eq!(bridge.selected_space(), Some(SpaceId(0)));
+        assert_eq!(bridge.selected_name(), Some("Memory".to_string()));
+    }
+
+    #[test]
+    fn anchor_uses_pin_without_follow() {
+        use nerust_core_traits::debugger::DisasmLine;
+        let mut display = DisplayCache::default();
+        display.disasm_lines = vec![DisasmLine {
+            addr: 0x1234,
+            bytes: [0; 4],
+            len: 2,
+            text: "NOP".to_string(),
+            is_pc: true,
+            target: None,
+        }];
+        let bridge = DebugBridge::new(display, vec![], 0, AppLanguage::English);
+        // Pinning an address leaves follow mode: the stored pin wins
+        // over the first visible line.
+        lock_recovered(&bridge.nav).navigate(0x1234, 0x0300);
+        assert_eq!(bridge.anchor(), 0x0300);
+    }
+
+    #[test]
+    fn anchor_uses_first_line_in_follow_mode() {
+        use nerust_core_traits::debugger::DisasmLine;
+        let mut display = DisplayCache::default();
+        display.disasm_lines = vec![DisasmLine {
+            addr: 0x0800_27D2,
+            bytes: [0; 4],
+            len: 2,
+            text: "POP".to_string(),
+            is_pc: true,
+            target: None,
+        }];
+        let bridge = DebugBridge::new(display, vec![], 0, AppLanguage::English);
+        lock_recovered(&bridge.nav).follow();
+        assert_eq!(bridge.anchor(), 0x0800_27D2);
+    }
+}
