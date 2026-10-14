@@ -21,10 +21,8 @@ pub enum SpaceAccess {
 
 /// Static description of one address space.
 ///
-/// `key` is a stable identifier for logs and error display, and for
-/// resolving ids from snapshots at configuration time (open, not per
-/// frame). It is never used for per-frame branching — branch on
-/// [`SpaceId`] instead.
+/// Stable identifier for logs, display, and snapshot resolution;
+/// never per-frame branching — branch on [`SpaceId`] instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpaceInfo {
     pub id: SpaceId,
@@ -200,13 +198,9 @@ pub trait Debugger {
     /// Space covering `addr`, or `None` when unmapped.
     fn space_containing(&self, addr: u32) -> Option<SpaceId>;
 
-    /// Read `width` bytes (1 / 2 / 4) at `addr` in `space`.
-    ///
-    /// Hardware-faithful: mapped reads match executed reads, unmapped
-    /// yields the stable latch, no side effects. Out-of-range, straddling,
-    /// and unknown spaces/widths yield `None`; range checking is the
-    /// reader's duty. `Option`, not `Result`: invalid width is not
-    /// distinguished from unmapped on this hot path.
+    /// Hardware-faithful read; unmapped/out-of-range/bad widths yield
+    /// `None` (range checking is the reader's duty). `Option`, not
+    /// `Result`, for this hot path.
     fn read(&self, space: SpaceId, addr: u32, width: u8) -> Option<u64>;
 
     /// Contiguous byte read for hex dumps. Stops at the range end.
@@ -452,13 +446,8 @@ pub struct MemoryWrite {
     pub value: u64,
 }
 
-/// Batched debugger snapshot: inspect + anchor + disassembly in one
-/// thread crossing instead of three sequential round trips (each
-/// with its own timeout on the UI thread). Per-part contracts match
-/// the individual commands: paused-gated inspect, ungated PC and
-/// decode. Failure semantics are preserved exactly: an inspect
-/// failure skips the rest (as today), a PC failure yields no anchor
-/// and no disassembly, disassembly failure yields no rows.
+/// Batched debugger snapshot in one thread crossing. Per-part contracts
+/// match the individual commands; an inspect failure skips the rest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotRequest {
     pub inspect: InspectRequest,
@@ -498,13 +487,9 @@ pub enum DebuggerError {
     BadWidth(u8),
 }
 
-/// `EmuCommand::DebuggerInspect` failure reasons.
-///
-/// Defined in the kernel next to `EmuCommand` (not in `traits/emu-thread`
-/// as §5.2 sketched: the command type lives here, so its reply type must
-/// too — otherwise the crates cycle). The layering still holds: `NotPaused`
-/// is produced only by the loop guard (infrastructure), every other
-/// variant arrives wrapped from domain code.
+/// `EmuCommand::DebuggerInspect` failure reasons. Defined next to
+/// `EmuCommand` so the crates cannot cycle; `NotPaused` comes only
+/// from the loop guard, the rest wrap domain errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InspectError {
     /// Not paused, so inspection is refused. Produced by the loop guard;
@@ -515,12 +500,8 @@ pub enum InspectError {
 }
 
 /// Execution control and memory editing. Separate from [`Debugger`] so
-/// that `&self` observation never implies write permission, and so that
-/// cores with observation but no single-stepping stay expressible.
-///
-/// `Send` is intentionally not required: control objects are created
-/// and consumed inside emu-thread command handling and never cross
-/// threads.
+/// `&self` observation never implies write permission. `Send` is not
+/// required: controls never cross threads.
 pub trait DebugControl {
     /// Advance execution by one unit. Returns cycles advanced.
     fn step(&mut self, unit: StepUnit) -> Result<u64, DebuggerError>;
@@ -538,12 +519,9 @@ pub trait DebugControl {
         value: u64,
     ) -> Result<(), DebuggerError>;
 
-    /// Edit one named register (register-viewer path). `name` is one
-    /// of [`Debugger::registers`] names; backends mask `value` to the
-    /// register width. Unknown names report `Unsupported` (no new
-    /// error variant: the name travels as data, and the refusal
-    /// reason stays one word). Defaults to `Unsupported` so
-    /// observation-only controls stay expressible.
+    /// Edit one named register. `name` is one of
+    /// [`Debugger::registers`] names; backends mask to the width.
+    /// Unknown names report `Unsupported`; default is `Unsupported`.
     fn write_register(&mut self, _name: &str, _value: u64) -> Result<(), DebuggerError> {
         Err(DebuggerError::Unsupported)
     }

@@ -9,7 +9,6 @@ use crate::session::persistence::FailingSlotBackend;
 use crate::session::test_util::*;
 use crate::test_helpers::*;
 
-#[serial_test::serial]
 #[test]
 fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     let temp_dir = unique_temp_dir("rebuild");
@@ -45,7 +44,6 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-#[serial_test::serial]
 #[test]
 fn hidden_lifecycle_state_round_trips_without_visible_slot() {
     let temp_dir = unique_temp_dir("hidden-lifecycle-state");
@@ -87,7 +85,6 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-#[serial_test::serial]
 #[test]
 fn hidden_lifecycle_state_is_deleted_after_import_failure() {
     let temp_dir = unique_temp_dir("hidden-lifecycle-import");
@@ -122,7 +119,6 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-#[serial_test::serial]
 #[test]
 fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
     let temp_dir = unique_temp_dir("hidden-lifecycle-identity");
@@ -191,7 +187,6 @@ fn load_test_rom(session: &mut crate::session::SessionHandle, rom_path: std::pat
         .unwrap();
 }
 
-#[serial_test::serial]
 #[test]
 fn slot_commands_report_empty_missing_and_clean_round_trip() {
     let temp_dir = unique_temp_dir("slot-failures");
@@ -236,7 +231,6 @@ fn slot_commands_report_empty_missing_and_clean_round_trip() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-#[serial_test::serial]
 #[test]
 fn failing_slot_backend_reports_storage() {
     let temp_dir = unique_temp_dir("slot-backend-failure");
@@ -271,7 +265,6 @@ fn failing_slot_backend_reports_storage() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-#[serial_test::serial]
 #[test]
 fn core_persistence_errors_classify_for_slot_messages() {
     assert_eq!(

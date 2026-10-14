@@ -1,7 +1,4 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
 
 use nerust_core_traits::{
     audio::AudioBackend,
@@ -21,13 +18,16 @@ use crate::test_helpers::{
 
 pub(crate) struct MockFactory;
 
-/// Core constructions through the mock factory. Session tests diff
-/// this around `apply_settings` to prove a delta swapped live (count
-/// unchanged) instead of rebuilding (count +1).
-static CORE_CREATIONS: AtomicUsize = AtomicUsize::new(0);
+// Core constructions through the mock factory. Thread-local so
+// parallel tests observe only their own thread (no serialization).
+std::thread_local! {
+    static CORE_CREATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
+/// Constructions so far on this thread; tests diff it around
+/// `apply_settings` to prove live swap vs rebuild.
 pub(crate) fn mock_core_creations() -> usize {
-    CORE_CREATIONS.load(Ordering::SeqCst)
+    CORE_CREATIONS.with(|c| c.get())
 }
 
 impl CoreFactory for MockFactory {
@@ -43,7 +43,7 @@ impl CoreFactory for MockFactory {
         _speaker: Box<dyn AudioBackend>,
         _: &InputAssignments,
     ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
-        CORE_CREATIONS.fetch_add(1, Ordering::SeqCst);
+        CORE_CREATIONS.with(|c| c.set(c.get() + 1));
         Ok(build_test_core_parts())
     }
     fn probe_media(&self, _: &MediaObject) -> bool {

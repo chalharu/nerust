@@ -1,9 +1,6 @@
-//! Debugger views (Phase B). Batched, paused-gated reads plus the
-//! shell-owned two-phase write transaction. Frontends render from
-//! [`debug_vm::DebugSnapshot`] and never touch the core.
-//!
-//! Split from `session.rs`: the session owns lifecycle, input, and
-//! persistence; this module owns debugger interpretation traffic.
+//! Debugger views: batched, paused-gated reads plus the shell-owned
+//! two-phase write transaction. Frontends render from snapshots and
+//! never touch the core.
 
 use std::sync::Arc;
 
