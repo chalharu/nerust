@@ -439,8 +439,17 @@ impl SettingsWindowHandle {
         // Same geometry cabling as the aux twins: creation reads a
         // synchronous placeholder on some compositors (0x0 initial
         // configure on Wayland), so every resize lands in the log.
+        // The inner/outer cross-check tells event/client/frame apart:
+        // WSLg has been seen reporting the outer (frame+translucency)
+        // size as the event size while the client stays 960x720.
+        let inner = self.window.inner_size();
+        let outer = self.window.outer_size();
         log::debug!(
-            "settings resize: physical={width}x{height} scale={} bounds={:?}",
+            "settings resize: event={width}x{height} inner={}x{} outer={}x{} scale={} bounds={:?}",
+            inner.width,
+            inner.height,
+            outer.width,
+            outer.height,
             self.scale_factor,
             crate::iced_shell::logical_bounds((width, height), self.scale_factor)
         );
