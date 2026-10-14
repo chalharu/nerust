@@ -372,13 +372,9 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     }
 
     /// Resize the raster and relayout the retained tree against the
-    /// fresh bounds (no view rebuild): `Fill` tracks live resize.
-    /// The surface realloc is deliberately deferred to `render`: a
-    /// live drag delivers resize storms, and reconfiguring per event
-    /// falls behind the drag — the backlog then unloads as a hang
-    /// proportional to the drag length on release. One configure per
-    /// presented frame keeps the loop ahead. Same-size events
-    /// (redundant during some drags) skip everything.
+    /// fresh bounds (no view rebuild). The surface realloc is deferred
+    /// to `render` (one configure per presented frame); same-size
+    /// events skip everything.
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         if self.viewport_physical == (width, height) {
             return;

@@ -62,16 +62,11 @@ impl fmt::Debug for EmuThread {
 }
 
 impl EmuThread {
-    /// `shared_fb` is swapped with the internal frame buffer after each render_frame.
-    /// `frame_ready` signals ConsoleVideo that a new frame is available.
-    /// `frame_slot` is the core's render target, built by the caller
-    /// from the factory-declared profile (size + frame format) — never
-    /// per-system constants here. `mem::swap` propagates its format
-    /// into `shared_fb` and onward, so all three buffers must agree
-    /// before the first swap; cores may still adjust it defensively.
-    /// `audio` is session-owned: the thread pumps core-produced samples
-    /// through the rate-control filter into it (transport separation:
-    /// cores never see the backend).
+    /// `shared_fb` swaps with the internal buffer after each render;
+    /// `frame_ready` signals ConsoleVideo. `frame_slot` (the core's
+    /// render target) comes from the factory profile, never per-system
+    /// constants, so all three buffers agree before the first swap.
+    /// `audio` is session-owned; cores never see the backend.
     pub fn spawn(
         mut core: Box<dyn ConsoleCore + Send + 'static>,
         shared_fb: Arc<Mutex<FrameBuffer>>,
@@ -236,22 +231,12 @@ impl EmuThread {
                             let _ = reply.send(result);
                         }
                         EmuCommand::Step { unit, reply } => {
-                            // Processed synchronously here, so receipt is
-                            // the barrier: each reply matches exactly one
-                            // executed step. Deterministic callers pause
-                            // first; stepping while running races free-run.
-                            //
-                            // Frame steps run the standard frame block
-                            // directly: the pixels must land in the shared
-                            // framebuffer, which a delegated control
-                            // cannot reach. The reply is the frame counter
-                            // after the step (barrier position).
-                            // Instruction steps carry no pixels, so they
-                            // delegate to the control (cycles kept).
-                            //
-                            // Stepping an unloaded core is refused: the
-                            // render block would silently succeed without
-                            // advancing anything observable.
+                            // Synchronous barrier: each reply matches exactly
+                            // one executed step; callers pause first.
+                            // Frame steps run the frame block directly
+                            // (pixels must land in the shared framebuffer);
+                            // instruction steps delegate (cycles kept).
+                            // Unloaded stepping is refused.
                             let result = if !loaded {
                                 Err(DebuggerError::Unsupported)
                             } else {

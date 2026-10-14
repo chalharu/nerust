@@ -266,9 +266,8 @@ impl SettingsWindowHandle {
             Rc::clone(&view_invalidated),
         );
 
-        // Birth geometry: synchronous inner_size() is a placeholder on
-        // some compositors, so record it to tell "born 0x0, never
-        // resized" apart from later resize traffic.
+        // Birth geometry is a placeholder on some compositors; record
+        // it to tell "born 0x0, never resized" apart from later traffic.
         log::debug!(
             "settings create: physical={}x{} scale={scale_factor} bounds={bounds:?}",
             viewport_physical.0,
@@ -444,12 +443,8 @@ impl SettingsWindowHandle {
             return;
         }
         self.viewport_physical = (width, height);
-        // Same geometry cabling as the aux twins: creation reads a
-        // synchronous placeholder on some compositors (0x0 initial
-        // configure on Wayland), so every real resize lands in the log.
-        // The inner/outer cross-check tells event/client/frame apart:
-        // WSLg has been seen reporting the outer (frame+translucency)
-        // size as the event size while the client stays 960x720.
+        // The inner/outer cross-check tells event/client/frame apart
+        // (some compositors report the outer size as the event size).
         // Window-system queries run only when something reads the log.
         if log::log_enabled!(log::Level::Debug) {
             let inner = self.window.inner_size();

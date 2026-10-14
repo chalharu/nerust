@@ -37,16 +37,9 @@ impl SessionHandle {
         )
     }
 
-    /// Single batched snapshot for one drain: one inspect (registers,
-    /// dump, panels), one disassembly at `dis_addr` (or the program
-    /// counter when `None`), one images pass. `elapsed` measures the
-    /// batched core pass. Unavailable when no core is loaded or the
-    /// inspect refuses (e.g. running): sections carry degenerates.
-    ///
-    /// Registers, dump rows, and panels travel structured; text
-    /// formatting is the frontends' job at rebuild time. `watch` is
-    /// folded into the same inspect when it lands on the fetched
-    /// page, saving a thread round-trip in the common case.
+    /// Single batched snapshot for one drain: one inspect, one
+    /// disassembly, one images pass. Unavailable sections carry
+    /// degenerates; rows travel structured, frontends format.
     pub fn debug_snapshot(
         &self,
         space: Option<nerust_core_traits::debugger::SpaceId>,
@@ -119,19 +112,10 @@ impl SessionHandle {
         snapshot
     }
 
-    /// Images-only refresh for the live PPU follow while the core
-    /// runs. Unlike [`SessionHandle::debug_snapshot`], this never
-    /// touches inspect or disassembly: those are paused-gated and come
-    /// back degenerate while running, which would blank the dump and
-    /// registers the user paused on. The live tick patches only the
-    /// returned images (plus the paused/status chrome) and leaves the
-    /// last paused sections alone. `None` when imageless or when the
-    /// fetch fails.
-    ///
-    /// Blocking (one UI-thread `recv_timeout` when the cache misses):
-    /// live ticks use [`SessionHandle::debug_live_images_begin`] plus
-    /// tick polling instead. This wrapper only spins flights for
-    /// tests and headless drivers.
+    /// Images-only refresh for the live PPU follow while the core runs.
+    /// It never touches inspect or disassembly (paused-gated) and leaves
+    /// the last paused sections alone. Blocking wrapper for tests only;
+    /// live ticks use the flight.
     pub fn debug_live_images(&self, need_images: bool) -> LiveImages {
         let mut flight = self.debug_live_images_begin(need_images);
         loop {

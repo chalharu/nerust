@@ -112,19 +112,9 @@ impl HostState {
     }
 
     /// Open the debugger (idempotent), and the PPU viewer only for
-    /// the toolbar button. Closing never resumes: resume is always
-    /// explicit.
-    ///
-    /// The first pause and snapshot run through the shared shell
-    /// drain, never around it: opening with an empty display and
-    /// draining `[Pause, Refresh]` keeps one phase order for every
-    /// path. Pause must precede the paused-gated inspect, and the
-    /// drain runs them in order.
-    ///
-    /// `focus_ppu` serves the toolbar PPU-viewer button: a missing
-    /// viewer is created, an already open one takes focus instead
-    /// of staying buried. The F4/menu path passes `false` so only
-    /// the debugger opens (the gtk twin never auto-opens either).
+    /// the toolbar button. Closing never resumes. Opening drains
+    /// `[Pause, Refresh]` through the shared shell drain (pause first);
+    /// `focus_ppu` opens-or-focuses the viewer for the toolbar only.
     pub(crate) fn open_debug_windows(
         &mut self,
         event_loop: &EventLoopWindowTarget<UserEvent>,
@@ -325,15 +315,9 @@ impl HostState {
         self.last_drain_paused = Some(self.session.paused());
     }
 
-    /// Focus-driven chrome sync. Menu/title refresh is cheap and
-    /// local, so it always runs; the emu round-trip snapshot only
-    /// runs when the pause state moved since the last drain. A focus
-    /// flip with no state change (the common window-switching case)
-    /// must not re-hit the emu thread: flips arrive in bursts (main
-    /// blur + aux focus), and a synchronous drain used to wedge the
-    /// UI for tens of seconds when the thread was slow. Drains are
-    /// async flights now, but the gate still skips the pointless
-    /// re-read.
+    /// Focus-driven chrome sync. Menu/title refresh always runs; the
+    /// emu snapshot only runs when pause state moved, so focus bursts
+    /// never re-hit the thread.
     pub(crate) fn sync_debug_chrome(&mut self) {
         self.sync_menu_state();
         self.refresh_window_title();

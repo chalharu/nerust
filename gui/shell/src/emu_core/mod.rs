@@ -61,18 +61,9 @@ impl CorePersistenceError {
     }
 }
 
-/// Bound for debugger query round-trips (inspect, disassembly,
-/// images, steps, writes). Interactive drains never wait on it: they
-/// run as async flights (`DrainFlight`) that only `try_send`/`try_recv`
-/// on the UI thread and degrade per-await instead. This timeout only
-/// bounds the blocking wrappers kept for tests, headless drivers, and
-/// non-drain callers: an unbounded `recv` would freeze every window's
-/// input forever if the emu thread ever stalls (wedged audio, a
-/// panicked core that already dropped its reply). A timeout degrades
-/// to the existing loud `NoReply` failure instead, which every drain
-/// already reports in the status line. Five seconds is generous: the
-/// dearest path (a running GBA image re-decode) answers in
-/// milliseconds.
+/// Bound for debugger query round-trips. Interactive drains never wait
+/// on it (async flights degrade per-await instead); it only bounds the
+/// blocking wrappers for tests, headless drivers, and non-drain callers.
 const DEBUG_REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn recv_debug_reply<T>(reply_rx: std::sync::mpsc::Receiver<T>) -> Result<T, OperationError> {
@@ -189,11 +180,9 @@ impl EmuCore {
     /// Wrap `CoreParts` (from a factory) into an `EmuCore`.
     /// Returns (EmuCore, GuiInput, field_map).
     ///
-    /// Buffer geometry comes from the factory-declared render profile
-    /// (size + frame format), never per-system constants: indexed
-    /// systems carry their palette, direct-color systems (Rgba) carry
-    /// none. The thread slot is built identically so all three buffers
-    /// agree before the first swap.
+    /// Buffer geometry comes from the factory-declared render profile,
+    /// never per-system constants; the thread slot is built identically
+    /// so all three buffers agree before the first swap.
     pub fn from_parts(
         parts: CoreParts,
     ) -> (

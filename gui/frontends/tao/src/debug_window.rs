@@ -698,15 +698,9 @@ fn view_mem_nav(
     .into()
 }
 
-/// Dump rows are text-style buttons; selection inverts to
-/// secondary. Changed rows carry a `*` mark (theme-safe, no
-/// new colors). Selection wins the secondary style.
-///
-/// The list rides in a scrollable that fills its share: window
-/// growth lands in the viewport instead of stranding dead space,
-/// and shrunken windows scroll natively. (Wheel paging is a GTK
-/// affordance: iced reports scroll position, not wheel deltas, so
-/// an exact-fit page cannot tell the direction.)
+/// Dump rows are text-style buttons; selection inverts, changed rows
+/// carry a `*` mark. The list fills its share in a scrollable;
+/// shrunken windows scroll natively.
 fn view_dump_col(
     dump_rows: &[HexRow],
     diff: &[u32],
@@ -1662,15 +1656,10 @@ mod tests {
         assert!(cursor_page(&Physical::Code(Code::ArrowLeft)).is_none());
     }
 
-    /// Full UI-shell lifecycle without a window: build, pump,
-    /// message-driven rebuild, relayout, draw. Everything here is
-    /// software rasterization plus program state, so it runs in any
-    /// CI job (including the display-less ones) and pins the paths
-    /// the widget tests also exercise. Refresh-style messages only
-    /// queue drain requests, so no emulator contact happens.
-    ///
-    /// Lives here (not in `iced_shell`) so the module graph stays
-    /// acyclic: `iced_shell` must never depend on `debug_window`.
+    /// Headless UI-shell lifecycle test (build/pump/rebuild/relayout/
+    /// draw). Software rasterization only, so it runs without a display
+    /// and never contacts the emulator. Lives here to keep `iced_shell`
+    /// free of `debug_window` imports.
     #[test]
     fn uishell_headless_build_pump_relayout_draw() {
         use crate::iced_shell::UiShell;
