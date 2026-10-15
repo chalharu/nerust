@@ -42,7 +42,11 @@ impl HostState {
         );
     }
 
-    /// Reposition the overlay after main-window moves/resizes.
+    /// Reposition the overlay when the main geometry changed.
+    /// Polled (not only event-driven): WM-driven moves/resizes do not
+    /// reliably surface as tao events on every backend, and a missed
+    /// event would strand the overlay forever. Cheap: two X queries
+    /// per loop pass, skipped when the overlay is absent.
     pub(crate) fn sync_osd_geometry(&mut self) {
         let Some(window) = self.window.as_ref() else {
             return;
@@ -60,6 +64,17 @@ impl HostState {
             size.width,
             size.height
         );
+        let current = (
+            position.x,
+            position.y,
+            size.width,
+            size.height,
+            scale.to_bits(),
+        );
+        if self.osd_geometry == Some(current) {
+            return;
+        }
+        self.osd_geometry = Some(current);
         if let Some(handle) = self.osd_window.as_mut() {
             handle.move_to(
                 (position.x, position.y),

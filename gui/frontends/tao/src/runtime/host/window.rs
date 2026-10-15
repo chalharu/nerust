@@ -175,6 +175,10 @@ impl HostState {
             *control_flow = ControlFlow::WaitUntil(earlier);
         }
 
+        // Overlay tracks the main client area (see sync_osd_geometry).
+        if self.osd_window.is_some() {
+            self.sync_osd_geometry();
+        }
         // OSD expiry wakes the loop for relabel: plain Wait would
         // leave a stale label up until the next input event.
         // Redraw while labels show so expiry applies even paused.
