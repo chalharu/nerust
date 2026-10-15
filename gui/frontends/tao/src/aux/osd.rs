@@ -77,17 +77,8 @@ impl Program for OsdProgram {
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::widget::{column, container, row, text};
         let snapshot = &state.snapshot;
-        log::debug!(
-            "OSD view: rows={} status={} font={}",
-            snapshot.rows.len(),
-            snapshot.status.is_some(),
-            snapshot.font_px,
-        );
         let font = iced::Pixels(snapshot.font_px.max(6.0));
-        let label = |glyph: char,
-                         body: &str,
-                         rgb: (u8, u8, u8)|
-         -> iced::Element<'_, OsdMessage> {
+        let label = |glyph: char, body: &str, rgb: (u8, u8, u8)| -> iced::Element<'_, OsdMessage> {
             container(
                 row![
                     text(format!("{glyph} ")).size(font),
@@ -136,20 +127,19 @@ impl Program for OsdProgram {
                 })
                 .into()
         };
-        let status_widget: iced::Element<'_, OsdMessage> =
-            match snapshot.status.as_ref() {
-                Some(status) => container(label('\u{25cf}', status, (200, 200, 200)))
-                    .align_x(match snapshot.status_position {
-                        NotificationPosition::TopLeft | NotificationPosition::BottomLeft => {
-                            iced::alignment::Horizontal::Left
-                        }
-                        NotificationPosition::TopRight | NotificationPosition::BottomRight => {
-                            iced::alignment::Horizontal::Right
-                        }
-                    })
-                    .into(),
-                None => iced::widget::Space::new().into(),
-            };
+        let status_widget: iced::Element<'_, OsdMessage> = match snapshot.status.as_ref() {
+            Some(status) => container(label('\u{25cf}', status, (200, 200, 200)))
+                .align_x(match snapshot.status_position {
+                    NotificationPosition::TopLeft | NotificationPosition::BottomLeft => {
+                        iced::alignment::Horizontal::Left
+                    }
+                    NotificationPosition::TopRight | NotificationPosition::BottomRight => {
+                        iced::alignment::Horizontal::Right
+                    }
+                })
+                .into(),
+            None => iced::widget::Space::new().into(),
+        };
         // Same edge: status pins to the edge side, transient inside.
         let (top, bottom) = if top_is_transient == status_top {
             if top_is_transient {
@@ -212,7 +202,6 @@ impl OsdWindowHandle {
             log::warn!("OSD click-through refused: {error:?}");
             return None;
         }
-        log::debug!("OSD window created: id={:?}", window.id());
         let window = std::sync::Arc::new(window);
         let scaffold = WindowScaffold::open_transparent(window, "OSD overlay")?;
         let (instance, _task) = program::Instance::new(OsdProgram);
@@ -233,13 +222,6 @@ impl OsdWindowHandle {
         let live = self.shell.window.inner_size();
         self.shell.resize(live.width, live.height);
         let bounds = self.shell.logical_bounds();
-        log::debug!(
-            "OSD sync: live={}x{} bounds={:?} scale={}",
-            live.width,
-            live.height,
-            bounds,
-            self.shell.scale_factor,
-        );
         let window_id = self.shell.window_id;
         self.shell.ui_state.process_messages(
             vec![OsdMessage::Sync(snapshot)],
@@ -266,7 +248,6 @@ impl OsdWindowHandle {
 
 impl OsdWindowHandle {
     pub(crate) fn render(&mut self) {
-        log::debug!("OSD render");
         self.shell.render("OSD overlay");
     }
 }
@@ -315,10 +296,7 @@ impl Program for HistoryProgram {
     }
 
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
-        (
-            HistoryState { lines: Vec::new() },
-            Task::none(),
-        )
+        (HistoryState { lines: Vec::new() }, Task::none())
     }
 
     fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {

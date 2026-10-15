@@ -81,10 +81,7 @@ impl WindowScaffold {
             builder = builder.with_position(tao::dpi::LogicalPosition::new(x as f64, y as f64));
         }
         let window = Arc::new(match builder.build(event_loop) {
-            Ok(window) => {
-                log::debug!("aux window created: title={title} id={:?}", window.id());
-                window
-            }
+            Ok(window) => window,
             Err(error) => {
                 log::error!("failed to create {log_tag}: {error}");
                 return None;

@@ -63,28 +63,12 @@ impl HostState {
         let size = window.map(|window| window.inner_size());
         let scale = window.map(|window| window.scale_factor());
         let Some((position, logical_size)) = self.main_client_rect() else {
-            log::debug!("OSD geometry: client rect unavailable");
             return;
         };
         let (size, scale) = match (size, scale) {
             (Some(size), Some(scale)) => (size, scale),
             _ => return,
         };
-        log::debug!(
-            "OSD geometry: inner={}x{} size={}x{} scale={scale} outer_size={}x{}",
-            position.0,
-            position.1,
-            size.width,
-            size.height,
-            self.window
-                .as_ref()
-                .map(|window| window.outer_size().width)
-                .unwrap_or(0),
-            self.window
-                .as_ref()
-                .map(|window| window.outer_size().height)
-                .unwrap_or(0),
-        );
         let current = (
             position.0,
             position.1,
@@ -179,15 +163,11 @@ impl HostState {
 
     /// Drain shell notifications into display state, show aggregated
     /// error modals (auto-pausing first), and refresh the overlay.
-    /// Returns the next expiry for loop wakeups.
-    pub(crate) fn poll_notifications(&mut self) -> Option<Instant> {
+    /// Cheap when idle (dirty-gated sync); safe to call every loop
+    /// pass, including paused+unfocused where `on_update` stalls.
+    pub(crate) fn poll_notifications(&mut self) {
         let now = Instant::now();
         let drained = self.session.drain_notifications();
-        log::debug!(
-            "OSD poll: drained={} osd_open={}",
-            drained.len(),
-            self.osd_window.is_some()
-        );
         if !drained.is_empty() {
             let settings = self.notification_settings();
             let language = self.notification_language();
@@ -208,10 +188,15 @@ impl HostState {
             self.dialogs
                 .show_error(self.notification_language(), &detail);
         }
-        self.sync_osd_snapshot();
-        self.sync_history_window();
-        log::debug!("OSD poll: rows={}", self.osd.rows().len());
-        self.osd.next_deadline()
+        if self.osd.take_dirty() {
+            self.sync_osd_snapshot();
+            // Paint even idle: no main redraw is scheduled while
+            // paused+unfocused, which is exactly when Paused lands.
+            self.request_redraw();
+        }
+        if self.history_window.is_some() {
+            self.sync_history_window();
+        }
     }
 
     fn sync_osd_snapshot(&mut self) {
