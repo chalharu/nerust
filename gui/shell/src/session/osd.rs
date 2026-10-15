@@ -53,6 +53,7 @@ pub struct OsdManager {
     items: Vec<OsdItem>,
     modal: Vec<String>,
     error_hold: Option<OsdItem>,
+    dirty: bool,
 }
 
 impl OsdManager {
@@ -94,6 +95,9 @@ impl OsdManager {
         language: AppLanguage,
         now: Instant,
     ) {
+        if !notifications.is_empty() {
+            self.dirty = true;
+        }
         for n in notifications {
             if !Self::enabled(n.level, settings) {
                 continue;
@@ -174,7 +178,14 @@ impl OsdManager {
         let before = self.items.len();
         self.items
             .retain(|item| item.deadline.is_none_or(|deadline| deadline > now));
-        before != self.items.len()
+        let changed = before != self.items.len();
+        self.dirty = self.dirty || changed;
+        changed
+    }
+
+    /// True when display state changed since the last sync.
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::replace(&mut self.dirty, false)
     }
 
     pub fn rows(&self) -> Vec<OsdRow> {
