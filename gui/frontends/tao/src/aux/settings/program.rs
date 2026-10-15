@@ -1,5 +1,4 @@
 use std::{
-    cell::Cell,
     rc::Rc,
     sync::{
         Arc, Mutex,
@@ -8,12 +7,9 @@ use std::{
 };
 
 use iced::{
-    Font, Length, Task, Theme,
+    Length, Task, Theme,
     alignment::Alignment,
-    widget::{
-        Column, button, checkbox, column, container, pick_list, radio, row, scrollable, slider,
-        text, text_input,
-    },
+    widget::{button, column, container, row, scrollable, text},
 };
 use iced_winit::program::Program;
 use nerust_core_traits::audio::AudioBackendRegistry;
@@ -36,7 +32,10 @@ use nerust_keyboard::Key;
 
 use rfd::FileDialog;
 
-type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
+use crate::aux::bridge::lock_recovered;
+use crate::convert::default_font;
+
+pub(super) type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -94,7 +93,7 @@ pub(crate) struct SettingsAppProgram {
     pub(crate) audio_registry: Arc<AudioBackendRegistry>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) view_invalidated: Rc<Cell<bool>>,
+    pub(crate) view_invalidated: Arc<AtomicBool>,
 }
 
 impl Program for SettingsAppProgram {
@@ -152,15 +151,69 @@ impl Program for SettingsAppProgram {
 pub(crate) struct SettingsAppState {
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) view_invalidated: Rc<Cell<bool>>,
+    pub(crate) view_invalidated: Arc<AtomicBool>,
     pub vm: SettingsViewModel,
     _revision_subscription: nerust_gui_viewmodel::settings::Subscription,
-    page: SettingsPage,
-    system_tab_index: Option<usize>,
-    input_tab_index: Option<usize>,
-    input_section: InputPageSection,
-    storage_directory_input: String,
-    error_message: Option<String>,
+    pub(super) page: SettingsPage,
+    pub(super) system_tab_index: Option<usize>,
+    pub(super) input_tab_index: Option<usize>,
+    pub(super) input_section: InputPageSection,
+    pub(super) storage_directory_input: String,
+    pub(super) error_message: Option<String>,
+}
+
+fn system_id_key(factory: &Arc<dyn nerust_core_traits::factory::CoreFactory>) -> String {
+    factory.system_id().to_string()
+}
+
+/// First key occurring twice, in encounter order.
+fn first_duplicate_key<T>(
+    items: impl IntoIterator<Item = T>,
+    mut key: impl FnMut(&T) -> String,
+) -> Option<String> {
+    let mut seen = std::collections::HashSet::new();
+    items
+        .into_iter()
+        .map(|item| key(&item))
+        .find(|id| !seen.insert(id.clone()))
+}
+
+/// First duplicate SystemId in registration order, if any.
+pub(crate) fn find_duplicate_system_id(registry: &SystemRegistry) -> Option<String> {
+    first_duplicate_key(registry.all(), |factory| system_id_key(factory))
+}
+
+/// First-wins dedupe by key; `on_duplicate` fires per dropped item.
+fn deduped_by_key<T>(
+    items: impl IntoIterator<Item = T>,
+    mut key: impl FnMut(&T) -> String,
+    mut on_duplicate: impl FnMut(&T),
+) -> Vec<T> {
+    let mut seen = std::collections::HashSet::new();
+    items
+        .into_iter()
+        .filter(|item| {
+            if seen.insert(key(item)) {
+                true
+            } else {
+                on_duplicate(item);
+                false
+            }
+        })
+        .collect()
+}
+
+/// Factories deduped first-wins by [`system_id_key`]; later
+/// duplicates are logged and dropped.
+fn deduped_factories(
+    registry: &SystemRegistry,
+) -> Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>> {
+    deduped_by_key(registry.all().iter().cloned(), system_id_key, |factory| {
+        log::warn!(
+            "ignoring factory '{}' with duplicate SystemId",
+            factory.display_name()
+        );
+    })
 }
 
 impl SettingsAppState {
@@ -174,7 +227,7 @@ impl SettingsAppState {
             snapshot,
             registry,
             audio_registry,
-            Rc::new(Cell::new(false)),
+            Arc::new(AtomicBool::new(false)),
         )
     }
 
@@ -182,7 +235,7 @@ impl SettingsAppState {
         snapshot: &SettingsSnapshot,
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
-        view_invalidated: Rc<Cell<bool>>,
+        view_invalidated: Arc<AtomicBool>,
     ) -> Self {
         let supported_sample_rates: Arc<[u32]> = {
             let rates = audio_registry.supported_rates();
@@ -212,18 +265,21 @@ impl SettingsAppState {
             }
         }
 
-        let factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>> =
-            registry.all().iter().map(Arc::clone).collect();
+        // First-wins dedupe by the `find_duplicate_system_id` key.
+        let factories = deduped_factories(&registry);
+        // Impossibility guard: same-predicate dedupe above plus the
+        // window-open pre-check, and the registry is immutable after
+        // construction, so no duplicate can slip between the two.
         let vm = SettingsViewModel::new(
             snapshot.clone(),
             factories,
             supported_sample_rates,
             Rc::new(FsStoragePathValidator) as Rc<dyn StoragePathValidator>,
         )
-        .expect("duplicate SystemId in factory catalog");
-        let invalidated = Rc::clone(&view_invalidated);
+        .expect("deduped factory catalog contains a duplicate SystemId");
+        let invalidated = Arc::clone(&view_invalidated);
         let _revision_subscription = vm.revision.observe(move |_| {
-            invalidated.set(true);
+            invalidated.store(true, Ordering::Release);
         });
         let has_systems = !vm.systems().is_empty();
         Self {
@@ -253,7 +309,7 @@ impl SettingsAppState {
         audio_registry: Arc<AudioBackendRegistry>,
         should_close: Arc<AtomicBool>,
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-        view_invalidated: Rc<Cell<bool>>,
+        view_invalidated: Arc<AtomicBool>,
     ) -> Self {
         let mut state =
             Self::new_with_invalidation(snapshot, registry, audio_registry, view_invalidated);
@@ -262,11 +318,11 @@ impl SettingsAppState {
         state
     }
 
-    fn language(&self) -> AppLanguage {
+    pub(super) fn language(&self) -> AppLanguage {
         self.vm.general.view.get().language
     }
 
-    fn validation_errors(&self) -> Vec<String> {
+    pub(super) fn validation_errors(&self) -> Vec<String> {
         self.vm
             .finish()
             .err()
@@ -274,7 +330,7 @@ impl SettingsAppState {
             .unwrap_or_default()
     }
 
-    fn storage_error(&self) -> Option<String> {
+    pub(super) fn storage_error(&self) -> Option<String> {
         let general = self.vm.general.view.get();
         if general.show_storage_directory && general.storage_directory.is_empty() {
             Some("Custom storage directory required".into())
@@ -327,23 +383,23 @@ impl SettingsAppState {
 
     fn select_page(&mut self, page: SettingsPage) {
         self.page = page;
-        self.view_invalidated.set(true);
+        self.view_invalidated.store(true, Ordering::Release);
     }
 
     fn select_input_section(&mut self, section: InputPageSection) {
         self.input_section = section;
-        self.view_invalidated.set(true);
+        self.view_invalidated.store(true, Ordering::Release);
     }
 
     fn select_system_tab(&mut self, index: usize) {
         self.system_tab_index = Some(index);
-        self.view_invalidated.set(true);
+        self.view_invalidated.store(true, Ordering::Release);
     }
 
     fn select_input_tab(&mut self, index: usize) {
         self.input_tab_index = Some(index);
         self.input_section = InputPageSection::Attachment(0);
-        self.view_invalidated.set(true);
+        self.view_invalidated.store(true, Ordering::Release);
     }
 
     fn set_storage_directory(&mut self, value: String) {
@@ -395,7 +451,7 @@ impl SettingsAppState {
 
     fn submit(&mut self) {
         if let Ok(snapshot) = self.vm.finish() {
-            *self.pending_apply.lock().expect("pending apply mutex") = Some(snapshot);
+            *lock_recovered(&self.pending_apply) = Some(snapshot);
             self.should_close.store(true, Ordering::Release);
         }
     }
@@ -410,11 +466,11 @@ impl SettingsAppState {
         let can_submit = validation_errors.is_empty();
 
         let sidebar = column![
-            page_radio(language, UiText::General, SettingsPage::General, self.page),
-            page_radio(language, UiText::Input, SettingsPage::Input, self.page),
-            page_radio(language, UiText::Video, SettingsPage::Video, self.page),
-            page_radio(language, UiText::Audio, SettingsPage::Audio, self.page),
-            page_radio(language, UiText::System, SettingsPage::System, self.page),
+            super::views::page_radio(language, UiText::General, SettingsPage::General, self.page),
+            super::views::page_radio(language, UiText::Input, SettingsPage::Input, self.page),
+            super::views::page_radio(language, UiText::Video, SettingsPage::Video, self.page),
+            super::views::page_radio(language, UiText::Audio, SettingsPage::Audio, self.page),
+            super::views::page_radio(language, UiText::System, SettingsPage::System, self.page),
         ]
         .spacing(10)
         .width(Length::Shrink);
@@ -457,337 +513,6 @@ impl SettingsAppState {
 
         root.push(container(buttons).width(Length::Fill)).into()
     }
-
-    fn page_content(&self) -> El<'_> {
-        match self.page {
-            SettingsPage::General => self.general_page(),
-            SettingsPage::Input => self.input_page(),
-            SettingsPage::Video => self.video_page(),
-            SettingsPage::Audio => self.audio_page(),
-            SettingsPage::System => self.system_page(),
-        }
-    }
-
-    fn general_page(&self) -> El<'_> {
-        let general = self.vm.general.view.get();
-        let language = general.language;
-        let mut content = column![
-            labeled_pick_list(
-                ui_text(language, UiText::Language),
-                general.language_choices.clone(),
-                pick_selected(&general.language_choices, &general.language),
-                Message::SetLanguage
-            ),
-            labeled_pick_list(
-                ui_text(language, UiText::SaveStoragePolicy),
-                general.storage_policy_choices.clone(),
-                pick_selected(&general.storage_policy_choices, &general.storage_policy),
-                Message::SetStoragePolicy
-            ),
-        ]
-        .spacing(16);
-
-        if general.show_storage_directory {
-            let storage_row = row![
-                text(ui_text(language, UiText::SaveStorageDirectory)).width(Length::Fixed(220.0)),
-                text_input("", &self.storage_directory_input)
-                    .on_input(Message::SetStorageDirectory)
-                    .width(Length::Fill),
-                button(ui_text(language, UiText::Browse)).on_press(Message::BrowseStorageDirectory),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center);
-            content = content.push(storage_row);
-            if let Some(error) = self.storage_error() {
-                content = content.push(text(error));
-            }
-        }
-
-        content.into()
-    }
-
-    fn input_page(&self) -> El<'_> {
-        let Some(input_tab_index) = self.input_tab_index else {
-            return column![text("No systems available").size(14)].into();
-        };
-        let inputs = self.vm.inputs();
-        let Some(input_vm) = inputs.get(input_tab_index) else {
-            return column![text("No systems available").size(14)].into();
-        };
-        let view = input_vm.view.get();
-
-        let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![];
-
-        // Tab buttons
-        let names: Vec<String> = inputs
-            .iter()
-            .map(|vm| vm.display_name().to_string())
-            .collect();
-        let tab_row = row(names.iter().enumerate().map(|(i, name)| {
-            let btn_text = text(name.clone()).size(14);
-            if Some(i) == self.input_tab_index {
-                button(btn_text).style(button::primary).into()
-            } else {
-                button(btn_text).on_press(Message::SelectInputTab(i)).into()
-            }
-        }))
-        .spacing(4);
-        content = content.push(tab_row);
-
-        // Conflicts
-        for conflict in &view.conflicts {
-            content = content.push(text(conflict.message.clone()));
-        }
-
-        // Controller slots
-        for slot in &view.slots {
-            if slot.occupied_by_other_slot {
-                content = content.push(text(format!("{} — (occupied)", slot.label)));
-                continue;
-            }
-            let current = slot.selected_profile_id.as_ref().and_then(|id| {
-                slot.choices
-                    .iter()
-                    .find(|c| c.value.as_deref() == Some(id.as_str()))
-                    .cloned()
-            });
-            let slot_id = slot.slot_id;
-            let pick = pick_list(
-                slot.choices.clone(),
-                current,
-                move |choice: ChoiceView<Option<String>>| Message::SetControllerSlot {
-                    slot: slot_id,
-                    controller_id: choice.value,
-                },
-            );
-            content = content.push(text(slot.label.clone())).push(pick);
-        }
-
-        // Build navigation tabs as owned data to avoid lifetime issues
-        let section_labels: Vec<String> = view.sections.iter().map(|s| s.label.clone()).collect();
-        let mut navigation = row![].spacing(16).align_y(Alignment::Center);
-        for (index, label) in section_labels.iter().enumerate() {
-            navigation = navigation.push(radio(
-                label.clone(),
-                InputPageSection::Attachment(index),
-                Some(self.input_section),
-                Message::SelectInputSection,
-            ));
-        }
-        // Content section: clone all data upfront to avoid lifetime issues
-        let input_section_content = match self.input_section {
-            InputPageSection::Attachment(index) => {
-                if let Some(section) = view.sections.get(index) {
-                    let rows: Vec<nerust_gui_viewmodel::settings::dto::BindingRowView> =
-                        section.rows.clone();
-                    let title = section.label.clone();
-                    self.binding_section(title, rows)
-                } else {
-                    column![text("")].into()
-                }
-            }
-        };
-
-        content
-            .push(navigation)
-            .push(input_section_content)
-            .spacing(16)
-            .into()
-    }
-
-    fn binding_section(
-        &self,
-        title: String,
-        rows: Vec<nerust_gui_viewmodel::settings::dto::BindingRowView>,
-    ) -> El<'_> {
-        let language = self.language();
-        let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![text(title)];
-        for row in rows {
-            let binding_label = match &row.value {
-                nerust_gui_viewmodel::settings::dto::BindingValueView::Bound(l) => l.clone(),
-                nerust_gui_viewmodel::settings::dto::BindingValueView::Unbound(l) => l.clone(),
-                nerust_gui_viewmodel::settings::dto::BindingValueView::Capturing(l) => l.clone(),
-            };
-            let target = row.target.clone();
-            content = content.push(
-                row![
-                    text(row.label.clone()).width(Length::Fixed(180.0)),
-                    text(binding_label).width(Length::Fill),
-                    button(ui_text(language, UiText::Change))
-                        .on_press(Message::StartCapture(target.clone())),
-                    button(ui_text(language, UiText::Clear))
-                        .on_press(Message::ClearCapture(target)),
-                ]
-                .spacing(12)
-                .width(Length::Fill)
-                .align_y(Alignment::Center),
-            );
-        }
-        content.spacing(8).into()
-    }
-
-    fn video_page(&self) -> El<'_> {
-        let video = self.vm.video.view.get();
-        let language = self.language();
-        column![
-            checkbox(video.fullscreen_default)
-                .label(ui_text(language, UiText::FullscreenDefault))
-                .on_toggle(Message::ToggleFullscreenDefault),
-            labeled_pick_list(
-                ui_text(language, UiText::Scaling),
-                video.scaling_choices.clone(),
-                pick_selected(&video.scaling_choices, &video.scaling),
-                Message::SetScaling
-            ),
-            checkbox(video.vsync)
-                .label(ui_text(language, UiText::Vsync))
-                .on_toggle(Message::ToggleVsync),
-        ]
-        .spacing(16)
-        .into()
-    }
-
-    fn audio_page(&self) -> El<'_> {
-        let audio = self.vm.audio.view.get();
-        let language = self.language();
-        column![
-            checkbox(audio.muted)
-                .label(ui_text(language, UiText::Mute))
-                .on_toggle(Message::ToggleMute),
-            labeled_slider(
-                ui_text(language, UiText::MasterVolume),
-                format!("{}%", audio.volume_percent),
-                slider(0..=100, audio.volume_percent, Message::SetVolume)
-            ),
-            labeled_pick_list(
-                ui_text(language, UiText::SampleRate),
-                audio.sample_rate_choices.clone(),
-                pick_selected(&audio.sample_rate_choices, &audio.sample_rate),
-                Message::SetSampleRate
-            ),
-            labeled_slider(
-                ui_text(language, UiText::AudioLatency),
-                format!("{} ms", audio.latency_ms),
-                slider(10..=200, audio.latency_ms, Message::SetLatency)
-            ),
-        ]
-        .spacing(16)
-        .into()
-    }
-
-    fn system_page(&self) -> El<'_> {
-        let _language = self.language();
-        let system_tab_index = self.system_tab_index;
-        let Some(system_tab_index) = system_tab_index else {
-            return column![text("No systems available").size(14)].into();
-        };
-        let systems = self.vm.systems();
-        let Some(system_vm) = systems.get(system_tab_index) else {
-            return column![text("No systems available").size(14)].into();
-        };
-        let view = system_vm.view.get();
-
-        let mut content = column![];
-
-        // Tab buttons
-        let tab_row = row(systems.iter().enumerate().map(|(i, vm)| {
-            let btn_text = text(vm.display_name()).size(14);
-            if Some(i) == self.system_tab_index {
-                button(btn_text).style(button::primary).into()
-            } else {
-                button(btn_text)
-                    .on_press(Message::SelectSystemTab(i))
-                    .into()
-            }
-        }))
-        .spacing(4);
-        content = content.push(tab_row);
-
-        // Fields
-        for field in &view.fields {
-            let choices: Vec<
-                nerust_gui_viewmodel::settings::dto::ChoiceView<
-                    nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
-                >,
-            > = field.choices.clone();
-            let selected = choices.iter().find(|c| c.value == field.selected).cloned();
-            let label = field.label.clone();
-            let field_id_str = field.id.0.to_string();
-            content = content.push(labeled_pick_list(
-                &label,
-                choices,
-                selected,
-                move |choice: nerust_gui_viewmodel::settings::dto::ChoiceView<
-                    nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
-                >| { Message::SetSystemChoice(field_id_str.clone(), choice) },
-            ));
-        }
-        content.spacing(16).into()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helper functions (shared between old and new paths)
-// ---------------------------------------------------------------------------
-
-fn page_radio(
-    language: AppLanguage,
-    label: UiText,
-    value: SettingsPage,
-    selected: SettingsPage,
-) -> El<'static> {
-    radio(
-        ui_text(language, label),
-        value,
-        Some(selected),
-        Message::SelectPage,
-    )
-    .into()
-}
-
-fn labeled_pick_list<'a, T: Clone + PartialEq + Eq + 'static>(
-    label: &str,
-    options: Vec<ChoiceView<T>>,
-    selected: Option<ChoiceView<T>>,
-    on_select: impl Fn(ChoiceView<T>) -> Message + 'a,
-) -> El<'a> {
-    row![
-        text(label.to_string()).width(Length::Fixed(220.0)),
-        // Stretch to the pane: Shrink rows strand the fixed window
-        // (General shows two short rows in a 960px frame otherwise).
-        pick_list(options, selected, on_select).width(Length::Fill)
-    ]
-    .spacing(12)
-    .align_y(Alignment::Center)
-    .into()
-}
-
-fn labeled_slider<'a>(label: &'static str, value: String, slider: impl Into<El<'a>>) -> El<'a> {
-    row![
-        text(label).width(Length::Fixed(220.0)),
-        slider.into(),
-        text(value).width(Length::Fixed(72.0)),
-    ]
-    .spacing(12)
-    .align_y(Alignment::Center)
-    .into()
-}
-
-fn pick_selected<T: Clone + PartialEq + Eq>(
-    options: &[ChoiceView<T>],
-    value: &T,
-) -> Option<ChoiceView<T>> {
-    options.iter().find(|c| &c.value == value).cloned()
-}
-
-#[cfg(target_os = "windows")]
-fn default_font() -> Font {
-    Font::with_name("Yu Gothic UI")
-}
-
-#[cfg(not(target_os = "windows"))]
-fn default_font() -> Font {
-    Font::DEFAULT
 }
 
 pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical) -> Option<Key> {
@@ -832,17 +557,54 @@ mod tests {
     }
 
     #[test]
-    fn revision_callback_shares_external_view_invalidated_cell() {
-        use std::cell::Cell;
+    fn program_update_and_error_paths_stay_headless() {
+        let program = SettingsAppProgram {
+            snapshot: empty_snapshot(),
+            registry: Arc::new(SystemRegistry::new(Vec::new())),
+            audio_registry: Arc::new(AudioBackendRegistry::new()),
+            should_close: Arc::new(AtomicBool::new(false)),
+            pending_apply: Arc::new(Mutex::new(None)),
+            view_invalidated: Arc::new(AtomicBool::new(false)),
+        };
+        let (mut state, _task) = program.boot();
+        dispatch(&mut state, Message::SelectPage(SettingsPage::Audio));
+        assert_eq!(state.page, SettingsPage::Audio);
+        let _ = program.update(&mut state, Message::SelectPage(SettingsPage::General));
+        // Storage error reads the live ViewModel projection.
+        let _ = state.storage_error();
+        // Error banner renders above the buttons when set.
+        state.error_message = Some("boom".to_string());
+        let _ = program.view(&state, iced::window::Id::unique());
+    }
 
-        let external = Rc::new(Cell::new(false));
+    #[test]
+    fn program_boot_and_chrome_are_headless() {
+        let program = SettingsAppProgram {
+            snapshot: empty_snapshot(),
+            registry: Arc::new(SystemRegistry::new(Vec::new())),
+            audio_registry: Arc::new(AudioBackendRegistry::new()),
+            should_close: Arc::new(AtomicBool::new(false)),
+            pending_apply: Arc::new(Mutex::new(None)),
+            view_invalidated: Arc::new(AtomicBool::new(false)),
+        };
+        assert_eq!(SettingsAppProgram::name(), "nerust_settings");
+        assert!(program.window().is_none());
+        let _ = program.settings();
+        let (state, _task) = program.boot();
+        assert!(program.theme(&state, iced::window::Id::unique()).is_none());
+        let _ = program.view(&state, iced::window::Id::unique());
+    }
+
+    #[test]
+    fn revision_callback_shares_external_view_invalidated_flag() {
+        let external = Arc::new(AtomicBool::new(false));
         let mut state = SettingsAppState::new_with_shared(
             &empty_snapshot(),
             Arc::new(SystemRegistry::new(Vec::new())),
             Arc::new(AudioBackendRegistry::new()),
             Arc::new(AtomicBool::new(false)),
             Arc::new(Mutex::new(None)),
-            Rc::clone(&external),
+            Arc::clone(&external),
         );
 
         dispatch(
@@ -854,8 +616,8 @@ mod tests {
         );
 
         assert!(
-            external.get(),
-            "revision callback should have set the externally-shared cell"
+            external.load(Ordering::Acquire),
+            "revision callback should have set the externally-shared flag"
         );
     }
 
@@ -970,12 +732,12 @@ mod tests {
         dispatch(&mut submitted, Message::Submit);
 
         assert!(submitted.should_close.load(Ordering::Acquire));
-        assert!(submitted.pending_apply.lock().unwrap().is_some());
+        assert!(lock_recovered(&submitted.pending_apply).is_some());
 
         let mut cancelled = empty_state();
         dispatch(&mut cancelled, Message::Cancel);
         assert!(cancelled.should_close.load(Ordering::Acquire));
-        assert!(cancelled.pending_apply.lock().unwrap().is_none());
+        assert!(lock_recovered(&cancelled.pending_apply).is_none());
     }
 
     #[test]
@@ -985,7 +747,7 @@ mod tests {
         // No custom directory and default policy is sidecar — no storage error
         // Submit should succeed (empty snapshot)
         dispatch(&mut state, Message::Submit);
-        assert!(state.pending_apply.lock().unwrap().is_some());
+        assert!(lock_recovered(&state.pending_apply).is_some());
     }
 
     #[test]
@@ -1073,5 +835,37 @@ mod tests {
             errors.is_empty(),
             "default settings should have no validation errors"
         );
+    }
+}
+
+#[cfg(test)]
+mod dedupe_tests {
+    use super::{deduped_by_key, first_duplicate_key};
+
+    fn key(entry: &(&str, u32)) -> String {
+        entry.0.to_string()
+    }
+
+    #[test]
+    fn first_duplicate_reports_first_repeat_in_order() {
+        let items = vec![("a", 1), ("b", 2), ("a", 3), ("b", 4)];
+        assert_eq!(first_duplicate_key(items, key), Some("a".to_string()));
+    }
+
+    #[test]
+    fn first_duplicate_returns_none_without_repeats() {
+        let items = vec![("a", 1), ("b", 2)];
+        assert_eq!(first_duplicate_key(items, key), None);
+        let empty: Vec<(&str, u32)> = Vec::new();
+        assert_eq!(first_duplicate_key(empty, key), None);
+    }
+
+    #[test]
+    fn dedupe_keeps_first_and_reports_drops() {
+        let items = vec![("a", 1), ("b", 2), ("a", 3)];
+        let mut dropped = Vec::new();
+        let kept = deduped_by_key(items, key, |item| dropped.push(item.1));
+        assert_eq!(kept, vec![("a", 1), ("b", 2)]);
+        assert_eq!(dropped, vec![3]);
     }
 }

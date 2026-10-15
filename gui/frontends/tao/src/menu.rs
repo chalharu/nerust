@@ -5,24 +5,13 @@ use nerust_settings_core::model::input::ShortcutBinding;
 use nerust_settings_core::model::language::AppLanguage;
 use tao::window::Window as TaoWindow;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum MenuCommand {
-    Open,
-    Close,
-    Settings,
-    Debugger,
-    Session(SessionCommand),
-    Quit,
-}
-
-#[derive(Debug)]
-pub(crate) enum UserEvent {
-    Menu(MenuCommand),
-    /// Periodic live-follow pulse for the PPU viewer (see
-    /// `WindowRuntime::run`): user events always wake a `Wait` loop,
-    /// unlike timer-based waits. The handler no-ops unless a running
-    /// core has the viewer open.
-    LiveTick,
+/// Headless-testable menu surface: production `AppMenu` drives the
+/// native menubar, test recorders observe the syncs. Object-safe so
+/// `HostState` holds it behind `Box<dyn MenuSink>`.
+pub(crate) trait MenuSink {
+    fn update(&mut self, sync: MenuSync<'_>);
+    fn init_for_window(&self, window: &TaoWindow);
+    fn clear_event_handler(&self);
 }
 
 /// One snapshot for a menu sync: a struct (not a long argument
@@ -76,9 +65,18 @@ pub(crate) mod imp {
     #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowExtWindows;
 
-    use super::{
-        MenuCommand, MenuSync, SessionCommand, StateSlotSummary, TaoWindow, UserEvent, slot_label,
-    };
+    use super::{MenuSync, SessionCommand, StateSlotSummary, TaoWindow, slot_label};
+    use crate::event::MenuCommand;
+    use crate::event::UserEvent;
+
+    /// Best-effort menu construction: a failed append (torn-down
+    /// native menu) logs and leaves a partial menu instead of
+    /// aborting the whole frontend at startup.
+    fn try_append(append: impl FnOnce() -> muda::Result<()>) {
+        if let Err(error) = append() {
+            log::error!("failed to add menu item: {error}");
+        }
+    }
 
     pub(crate) struct AppMenu {
         menu_bar: Menu,
@@ -117,8 +115,8 @@ pub(crate) mod imp {
             #[cfg(target_os = "macos")]
             {
                 let app_menu = Submenu::new("App", true);
-                app_menu
-                    .append_items(&[
+                try_append(|| {
+                    app_menu.append_items(&[
                         &muda::PredefinedMenuItem::about(None, None),
                         &muda::PredefinedMenuItem::separator(),
                         &muda::PredefinedMenuItem::services(None),
@@ -129,8 +127,8 @@ pub(crate) mod imp {
                         &muda::PredefinedMenuItem::separator(),
                         &muda::PredefinedMenuItem::quit(None),
                     ])
-                    .unwrap();
-                menu_bar.append(&app_menu).unwrap();
+                });
+                try_append(|| menu_bar.append(&app_menu));
             }
 
             let open = MenuItem::new("Open ROM...", true, None);
@@ -162,25 +160,25 @@ pub(crate) mod imp {
             let dynamic_commands = Arc::new(RwLock::new(Vec::<(MenuId, SessionCommand)>::new()));
             let dynamic_commands_handler = dynamic_commands.clone();
 
-            file_menu.append(&open).unwrap();
-            file_menu.append(&close).unwrap();
-            file_menu.append(&settings).unwrap();
-            file_menu.append(&quit).unwrap();
-            state_menu.append(&create_slot).unwrap();
-            state_menu.append(&save_active).unwrap();
-            state_menu.append(&load_active).unwrap();
-            state_menu.append(&active_slot_menu).unwrap();
-            state_menu.append(&save_slot_menu).unwrap();
-            state_menu.append(&load_slot_menu).unwrap();
-            state_menu.append(&delete_slot_menu).unwrap();
-            emulation_menu.append(&pause).unwrap();
-            emulation_menu.append(&resume).unwrap();
-            emulation_menu.append(&reset).unwrap();
-            emulation_menu.append(&state_menu).unwrap();
-            emulation_menu.append(&debugger).unwrap();
+            try_append(|| file_menu.append(&open));
+            try_append(|| file_menu.append(&close));
+            try_append(|| file_menu.append(&settings));
+            try_append(|| file_menu.append(&quit));
+            try_append(|| state_menu.append(&create_slot));
+            try_append(|| state_menu.append(&save_active));
+            try_append(|| state_menu.append(&load_active));
+            try_append(|| state_menu.append(&active_slot_menu));
+            try_append(|| state_menu.append(&save_slot_menu));
+            try_append(|| state_menu.append(&load_slot_menu));
+            try_append(|| state_menu.append(&delete_slot_menu));
+            try_append(|| emulation_menu.append(&pause));
+            try_append(|| emulation_menu.append(&resume));
+            try_append(|| emulation_menu.append(&reset));
+            try_append(|| emulation_menu.append(&state_menu));
+            try_append(|| emulation_menu.append(&debugger));
 
-            menu_bar.append(&file_menu).unwrap();
-            menu_bar.append(&emulation_menu).unwrap();
+            try_append(|| menu_bar.append(&file_menu));
+            try_append(|| menu_bar.append(&emulation_menu));
 
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
                 let command = if event.id() == &open_id {
@@ -208,14 +206,16 @@ pub(crate) mod imp {
                 } else {
                     dynamic_commands_handler
                         .read()
-                        .unwrap_or_else(|err| err.into_inner())
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .iter()
                         .find_map(|(id, command)| {
                             (event.id() == id).then_some(MenuCommand::Session(*command))
                         })
                 };
-                if let Some(command) = command {
-                    let _ = proxy.send_event(UserEvent::Menu(command));
+                if let Some(command) = command
+                    && let Err(error) = proxy.send_event(UserEvent::Menu(command))
+                {
+                    log::debug!("menu event dropped after loop exit: {error}");
                 }
             }));
 
@@ -246,7 +246,9 @@ pub(crate) mod imp {
         pub(crate) fn init_for_window(&self, window: &TaoWindow) {
             #[cfg(target_os = "windows")]
             unsafe {
-                self.menu_bar.init_for_hwnd(window.hwnd() as _).unwrap();
+                if let Err(error) = self.menu_bar.init_for_hwnd(window.hwnd() as _) {
+                    log::error!("failed to attach menu to window: {error}");
+                }
             }
 
             #[cfg(any(
@@ -257,9 +259,12 @@ pub(crate) mod imp {
                 target_os = "openbsd"
             ))]
             {
-                self.menu_bar
+                if let Err(error) = self
+                    .menu_bar
                     .init_for_gtk_window(window.gtk_window(), window.default_vbox())
-                    .unwrap();
+                {
+                    log::error!("failed to attach menu to window: {error}");
+                }
                 window.gtk_window().show_all();
             }
 
@@ -316,8 +321,7 @@ pub(crate) mod imp {
                     &self.load_slot_menu,
                     &self.delete_slot_menu,
                 ] {
-                    menu.append(&MenuItem::new(placeholder, false, None))
-                        .unwrap();
+                    try_append(|| menu.append(&MenuItem::new(placeholder, false, None)));
                 }
             }
             for slot in slots {
@@ -326,33 +330,33 @@ pub(crate) mod imp {
                     select_item.id().clone(),
                     SessionCommand::SelectActiveSlot(slot.slot_id),
                 ));
-                self.active_slot_menu.append(&select_item).unwrap();
+                try_append(|| self.active_slot_menu.append(&select_item));
 
                 let save_item = MenuItem::new(slot_label(slot, active_slot), true, None);
                 commands.push((
                     save_item.id().clone(),
                     SessionCommand::SaveSlot(slot.slot_id),
                 ));
-                self.save_slot_menu.append(&save_item).unwrap();
+                try_append(|| self.save_slot_menu.append(&save_item));
 
                 let load_item = MenuItem::new(slot_label(slot, active_slot), true, None);
                 commands.push((
                     load_item.id().clone(),
                     SessionCommand::LoadSlot(slot.slot_id),
                 ));
-                self.load_slot_menu.append(&load_item).unwrap();
+                try_append(|| self.load_slot_menu.append(&load_item));
 
                 let delete_item = MenuItem::new(slot_label(slot, active_slot), true, None);
                 commands.push((
                     delete_item.id().clone(),
                     SessionCommand::DeleteSlot(slot.slot_id),
                 ));
-                self.delete_slot_menu.append(&delete_item).unwrap();
+                try_append(|| self.delete_slot_menu.append(&delete_item));
             }
             *self
                 .dynamic_commands
                 .write()
-                .unwrap_or_else(|err| err.into_inner()) = commands;
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = commands;
         }
 
         fn update_labels(&self, language: AppLanguage, shortcuts: &[ShortcutBinding]) {
@@ -398,6 +402,20 @@ pub(crate) mod imp {
         }
     }
 
+    impl super::MenuSink for AppMenu {
+        fn update(&mut self, sync: super::MenuSync<'_>) {
+            AppMenu::update(self, sync);
+        }
+
+        fn init_for_window(&self, window: &super::TaoWindow) {
+            AppMenu::init_for_window(self, window);
+        }
+
+        fn clear_event_handler(&self) {
+            AppMenu::clear_event_handler(self);
+        }
+    }
+
     /// Menu label with the action's *current* shortcut hint
     /// (`Save Active Slot (F5)`), or the bare label when unbound.
     /// Binding-driven so Settings rebinding never leaves a stale
@@ -410,8 +428,57 @@ pub(crate) mod imp {
     }
 
     fn clear_submenu(menu: &Submenu) {
-        while !menu.items().is_empty() {
+        // Bounded: remove_at can fail (leaving the item in place),
+        // so a while-is-not-empty loop could spin forever.
+        for _ in 0..menu.items().len() {
             let _ = menu.remove_at(0);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::try_append;
+        use nerust_keyboard::Key;
+        use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
+
+        use super::shortcut_hint;
+
+        fn binding(action: ShortcutAction, key: Option<Key>) -> ShortcutBinding {
+            ShortcutBinding { action, key }
+        }
+
+        #[test]
+        fn try_append_tolerates_failure() {
+            // A failing append logs and continues instead of panicking.
+            try_append(|| Err(muda::Error::NotAChildOfThisMenu));
+            try_append(|| Ok(()));
+        }
+
+        #[test]
+        fn shortcut_hint_appends_bound_key() {
+            let bindings = [binding(ShortcutAction::TogglePause, Some(Key::F5))];
+            assert_eq!(
+                shortcut_hint("Pause", &bindings, ShortcutAction::TogglePause),
+                "Pause (F5)"
+            );
+        }
+
+        #[test]
+        fn shortcut_hint_bare_when_unbound() {
+            let bindings = [binding(ShortcutAction::TogglePause, Some(Key::F5))];
+            assert_eq!(
+                shortcut_hint("Pause", &[], ShortcutAction::TogglePause),
+                "Pause"
+            );
+            let unbound = [binding(ShortcutAction::TogglePause, None)];
+            assert_eq!(
+                shortcut_hint("Pause", &unbound, ShortcutAction::TogglePause),
+                "Pause"
+            );
+            assert_eq!(
+                shortcut_hint("Pause", &bindings, ShortcutAction::Reset),
+                "Pause"
+            );
         }
     }
 }
@@ -429,7 +496,8 @@ pub(crate) mod imp {
     use nerust_settings_core::model::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
 
-    use super::{MenuSync, StateSlotSummary, TaoWindow, UserEvent};
+    use super::{MenuSync, TaoWindow};
+    use crate::event::UserEvent;
 
     pub(crate) struct AppMenu;
 
@@ -443,5 +511,19 @@ pub(crate) mod imp {
         pub(crate) fn update(&mut self, _sync: MenuSync<'_>) {}
 
         pub(crate) fn clear_event_handler(&self) {}
+    }
+
+    impl super::MenuSink for AppMenu {
+        fn update(&mut self, sync: super::MenuSync<'_>) {
+            AppMenu::update(self, sync);
+        }
+
+        fn init_for_window(&self, window: &super::TaoWindow) {
+            AppMenu::init_for_window(self, window);
+        }
+
+        fn clear_event_handler(&self) {
+            AppMenu::clear_event_handler(self);
+        }
     }
 }

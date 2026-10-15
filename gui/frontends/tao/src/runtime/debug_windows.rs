@@ -10,16 +10,19 @@ use tao::window::WindowId;
 /// running picture instead of freezing on the open-time frame.
 /// Ticks are images-only empty batches (never kill staged
 /// transactions).
-pub(crate) const PPU_LIVE_INTERVAL: Duration = Duration::from_millis(250);
+pub(super) const PPU_LIVE_INTERVAL: Duration = Duration::from_millis(250);
 
-pub(crate) struct DebugWindows {
-    pub(crate) debug_window: Option<crate::debug_window::DebugWindowHandle>,
-    pub(crate) ppu_window: Option<crate::ppu_window::PpuWindowHandle>,
+pub(super) struct DebugWindows {
+    pub(super) debug_window: Option<crate::aux::debug::DebugWindowHandle>,
+    pub(super) ppu_window: Option<crate::aux::ppu::PpuWindowHandle>,
     debug_open_requested: bool,
-    pub(crate) ppu_open_requested: bool,
+    ppu_open_requested: bool,
     debug_window_pos: Option<(i32, i32)>,
     ppu_window_pos: Option<(i32, i32)>,
     last_ppu_live: Option<Instant>,
+    /// Pause state at the last completed debug drain, for focus
+    /// coalescing. `None` before the first drain.
+    last_drain_paused: Option<bool>,
 }
 
 impl DebugWindows {
@@ -32,6 +35,7 @@ impl DebugWindows {
             debug_window_pos: None,
             ppu_window_pos: None,
             last_ppu_live: None,
+            last_drain_paused: None,
         }
     }
 
@@ -57,6 +61,31 @@ impl DebugWindows {
 
     pub(crate) fn take_ppu_open_request(&mut self) -> bool {
         std::mem::take(&mut self.ppu_open_requested)
+    }
+
+    pub(super) fn request_ppu_open(&mut self) {
+        self.ppu_open_requested = true;
+    }
+
+    pub(super) fn last_drain_paused(&self) -> Option<bool> {
+        self.last_drain_paused
+    }
+
+    pub(super) fn set_last_drain_paused(&mut self, paused: bool) {
+        self.last_drain_paused = Some(paused);
+    }
+
+    /// Drain one batch from the debugger window: queued requests plus
+    /// the toolbar PPU-open flag. `None` with no debugger open.
+    pub(super) fn take_debug_batch(
+        &mut self,
+    ) -> Option<(bool, Vec<nerust_gui_shell::debug::DebugAction>)> {
+        let handle = self.debug_window.as_ref()?;
+        let open = handle
+            .bridge
+            .open_ppu
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
+        Some((open, handle.take_requests()))
     }
 
     pub(crate) fn debug_window_pos(&self) -> Option<(i32, i32)> {
@@ -99,6 +128,35 @@ impl DebugWindows {
     pub(crate) fn next_live_tick(&self) -> Option<Instant> {
         self.last_ppu_live.map(|last| last + PPU_LIVE_INTERVAL)
     }
+
+    /// Drop a dead handle (external destroy without CloseRequested):
+    /// a stale handle must not linger and block reopening.
+    pub(super) fn drop_debug_window(&mut self) {
+        self.debug_window.take();
+    }
+
+    /// Same guard for the PPU viewer.
+    pub(super) fn drop_ppu_window(&mut self) {
+        self.ppu_window.take();
+    }
+
+    /// Close-request flag raised by the debugger window itself.
+    pub(super) fn debug_close_requested(&self) -> bool {
+        self.debug_window.as_ref().is_some_and(|h| {
+            h.shell
+                .should_close
+                .load(std::sync::atomic::Ordering::Acquire)
+        })
+    }
+
+    /// Same flag for the PPU viewer.
+    pub(super) fn ppu_close_requested(&self) -> bool {
+        self.ppu_window.as_ref().is_some_and(|h| {
+            h.shell
+                .should_close
+                .load(std::sync::atomic::Ordering::Acquire)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -111,7 +169,7 @@ mod tests {
         assert!(!windows.take_debug_open_request());
         assert!(!windows.take_ppu_open_request());
         windows.request_debug_open();
-        windows.ppu_open_requested = true;
+        windows.request_ppu_open();
         assert!(windows.take_debug_open_request());
         assert!(windows.take_ppu_open_request());
         assert!(!windows.take_debug_open_request());
@@ -150,5 +208,16 @@ mod tests {
         assert!(!windows.live_due(first));
         assert!(!windows.live_due(first + PPU_LIVE_INTERVAL - Duration::from_nanos(1)));
         assert!(windows.live_due(first + PPU_LIVE_INTERVAL));
+    }
+
+    #[test]
+    fn drop_and_close_flags_total_on_empty() {
+        // Headless: no windows open; drops are no-ops and no close
+        // is ever reported.
+        let mut windows = DebugWindows::new();
+        windows.drop_debug_window();
+        windows.drop_ppu_window();
+        assert!(!windows.debug_close_requested());
+        assert!(!windows.ppu_close_requested());
     }
 }

@@ -1,9 +1,7 @@
 //! Debugger and live-follow orchestration for `HostState`.
 //! Drains, flights, aux-window management, and live PPU follow.
 
-use std::{sync::Arc, time::Instant};
-
-use tao::event_loop::EventLoopWindowTarget;
+use std::time::Instant;
 
 use nerust_gui_shell::{
     debug::{DebugDrainOutput, DrainPoll, LiveImagesPoll},
@@ -12,7 +10,8 @@ use nerust_gui_shell::{
 use nerust_gui_viewmodel::debugger as debug_vm;
 
 use super::host::HostState;
-use crate::app_menu::UserEvent;
+use crate::aux::bridge::lock_recovered;
+use crate::ports::WindowOpener;
 
 impl HostState {
     pub(crate) fn take_debug_open_request(&mut self) -> bool {
@@ -84,7 +83,7 @@ impl HostState {
             return;
         };
         {
-            let mut display = handle.bridge.display.lock().unwrap();
+            let mut display = lock_recovered(&handle.bridge.display);
             if display.images_gen == generation {
                 return;
             }
@@ -107,11 +106,7 @@ impl HostState {
     /// the toolbar button. Closing never resumes. Opening drains
     /// `[Pause, Refresh]` through the shared shell drain (pause first);
     /// `focus_ppu` opens-or-focuses the viewer for the toolbar only.
-    pub(crate) fn open_debug_windows(
-        &mut self,
-        event_loop: &EventLoopWindowTarget<UserEvent>,
-        focus_ppu: bool,
-    ) {
+    pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         use nerust_gui_shell::debug::DebugAction;
         if self.debug.debug_window.is_none() {
             let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> = self
@@ -126,12 +121,11 @@ impl HostState {
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
             let position = self.debug.debug_window_pos();
             let language = self.session.settings_snapshot().shared.general.language;
-            match crate::debug_window::DebugWindowHandle::new(
+            match opener.create_debug(
                 debug_vm::DisplayCache::default(),
                 spaces,
                 mem_addr,
                 language,
-                event_loop,
                 position,
             ) {
                 Some(handle) => {
@@ -146,11 +140,7 @@ impl HostState {
             && let Some(main) = self.debug.debug_window.as_ref()
         {
             let position = self.debug.ppu_window_pos();
-            match crate::ppu_window::PpuWindowHandle::new(
-                Arc::clone(&main.bridge),
-                event_loop,
-                position,
-            ) {
+            match opener.create_ppu(&main.bridge, position) {
                 Some(handle) => {
                     self.debug.ppu_window = Some(handle);
                     // Populate the image cache immediately: the bridge
@@ -174,22 +164,15 @@ impl HostState {
 
     /// Drain debugger requests and push one batched snapshot back.
     /// Execution requests run before the re-read so one drain both
-    /// acts and refreshes. The phase order lives in the shared shell
-    /// drain; this only gathers frontend state and renders. A stored
-    /// flight polls first so rapid batches supersede in order.
+    /// acts and refreshes.
     pub(crate) fn drain_debug_requests(&mut self) {
-        use nerust_gui_shell::debug::DebugAction;
-        use std::sync::atomic::Ordering;
         self.poll_debug_flight();
-        let requests: Vec<DebugAction> = match self.debug.debug_window.as_ref() {
-            Some(handle) => {
-                if handle.bridge.open_ppu.swap(false, Ordering::SeqCst) {
-                    self.debug.ppu_open_requested = true;
-                }
-                handle.take_requests()
-            }
-            None => return,
+        let Some((open_ppu, requests)) = self.debug.take_debug_batch() else {
+            return;
         };
+        if open_ppu {
+            self.debug.request_ppu_open();
+        }
         if requests.is_empty() {
             return;
         }
@@ -204,18 +187,18 @@ impl HostState {
         let (space, mem_addr, dis_addr, watch, freeze, reg_target, prev_rows, need_images) =
             match self.debug.debug_window.as_ref() {
                 Some(handle) => {
-                    let nav = handle.bridge.nav.lock().unwrap();
+                    let nav = lock_recovered(&handle.bridge.nav);
                     let mem_addr = nav.mem_addr();
                     let dis_addr = nav.dis_addr();
-                    let prev = handle.bridge.display.lock().unwrap().dump_rows.clone();
+                    let prev = lock_recovered(&handle.bridge.display).dump_rows.clone();
                     drop(nav);
                     (
                         handle.bridge.selected_space(),
                         mem_addr,
                         dis_addr,
-                        *handle.bridge.watch.lock().unwrap(),
-                        *handle.bridge.freeze.lock().unwrap(),
-                        *handle.bridge.reg_target.lock().unwrap(),
+                        *lock_recovered(&handle.bridge.watch),
+                        *lock_recovered(&handle.bridge.freeze),
+                        *lock_recovered(&handle.bridge.reg_target),
                         prev,
                         self.debug.ppu_window.is_some(),
                     )
@@ -223,7 +206,7 @@ impl HostState {
                 None => {
                     // No round-trip ran, so nothing could have moved:
                     // still record truth for the focus gate below.
-                    self.last_drain_paused = Some(self.session.paused());
+                    self.debug.set_last_drain_paused(self.session.paused());
                     return;
                 }
             };
@@ -275,7 +258,7 @@ impl HostState {
     fn apply_drain_output(&mut self, output: DebugDrainOutput) {
         if let Some(handle) = self.debug.debug_window.as_mut() {
             if let Some(selected) = output.reselected {
-                *handle.bridge.selected.lock().unwrap() = Some(selected);
+                *lock_recovered(&handle.bridge.selected) = Some(selected);
             }
             // Running drains come back section-degenerate (paused
             // gate): restore the last paused rows so Resume keeps the
@@ -285,7 +268,7 @@ impl HostState {
                 // Images excluded: `restore_paused_sections` only reads
                 // the six small paused fields, so dragging up to 512KB
                 // of RGBA through every drain is pure waste.
-                let old = handle.bridge.display.lock().unwrap().clone_without_images();
+                let old = lock_recovered(&handle.bridge.display).clone_without_images();
                 display.restore_paused_sections(&old);
             }
             handle.set_display(display);
@@ -303,7 +286,7 @@ impl HostState {
         // Post-drain truth (the drain may itself pause/resume): focus
         // flips compare against this to skip redundant emu
         // round-trips (see `sync_debug_chrome`).
-        self.last_drain_paused = Some(self.session.paused());
+        self.debug.set_last_drain_paused(self.session.paused());
     }
 
     /// Focus-driven chrome sync. Menu/title refresh always runs; the
@@ -314,7 +297,7 @@ impl HostState {
         self.refresh_window_title();
         if chrome_drain_due(
             self.debug.debug_window.is_some(),
-            self.last_drain_paused,
+            self.debug.last_drain_paused(),
             self.session.paused(),
         ) {
             self.run_debug_drain(&[]);
@@ -329,6 +312,7 @@ fn chrome_drain_due(debug_open: bool, last_drain_paused: Option<bool>, paused: b
 #[cfg(test)]
 mod tests {
     use super::chrome_drain_due;
+    use crate::runtime::host::TestHost;
 
     #[test]
     fn focus_chrome_drains_only_on_pause_transitions() {
@@ -345,5 +329,36 @@ mod tests {
         // re-arms exactly one drain.
         assert!(chrome_drain_due(true, Some(true), false));
         assert!(chrome_drain_due(true, Some(false), true));
+    }
+
+    #[test]
+    fn apply_drain_output_without_windows_syncs_chrome() {
+        use nerust_gui_shell::debug::DebugDrainOutput;
+        use nerust_gui_viewmodel::debugger::DisplayCache;
+        let support = TestHost::new();
+        let mut host = support.host;
+        let output = DebugDrainOutput {
+            display: DisplayCache::default(),
+            reselected: Some((0x100, Some(0xAB))),
+        };
+        host.apply_drain_output(output);
+        assert_eq!(host.debug.last_drain_paused(), Some(host.session.paused()));
+        assert_eq!(support.menu.updates().len(), 1);
+    }
+
+    #[test]
+    fn drain_and_live_stay_quiet_without_windows() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        assert!(!host.take_debug_open_request());
+        assert!(!host.take_ppu_open_request());
+        assert!(!host.live_follow_active());
+        host.live_tick();
+        assert!(!host.poll_debug_flight());
+        // No debugger open: the drain records pause truth and stops.
+        host.drain_debug_requests();
+        host.run_debug_drain(&[]);
+        assert_eq!(host.debug.last_drain_paused(), Some(host.session.paused()));
+        assert!(support.menu.updates().is_empty());
     }
 }

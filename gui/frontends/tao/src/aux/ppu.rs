@@ -2,15 +2,18 @@
 //! tile hover info. Display-only content scrolls; scaled pictures
 //! derive once per drain, hover clones cached handles.
 
-use std::sync::{Arc, Mutex, atomic::Ordering};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use iced::{Length, Point, Task};
 use iced_winit::program::{self, Program};
 
 use tao::event_loop::EventLoopWindowTarget;
 
-use super::debug_window::DebugBridge;
-use crate::iced_shell::{WindowScaffold, aux_settings, aux_theme};
+use super::bridge::{DebugBridge, lock_recovered};
+use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 
 /// Initial PPU viewer window size (verified Xvfb fit).
 pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
@@ -51,9 +54,7 @@ pub(crate) struct PpuState {
     scaled: Mutex<Vec<(String, u32, u32, iced::widget::image::Handle)>>,
     panels_cache: Mutex<String>,
     hover_cache: Mutex<String>,
-    /// Generation of the source images behind `scaled`. Sync
-    /// re-derives only when the drain reports a new generation:
-    /// drains while paused re-run Sync with identical memory. Starts
+    /// Generation of the source images behind `scaled`. Starts
     /// impossibly high so the first Sync always derives (generation
     /// zero is a valid first fetch).
     source_gen: Mutex<u64>,
@@ -103,14 +104,14 @@ impl Program for PpuProgram {
         let bridge = &state.bridge;
         match message {
             PpuMessage::Hovered(line) => {
-                *bridge.ppu_hover.lock().unwrap() = line.clone();
-                *state.hover_cache.lock().unwrap() = line;
+                *lock_recovered(&bridge.ppu_hover) = line.clone();
+                *lock_recovered(&state.hover_cache) = line;
                 bridge.ppu_invalidated.store(true, Ordering::Release);
             }
             PpuMessage::Sync => {
-                let display = bridge.display.lock().unwrap();
+                let display = lock_recovered(&bridge.display);
                 let generation = display.images_gen;
-                let mut source_gen = state.source_gen.lock().unwrap();
+                let mut source_gen = lock_recovered(&state.source_gen);
                 if *source_gen != generation {
                     let mut scaled = Vec::with_capacity(display.images.len());
                     for (label, width, height, rgba) in &display.images {
@@ -122,10 +123,10 @@ impl Program for PpuProgram {
                             iced::widget::image::Handle::from_rgba(width * 2, height * 2, bytes),
                         ));
                     }
-                    *state.scaled.lock().unwrap() = scaled;
+                    *lock_recovered(&state.scaled) = scaled;
                     *source_gen = generation;
                 }
-                *state.panels_cache.lock().unwrap() =
+                *lock_recovered(&state.panels_cache) =
                     nerust_gui_viewmodel::debugger::format_panels(&display.panels);
             }
         }
@@ -142,9 +143,9 @@ impl Program for PpuProgram {
         // Single coherent capture; scaled bytes come from the Sync
         // cache, never re-derived here.
         let language = state.bridge.language;
-        let scaled = state.scaled.lock().unwrap().clone();
-        let panels = state.panels_cache.lock().unwrap().clone();
-        let hover = state.hover_cache.lock().unwrap().clone();
+        let scaled = lock_recovered(&state.scaled).clone();
+        let panels = lock_recovered(&state.panels_cache).clone();
+        let hover = lock_recovered(&state.hover_cache).clone();
         let mut content = column![
             text(ui_text(language, UiText::PpuViewer)).size(18),
             text(if hover.is_empty() {
@@ -192,14 +193,14 @@ impl Program for PpuProgram {
 }
 
 pub(crate) struct PpuWindowHandle {
-    pub(crate) shell: crate::iced_shell::AuxShell<PpuProgram>,
+    pub(crate) shell: crate::aux::shell::AuxShell<PpuProgram>,
     bridge: Arc<DebugBridge>,
 }
 
 impl PpuWindowHandle {
     pub(crate) fn new(
         bridge: Arc<DebugBridge>,
-        event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
+        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
         use nerust_settings_core::i18n::{UiText, text as ui_text};
@@ -217,7 +218,11 @@ impl PpuWindowHandle {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let shell = crate::iced_shell::AuxShell::assemble(scaffold, instance);
+        let shell = crate::aux::shell::AuxShell::assemble(
+            scaffold,
+            instance,
+            Arc::new(AtomicBool::new(false)),
+        );
         // The viewer opens on demand from the debugger toolbar: take
         // focus so keyboard and wheel go straight to the tiles.
         shell.window.set_focus();
@@ -232,17 +237,17 @@ impl PpuWindowHandle {
             &mut self.shell.renderer.backend,
         );
         match outcome {
-            crate::iced_shell::PumpOutcome::Rebuild => {
+            crate::aux::shell::PumpOutcome::Rebuild => {
                 self.bridge
                     .ppu_invalidated
                     .store(true, std::sync::atomic::Ordering::Release);
             }
-            crate::iced_shell::PumpOutcome::Repaint => {
+            crate::aux::shell::PumpOutcome::Repaint => {
                 self.shell.window.request_redraw();
             }
-            crate::iced_shell::PumpOutcome::Idle => {}
+            crate::aux::shell::PumpOutcome::Idle => {}
         }
-        if !messages.is_empty() || matches!(outcome, crate::iced_shell::PumpOutcome::Rebuild) {
+        if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
             let bounds = self.shell.logical_bounds();
             self.shell.ui_state.process_messages(
                 messages,
@@ -259,7 +264,7 @@ impl PpuWindowHandle {
         self.shell.render("PPU viewer");
     }
 
-    pub(crate) fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
+    fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
         if let Some(iced_event) = self.shell.feed_tao_event(event) {
             self.handle_event(iced_event);
         }
@@ -283,6 +288,14 @@ impl PpuWindowHandle {
         // instead of depending on the next window event, so the
         // viewer never sits on a stale or blank frame.
         self.render();
+    }
+}
+
+impl crate::aux::shell::AuxWindow for PpuWindowHandle {
+    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
+        self.shell.handle_common_event(&event);
+        self.handle_tao_event(event);
+        self.shell.window.request_redraw();
     }
 }
 
@@ -351,20 +364,20 @@ mod tests {
         let mut state = ppu_state(&bridge);
         let _ = program.update(&mut state, PpuMessage::Sync);
         // First sync derives: one 2x image plus the generation.
-        assert_eq!(state.scaled.lock().unwrap().len(), 1);
-        assert_eq!(*state.source_gen.lock().unwrap(), 5);
-        assert_eq!(state.scaled.lock().unwrap()[0].1, 4);
-        assert_eq!(state.scaled.lock().unwrap()[0].2, 2);
+        assert_eq!(lock_recovered(&state.scaled).len(), 1);
+        assert_eq!(*lock_recovered(&state.source_gen), 5);
+        assert_eq!(lock_recovered(&state.scaled)[0].1, 4);
+        assert_eq!(lock_recovered(&state.scaled)[0].2, 2);
         // Identical generation re-runs Sync without re-deriving.
         let _ = program.update(&mut state, PpuMessage::Sync);
-        assert_eq!(*state.source_gen.lock().unwrap(), 5);
+        assert_eq!(*lock_recovered(&state.source_gen), 5);
         // Hover only records the line, never re-derives.
         let _ = program.update(
             &mut state,
             PpuMessage::Hovered("Tiles tile #0 (px 0,0, +0000)".to_string()),
         );
         assert_eq!(
-            *state.hover_cache.lock().unwrap(),
+            *lock_recovered(&state.hover_cache),
             "Tiles tile #0 (px 0,0, +0000)"
         );
         assert!(bridge.ppu_invalidated.load(Ordering::Acquire));
@@ -389,5 +402,20 @@ mod tests {
         );
         let _full = program.view(&synced, iced::window::Id::unique());
         drop(_full);
+    }
+    #[test]
+    fn program_boot_and_chrome_are_headless() {
+        let bridge = ppu_bridge();
+        let program = PpuProgram {
+            bridge: Arc::clone(&bridge),
+        };
+        assert_eq!(PpuProgram::name(), "nerust_ppu_viewer");
+        assert!(program.window().is_none());
+        let _ = program.settings();
+        let (state, _task) = program.boot();
+        let theme = program.theme(&state, iced::window::Id::unique());
+        assert!(matches!(theme, Some(iced::Theme::Light)));
+        let _ = program.view(&state, iced::window::Id::unique());
+        drop(state);
     }
 }
