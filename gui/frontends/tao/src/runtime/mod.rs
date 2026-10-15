@@ -188,6 +188,7 @@ impl WindowRuntime {
                 self.host.on_osd_event(event);
             }
             Event::RedrawRequested(window_id) if self.host.is_osd_window(window_id) => {
+                log::debug!("OSD redraw requested");
                 if let Some(handle) = self.host.osd_window.as_mut() {
                     handle.render();
                 }
