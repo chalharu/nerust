@@ -474,7 +474,7 @@ mod tests {
 
     #[test]
     fn keyboard_shortcuts_route_without_keys() {
-        use nerust_gui_shell::session::commands::KeyboardShortcut;
+        use nerust_gui_shell::session::KeyboardShortcut;
         let support = TestHost::new();
         let mut host = support.host;
         host.apply_keyboard_shortcut(KeyboardShortcut::OpenDebugger);
