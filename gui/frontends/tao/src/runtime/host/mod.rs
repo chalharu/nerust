@@ -30,7 +30,8 @@ mod settings;
 mod window;
 
 use self::focus::FocusState;
-use crate::aux::osd::{HistoryWindowHandle, OsdManager, OsdWindowHandle};
+use crate::aux::osd::{HistoryWindowHandle, OsdWindowHandle};
+use nerust_gui_shell::session::osd::OsdManager;
 use crate::ports::DialogPorts;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
