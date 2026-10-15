@@ -573,17 +573,13 @@ impl GpuRenderer for SoftbufferRenderer {
         }
 
         let top = (self.reserved.top as usize).min(dst_h);
-        let avail_h = dst_h.saturating_sub(
-            (self.reserved.height_loss(self.size.height)) as usize,
-        );
+        let avail_h = dst_h.saturating_sub((self.reserved.height_loss(self.size.height)) as usize);
         // Strip rows keep the cleared black: the surface buffer is
         // reused across frames, so stale game pixels must not linger.
         for row in buffer.as_mut()[..top.saturating_mul(dst_w)].iter_mut() {
             *row = 0;
         }
-        for row in buffer.as_mut()
-            [(top.saturating_add(avail_h)).saturating_mul(dst_w)..]
-            .iter_mut()
+        for row in buffer.as_mut()[(top.saturating_add(avail_h)).saturating_mul(dst_w)..].iter_mut()
         {
             *row = 0;
         }

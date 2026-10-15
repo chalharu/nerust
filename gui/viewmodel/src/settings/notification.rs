@@ -147,9 +147,7 @@ mod tests {
     #[test]
     fn notification_edits_round_trip() {
         let vm = test_vm();
-        vm.notifications
-            .set_warning_duration_ms(3_000)
-            .unwrap();
+        vm.notifications.set_warning_duration_ms(3_000).unwrap();
         vm.notifications.set_error_modal(false).unwrap();
         vm.notifications
             .set_position(NotificationPosition::TopRight)

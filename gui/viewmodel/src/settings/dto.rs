@@ -8,9 +8,7 @@ use nerust_input_traits::AttachmentId;
 use nerust_settings_core::editor::CaptureTarget;
 use nerust_settings_core::model::{
     language::AppLanguage,
-    local::{
-        NotificationAreaMode, NotificationColor, NotificationPosition, ScalingMode,
-    },
+    local::{NotificationAreaMode, NotificationColor, NotificationPosition, ScalingMode},
     shared::StoragePolicy,
 };
 
