@@ -248,7 +248,10 @@ impl OsdWindowHandle {
 
 impl OsdWindowHandle {
     pub(crate) fn render(&mut self) {
-        self.shell.render("OSD overlay");
+        // Transparent clear: the surface is alpha-capable, so empty
+        // areas composite the game beneath instead of theme white.
+        self.shell
+            .render_with_background("OSD overlay", iced::Color::TRANSPARENT);
     }
 }
 
