@@ -206,7 +206,7 @@ pub(crate) mod imp {
                 } else {
                     dynamic_commands_handler
                         .read()
-                        .unwrap_or_else(|err| err.into_inner())
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .iter()
                         .find_map(|(id, command)| {
                             (event.id() == id).then_some(MenuCommand::Session(*command))
@@ -356,7 +356,7 @@ pub(crate) mod imp {
             *self
                 .dynamic_commands
                 .write()
-                .unwrap_or_else(|err| err.into_inner()) = commands;
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = commands;
         }
 
         fn update_labels(&self, language: AppLanguage, shortcuts: &[ShortcutBinding]) {

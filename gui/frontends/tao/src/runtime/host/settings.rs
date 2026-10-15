@@ -1,8 +1,13 @@
 //! Settings dialog lifecycle: open/close plus applying snapshots.
 //! Owned by `HostState`; the iced side lives in `crate::aux::settings`.
 use super::HostState;
-use super::*;
-use nerust_gui_shell::session::access::FrontendSession;
+use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_shell::session::{
+    SessionError,
+    access::{FrontendSession, SettingsResult},
+};
+
+use crate::ports::WindowOpener;
 
 impl HostState {
     pub(crate) fn apply_settings(
@@ -88,7 +93,7 @@ impl HostState {
 
 #[cfg(test)]
 mod tests {
-    use super::TestHost;
+    use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
 
     #[test]

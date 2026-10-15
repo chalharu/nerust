@@ -1,7 +1,20 @@
 //! Native window lifecycle, surface targets, and loop control flow.
 
 use super::HostState;
-use super::*;
+use super::{
+    create_window_builder, default_fit_window_size, logical_size_from_remembered,
+    logical_window_size, window_is_fullscreen, window_surface_size,
+};
+use std::path::Path;
+use std::time::Instant;
+use tao::{dpi::LogicalSize as TaoLogicalSize, event_loop::ControlFlow, window::WindowId};
+
+use nerust_gui_shell::settings::scaling_factor;
+use nerust_render_traits::{SurfaceSize, renderer::RenderResult};
+use nerust_settings_core::model::app_state::RememberedWindowSize;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+use crate::ports::WindowOpener;
 
 impl HostState {
     pub(crate) fn ensure_window(&mut self, opener: &dyn WindowOpener) {
@@ -265,7 +278,7 @@ impl HostState {
 mod tests {
     use tao::event_loop::ControlFlow;
 
-    use super::TestHost;
+    use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
 
     #[test]
