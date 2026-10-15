@@ -7,7 +7,6 @@
 //! window itself (`OsdWindowHandle`) is a transparent click-through
 //! iced shell tracking the main client area.
 
-
 use iced::{Length, Task};
 use iced_winit::program::{self, Program};
 
