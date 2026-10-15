@@ -233,6 +233,13 @@ impl OsdWindowHandle {
         let live = self.shell.window.inner_size();
         self.shell.resize(live.width, live.height);
         let bounds = self.shell.logical_bounds();
+        log::debug!(
+            "OSD sync: live={}x{} bounds={:?} scale={}",
+            live.width,
+            live.height,
+            bounds,
+            self.shell.scale_factor,
+        );
         let window_id = self.shell.window_id;
         self.shell.ui_state.process_messages(
             vec![OsdMessage::Sync(snapshot)],
