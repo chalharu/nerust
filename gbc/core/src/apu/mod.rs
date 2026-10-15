@@ -134,9 +134,7 @@ impl GbcApu {
             // Square channels: clocked at 1,048,576 Hz (master/4)
             // Pan Docs: "The pulse channels' period dividers are clocked
             // at 1048576 Hz, once per four dots"
-            // Wrapping is intentional: only mod-2/mod-4 phase matters
-            // for the channel prescalers, and u32 wraps every ~17.9 min
-            // at 4 MiHz (debug builds panic on overflow otherwise).
+            // Wrap: only mod-2/mod-4 phase is used below.
             self.dot_counter = self.dot_counter.wrapping_add(1);
             // Square channels: clocked at 1,048,576 Hz (master/4)
             // Pan Docs: "The pulse channels' period dividers are clocked
