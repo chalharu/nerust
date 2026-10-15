@@ -10,8 +10,8 @@ use nerust_render_traits::ReservedStrip;
 use tao::event::WindowEvent;
 
 use super::HostState;
-use nerust_gui_shell::session::osd::{OsdManager, OsdSnapshot, strip_pixels, strip_rows};
 use crate::ports::WindowOpener;
+use nerust_gui_shell::session::osd::{OsdManager, OsdSnapshot, strip_pixels, strip_rows};
 
 impl HostState {
     fn notification_settings(&self) -> nerust_settings_core::model::local::NotificationSettings {
