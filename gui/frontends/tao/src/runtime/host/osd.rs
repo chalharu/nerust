@@ -10,7 +10,7 @@ use nerust_render_traits::ReservedStrip;
 use tao::event::WindowEvent;
 
 use super::HostState;
-use crate::aux::osd::{OsdManager, OsdSnapshot, strip_pixels, strip_rows};
+use nerust_gui_shell::session::osd::{OsdManager, OsdSnapshot, strip_pixels, strip_rows};
 use crate::ports::WindowOpener;
 
 impl HostState {

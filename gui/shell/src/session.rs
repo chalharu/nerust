@@ -4,6 +4,7 @@ pub mod debug_ops;
 pub mod input;
 pub mod lifecycle;
 pub mod notification;
+pub mod osd;
 pub mod persistence;
 #[cfg(test)]
 mod persistence_test;
