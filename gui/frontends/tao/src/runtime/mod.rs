@@ -21,6 +21,7 @@ use tao::{
 use self::host::{HostAction, HostState};
 use crate::event::UserEvent;
 use crate::menu::imp::AppMenu;
+use crate::runtime::host::NativeDialogs;
 
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
@@ -44,7 +45,7 @@ impl WindowRuntime {
         let proxy = event_loop.create_proxy();
         let app_menu = AppMenu::new(proxy);
 
-        let host = HostState::new(ctx, Box::new(app_menu))?;
+        let host = HostState::new(ctx, Box::new(app_menu), Box::new(NativeDialogs))?;
 
         Ok(Self {
             event_loop: Some(event_loop),

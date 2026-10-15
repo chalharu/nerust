@@ -1,8 +1,45 @@
 //! Menu/keyboard dispatch, ROM lifecycle, and the session delegate.
 
+use std::path::PathBuf;
+
+use nerust_gui_shell::registry::SystemRegistry;
+use nerust_settings_core::model::language::AppLanguage;
+
 use super::HostState;
 use super::*;
 use nerust_gui_shell::session::access::FrontendSession;
+
+/// Native file/error dialogs, seamed for headless tests. Production
+/// talks to rfd; fakes return canned picks and record errors.
+pub(crate) trait DialogPorts {
+    fn pick_rom_file(
+        &self,
+        language: AppLanguage,
+        filters: Vec<(String, Vec<String>)>,
+    ) -> Option<PathBuf>;
+    fn show_load_error(&self, language: AppLanguage, detail: &str);
+}
+
+/// Production dialogs over rfd.
+pub(crate) struct NativeDialogs;
+
+impl DialogPorts for NativeDialogs {
+    fn pick_rom_file(
+        &self,
+        language: AppLanguage,
+        filters: Vec<(String, Vec<String>)>,
+    ) -> Option<PathBuf> {
+        let mut dialog = FileDialog::new().set_title(text(language, UiText::Open));
+        for (name, extensions) in filters {
+            dialog = dialog.add_filter(name, extensions.as_slice());
+        }
+        dialog.pick_file()
+    }
+
+    fn show_load_error(&self, language: AppLanguage, detail: &str) {
+        show_rom_load_error(language, detail);
+    }
+}
 
 impl HostState {
     pub(crate) fn on_menu_command(
@@ -75,27 +112,35 @@ impl HostState {
     }
 
     fn open_rom_dialog(&mut self) -> bool {
-        let mut dialog = FileDialog::new().set_title(text(
-            self.session.settings_snapshot().shared.general.language,
-            UiText::Open,
-        ));
-        for factory in self.ctx.registry.all() {
-            let extensions = factory.supported_extensions();
-            if !extensions.is_empty() {
-                dialog = dialog.add_filter(format!("{} ROM", factory.display_name()), extensions);
-            }
-        }
-        let Some(path) = dialog.pick_file() else {
+        let language = self.session.settings_snapshot().shared.general.language;
+        let filters = Self::rom_dialog_filters(&self.ctx.registry);
+        let Some(path) = self.dialogs.pick_rom_file(language, filters) else {
             return false;
         };
         if let Err(detail) = self.load_path(&path) {
-            show_rom_load_error(
-                self.session.settings_snapshot().shared.general.language,
-                &detail,
-            );
+            self.dialogs.show_load_error(language, &detail);
             return false;
         }
         true
+    }
+
+    /// ROM-picker filters from the registered cores, extracted pure
+    /// so the dialog wiring stays unit-testable. Cores without
+    /// extensions never reach the picker.
+    pub(super) fn rom_dialog_filters(registry: &SystemRegistry) -> Vec<(String, Vec<String>)> {
+        registry
+            .all()
+            .iter()
+            .filter_map(|factory| {
+                let extensions = factory.supported_extensions();
+                (!extensions.is_empty()).then(|| {
+                    (
+                        format!("{} ROM", factory.display_name()),
+                        extensions.iter().map(|item| item.to_string()).collect(),
+                    )
+                })
+            })
+            .collect()
     }
 
     fn close_rom(&mut self) {
@@ -234,5 +279,48 @@ impl FrontendSession for HostState {
             fullscreen_default_changed: plan.fullscreen_default_changed,
             scaling_changed: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HostState;
+    use crate::test_support::{FakeRomLoader, TestHost};
+    use nerust_gui_shell::registry::SystemRegistry;
+
+    #[test]
+    fn rom_filters_empty_without_cores() {
+        let registry = SystemRegistry::new(Vec::new());
+        assert!(HostState::rom_dialog_filters(&registry).is_empty());
+    }
+
+    #[test]
+    fn rom_dialog_cancel_picks_nothing() {
+        let support = TestHost::with_pick(None);
+        let mut host = support.host;
+        assert!(!host.open_rom_dialog());
+        assert!(support.loader.attempted().is_empty());
+        assert!(support.dialogs.errors().is_empty());
+    }
+
+    #[test]
+    fn rom_dialog_success_loads_picked_path() {
+        let path = std::path::PathBuf::from("/tmp/game.nes");
+        let support = TestHost::with_pick(Some(path.clone()));
+        let mut host = support.host;
+        assert!(host.open_rom_dialog());
+        assert_eq!(support.loader.attempted(), [path]);
+        assert!(support.dialogs.errors().is_empty());
+    }
+
+    #[test]
+    fn rom_dialog_failure_surfaces_error() {
+        let path = std::path::PathBuf::from("/tmp/broken.nes");
+        let loader = FakeRomLoader::failing("bad rom");
+        let support = TestHost::with_loader_and_pick(loader, Some(path.clone()));
+        let mut host = support.host;
+        assert!(!host.open_rom_dialog());
+        assert_eq!(support.loader.attempted(), [path]);
+        assert_eq!(support.dialogs.errors(), ["ROM load failed: bad rom"]);
     }
 }
