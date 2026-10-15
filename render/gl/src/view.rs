@@ -352,14 +352,6 @@ impl GlView {
         self.unpack_row_length
     }
 
-    pub fn on_resize(&mut self, viewport_width: i32, viewport_height: i32) {
-        self.on_resize_with_strip(
-            viewport_width,
-            viewport_height,
-            nerust_render_traits::ReservedStrip::default(),
-        )
-    }
-
     /// Fit the game into the surface minus reserved OSD strips.
     /// GL viewports start at the bottom-left, so the drawable rect
     /// sits `strip.bottom` above the surface base.
