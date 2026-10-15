@@ -352,7 +352,9 @@ mod self_tests {
     fn fake_gpu_factory_fails_closed() {
         use raw_window_handle::RawDisplayHandle;
         let factory = FakeGpuFactory;
-        let result = factory.create_renderer(&test_config(), RawDisplayHandle::Haiku);
+        // Never dereferenced: the fake fails before touching it.
+        let handle: RawDisplayHandle = unsafe { std::mem::zeroed() };
+        let result = factory.create_renderer(&test_config(), handle);
         assert!(result.is_err());
     }
 }
