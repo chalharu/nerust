@@ -292,6 +292,19 @@ mod tests {
     }
 
     #[test]
+    fn armed_auto_pause_consumes_without_core() {
+        use tao::event_loop::ControlFlow;
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.focus.leave_main();
+        let mut flow = ControlFlow::Wait;
+        host.update_control_flow(&mut flow);
+        assert_eq!(flow, ControlFlow::Wait);
+        // Consumed: arriving now reports no resume.
+        assert!(!host.focus.arrive_main());
+    }
+
+    #[test]
     fn window_helpers_stay_total_without_window() {
         use nerust_render_traits::renderer::RenderResult;
         let support = TestHost::new();

@@ -275,6 +275,18 @@ mod tests {
     }
 
     #[test]
+    fn settings_focus_never_moves_main_activity() {
+        // Settings arrivals cancel without resuming and never touch
+        // the main-active flag; departures only arm the deferred pause.
+        let (mut runtime, menu) = test_runtime();
+        runtime.on_settings_event(WindowEvent::Focused(true));
+        runtime.on_settings_event(WindowEvent::Focused(false));
+        assert!(runtime.host.focus.main_active());
+        assert!(menu.updates().is_empty());
+        runtime.host.focus.cancel_pending();
+    }
+
+    #[test]
     fn settings_destroyed_without_window_is_noop() {
         let (mut runtime, menu) = test_runtime();
         runtime.on_settings_event(WindowEvent::Destroyed);
@@ -315,6 +327,25 @@ mod tests {
         let (mut runtime, _) = test_runtime();
         runtime.on_ppu_event(WindowEvent::Moved(PhysicalPosition::new(1250, 100)));
         assert_eq!(runtime.host.debug.ppu_window_pos(), Some((1250, 100)));
+    }
+
+    #[test]
+    fn ppu_focused_without_window_returns_early() {
+        let (mut runtime, menu) = test_runtime();
+        runtime.on_ppu_event(WindowEvent::Focused(true));
+        runtime.on_ppu_event(WindowEvent::Focused(false));
+        assert!(menu.updates().is_empty());
+    }
+
+    #[test]
+    fn ppu_request_opens_debugger_once() {
+        let (mut runtime, _) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        runtime.host.debug.request_ppu_open();
+        runtime.on_debug_redrawn(&opener);
+        assert_eq!(opener.calls(), [OpenerCall::Debug]);
+        runtime.on_debug_redrawn(&opener);
+        assert_eq!(opener.calls(), [OpenerCall::Debug]);
     }
 
     #[test]
