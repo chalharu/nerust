@@ -13,6 +13,7 @@ pub(crate) enum MenuCommand {
     Close,
     Settings,
     Debugger,
+    NotificationHistory,
     Session(SessionCommand),
     Quit,
 }

@@ -19,6 +19,7 @@ impl SettingsAppState {
             SettingsPage::Input => self.input_page(),
             SettingsPage::Video => self.video_page(),
             SettingsPage::Audio => self.audio_page(),
+            SettingsPage::Notifications => self.notifications_page(),
             SettingsPage::System => self.system_page(),
         }
     }
@@ -190,6 +191,137 @@ impl SettingsAppState {
                 ui_text(language, UiText::AudioLatency),
                 format!("{} ms", audio.latency_ms),
                 slider(10..=200, audio.latency_ms, Message::SetLatency)
+            ),
+        ]
+        .spacing(16)
+        .into()
+    }
+
+    fn notifications_page(&self) -> El<'_> {
+        use nerust_settings_core::model::local::{
+            NotificationAreaMode, NotificationColor, NotificationPosition,
+        };
+        let view = self.vm.notifications.view.get();
+        let language = self.language();
+        let colors = vec![
+            ChoiceView {
+                value: NotificationColor::White,
+                label: ui_text(language, UiText::ColorWhite).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Yellow,
+                label: ui_text(language, UiText::ColorYellow).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Red,
+                label: ui_text(language, UiText::ColorRed).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Green,
+                label: ui_text(language, UiText::ColorGreen).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Cyan,
+                label: ui_text(language, UiText::ColorCyan).to_string(),
+            },
+        ];
+        let positions = vec![
+            ChoiceView {
+                value: NotificationPosition::TopLeft,
+                label: ui_text(language, UiText::PosTopLeft).to_string(),
+            },
+            ChoiceView {
+                value: NotificationPosition::TopRight,
+                label: ui_text(language, UiText::PosTopRight).to_string(),
+            },
+            ChoiceView {
+                value: NotificationPosition::BottomLeft,
+                label: ui_text(language, UiText::PosBottomLeft).to_string(),
+            },
+            ChoiceView {
+                value: NotificationPosition::BottomRight,
+                label: ui_text(language, UiText::PosBottomRight).to_string(),
+            },
+        ];
+        let areas = vec![
+            ChoiceView {
+                value: NotificationAreaMode::Overlay,
+                label: ui_text(language, UiText::AreaOverlay).to_string(),
+            },
+            ChoiceView {
+                value: NotificationAreaMode::Strip,
+                label: ui_text(language, UiText::AreaStrip).to_string(),
+            },
+        ];
+        column![
+            checkbox(view.info_enabled)
+                .label(ui_text(language, UiText::NotificationInfo))
+                .on_toggle(Message::ToggleInfoEnabled),
+            labeled_slider(
+                ui_text(language, UiText::NotificationDuration),
+                format!("{} ms", view.info_duration_ms),
+                slider(
+                    1000..=30000,
+                    view.info_duration_ms,
+                    Message::SetInfoDuration
+                )
+            ),
+            labeled_pick_list(
+                ui_text(language, UiText::NotificationColor),
+                colors.clone(),
+                pick_selected(&colors, &view.info_color),
+                Message::SetInfoColor
+            ),
+            checkbox(view.warning_enabled)
+                .label(ui_text(language, UiText::NotificationWarning))
+                .on_toggle(Message::ToggleWarningEnabled),
+            labeled_slider(
+                ui_text(language, UiText::NotificationDuration),
+                format!("{} ms", view.warning_duration_ms),
+                slider(
+                    1000..=30000,
+                    view.warning_duration_ms,
+                    Message::SetWarningDuration
+                )
+            ),
+            labeled_pick_list(
+                ui_text(language, UiText::NotificationColor),
+                colors.clone(),
+                pick_selected(&colors, &view.warning_color),
+                Message::SetWarningColor
+            ),
+            checkbox(view.error_enabled)
+                .label(ui_text(language, UiText::NotificationError))
+                .on_toggle(Message::ToggleErrorEnabled),
+            checkbox(view.error_modal)
+                .label(ui_text(language, UiText::NotificationErrorModal))
+                .on_toggle(Message::ToggleErrorModal),
+            labeled_pick_list(
+                ui_text(language, UiText::NotificationColor),
+                colors.clone(),
+                pick_selected(&colors, &view.error_color),
+                Message::SetErrorColor
+            ),
+            checkbox(view.status_enabled)
+                .label(ui_text(language, UiText::NotificationStatus))
+                .on_toggle(Message::ToggleStatusEnabled),
+            labeled_pick_list(
+                ui_text(language, UiText::NotificationPosition),
+                positions.clone(),
+                pick_selected(&positions, &view.position),
+                Message::SetPosition
+            ),
+            labeled_pick_list(
+                ui_text(language, UiText::NotificationStatusPosition),
+                positions.clone(),
+                pick_selected(&positions, &view.status_position),
+                Message::SetStatusPosition
+            ),
+            labeled_pick_list(
+                ui_text(language, UiText::NotificationAreaMode),
+                areas.clone(),
+                pick_selected(&areas, &view.area_mode),
+                Message::SetAreaMode
             ),
         ]
         .spacing(16)

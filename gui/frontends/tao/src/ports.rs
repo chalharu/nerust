@@ -32,6 +32,7 @@ pub(crate) trait DialogPorts {
         filters: Vec<(String, Vec<String>)>,
     ) -> Option<PathBuf>;
     fn show_load_error(&self, language: AppLanguage, detail: &str);
+    fn show_error(&self, language: AppLanguage, detail: &str);
 }
 
 /// Production dialogs over rfd.
@@ -52,6 +53,15 @@ impl DialogPorts for NativeDialogs {
 
     fn show_load_error(&self, language: AppLanguage, detail: &str) {
         show_rom_load_error(language, detail);
+    }
+
+    fn show_error(&self, language: AppLanguage, detail: &str) {
+        rfd::MessageDialog::new()
+            .set_title(text(language, UiText::Error))
+            .set_description(detail)
+            .set_level(rfd::MessageLevel::Error)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
     }
 }
 
@@ -90,6 +100,13 @@ pub(crate) trait WindowOpener {
         bridge: &Arc<DebugBridge>,
         position: Option<(i32, i32)>,
     ) -> Option<crate::aux::ppu::PpuWindowHandle>;
+    fn create_osd(
+        &self,
+        position: (i32, i32),
+        size: (f64, f64),
+    ) -> Option<crate::aux::osd::OsdWindowHandle>;
+    fn create_history(&self, language: AppLanguage)
+    -> Option<crate::aux::osd::HistoryWindowHandle>;
 }
 
 /// Production opener: real tao windows on the live event loop.
@@ -149,5 +166,20 @@ impl WindowOpener for TaoWindowOpener<'_> {
         position: Option<(i32, i32)>,
     ) -> Option<crate::aux::ppu::PpuWindowHandle> {
         crate::aux::ppu::PpuWindowHandle::new(Arc::clone(bridge), self.target, position)
+    }
+
+    fn create_osd(
+        &self,
+        position: (i32, i32),
+        size: (f64, f64),
+    ) -> Option<crate::aux::osd::OsdWindowHandle> {
+        crate::aux::osd::OsdWindowHandle::new(self.target, position, size)
+    }
+
+    fn create_history(
+        &self,
+        language: AppLanguage,
+    ) -> Option<crate::aux::osd::HistoryWindowHandle> {
+        crate::aux::osd::HistoryWindowHandle::new(self.target, language)
     }
 }

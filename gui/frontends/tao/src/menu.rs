@@ -87,6 +87,7 @@ pub(crate) mod imp {
         close: MenuItem,
         settings: MenuItem,
         debugger: MenuItem,
+        history: MenuItem,
         pause: MenuItem,
         resume: MenuItem,
         reset: MenuItem,
@@ -138,6 +139,7 @@ pub(crate) mod imp {
             // bindings; the constructor keeps plain labels so a
             // rebound key never flashes the stale default first.
             let debugger = MenuItem::new("Open Debugger", true, None);
+            let history = MenuItem::new("Notification history", true, None);
             let pause = MenuItem::new("Pause", true, None);
             let resume = MenuItem::new("Resume", false, None);
             let reset = MenuItem::new("Reset", true, None);
@@ -150,6 +152,7 @@ pub(crate) mod imp {
             let close_id = close.id().clone();
             let settings_id = settings.id().clone();
             let debugger_id = debugger.id().clone();
+            let history_id = history.id().clone();
             let pause_id = pause.id().clone();
             let resume_id = resume.id().clone();
             let reset_id = reset.id().clone();
@@ -176,6 +179,7 @@ pub(crate) mod imp {
             try_append(|| emulation_menu.append(&reset));
             try_append(|| emulation_menu.append(&state_menu));
             try_append(|| emulation_menu.append(&debugger));
+            try_append(|| emulation_menu.append(&history));
 
             try_append(|| menu_bar.append(&file_menu));
             try_append(|| menu_bar.append(&emulation_menu));
@@ -189,6 +193,8 @@ pub(crate) mod imp {
                     Some(MenuCommand::Settings)
                 } else if event.id() == &debugger_id {
                     Some(MenuCommand::Debugger)
+                } else if event.id() == &history_id {
+                    Some(MenuCommand::NotificationHistory)
                 } else if event.id() == &pause_id {
                     Some(MenuCommand::Session(SessionCommand::Pause))
                 } else if event.id() == &resume_id {
@@ -228,6 +234,7 @@ pub(crate) mod imp {
                 close,
                 settings,
                 debugger,
+                history,
                 pause,
                 resume,
                 reset,
@@ -289,6 +296,7 @@ pub(crate) mod imp {
             // guidance, same as F4): gating on `loaded` would disagree
             // with the shortcut, so only the settings-open guard stays.
             self.debugger.set_enabled(!sync.settings_open);
+            self.history.set_enabled(!sync.settings_open);
             self.create_slot
                 .set_enabled(!sync.settings_open && sync.loaded);
             self.save_active
