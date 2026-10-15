@@ -15,6 +15,8 @@ mod event;
 ))]
 mod gtk_embed;
 mod menu;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub(crate) mod aux;
 pub(crate) mod runtime;

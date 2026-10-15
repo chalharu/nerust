@@ -31,7 +31,7 @@ use tao::{
 };
 
 use crate::event::{MenuCommand, UserEvent};
-use crate::menu::imp::AppMenu;
+use crate::menu::MenuSink;
 
 use super::debug_windows::DebugWindows;
 
@@ -53,13 +53,26 @@ pub(crate) enum HostAction {
 const DEFAULT_FIT_WINDOW_WIDTH: f64 = 960.0;
 const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 
+pub(crate) fn backend_capabilities() -> HostBackendCapabilities {
+    HostBackendCapabilities {
+        window: HostWindowCapabilities {
+            remembers_window_size: true,
+            supports_fullscreen_default: true,
+            supports_scaling: true,
+        },
+        presentation: Some(BackendPresentationCapabilities {
+            supports_vsync: true,
+        }),
+    }
+}
+
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
     /// Window creation failure: the loop exits gracefully.
     fatal_error: Option<String>,
     pub(super) session: SessionHandle,
     ctx: FrontendContext,
-    app_menu: AppMenu,
+    app_menu: Box<dyn MenuSink>,
     shell: NativeShellState,
     pub(super) settings_window: Option<crate::aux::settings::window::SettingsWindowHandle>,
     settings_open: bool,
@@ -91,22 +104,28 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
-    pub(crate) fn new(ctx: FrontendContext, app_menu: AppMenu) -> Result<Self, String> {
-        let capabilities = HostBackendCapabilities {
-            window: HostWindowCapabilities {
-                remembers_window_size: true,
-                supports_fullscreen_default: true,
-                supports_scaling: true,
-            },
-            presentation: Some(BackendPresentationCapabilities {
-                supports_vsync: true,
-            }),
-        };
-        let session = SessionHandle::new(
-            capabilities,
-            ctx.registry.clone(),
-            ctx.audio_registry.clone(),
-        )
+    pub(crate) fn new(ctx: FrontendContext, app_menu: Box<dyn MenuSink>) -> Result<Self, String> {
+        Self::new_with_settings_paths(ctx, app_menu, None)
+    }
+
+    pub(crate) fn new_with_settings_paths(
+        ctx: FrontendContext,
+        app_menu: Box<dyn MenuSink>,
+        paths: Option<nerust_gui_runtime::settings::SettingsPaths>,
+    ) -> Result<Self, String> {
+        let session = match paths {
+            Some(paths) => SessionHandle::new_with_settings_paths(
+                backend_capabilities(),
+                ctx.registry.clone(),
+                ctx.audio_registry.clone(),
+                paths,
+            ),
+            None => SessionHandle::new(
+                backend_capabilities(),
+                ctx.registry.clone(),
+                ctx.audio_registry.clone(),
+            ),
+        }
         .map_err(|e| {
             log::error!("failed to create core: {e}");
             e.to_string()
@@ -255,6 +274,23 @@ mod tests {
     use tao::{dpi::LogicalSize as TaoLogicalSize, window::Fullscreen};
 
     use super::{NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync};
+    use crate::test_support::TestHost;
+
+    #[test]
+    fn headless_host_builds_and_syncs_menu() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        assert!(!host.session().loaded());
+        host.sync_menu_state();
+        assert_eq!(
+            support.menu.updates(),
+            [crate::test_support::MenuSyncSnapshot {
+                loaded: false,
+                paused: false,
+                settings_open: false,
+            }]
+        );
+    }
 
     #[test]
     fn window_builder_requests_initial_fullscreen_when_enabled() {
