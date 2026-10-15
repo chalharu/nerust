@@ -5,6 +5,7 @@ pub mod dto;
 mod editor;
 mod general;
 mod input;
+mod notification;
 mod projection;
 #[cfg(test)]
 mod projection_test;
@@ -29,5 +30,6 @@ pub use audio::AudioSettingsViewModel;
 pub use capture::CaptureViewModel;
 pub use general::GeneralSettingsViewModel;
 pub use input::InputSettingsViewModel;
+pub use notification::NotificationSettingsViewModel;
 pub use system::SystemSettingsViewModel;
 pub use video::VideoSettingsViewModel;

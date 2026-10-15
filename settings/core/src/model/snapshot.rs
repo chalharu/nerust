@@ -33,4 +33,6 @@ pub struct SettingsApplyPlan {
     pub scaling_changed: bool,
     pub vsync_changed: bool,
     pub fullscreen_default_changed: bool,
+    /// Notification presentation only: frontends refresh OSD/modal state.
+    pub notifications_changed: bool,
 }

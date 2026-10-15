@@ -13,6 +13,7 @@ use super::{
     editor::{SettingsEditor, StoragePathValidator},
     general::GeneralSettingsViewModel,
     input::InputSettingsViewModel,
+    notification::NotificationSettingsViewModel,
     property::ReadOnlyObservableProperty,
     system::SystemSettingsViewModel,
     video::VideoSettingsViewModel,
@@ -26,6 +27,7 @@ pub struct SettingsViewModel {
     pub general: GeneralSettingsViewModel,
     pub video: VideoSettingsViewModel,
     pub audio: AudioSettingsViewModel,
+    pub notifications: NotificationSettingsViewModel,
     pub capture: CaptureViewModel,
     systems: Vec<SystemSettingsViewModel>,
     inputs: Vec<InputSettingsViewModel>,
@@ -54,6 +56,7 @@ impl SettingsViewModel {
         let general = GeneralSettingsViewModel::new(&editor);
         let video = VideoSettingsViewModel::new(&editor);
         let audio = AudioSettingsViewModel::new(&editor);
+        let notifications = NotificationSettingsViewModel::new(&editor);
         let capture = CaptureViewModel::new(&editor);
         let systems: Vec<SystemSettingsViewModel> = factories
             .iter()
@@ -71,6 +74,7 @@ impl SettingsViewModel {
             general,
             video,
             audio,
+            notifications,
             capture,
             systems,
             inputs,
@@ -134,6 +138,30 @@ fn validate_audio_settings(state: &super::EditorState, issues: &mut Vec<super::V
             scope: super::ValidationScope::Audio,
             message: "Audio latency must be between 10 and 200 ms".into(),
         });
+    }
+}
+
+fn validate_notification_settings(
+    state: &super::EditorState,
+    issues: &mut Vec<super::ValidationIssue>,
+) {
+    // Durations guard against 0ms (invisible) and absurd holds.
+    for (value, name) in [
+        (
+            state.draft.local.notifications.info_duration_ms,
+            "Info notification duration",
+        ),
+        (
+            state.draft.local.notifications.warning_duration_ms,
+            "Warning notification duration",
+        ),
+    ] {
+        if !(1_000..=30_000).contains(&value) {
+            issues.push(super::ValidationIssue {
+                scope: super::ValidationScope::Notifications,
+                message: format!("{name} must be between 1000 and 30000 ms"),
+            });
+        }
     }
 }
 
@@ -237,6 +265,7 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
     let mut issues = Vec::new();
     validate_storage_policy(state, &mut issues);
     validate_audio_settings(state, &mut issues);
+    validate_notification_settings(state, &mut issues);
     for factory in state.catalog.all() {
         validate_factory_settings(state, factory, &mut issues);
     }
