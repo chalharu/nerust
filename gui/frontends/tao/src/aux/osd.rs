@@ -18,17 +18,20 @@ use crate::aux::shell::{AuxWindow, WindowScaffold, aux_settings, aux_theme};
 
 // ── Overlay window ───────────────────────────────────────────────
 
-pub(crate) struct OsdState {
-    shared: std::sync::Arc<std::sync::Mutex<OsdSnapshot>>,
+#[derive(Debug, Clone)]
+pub(crate) enum OsdMessage {
+    Sync(OsdSnapshot),
 }
 
-pub(crate) struct OsdProgram {
-    shared: std::sync::Arc<std::sync::Mutex<OsdSnapshot>>,
+pub(crate) struct OsdState {
+    snapshot: OsdSnapshot,
 }
+
+pub(crate) struct OsdProgram;
 
 impl Program for OsdProgram {
     type State = OsdState;
-    type Message = ();
+    type Message = OsdMessage;
     type Theme = iced::Theme;
     type Renderer = iced_tiny_skia::Renderer;
     type Executor = iced_winit::futures::backend::default::Executor;
@@ -52,14 +55,19 @@ impl Program for OsdProgram {
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
         (
             OsdState {
-                shared: std::sync::Arc::clone(&self.shared),
+                snapshot: OsdSnapshot::default(),
             },
             Task::none(),
         )
     }
 
-    fn update(&self, _state: &mut Self::State, _message: Self::Message) -> Task<Self::Message> {
-        Task::none()
+    fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
+        match message {
+            OsdMessage::Sync(snapshot) => {
+                state.snapshot = snapshot;
+                Task::none()
+            }
+        }
     }
 
     fn view<'a>(
@@ -68,7 +76,7 @@ impl Program for OsdProgram {
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::widget::{column, container, row, text};
-        let snapshot = state.shared.lock().map(|s| s.clone()).unwrap_or_default();
+        let snapshot = &state.snapshot;
         log::debug!(
             "OSD view: rows={} status={} font={}",
             snapshot.rows.len(),
@@ -76,7 +84,10 @@ impl Program for OsdProgram {
             snapshot.font_px,
         );
         let font = iced::Pixels(snapshot.font_px.max(6.0));
-        let label = |glyph: char, body: &str, rgb: (u8, u8, u8)| {
+        let label = |glyph: char,
+                         body: &str,
+                         rgb: (u8, u8, u8)|
+         -> iced::Element<'_, OsdMessage> {
             container(
                 row![
                     text(format!("{glyph} ")).size(font),
@@ -96,6 +107,7 @@ impl Program for OsdProgram {
                 },
                 ..Default::default()
             })
+            .into()
         };
         // Transient rows anchor at `position`, status at
         // `status_position`: same-corner stacking and split-corner
@@ -108,7 +120,7 @@ impl Program for OsdProgram {
             snapshot.status_position,
             NotificationPosition::TopLeft | NotificationPosition::TopRight
         );
-        let transient: iced::Element<'_, (), iced::Theme, iced_tiny_skia::Renderer> = {
+        let transient: iced::Element<'_, OsdMessage> = {
             let mut items = column![].spacing(4);
             for row_data in &snapshot.rows {
                 items = items.push(label(row_data.glyph, &row_data.text, row_data.rgb));
@@ -124,7 +136,7 @@ impl Program for OsdProgram {
                 })
                 .into()
         };
-        let status_widget: iced::Element<'_, (), iced::Theme, iced_tiny_skia::Renderer> =
+        let status_widget: iced::Element<'_, OsdMessage> =
             match snapshot.status.as_ref() {
                 Some(status) => container(label('\u{25cf}', status, (200, 200, 200)))
                     .align_x(match snapshot.status_position {
@@ -170,7 +182,6 @@ impl Program for OsdProgram {
 
 pub(crate) struct OsdWindowHandle {
     pub(crate) shell: crate::aux::shell::AuxShell<OsdProgram>,
-    shared: std::sync::Arc<std::sync::Mutex<OsdSnapshot>>,
 }
 
 impl OsdWindowHandle {
@@ -204,22 +215,27 @@ impl OsdWindowHandle {
         log::debug!("OSD window created: id={:?}", window.id());
         let window = std::sync::Arc::new(window);
         let scaffold = WindowScaffold::open_transparent(window, "OSD overlay")?;
-        let shared = std::sync::Arc::new(std::sync::Mutex::new(OsdSnapshot::default()));
-        let (instance, _task) = program::Instance::new(OsdProgram {
-            shared: std::sync::Arc::clone(&shared),
-        });
+        let (instance, _task) = program::Instance::new(OsdProgram);
         let shell = crate::aux::shell::AuxShell::assemble(
             scaffold,
             instance,
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
-        Some(Self { shell, shared })
+        Some(Self { shell })
     }
 
     pub(crate) fn sync(&mut self, snapshot: OsdSnapshot) {
-        if let Ok(mut shared) = self.shared.lock() {
-            *shared = snapshot;
-        }
+        // Message-driven (not shared-state): iced rebuilds the cached
+        // tree only on update(), so silent Arc mutation never paints.
+        let bounds = self.shell.logical_bounds();
+        let window_id = self.shell.window_id;
+        self.shell.ui_state.process_messages(
+            vec![OsdMessage::Sync(snapshot)],
+            window_id,
+            bounds,
+            &mut self.shell.renderer.backend,
+            &self.shell.should_close,
+        );
         self.shell.window.request_redraw();
     }
 
@@ -252,17 +268,20 @@ impl AuxWindow for OsdWindowHandle {
 
 // ── History viewer ─────────────────────────────────────────────
 
-pub(crate) struct HistoryState {
-    shared: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+#[derive(Debug, Clone)]
+pub(crate) enum HistoryMessage {
+    Sync(Vec<String>),
 }
 
-pub(crate) struct HistoryProgram {
-    shared: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+pub(crate) struct HistoryState {
+    lines: Vec<String>,
 }
+
+pub(crate) struct HistoryProgram;
 
 impl Program for HistoryProgram {
     type State = HistoryState;
-    type Message = ();
+    type Message = HistoryMessage;
     type Theme = iced::Theme;
     type Renderer = iced_tiny_skia::Renderer;
     type Executor = iced_winit::futures::backend::default::Executor;
@@ -285,15 +304,18 @@ impl Program for HistoryProgram {
 
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
         (
-            HistoryState {
-                shared: std::sync::Arc::clone(&self.shared),
-            },
+            HistoryState { lines: Vec::new() },
             Task::none(),
         )
     }
 
-    fn update(&self, _state: &mut Self::State, _message: Self::Message) -> Task<Self::Message> {
-        Task::none()
+    fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
+        match message {
+            HistoryMessage::Sync(lines) => {
+                state.lines = lines;
+                Task::none()
+            }
+        }
     }
 
     fn view<'a>(
@@ -302,9 +324,9 @@ impl Program for HistoryProgram {
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::widget::{column, scrollable, text};
-        let lines = state.shared.lock().map(|s| s.clone()).unwrap_or_default();
+        let lines = &state.lines;
         let mut items = column![].spacing(2);
-        for line in &lines {
+        for line in lines {
             items = items.push(text(line.clone()).size(13));
         }
         scrollable(items).into()
@@ -313,7 +335,6 @@ impl Program for HistoryProgram {
 
 pub(crate) struct HistoryWindowHandle {
     pub(crate) shell: crate::aux::shell::AuxShell<HistoryProgram>,
-    shared: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl HistoryWindowHandle {
@@ -333,22 +354,25 @@ impl HistoryWindowHandle {
             None,
             "history window",
         )?;
-        let shared = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let (instance, _task) = program::Instance::new(HistoryProgram {
-            shared: std::sync::Arc::clone(&shared),
-        });
+        let (instance, _task) = program::Instance::new(HistoryProgram);
         let shell = crate::aux::shell::AuxShell::assemble(
             scaffold,
             instance,
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
-        Some(Self { shell, shared })
+        Some(Self { shell })
     }
 
     pub(crate) fn sync(&mut self, lines: Vec<String>) {
-        if let Ok(mut shared) = self.shared.lock() {
-            *shared = lines;
-        }
+        let bounds = self.shell.logical_bounds();
+        let window_id = self.shell.window_id;
+        self.shell.ui_state.process_messages(
+            vec![HistoryMessage::Sync(lines)],
+            window_id,
+            bounds,
+            &mut self.shell.renderer.backend,
+            &self.shell.should_close,
+        );
         self.shell.window.request_redraw();
     }
 }

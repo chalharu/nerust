@@ -85,7 +85,6 @@ impl WindowScaffold {
                 log::debug!("aux window created: title={title} id={:?}", window.id());
                 window
             }
-            Ok(window) => window,
             Err(error) => {
                 log::error!("failed to create {log_tag}: {error}");
                 return None;
