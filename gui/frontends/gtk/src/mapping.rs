@@ -5,7 +5,9 @@
 //! populate widgets and handle signal responses.
 
 use nerust_settings_core::model::{
-    language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
+    language::AppLanguage,
+    local::{NotificationAreaMode, NotificationColor, NotificationPosition, ScalingMode},
+    shared::StoragePolicy,
 };
 
 // ── Forward: enum → GTK id ──────────────────────────────────────────────
@@ -62,6 +64,35 @@ pub fn parse_storage_policy_id(id: Option<&str>) -> StoragePolicy {
     }
 }
 
+/// Map a NotificationColor to the GTK combo active_id string.
+pub fn map_color_id(color: NotificationColor) -> &'static str {
+    match color {
+        NotificationColor::White => "white",
+        NotificationColor::Yellow => "yellow",
+        NotificationColor::Red => "red",
+        NotificationColor::Green => "green",
+        NotificationColor::Cyan => "cyan",
+    }
+}
+
+/// Map a NotificationPosition to the GTK combo active_id string.
+pub fn map_position_id(position: NotificationPosition) -> &'static str {
+    match position {
+        NotificationPosition::TopLeft => "top_left",
+        NotificationPosition::TopRight => "top_right",
+        NotificationPosition::BottomLeft => "bottom_left",
+        NotificationPosition::BottomRight => "bottom_right",
+    }
+}
+
+/// Map a NotificationAreaMode to the GTK combo active_id string.
+pub fn map_area_id(mode: NotificationAreaMode) -> &'static str {
+    match mode {
+        NotificationAreaMode::Overlay => "overlay",
+        NotificationAreaMode::Strip => "strip",
+    }
+}
+
 /// Parse a GTK combo active_id string back to ScalingMode.
 /// Returns `ScalingMode::FitToWindow` for unknown/unset ids.
 pub fn parse_scaling_id(id: Option<&str>) -> ScalingMode {
@@ -72,6 +103,35 @@ pub fn parse_scaling_id(id: Option<&str>) -> ScalingMode {
         Some("4") => ScalingMode::X4,
         Some("5") => ScalingMode::X5,
         _ => ScalingMode::FitToWindow,
+    }
+}
+
+/// Parse a GTK combo active_id string back to NotificationColor.
+pub fn parse_color_id(id: Option<&str>) -> NotificationColor {
+    match id {
+        Some("yellow") => NotificationColor::Yellow,
+        Some("red") => NotificationColor::Red,
+        Some("green") => NotificationColor::Green,
+        Some("cyan") => NotificationColor::Cyan,
+        _ => NotificationColor::White,
+    }
+}
+
+/// Parse a GTK combo active_id string back to NotificationPosition.
+pub fn parse_position_id(id: Option<&str>) -> NotificationPosition {
+    match id {
+        Some("top_left") => NotificationPosition::TopLeft,
+        Some("top_right") => NotificationPosition::TopRight,
+        Some("bottom_right") => NotificationPosition::BottomRight,
+        _ => NotificationPosition::BottomLeft,
+    }
+}
+
+/// Parse a GTK combo active_id string back to NotificationAreaMode.
+pub fn parse_area_id(id: Option<&str>) -> NotificationAreaMode {
+    match id {
+        Some("strip") => NotificationAreaMode::Strip,
+        _ => NotificationAreaMode::Overlay,
     }
 }
 
@@ -91,6 +151,38 @@ mod tests {
             let id = map_language_id(lang);
             let back = parse_language_id(Some(id));
             assert_eq!(back, lang, "roundtrip failed for {lang:?}");
+        }
+    }
+
+    #[test]
+    fn map_color_id_roundtrip() {
+        for color in [
+            NotificationColor::White,
+            NotificationColor::Yellow,
+            NotificationColor::Red,
+            NotificationColor::Green,
+            NotificationColor::Cyan,
+        ] {
+            assert_eq!(parse_color_id(Some(map_color_id(color))), color);
+        }
+    }
+
+    #[test]
+    fn map_position_id_roundtrip() {
+        for position in [
+            NotificationPosition::TopLeft,
+            NotificationPosition::TopRight,
+            NotificationPosition::BottomLeft,
+            NotificationPosition::BottomRight,
+        ] {
+            assert_eq!(parse_position_id(Some(map_position_id(position))), position);
+        }
+    }
+
+    #[test]
+    fn map_area_id_roundtrip() {
+        for mode in [NotificationAreaMode::Overlay, NotificationAreaMode::Strip] {
+            assert_eq!(parse_area_id(Some(map_area_id(mode))), mode);
         }
     }
 

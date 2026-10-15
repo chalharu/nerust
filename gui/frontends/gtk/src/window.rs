@@ -35,6 +35,7 @@ pub(crate) struct WindowCore {
     resume_action: gio::SimpleAction,
     reset_action: gio::SimpleAction,
     debugger_action: gio::SimpleAction,
+    history_action: gio::SimpleAction,
     state_create_action: gio::SimpleAction,
     state_save_active_action: gio::SimpleAction,
     state_load_active_action: gio::SimpleAction,
@@ -62,6 +63,7 @@ pub(crate) trait WindowExtend {
     fn application(&self) -> gtk::Application;
     fn state(&self) -> Rc<RefCell<State>>;
     fn open_debugger(&self);
+    fn open_history(&self);
     fn realize(&self);
     fn close_request(&self) -> bool;
     fn open(&self);
@@ -108,6 +110,7 @@ impl WindowExtend for Window {
         let resume_action = gio::SimpleAction::new("resume", None);
         let reset_action = gio::SimpleAction::new("reset", None);
         let debugger_action = gio::SimpleAction::new("debugger", None);
+        let history_action = gio::SimpleAction::new("history", None);
         let state_create_action = gio::SimpleAction::new("state-create", None);
         let state_save_active_action = gio::SimpleAction::new("state-save-active", None);
         let state_load_active_action = gio::SimpleAction::new("state-load-active", None);
@@ -132,6 +135,7 @@ impl WindowExtend for Window {
             resume_action: resume_action.clone(),
             reset_action: reset_action.clone(),
             debugger_action: debugger_action.clone(),
+            history_action: history_action.clone(),
             state_create_action: state_create_action.clone(),
             state_save_active_action: state_save_active_action.clone(),
             state_load_active_action: state_load_active_action.clone(),
@@ -235,6 +239,14 @@ impl WindowExtend for Window {
             });
         }
         window.add_action(&debugger_action);
+
+        {
+            let result = result.clone();
+            let _ = history_action.connect_activate(move |_, _| {
+                result.open_history();
+            });
+        }
+        window.add_action(&history_action);
 
         {
             let result = result.clone();
@@ -343,6 +355,10 @@ impl WindowExtend for Window {
         result.sync_fullscreen_from_settings();
         let _ = window.grab_focus();
         result
+    }
+
+    fn open_history(&self) {
+        crate::osd::GtkOsd::show_history(&self.window(), &self.state());
     }
 
     fn open_debugger(&self) {
@@ -458,6 +474,7 @@ impl WindowExtend for Window {
         // guidance, same as F4): gating on `loaded` would disagree
         // with the shortcut, so the action stays enabled.
         self.borrow().debugger_action.set_enabled(true);
+        self.borrow().history_action.set_enabled(true);
         self.borrow()
             .state_create_action
             .set_enabled(state.loaded());

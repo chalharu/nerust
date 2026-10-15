@@ -1,6 +1,7 @@
 mod debugger;
 mod gdk_raw;
 pub mod mapping;
+mod osd;
 mod ppu_window;
 mod preferences;
 mod renderer;
@@ -126,6 +127,27 @@ impl State {
 
     pub(crate) fn take_renderer_reload_pending(&mut self) -> bool {
         std::mem::take(&mut self.renderer_reload_pending)
+    }
+
+    pub(crate) fn drain_notifications(
+        &mut self,
+    ) -> Vec<nerust_gui_shell::session::notification::UiNotification> {
+        self.session.drain_notifications()
+    }
+
+    pub(crate) fn notification_history_lines(
+        &self,
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) -> Vec<String> {
+        self.session
+            .notification_history()
+            .map(|n| n.kind.text(language))
+            .collect()
+    }
+
+    pub(crate) fn emulation_status(&self) -> (f32, bool) {
+        let metrics = self.session.metrics();
+        (metrics.emulation_fps, metrics.paused)
     }
 }
 
@@ -405,6 +427,10 @@ pub(crate) fn build_menu_model(
             ShortcutAction::OpenDebugger,
         )),
         Some("win.debugger"),
+    );
+    emulation_menu.append(
+        Some(text(language, UiText::NotificationHistory)),
+        Some("win.history"),
     );
 
     let help_menu = gio::Menu::new();
