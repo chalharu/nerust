@@ -26,6 +26,7 @@ pub struct ValidationIssue {
 pub enum ValidationScope {
     Persistence,
     Audio,
+    Notifications,
     Input(Box<dyn nerust_core_traits::identity::SystemId>),
     System(Box<dyn nerust_core_traits::identity::SystemId>),
 }
