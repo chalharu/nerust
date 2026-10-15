@@ -5,6 +5,15 @@ use nerust_settings_core::model::input::ShortcutBinding;
 use nerust_settings_core::model::language::AppLanguage;
 use tao::window::Window as TaoWindow;
 
+/// Headless-testable menu surface: production `AppMenu` drives the
+/// native menubar, test recorders observe the syncs. Object-safe so
+/// `HostState` holds it behind `Box<dyn MenuSink>`.
+pub(crate) trait MenuSink {
+    fn update(&mut self, sync: MenuSync<'_>);
+    fn init_for_window(&self, window: &TaoWindow);
+    fn clear_event_handler(&self);
+}
+
 /// One snapshot for a menu sync: a struct (not a long argument
 /// list) so adding a field never trips the arity lint. Shared by
 /// the real menu and the headless stub below.
@@ -393,6 +402,20 @@ pub(crate) mod imp {
         }
     }
 
+    impl super::MenuSink for AppMenu {
+        fn update(&mut self, sync: super::MenuSync<'_>) {
+            AppMenu::update(self, sync);
+        }
+
+        fn init_for_window(&self, window: &super::TaoWindow) {
+            AppMenu::init_for_window(self, window);
+        }
+
+        fn clear_event_handler(&self) {
+            AppMenu::clear_event_handler(self);
+        }
+    }
+
     /// Menu label with the action's *current* shortcut hint
     /// (`Save Active Slot (F5)`), or the bare label when unbound.
     /// Binding-driven so Settings rebinding never leaves a stale
@@ -488,5 +511,19 @@ pub(crate) mod imp {
         pub(crate) fn update(&mut self, _sync: MenuSync<'_>) {}
 
         pub(crate) fn clear_event_handler(&self) {}
+    }
+
+    impl super::MenuSink for AppMenu {
+        fn update(&mut self, sync: super::MenuSync<'_>) {
+            AppMenu::update(self, sync);
+        }
+
+        fn init_for_window(&self, window: &super::TaoWindow) {
+            AppMenu::init_for_window(self, window);
+        }
+
+        fn clear_event_handler(&self) {
+            AppMenu::clear_event_handler(self);
+        }
     }
 }

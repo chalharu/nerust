@@ -1,7 +1,7 @@
 mod debug_windows;
 mod dispatch;
 mod drain;
-mod host;
+pub(crate) mod host;
 
 use std::path::Path;
 
@@ -44,7 +44,7 @@ impl WindowRuntime {
         let proxy = event_loop.create_proxy();
         let app_menu = AppMenu::new(proxy);
 
-        let host = HostState::new(ctx, app_menu)?;
+        let host = HostState::new(ctx, Box::new(app_menu))?;
 
         Ok(Self {
             event_loop: Some(event_loop),
