@@ -131,6 +131,8 @@ pub(crate) struct HostState {
     pub(super) osd: OsdManager,
     pub(super) osd_window: Option<OsdWindowHandle>,
     pub(super) history_window: Option<HistoryWindowHandle>,
+    /// Last synced main geometry (pos, size, scale bits).
+    pub(super) osd_geometry: Option<(i32, i32, u32, u32, u64)>,
     /// Linux render target below the muda menubar (`None` elsewhere).
     /// When it yields no native target (Wayland, pre-layout) the
     /// toplevel fallback applies and the menu stays occluded.
@@ -195,6 +197,7 @@ impl HostState {
             osd: OsdManager::new(),
             osd_window: None,
             history_window: None,
+            osd_geometry: None,
             #[cfg(any(
                 target_os = "linux",
                 target_os = "dragonfly",
