@@ -281,6 +281,13 @@ mod tests {
     }
 
     #[test]
+    fn clear_event_handler_reaches_menu() {
+        let support = TestHost::new();
+        support.host.clear_event_handler();
+        assert!(support.menu.updates().is_empty());
+    }
+
+    #[test]
     fn update_control_flow_waits_quietly_without_windows() {
         let support = TestHost::new();
         let mut host = support.host;

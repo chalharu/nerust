@@ -121,6 +121,15 @@ mod tests {
     }
 
     #[test]
+    fn settings_close_without_open_state_is_noop() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.on_settings_closed();
+        assert!(!host.settings_open);
+        assert!(support.menu.updates().is_empty());
+    }
+
+    #[test]
     fn settings_close_resumes_or_syncs() {
         let support = TestHost::new();
         let mut host = support.host;

@@ -672,6 +672,16 @@ mod tests {
                 delta: mouse::ScrollDelta::Pixels { .. }
             }))
         ));
+        let released = feed!(WindowEvent::MouseInput {
+            device_id: device,
+            state: ElementState::Released,
+            button: tao::event::MouseButton::Left,
+            modifiers: tao::keyboard::ModifiersState::empty(),
+        });
+        assert!(matches!(
+            released,
+            Some(iced::Event::Mouse(mouse::Event::ButtonReleased(_)))
+        ));
         assert!(feed!(WindowEvent::CloseRequested).is_none());
         assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
         // Anything else (resizes and friends) passes through silently.
@@ -738,6 +748,12 @@ mod tests {
         assert_eq!(default_font(), Font::with_name("Yu Gothic UI"));
         #[cfg(not(target_os = "windows"))]
         assert_eq!(default_font(), Font::DEFAULT);
+    }
+
+    #[test]
+    fn backquote_maps_to_itself_not_fallback() {
+        use tao::keyboard::KeyCode as T;
+        assert_eq!(keycode_to_key(T::Backquote), Some(Key::Backquote));
     }
 
     #[test]

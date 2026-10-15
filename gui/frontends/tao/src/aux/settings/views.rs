@@ -400,6 +400,24 @@ mod tests {
     }
 
     #[test]
+    fn page_content_dispatches_every_page() {
+        let mut state = empty_state();
+        for page in [
+            SettingsPage::General,
+            SettingsPage::Input,
+            SettingsPage::Video,
+            SettingsPage::Audio,
+            SettingsPage::System,
+        ] {
+            state.page = page;
+            let _ = state.page_content();
+        }
+        let _ = tab_row(Some(0), vec!["A".to_string()], |_| {
+            Message::SelectInputTab(0)
+        });
+    }
+
+    #[test]
     fn tab_and_slot_helpers_construct() {
         let state = empty_state();
         let inputs = state.vm.inputs();
