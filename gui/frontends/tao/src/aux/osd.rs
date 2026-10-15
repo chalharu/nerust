@@ -232,6 +232,7 @@ impl OsdWindowHandle {
 
 impl OsdWindowHandle {
     pub(crate) fn render(&mut self) {
+        log::debug!("OSD render");
         self.shell.render("OSD overlay");
     }
 }
