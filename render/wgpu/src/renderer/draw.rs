@@ -1,4 +1,4 @@
-use nerust_render_traits::{SurfaceSize, physical::PhysicalSize};
+use nerust_render_traits::{ReservedStrip, SurfaceSize, physical::PhysicalSize};
 use wgpu::{
     Color, CommandEncoderDescriptor, Extent3d, LoadOp, Operations, Origin3d,
     RenderPassColorAttachment, RenderPassDescriptor, StoreOp, TexelCopyBufferInfo,
@@ -16,22 +16,29 @@ pub(super) struct Viewport {
     pub(super) height: f32,
 }
 
-pub(super) fn compute_viewport(window_size: SurfaceSize, content_size: PhysicalSize) -> Viewport {
+pub(super) fn compute_viewport(
+    window_size: SurfaceSize,
+    content_size: PhysicalSize,
+    strip: ReservedStrip,
+) -> Viewport {
+    let available_height = window_size
+        .height
+        .saturating_sub(strip.height_loss(window_size.height));
     if window_size.width == 0
-        || window_size.height == 0
+        || available_height == 0
         || content_size.width <= 0.0
         || content_size.height <= 0.0
     {
         return Viewport {
             x: 0.0,
-            y: 0.0,
+            y: strip.top as f32,
             width: window_size.width as f32,
-            height: window_size.height as f32,
+            height: available_height as f32,
         };
     }
 
     let rate_x = window_size.width as f32 / content_size.width;
-    let rate_y = window_size.height as f32 / content_size.height;
+    let rate_y = available_height as f32 / content_size.height;
     let rate = rate_x.min(rate_y);
     let width = content_size.width * rate;
     let height = content_size.height * rate;
@@ -47,7 +54,7 @@ pub(super) fn compute_viewport(window_size: SurfaceSize, content_size: PhysicalS
 
     Viewport {
         x: (window_size.width as f32 - width) * 0.5,
-        y: (window_size.height as f32 - height) * y_bias,
+        y: strip.top as f32 + (available_height as f32 - height) * y_bias,
         width,
         height,
     }
@@ -145,7 +152,7 @@ impl RenderPipeline {
                 label: Some("nerust_render_encoder"),
             });
         self.update_frame_texture(&mut encoder, frame_buffer, source_bytes_per_row);
-        let viewport = compute_viewport(surface_size, self.content_size);
+        let viewport = compute_viewport(surface_size, self.content_size, self.reserved);
 
         {
             let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
