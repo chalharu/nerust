@@ -127,7 +127,7 @@ impl HostState {
     /// ROM-picker filters from the registered cores, extracted pure
     /// so the dialog wiring stays unit-testable. Cores without
     /// extensions never reach the picker.
-    pub(super) fn rom_dialog_filters(registry: &SystemRegistry) -> Vec<(String, Vec<String>)> {
+    fn rom_dialog_filters(registry: &SystemRegistry) -> Vec<(String, Vec<String>)> {
         registry
             .all()
             .iter()

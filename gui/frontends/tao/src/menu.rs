@@ -496,7 +496,7 @@ pub(crate) mod imp {
     use nerust_settings_core::model::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
 
-    use super::{MenuSync, StateSlotSummary, TaoWindow};
+    use super::{MenuSync, TaoWindow};
     use crate::event::UserEvent;
 
     pub(crate) struct AppMenu;

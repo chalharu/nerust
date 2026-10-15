@@ -332,4 +332,16 @@ mod tests {
         assert!(menu.updates().is_empty());
         assert!(opener.calls().is_empty());
     }
+
+    #[test]
+    fn debug_open_with_focus_ppu_skips_viewer_without_debugger() {
+        // Debugger creation fails headless, so no viewer follows:
+        // the PPU arm needs a live debugger handle.
+        let (mut runtime, _) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        runtime.host.open_debug_windows(&opener, true);
+        assert_eq!(opener.calls(), [OpenerCall::Debug]);
+        assert!(runtime.host.debug.debug_window.is_none());
+        assert!(runtime.host.debug.ppu_window.is_none());
+    }
 }

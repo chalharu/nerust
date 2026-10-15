@@ -56,7 +56,7 @@ pub(crate) enum HostAction {
 const DEFAULT_FIT_WINDOW_WIDTH: f64 = 960.0;
 const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 
-pub(crate) fn backend_capabilities() -> HostBackendCapabilities {
+fn backend_capabilities() -> HostBackendCapabilities {
     HostBackendCapabilities {
         window: HostWindowCapabilities {
             remembers_window_size: true,
