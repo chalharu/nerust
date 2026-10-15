@@ -44,22 +44,27 @@ impl HostState {
 
     /// Reposition the overlay after main-window moves/resizes.
     pub(crate) fn sync_osd_geometry(&mut self) {
-        let (position, size) = match self.window.as_ref() {
-            Some(window) => match window.inner_position() {
-                Ok(position) => {
-                    let size = window.inner_size();
-                    let scale = window.scale_factor();
-                    (
-                        (position.x, position.y),
-                        (size.width as f64 / scale, size.height as f64 / scale),
-                    )
-                }
-                Err(_) => return,
-            },
-            None => return,
+        let Some(window) = self.window.as_ref() else {
+            return;
         };
+        let size = window.inner_size();
+        let scale = window.scale_factor();
+        let Ok(position) = window.inner_position() else {
+            log::debug!("OSD geometry: inner_position failed");
+            return;
+        };
+        log::debug!(
+            "OSD geometry: inner={}x{} size={}x{} scale={scale}",
+            position.x,
+            position.y,
+            size.width,
+            size.height
+        );
         if let Some(handle) = self.osd_window.as_mut() {
-            handle.move_to(position, size);
+            handle.move_to(
+                (position.x, position.y),
+                (size.width as f64 / scale, size.height as f64 / scale),
+            );
         }
     }
 
