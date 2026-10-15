@@ -195,6 +195,7 @@ impl OsdWindowHandle {
             log::warn!("OSD click-through refused: {error:?}");
             return None;
         }
+        log::debug!("OSD window created: id={:?}", window.id());
         let window = std::sync::Arc::new(window);
         let scaffold = WindowScaffold::open_transparent(window, "OSD overlay")?;
         let shared = std::sync::Arc::new(std::sync::Mutex::new(OsdSnapshot::default()));

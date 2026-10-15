@@ -55,6 +55,12 @@ impl HostState {
                 .default_vbox()
                 .map(|vbox| crate::gtk_embed::ContentArea::new(vbox, window.gtk_window(), &window));
         }
+        log::debug!(
+            "main window created: id={:?} size={}x{}",
+            window.id(),
+            window.inner_size().width,
+            window.inner_size().height
+        );
         self.window = Some(window);
         self.sync_fullscreen_from_settings();
         self.sync_menu_state();
