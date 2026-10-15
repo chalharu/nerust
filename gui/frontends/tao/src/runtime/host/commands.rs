@@ -475,21 +475,19 @@ mod tests {
     #[test]
     fn keyboard_shortcuts_route_without_keys() {
         use nerust_gui_shell::session::KeyboardShortcut;
+        use nerust_settings_core::model::input::ShortcutAction;
         let support = TestHost::new();
         let mut host = support.host;
         host.apply_keyboard_shortcut(KeyboardShortcut::OpenDebugger);
         assert!(host.take_debug_open_request());
         assert!(support.menu.updates().is_empty());
-        host.apply_keyboard_shortcut(KeyboardShortcut::Session(
-            nerust_gui_shell::session::commands::SessionCommand::TogglePause,
-        ));
+        host.apply_keyboard_shortcut(KeyboardShortcut::Session(ShortcutAction::TogglePause));
         host.apply_keyboard_shortcut(KeyboardShortcut::ToggleFullscreen);
         assert_eq!(support.menu.updates().len(), 2);
     }
 
     #[test]
     fn session_verbs_stay_total_without_core() {
-        use nerust_gui_shell::session::access::FrontendSession;
         let support = TestHost::new();
         let mut host = support.host;
         host.resume_session();
