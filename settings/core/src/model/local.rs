@@ -1,4 +1,4 @@
-pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 5;
+pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -9,6 +9,7 @@ pub struct HostBackendLocalSettings {
     pub touch_overlay: TouchOverlaySettings,
     pub cartridge_peripherals: CartridgePeripheralSettings,
     pub screen_orientation: ScreenOrientation,
+    pub notifications: NotificationSettings,
 }
 
 impl Default for HostBackendLocalSettings {
@@ -20,6 +21,7 @@ impl Default for HostBackendLocalSettings {
             touch_overlay: TouchOverlaySettings::default(),
             cartridge_peripherals: CartridgePeripheralSettings::default(),
             screen_orientation: ScreenOrientation::default(),
+            notifications: NotificationSettings::default(),
         }
     }
 }
@@ -214,4 +216,88 @@ impl Default for AudioSettings {
             latency_ms: 50,
         }
     }
+}
+
+/// Transient notification (OSD) and error-modal presentation.
+///
+/// Durations are fixed milliseconds (not length-proportional); the OSD
+/// font scales with the viewport and fades out in a fixed 100ms.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct NotificationSettings {
+    pub info_enabled: bool,
+    pub info_duration_ms: u32,
+    pub info_color: NotificationColor,
+    pub warning_enabled: bool,
+    pub warning_duration_ms: u32,
+    pub warning_color: NotificationColor,
+    pub error_enabled: bool,
+    /// Modal dialog (default) vs OSD fallback (minimum 5s, replaced by next).
+    pub error_modal: bool,
+    pub error_color: NotificationColor,
+    pub status_enabled: bool,
+    pub position: NotificationPosition,
+    pub status_position: NotificationPosition,
+    pub area_mode: NotificationAreaMode,
+}
+
+impl Default for NotificationSettings {
+    fn default() -> Self {
+        Self {
+            info_enabled: true,
+            info_duration_ms: 2_000,
+            info_color: NotificationColor::White,
+            warning_enabled: true,
+            warning_duration_ms: 5_000,
+            warning_color: NotificationColor::Yellow,
+            error_enabled: true,
+            error_modal: true,
+            error_color: NotificationColor::Red,
+            status_enabled: false,
+            position: NotificationPosition::BottomLeft,
+            status_position: NotificationPosition::TopLeft,
+            area_mode: NotificationAreaMode::Overlay,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationColor {
+    #[default]
+    White,
+    Yellow,
+    Red,
+    Green,
+    Cyan,
+}
+
+impl NotificationColor {
+    pub fn rgb(&self) -> (u8, u8, u8) {
+        match self {
+            NotificationColor::White => (255, 255, 255),
+            NotificationColor::Yellow => (255, 220, 80),
+            NotificationColor::Red => (255, 90, 90),
+            NotificationColor::Green => (120, 255, 140),
+            NotificationColor::Cyan => (120, 220, 255),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationPosition {
+    TopLeft,
+    TopRight,
+    #[default]
+    BottomLeft,
+    BottomRight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationAreaMode {
+    #[default]
+    Overlay,
+    Strip,
 }
