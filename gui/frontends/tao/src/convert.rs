@@ -526,4 +526,58 @@ mod tests {
         // Anything else (resizes and friends) passes through silently.
         assert!(feed!(WindowEvent::Resized(tao::dpi::PhysicalSize::new(800, 600))).is_none());
     }
+
+    #[test]
+    fn modifiers_map_each_flag() {
+        use tao::keyboard::ModifiersState as M;
+        assert!(tao_modifiers_to_iced(M::empty()).is_empty());
+        let shift = tao_modifiers_to_iced(M::SHIFT);
+        assert!(shift.contains(keyboard::Modifiers::SHIFT));
+        assert!(!shift.contains(keyboard::Modifiers::CTRL));
+        let ctrl = tao_modifiers_to_iced(M::CONTROL);
+        assert!(ctrl.contains(keyboard::Modifiers::CTRL));
+        assert!(!ctrl.contains(keyboard::Modifiers::ALT));
+        let alt = tao_modifiers_to_iced(M::ALT);
+        assert!(alt.contains(keyboard::Modifiers::ALT));
+        let logo = tao_modifiers_to_iced(M::SUPER);
+        assert!(logo.contains(keyboard::Modifiers::LOGO));
+        let all = tao_modifiers_to_iced(M::SHIFT | M::CONTROL | M::ALT | M::SUPER);
+        for flag in [
+            keyboard::Modifiers::SHIFT,
+            keyboard::Modifiers::CTRL,
+            keyboard::Modifiers::ALT,
+            keyboard::Modifiers::LOGO,
+        ] {
+            assert!(all.contains(flag));
+        }
+    }
+
+    #[test]
+    fn named_editing_keys_map_explicitly() {
+        use iced::keyboard::key::Named;
+        use tao::keyboard::Key as T;
+        for (tao_key, named) in [
+            (T::Backspace, Named::Backspace),
+            (T::Delete, Named::Delete),
+            (T::Enter, Named::Enter),
+            (T::Escape, Named::Escape),
+            (T::Tab, Named::Tab),
+        ] {
+            assert_eq!(tao_key_to_iced_key(&tao_key), keyboard::Key::Named(named));
+        }
+        assert_eq!(
+            tao_key_to_iced_key(&tao::keyboard::Key::F1),
+            keyboard::Key::Unidentified
+        );
+    }
+
+    #[test]
+    fn unmapped_codes_fall_back_to_backquote() {
+        let code = tao::keyboard::KeyCode::Unidentified(tao::keyboard::NativeKeyCode::Unidentified);
+        assert!(keycode_to_key(code).is_none());
+        assert_eq!(
+            tao_keycode_to_iced_code(code) as i32,
+            keyboard::key::Code::Backquote as i32
+        );
+    }
 }

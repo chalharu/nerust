@@ -415,12 +415,47 @@ pub(crate) mod imp {
     #[cfg(test)]
     mod tests {
         use super::try_append;
+        use nerust_keyboard::Key;
+        use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
+
+        use super::shortcut_hint;
+
+        fn binding(action: ShortcutAction, key: Option<Key>) -> ShortcutBinding {
+            ShortcutBinding { action, key }
+        }
 
         #[test]
         fn try_append_tolerates_failure() {
             // A failing append logs and continues instead of panicking.
             try_append(|| Err(muda::Error::NotAChildOfThisMenu));
             try_append(|| Ok(()));
+        }
+
+        #[test]
+        fn shortcut_hint_appends_bound_key() {
+            let bindings = [binding(ShortcutAction::TogglePause, Some(Key::F5))];
+            assert_eq!(
+                shortcut_hint("Pause", &bindings, ShortcutAction::TogglePause),
+                "Pause (F5)"
+            );
+        }
+
+        #[test]
+        fn shortcut_hint_bare_when_unbound() {
+            let bindings = [binding(ShortcutAction::TogglePause, Some(Key::F5))];
+            assert_eq!(
+                shortcut_hint("Pause", &[], ShortcutAction::TogglePause),
+                "Pause"
+            );
+            let unbound = [binding(ShortcutAction::TogglePause, None)];
+            assert_eq!(
+                shortcut_hint("Pause", &unbound, ShortcutAction::TogglePause),
+                "Pause"
+            );
+            assert_eq!(
+                shortcut_hint("Pause", &bindings, ShortcutAction::Reset),
+                "Pause"
+            );
         }
     }
 }

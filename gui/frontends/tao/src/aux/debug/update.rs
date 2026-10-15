@@ -341,3 +341,124 @@ fn reg_set(bridge: &DebugBridge) {
         _ => bridge.set_status(ui_msg::parse_failed(bridge.language, &input)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nerust_core_traits::debugger::SpaceId;
+    use nerust_gui_viewmodel::debugger::{DisplayCache, PendingWrite, StatusMessage};
+    use nerust_settings_core::model::language::AppLanguage;
+
+    fn test_bridge() -> DebugBridge {
+        DebugBridge::new(
+            DisplayCache::default(),
+            vec![(SpaceId(0), "Memory".to_string(), 0)],
+            0,
+            AppLanguage::English,
+        )
+    }
+
+    fn status_text(bridge: &DebugBridge) -> String {
+        match &lock_recovered(&bridge.display).status {
+            StatusMessage::Local(text) => text.clone(),
+            other => panic!("expected local status, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn confirm_write_pushes_write_confirm_and_clears_input() {
+        let bridge = test_bridge();
+        *lock_recovered(&bridge.edit_input) = "42".to_string();
+        update_message(&bridge, DebugMessage::ConfirmWrite);
+        assert!(matches!(
+            bridge.take_requests().as_slice(),
+            [DebugAction::WriteConfirm]
+        ));
+        assert!(lock_recovered(&bridge.edit_input).is_empty());
+    }
+
+    #[test]
+    fn cancel_write_pushes_edit_cancel_and_clears_pending() {
+        let bridge = test_bridge();
+        lock_recovered(&bridge.display).pending = Some(PendingWrite {
+            addr: 0x100,
+            old: Some(0xAB),
+            value: 0x42,
+        });
+        update_message(&bridge, DebugMessage::CancelWrite);
+        assert!(matches!(
+            bridge.take_requests().as_slice(),
+            [DebugAction::EditCancel]
+        ));
+        assert!(lock_recovered(&bridge.display).pending.is_none());
+    }
+
+    #[test]
+    fn bookmark_add_defaults_label_and_falls_back_to_pin() {
+        let bridge = test_bridge();
+        update_message(&bridge, DebugMessage::BookmarkAdd);
+        let marks = lock_recovered(&bridge.bookmarks);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].0, bridge.anchor());
+        assert_eq!(marks[0].1, "BM1");
+        assert!(lock_recovered(&bridge.bm_input).is_empty());
+    }
+
+    #[test]
+    fn freeze_rejects_unparseable_byte_with_selection() {
+        let bridge = test_bridge();
+        *lock_recovered(&bridge.selected) = Some((0x100, Some(0xAB)));
+        *lock_recovered(&bridge.freeze_input) = "ZZZ".to_string();
+        update_message(&bridge, DebugMessage::FreezeSet);
+        assert!(lock_recovered(&bridge.freeze).is_none());
+        assert_eq!(
+            status_text(&bridge),
+            "freeze needs a selected row and hex byte"
+        );
+    }
+
+    #[test]
+    fn freeze_rejects_out_of_range_byte() {
+        let bridge = test_bridge();
+        *lock_recovered(&bridge.selected) = Some((0x100, Some(0xAB)));
+        *lock_recovered(&bridge.freeze_input) = "1FF".to_string();
+        update_message(&bridge, DebugMessage::FreezeSet);
+        assert!(lock_recovered(&bridge.freeze).is_none());
+        assert_eq!(
+            status_text(&bridge),
+            "freeze needs a selected row and hex byte"
+        );
+    }
+
+    #[test]
+    fn edit_write_rejects_bad_hex_without_queueing() {
+        let bridge = test_bridge();
+        *lock_recovered(&bridge.selected) = Some((0x100, Some(0xAB)));
+        *lock_recovered(&bridge.edit_input) = "ZZZ".to_string();
+        update_message(&bridge, DebugMessage::EditWrite);
+        assert!(bridge.take_requests().is_empty());
+        assert_eq!(status_text(&bridge), "parse failed: ZZZ");
+    }
+
+    #[test]
+    fn cycle_space_without_spaces_pushes_nothing() {
+        let bridge = DebugBridge::new(DisplayCache::default(), Vec::new(), 0, AppLanguage::English);
+        *lock_recovered(&bridge.selected) = Some((0x100, Some(0xAB)));
+        update_message(&bridge, DebugMessage::SpaceNext);
+        update_message(&bridge, DebugMessage::SpacePrev);
+        assert!(bridge.take_requests().is_empty());
+        assert!(lock_recovered(&bridge.selected).is_some());
+    }
+
+    #[test]
+    fn reg_set_accepts_full_width_hex() {
+        let bridge = test_bridge();
+        *lock_recovered(&bridge.reg_target) = Some("r0");
+        *lock_recovered(&bridge.reg_input) = "1FF".to_string();
+        update_message(&bridge, DebugMessage::RegSet);
+        assert!(matches!(
+            bridge.take_requests().as_slice(),
+            [DebugAction::RegisterWrite(0x1FF)]
+        ));
+    }
+}
