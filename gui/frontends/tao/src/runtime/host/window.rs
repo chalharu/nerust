@@ -58,7 +58,9 @@ impl HostState {
         self.window = Some(window);
         self.sync_fullscreen_from_settings();
         self.sync_menu_state();
-        self.ensure_osd_window(opener);
+        if std::env::var("NERUST_NO_OSD").is_err() {
+            self.ensure_osd_window(opener);
+        }
         self.request_redraw();
         self.refresh_window_title();
     }
