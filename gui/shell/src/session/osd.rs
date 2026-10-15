@@ -5,10 +5,10 @@
 
 use std::time::{Duration, Instant};
 
+use nerust_settings_core::model::language::AppLanguage;
 use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationPosition, NotificationSettings,
 };
-use nerust_settings_core::model::language::AppLanguage;
 
 use super::notification::{MAX_PENDING, NotificationLevel, UiNotification};
 
@@ -39,6 +39,7 @@ pub struct OsdRow {
     pub glyph: char,
 }
 
+#[derive(Debug)]
 struct OsdItem {
     row: OsdRow,
     /// `None` holds indefinitely (Error-as-OSD without successor).
@@ -47,6 +48,7 @@ struct OsdItem {
     replaceable_at: Instant,
 }
 
+#[derive(Debug, Default)]
 pub struct OsdManager {
     items: Vec<OsdItem>,
     modal: Vec<String>,
@@ -55,11 +57,7 @@ pub struct OsdManager {
 
 impl OsdManager {
     pub fn new() -> Self {
-        Self {
-            items: Vec::new(),
-            modal: Vec::new(),
-            error_hold: None,
-        }
+        Self::default()
     }
 
     fn enabled(level: NotificationLevel, settings: &NotificationSettings) -> bool {
@@ -258,7 +256,6 @@ pub fn strip_pixels(client_height: u32, rows: u32) -> u32 {
     rows.saturating_mul(font_px.saturating_add(8))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::super::notification::NotificationKind;
@@ -342,11 +339,21 @@ mod tests {
     fn strip_rows_share_edges() {
         use NotificationPosition as P;
         assert_eq!(
-            strip_rows(NotificationAreaMode::Strip, P::BottomLeft, P::BottomRight, true),
+            strip_rows(
+                NotificationAreaMode::Strip,
+                P::BottomLeft,
+                P::BottomRight,
+                true
+            ),
             (0, 1)
         );
         assert_eq!(
-            strip_rows(NotificationAreaMode::Strip, P::BottomLeft, P::BottomLeft, true),
+            strip_rows(
+                NotificationAreaMode::Strip,
+                P::BottomLeft,
+                P::BottomLeft,
+                true
+            ),
             (0, 2)
         );
         assert_eq!(

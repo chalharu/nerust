@@ -46,9 +46,9 @@ impl NotificationKind {
     pub fn level(&self) -> NotificationLevel {
         match self {
             NotificationKind::SlotFailed { reason, .. } => match reason {
-                SlotOpFailure::Storage
-                | SlotOpFailure::Corrupt
-                | SlotOpFailure::Incompatible => NotificationLevel::Error,
+                SlotOpFailure::Storage | SlotOpFailure::Corrupt | SlotOpFailure::Incompatible => {
+                    NotificationLevel::Error
+                }
                 SlotOpFailure::Empty | SlotOpFailure::Missing | SlotOpFailure::Unavailable => {
                     NotificationLevel::Warning
                 }
@@ -91,12 +91,9 @@ impl NotificationKind {
                     "Reset".to_string()
                 }
             }
-            NotificationKind::SavedSlot(id) => Self::slot_text(
-                Some(*id),
-                language,
-                "Saved to",
-                "保存しました",
-            ),
+            NotificationKind::SavedSlot(id) => {
+                Self::slot_text(Some(*id), language, "Saved to", "保存しました")
+            }
             NotificationKind::LoadedSlot(id) => {
                 Self::slot_text(Some(*id), language, "Loaded", "読み込みました")
             }
@@ -284,9 +281,7 @@ pub fn outcome_notifications(
         SessionCommand::SaveActiveSlotOrNew => {
             NotificationKind::SavedSlot(active_slot.unwrap_or(0))
         }
-        SessionCommand::LoadActiveSlot => {
-            NotificationKind::LoadedSlot(active_slot.unwrap_or(0))
-        }
+        SessionCommand::LoadActiveSlot => NotificationKind::LoadedSlot(active_slot.unwrap_or(0)),
         SessionCommand::SelectActiveSlot(id) => NotificationKind::SelectedSlot(id),
         SessionCommand::SelectNextSlot | SessionCommand::SelectPreviousSlot => {
             NotificationKind::SelectedSlot(active_slot.unwrap_or(0))
