@@ -1,45 +1,10 @@
 //! Menu/keyboard dispatch, ROM lifecycle, and the session delegate.
 
-use std::path::PathBuf;
-
 use nerust_gui_shell::registry::SystemRegistry;
-use nerust_settings_core::model::language::AppLanguage;
 
 use super::HostState;
 use super::*;
 use nerust_gui_shell::session::access::FrontendSession;
-
-/// Native file/error dialogs, seamed for headless tests. Production
-/// talks to rfd; fakes return canned picks and record errors.
-pub(crate) trait DialogPorts {
-    fn pick_rom_file(
-        &self,
-        language: AppLanguage,
-        filters: Vec<(String, Vec<String>)>,
-    ) -> Option<PathBuf>;
-    fn show_load_error(&self, language: AppLanguage, detail: &str);
-}
-
-/// Production dialogs over rfd.
-pub(crate) struct NativeDialogs;
-
-impl DialogPorts for NativeDialogs {
-    fn pick_rom_file(
-        &self,
-        language: AppLanguage,
-        filters: Vec<(String, Vec<String>)>,
-    ) -> Option<PathBuf> {
-        let mut dialog = FileDialog::new().set_title(text(language, UiText::Open));
-        for (name, extensions) in filters {
-            dialog = dialog.add_filter(name, extensions.as_slice());
-        }
-        dialog.pick_file()
-    }
-
-    fn show_load_error(&self, language: AppLanguage, detail: &str) {
-        show_rom_load_error(language, detail);
-    }
-}
 
 impl HostState {
     pub(crate) fn on_menu_command(
@@ -285,9 +250,11 @@ impl FrontendSession for HostState {
 #[cfg(test)]
 mod tests {
     use super::HostState;
+    use super::TestHost;
     use crate::event::MenuCommand;
     use crate::runtime::host::HostAction;
-    use crate::test_support::{FakeOpener, FakeRomLoader, OpenerCall, TestHost};
+    use crate::test_opener::{FakeOpener, OpenerCall};
+    use crate::test_session::FakeRomLoader;
     use nerust_gui_shell::registry::SystemRegistry;
     use nerust_gui_shell::session::commands::SessionCommand;
 

@@ -18,9 +18,10 @@ use tao::{
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
 
-use self::host::{HostAction, HostState, NativeDialogs, TaoWindowOpener};
+use self::host::{HostAction, HostState};
 use crate::event::UserEvent;
 use crate::menu::imp::AppMenu;
+use crate::ports::{NativeDialogs, TaoWindowOpener};
 
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
@@ -108,7 +109,7 @@ impl WindowRuntime {
                 // Startup runs before the main window exists, so the
                 // standalone dialog is the only explanation for a bad
                 // `--rom` path.
-                host::show_rom_load_error(
+                crate::ports::show_rom_load_error(
                     self.host
                         .session()
                         .settings_snapshot()

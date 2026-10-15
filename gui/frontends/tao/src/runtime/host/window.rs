@@ -265,7 +265,8 @@ impl HostState {
 mod tests {
     use tao::event_loop::ControlFlow;
 
-    use crate::test_support::{FakeOpener, OpenerCall, TestHost};
+    use super::TestHost;
+    use crate::test_opener::{FakeOpener, OpenerCall};
 
     #[test]
     fn ensure_window_failure_exits_loop() {

@@ -1,24 +1,71 @@
-//! Aux/main window creation behind a seam: production builds real
-//! tao windows, headless tests record the request and fail closed.
-//! Callers take `&dyn WindowOpener` so no `EventLoopWindowTarget`
-//! ever reaches test code.
+//! Headless seams for native surfaces: dialogs and window creation.
+//! Tao-local leaf (only inner crates, aux handles, and tao types), so
+//! both production implementors and headless fakes depend downward.
+//! Production impls live here; fakes live in `crate::test_support`.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use tao::{
     event_loop::EventLoopWindowTarget,
     window::{Window as TaoWindow, WindowBuilder},
 };
 
-use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_core_traits::debugger::SpaceId;
+use nerust_core_traits::{audio::AudioBackendRegistry, debugger::SpaceId};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_gui_viewmodel::debugger::DisplayCache;
-use nerust_settings_core::model::language::AppLanguage;
+use nerust_settings_core::{
+    i18n::{UiText, text},
+    model::language::AppLanguage,
+};
+use rfd::FileDialog;
 
 use crate::aux::bridge::DebugBridge;
 use crate::event::UserEvent;
+
+/// Native file/error dialogs, seamed for headless tests. Production
+/// talks to rfd; fakes return canned picks and record errors.
+pub(crate) trait DialogPorts {
+    fn pick_rom_file(
+        &self,
+        language: AppLanguage,
+        filters: Vec<(String, Vec<String>)>,
+    ) -> Option<PathBuf>;
+    fn show_load_error(&self, language: AppLanguage, detail: &str);
+}
+
+/// Production dialogs over rfd.
+pub(crate) struct NativeDialogs;
+
+impl DialogPorts for NativeDialogs {
+    fn pick_rom_file(
+        &self,
+        language: AppLanguage,
+        filters: Vec<(String, Vec<String>)>,
+    ) -> Option<PathBuf> {
+        let mut dialog = FileDialog::new().set_title(text(language, UiText::Open));
+        for (name, extensions) in filters {
+            dialog = dialog.add_filter(name, extensions.as_slice());
+        }
+        dialog.pick_file()
+    }
+
+    fn show_load_error(&self, language: AppLanguage, detail: &str) {
+        show_rom_load_error(language, detail);
+    }
+}
+
+/// Surface ROM load failures in a modal dialog: the previous
+/// warn-only path left the empty window with no explanation.
+pub(super) fn show_rom_load_error(language: AppLanguage, detail: &str) {
+    let title = text(language, UiText::RomLoadFailed);
+    rfd::MessageDialog::new()
+        .set_title(title)
+        .set_description(detail)
+        .set_level(rfd::MessageLevel::Error)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
+}
 
 /// Window creation surface. Every method fails closed (`None`/`Err`)
 /// on headless fakes; production forwards to the handle constructors.
