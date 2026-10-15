@@ -2,7 +2,9 @@
 //! Window sizing helpers live in `window`; the settings dialog in
 //! `settings`.
 use super::HostState;
-use super::*;
+use super::{derive_native_fullscreen_sync, set_window_fullscreen, window_is_fullscreen};
+use nerust_gui_shell::session::{SessionError, access::SettingsResult};
+use std::time::Instant;
 
 impl HostState {
     pub(crate) fn sync_fullscreen_default_from_window(&mut self) {

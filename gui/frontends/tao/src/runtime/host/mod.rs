@@ -1,36 +1,23 @@
 use nerust_gui_runtime::{
-    settings::{
-        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
-        SettingsSnapshot,
-    },
+    settings::{BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities},
     shell::NativeShellState,
 };
 use nerust_gui_shell::{
     context::FrontendContext,
     debug::{DrainFlight, LiveImagesFlight},
-    session::{
-        KeyboardShortcut, SessionError, SessionHandle, access::SettingsResult,
-        commands::SessionCommand, lifecycle::WindowSize,
-    },
-    settings::scaling_factor,
+    session::{SessionHandle, lifecycle::WindowSize},
 };
-use nerust_render_traits::{
-    SurfaceSize,
-    renderer::{GpuFactory, RenderResult},
-};
+use nerust_render_traits::{SurfaceSize, renderer::GpuFactory};
 use nerust_settings_core::model::app_state::RememberedWindowSize;
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 #[cfg(test)]
 use std::path::PathBuf;
-use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
+use std::{rc::Rc, sync::Arc};
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
-    event::{ElementState, KeyEvent},
-    event_loop::ControlFlow,
-    window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
+    event::ElementState,
+    window::{Fullscreen, Window as TaoWindow, WindowBuilder},
 };
 
-use crate::event::MenuCommand;
 use crate::menu::MenuSink;
 
 use super::debug_windows::DebugWindows;
@@ -42,7 +29,7 @@ mod settings;
 mod window;
 
 use self::focus::FocusState;
-use crate::ports::{DialogPorts, WindowOpener};
+use crate::ports::DialogPorts;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {

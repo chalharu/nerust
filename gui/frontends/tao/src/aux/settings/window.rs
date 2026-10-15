@@ -9,7 +9,7 @@ use tao::event_loop::EventLoopWindowTarget;
 use super::program::{Message, SettingsAppProgram, find_duplicate_system_id};
 use crate::aux::bridge::lock_recovered;
 use crate::aux::shell::{AuxShell, PumpOutcome, WindowScaffold};
-use crate::convert::*;
+use crate::convert::convert_tao_window_event;
 
 /// Settings dialog: the shared [`AuxShell`] host plus the
 /// settings-only pieces (pending-apply staging and the external

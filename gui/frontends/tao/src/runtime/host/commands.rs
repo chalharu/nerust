@@ -3,8 +3,17 @@
 use nerust_gui_shell::registry::SystemRegistry;
 
 use super::HostState;
-use super::*;
-use nerust_gui_shell::session::access::FrontendSession;
+use super::{HostAction, element_state_to_pressed};
+use tao::event::KeyEvent;
+
+use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_shell::session::{
+    KeyboardShortcut, SessionError, access::FrontendSession, access::SettingsResult,
+    commands::SessionCommand,
+};
+
+use crate::event::MenuCommand;
+use crate::ports::WindowOpener;
 
 impl HostState {
     pub(crate) fn on_menu_command(
@@ -250,9 +259,9 @@ impl FrontendSession for HostState {
 #[cfg(test)]
 mod tests {
     use super::HostState;
-    use super::TestHost;
     use crate::event::MenuCommand;
     use crate::runtime::host::HostAction;
+    use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
     use crate::test_session::FakeRomLoader;
     use nerust_gui_shell::registry::SystemRegistry;
