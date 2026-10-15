@@ -45,7 +45,7 @@ impl HostState {
     pub(crate) fn on_menu_command(
         &mut self,
         command: MenuCommand,
-        event_loop: &EventLoopWindowTarget<UserEvent>,
+        opener: &dyn WindowOpener,
     ) -> HostAction {
         if self.settings_open {
             return match command {
@@ -72,11 +72,11 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Settings => {
-                self.open_settings_window(event_loop);
+                self.open_settings_window(opener);
                 HostAction::None
             }
             MenuCommand::Debugger => {
-                self.open_debug_windows(event_loop, false);
+                self.open_debug_windows(opener, false);
                 HostAction::None
             }
             MenuCommand::Session(command) => {
@@ -285,8 +285,11 @@ impl FrontendSession for HostState {
 #[cfg(test)]
 mod tests {
     use super::HostState;
-    use crate::test_support::{FakeRomLoader, TestHost};
+    use crate::event::MenuCommand;
+    use crate::runtime::host::HostAction;
+    use crate::test_support::{FakeOpener, FakeRomLoader, OpenerCall, TestHost};
     use nerust_gui_shell::registry::SystemRegistry;
+    use nerust_gui_shell::session::commands::SessionCommand;
 
     #[test]
     fn rom_filters_empty_without_cores() {
@@ -322,5 +325,93 @@ mod tests {
         assert!(!host.open_rom_dialog());
         assert_eq!(support.loader.attempted(), [path]);
         assert_eq!(support.dialogs.errors(), ["ROM load failed: bad rom"]);
+    }
+
+    #[test]
+    fn settings_open_guard_swallows_non_quit() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.settings_open = true;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            host.on_menu_command(MenuCommand::Open, &opener),
+            HostAction::None
+        );
+        assert!(opener.calls().is_empty());
+        assert!(support.loader.attempted().is_empty());
+    }
+
+    #[test]
+    fn quit_exits_and_closes() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            host.on_menu_command(MenuCommand::Quit, &opener),
+            HostAction::Exit
+        );
+    }
+
+    #[test]
+    fn open_menu_routes_dialog_result() {
+        let path = std::path::PathBuf::from("/tmp/game.nes");
+        let support = TestHost::with_pick(Some(path.clone()));
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            host.on_menu_command(MenuCommand::Open, &opener),
+            HostAction::RomLoaded
+        );
+        assert_eq!(support.loader.attempted(), [path]);
+    }
+
+    #[test]
+    fn close_menu_unloads_without_core() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            host.on_menu_command(MenuCommand::Close, &opener),
+            HostAction::None
+        );
+        assert_eq!(support.menu.updates().len(), 1);
+    }
+
+    #[test]
+    fn session_menu_runs_command_and_syncs() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            host.on_menu_command(MenuCommand::Session(SessionCommand::TogglePause), &opener,),
+            HostAction::None
+        );
+        assert_eq!(support.menu.updates().len(), 1);
+    }
+
+    #[test]
+    fn settings_menu_records_open_attempt() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            host.on_menu_command(MenuCommand::Settings, &opener),
+            HostAction::None
+        );
+        assert_eq!(opener.calls(), [OpenerCall::Settings]);
+        assert!(!host.settings_open);
+    }
+
+    #[test]
+    fn debugger_menu_records_open_attempt() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            host.on_menu_command(MenuCommand::Debugger, &opener),
+            HostAction::None
+        );
+        assert_eq!(opener.calls(), [OpenerCall::Debug]);
+        assert!(host.debug.debug_window.is_none());
     }
 }

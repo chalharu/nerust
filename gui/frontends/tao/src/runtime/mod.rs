@@ -18,7 +18,7 @@ use tao::{
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
 
-use self::host::{HostAction, HostState};
+use self::host::{HostAction, HostState, TaoWindowOpener};
 use crate::event::UserEvent;
 use crate::menu::imp::AppMenu;
 use crate::runtime::host::NativeDialogs;
@@ -145,14 +145,16 @@ impl WindowRuntime {
 
         event_loop.run(move |event, event_loop, control_flow| match event {
             Event::NewEvents(StartCause::Init) => {
-                self.host.ensure_window(event_loop);
+                let opener = TaoWindowOpener::new(event_loop);
+                self.host.ensure_window(&opener);
                 self.recreate_renderer();
                 *control_flow = ControlFlow::Wait;
             }
             Event::WindowEvent {
                 event, window_id, ..
             } if self.host.is_window(window_id) => {
-                self.on_main_event(event_loop, event, control_flow);
+                let opener = TaoWindowOpener::new(event_loop);
+                self.on_main_event(&opener, event, control_flow);
             }
             Event::WindowEvent {
                 event, window_id, ..
@@ -168,10 +170,12 @@ impl WindowRuntime {
             Event::WindowEvent {
                 event, window_id, ..
             } if self.host.debug.is_debug_window(window_id) => {
-                self.on_debug_event(event_loop, event);
+                let opener = TaoWindowOpener::new(event_loop);
+                self.on_debug_event(&opener, event);
             }
             Event::RedrawRequested(window_id) if self.host.debug.is_debug_window(window_id) => {
-                self.on_debug_redrawn(event_loop);
+                let opener = TaoWindowOpener::new(event_loop);
+                self.on_debug_redrawn(&opener);
             }
             Event::WindowEvent {
                 event, window_id, ..
@@ -187,7 +191,8 @@ impl WindowRuntime {
             Event::UserEvent(command) => match command {
                 UserEvent::LiveTick => self.host.live_tick(),
                 UserEvent::Menu(command) => {
-                    let action = self.host.on_menu_command(command, event_loop);
+                    let opener = TaoWindowOpener::new(event_loop);
+                    let action = self.host.on_menu_command(command, &opener);
                     match action {
                         HostAction::None => (),
                         HostAction::RomLoaded => self.recreate_renderer(),

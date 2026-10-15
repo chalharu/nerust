@@ -37,7 +37,7 @@ impl HostState {
         }
     }
 
-    pub(super) fn open_settings_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+    pub(super) fn open_settings_window(&mut self, opener: &dyn WindowOpener) {
         if self.settings_open {
             return;
         }
@@ -49,11 +49,10 @@ impl HostState {
             self.sync_menu_state();
         }
 
-        match crate::aux::settings::window::SettingsWindowHandle::new(
+        match opener.create_settings(
             self.session.settings_snapshot().clone(),
             self.ctx.registry.clone(),
             self.ctx.audio_registry.clone(),
-            event_loop,
         ) {
             Some(handle) => self.settings_window = Some(handle),
             None => {
@@ -84,5 +83,55 @@ impl HostState {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_support::{FakeOpener, OpenerCall, TestHost};
+
+    #[test]
+    fn open_settings_skips_when_already_open() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.settings_open = true;
+        let opener = FakeOpener::failing("no display");
+        host.open_settings_window(&opener);
+        assert!(opener.calls().is_empty());
+        assert!(host.settings_window.is_none());
+    }
+
+    #[test]
+    fn open_settings_failure_rolls_back() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        host.open_settings_window(&opener);
+        assert_eq!(opener.calls(), [OpenerCall::Settings]);
+        assert!(host.settings_window.is_none());
+        assert!(!host.settings_open);
+        // Sync runs around the attempt (armed, then rolled back).
+        let open_flags: Vec<bool> = support
+            .menu
+            .updates()
+            .iter()
+            .map(|sync| sync.settings_open)
+            .collect();
+        assert_eq!(open_flags, [true, false]);
+    }
+
+    #[test]
+    fn settings_close_resumes_or_syncs() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.settings_open = true;
+        host.resume_after_settings = true;
+        host.on_settings_closed();
+        assert!(!host.settings_open);
+        assert!(!host.resume_after_settings);
+        host.settings_open = true;
+        host.on_settings_closed();
+        assert!(!host.settings_open);
+        assert_eq!(support.menu.updates().len(), 1);
     }
 }
