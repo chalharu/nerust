@@ -46,6 +46,14 @@ impl GtkOsd {
         let previous = window.child();
         if let Some(child) = previous.as_ref() {
             overlay.set_child(Some(child));
+        } else {
+            // An overlay without a main child may leave overlay
+            // children unallocated; a filling placeholder keeps
+            // their allocation identical to the window.
+            let placeholder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            placeholder.set_hexpand(true);
+            placeholder.set_vexpand(true);
+            overlay.set_child(Some(&placeholder));
         }
         let transient_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
         transient_box.set_can_target(false);
@@ -55,6 +63,7 @@ impl GtkOsd {
         status_label.set_can_focus(false);
         overlay.add_overlay(&transient_box);
         overlay.add_overlay(&status_label);
+
         overlay.set_clip_overlay(&transient_box, false);
         overlay.set_clip_overlay(&status_label, false);
         window.set_child(Some(&overlay));
@@ -87,7 +96,6 @@ impl GtkOsd {
         if !drained.is_empty() {
             self.manager.push_all(drained, &settings, language, now);
         }
-        self.manager.poll(now);
         let modal = self.manager.take_modal();
         if !modal.is_empty() {
             // Auto-pause first (spec): the game must not advance
@@ -104,8 +112,15 @@ impl GtkOsd {
             show_error_modal(window, &detail);
         }
         let (fps, paused) = metrics;
+        let changed = self.manager.poll(now);
         self.refresh_labels(&settings, language, paused, fps, window);
         self.apply_strip(&settings, renderer, window);
+        // Repaint only while labels show (or just changed): the game
+        // surface presents outside GTK paint and would otherwise cover
+        // one-shot label paints within a frame.
+        if changed || self.manager.has_visible() {
+            self.redraw();
+        }
     }
 
     fn refresh_labels(
@@ -199,6 +214,14 @@ impl GtkOsd {
             child.set_margin_top(12);
             child.set_margin_bottom(12);
         }
+    }
+
+    /// Repaint labels over the freshly presented game frame. The
+    /// game surface presents outside GTK paint, so one-shot label
+    /// paints would be covered within a frame; repaint every tick.
+    pub(crate) fn redraw(&self) {
+        self.transient_box.queue_draw();
+        self.status_label.queue_draw();
     }
 
     fn apply_strip(
