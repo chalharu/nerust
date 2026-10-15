@@ -1,5 +1,6 @@
 use nerust_render_traits::{
-    FrameBuffer, SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
+    FrameBuffer, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation,
+    VideoRenderProfile,
     renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -92,6 +93,12 @@ impl GpuRenderer for WgpuRenderer {
     fn detach(&mut self) {
         self.surface = None;
         self.pipeline = None;
+    }
+
+    fn set_reserved_strip(&mut self, strip: ReservedStrip) {
+        if let Some(ref mut pipeline) = self.pipeline {
+            pipeline.set_reserved_strip(strip);
+        }
     }
 
     fn resize(&mut self, size: SurfaceSize) {

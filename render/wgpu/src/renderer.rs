@@ -76,6 +76,7 @@ pub struct RenderPipeline {
     pipeline: wgpu::RenderPipeline,
     frame_logical_size: LogicalSize,
     content_size: PhysicalSize,
+    reserved: nerust_render_traits::ReservedStrip,
 }
 
 impl RenderPipeline {
@@ -89,6 +90,11 @@ impl RenderPipeline {
 
     pub fn surface_config(&self) -> &wgpu::SurfaceConfiguration {
         &self.config
+    }
+
+    /// Edge strips the game viewport avoids; applied on next render.
+    pub fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
+        self.reserved = strip;
     }
 
     /// PaletteIndex 形式の FrameBuffer からパレットデータを palette texture に書き込む。

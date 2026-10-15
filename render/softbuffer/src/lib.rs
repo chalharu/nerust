@@ -36,6 +36,7 @@ pub struct SoftbufferRenderer {
     surface: Option<Surface<WindowHandlePair, WindowHandlePair>>,
     render_profile: VideoRenderProfile,
     size: SurfaceSize,
+    reserved: nerust_render_traits::ReservedStrip,
     lut: LutEntry,
     resize_buffer: Vec<u32>,
     ntsc_buffer: Vec<u32>,
@@ -279,10 +280,16 @@ impl SoftbufferRenderer {
             surface: None,
             render_profile: profile.clone(),
             size: SurfaceSize::new(0, 0),
+            reserved: nerust_render_traits::ReservedStrip::default(),
             lut: LutEntry::new(),
             resize_buffer: Vec::new(),
             ntsc_buffer: Vec::new(),
         }
+    }
+
+    fn available_size(&self) -> SurfaceSize {
+        let loss = self.reserved.height_loss(self.size.height);
+        SurfaceSize::new(self.size.width, self.size.height.saturating_sub(loss))
     }
 
     fn resize_lut(&mut self) {
@@ -292,7 +299,7 @@ impl SoftbufferRenderer {
                 height: self.render_profile.logical_size.height as u32,
             },
             self.render_profile.physical_size.width / self.render_profile.physical_size.height,
-            self.size,
+            self.available_size(),
         );
         self.ntsc_buffer.resize(
             self.render_profile.logical_size.width * self.render_profile.logical_size.height,
@@ -509,6 +516,11 @@ impl GpuRenderer for SoftbufferRenderer {
         self.resize_lut();
     }
 
+    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
+        self.reserved = strip;
+        self.resize_lut();
+    }
+
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
         self.render_profile = profile.clone();
         self.resize_lut();
@@ -560,9 +572,27 @@ impl GpuRenderer for SoftbufferRenderer {
             return RenderResult::Skipped;
         }
 
+        let top = (self.reserved.top as usize).min(dst_h);
+        let avail_h = dst_h.saturating_sub(
+            (self.reserved.height_loss(self.size.height)) as usize,
+        );
+        // Strip rows keep the cleared black: the surface buffer is
+        // reused across frames, so stale game pixels must not linger.
+        for row in buffer.as_mut()[..top.saturating_mul(dst_w)].iter_mut() {
+            *row = 0;
+        }
+        for row in buffer.as_mut()
+            [(top.saturating_add(avail_h)).saturating_mul(dst_w)..]
+            .iter_mut()
+        {
+            *row = 0;
+        }
+
         let src_stride = frame.stride();
         let src = frame.as_ref();
-        let dst = buffer.as_mut();
+        let game_rows = top.saturating_mul(dst_w);
+        let game_len = avail_h.saturating_mul(dst_w);
+        let dst = &mut buffer.as_mut()[game_rows..game_rows.saturating_add(game_len)];
         // let src_w = self.render_profile.source_logical_size.width;
         let src_h = self.render_profile.source_logical_size.height;
         // Short source images would panic every indexer below (the
@@ -587,7 +617,7 @@ impl GpuRenderer for SoftbufferRenderer {
                     src_stride / 4,
                     src_h,
                     dst_w,
-                    dst_h,
+                    avail_h,
                     move |i| src[i * 4..i * 4 + 4].try_into().unwrap(),
                     &self.lut,
                     &mut self.resize_buffer,
@@ -606,7 +636,7 @@ impl GpuRenderer for SoftbufferRenderer {
                         self.render_profile.logical_size.width,
                         src_h,
                         dst_w,
-                        dst_h,
+                        avail_h,
                         |i| self.ntsc_buffer[i].to_be_bytes(),
                         &self.lut,
                         &mut self.resize_buffer,
@@ -619,7 +649,7 @@ impl GpuRenderer for SoftbufferRenderer {
                         src_stride,
                         src_h,
                         dst_w,
-                        dst_h,
+                        avail_h,
                         move |i| {
                             palette
                                 .get(src.get(i).copied().unwrap_or(0) as usize)
