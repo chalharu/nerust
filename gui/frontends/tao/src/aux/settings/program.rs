@@ -557,6 +557,27 @@ mod tests {
     }
 
     #[test]
+    fn program_update_and_error_paths_stay_headless() {
+        let program = SettingsAppProgram {
+            snapshot: empty_snapshot(),
+            registry: Arc::new(SystemRegistry::new(Vec::new())),
+            audio_registry: Arc::new(AudioBackendRegistry::new()),
+            should_close: Arc::new(AtomicBool::new(false)),
+            pending_apply: Arc::new(Mutex::new(None)),
+            view_invalidated: Arc::new(AtomicBool::new(false)),
+        };
+        let (mut state, _task) = program.boot();
+        dispatch(&mut state, Message::SelectPage(SettingsPage::Audio));
+        assert_eq!(state.page, SettingsPage::Audio);
+        let _ = program.update(&mut state, Message::SelectPage(SettingsPage::General));
+        // Storage error reads the live ViewModel projection.
+        let _ = state.storage_error();
+        // Error banner renders above the buttons when set.
+        state.error_message = Some("boom".to_string());
+        let _ = program.view(&state, iced::window::Id::unique());
+    }
+
+    #[test]
     fn program_boot_and_chrome_are_headless() {
         let program = SettingsAppProgram {
             snapshot: empty_snapshot(),

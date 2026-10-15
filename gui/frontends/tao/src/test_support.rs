@@ -349,6 +349,31 @@ mod self_tests {
     }
 
     #[test]
+    fn recorder_window_fns_stay_total() {
+        let recorder = MenuRecorderHandle::default();
+        recorder.clear_event_handler();
+        assert!(recorder.updates().is_empty());
+    }
+
+    #[test]
+    fn fake_opener_records_ppu_without_building() {
+        use crate::aux::bridge::DebugBridge;
+        use crate::runtime::host::WindowOpener;
+        use nerust_core_traits::debugger::SpaceId;
+        use nerust_gui_viewmodel::debugger::DisplayCache;
+        use nerust_settings_core::model::language::AppLanguage;
+        let opener = FakeOpener::failing("no display");
+        let bridge = std::sync::Arc::new(DebugBridge::new(
+            DisplayCache::default(),
+            vec![(SpaceId(0), "Memory".to_string(), 0)],
+            0,
+            AppLanguage::English,
+        ));
+        assert!(opener.create_ppu(&bridge, None).is_none());
+        assert!(opener.calls().contains(&OpenerCall::Ppu));
+    }
+
+    #[test]
     fn fake_gpu_factory_fails_closed() {
         use raw_window_handle::RawDisplayHandle;
         let factory = FakeGpuFactory;

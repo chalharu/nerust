@@ -287,6 +287,15 @@ mod tests {
     use crate::test_support::TestHost;
 
     #[test]
+    fn host_accessors_expose_session_and_factory() {
+        let support = crate::test_support::TestHost::new();
+        let mut host = support.host;
+        let _ = host.gpu_factory();
+        let _ = host.session_mut();
+        assert!(!host.session().loaded());
+    }
+
+    #[test]
     fn production_constructor_delegates_to_temp_paths() {
         use crate::test_support::{MenuRecorderHandle, TestContext};
         let support = TestContext::with_loader(crate::test_support::FakeRomLoader::succeeding());
