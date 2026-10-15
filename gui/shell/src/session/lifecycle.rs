@@ -422,16 +422,16 @@ impl SessionHandle {
         match &result {
             Ok(outcome) => {
                 let active = self.active_slot_id();
-                for kind in super::notification::outcome_notifications(command, outcome, active)
-                {
+                for kind in super::notification::outcome_notifications(command, outcome, active) {
                     self.notifications.push(kind);
                 }
             }
-            Err(_) => self
-                .notifications
-                .push(super::notification::NotificationKind::CommandFailed(
-                    command_name(command),
-                )),
+            Err(_) => {
+                self.notifications
+                    .push(super::notification::NotificationKind::CommandFailed(
+                        command_name(command),
+                    ))
+            }
         }
         result
     }
