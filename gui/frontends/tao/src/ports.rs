@@ -1,7 +1,7 @@
 //! Headless seams for native surfaces: dialogs and window creation.
 //! Tao-local leaf (only inner crates, aux handles, and tao types), so
 //! both production implementors and headless fakes depend downward.
-//! Production impls live here; fakes live in `crate::test_support`.
+//! Production impls live here; fakes live in `crate::test_*`.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -57,7 +57,7 @@ impl DialogPorts for NativeDialogs {
 
 /// Surface ROM load failures in a modal dialog: the previous
 /// warn-only path left the empty window with no explanation.
-pub(super) fn show_rom_load_error(language: AppLanguage, detail: &str) {
+pub(crate) fn show_rom_load_error(language: AppLanguage, detail: &str) {
     let title = text(language, UiText::RomLoadFailed);
     rfd::MessageDialog::new()
         .set_title(title)

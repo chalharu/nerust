@@ -7,7 +7,7 @@ use crate::menu::{MenuSink, MenuSync};
 
 /// `MenuSink` that records sync snapshots for assertions.
 #[derive(Debug, Default)]
-pub(crate) struct MenuRecorder {
+struct MenuRecorder {
     updates: Mutex<Vec<MenuSyncSnapshot>>,
 }
 
