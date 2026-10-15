@@ -287,6 +287,18 @@ mod tests {
     use crate::test_support::TestHost;
 
     #[test]
+    fn production_constructor_delegates_to_temp_paths() {
+        use crate::test_support::{MenuRecorderHandle, TestContext};
+        let support = TestContext::with_loader(crate::test_support::FakeRomLoader::succeeding());
+        let host = super::HostState::new(
+            support.ctx,
+            MenuRecorderHandle::default().into_box(),
+            Box::new(super::NativeDialogs),
+        );
+        assert!(host.is_ok());
+    }
+
+    #[test]
     fn headless_host_builds_and_syncs_menu() {
         let support = TestHost::new();
         let mut host = support.host;

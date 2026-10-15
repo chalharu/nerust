@@ -317,3 +317,42 @@ impl crate::runtime::host::WindowOpener for FakeOpener {
         None
     }
 }
+
+#[cfg(test)]
+mod self_tests {
+    use super::*;
+    use nerust_render_traits::{
+        logical::LogicalSize, physical::PhysicalSize, renderer::GpuFactory,
+    };
+
+    fn test_config() -> nerust_render_traits::renderer::RendererConfig {
+        use nerust_render_traits::{VideoFrameFormat, VideoRenderProfile};
+        nerust_render_traits::renderer::RendererConfig {
+            render_profile: VideoRenderProfile {
+                source_logical_size: LogicalSize {
+                    width: 160,
+                    height: 144,
+                },
+                logical_size: LogicalSize {
+                    width: 160,
+                    height: 144,
+                },
+                physical_size: PhysicalSize {
+                    width: 160.0,
+                    height: 144.0,
+                },
+                frame_format: VideoFrameFormat::Rgba,
+                ntsc_packed_rgba8: None,
+            },
+            vsync: false,
+        }
+    }
+
+    #[test]
+    fn fake_gpu_factory_fails_closed() {
+        use raw_window_handle::RawDisplayHandle;
+        let factory = FakeGpuFactory;
+        let result = factory.create_renderer(&test_config(), RawDisplayHandle::Haiku);
+        assert!(result.is_err());
+    }
+}
