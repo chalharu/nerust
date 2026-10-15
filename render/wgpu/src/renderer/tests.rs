@@ -36,7 +36,10 @@ fn viewport_avoids_reserved_strips() {
             width: 512.0,
             height: 480.0,
         },
-        ReservedStrip { top: 40, bottom: 60 },
+        ReservedStrip {
+            top: 40,
+            bottom: 60,
+        },
     );
 
     // Available height 800: 512x480 fits at 800 high, 853 wide.
