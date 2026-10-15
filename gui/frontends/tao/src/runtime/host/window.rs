@@ -4,7 +4,7 @@ use super::HostState;
 use super::*;
 
 impl HostState {
-    pub(crate) fn ensure_window(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+    pub(crate) fn ensure_window(&mut self, opener: &dyn WindowOpener) {
         if self.window.is_some() {
             return;
         }
@@ -16,17 +16,15 @@ impl HostState {
             .video
             .window
             .fullscreen_default;
-        let window = match create_window_builder(
+        let window = match opener.create_main(create_window_builder(
             self.startup_window_size(),
             self.session.window_title(),
             fullscreen,
-        )
-        .build(event_loop)
-        {
-            Ok(window) => Arc::new(window),
-            Err(e) => {
-                log::error!("failed to create window: {e}");
-                self.fatal_error = Some(e.to_string());
+        )) {
+            Ok(window) => window,
+            Err(detail) => {
+                log::error!("failed to create window: {detail}");
+                self.fatal_error = Some(detail);
                 return;
             }
         };
@@ -260,5 +258,25 @@ impl HostState {
         {
             log::warn!("failed to remember tao window size: {error}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tao::event_loop::ControlFlow;
+
+    use crate::test_support::{FakeOpener, OpenerCall, TestHost};
+
+    #[test]
+    fn ensure_window_failure_exits_loop() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        host.ensure_window(&opener);
+        assert_eq!(opener.calls(), [OpenerCall::Main]);
+        assert!(host.window().is_none());
+        let mut flow = ControlFlow::Wait;
+        host.update_control_flow(&mut flow);
+        assert_eq!(flow, ControlFlow::Exit);
     }
 }

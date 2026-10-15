@@ -3,20 +3,17 @@
 //! inline arms (debug/PPU focus agreement shares helpers); check the
 //! arm history before reordering Destroyed/focus guards.
 
-use tao::{
-    event::WindowEvent,
-    event_loop::{ControlFlow, EventLoopWindowTarget},
-};
+use tao::{event::WindowEvent, event_loop::ControlFlow};
 
 use crate::aux::shell::AuxWindow;
-use crate::event::UserEvent;
+use crate::runtime::host::WindowOpener;
 
 use super::WindowRuntime;
 
 impl WindowRuntime {
     pub(super) fn on_main_event(
         &mut self,
-        event_loop: &EventLoopWindowTarget<UserEvent>,
+        opener: &dyn WindowOpener,
         event: WindowEvent,
         control_flow: &mut ControlFlow,
     ) {
@@ -51,11 +48,18 @@ impl WindowRuntime {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 self.host.on_keyboard_input(event);
-                if self.host.take_debug_open_request() {
-                    self.host.open_debug_windows(event_loop, false);
-                }
+                self.pump_debug_open_request(opener);
             }
             _ => (),
+        }
+    }
+
+    /// Keyboard/F4 open wiring, extracted so the flag-to-window path
+    /// stays headless-testable (`KeyEvent` itself is unbuildable
+    /// outside tao, so the input arm above keeps no other logic).
+    fn pump_debug_open_request(&mut self, opener: &dyn WindowOpener) {
+        if self.host.take_debug_open_request() {
+            self.host.open_debug_windows(opener, false);
         }
     }
 
@@ -106,11 +110,7 @@ impl WindowRuntime {
         }
     }
 
-    pub(super) fn on_debug_event(
-        &mut self,
-        event_loop: &EventLoopWindowTarget<UserEvent>,
-        event: WindowEvent,
-    ) {
+    pub(super) fn on_debug_event(&mut self, opener: &dyn WindowOpener, event: WindowEvent) {
         if let WindowEvent::Moved(position) = &event {
             self.host
                 .debug
@@ -135,7 +135,7 @@ impl WindowRuntime {
         if refocused {
             self.host.sync_debug_chrome();
         }
-        self.drain_and_maybe_open_ppu(event_loop);
+        self.drain_and_maybe_open_ppu(opener);
         // Closing never resumes: resume is always explicit.
         if let Some(handle) = self.host.debug.debug_window.as_mut() {
             // Coalesced present (see the settings arm): every
@@ -148,8 +148,8 @@ impl WindowRuntime {
         }
     }
 
-    pub(super) fn on_debug_redrawn(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
-        self.drain_and_maybe_open_ppu(event_loop);
+    pub(super) fn on_debug_redrawn(&mut self, opener: &dyn WindowOpener) {
+        self.drain_and_maybe_open_ppu(opener);
         if let Some(handle) = self.host.debug.debug_window.as_mut() {
             handle.render();
         }
@@ -198,11 +198,138 @@ impl WindowRuntime {
 
     /// Debug drain plus deferred PPU-viewer open, shared by the
     /// debugger event and redraw paths.
-    fn drain_and_maybe_open_ppu(&mut self, event_loop: &EventLoopWindowTarget<UserEvent>) {
+    fn drain_and_maybe_open_ppu(&mut self, opener: &dyn WindowOpener) {
         self.host.drain_debug_requests();
         if self.host.take_ppu_open_request() {
-            self.host.open_debug_windows(event_loop, true);
+            self.host.open_debug_windows(opener, true);
             self.host.run_debug_drain(&[]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tao::{dpi::PhysicalPosition, event::WindowEvent, event_loop::ControlFlow};
+
+    use super::WindowRuntime;
+    use crate::test_support::{FakeOpener, OpenerCall, TestHost};
+
+    fn test_runtime() -> (WindowRuntime, crate::test_support::MenuRecorderHandle) {
+        let support = TestHost::new();
+        let menu = support.menu.clone();
+        let runtime = WindowRuntime {
+            event_loop: None,
+            host: support.host,
+            renderer: None,
+            surface_xid: None,
+        };
+        (runtime, menu)
+    }
+
+    #[test]
+    fn main_close_requests_exit() {
+        let (mut runtime, menu) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        let mut flow = ControlFlow::Wait;
+        runtime.on_main_event(&opener, WindowEvent::CloseRequested, &mut flow);
+        assert_eq!(flow, ControlFlow::Exit);
+        assert!(menu.updates().is_empty());
+    }
+
+    #[test]
+    fn main_focus_arms_syncs_chrome() {
+        let (mut runtime, menu) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        let mut flow = ControlFlow::Wait;
+        runtime.on_main_event(&opener, WindowEvent::Focused(false), &mut flow);
+        assert!(!runtime.host.focus.main_active());
+        runtime.on_main_event(&opener, WindowEvent::Focused(true), &mut flow);
+        assert!(runtime.host.focus.main_active());
+        assert_eq!(menu.updates().len(), 2);
+    }
+
+    #[test]
+    fn main_resized_without_window_stays_quiet() {
+        let (mut runtime, menu) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        let mut flow = ControlFlow::Wait;
+        runtime.on_main_event(
+            &opener,
+            WindowEvent::Resized(tao::dpi::PhysicalSize::new(800, 600)),
+            &mut flow,
+        );
+        assert_eq!(flow, ControlFlow::Wait);
+        assert!(menu.updates().is_empty());
+    }
+
+    #[test]
+    fn debug_open_request_reaches_opener_once() {
+        let (mut runtime, _) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        runtime.host.debug.request_debug_open();
+        runtime.pump_debug_open_request(&opener);
+        assert_eq!(opener.calls(), [OpenerCall::Debug]);
+        // Consumed: a second pump without re-arm stays quiet.
+        runtime.pump_debug_open_request(&opener);
+        assert_eq!(opener.calls(), [OpenerCall::Debug]);
+    }
+
+    #[test]
+    fn settings_destroyed_without_window_is_noop() {
+        let (mut runtime, menu) = test_runtime();
+        runtime.on_settings_event(WindowEvent::Destroyed);
+        assert!(menu.updates().is_empty());
+    }
+
+    #[test]
+    fn debug_moved_remembers_position() {
+        let (mut runtime, _) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        runtime.on_debug_event(&opener, WindowEvent::Moved(PhysicalPosition::new(60, 20)));
+        assert_eq!(runtime.host.debug.debug_window_pos(), Some((60, 20)));
+    }
+
+    #[test]
+    fn debug_destroyed_without_window_is_noop() {
+        let (mut runtime, menu) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        runtime.on_debug_event(&opener, WindowEvent::Destroyed);
+        assert!(menu.updates().is_empty());
+        assert!(opener.calls().is_empty());
+    }
+
+    #[test]
+    fn debug_focused_without_window_returns_early() {
+        // No handle open: focus agreement runs, then the handler
+        // returns before chrome sync or drain.
+        let (mut runtime, menu) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        runtime.host.focus.leave_main();
+        runtime.on_debug_event(&opener, WindowEvent::Focused(true));
+        assert!(menu.updates().is_empty());
+        assert!(opener.calls().is_empty());
+    }
+
+    #[test]
+    fn ppu_moved_remembers_position() {
+        let (mut runtime, _) = test_runtime();
+        runtime.on_ppu_event(WindowEvent::Moved(PhysicalPosition::new(1250, 100)));
+        assert_eq!(runtime.host.debug.ppu_window_pos(), Some((1250, 100)));
+    }
+
+    #[test]
+    fn ppu_destroyed_without_window_is_noop() {
+        let (mut runtime, menu) = test_runtime();
+        runtime.on_ppu_event(WindowEvent::Destroyed);
+        assert!(menu.updates().is_empty());
+    }
+
+    #[test]
+    fn debug_redrawn_drains_quietly() {
+        let (mut runtime, menu) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        runtime.on_debug_redrawn(&opener);
+        assert!(menu.updates().is_empty());
+        assert!(opener.calls().is_empty());
     }
 }

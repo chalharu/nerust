@@ -1,9 +1,7 @@
 //! Debugger and live-follow orchestration for `HostState`.
 //! Drains, flights, aux-window management, and live PPU follow.
 
-use std::{sync::Arc, time::Instant};
-
-use tao::event_loop::EventLoopWindowTarget;
+use std::time::Instant;
 
 use nerust_gui_shell::{
     debug::{DebugDrainOutput, DrainPoll, LiveImagesPoll},
@@ -12,8 +10,8 @@ use nerust_gui_shell::{
 use nerust_gui_viewmodel::debugger as debug_vm;
 
 use super::host::HostState;
+use super::host::WindowOpener;
 use crate::aux::bridge::lock_recovered;
-use crate::event::UserEvent;
 
 impl HostState {
     pub(crate) fn take_debug_open_request(&mut self) -> bool {
@@ -108,11 +106,7 @@ impl HostState {
     /// the toolbar button. Closing never resumes. Opening drains
     /// `[Pause, Refresh]` through the shared shell drain (pause first);
     /// `focus_ppu` opens-or-focuses the viewer for the toolbar only.
-    pub(crate) fn open_debug_windows(
-        &mut self,
-        event_loop: &EventLoopWindowTarget<UserEvent>,
-        focus_ppu: bool,
-    ) {
+    pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         use nerust_gui_shell::debug::DebugAction;
         if self.debug.debug_window.is_none() {
             let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> = self
@@ -127,12 +121,11 @@ impl HostState {
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
             let position = self.debug.debug_window_pos();
             let language = self.session.settings_snapshot().shared.general.language;
-            match crate::aux::debug::DebugWindowHandle::new(
+            match opener.create_debug(
                 debug_vm::DisplayCache::default(),
                 spaces,
                 mem_addr,
                 language,
-                event_loop,
                 position,
             ) {
                 Some(handle) => {
@@ -147,11 +140,7 @@ impl HostState {
             && let Some(main) = self.debug.debug_window.as_ref()
         {
             let position = self.debug.ppu_window_pos();
-            match crate::aux::ppu::PpuWindowHandle::new(
-                Arc::clone(&main.bridge),
-                event_loop,
-                position,
-            ) {
+            match opener.create_ppu(&main.bridge, position) {
                 Some(handle) => {
                     self.debug.ppu_window = Some(handle);
                     // Populate the image cache immediately: the bridge

@@ -26,23 +26,25 @@ use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, KeyEvent},
-    event_loop::{ControlFlow, EventLoopWindowTarget},
+    event_loop::ControlFlow,
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
 
-use crate::event::{MenuCommand, UserEvent};
+use crate::event::MenuCommand;
 use crate::menu::MenuSink;
 
 use super::debug_windows::DebugWindows;
 
 mod commands;
 mod focus;
+mod opener;
 mod presentation;
 mod settings;
 mod window;
 
 pub(crate) use self::commands::{DialogPorts, NativeDialogs};
 use self::focus::FocusState;
+pub(crate) use self::opener::{TaoWindowOpener, WindowOpener};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {
@@ -349,6 +351,18 @@ mod tests {
                 pending_target: None,
                 persist_setting: true,
             }
+        );
+    }
+
+    #[test]
+    fn element_state_maps_to_pressed() {
+        use tao::event::ElementState;
+
+        use super::element_state_to_pressed;
+        assert_eq!(element_state_to_pressed(ElementState::Pressed), Some(true));
+        assert_eq!(
+            element_state_to_pressed(ElementState::Released),
+            Some(false)
         );
     }
 }
