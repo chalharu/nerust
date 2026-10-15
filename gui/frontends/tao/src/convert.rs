@@ -359,8 +359,40 @@ mod tests {
         use tao::keyboard::KeyCode as T;
         let codes = [
             T::KeyA,
+            T::KeyB,
+            T::KeyC,
+            T::KeyD,
+            T::KeyE,
+            T::KeyF,
+            T::KeyG,
+            T::KeyH,
+            T::KeyI,
+            T::KeyJ,
+            T::KeyK,
+            T::KeyL,
+            T::KeyM,
+            T::KeyN,
+            T::KeyO,
+            T::KeyP,
+            T::KeyQ,
+            T::KeyR,
+            T::KeyS,
+            T::KeyT,
+            T::KeyU,
+            T::KeyV,
+            T::KeyW,
+            T::KeyX,
+            T::KeyY,
             T::KeyZ,
             T::Digit0,
+            T::Digit1,
+            T::Digit2,
+            T::Digit3,
+            T::Digit4,
+            T::Digit5,
+            T::Digit6,
+            T::Digit7,
+            T::Digit8,
             T::Digit9,
             T::ArrowUp,
             T::ArrowDown,
@@ -374,18 +406,39 @@ mod tests {
             T::Delete,
             T::Home,
             T::End,
+            T::PageUp,
+            T::PageDown,
+            T::Insert,
             T::F1,
+            T::F2,
+            T::F3,
+            T::F4,
+            T::F5,
+            T::F6,
+            T::F7,
+            T::F8,
+            T::F9,
+            T::F10,
+            T::F11,
             T::F12,
             T::ShiftLeft,
+            T::ShiftRight,
             T::ControlLeft,
+            T::ControlRight,
             T::AltLeft,
+            T::AltRight,
             T::SuperLeft,
+            T::SuperRight,
             T::Numpad0,
+            T::Numpad1,
+            T::Numpad5,
             T::Numpad9,
             T::NumpadAdd,
             T::NumpadSubtract,
             T::NumpadMultiply,
             T::NumpadDivide,
+            T::NumpadDecimal,
+            T::NumpadEnter,
             T::CapsLock,
             T::NumLock,
             T::ScrollLock,
@@ -400,6 +453,104 @@ mod tests {
             T::Backslash,
             T::Slash,
             T::IntlBackslash,
+            T::Pause,
+            T::PrintScreen,
+            T::F13,
+            T::F14,
+            T::F15,
+            T::F16,
+            T::F17,
+            T::F18,
+            T::F19,
+            T::F20,
+            T::F21,
+            T::F22,
+            T::F23,
+            T::F24,
+            T::F25,
+            T::F26,
+            T::F27,
+            T::F28,
+            T::F29,
+            T::F30,
+            T::F31,
+            T::F32,
+            T::F33,
+            T::F34,
+            T::F35,
+            T::Convert,
+            T::NonConvert,
+            T::Lang1,
+            T::Lang2,
+            T::Lang3,
+            T::Lang4,
+            T::Lang5,
+            T::LaunchApp1,
+            T::LaunchApp2,
+            T::LaunchMail,
+            T::Fn,
+            T::FnLock,
+            T::Hyper,
+            T::Turbo,
+            T::Sleep,
+            T::Power,
+            T::WakeUp,
+            T::Suspend,
+            T::AudioVolumeMute,
+            T::AudioVolumeDown,
+            T::AudioVolumeUp,
+            T::MediaPlayPause,
+            T::MediaStop,
+            T::MediaTrackNext,
+            T::MediaTrackPrevious,
+            T::MediaSelect,
+            T::BrowserBack,
+            T::BrowserForward,
+            T::BrowserRefresh,
+            T::BrowserStop,
+            T::BrowserSearch,
+            T::BrowserHome,
+            T::BrowserFavorites,
+            T::Copy,
+            T::Cut,
+            T::Paste,
+            T::Undo,
+            T::Find,
+            T::Help,
+            T::Props,
+            T::Select,
+            T::Open,
+            T::Resume,
+            T::Eject,
+            T::Abort,
+            T::Again,
+            T::ContextMenu,
+            T::KanaMode,
+            T::Katakana,
+            T::Hiragana,
+            T::IntlRo,
+            T::IntlYen,
+            T::Numpad2,
+            T::Numpad3,
+            T::Numpad4,
+            T::Numpad6,
+            T::Numpad7,
+            T::Numpad8,
+            T::NumpadComma,
+            T::NumpadBackspace,
+            T::NumpadClear,
+            T::NumpadClearEntry,
+            T::NumpadHash,
+            T::NumpadEqual,
+            T::NumpadStar,
+            T::NumpadParenLeft,
+            T::NumpadParenRight,
+            T::NumpadMemoryStore,
+            T::NumpadMemoryRecall,
+            T::NumpadMemoryClear,
+            T::NumpadMemoryAdd,
+            T::NumpadMemorySubtract,
+            T::Plus,
         ];
         for code in codes {
             let iced_code = tao_keycode_to_iced_code(code);
@@ -521,9 +672,97 @@ mod tests {
                 delta: mouse::ScrollDelta::Pixels { .. }
             }))
         ));
+        let released = feed!(WindowEvent::MouseInput {
+            device_id: device,
+            state: ElementState::Released,
+            button: tao::event::MouseButton::Left,
+            modifiers: tao::keyboard::ModifiersState::empty(),
+        });
+        assert!(matches!(
+            released,
+            Some(iced::Event::Mouse(mouse::Event::ButtonReleased(_)))
+        ));
         assert!(feed!(WindowEvent::CloseRequested).is_none());
         assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
         // Anything else (resizes and friends) passes through silently.
         assert!(feed!(WindowEvent::Resized(tao::dpi::PhysicalSize::new(800, 600))).is_none());
+    }
+
+    #[test]
+    fn modifiers_map_each_flag() {
+        use tao::keyboard::ModifiersState as M;
+        assert!(tao_modifiers_to_iced(M::empty()).is_empty());
+        let shift = tao_modifiers_to_iced(M::SHIFT);
+        assert!(shift.contains(keyboard::Modifiers::SHIFT));
+        assert!(!shift.contains(keyboard::Modifiers::CTRL));
+        let ctrl = tao_modifiers_to_iced(M::CONTROL);
+        assert!(ctrl.contains(keyboard::Modifiers::CTRL));
+        assert!(!ctrl.contains(keyboard::Modifiers::ALT));
+        let alt = tao_modifiers_to_iced(M::ALT);
+        assert!(alt.contains(keyboard::Modifiers::ALT));
+        let logo = tao_modifiers_to_iced(M::SUPER);
+        assert!(logo.contains(keyboard::Modifiers::LOGO));
+        let all = tao_modifiers_to_iced(M::SHIFT | M::CONTROL | M::ALT | M::SUPER);
+        for flag in [
+            keyboard::Modifiers::SHIFT,
+            keyboard::Modifiers::CTRL,
+            keyboard::Modifiers::ALT,
+            keyboard::Modifiers::LOGO,
+        ] {
+            assert!(all.contains(flag));
+        }
+    }
+
+    #[test]
+    fn named_editing_keys_map_explicitly() {
+        use iced::keyboard::key::Named;
+        use tao::keyboard::Key as T;
+        for (tao_key, named) in [
+            (T::Backspace, Named::Backspace),
+            (T::Delete, Named::Delete),
+            (T::Enter, Named::Enter),
+            (T::Escape, Named::Escape),
+            (T::Tab, Named::Tab),
+        ] {
+            assert_eq!(tao_key_to_iced_key(&tao_key), keyboard::Key::Named(named));
+        }
+        assert_eq!(
+            tao_key_to_iced_key(&tao::keyboard::Key::F1),
+            keyboard::Key::Unidentified
+        );
+        // Non-editing named keys stay unidentified: physical codes
+        // (not logical names) drive shortcuts.
+        assert_eq!(
+            tao_key_to_iced_key(&tao::keyboard::Key::Space),
+            keyboard::Key::Unidentified
+        );
+        assert_eq!(
+            tao_key_to_iced_key(&tao::keyboard::Key::Shift),
+            keyboard::Key::Unidentified
+        );
+    }
+
+    #[test]
+    fn default_font_matches_platform() {
+        #[cfg(target_os = "windows")]
+        assert_eq!(default_font(), Font::with_name("Yu Gothic UI"));
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(default_font(), Font::DEFAULT);
+    }
+
+    #[test]
+    fn backquote_maps_to_itself_not_fallback() {
+        use tao::keyboard::KeyCode as T;
+        assert_eq!(keycode_to_key(T::Backquote), Some(Key::Backquote));
+    }
+
+    #[test]
+    fn unmapped_codes_fall_back_to_backquote() {
+        let code = tao::keyboard::KeyCode::Unidentified(tao::keyboard::NativeKeyCode::Unidentified);
+        assert!(keycode_to_key(code).is_none());
+        assert_eq!(
+            tao_keycode_to_iced_code(code) as i32,
+            keyboard::key::Code::Backquote as i32
+        );
     }
 }

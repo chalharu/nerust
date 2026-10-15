@@ -1,8 +1,6 @@
 //! Shared iced-on-tao auxiliary-window shell: the debugger and PPU
-//! viewer run the same tiny-skia lifecycle (builder, compositor,
-//! UI instance, event pump, render) over different programs.
-//! Splitting it out keeps the two windows' twins from drifting and
-//! keeps the pattern in one place for the next auxiliary window.
+//! viewer run the same tiny-skia lifecycle over different programs,
+//! keeping the twins from drifting.
 
 use std::sync::{
     Arc,
@@ -29,7 +27,7 @@ use tao::{
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 
-use crate::{app_menu::UserEvent, tao_conversions::default_font};
+use crate::{convert::default_font, event::UserEvent};
 
 /// Light theme for OS light-theme nativeness. Every auxiliary
 /// program shares it (the flagged duplication was five copies).
@@ -50,18 +48,18 @@ pub(crate) fn aux_settings() -> iced::Settings {
 /// size, optional minimum, position, compositor, renderer, surface,
 /// and initial bounds. Programs and UI instances stay per-window.
 pub(crate) struct WindowScaffold {
-    pub window: Arc<TaoWindow>,
-    pub window_id: iced::window::Id,
-    pub scale_factor: f32,
-    pub viewport_physical: (u32, u32),
-    pub bounds: Size,
-    pub compositor: Compositor,
-    pub renderer: Renderer,
-    pub surface: Surface,
+    pub(crate) window: Arc<TaoWindow>,
+    pub(crate) window_id: iced::window::Id,
+    pub(crate) scale_factor: f32,
+    pub(crate) viewport_physical: (u32, u32),
+    pub(crate) bounds: Size,
+    pub(crate) compositor: Compositor,
+    pub(crate) renderer: Renderer,
+    pub(crate) surface: Surface,
 }
 
 impl WindowScaffold {
-    pub fn open(
+    pub(crate) fn open(
         event_loop: &EventLoopWindowTarget<UserEvent>,
         title: &str,
         size: (f64, f64),
@@ -131,13 +129,13 @@ pub(crate) fn logical_bounds(viewport_physical: (u32, u32), scale_factor: f32) -
 /// Renderer triple both auxiliary windows share. Field names mirror
 /// the former per-window structs so call sites barely change.
 pub(crate) struct ShellRenderer {
-    pub compositor: Compositor,
-    pub surface: Surface,
-    pub backend: Renderer,
+    pub(crate) compositor: Compositor,
+    pub(crate) surface: Surface,
+    pub(crate) backend: Renderer,
 }
 
 impl ShellRenderer {
-    pub fn present(
+    pub(crate) fn present(
         &mut self,
         viewport: &Viewport,
         background_color: iced::Color,
@@ -151,7 +149,7 @@ impl ShellRenderer {
         )
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+    pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.compositor
             .configure_surface(&mut self.surface, width, height);
     }
@@ -211,7 +209,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         }
     }
 
-    pub fn new(
+    pub(crate) fn new(
         instance: program::Instance<P>,
         window_id: iced::window::Id,
         bounds: Size,
@@ -224,15 +222,18 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         }
     }
 
-    pub fn ui_mut(&mut self) -> &mut UserInterface<'static, P::Message, iced::Theme, Renderer> {
-        self.ui
-            .as_deref_mut()
-            .expect("UiShell used after a panicked relayout")
+    /// Borrow the live interface, or `None` after a panicked
+    /// relayout dropped it. Callers log and bail; never unwrap.
+    pub(crate) fn ui_mut(
+        &mut self,
+    ) -> Option<&mut UserInterface<'static, P::Message, iced::Theme, Renderer>> {
+        self.ui.as_deref_mut()
     }
 
     /// Push one program message without a rebuild (Sync-style refresh
-    /// entry point shared by both viewers).
-    pub fn push_message(&mut self, message: P::Message) {
+    /// entry point shared by both viewers). The task is intentionally
+    /// dropped: every aux program returns `Task::none` (sync-only).
+    pub(crate) fn push_message(&mut self, message: P::Message) {
         let _task = self.instance.update(message);
     }
 
@@ -240,7 +241,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     /// (wheel/drag/hover/caret move widget state but emit no
     /// messages), or a view rebuild (`State::Outdated`: the tree must
     /// be re-rendered from program state).
-    pub fn pump(
+    pub(crate) fn pump(
         &mut self,
         mapped: iced::Event,
         cursor: mouse::Cursor,
@@ -248,16 +249,18 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         backend: &mut Renderer,
     ) -> (Vec<P::Message>, PumpOutcome) {
         let mut messages = Vec::new();
-        let (state, _) = self
-            .ui_mut()
-            .update(&[mapped], cursor, backend, clipboard, &mut messages);
+        let Some(ui) = self.ui_mut() else {
+            log::warn!("aux window ui unavailable after panicked relayout");
+            return (messages, PumpOutcome::Idle);
+        };
+        let (state, _) = ui.update(&[mapped], cursor, backend, clipboard, &mut messages);
         (messages, pump_outcome(&state))
     }
 
     /// Relayout for a new size: one layout pass reusing the retained
     /// tree and widget state (scroll, inputs, focus survive). No view
     /// re-invocation.
-    pub fn relayout(&mut self, bounds: Size, renderer: &mut Renderer) {
+    pub(crate) fn relayout(&mut self, bounds: Size, renderer: &mut Renderer) {
         let Some(owned) = self.ui.take() else {
             return;
         };
@@ -266,7 +269,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         self.ui = Some(std::mem::ManuallyDrop::new(rebuilt));
     }
 
-    pub fn process_messages(
+    pub(crate) fn process_messages(
         &mut self,
         messages: Vec<P::Message>,
         window_id: iced::window::Id,
@@ -304,9 +307,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> Drop for UiShell<P> {
 
 /// Window-system half shared by the debugger and PPU viewer
 /// (twins by design): native window, viewport, input state, renderer,
-/// and UI shell. The program-specific halves (bridge, messages,
-/// view) stay in the handles. One home for resize/relayout/scale/
-/// render/event-feed so the twins can never drift apart.
+/// and UI shell. Program-specific halves stay in the handles.
 pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     pub(crate) window: Arc<TaoWindow>,
     pub(crate) window_id: iced::window::Id,
@@ -324,10 +325,14 @@ pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>>
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
-    /// Assemble from a scaffold plus a program instance: builds the
-    /// UI shell, wraps the renderer, and paints the first frame.
-    /// Programs and bridges stay with the caller.
-    pub(crate) fn assemble(scaffold: WindowScaffold, instance: program::Instance<P>) -> Self {
+    /// Assemble from a scaffold plus a program instance. The close
+    /// flag is a parameter (not minted here) so sharing programs
+    /// observe the same flag.
+    pub(crate) fn assemble(
+        scaffold: WindowScaffold,
+        instance: program::Instance<P>,
+        should_close: Arc<AtomicBool>,
+    ) -> Self {
         let WindowScaffold {
             window,
             window_id,
@@ -354,7 +359,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
             surface_size: viewport_physical,
             scale_factor,
             modifiers: iced::keyboard::Modifiers::default(),
-            should_close: Arc::new(AtomicBool::new(false)),
+            should_close,
             cursor: mouse::Cursor::default(),
             clipboard: Clipboard::unconnected(),
         }
@@ -388,7 +393,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     }
 
     pub(crate) fn set_modifiers(&mut self, modifiers: tao::keyboard::ModifiersState) {
-        self.modifiers = crate::tao_conversions::tao_modifiers_to_iced(modifiers);
+        self.modifiers = crate::convert::tao_modifiers_to_iced(modifiers);
     }
 
     /// Shared event prelude for both twins (resize/scale/
@@ -414,7 +419,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     /// hover). Returns the event instead of taking a closure so
     /// callers never double-borrow the shell.
     pub(crate) fn feed_tao_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
-        crate::tao_conversions::convert_tao_window_event(
+        crate::convert::convert_tao_window_event(
             event,
             &mut self.cursor,
             self.scale_factor,
@@ -427,14 +432,11 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     pub(crate) fn logical_bounds(&self) -> Size {
         logical_bounds(self.viewport_physical, self.scale_factor)
     }
-
     /// Full render through the shared pump; only the log tag differs.
     pub(crate) fn render(&mut self, log_tag: &'static str) {
-        // Self-healing scale: if the live factor drifted from the
-        // stored one (missed/late ScaleFactorChanged, e.g. unmapped
-        // windows or backend quirks), layout and surface would
-        // permanently disagree — content overflowing a misaligned
-        // frame. Re-querying here re-converges on the next frame.
+        // Self-healing scale: re-query the live factor and relayout
+        // on drift (missed/late ScaleFactorChanged), so layout and
+        // surface re-converge on the next frame.
         let live_scale = self.window.scale_factor() as f32;
         if live_scale != self.scale_factor {
             log::debug!(
@@ -466,6 +468,13 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     }
 }
 
+/// Uniform aux-window event feed: shell prelude, program dispatch,
+/// redraw request. Each handle keeps its own routing inside, so
+/// dispatch arms stay orchestration-only (focus/drain/close).
+pub(crate) trait AuxWindow {
+    fn pump_window_event(&mut self, event: tao::event::WindowEvent);
+}
+
 /// Shared full render: Light theme, redraw pump, draw, present.
 /// Both viewers call this; only the failure log tag differs.
 #[allow(clippy::too_many_arguments)]
@@ -488,14 +497,20 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
     let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
         std::time::Instant::now(),
     ));
-    let _ = ui.ui_mut().update(
+    let Some(ui) = ui.ui_mut() else {
+        log::warn!("aux window ui unavailable after panicked relayout");
+        return;
+    };
+    // Redraw-only pump: widget rebuild requests wait for the next
+    // event-driven pump (`pump_outcome` mapping lives there).
+    let _ = ui.update(
         &[redraw_event],
         cursor,
         &mut renderer.backend,
         clipboard,
         &mut std::vec::Vec::new(),
     );
-    ui.ui_mut().draw(
+    ui.draw(
         &mut renderer.backend,
         &theme,
         &renderer::Style {
@@ -511,6 +526,72 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    static VIEW_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    struct StubProgram;
+    #[derive(Debug, Clone, Default)]
+    struct StubState;
+    #[derive(Debug, Clone)]
+    enum StubMessage {
+        Ping,
+    }
+
+    impl Program for StubProgram {
+        type State = StubState;
+        type Message = StubMessage;
+        type Theme = iced::Theme;
+        type Renderer = Renderer;
+        type Executor = iced_winit::futures::backend::default::Executor;
+
+        fn name() -> &'static str {
+            "stub"
+        }
+
+        fn settings(&self) -> iced::Settings {
+            iced::Settings::default()
+        }
+
+        fn window(&self) -> Option<iced::window::Settings> {
+            None
+        }
+
+        fn boot(&self) -> (Self::State, iced::Task<Self::Message>) {
+            (StubState, iced::Task::none())
+        }
+
+        fn update(
+            &self,
+            _state: &mut Self::State,
+            _message: Self::Message,
+        ) -> iced::Task<Self::Message> {
+            iced::Task::none()
+        }
+
+        fn view<'a>(
+            &self,
+            _state: &'a Self::State,
+            _window: iced::window::Id,
+        ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
+            VIEW_CALLS.fetch_add(1, Ordering::SeqCst);
+            iced::widget::text("stub").into()
+        }
+    }
+
+    fn stub_shell() -> (UiShell<StubProgram>, Renderer, iced_winit::Clipboard) {
+        VIEW_CALLS.store(0, Ordering::SeqCst);
+        let (instance, _task) = program::Instance::new(StubProgram);
+        let mut backend = Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
+        let shell = UiShell::new(
+            instance,
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+            &mut backend,
+        );
+        let clipboard = iced_winit::Clipboard::unconnected();
+        (shell, backend, clipboard)
+    }
 
     #[test]
     fn logical_bounds_divide_by_scale() {
@@ -544,5 +625,69 @@ mod tests {
             pump_outcome(&updated(RedrawRequest::NextFrame)),
             PumpOutcome::Repaint
         );
+    }
+
+    #[test]
+    fn pump_on_missing_ui_warns_and_idles() {
+        let (mut shell, mut backend, mut clipboard) = stub_shell();
+        let _ = shell.ui.take();
+        assert!(shell.ui_mut().is_none());
+        let (messages, outcome) = shell.pump(
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            )),
+            iced::mouse::Cursor::default(),
+            &mut clipboard,
+            &mut backend,
+        );
+        assert!(messages.is_empty());
+        assert_eq!(outcome, PumpOutcome::Idle);
+        // Push and relayout stay total without an interface.
+        shell.push_message(StubMessage::Ping);
+        shell.relayout(iced::Size::new(640.0, 480.0), &mut backend);
+        assert!(shell.ui_mut().is_none());
+    }
+
+    #[test]
+    fn shared_chrome_helpers_are_stable() {
+        assert!(matches!(aux_theme(), Some(iced::Theme::Light)));
+        let settings = aux_settings();
+        assert_eq!(settings.default_text_size, iced::Pixels(16.0));
+    }
+
+    #[test]
+    fn process_messages_skips_quiet_batches() {
+        let (mut shell, mut backend, _) = stub_shell();
+        let built = VIEW_CALLS.load(Ordering::SeqCst);
+        assert!(built > 0);
+        // Empty batch without invalidation: no rebuild.
+        let still = AtomicBool::new(false);
+        shell.process_messages(
+            Vec::new(),
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+            &mut backend,
+            &still,
+        );
+        assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), built);
+        // Either a message or the flag rebuilds exactly once.
+        shell.process_messages(
+            vec![StubMessage::Ping],
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+            &mut backend,
+            &still,
+        );
+        assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), built + 1);
+        let flagged = AtomicBool::new(true);
+        shell.process_messages(
+            Vec::new(),
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+            &mut backend,
+            &flagged,
+        );
+        assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), built + 2);
+        assert!(!flagged.load(Ordering::Acquire));
     }
 }
