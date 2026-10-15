@@ -2,14 +2,13 @@ use std::{collections::HashMap, hash::Hash};
 
 use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent, InputAssignments, InputValue,
+    AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent, InputValue,
 };
 use nerust_keyboard::Key;
-use nerust_settings_core::factory::settings_view;
 use nerust_settings_core::model::input::{KeyboardBinding, ShortcutAction};
 
 use crate::{
-    session::{KeyboardShortcut, SessionError, SessionHandle},
+    session::{KeyboardShortcut, SessionHandle},
     settings::bindings::events::shortcut::shortcut_action_for_key,
 };
 
@@ -91,41 +90,6 @@ impl SessionHandle {
             }
         }
         TouchOverlayModel { revision, controls }
-    }
-
-    /// Reassign controllers and rebuild the core.
-    pub fn reassign_controllers(
-        &mut self,
-        assignments: &InputAssignments,
-    ) -> Result<(), crate::session::SessionError> {
-        let factory = self.active_factory().ok_or(SessionError::NoCore)?;
-        let system_id = factory.system_id();
-        let view = settings_view(&self.settings_snapshot, system_id.as_ref());
-        let speaker =
-            crate::settings::build_speaker(&self.audio_registry, &self.settings_snapshot.local);
-        let parts =
-            factory.create_core_and_adapter_with_assignments(&view, speaker, assignments)?;
-        let (rebuilt_core, gui_input, field_map, host_peripherals) =
-            crate::emu_core::EmuCore::from_parts(parts);
-        let was_paused = self
-            .emu_core
-            .as_ref()
-            .map(|c| c.metrics())
-            .unwrap_or_default()
-            .paused;
-        if let Some(loaded_media) = self.loaded_media.clone() {
-            rebuilt_core.load(&loaded_media.media, None)?;
-            if !was_paused {
-                rebuilt_core.resume()?;
-            }
-        }
-        self.emu_core = Some(rebuilt_core);
-        self.gui_input = Some(gui_input);
-        self.field_map = field_map;
-        self.host_peripherals = host_peripherals;
-        self.current_assignments = assignments.clone();
-        self.rebuild_key_field_map();
-        Ok(())
     }
 
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
