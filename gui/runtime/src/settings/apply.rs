@@ -219,6 +219,7 @@ mod tests {
                 scaling_changed: true,
                 vsync_changed: false,
                 fullscreen_default_changed: false,
+                notifications_changed: false,
             }
         );
     }
