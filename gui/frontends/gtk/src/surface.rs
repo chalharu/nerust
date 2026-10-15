@@ -97,7 +97,7 @@ impl SurfaceExtend for Surface {
                 s.renderer.borrow_mut().render(fb, physical_size);
             }
 
-            s.osd.borrow_mut().poll(&s.state, &s.renderer, &s.window);
+            s.osd.borrow_mut().poll(&mut state, &s.renderer, &s.window);
         }
 
         true

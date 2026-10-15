@@ -70,26 +70,20 @@ impl GtkOsd {
 
     /// Drain the session queue, show modals, and refresh labels.
     /// Called from the surface tick (every frame while running).
+    /// Takes `&mut State` directly: the tick already holds the
+    /// borrow, so re-borrowing the `Rc` would panic.
     pub(crate) fn poll(
         &mut self,
-        state: &Rc<RefCell<State>>,
+        state: &mut State,
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
     ) {
         let now = Instant::now();
-        let (drained, settings, language, metrics) = {
-            let mut state = state.borrow_mut();
-            let drained = state.drain_notifications();
-            let snapshot = state.settings_snapshot().clone();
-            let language = snapshot.shared.general.language;
-            let (fps, paused) = state.emulation_status();
-            (
-                drained,
-                snapshot.local.notifications.clone(),
-                language,
-                (fps, paused),
-            )
-        };
+        let drained = state.drain_notifications();
+        let snapshot = state.settings_snapshot().clone();
+        let language = snapshot.shared.general.language;
+        let metrics = state.emulation_status();
+        let settings = snapshot.local.notifications.clone();
         if !drained.is_empty() {
             self.manager.push_all(drained, &settings, language, now);
         }
@@ -100,7 +94,7 @@ impl GtkOsd {
             // behind the modal. Pause stays on; the user resumes.
             {
                 use nerust_gui_shell::session::access::FrontendSession;
-                state.borrow_mut().pause();
+                state.pause();
             }
             let detail = modal
                 .iter()
