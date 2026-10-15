@@ -10,6 +10,8 @@ pub(crate) enum OpenerCall {
     Settings,
     Debug,
     Ppu,
+    Osd,
+    History,
 }
 
 /// `WindowOpener` that fails every creation closed and records calls.
@@ -70,6 +72,23 @@ impl crate::ports::WindowOpener for FakeOpener {
         _position: Option<(i32, i32)>,
     ) -> Option<crate::aux::ppu::PpuWindowHandle> {
         crate::aux::bridge::lock_recovered(&self.calls).push(OpenerCall::Ppu);
+        None
+    }
+
+    fn create_osd(
+        &self,
+        _position: (i32, i32),
+        _size: (f64, f64),
+    ) -> Option<crate::aux::osd::OsdWindowHandle> {
+        crate::aux::bridge::lock_recovered(&self.calls).push(OpenerCall::Osd);
+        None
+    }
+
+    fn create_history(
+        &self,
+        _language: nerust_settings_core::model::language::AppLanguage,
+    ) -> Option<crate::aux::osd::HistoryWindowHandle> {
+        crate::aux::bridge::lock_recovered(&self.calls).push(OpenerCall::History);
         None
     }
 }

@@ -114,6 +114,38 @@ impl WindowScaffold {
             surface,
         })
     }
+
+    /// Assemble around a caller-built window (transparent overlays
+    /// own their builder flags). Compositor steps mirror `open`.
+    pub(crate) fn open_transparent(window: Arc<TaoWindow>, log_tag: &'static str) -> Option<Self> {
+        let window_id = iced::window::Id::unique();
+        let scale_factor = window.scale_factor() as f32;
+        let window_size = window.inner_size();
+        let viewport_physical = (window_size.width, window_size.height);
+        let logical_size = window_size.to_logical::<f64>(scale_factor as f64);
+        let bounds = Size::new(logical_size.width as f32, logical_size.height as f32);
+        let mut compositor = compositor::new(
+            iced_tiny_skia::Settings {
+                default_font: default_font(),
+                default_text_size: iced::Pixels(16.0),
+            },
+            Arc::clone(&window),
+        );
+        let renderer = compositor.create_renderer();
+        let surface =
+            compositor.create_surface(Arc::clone(&window), window_size.width, window_size.height);
+        let _ = log_tag;
+        Some(Self {
+            window,
+            window_id,
+            scale_factor,
+            viewport_physical,
+            bounds,
+            compositor,
+            renderer,
+            surface,
+        })
+    }
 }
 
 /// Logical layout bounds for a physical viewport and scale factor.

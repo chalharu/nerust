@@ -58,6 +58,7 @@ impl HostState {
         self.window = Some(window);
         self.sync_fullscreen_from_settings();
         self.sync_menu_state();
+        self.ensure_osd_window(opener);
         self.request_redraw();
         self.refresh_window_title();
     }
@@ -170,6 +171,22 @@ impl HostState {
             let earlier = match *control_flow {
                 ControlFlow::WaitUntil(at) => at.min(soon),
                 _ => soon,
+            };
+            *control_flow = ControlFlow::WaitUntil(earlier);
+        }
+
+        // OSD expiry wakes the loop for relabel: plain Wait would
+        // leave a stale label up until the next input event.
+        // Redraw while labels show so expiry applies even paused.
+        if self.osd.has_visible()
+            && let Some(window) = self.window.as_ref()
+        {
+            window.request_redraw();
+        }
+        if let Some(deadline) = self.osd_wakeup() {
+            let earlier = match *control_flow {
+                ControlFlow::WaitUntil(at) => at.min(deadline),
+                _ => deadline,
             };
             *control_flow = ControlFlow::WaitUntil(earlier);
         }
