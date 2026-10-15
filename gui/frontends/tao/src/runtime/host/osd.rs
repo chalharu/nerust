@@ -71,11 +71,19 @@ impl HostState {
             _ => return,
         };
         log::debug!(
-            "OSD geometry: inner={}x{} size={}x{} scale={scale}",
+            "OSD geometry: inner={}x{} size={}x{} scale={scale} outer_size={}x{}",
             position.0,
             position.1,
             size.width,
-            size.height
+            size.height,
+            self.window
+                .as_ref()
+                .map(|window| window.outer_size().width)
+                .unwrap_or(0),
+            self.window
+                .as_ref()
+                .map(|window| window.outer_size().height)
+                .unwrap_or(0),
         );
         let current = (
             position.0,
