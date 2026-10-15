@@ -41,6 +41,7 @@ mod presentation;
 mod settings;
 mod window;
 
+pub(crate) use self::commands::{DialogPorts, NativeDialogs};
 use self::focus::FocusState;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -73,6 +74,7 @@ pub(crate) struct HostState {
     pub(super) session: SessionHandle,
     ctx: FrontendContext,
     app_menu: Box<dyn MenuSink>,
+    dialogs: Box<dyn DialogPorts>,
     shell: NativeShellState,
     pub(super) settings_window: Option<crate::aux::settings::window::SettingsWindowHandle>,
     settings_open: bool,
@@ -104,13 +106,18 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
-    pub(crate) fn new(ctx: FrontendContext, app_menu: Box<dyn MenuSink>) -> Result<Self, String> {
-        Self::new_with_settings_paths(ctx, app_menu, None)
+    pub(crate) fn new(
+        ctx: FrontendContext,
+        app_menu: Box<dyn MenuSink>,
+        dialogs: Box<dyn DialogPorts>,
+    ) -> Result<Self, String> {
+        Self::new_with_settings_paths(ctx, app_menu, dialogs, None)
     }
 
     pub(crate) fn new_with_settings_paths(
         ctx: FrontendContext,
         app_menu: Box<dyn MenuSink>,
+        dialogs: Box<dyn DialogPorts>,
         paths: Option<nerust_gui_runtime::settings::SettingsPaths>,
     ) -> Result<Self, String> {
         let session = match paths {
@@ -136,6 +143,7 @@ impl HostState {
             session,
             ctx,
             app_menu,
+            dialogs,
             shell: NativeShellState::new(),
             settings_window: None,
             settings_open: false,

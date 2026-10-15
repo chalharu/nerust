@@ -12,9 +12,7 @@ use std::{
 };
 
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_gui_shell::{
-    context::FrontendContext, load::RomLoader, registry::SystemRegistry,
-};
+use nerust_gui_shell::{context::FrontendContext, load::RomLoader, registry::SystemRegistry};
 use nerust_render_traits::renderer::{GpuRenderer, RendererConfig, RendererError};
 
 use crate::menu::{MenuSink, MenuSync};
@@ -45,8 +43,15 @@ impl nerust_render_traits::renderer::GpuFactory for FakeGpuFactory {
 }
 
 /// `RomLoader` with a canned result, recording every attempted path.
-#[derive(Debug)]
+/// Clone shares the same innards, so the copy inside `FrontendContext`
+/// and the test's handle observe each other.
+#[derive(Debug, Clone)]
 pub(crate) struct FakeRomLoader {
+    inner: Arc<FakeRomLoaderInner>,
+}
+
+#[derive(Debug)]
+struct FakeRomLoaderInner {
     result: Mutex<Result<(), String>>,
     attempted: Mutex<Vec<PathBuf>>,
 }
@@ -54,8 +59,10 @@ pub(crate) struct FakeRomLoader {
 impl Default for FakeRomLoader {
     fn default() -> Self {
         Self {
-            result: Mutex::new(Ok(())),
-            attempted: Mutex::new(Vec::new()),
+            inner: Arc::new(FakeRomLoaderInner {
+                result: Mutex::new(Ok(())),
+                attempted: Mutex::new(Vec::new()),
+            }),
         }
     }
 }
@@ -66,14 +73,13 @@ impl FakeRomLoader {
     }
 
     pub(crate) fn failing(detail: &str) -> Self {
-        Self {
-            result: Mutex::new(Err(detail.to_string())),
-            attempted: Mutex::new(Vec::new()),
-        }
+        let loader = Self::default();
+        *crate::aux::bridge::lock_recovered(&loader.inner.result) = Err(detail.to_string());
+        loader
     }
 
     pub(crate) fn attempted(&self) -> Vec<PathBuf> {
-        crate::aux::bridge::lock_recovered(&self.attempted).clone()
+        crate::aux::bridge::lock_recovered(&self.inner.attempted).clone()
     }
 }
 
@@ -83,10 +89,53 @@ impl RomLoader for FakeRomLoader {
         path: &Path,
         _target: &mut dyn nerust_gui_shell::load::RomLoadTarget,
     ) -> Result<(), nerust_gui_shell::load::RomLoaderError> {
-        crate::aux::bridge::lock_recovered(&self.attempted).push(path.to_path_buf());
-        crate::aux::bridge::lock_recovered(&self.result)
+        crate::aux::bridge::lock_recovered(&self.inner.attempted).push(path.to_path_buf());
+        crate::aux::bridge::lock_recovered(&self.inner.result)
             .clone()
             .map_err(nerust_gui_shell::load::RomLoaderError::Load)
+    }
+}
+
+/// `DialogPorts` with a canned pick, recording shown errors. Clone
+/// shares state like the loader above.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FakeDialogs {
+    inner: Arc<FakeDialogsInner>,
+}
+
+#[derive(Debug, Default)]
+struct FakeDialogsInner {
+    pick: Mutex<Option<PathBuf>>,
+    errors: Mutex<Vec<String>>,
+}
+
+impl FakeDialogs {
+    pub(crate) fn with_pick(pick: Option<PathBuf>) -> Self {
+        let dialogs = Self::default();
+        *crate::aux::bridge::lock_recovered(&dialogs.inner.pick) = pick;
+        dialogs
+    }
+
+    pub(crate) fn errors(&self) -> Vec<String> {
+        crate::aux::bridge::lock_recovered(&self.inner.errors).clone()
+    }
+}
+
+impl crate::runtime::host::DialogPorts for FakeDialogs {
+    fn pick_rom_file(
+        &self,
+        _language: nerust_settings_core::model::language::AppLanguage,
+        _filters: Vec<(String, Vec<String>)>,
+    ) -> Option<PathBuf> {
+        crate::aux::bridge::lock_recovered(&self.inner.pick).clone()
+    }
+
+    fn show_load_error(
+        &self,
+        _language: nerust_settings_core::model::language::AppLanguage,
+        detail: &str,
+    ) {
+        crate::aux::bridge::lock_recovered(&self.inner.errors).push(detail.to_string());
     }
 }
 
@@ -141,12 +190,12 @@ pub(crate) struct TestContext {
 }
 
 impl TestContext {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn with_loader(loader: FakeRomLoader) -> Self {
         let dir = unique_test_dir();
         let ctx = FrontendContext {
             gpu_factory: Rc::new(FakeGpuFactory),
             registry: Arc::new(SystemRegistry::new(Vec::new())),
-            rom_loader: Box::new(FakeRomLoader::succeeding()),
+            rom_loader: Box::new(loader.clone()),
             audio_registry: Arc::new(AudioBackendRegistry::new()),
         };
         Self { ctx, _dir: dir }
@@ -158,29 +207,42 @@ impl TestContext {
             central_storage_root: self._dir.join("storage"),
         }
     }
-
-    pub(crate) fn capabilities() -> nerust_gui_runtime::settings::HostBackendCapabilities {
-        crate::runtime::host::backend_capabilities()
-    }
 }
 
 /// Headless `HostState`: temp settings paths, recording menu.
 pub(crate) struct TestHost {
     pub(crate) host: crate::runtime::host::HostState,
     pub(crate) menu: MenuRecorderHandle,
+    pub(crate) loader: FakeRomLoader,
+    pub(crate) dialogs: FakeDialogs,
 }
 
 impl TestHost {
     pub(crate) fn new() -> Self {
-        let support = TestContext::new();
+        Self::with_pick(None)
+    }
+
+    pub(crate) fn with_pick(pick: Option<PathBuf>) -> Self {
+        Self::with_loader_and_pick(FakeRomLoader::succeeding(), pick)
+    }
+
+    pub(crate) fn with_loader_and_pick(loader: FakeRomLoader, pick: Option<PathBuf>) -> Self {
+        let support = TestContext::with_loader(loader.clone());
         let paths = support.settings_paths();
         let menu = MenuRecorderHandle::default();
+        let dialogs = FakeDialogs::with_pick(pick);
         let host = crate::runtime::host::HostState::new_with_settings_paths(
             support.ctx,
             menu.clone().into_box(),
+            Box::new(dialogs.clone()),
             Some(paths),
         )
         .expect("headless host builds on temp settings paths");
-        Self { host, menu }
+        Self {
+            host,
+            menu,
+            loader,
+            dialogs,
+        }
     }
 }
