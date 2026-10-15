@@ -44,7 +44,11 @@ impl WindowRuntime {
             }
             WindowEvent::Resized(_) => {
                 self.host.sync_fullscreen_default_from_window();
+                self.host.sync_osd_geometry();
                 self.host.request_redraw();
+            }
+            WindowEvent::Moved(_) => {
+                self.host.sync_osd_geometry();
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 self.host.on_keyboard_input(event);

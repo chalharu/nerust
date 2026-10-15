@@ -24,11 +24,13 @@ use super::debug_windows::DebugWindows;
 
 mod commands;
 mod focus;
+mod osd;
 mod presentation;
 mod settings;
 mod window;
 
 use self::focus::FocusState;
+use crate::aux::osd::{HistoryWindowHandle, OsdManager, OsdWindowHandle};
 use crate::ports::DialogPorts;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -124,6 +126,10 @@ pub(crate) struct HostState {
     /// Aux-window state (debugger + PPU viewer). Orchestration lives
     /// here; ownership lives there.
     pub(super) debug: DebugWindows,
+    /// OSD notification display state + overlay/history windows.
+    pub(super) osd: OsdManager,
+    pub(super) osd_window: Option<OsdWindowHandle>,
+    pub(super) history_window: Option<HistoryWindowHandle>,
     /// Linux render target below the muda menubar (`None` elsewhere).
     /// When it yields no native target (Wayland, pre-layout) the
     /// toplevel fallback applies and the menu stays occluded.
@@ -185,6 +191,9 @@ impl HostState {
             drain_flight: None,
             live_flight: None,
             debug: DebugWindows::new(),
+            osd: OsdManager::new(),
+            osd_window: None,
+            history_window: None,
             #[cfg(any(
                 target_os = "linux",
                 target_os = "dragonfly",

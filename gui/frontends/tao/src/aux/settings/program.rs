@@ -16,7 +16,9 @@ use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::model::{
-    language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
+    language::AppLanguage,
+    local::{NotificationAreaMode, NotificationColor, NotificationPosition, ScalingMode},
+    shared::StoragePolicy,
 };
 
 use nerust_settings_core::{
@@ -47,6 +49,7 @@ pub(crate) enum SettingsPage {
     Input,
     Video,
     Audio,
+    Notifications,
     System,
 }
 
@@ -72,6 +75,19 @@ pub(crate) enum Message {
     SetVolume(u8),
     SetSampleRate(ChoiceView<u32>),
     SetLatency(u16),
+    ToggleInfoEnabled(bool),
+    SetInfoDuration(u32),
+    SetInfoColor(ChoiceView<NotificationColor>),
+    ToggleWarningEnabled(bool),
+    SetWarningDuration(u32),
+    SetWarningColor(ChoiceView<NotificationColor>),
+    ToggleErrorEnabled(bool),
+    ToggleErrorModal(bool),
+    SetErrorColor(ChoiceView<NotificationColor>),
+    ToggleStatusEnabled(bool),
+    SetPosition(ChoiceView<NotificationPosition>),
+    SetStatusPosition(ChoiceView<NotificationPosition>),
+    SetAreaMode(ChoiceView<NotificationAreaMode>),
     SetSystemChoice(
         String,
         ChoiceView<nerust_core_traits::factory::descriptor::SystemSettingsChoiceId>,
@@ -361,6 +377,45 @@ impl SettingsAppState {
             Message::SetVolume(value) => self.err(self.vm.audio.set_volume(value)),
             Message::SetSampleRate(choice) => self.err(self.vm.audio.set_sample_rate(choice.value)),
             Message::SetLatency(value) => self.err(self.vm.audio.set_latency(value)),
+            Message::ToggleInfoEnabled(value) => {
+                self.err(self.vm.notifications.set_info_enabled(value))
+            }
+            Message::SetInfoDuration(value) => {
+                self.err(self.vm.notifications.set_info_duration_ms(value))
+            }
+            Message::SetInfoColor(choice) => {
+                self.err(self.vm.notifications.set_info_color(choice.value))
+            }
+            Message::ToggleWarningEnabled(value) => {
+                self.err(self.vm.notifications.set_warning_enabled(value))
+            }
+            Message::SetWarningDuration(value) => {
+                self.err(self.vm.notifications.set_warning_duration_ms(value))
+            }
+            Message::SetWarningColor(choice) => {
+                self.err(self.vm.notifications.set_warning_color(choice.value))
+            }
+            Message::ToggleErrorEnabled(value) => {
+                self.err(self.vm.notifications.set_error_enabled(value))
+            }
+            Message::ToggleErrorModal(value) => {
+                self.err(self.vm.notifications.set_error_modal(value))
+            }
+            Message::SetErrorColor(choice) => {
+                self.err(self.vm.notifications.set_error_color(choice.value))
+            }
+            Message::ToggleStatusEnabled(value) => {
+                self.err(self.vm.notifications.set_status_enabled(value))
+            }
+            Message::SetPosition(choice) => {
+                self.err(self.vm.notifications.set_position(choice.value))
+            }
+            Message::SetStatusPosition(choice) => {
+                self.err(self.vm.notifications.set_status_position(choice.value))
+            }
+            Message::SetAreaMode(choice) => {
+                self.err(self.vm.notifications.set_area_mode(choice.value))
+            }
             Message::SetSystemChoice(field, choice) => self.set_system_choice(field, choice),
             Message::SetControllerSlot {
                 slot,
@@ -470,6 +525,12 @@ impl SettingsAppState {
             super::views::page_radio(language, UiText::Input, SettingsPage::Input, self.page),
             super::views::page_radio(language, UiText::Video, SettingsPage::Video, self.page),
             super::views::page_radio(language, UiText::Audio, SettingsPage::Audio, self.page),
+            super::views::page_radio(
+                language,
+                UiText::Notifications,
+                SettingsPage::Notifications,
+                self.page,
+            ),
             super::views::page_radio(language, UiText::System, SettingsPage::System, self.page),
         ]
         .spacing(10)

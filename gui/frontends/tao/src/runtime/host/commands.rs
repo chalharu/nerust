@@ -53,6 +53,10 @@ impl HostState {
                 self.open_debug_windows(opener, false);
                 HostAction::None
             }
+            MenuCommand::NotificationHistory => {
+                self.open_history(opener);
+                HostAction::None
+            }
             MenuCommand::Session(command) => {
                 self.run_command(command);
                 self.sync_menu_state();
