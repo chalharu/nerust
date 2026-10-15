@@ -42,8 +42,8 @@ const DEFAULT_FIT_WINDOW_WIDTH: f64 = 960.0;
 const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 
 /// Headless `HostState`: temp settings paths, recording menu.
-/// Lives here (not in `test_support`) so the fake module never
-/// depends back on `host` (see `crate::ports` for the seam split).
+/// Lives here (not in `test_*`) so the fake modules never
+/// depend back on `host` (see `crate::ports` for the seam split).
 #[cfg(test)]
 pub(crate) struct TestHost {
     pub(crate) host: HostState,
