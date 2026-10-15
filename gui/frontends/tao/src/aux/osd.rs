@@ -227,6 +227,11 @@ impl OsdWindowHandle {
     pub(crate) fn sync(&mut self, snapshot: OsdSnapshot) {
         // Message-driven (not shared-state): iced rebuilds the cached
         // tree only on update(), so silent Arc mutation never paints.
+        // Self-healing viewport: a fresh transparent window reports a
+        // degenerate size, and Resized events are not guaranteed on
+        // every backend. Without this the layout collapses to nothing.
+        let live = self.shell.window.inner_size();
+        self.shell.resize(live.width, live.height);
         let bounds = self.shell.logical_bounds();
         let window_id = self.shell.window_id;
         self.shell.ui_state.process_messages(
