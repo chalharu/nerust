@@ -134,7 +134,10 @@ impl GbcApu {
             // Square channels: clocked at 1,048,576 Hz (master/4)
             // Pan Docs: "The pulse channels' period dividers are clocked
             // at 1048576 Hz, once per four dots"
-            self.dot_counter += 1;
+            // Wrapping is intentional: only mod-2/mod-4 phase matters
+            // for the channel prescalers, and u32 wraps every ~17.9 min
+            // at 4 MiHz (debug builds panic on overflow otherwise).
+            self.dot_counter = self.dot_counter.wrapping_add(1);
             // Square channels: clocked at 1,048,576 Hz (master/4)
             // Pan Docs: "The pulse channels' period dividers are clocked
             // at 1048576 Hz, once per four dots"
@@ -539,6 +542,15 @@ mod tests {
         assert_eq!(apu.read_register(0xFF26), 0x70);
         apu.write_register(0xFF26, 0xFF);
         assert_eq!(apu.read_register(0xFF26), 0xF0);
+    }
+
+    #[test]
+    fn dot_counter_wraps_without_panic() {
+        let mut apu = GbcApu::new();
+        apu.write_register(0xFF26, 0x80); // power on
+        apu.dot_counter = u32::MAX - 1;
+        apu.step(4);
+        assert_eq!(apu.dot_counter, 2);
     }
 
     #[test]
