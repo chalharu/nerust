@@ -31,8 +31,8 @@ mod window;
 
 use self::focus::FocusState;
 use crate::aux::osd::{HistoryWindowHandle, OsdWindowHandle};
-use nerust_gui_shell::session::osd::OsdManager;
 use crate::ports::DialogPorts;
+use nerust_gui_shell::session::osd::OsdManager;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {

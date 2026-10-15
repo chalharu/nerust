@@ -13,9 +13,7 @@ use iced::{Length, Task};
 use iced_winit::program::{self, Program};
 
 use nerust_gui_shell::session::osd::OsdSnapshot;
-use nerust_settings_core::model::{
-    language::AppLanguage, local::NotificationPosition,
-};
+use nerust_settings_core::model::{language::AppLanguage, local::NotificationPosition};
 use tao::event_loop::EventLoopWindowTarget;
 
 use crate::aux::shell::{AuxWindow, WindowScaffold, aux_settings, aux_theme};
