@@ -183,6 +183,11 @@ impl HostState {
     pub(crate) fn poll_notifications(&mut self) -> Option<Instant> {
         let now = Instant::now();
         let drained = self.session.drain_notifications();
+        log::debug!(
+            "OSD poll: drained={} osd_open={}",
+            drained.len(),
+            self.osd_window.is_some()
+        );
         if !drained.is_empty() {
             let settings = self.notification_settings();
             let language = self.notification_language();
@@ -205,6 +210,7 @@ impl HostState {
         }
         self.sync_osd_snapshot();
         self.sync_history_window();
+        log::debug!("OSD poll: rows={}", self.osd.rows().len());
         self.osd.next_deadline()
     }
 
