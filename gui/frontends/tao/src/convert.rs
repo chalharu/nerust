@@ -359,8 +359,40 @@ mod tests {
         use tao::keyboard::KeyCode as T;
         let codes = [
             T::KeyA,
+            T::KeyB,
+            T::KeyC,
+            T::KeyD,
+            T::KeyE,
+            T::KeyF,
+            T::KeyG,
+            T::KeyH,
+            T::KeyI,
+            T::KeyJ,
+            T::KeyK,
+            T::KeyL,
+            T::KeyM,
+            T::KeyN,
+            T::KeyO,
+            T::KeyP,
+            T::KeyQ,
+            T::KeyR,
+            T::KeyS,
+            T::KeyT,
+            T::KeyU,
+            T::KeyV,
+            T::KeyW,
+            T::KeyX,
+            T::KeyY,
             T::KeyZ,
             T::Digit0,
+            T::Digit1,
+            T::Digit2,
+            T::Digit3,
+            T::Digit4,
+            T::Digit5,
+            T::Digit6,
+            T::Digit7,
+            T::Digit8,
             T::Digit9,
             T::ArrowUp,
             T::ArrowDown,
@@ -374,18 +406,39 @@ mod tests {
             T::Delete,
             T::Home,
             T::End,
+            T::PageUp,
+            T::PageDown,
+            T::Insert,
             T::F1,
+            T::F2,
+            T::F3,
+            T::F4,
+            T::F5,
+            T::F6,
+            T::F7,
+            T::F8,
+            T::F9,
+            T::F10,
+            T::F11,
             T::F12,
             T::ShiftLeft,
+            T::ShiftRight,
             T::ControlLeft,
+            T::ControlRight,
             T::AltLeft,
+            T::AltRight,
             T::SuperLeft,
+            T::SuperRight,
             T::Numpad0,
+            T::Numpad1,
+            T::Numpad5,
             T::Numpad9,
             T::NumpadAdd,
             T::NumpadSubtract,
             T::NumpadMultiply,
             T::NumpadDivide,
+            T::NumpadDecimal,
+            T::NumpadEnter,
             T::CapsLock,
             T::NumLock,
             T::ScrollLock,
@@ -400,6 +453,8 @@ mod tests {
             T::Backslash,
             T::Slash,
             T::IntlBackslash,
+            T::Pause,
+            T::PrintScreen,
         ];
         for code in codes {
             let iced_code = tao_keycode_to_iced_code(code);
@@ -569,6 +624,24 @@ mod tests {
             tao_key_to_iced_key(&tao::keyboard::Key::F1),
             keyboard::Key::Unidentified
         );
+        // Non-editing named keys stay unidentified: physical codes
+        // (not logical names) drive shortcuts.
+        assert_eq!(
+            tao_key_to_iced_key(&tao::keyboard::Key::Space),
+            keyboard::Key::Unidentified
+        );
+        assert_eq!(
+            tao_key_to_iced_key(&tao::keyboard::Key::Shift),
+            keyboard::Key::Unidentified
+        );
+    }
+
+    #[test]
+    fn default_font_matches_platform() {
+        #[cfg(target_os = "windows")]
+        assert_eq!(default_font(), Font::with_name("Yu Gothic UI"));
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(default_font(), Font::DEFAULT);
     }
 
     #[test]

@@ -526,6 +526,72 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    static VIEW_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    struct StubProgram;
+    #[derive(Debug, Clone, Default)]
+    struct StubState;
+    #[derive(Debug, Clone)]
+    enum StubMessage {
+        Ping,
+    }
+
+    impl Program for StubProgram {
+        type State = StubState;
+        type Message = StubMessage;
+        type Theme = iced::Theme;
+        type Renderer = Renderer;
+        type Executor = iced_winit::futures::backend::default::Executor;
+
+        fn name() -> &'static str {
+            "stub"
+        }
+
+        fn settings(&self) -> iced::Settings {
+            iced::Settings::default()
+        }
+
+        fn window(&self) -> Option<iced::window::Settings> {
+            None
+        }
+
+        fn boot(&self) -> (Self::State, iced::Task<Self::Message>) {
+            (StubState, iced::Task::none())
+        }
+
+        fn update(
+            &self,
+            _state: &mut Self::State,
+            _message: Self::Message,
+        ) -> iced::Task<Self::Message> {
+            iced::Task::none()
+        }
+
+        fn view<'a>(
+            &self,
+            _state: &'a Self::State,
+            _window: iced::window::Id,
+        ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
+            VIEW_CALLS.fetch_add(1, Ordering::SeqCst);
+            iced::widget::text("stub").into()
+        }
+    }
+
+    fn stub_shell() -> (UiShell<StubProgram>, Renderer, iced_winit::Clipboard) {
+        VIEW_CALLS.store(0, Ordering::SeqCst);
+        let (instance, _task) = program::Instance::new(StubProgram);
+        let mut backend = Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
+        let shell = UiShell::new(
+            instance,
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+            &mut backend,
+        );
+        let clipboard = iced_winit::Clipboard::unconnected();
+        (shell, backend, clipboard)
+    }
 
     #[test]
     fn logical_bounds_divide_by_scale() {
@@ -559,5 +625,69 @@ mod tests {
             pump_outcome(&updated(RedrawRequest::NextFrame)),
             PumpOutcome::Repaint
         );
+    }
+
+    #[test]
+    fn pump_on_missing_ui_warns_and_idles() {
+        let (mut shell, mut backend, mut clipboard) = stub_shell();
+        let _ = shell.ui.take();
+        assert!(shell.ui_mut().is_none());
+        let (messages, outcome) = shell.pump(
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            )),
+            iced::mouse::Cursor::default(),
+            &mut clipboard,
+            &mut backend,
+        );
+        assert!(messages.is_empty());
+        assert_eq!(outcome, PumpOutcome::Idle);
+        // Push and relayout stay total without an interface.
+        shell.push_message(StubMessage::Ping);
+        shell.relayout(iced::Size::new(640.0, 480.0), &mut backend);
+        assert!(shell.ui_mut().is_none());
+    }
+
+    #[test]
+    fn shared_chrome_helpers_are_stable() {
+        assert!(matches!(aux_theme(), Some(iced::Theme::Light)));
+        let settings = aux_settings();
+        assert_eq!(settings.default_text_size, iced::Pixels(16.0));
+    }
+
+    #[test]
+    fn process_messages_skips_quiet_batches() {
+        let (mut shell, mut backend, _) = stub_shell();
+        let built = VIEW_CALLS.load(Ordering::SeqCst);
+        assert!(built > 0);
+        // Empty batch without invalidation: no rebuild.
+        let still = AtomicBool::new(false);
+        shell.process_messages(
+            Vec::new(),
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+            &mut backend,
+            &still,
+        );
+        assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), built);
+        // Either a message or the flag rebuilds exactly once.
+        shell.process_messages(
+            vec![StubMessage::Ping],
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+            &mut backend,
+            &still,
+        );
+        assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), built + 1);
+        let flagged = AtomicBool::new(true);
+        shell.process_messages(
+            Vec::new(),
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+            &mut backend,
+            &flagged,
+        );
+        assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), built + 2);
+        assert!(!flagged.load(Ordering::Acquire));
     }
 }

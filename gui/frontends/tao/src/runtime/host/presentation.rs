@@ -102,7 +102,7 @@ impl HostState {
         set_window_fullscreen(window, fullscreen);
     }
 
-    fn persist_fullscreen_default(
+    pub(super) fn persist_fullscreen_default(
         &mut self,
         fullscreen: bool,
     ) -> Result<SettingsResult, SessionError> {

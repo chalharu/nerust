@@ -403,4 +403,19 @@ mod tests {
         let _full = program.view(&synced, iced::window::Id::unique());
         drop(_full);
     }
+    #[test]
+    fn program_boot_and_chrome_are_headless() {
+        let bridge = ppu_bridge();
+        let program = PpuProgram {
+            bridge: Arc::clone(&bridge),
+        };
+        assert_eq!(PpuProgram::name(), "nerust_ppu_viewer");
+        assert!(program.window().is_none());
+        let _ = program.settings();
+        let (state, _task) = program.boot();
+        let theme = program.theme(&state, iced::window::Id::unique());
+        assert!(matches!(theme, Some(iced::Theme::Light)));
+        let _ = program.view(&state, iced::window::Id::unique());
+        drop(state);
+    }
 }

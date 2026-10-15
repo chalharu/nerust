@@ -365,4 +365,42 @@ mod tests {
             Some(false)
         );
     }
+
+    #[test]
+    fn window_size_math_scales_and_falls_back() {
+        use nerust_gui_shell::session::lifecycle::WindowSize;
+        use nerust_settings_core::model::app_state::RememberedWindowSize;
+
+        use super::{
+            default_fit_window_size, fullscreen_mode, logical_size_from_remembered,
+            logical_window_size, window_surface_size,
+        };
+        let scaled = logical_window_size(
+            WindowSize {
+                width: 160.0,
+                height: 144.0,
+            },
+            Some(3),
+        );
+        assert_eq!((scaled.width, scaled.height), (480.0, 432.0));
+        let plain = logical_window_size(
+            WindowSize {
+                width: 160.0,
+                height: 144.0,
+            },
+            None,
+        );
+        assert_eq!((plain.width, plain.height), (160.0, 144.0));
+        let remembered = logical_size_from_remembered(RememberedWindowSize {
+            width: 800,
+            height: 600,
+        });
+        assert_eq!((remembered.width, remembered.height), (800.0, 600.0));
+        let fit = default_fit_window_size();
+        assert_eq!((fit.width, fit.height), (960.0, 720.0));
+        assert!(fullscreen_mode(true).is_some());
+        assert!(fullscreen_mode(false).is_none());
+        let surface = window_surface_size(tao::dpi::PhysicalSize::new(960, 720));
+        assert_eq!((surface.width, surface.height), (960, 720));
+    }
 }
