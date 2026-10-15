@@ -22,24 +22,35 @@ impl HostState {
         self.session.settings_snapshot().shared.general.language
     }
 
+    /// Main client rect in physical pixels: outer frame minus
+    /// decorations (inner_position() goes stale on some X11 WMs).
+    fn main_client_rect(&self) -> Option<((i32, i32), (f64, f64))> {
+        let window = self.window.as_ref()?;
+        let size = window.inner_size();
+        let scale = window.scale_factor();
+        let outer = window.outer_position().ok()?;
+        let outer_size = window.outer_size();
+        let side = outer_size.width.saturating_sub(size.width) / 2;
+        let top = outer_size
+            .height
+            .saturating_sub(size.height)
+            .saturating_sub(side);
+        Some((
+            (outer.x + side as i32, outer.y + top as i32),
+            (size.width as f64 / scale, size.height as f64 / scale),
+        ))
+    }
+
     /// Create the overlay window tracking the main client area.
     /// Transparency refusal degrades to no OSD (log + history remain).
     pub(crate) fn ensure_osd_window(&mut self, opener: &dyn WindowOpener) {
         if self.osd_window.is_some() {
             return;
         }
-        let Some(window) = self.window.as_ref() else {
+        let Some((position, size)) = self.main_client_rect() else {
             return;
         };
-        let Ok(position) = window.inner_position() else {
-            return;
-        };
-        let size = window.inner_size();
-        let scale = window.scale_factor();
-        self.osd_window = opener.create_osd(
-            (position.x, position.y),
-            (size.width as f64 / scale, size.height as f64 / scale),
-        );
+        self.osd_window = opener.create_osd(position, size);
     }
 
     /// Reposition the overlay when the main geometry changed.
@@ -48,25 +59,27 @@ impl HostState {
     /// event would strand the overlay forever. Cheap: two X queries
     /// per loop pass, skipped when the overlay is absent.
     pub(crate) fn sync_osd_geometry(&mut self) {
-        let Some(window) = self.window.as_ref() else {
+        let window = self.window.as_ref();
+        let size = window.map(|window| window.inner_size());
+        let scale = window.map(|window| window.scale_factor());
+        let Some((position, logical_size)) = self.main_client_rect() else {
+            log::debug!("OSD geometry: client rect unavailable");
             return;
         };
-        let size = window.inner_size();
-        let scale = window.scale_factor();
-        let Ok(position) = window.inner_position() else {
-            log::debug!("OSD geometry: inner_position failed");
-            return;
+        let (size, scale) = match (size, scale) {
+            (Some(size), Some(scale)) => (size, scale),
+            _ => return,
         };
         log::debug!(
             "OSD geometry: inner={}x{} size={}x{} scale={scale}",
-            position.x,
-            position.y,
+            position.0,
+            position.1,
             size.width,
             size.height
         );
         let current = (
-            position.x,
-            position.y,
+            position.0,
+            position.1,
             size.width,
             size.height,
             scale.to_bits(),
@@ -76,10 +89,7 @@ impl HostState {
         }
         self.osd_geometry = Some(current);
         if let Some(handle) = self.osd_window.as_mut() {
-            handle.move_to(
-                (position.x, position.y),
-                (size.width as f64 / scale, size.height as f64 / scale),
-            );
+            handle.move_to(position, logical_size);
         }
     }
 
