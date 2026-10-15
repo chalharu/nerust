@@ -312,6 +312,7 @@ fn chrome_drain_due(debug_open: bool, last_drain_paused: Option<bool>, paused: b
 #[cfg(test)]
 mod tests {
     use super::chrome_drain_due;
+    use crate::test_support::TestHost;
 
     #[test]
     fn focus_chrome_drains_only_on_pause_transitions() {
@@ -328,5 +329,36 @@ mod tests {
         // re-arms exactly one drain.
         assert!(chrome_drain_due(true, Some(true), false));
         assert!(chrome_drain_due(true, Some(false), true));
+    }
+
+    #[test]
+    fn apply_drain_output_without_windows_syncs_chrome() {
+        use nerust_gui_shell::debug::DebugDrainOutput;
+        use nerust_gui_viewmodel::debugger::DisplayCache;
+        let support = TestHost::new();
+        let mut host = support.host;
+        let output = DebugDrainOutput {
+            display: DisplayCache::default(),
+            reselected: Some((0x100, Some(0xAB))),
+        };
+        host.apply_drain_output(output);
+        assert_eq!(host.debug.last_drain_paused(), Some(host.session.paused()));
+        assert_eq!(support.menu.updates().len(), 1);
+    }
+
+    #[test]
+    fn drain_and_live_stay_quiet_without_windows() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        assert!(!host.take_debug_open_request());
+        assert!(!host.take_ppu_open_request());
+        assert!(!host.live_follow_active());
+        host.live_tick();
+        assert!(!host.poll_debug_flight());
+        // No debugger open: the drain records pause truth and stops.
+        host.drain_debug_requests();
+        host.run_debug_drain(&[]);
+        assert_eq!(host.debug.last_drain_paused(), Some(host.session.paused()));
+        assert!(support.menu.updates().is_empty());
     }
 }

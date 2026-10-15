@@ -557,6 +557,24 @@ mod tests {
     }
 
     #[test]
+    fn program_boot_and_chrome_are_headless() {
+        let program = SettingsAppProgram {
+            snapshot: empty_snapshot(),
+            registry: Arc::new(SystemRegistry::new(Vec::new())),
+            audio_registry: Arc::new(AudioBackendRegistry::new()),
+            should_close: Arc::new(AtomicBool::new(false)),
+            pending_apply: Arc::new(Mutex::new(None)),
+            view_invalidated: Arc::new(AtomicBool::new(false)),
+        };
+        assert_eq!(SettingsAppProgram::name(), "nerust_settings");
+        assert!(program.window().is_none());
+        let _ = program.settings();
+        let (state, _task) = program.boot();
+        assert!(program.theme(&state, iced::window::Id::unique()).is_none());
+        let _ = program.view(&state, iced::window::Id::unique());
+    }
+
+    #[test]
     fn revision_callback_shares_external_view_invalidated_flag() {
         let external = Arc::new(AtomicBool::new(false));
         let mut state = SettingsAppState::new_with_shared(

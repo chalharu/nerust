@@ -279,4 +279,33 @@ mod tests {
         host.update_control_flow(&mut flow);
         assert_eq!(flow, ControlFlow::Exit);
     }
+
+    #[test]
+    fn update_control_flow_waits_quietly_without_windows() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let mut flow = ControlFlow::Wait;
+        host.update_control_flow(&mut flow);
+        assert_eq!(flow, ControlFlow::Wait);
+        // No window, no flights, no follows: nothing to present.
+        assert!(support.menu.updates().is_empty());
+    }
+
+    #[test]
+    fn window_helpers_stay_total_without_window() {
+        use nerust_render_traits::renderer::RenderResult;
+        let support = TestHost::new();
+        let mut host = support.host;
+        assert!(host.window_surface_size().is_none());
+        assert!(host.surface_target().is_none());
+        assert!(host.surface_xid().is_none());
+        host.update_window_size_for_scaling();
+        host.remember_fit_window_size();
+        host.toggle_fullscreen();
+        host.on_render_result(RenderResult::Presented);
+        host.on_render_result(RenderResult::Skipped);
+        host.on_render_result(RenderResult::Error);
+        assert!(host.startup_window_size().width > 0.0);
+        assert!(support.menu.updates().is_empty());
+    }
 }

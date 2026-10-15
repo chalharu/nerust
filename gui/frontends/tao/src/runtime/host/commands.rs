@@ -414,4 +414,85 @@ mod tests {
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
         assert!(host.debug.debug_window.is_none());
     }
+
+    #[test]
+    fn session_menu_runs_every_command_without_core() {
+        use nerust_gui_shell::session::commands::SessionCommand as Cmd;
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        let before = support.menu.updates().len();
+        for command in [
+            Cmd::Pause,
+            Cmd::Resume,
+            Cmd::TogglePause,
+            Cmd::Reset,
+            Cmd::CreateSlot,
+            Cmd::SaveActiveSlotOrNew,
+            Cmd::LoadActiveSlot,
+            Cmd::SelectActiveSlot(7),
+            Cmd::SaveSlot(7),
+            Cmd::LoadSlot(7),
+            Cmd::DeleteSlot(7),
+            Cmd::SelectNextSlot,
+            Cmd::SelectPreviousSlot,
+        ] {
+            assert_eq!(
+                host.on_menu_command(MenuCommand::Session(command), &opener),
+                HostAction::None
+            );
+        }
+        // Every command syncs the menu, none opens a window.
+        assert_eq!(support.menu.updates().len(), before + 13);
+        assert!(opener.calls().is_empty());
+    }
+
+    #[test]
+    fn session_delegates_stay_total_without_core() {
+        use nerust_gui_shell::session::access::FrontendSession;
+        let support = TestHost::new();
+        let mut host = support.host;
+        assert!(!host.session.paused());
+        host.pause();
+        host.resume();
+        host.toggle_pause();
+        assert!(!host.session.paused());
+        assert!(!host.save_active_slot());
+        assert!(!host.load_active_slot());
+        host.select_next_slot();
+        host.select_previous_slot();
+        assert!(!host.load_slot(99));
+        host.save_slot(99);
+        host.delete_slot(99);
+        host.select_slot(99);
+        host.create_slot();
+        host.reset();
+        host.unload();
+        host.run_command(nerust_gui_shell::session::commands::SessionCommand::Reset);
+        assert!(!host.session.loaded());
+    }
+
+    #[test]
+    fn session_verbs_stay_total_without_core() {
+        use nerust_gui_shell::session::access::FrontendSession;
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.resume_session();
+        host.pause_session();
+        host.clear_keys();
+        host.sync_fullscreen_from_settings();
+        let _ = host.persist_fullscreen_default(false);
+        assert!(!host.session.loaded());
+    }
+
+    #[test]
+    fn apply_paths_stay_total_without_core() {
+        use nerust_gui_shell::session::access::FrontendSession;
+        let support = TestHost::new();
+        let mut host = support.host;
+        let snapshot = host.session.settings_snapshot().clone();
+        let _ = host.apply_settings(snapshot);
+        let _ = host.set_fullscreen_default(true);
+        assert!(!host.session.loaded());
+    }
 }
