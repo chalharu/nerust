@@ -18,10 +18,10 @@ use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, RenderResult},
 };
-use nerust_settings_core::i18n::{UiText, text};
 use nerust_settings_core::model::app_state::RememberedWindowSize;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use rfd::FileDialog;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::{path::Path, rc::Rc, sync::Arc, time::Instant};
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
@@ -37,14 +37,12 @@ use super::debug_windows::DebugWindows;
 
 mod commands;
 mod focus;
-mod opener;
 mod presentation;
 mod settings;
 mod window;
 
-pub(crate) use self::commands::{DialogPorts, NativeDialogs};
 use self::focus::FocusState;
-pub(crate) use self::opener::{TaoWindowOpener, WindowOpener};
+use crate::ports::{DialogPorts, WindowOpener};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {
@@ -55,6 +53,51 @@ pub(crate) enum HostAction {
 
 const DEFAULT_FIT_WINDOW_WIDTH: f64 = 960.0;
 const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
+
+/// Headless `HostState`: temp settings paths, recording menu.
+/// Lives here (not in `test_support`) so the fake module never
+/// depends back on `host` (see `crate::ports` for the seam split).
+#[cfg(test)]
+pub(crate) struct TestHost {
+    pub(crate) host: HostState,
+    pub(crate) menu: crate::test_menu::MenuRecorderHandle,
+    pub(crate) loader: crate::test_session::FakeRomLoader,
+    pub(crate) dialogs: crate::test_dialogs::FakeDialogs,
+}
+
+#[cfg(test)]
+impl TestHost {
+    pub(crate) fn new() -> Self {
+        Self::with_pick(None)
+    }
+
+    pub(crate) fn with_pick(pick: Option<PathBuf>) -> Self {
+        Self::with_loader_and_pick(crate::test_session::FakeRomLoader::succeeding(), pick)
+    }
+
+    pub(crate) fn with_loader_and_pick(
+        loader: crate::test_session::FakeRomLoader,
+        pick: Option<PathBuf>,
+    ) -> Self {
+        let support = crate::test_session::TestContext::with_loader(loader.clone());
+        let paths = support.settings_paths();
+        let menu = crate::test_menu::MenuRecorderHandle::default();
+        let dialogs = crate::test_dialogs::FakeDialogs::with_pick(pick);
+        let host = HostState::new_with_settings_paths(
+            support.ctx,
+            menu.clone().into_box(),
+            Box::new(dialogs.clone()),
+            Some(paths),
+        )
+        .expect("headless host builds on temp settings paths");
+        Self {
+            host,
+            menu,
+            loader,
+            dialogs,
+        }
+    }
+}
 
 fn backend_capabilities() -> HostBackendCapabilities {
     HostBackendCapabilities {
@@ -194,21 +237,6 @@ fn create_window_builder(
         .with_fullscreen(fullscreen_mode(fullscreen))
 }
 
-/// Surface ROM load failures in a modal dialog: the previous
-/// warn-only path left the empty window with no explanation.
-pub(super) fn show_rom_load_error(
-    language: nerust_settings_core::model::language::AppLanguage,
-    detail: &str,
-) {
-    let title = text(language, UiText::RomLoadFailed);
-    rfd::MessageDialog::new()
-        .set_title(title)
-        .set_description(detail)
-        .set_level(rfd::MessageLevel::Error)
-        .set_buttons(rfd::MessageButtons::Ok)
-        .show();
-}
-
 fn window_is_fullscreen(window: &TaoWindow) -> bool {
     window.fullscreen().is_some()
 }
@@ -283,12 +311,12 @@ fn element_state_to_pressed(state: ElementState) -> Option<bool> {
 mod tests {
     use tao::{dpi::LogicalSize as TaoLogicalSize, window::Fullscreen};
 
+    use super::TestHost;
     use super::{NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync};
-    use crate::test_support::TestHost;
 
     #[test]
     fn host_accessors_expose_session_and_factory() {
-        let support = crate::test_support::TestHost::new();
+        let support = TestHost::new();
         let mut host = support.host;
         let _ = host.gpu_factory();
         let _ = host.session_mut();
@@ -297,12 +325,12 @@ mod tests {
 
     #[test]
     fn production_constructor_delegates_to_temp_paths() {
-        use crate::test_support::{MenuRecorderHandle, TestContext};
-        let support = TestContext::with_loader(crate::test_support::FakeRomLoader::succeeding());
+        use crate::{test_menu::MenuRecorderHandle, test_session::TestContext};
+        let support = TestContext::with_loader(crate::test_session::FakeRomLoader::succeeding());
         let host = super::HostState::new(
             support.ctx,
             MenuRecorderHandle::default().into_box(),
-            Box::new(super::NativeDialogs),
+            Box::new(crate::ports::NativeDialogs),
         );
         assert!(host.is_ok());
     }
@@ -315,7 +343,7 @@ mod tests {
         host.sync_menu_state();
         assert_eq!(
             support.menu.updates(),
-            [crate::test_support::MenuSyncSnapshot {
+            [crate::test_menu::MenuSyncSnapshot {
                 loaded: false,
                 paused: false,
                 settings_open: false,

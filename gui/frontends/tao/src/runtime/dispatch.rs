@@ -6,7 +6,7 @@
 use tao::{event::WindowEvent, event_loop::ControlFlow};
 
 use crate::aux::shell::AuxWindow;
-use crate::runtime::host::WindowOpener;
+use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
 
@@ -212,9 +212,10 @@ mod tests {
     use tao::{dpi::PhysicalPosition, event::WindowEvent, event_loop::ControlFlow};
 
     use super::WindowRuntime;
-    use crate::test_support::{FakeOpener, OpenerCall, TestHost};
+    use crate::runtime::host::TestHost;
+    use crate::test_opener::{FakeOpener, OpenerCall};
 
-    fn test_runtime() -> (WindowRuntime, crate::test_support::MenuRecorderHandle) {
+    fn test_runtime() -> (WindowRuntime, crate::test_menu::MenuRecorderHandle) {
         let support = TestHost::new();
         let menu = support.menu.clone();
         let runtime = WindowRuntime {

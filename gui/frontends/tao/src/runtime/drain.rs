@@ -10,8 +10,8 @@ use nerust_gui_shell::{
 use nerust_gui_viewmodel::debugger as debug_vm;
 
 use super::host::HostState;
-use super::host::WindowOpener;
 use crate::aux::bridge::lock_recovered;
+use crate::ports::WindowOpener;
 
 impl HostState {
     pub(crate) fn take_debug_open_request(&mut self) -> bool {
@@ -312,7 +312,7 @@ fn chrome_drain_due(debug_open: bool, last_drain_paused: Option<bool>, paused: b
 #[cfg(test)]
 mod tests {
     use super::chrome_drain_due;
-    use crate::test_support::TestHost;
+    use crate::runtime::host::TestHost;
 
     #[test]
     fn focus_chrome_drains_only_on_pause_transitions() {

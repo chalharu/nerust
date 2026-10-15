@@ -88,7 +88,8 @@ impl HostState {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_support::{FakeOpener, OpenerCall, TestHost};
+    use super::TestHost;
+    use crate::test_opener::{FakeOpener, OpenerCall};
 
     #[test]
     fn open_settings_skips_when_already_open() {

@@ -15,8 +15,17 @@ mod event;
 ))]
 mod gtk_embed;
 mod menu;
+mod ports;
 #[cfg(test)]
-pub(crate) mod test_support;
+pub(crate) mod test_dialogs;
+#[cfg(test)]
+pub(crate) mod test_gpu;
+#[cfg(test)]
+pub(crate) mod test_menu;
+#[cfg(test)]
+pub(crate) mod test_opener;
+#[cfg(test)]
+pub(crate) mod test_session;
 
 pub(crate) mod aux;
 pub(crate) mod runtime;
