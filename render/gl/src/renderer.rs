@@ -26,6 +26,7 @@ pub struct GlRenderer {
     gl_surface: Option<glutin::surface::Surface<WindowSurface>>,
     expected_frame_len: usize,
     size: SurfaceSize,
+    reserved: nerust_render_traits::ReservedStrip,
     /// Fixed-size staging for the pre-GLES3 pack path (see `render`).
     tight: Vec<u8>,
 }
@@ -128,6 +129,10 @@ impl GpuRenderer for GlRenderer {
         drop(self.gl_surface.take());
     }
 
+    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
+        self.reserved = strip;
+    }
+
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
         self.render_profile = profile.clone();
         let Some(ref ctx) = self.context else {
@@ -176,7 +181,11 @@ impl GpuRenderer for GlRenderer {
             return RenderResult::Error;
         }
 
-        view.on_resize(self.size.width as i32, self.size.height as i32);
+        view.on_resize_with_strip(
+            self.size.width as i32,
+            self.size.height as i32,
+            self.reserved,
+        );
         if let Some(p) = frame_buffer.palette_as_rgba8() {
             view.update_palette_texture(&p);
         }
@@ -329,6 +338,7 @@ impl GpuFactory for GlFactory {
             gl_surface: None,
             expected_frame_len: 0,
             size: SurfaceSize::new(0, 0),
+            reserved: nerust_render_traits::ReservedStrip::default(),
             tight: Vec::new(),
         }))
     }

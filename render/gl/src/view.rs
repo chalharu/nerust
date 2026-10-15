@@ -353,7 +353,27 @@ impl GlView {
     }
 
     pub fn on_resize(&mut self, viewport_width: i32, viewport_height: i32) {
-        let window_aspect = viewport_width as f32 / viewport_height as f32;
+        self.on_resize_with_strip(
+            viewport_width,
+            viewport_height,
+            nerust_render_traits::ReservedStrip::default(),
+        )
+    }
+
+    /// Fit the game into the surface minus reserved OSD strips.
+    /// GL viewports start at the bottom-left, so the drawable rect
+    /// sits `strip.bottom` above the surface base.
+    pub fn on_resize_with_strip(
+        &mut self,
+        viewport_width: i32,
+        viewport_height: i32,
+        strip: nerust_render_traits::ReservedStrip,
+    ) {
+        let height_i = viewport_height.max(0);
+        let top = strip.top.min(height_i as u32) as i32;
+        let bottom = strip.bottom.min(height_i as u32 - top as u32) as i32;
+        let area_height = (height_i - top - bottom).max(1);
+        let window_aspect = viewport_width as f32 / area_height as f32;
         let content_aspect = self.logical_width as f32 / self.logical_height as f32;
 
         let (scale_x, scale_y) = if window_aspect > content_aspect {
@@ -370,7 +390,7 @@ impl GlView {
         } else {
             bind_buffer(gl::ARRAY_BUFFER, self.vbo.as_ref().unwrap().id).unwrap();
         }
-        viewport(0, 0, viewport_width, viewport_height).unwrap();
+        viewport(0, bottom, viewport_width, area_height).unwrap();
         uniform_matrix_4fv(
             self.shader.as_ref().unwrap().get_uniform("unif_matrix"),
             1,

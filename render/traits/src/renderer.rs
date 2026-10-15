@@ -1,6 +1,6 @@
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::{FrameBuffer, SurfaceSize, VideoRenderProfile};
+use crate::{FrameBuffer, ReservedStrip, SurfaceSize, VideoRenderProfile};
 
 /// Wraps a static or formatted message as an `std::error::Error`.
 #[derive(Debug)]
@@ -78,6 +78,11 @@ pub trait GpuRenderer: std::fmt::Debug {
 
     /// Resize the output (swapchain for wgpu; stored for GL).
     fn resize(&mut self, size: SurfaceSize);
+
+    /// Reserve edge strips for OSD labels. The game viewport fits into
+    /// the remaining rect on the next resize/render; strips stay clear.
+    /// Default ignores the reservation (full-surface game).
+    fn set_reserved_strip(&mut self, _strip: ReservedStrip) {}
 
     /// Update the render pipeline for a new render profile.
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;

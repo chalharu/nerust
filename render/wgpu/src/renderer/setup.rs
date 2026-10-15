@@ -292,6 +292,7 @@ impl RenderPipeline {
             pipeline,
             frame_logical_size,
             content_size,
+            reserved: nerust_render_traits::ReservedStrip::default(),
         })
     }
 
