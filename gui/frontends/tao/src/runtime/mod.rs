@@ -18,10 +18,9 @@ use tao::{
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
 
-use self::host::{HostAction, HostState, TaoWindowOpener};
+use self::host::{HostAction, HostState, NativeDialogs, TaoWindowOpener};
 use crate::event::UserEvent;
 use crate::menu::imp::AppMenu;
-use crate::runtime::host::NativeDialogs;
 
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
