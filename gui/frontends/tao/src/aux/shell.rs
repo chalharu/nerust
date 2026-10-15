@@ -488,6 +488,19 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
                 .resize(self.viewport_physical.0, self.viewport_physical.1);
             self.surface_size = self.viewport_physical;
         }
+        self.render_ui_with(log_tag, None);
+    }
+
+    /// Render with an explicit clear color (transparent overlays).
+    pub(crate) fn render_with_background(
+        &mut self,
+        log_tag: &'static str,
+        background: iced::Color,
+    ) {
+        self.render_ui_with(log_tag, Some(background));
+    }
+
+    fn render_ui_with(&mut self, log_tag: &'static str, background: Option<iced::Color>) {
         render_ui(
             &mut self.ui_state,
             &mut self.renderer,
@@ -496,6 +509,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
             self.cursor,
             &mut self.clipboard,
             log_tag,
+            background,
         );
     }
 }
@@ -509,6 +523,8 @@ pub(crate) trait AuxWindow {
 
 /// Shared full render: Light theme, redraw pump, draw, present.
 /// Both viewers call this; only the failure log tag differs.
+/// `background_override` is `None` for the theme default, or a
+/// transparent clear for overlay windows on transparent surfaces.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
     ui: &mut UiShell<P>,
@@ -518,6 +534,7 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
     cursor: mouse::Cursor,
     clipboard: &mut Clipboard,
     log_tag: &'static str,
+    background_override: Option<iced::Color>,
 ) {
     // Light theme for OS light-theme nativeness.
     let theme = iced::Theme::Light;
@@ -550,7 +567,10 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
         },
         cursor,
     );
-    if let Err(error) = renderer.present(&viewport, style.background_color) {
+    if let Err(error) = renderer.present(
+        &viewport,
+        background_override.unwrap_or(style.background_color),
+    ) {
         log::warn!("{log_tag} render present failed: {error}");
     }
 }
