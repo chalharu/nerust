@@ -69,6 +69,12 @@ impl Program for OsdProgram {
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::widget::{column, container, row, text};
         let snapshot = state.shared.lock().map(|s| s.clone()).unwrap_or_default();
+        log::debug!(
+            "OSD view: rows={} status={} font={}",
+            snapshot.rows.len(),
+            snapshot.status.is_some(),
+            snapshot.font_px,
+        );
         let font = iced::Pixels(snapshot.font_px.max(6.0));
         let label = |glyph: char, body: &str, rgb: (u8, u8, u8)| {
             container(
