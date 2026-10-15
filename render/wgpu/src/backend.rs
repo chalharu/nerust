@@ -1,6 +1,5 @@
 use nerust_render_traits::{
-    FrameBuffer, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation,
-    VideoRenderProfile,
+    FrameBuffer, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
     renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
