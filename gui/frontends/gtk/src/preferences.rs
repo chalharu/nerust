@@ -23,7 +23,7 @@ use nerust_gui_viewmodel::settings::{
 };
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{UiText, text as ui_text},
+    i18n::{UiText, notification_group_label, text as ui_text},
 };
 
 use nerust_settings_core::model::{language::AppLanguage, local::ScalingMode};
@@ -813,9 +813,14 @@ pub(crate) fn present_preferences_dialog(
     // ---- Notifications page: one section per level plus
     // display/status groups, so each control's scope reads off its
     // header. Error presentation is an exclusive radio pair.
-    section_header_first(&notifications_page, ui_text(lang, UiText::NotificationInfo));
     let info_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
-    notifications_page.append(&info_check);
+    section_header_toggled(
+        &notifications_page,
+        ui_text(lang, UiText::NotificationInfo),
+        &info_check,
+        &notification_group_label(lang, ui_text(lang, UiText::NotificationInfo)),
+        true,
+    );
     let info_duration_spin = gtk::SpinButton::with_range(1000.0, 30000.0, 500.0);
     notifications_page.append(&labeled_row(
         ui_text(lang, UiText::NotificationDuration),
@@ -832,12 +837,14 @@ pub(crate) fn present_preferences_dialog(
         ui_text(lang, UiText::NotificationColor),
         &info_color_combo,
     ));
-    section_header(
+    let warning_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
+    section_header_toggled(
         &notifications_page,
         ui_text(lang, UiText::NotificationWarning),
+        &warning_check,
+        &notification_group_label(lang, ui_text(lang, UiText::NotificationWarning)),
+        false,
     );
-    let warning_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
-    notifications_page.append(&warning_check);
     let warning_duration_spin = gtk::SpinButton::with_range(1000.0, 30000.0, 500.0);
     notifications_page.append(&labeled_row(
         ui_text(lang, UiText::NotificationDuration),
@@ -854,9 +861,14 @@ pub(crate) fn present_preferences_dialog(
         ui_text(lang, UiText::NotificationColor),
         &warning_color_combo,
     ));
-    section_header(&notifications_page, ui_text(lang, UiText::Error));
     let error_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
-    notifications_page.append(&error_check);
+    section_header_toggled(
+        &notifications_page,
+        ui_text(lang, UiText::Error),
+        &error_check,
+        &notification_group_label(lang, ui_text(lang, UiText::Error)),
+        false,
+    );
     let error_modal_radio =
         gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationErrorModal));
     let error_onscreen_radio =
@@ -903,12 +915,14 @@ pub(crate) fn present_preferences_dialog(
         ui_text(lang, UiText::NotificationAreaMode),
         &area_combo,
     ));
-    section_header(
+    let status_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
+    section_header_toggled(
         &notifications_page,
         ui_text(lang, UiText::NotificationSectionStatus),
+        &status_check,
+        ui_text(lang, UiText::NotificationStatus),
+        false,
     );
-    let status_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationStatus));
-    notifications_page.append(&status_check);
     notifications_page.append(&labeled_row(
         ui_text(lang, UiText::NotificationStatusPosition),
         &status_position_combo,
@@ -1411,9 +1425,34 @@ fn section_header(container: &gtk::Box, title: &str) {
     section_header_spaced(container, title, 20);
 }
 
-/// First group header: no top gap.
-fn section_header_first(container: &gtk::Box, title: &str) {
-    section_header_spaced(container, title, 0);
+/// Section header row with the master enable on the same row (MS
+/// SettingsExpander pattern, mirrors the tao form). The generic
+/// "Enabled" label also carries the level as a tooltip, which GTK
+/// exposes over AT-SPI as the accessible description: screen readers
+/// announce which group the toggle belongs to. (A full accessible-name
+/// override needs gtk4 `v4_10`'s `update_property`; that raises the
+/// minimum system GTK, so it stays a follow-up, not this change.)
+fn section_header_toggled(
+    container: &gtk::Box,
+    title: &str,
+    toggle: &gtk::CheckButton,
+    accessible_label: &str,
+    first: bool,
+) {
+    let label = gtk::Label::new(None);
+    label.set_markup(&format!(
+        "<b><span size=\"larger\">{}</span></b>",
+        gtk::glib::markup_escape_text(title)
+    ));
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    toggle.set_tooltip_text(Some(accessible_label));
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    row.set_margin_top(if first { 0 } else { 20 });
+    row.set_margin_bottom(2);
+    row.append(&label);
+    row.append(toggle);
+    container.append(&row);
 }
 
 fn section_header_spaced(container: &gtk::Box, title: &str, margin_top: i32) {

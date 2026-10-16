@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use nerust_gui_shell::session::commands::SessionCommand;
+use nerust_gui_shell::session::access::FrontendSession;
 use nerust_render_traits::ReservedStrip;
 use tao::event::WindowEvent;
 
@@ -183,15 +183,19 @@ impl HostState {
         }
         self.osd.poll(now);
         let modal = self.osd.take_modal();
+        // Auto-pause first (spec): the game must not advance
+        // behind the modal. Resume after the last ack: the pause
+        // exists only to freeze the game behind the dialog, mirroring
+        // the settings window's resume_after_settings. Guarded by
+        // can_pause: pausing with no loaded core fails, and that
+        // failure is itself an Error notification, which would
+        // re-queue a modal and flood one dialog per tick. Only resume
+        // what we paused: a manually-paused game stays paused.
+        let mut resume_after_modal = false;
         if !modal.is_empty() {
-            // Auto-pause first (spec): the game must not advance
-            // behind the modal. Pause stays on after close; the user
-            // resumes explicitly. Guarded by can_pause: pausing with
-            // no loaded core fails, and that failure is itself an
-            // Error notification, which would re-queue a modal and
-            // flood one dialog per tick.
-            if self.session.can_pause() {
-                let _ = self.session.run_command(SessionCommand::Pause);
+            resume_after_modal = self.session.can_pause() && !self.session.paused();
+            if resume_after_modal {
+                self.pause();
             }
             let detail = modal
                 .iter()
@@ -202,10 +206,14 @@ impl HostState {
         }
         // Sequential display: rfd blocks per dialog, so each batch
         // shows alone and the next follows its ack (never stacked).
+        // Resume once, after the last ack, not between batches.
         while let Some(detail) = self.osd.take_modal_batch() {
             self.dialogs
                 .show_error(self.notification_language(), &detail);
             self.osd.modal_closed();
+        }
+        if resume_after_modal {
+            self.resume();
         }
         if self.osd.take_dirty() {
             self.sync_osd_snapshot();

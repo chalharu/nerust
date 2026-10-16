@@ -257,13 +257,13 @@ impl SettingsAppState {
         // control's scope reads off its header (Apple HIG grouping).
         // Error presentation is an exclusive pair: modal dialog XOR
         // on-screen display, matching the delivery contract.
-        let info = section(
+        let info = section_toggled(
             ui_text(language, UiText::NotificationInfo),
+            checkbox(view.info_enabled)
+                .label(ui_text(language, UiText::NotificationEnabled))
+                .on_toggle(Message::ToggleInfoEnabled)
+                .into(),
             [
-                checkbox(view.info_enabled)
-                    .label(ui_text(language, UiText::NotificationEnabled))
-                    .on_toggle(Message::ToggleInfoEnabled)
-                    .into(),
                 labeled_slider(
                     ui_text(language, UiText::NotificationDuration),
                     format!("{} ms", view.info_duration_ms),
@@ -281,13 +281,13 @@ impl SettingsAppState {
                 ),
             ],
         );
-        let warning = section(
+        let warning = section_toggled(
             ui_text(language, UiText::NotificationWarning),
+            checkbox(view.warning_enabled)
+                .label(ui_text(language, UiText::NotificationEnabled))
+                .on_toggle(Message::ToggleWarningEnabled)
+                .into(),
             [
-                checkbox(view.warning_enabled)
-                    .label(ui_text(language, UiText::NotificationEnabled))
-                    .on_toggle(Message::ToggleWarningEnabled)
-                    .into(),
                 labeled_slider(
                     ui_text(language, UiText::NotificationDuration),
                     format!("{} ms", view.warning_duration_ms),
@@ -305,13 +305,13 @@ impl SettingsAppState {
                 ),
             ],
         );
-        let error = section(
+        let error = section_toggled(
             ui_text(language, UiText::Error),
+            checkbox(view.error_enabled)
+                .label(ui_text(language, UiText::NotificationEnabled))
+                .on_toggle(Message::ToggleErrorEnabled)
+                .into(),
             [
-                checkbox(view.error_enabled)
-                    .label(ui_text(language, UiText::NotificationEnabled))
-                    .on_toggle(Message::ToggleErrorEnabled)
-                    .into(),
                 row![
                     radio(
                         ui_text(language, UiText::NotificationErrorModal).to_string(),
@@ -353,20 +353,18 @@ impl SettingsAppState {
                 ),
             ],
         );
-        let status = section(
+        let status = section_toggled(
             ui_text(language, UiText::NotificationSectionStatus),
-            [
-                checkbox(view.status_enabled)
-                    .label(ui_text(language, UiText::NotificationStatus))
-                    .on_toggle(Message::ToggleStatusEnabled)
-                    .into(),
-                labeled_pick_list(
-                    ui_text(language, UiText::NotificationStatusPosition),
-                    positions.clone(),
-                    pick_selected(&positions, &view.status_position),
-                    Message::SetStatusPosition,
-                ),
-            ],
+            checkbox(view.status_enabled)
+                .label(ui_text(language, UiText::NotificationEnabled))
+                .on_toggle(Message::ToggleStatusEnabled)
+                .into(),
+            [labeled_pick_list(
+                ui_text(language, UiText::NotificationStatusPosition),
+                positions.clone(),
+                pick_selected(&positions, &view.status_position),
+                Message::SetStatusPosition,
+            )],
         );
         column![info, warning, error, display, status]
             .spacing(24)
@@ -507,16 +505,52 @@ pub(super) fn page_radio(
 /// same ratio here (24 vs 8-12). Weight alone failed on this stack:
 /// DejaVu has no Semibold, so Semibold fell back to serif.
 /// Header uses Bold, which DejaVu Sans provides.
-fn section<'a>(title: &str, rows: impl IntoIterator<Item = El<'a>>) -> El<'a> {
-    let header = text(title.to_string()).size(16).font(iced::Font {
-        weight: iced::font::Weight::Bold,
-        ..iced::Font::default()
-    });
+fn section<'a>(title: &'a str, rows: impl IntoIterator<Item = El<'a>>) -> El<'a> {
+    section_inner(header_text(title), None, rows)
+}
+
+/// Section whose master enable sits on the header row (MS
+/// SettingsExpander pattern: title plus primary action on one row).
+/// Screen readers meet title then toggle in order, so the generic
+/// "Enabled" label keeps its level context without visual duplication.
+fn section_toggled<'a>(
+    title: &'a str,
+    toggle: El<'a>,
+    rows: impl IntoIterator<Item = El<'a>>,
+) -> El<'a> {
+    section_inner(header_text(title), Some(toggle), rows)
+}
+
+fn header_text(title: &str) -> El<'static> {
+    text(title.to_string())
+        .size(16)
+        .font(iced::Font {
+            weight: iced::font::Weight::Bold,
+            ..iced::Font::default()
+        })
+        .into()
+}
+
+fn section_inner<'a>(
+    header: El<'a>,
+    toggle: Option<El<'a>>,
+    rows: impl IntoIterator<Item = El<'a>>,
+) -> El<'a> {
+    let header_row: El<'a> = match toggle {
+        Some(toggle) => row![
+            header,
+            iced::widget::Space::new().width(Length::Fill),
+            toggle
+        ]
+        .align_y(Alignment::Center)
+        .into(),
+        None => header,
+    };
     let mut items = column![].spacing(8);
     for row in rows {
         items = items.push(row);
     }
-    column![header, items].spacing(4).into()
+    column![header_row, items].spacing(4).into()
 }
 
 fn labeled_pick_list<'a, T: Clone + PartialEq + Eq + 'static>(
