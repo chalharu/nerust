@@ -222,6 +222,13 @@ open = { version = "=5.4.4" }
 png = { version = "=0.18.1" }
 pollster = { version = "=1.0.1" }
 raw-window-handle = { version = "=0.6.2" }
+# NOTE: do NOT enable rfd `gtk3` here. Its backend serves dialogs
+# from its own thread, which freezes against tao's GTK main loop on
+# Linux (sync show() never returns, no window maps; verified by RPA
+# with both rfd 0.17.1 and 0.17.2, which share the gtk-sys 0.18 line
+# and backend architecture). The default portal backend shells out
+# to zenity instead: no dialog where zenity is absent, but the app
+# stays alive.
 rfd = { version = "=0.17.2" }
 rmp-serde = { version = "=1.3.1" }
 serde = { default-features = false, version = "=1.0.229" }
