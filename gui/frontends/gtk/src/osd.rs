@@ -284,19 +284,28 @@ impl GtkOsd {
             )),
             Some(window),
             gtk::DialogFlags::MODAL,
-            &[("Close", gtk::ResponseType::Close)],
+            &[(
+                nerust_settings_core::i18n::text(
+                    language,
+                    nerust_settings_core::i18n::UiText::Close,
+                ),
+                gtk::ResponseType::Close,
+            )],
         );
         // Toolbar (the Console / DevTools / logcat pattern: filter
         // plus clear live together at the top). 8 between controls.
+        // Every caption goes through the i18n table (same keys as the
+        // tao twin); level options reuse the settings level names.
+        use nerust_settings_core::i18n::{UiText, text as ui_text};
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let level_caption = gtk::Label::new(Some("Level"));
+        let level_caption = gtk::Label::new(Some(ui_text(language, UiText::HistoryLevel)));
         level_caption.set_xalign(0.0);
         let filter = gtk::ComboBoxText::new();
         for (id, label) in [
-            ("all", "All"),
-            ("info", "Info"),
-            ("warning", "Warning"),
-            ("error", "Error"),
+            ("all", ui_text(language, UiText::HistoryFilterAll)),
+            ("info", ui_text(language, UiText::NotificationInfo)),
+            ("warning", ui_text(language, UiText::NotificationWarning)),
+            ("error", ui_text(language, UiText::Error)),
         ] {
             filter.append(Some(id), label);
         }
@@ -305,7 +314,7 @@ impl GtkOsd {
         toolbar.append(&filter);
         // "Clear History" names the target explicitly (cf. Event
         // Viewer "Clear Filter" vs "Clear Log"); count trails right.
-        let clear = gtk::Button::with_label("Clear History");
+        let clear = gtk::Button::with_label(ui_text(language, UiText::HistoryClear));
         toolbar.append(&clear);
         let count = gtk::Label::new(None);
         count.set_hexpand(true);
@@ -353,12 +362,20 @@ impl GtkOsd {
                         )
                     })
                     .collect();
-                count.set_text(&format!("{} items", visible.len()));
+                count.set_text(&nerust_settings_core::i18n::history_count(
+                    language,
+                    visible.len(),
+                ));
                 // Header: descriptive nouns, title case (Apple HIG).
                 let mut row_idx = 0;
-                for (col, header) in ["Datetime", "Level", "Module", "Message"]
-                    .into_iter()
-                    .enumerate()
+                for (col, header) in [
+                    ui_text(language, UiText::HistoryDatetime),
+                    ui_text(language, UiText::HistoryLevel),
+                    ui_text(language, UiText::HistoryModule),
+                    ui_text(language, UiText::HistoryMessage),
+                ]
+                .into_iter()
+                .enumerate()
                 {
                     let label = gtk::Label::new(Some(header));
                     label.set_xalign(0.0);
@@ -375,7 +392,7 @@ impl GtkOsd {
                 );
                 row_idx += 1;
                 if visible.is_empty() {
-                    let empty = gtk::Label::new(Some("No notifications"));
+                    let empty = gtk::Label::new(Some(ui_text(language, UiText::HistoryEmpty)));
                     empty.set_xalign(0.0);
                     grid.attach(&empty, 0, row_idx, 4, 1);
                     return;
@@ -399,7 +416,7 @@ impl GtkOsd {
                     let level = gtk::Label::new(None);
                     level.set_markup(&format!(
                         "<span foreground=\"#{r:02X}{g:02X}{b:02X}\">{}</span>",
-                        nerust_gui_shell::session::osd::level_name(line.level),
+                        nerust_gui_shell::session::osd::level_label(line.level, language),
                     ));
                     level.set_xalign(0.0);
                     let module = gtk::Label::new(None);

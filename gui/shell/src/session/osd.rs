@@ -33,6 +33,23 @@ pub fn level_name(level: NotificationLevel) -> &'static str {
     }
 }
 
+/// Localized level name for display surfaces (history grid, filter
+/// options). The canonical English [`level_name`] stays for logs and
+/// tests; UI text goes through the single i18n table. Note `Error`
+/// maps to `UiText::Error` ("Error"), not `NotificationError`
+/// ("Error notifications"), to match the column width and siblings.
+pub fn level_label(
+    level: NotificationLevel,
+    language: nerust_settings_core::model::language::AppLanguage,
+) -> &'static str {
+    use nerust_settings_core::i18n::{UiText, text as ui_text};
+    match level {
+        NotificationLevel::Info => ui_text(language, UiText::NotificationInfo),
+        NotificationLevel::Warning => ui_text(language, UiText::NotificationWarning),
+        NotificationLevel::Error => ui_text(language, UiText::Error),
+    }
+}
+
 /// Render contract handed to frontends: rows plus status placement.
 #[derive(Debug, Clone, Default)]
 pub struct OsdSnapshot {

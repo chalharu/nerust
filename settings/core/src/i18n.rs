@@ -134,6 +134,13 @@ pub enum UiText {
     NotificationErrorOnScreen,
     NotificationSectionDisplay,
     NotificationSectionStatus,
+    HistoryFilterAll,
+    HistoryLevel,
+    HistoryClear,
+    HistoryDatetime,
+    HistoryModule,
+    HistoryMessage,
+    HistoryEmpty,
     ColorWhite,
     ColorYellow,
     ColorRed,
@@ -320,6 +327,13 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::NotificationErrorOnScreen => ("On-screen display", "画面内表示"),
         UiText::NotificationSectionDisplay => ("Display", "表示"),
         UiText::NotificationSectionStatus => ("Status indicator", "状態表示"),
+        UiText::HistoryFilterAll => ("All", "すべて"),
+        UiText::HistoryLevel => ("Level", "レベル"),
+        UiText::HistoryClear => ("Clear History", "履歴を消去"),
+        UiText::HistoryDatetime => ("Datetime", "日時"),
+        UiText::HistoryModule => ("Module", "モジュール"),
+        UiText::HistoryMessage => ("Message", "メッセージ"),
+        UiText::HistoryEmpty => ("No notifications", "通知はありません"),
         UiText::ColorWhite => ("White", "白"),
         UiText::ColorYellow => ("Yellow", "黄"),
         UiText::ColorRed => ("Red", "赤"),
@@ -358,6 +372,12 @@ pub fn parse_failed(language: AppLanguage, input: &str) -> String {
         format!("parse failed: {input}"),
         format!("解析失敗: {input}")
     )
+}
+
+/// History item count (`42 items` / `42件`). The number leads in
+/// both languages (Console / Event Viewer pattern).
+pub fn history_count(language: AppLanguage, count: usize) -> String {
+    localized!(language, format!("{count} items"), format!("{count}件"))
 }
 
 /// Screen-reader label for a level enable toggle. The visible
@@ -565,6 +585,17 @@ mod tests {
             NotificationStatusPosition,
             NotificationAreaMode,
             NotificationErrorModal,
+            NotificationEnabled,
+            NotificationErrorOnScreen,
+            NotificationSectionDisplay,
+            NotificationSectionStatus,
+            HistoryFilterAll,
+            HistoryLevel,
+            HistoryClear,
+            HistoryDatetime,
+            HistoryModule,
+            HistoryMessage,
+            HistoryEmpty,
             ColorWhite,
             ColorYellow,
             ColorRed,
@@ -581,6 +612,13 @@ mod tests {
             assert!(!text(ja(), key).is_empty());
             assert_ne!(text(en(), key), text(ja(), key));
         }
+    }
+
+    #[test]
+    fn history_count_leads_with_the_number() {
+        assert_eq!(history_count(en(), 6), "6 items");
+        assert_eq!(history_count(ja(), 6), "6件");
+        assert_eq!(history_count(en(), 0), "0 items");
     }
 
     #[test]

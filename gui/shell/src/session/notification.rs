@@ -42,6 +42,16 @@ pub enum NotificationKind {
     CommandFailed(&'static str),
 }
 
+/// Pick the language side. Splitting this out (instead of inline
+/// `if ja` per arm) keeps `text()` under the complexity budget.
+fn bilingual(ja: bool, en: &str, ja_text: &str) -> String {
+    bilingual_str(ja, en, ja_text).to_string()
+}
+
+fn bilingual_str<'a>(ja: bool, en: &'a str, ja_text: &'a str) -> &'a str {
+    if ja { ja_text } else { en }
+}
+
 impl NotificationKind {
     pub fn level(&self) -> NotificationLevel {
         match self {
@@ -70,26 +80,11 @@ impl NotificationKind {
     pub fn text(&self, language: AppLanguage) -> String {
         let ja = matches!(language, AppLanguage::Japanese);
         match self {
-            NotificationKind::Paused => {
-                if ja {
-                    "一時停止しました".to_string()
-                } else {
-                    "Paused".to_string()
-                }
-            }
-            NotificationKind::Resumed => {
-                if ja {
-                    "再開しました".to_string()
-                } else {
-                    "Resumed".to_string()
-                }
-            }
-            NotificationKind::Reset => {
-                if ja {
-                    "リセットしました".to_string()
-                } else {
-                    "Reset".to_string()
-                }
+            NotificationKind::Paused => bilingual(ja, "Paused", "一時停止しました"),
+            NotificationKind::Resumed => bilingual(ja, "Resumed", "再開しました"),
+            NotificationKind::Reset => bilingual(ja, "Reset", "リセットしました"),
+            NotificationKind::CreatedSlot => {
+                bilingual(ja, "Slot created", "スロットを作成しました")
             }
             NotificationKind::SavedSlot(id) => {
                 Self::slot_text(Some(*id), language, "Saved to", "保存しました")
@@ -100,66 +95,11 @@ impl NotificationKind {
             NotificationKind::DeletedSlot(id) => {
                 Self::slot_text(Some(*id), language, "Deleted", "削除しました")
             }
-            NotificationKind::CreatedSlot => {
-                if ja {
-                    "スロットを作成しました".to_string()
-                } else {
-                    "Slot created".to_string()
-                }
-            }
             NotificationKind::SelectedSlot(id) => {
                 Self::slot_text(Some(*id), language, "Selected", "選択しました")
             }
             NotificationKind::SlotFailed { slot, reason } => {
-                let what = match reason {
-                    SlotOpFailure::Empty => {
-                        if ja {
-                            "空きスロットです"
-                        } else {
-                            "slot is empty"
-                        }
-                    }
-                    SlotOpFailure::Missing => {
-                        if ja {
-                            "データがありません"
-                        } else {
-                            "no data"
-                        }
-                    }
-                    SlotOpFailure::Storage => {
-                        if ja {
-                            "保存に失敗しました"
-                        } else {
-                            "storage failure"
-                        }
-                    }
-                    SlotOpFailure::Corrupt => {
-                        if ja {
-                            "データが壊れています"
-                        } else {
-                            "data is corrupt"
-                        }
-                    }
-                    SlotOpFailure::Incompatible => {
-                        if ja {
-                            "互換性がありません"
-                        } else {
-                            "incompatible data"
-                        }
-                    }
-                    SlotOpFailure::Unavailable => {
-                        if ja {
-                            "利用できません"
-                        } else {
-                            "unavailable"
-                        }
-                    }
-                };
-                match (slot, ja) {
-                    (Some(id), true) => format!("スロット{id}: {what}"),
-                    (Some(id), false) => format!("Slot {id}: {what}"),
-                    (None, _) => what.to_string(),
-                }
+                Self::slot_failed_text(*slot, *reason, language)
             }
             NotificationKind::CommandFailed(command) => {
                 if ja {
@@ -168,6 +108,29 @@ impl NotificationKind {
                     format!("{command} failed")
                 }
             }
+        }
+    }
+
+    fn slot_failed_text(slot: Option<u64>, reason: SlotOpFailure, language: AppLanguage) -> String {
+        let ja = matches!(language, AppLanguage::Japanese);
+        let what = Self::failure_reason_text(reason, ja);
+        match (slot, ja) {
+            (Some(id), true) => format!("スロット{id}: {what}"),
+            (Some(id), false) => format!("Slot {id}: {what}"),
+            (None, _) => what.to_string(),
+        }
+    }
+
+    fn failure_reason_text(reason: SlotOpFailure, ja: bool) -> &'static str {
+        match reason {
+            SlotOpFailure::Empty => bilingual_str(ja, "slot is empty", "空きスロットです"),
+            SlotOpFailure::Missing => bilingual_str(ja, "no data", "データがありません"),
+            SlotOpFailure::Storage => bilingual_str(ja, "storage failure", "保存に失敗しました"),
+            SlotOpFailure::Corrupt => bilingual_str(ja, "data is corrupt", "データが壊れています"),
+            SlotOpFailure::Incompatible => {
+                bilingual_str(ja, "incompatible data", "互換性がありません")
+            }
+            SlotOpFailure::Unavailable => bilingual_str(ja, "unavailable", "利用できません"),
         }
     }
 }
