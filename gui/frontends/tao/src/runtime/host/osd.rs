@@ -186,8 +186,13 @@ impl HostState {
         if !modal.is_empty() {
             // Auto-pause first (spec): the game must not advance
             // behind the modal. Pause stays on after close; the user
-            // resumes explicitly. A no-core Pause no-ops quietly.
-            let _ = self.session.run_command(SessionCommand::Pause);
+            // resumes explicitly. Guarded by can_pause: pausing with
+            // no loaded core fails, and that failure is itself an
+            // Error notification, which would re-queue a modal and
+            // flood one dialog per tick.
+            if self.session.can_pause() {
+                let _ = self.session.run_command(SessionCommand::Pause);
+            }
             let detail = modal
                 .iter()
                 .map(|line| format!("• {line}"))
