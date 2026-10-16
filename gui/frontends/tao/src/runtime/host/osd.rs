@@ -20,8 +20,8 @@ use nerust_gui_shell::session::osd::{OsdManager, OsdSnapshot, strip_pixels, stri
 /// bit rfd's gtk3 backend). `resume_after` mirrors the settings
 /// window: only what we paused gets resumed, after the last ack.
 pub(crate) struct ModalFlight {
-    done: std::sync::mpsc::Receiver<()>,
-    resume_after: bool,
+    pub(super) done: std::sync::mpsc::Receiver<()>,
+    pub(super) resume_after: bool,
 }
 
 impl HostState {
@@ -221,6 +221,45 @@ impl HostState {
         }
     }
 
+    /// Reap a finished dialog, chain the next batch, and resume
+    /// only once the queue drains (never between batches). A dead
+    /// thread (disconnected sender) reaps as a failed ack: the queue
+    /// must never wedge, or every later error would pile up unshown.
+    fn reap_modal(&mut self) {
+        let finished = self
+            .modal_flight
+            .as_ref()
+            .and_then(|flight| match flight.done.try_recv() {
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                done => Some((flight.resume_after, done.is_ok())),
+            });
+        if let Some((resume_after, normal)) = finished {
+            if !normal {
+                log::error!("error dialog thread died before ack");
+            }
+            self.modal_flight = None;
+            self.osd.modal_closed();
+            if self.osd.modal_pending() == 0 {
+                self.resume_after_modal = false;
+                if resume_after {
+                    self.resume();
+                }
+            }
+        }
+    }
+
+    /// Present the next batch only when no dialog is showing.
+    /// The blocking `show_error` runs on a short-lived thread
+    /// (see `ModalFlight`): presenting from the loop would freeze
+    /// every window and starve backends needing loop cooperation.
+    fn present_modal(&mut self) {
+        if self.modal_flight.is_none()
+            && let Some(detail) = self.osd.take_modal_batch()
+        {
+            self.spawn_modal(detail);
+        }
+    }
+
     /// Drain shell notifications into display state, show aggregated
     /// error modals (auto-pausing first), and refresh the overlay.
     /// Cheap when idle (dirty-gated sync); safe to call every loop
@@ -253,30 +292,8 @@ impl HostState {
                 .join("\n");
             self.osd.queue_modal(detail);
         }
-        // Reap a finished dialog, chain the next batch, and resume
-        // only once the queue drains (never between batches).
-        if let Some(flight) = self.modal_flight.as_ref()
-            && flight.done.try_recv().is_ok()
-        {
-            let resume_after = flight.resume_after;
-            self.modal_flight = None;
-            self.osd.modal_closed();
-            if self.osd.modal_pending() == 0 {
-                self.resume_after_modal = false;
-                if resume_after {
-                    self.resume();
-                }
-            }
-        }
-        // Present the next batch only when no dialog is showing.
-        // The blocking `show_error` runs on a short-lived thread
-        // (see `ModalFlight`): presenting from the loop would freeze
-        // every window and starve backends needing loop cooperation.
-        if self.modal_flight.is_none()
-            && let Some(detail) = self.osd.take_modal_batch()
-        {
-            self.spawn_modal(detail);
-        }
+        self.reap_modal();
+        self.present_modal();
         if self.osd.take_dirty() {
             self.sync_osd_snapshot();
             // Paint even idle: no main redraw is scheduled while
