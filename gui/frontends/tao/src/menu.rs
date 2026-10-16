@@ -391,6 +391,8 @@ pub(crate) mod imp {
                 shortcuts,
                 ShortcutAction::OpenDebugger,
             ));
+            self.history
+                .set_text(text(language, UiText::NotificationHistory));
             self.pause.set_text(text(language, UiText::Pause));
             self.resume.set_text(text(language, UiText::Resume));
             self.reset.set_text(text(language, UiText::Reset));

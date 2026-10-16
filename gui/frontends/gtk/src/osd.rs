@@ -103,6 +103,7 @@ impl GtkOsd {
         let metrics = state.emulation_status();
         let settings = snapshot.local.notifications.clone();
         if !drained.is_empty() {
+            log::debug!("gtk osd: showing {} notification(s)", drained.len());
             self.manager.push_all(drained, &settings, language, now);
         }
         let modal = self.manager.take_modal();
@@ -273,7 +274,7 @@ impl GtkOsd {
                 nerust_settings_core::i18n::UiText::NotificationHistory,
             )),
             Some(window),
-            gtk::DialogFlags::MODAL,
+            gtk::DialogFlags::DESTROY_WITH_PARENT,
             &[(
                 nerust_settings_core::i18n::text(
                     language,
@@ -443,7 +444,9 @@ impl GtkOsd {
                 refresh();
             }
         });
-        dialog.connect_response(|dialog, _| dialog.close());
+        // Modeless like the tao twin: a modal would park all keys
+        // in the dialog. Destroy (not hide) so focus returns.
+        dialog.connect_response(|dialog, _| dialog.destroy());
         dialog.present();
     }
 }
