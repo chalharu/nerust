@@ -6,7 +6,10 @@ use gtk::{
     prelude::*,
 };
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
+use nerust_gui_shell::session::{
+    KeyboardShortcut, SessionError,
+    access::{PauseControl, SessionControl, SlotControl},
+};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::renderer::GpuFactory;
 use nerust_settings_core::model::local::ScalingMode;
@@ -89,8 +92,7 @@ fn key_event_pressed(event: KeyEventState) -> bool {
 
 fn load_active_slot(state: &RefCell<State>) -> bool {
     let active_slot_id = state.borrow().active_slot_id();
-    active_slot_id
-        .is_some_and(|slot_id| FrontendSession::load_slot(&mut *state.borrow_mut(), slot_id))
+    active_slot_id.is_some_and(|slot_id| SlotControl::load_slot(&mut *state.borrow_mut(), slot_id))
 }
 
 impl WindowExtend for Window {

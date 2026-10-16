@@ -26,7 +26,7 @@ use nerust_gui_shell::{
     context::FrontendContext,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
-        access::{FrontendSession, SettingsResult},
+        access::{PauseControl, SessionControl, SettingsResult, SlotControl},
         commands::SessionCommand,
     },
 };
@@ -152,7 +152,7 @@ impl State {
     }
 }
 
-impl FrontendSession for State {
+impl PauseControl for State {
     fn pause(&mut self) {
         let _ = self.session.run_command(SessionCommand::Pause);
     }
@@ -162,6 +162,9 @@ impl FrontendSession for State {
     fn toggle_pause(&mut self) {
         let _ = self.session.run_command(SessionCommand::TogglePause);
     }
+}
+
+impl SlotControl for State {
     fn save_active_slot(&mut self) -> bool {
         self.session
             .run_command(SessionCommand::SaveActiveSlotOrNew)
@@ -205,13 +208,13 @@ impl FrontendSession for State {
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
     }
+}
+
+impl SessionControl for State {
     fn unload(&mut self) {
         if let Err(error) = self.session.unload() {
             log::warn!("ROM unload failed: {error}");
         }
-    }
-    fn run_command(&mut self, command: SessionCommand) {
-        let _ = self.session.run_command(command);
     }
     fn apply_settings(
         &mut self,

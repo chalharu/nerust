@@ -150,6 +150,11 @@ pub struct NotificationCenter {
     pending: VecDeque<UiNotification>,
     history: VecDeque<UiNotification>,
     next_seq: u64,
+    /// History version: advanced on every push and clear so hosts
+    /// can skip grid rebuilds while nothing changed. The history
+    /// sync runs on every loop pass when the viewer is open; without
+    /// this gate each pass reformats all rows for nothing.
+    history_seq: u64,
 }
 
 impl NotificationCenter {
@@ -164,6 +169,7 @@ impl NotificationCenter {
         let level = kind.level();
         let seq = self.next_seq;
         self.next_seq += 1;
+        self.history_seq += 1;
         let event = UiNotification {
             level,
             kind: kind.clone(),
@@ -209,6 +215,12 @@ impl NotificationCenter {
 
     pub fn clear_history(&mut self) {
         self.history.clear();
+        self.history_seq += 1;
+    }
+
+    /// Current history version (see `history_seq`).
+    pub fn history_seq(&self) -> u64 {
+        self.history_seq
     }
 
     pub fn pending_len(&self) -> usize {
@@ -327,5 +339,18 @@ mod tests {
         let kind = NotificationKind::SavedSlot(3);
         assert!(kind.text(AppLanguage::English).contains('3'));
         assert!(kind.text(AppLanguage::Japanese).contains("スロット3"));
+    }
+
+    #[test]
+    fn history_seq_advances_on_push_and_clear_only() {
+        let mut center = NotificationCenter::new();
+        assert_eq!(center.history_seq(), 0);
+        center.push(NotificationKind::Paused);
+        center.push(NotificationKind::Paused);
+        assert_eq!(center.history_seq(), 2);
+        let _ = center.drain();
+        assert_eq!(center.history_seq(), 2);
+        center.clear_history();
+        assert_eq!(center.history_seq(), 3);
     }
 }

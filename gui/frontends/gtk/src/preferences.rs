@@ -13,7 +13,7 @@ use gtk::prelude::{
     EditableExt as _, GtkWindowExt as _, WidgetExt as _,
 };
 use nerust_core_traits::factory::CoreFactory;
-use nerust_gui_shell::session::access::FrontendSession as _;
+use nerust_gui_shell::session::access::SessionControl;
 use nerust_gui_viewmodel::settings::{
     ReadOnlyObservableProperty, SettingsViewModel, StoragePathError, StoragePathValidator,
     Subscription,
