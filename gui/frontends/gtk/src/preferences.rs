@@ -15,7 +15,8 @@ use gtk::prelude::{
 use nerust_core_traits::factory::CoreFactory;
 use nerust_gui_shell::session::access::FrontendSession as _;
 use nerust_gui_viewmodel::settings::{
-    SettingsViewModel, StoragePathError, StoragePathValidator, Subscription,
+    ReadOnlyObservableProperty, SettingsViewModel, StoragePathError, StoragePathValidator,
+    Subscription,
     dto::{
         AudioView, BindingRowView, BindingValueView, ControllerSlotView, GeneralView, InputTabView,
         NotificationView, SystemTabView, VideoView,
@@ -150,35 +151,13 @@ impl PreferencesBinding {
         let nv = vm.notifications.view.get();
 
         let binding: Rc<Self> = Rc::new_cyclic(|weak: &std::rc::Weak<Self>| {
-            let mut subs = Vec::new();
-            subs.push(vm.general.view.observe({
-                let weak = weak.clone();
-                move |v| {
-                    let Some(b) = weak.upgrade() else { return };
-                    b.with_refreshing(|| b.refresh_general(v));
-                }
-            }));
-            subs.push(vm.video.view.observe({
-                let weak = weak.clone();
-                move |v| {
-                    let Some(b) = weak.upgrade() else { return };
-                    b.with_refreshing(|| b.refresh_video(v));
-                }
-            }));
-            subs.push(vm.audio.view.observe({
-                let weak = weak.clone();
-                move |v| {
-                    let Some(b) = weak.upgrade() else { return };
-                    b.with_refreshing(|| b.refresh_audio(v));
-                }
-            }));
-            subs.push(vm.notifications.view.observe({
-                let weak = weak.clone();
-                move |v| {
-                    let Some(b) = weak.upgrade() else { return };
-                    b.with_refreshing(|| b.refresh_notifications(v));
-                }
-            }));
+            // One observer per view (vec! literal, not a push chain).
+            let mut subs = vec![
+                Self::observe_view(weak, &vm.general.view, Self::refresh_general),
+                Self::observe_view(weak, &vm.video.view, Self::refresh_video),
+                Self::observe_view(weak, &vm.audio.view, Self::refresh_audio),
+                Self::observe_view(weak, &vm.notifications.view, Self::refresh_notifications),
+            ];
             for (index, input_vm) in vm.inputs().iter().enumerate() {
                 subs.push(input_vm.view.observe({
                     let weak = weak.clone();
@@ -243,6 +222,25 @@ impl PreferencesBinding {
         binding.refresh_validation();
 
         binding
+    }
+
+    /// Observe one settings view, refreshing while guarded. Shared by
+    /// the four fixed views so the subscription list stays a literal.
+    fn observe_view<T>(
+        weak: &std::rc::Weak<Self>,
+        view: &ReadOnlyObservableProperty<T>,
+        refresh: fn(&Self, &T),
+    ) -> Subscription
+    where
+        T: Clone + PartialEq + 'static,
+    {
+        let weak = weak.clone();
+        view.observe(move |v| {
+            let Some(binding) = weak.upgrade() else {
+                return;
+            };
+            binding.with_refreshing(|| refresh(&binding, v));
+        })
     }
 
     fn with_refreshing(&self, f: impl FnOnce()) {

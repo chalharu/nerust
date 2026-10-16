@@ -145,6 +145,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn notification_all_edits_round_trip() {
+        let vm = test_vm();
+        let notifications = &vm.notifications;
+        notifications.set_info_enabled(false).unwrap();
+        notifications.set_info_duration_ms(1_000).unwrap();
+        notifications
+            .set_info_color(NotificationColor::Red)
+            .unwrap();
+        notifications.set_warning_enabled(false).unwrap();
+        notifications.set_warning_duration_ms(1_000).unwrap();
+        notifications
+            .set_warning_color(NotificationColor::Green)
+            .unwrap();
+        notifications.set_error_enabled(false).unwrap();
+        notifications.set_error_modal(false).unwrap();
+        notifications
+            .set_error_color(NotificationColor::Cyan)
+            .unwrap();
+        notifications.set_status_enabled(true).unwrap();
+        notifications
+            .set_status_position(NotificationPosition::BottomLeft)
+            .unwrap();
+        notifications
+            .set_position(NotificationPosition::TopLeft)
+            .unwrap();
+        notifications
+            .set_area_mode(NotificationAreaMode::Strip)
+            .unwrap();
+        let view = notifications.view.get();
+        assert!(!view.info_enabled);
+        assert_eq!(view.info_duration_ms, 1_000);
+        assert_eq!(view.info_color, NotificationColor::Red);
+        assert!(!view.warning_enabled);
+        assert_eq!(view.warning_duration_ms, 1_000);
+        assert_eq!(view.warning_color, NotificationColor::Green);
+        assert!(!view.error_enabled);
+        assert!(!view.error_modal);
+        assert_eq!(view.error_color, NotificationColor::Cyan);
+        assert!(view.status_enabled);
+        assert_eq!(view.status_position, NotificationPosition::BottomLeft);
+        assert_eq!(view.position, NotificationPosition::TopLeft);
+        assert_eq!(view.area_mode, NotificationAreaMode::Strip);
+    }
+
+    #[test]
     fn notification_edits_round_trip() {
         let vm = test_vm();
         vm.notifications.set_warning_duration_ms(3_000).unwrap();
