@@ -339,6 +339,21 @@ pub(crate) enum HistoryFilter {
     Error,
 }
 
+/// Short module for the grid: last two segments keep the
+/// informative tail within the fixed column (full path stays
+/// in the data and in GTK's middle-ellipsis cell).
+fn short_module(module: &str) -> &str {
+    let mut parts = module.rsplit("::");
+    let (last, prev) = (parts.next(), parts.next());
+    match (prev, last) {
+        (Some(prev), Some(last)) => {
+            let cut = module.len() - prev.len() - last.len() - 2;
+            &module[cut..]
+        }
+        _ => module,
+    }
+}
+
 impl std::fmt::Display for HistoryFilter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.label())
@@ -434,7 +449,7 @@ impl Program for HistoryProgram {
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::Length;
-        use iced::widget::{button, column, pick_list, row, rule, scrollable, text};
+        use iced::widget::{button, column, container, pick_list, row, rule, scrollable, text};
         use nerust_gui_shell::session::osd::level_name;
         let visible: Vec<&HistoryLine> = state
             .lines
@@ -485,21 +500,37 @@ impl Program for HistoryProgram {
             if line.count > 1 {
                 message = format!("{message} ×{}", line.count);
             }
+            // Cells clip at their column: overlong values truncate
+            // instead of bleeding into the neighbour (HIG).
             items = items.push(
                 row![
-                    text(line.datetime.clone())
-                        .size(12)
-                        .font(iced::Font::MONOSPACE)
-                        .width(Length::Fixed(150.0)),
-                    text(level_name(line.level))
-                        .size(12)
-                        .color(level_color)
-                        .width(Length::Fixed(70.0)),
-                    text(line.module)
-                        .size(11)
-                        .font(iced::Font::MONOSPACE)
-                        .width(Length::Fixed(220.0)),
-                    text(message).size(13).width(Length::Fill),
+                    container(
+                        text(line.datetime.clone())
+                            .size(12)
+                            .font(iced::Font::MONOSPACE)
+                            .width(Length::Fill)
+                    )
+                    .clip(true)
+                    .width(Length::Fixed(150.0)),
+                    container(
+                        text(level_name(line.level))
+                            .size(12)
+                            .color(level_color)
+                            .width(Length::Fill)
+                    )
+                    .clip(true)
+                    .width(Length::Fixed(70.0)),
+                    container(
+                        text(short_module(line.module))
+                            .size(11)
+                            .font(iced::Font::MONOSPACE)
+                            .width(Length::Fill)
+                    )
+                    .clip(true)
+                    .width(Length::Fixed(220.0)),
+                    container(text(message).size(13).width(Length::Fill))
+                        .clip(true)
+                        .width(Length::Fill),
                 ]
                 .spacing(8),
             );
