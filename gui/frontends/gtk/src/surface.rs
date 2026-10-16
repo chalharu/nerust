@@ -12,7 +12,7 @@ pub(crate) struct SurfaceCore {
     window: gtk::ApplicationWindow,
     renderer: Rc<RefCell<GtkRenderer>>,
     state: Rc<RefCell<State>>,
-    osd: RefCell<super::osd::GtkOsd>,
+    pub(crate) osd: RefCell<super::osd::GtkOsd>,
     last_size: Cell<SurfaceSize>,
 }
 
@@ -97,7 +97,10 @@ impl SurfaceExtend for Surface {
                 s.renderer.borrow_mut().render(fb, physical_size);
             }
 
-            s.osd.borrow_mut().poll(&mut state, &s.renderer, &s.window);
+            let surface = self.clone();
+            s.osd
+                .borrow_mut()
+                .poll(&surface, &mut state, &s.renderer, &s.window);
         }
 
         true
