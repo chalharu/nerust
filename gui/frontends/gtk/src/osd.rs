@@ -269,7 +269,11 @@ impl GtkOsd {
             gtk::DialogFlags::MODAL,
             &[("Close", gtk::ResponseType::Close)],
         );
+        // Toolbar: level filter only (the Console / Event Viewer /
+        // DevTools / logcat pattern). 8 between controls.
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let level_caption = gtk::Label::new(Some("Level"));
+        level_caption.set_xalign(0.0);
         let filter = gtk::ComboBoxText::new();
         for (id, label) in [
             ("all", "All"),
@@ -280,22 +284,36 @@ impl GtkOsd {
             filter.append(Some(id), label);
         }
         filter.set_active_id(Some("all"));
-        let clear = gtk::Button::with_label("Clear");
+        toolbar.append(&level_caption);
         toolbar.append(&filter);
-        toolbar.append(&clear);
-        // Item count in the toolbar (Fluent toolbar pattern).
-        let count = gtk::Label::new(None);
-        count.set_xalign(0.0);
-        toolbar.append(&count);
         let scrolled = gtk::ScrolledWindow::new();
         scrolled.set_min_content_height(300);
         scrolled.set_min_content_width(560);
+        scrolled.set_vexpand(true);
         let grid = gtk::Grid::new();
         grid.set_column_spacing(12);
         grid.set_row_spacing(2);
         scrolled.set_child(Some(&grid));
-        dialog.content_area().append(&toolbar);
-        dialog.content_area().append(&scrolled);
+        // Footer: item count leading, Clear History trailing (dialog
+        // action placement). Explicit name so filter-clear and
+        // history-clear are never confused.
+        let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let count = gtk::Label::new(None);
+        count.set_xalign(0.0);
+        count.set_hexpand(true);
+        let clear = gtk::Button::with_label("Clear History");
+        footer.append(&count);
+        footer.append(&clear);
+        // 16 content margin, 12 between groups.
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        body.set_margin_start(16);
+        body.set_margin_end(16);
+        body.set_margin_top(16);
+        body.set_margin_bottom(16);
+        body.append(&toolbar);
+        body.append(&scrolled);
+        body.append(&footer);
+        dialog.content_area().append(&body);
         let refresh = Rc::new({
             let state = Rc::clone(state);
             let grid = grid.clone();
