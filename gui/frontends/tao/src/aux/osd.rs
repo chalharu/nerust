@@ -456,9 +456,13 @@ impl Program for HistoryProgram {
             .iter()
             .filter(|line| state.filter.matches(line.level))
             .collect();
-        // Toolbar above the table: level filter plus Clear, with an
-        // item count (Fluent toolbar pattern).
+        // Toolbar above the table: level filter only (the Console /
+        // Event Viewer / DevTools / logcat pattern). History clearing
+        // lives in the footer as an explicit "Clear History" action so
+        // the two are never confused (cf. Event Viewer "Clear Filter"
+        // vs "Clear Log").
         let toolbar = row![
+            text("Level").size(12),
             pick_list(
                 [
                     HistoryFilter::All,
@@ -470,8 +474,15 @@ impl Program for HistoryProgram {
                 HistoryMessage::SetFilter,
             )
             .placeholder("Level"),
-            button(text("Clear").size(12)).on_press(HistoryMessage::Clear),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+        // Footer: item count leading, Clear History trailing (dialog
+        // action placement, Apple HIG / Fluent dialog footer).
+        let footer = row![
             text(format!("{} items", visible.len())).size(12),
+            iced::widget::Space::new().width(Length::Fill),
+            button(text("Clear History").size(12)).on_press(HistoryMessage::Clear),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center);
@@ -484,7 +495,7 @@ impl Program for HistoryProgram {
                 text("Module").size(12).width(Length::Fixed(220.0)),
                 text("Message").size(12).width(Length::Fill),
             ]
-            .spacing(8),
+            .spacing(12),
         );
         items = items.push(rule::horizontal(1));
         if visible.is_empty() {
@@ -532,10 +543,14 @@ impl Program for HistoryProgram {
                         .clip(true)
                         .width(Length::Fill),
                 ]
-                .spacing(8),
+                .spacing(12),
             );
         }
-        column![toolbar, scrollable(items)].spacing(8).into()
+        // 16 content margin, 12 between groups, 8 between controls.
+        column![column![toolbar, scrollable(items)].spacing(12), footer,]
+            .spacing(12)
+            .padding(16)
+            .into()
     }
 }
 
