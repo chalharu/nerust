@@ -121,6 +121,12 @@ impl SettingsWindowHandle {
     }
 
     pub(crate) fn render(&mut self) {
+        // Self-healing viewport (same degenerate-size race as the OSD
+        // overlay): a fresh window can report 0x0, freezing an empty
+        // layout until a real resize arrives. Re-querying here heals
+        // it on the next frame after open.
+        let live = self.shell.window.inner_size();
+        self.shell.resize(live.width, live.height);
         self.shell.render("settings");
     }
 
