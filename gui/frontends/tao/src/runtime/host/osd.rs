@@ -122,7 +122,7 @@ impl HostState {
         let language = self.notification_language();
         let lines = self.session.notification_history_lines(language);
         if let Some(handle) = self.history_window.as_mut() {
-            handle.sync(lines);
+            handle.sync(lines, language);
         }
     }
 
