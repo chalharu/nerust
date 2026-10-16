@@ -182,6 +182,11 @@ impl ShellRenderer {
     }
 
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
+        // Zero-size configures poison the next present (tiny-skia
+        // pixel-map mismatch): skip until a real size arrives.
+        if width == 0 || height == 0 {
+            return;
+        }
         self.compositor
             .configure_surface(&mut self.surface, width, height);
     }
@@ -536,6 +541,11 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
     log_tag: &'static str,
     background_override: Option<iced::Color>,
 ) {
+    // Nothing to draw into yet (minimize/dock transient): presenting
+    // a zero-size surface panics in the pixel-map creation.
+    if viewport_physical.0 == 0 || viewport_physical.1 == 0 {
+        return;
+    }
     // Light theme for OS light-theme nativeness.
     let theme = iced::Theme::Light;
     let style = <iced::Theme as theme::Base>::base(&theme);

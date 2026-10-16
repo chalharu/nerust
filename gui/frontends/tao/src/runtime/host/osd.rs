@@ -29,8 +29,8 @@ impl HostState {
         self.session.settings_snapshot().shared.general.language
     }
 
-    /// Main client rect in physical pixels: outer frame minus
-    /// decorations (inner_position() goes stale on some X11 WMs).
+    /// Main client rect in logical points: outer frame minus decorations.
+    /// Positions arrive in physical pixels, so scale them like sizes.
     fn main_client_rect(&self) -> Option<((i32, i32), (f64, f64))> {
         let window = self.window.as_ref()?;
         let size = window.inner_size();
@@ -42,8 +42,12 @@ impl HostState {
             .height
             .saturating_sub(size.height)
             .saturating_sub(side);
+        let to_logical = |physical: i32| (physical as f64 / scale) as i32;
         Some((
-            (outer.x + side as i32, outer.y + top as i32),
+            (
+                to_logical(outer.x + side as i32),
+                to_logical(outer.y + top as i32),
+            ),
             (size.width as f64 / scale, size.height as f64 / scale),
         ))
     }

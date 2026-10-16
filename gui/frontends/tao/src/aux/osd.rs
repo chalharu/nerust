@@ -238,6 +238,13 @@ impl OsdWindowHandle {
         position: (i32, i32),
         size: (f64, f64),
     ) -> Option<Self> {
+        // Softbuffer's macOS backend drops per-pixel alpha: the overlay
+        // would composite as opaque black over the game. Degrade to no
+        // overlay there; history and logs still record everything.
+        if cfg!(target_os = "macos") {
+            log::warn!("OSD overlay unsupported on macOS; history only");
+            return None;
+        }
         use tao::window::WindowBuilder;
         let window = WindowBuilder::new()
             .with_title("nerust OSD")
