@@ -360,6 +360,20 @@ pub fn parse_failed(language: AppLanguage, input: &str) -> String {
     )
 }
 
+/// Screen-reader label for a level enable toggle. The visible
+/// "Enabled" carries no level, so assistive tech gets the full group
+/// name ("Info notifications" / "情報通知"). Pass the short level
+/// name (`NotificationInfo` / `NotificationWarning` / `Error` text);
+/// Error and Status read full elsewhere via `NotificationError` /
+/// `NotificationStatus`, which this matches exactly.
+pub fn notification_group_label(language: AppLanguage, level: &str) -> String {
+    localized!(
+        language,
+        format!("{level} notifications"),
+        format!("{level}通知")
+    )
+}
+
 /// Selected dump row (`was ??` when the old byte is unreadable).
 /// Addresses use the cross-system `0x` canon (never the NES `$`
 /// sigil): the same debugger serves NES, GBC, and GBA.
@@ -567,6 +581,26 @@ mod tests {
             assert!(!text(ja(), key).is_empty());
             assert_ne!(text(en(), key), text(ja(), key));
         }
+    }
+
+    #[test]
+    fn notification_group_label_names_the_level() {
+        assert_eq!(notification_group_label(en(), "Info"), "Info notifications");
+        assert_eq!(notification_group_label(ja(), "情報"), "情報通知");
+        assert_eq!(
+            notification_group_label(en(), "Warning"),
+            "Warning notifications"
+        );
+        assert_eq!(notification_group_label(ja(), "警告"), "警告通知");
+        // Matches the existing full-name keys exactly.
+        assert_eq!(
+            notification_group_label(en(), text(en(), UiText::Error)),
+            text(en(), UiText::NotificationError)
+        );
+        assert_eq!(
+            notification_group_label(ja(), text(ja(), UiText::Error)),
+            text(ja(), UiText::NotificationError)
+        );
     }
 
     #[test]
