@@ -133,6 +133,14 @@ impl HostState {
         }
         if let Some(handle) = self.history_window.as_mut() {
             crate::aux::shell::AuxWindow::pump_window_event(handle, event);
+            if handle
+                .shell
+                .should_close
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                self.history_window = None;
+                return;
+            }
             if handle.take_clear_request() {
                 self.session.clear_notification_history();
                 self.sync_history_window();
