@@ -56,13 +56,7 @@ pub trait SessionControl {
 }
 
 /// Frontend-facing session operations.
-///
-/// Hides `SessionCommand`, `SessionCommandOutcome`, and `SettingsApplyPlan`
-/// from frontend code. Each frontend's state struct implements the
-/// three control traits; the blanket impl below assembles this port.
-/// (The former `run_command` escape hatch is gone: menu dispatch goes
-/// through the typed methods, and frontends drive `SessionHandle`
-/// directly for anything else.)
+/// Hides command/outcome/plan types; blanket impl assembles the port.
 pub trait FrontendSession: PauseControl + SlotControl + SessionControl {}
 
 impl<T> FrontendSession for T where T: PauseControl + SlotControl + SessionControl {}

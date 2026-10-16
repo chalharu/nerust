@@ -1,9 +1,5 @@
-//! Transient user notifications: queue, coalescing, burst cap, and history.
-//!
-//! `SessionHandle::run_command` pushes one notification per executed or
-//! failed command. Frontends drain the pending queue on their frame tick
-//! and render at most [`MAX_PENDING`] labels; everything is also kept in
-//! a bounded history ring and the logs.
+//! Transient notifications: queue, coalescing, burst cap, history.
+//! Frontends drain per tick; all events also go to history and logs.
 
 use std::collections::VecDeque;
 

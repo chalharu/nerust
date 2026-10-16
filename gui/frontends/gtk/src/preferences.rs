@@ -1423,13 +1423,8 @@ fn section_header(container: &gtk::Box, title: &str) {
     section_header_spaced(container, title, 20);
 }
 
-/// Section header row with the master enable on the same row (MS
-/// SettingsExpander pattern, mirrors the tao form). The generic
-/// "Enabled" label also carries the level as a tooltip, which GTK
-/// exposes over AT-SPI as the accessible description: screen readers
-/// announce which group the toggle belongs to. (A full accessible-name
-/// override needs gtk4 `v4_10`'s `update_property`; that raises the
-/// minimum system GTK, so it stays a follow-up, not this change.)
+/// Section header with the master toggle on the same row.
+/// The generic "Enabled" carries the level as a tooltip.
 fn section_header_toggled(
     container: &gtk::Box,
     title: &str,
