@@ -369,7 +369,7 @@ impl SettingsAppState {
             ],
         );
         column![info, warning, error, display, status]
-            .spacing(12)
+            .spacing(24)
             .into()
     }
 
@@ -499,19 +499,24 @@ pub(super) fn page_radio(
     .into()
 }
 
-/// Titled settings group. The header is bold (headline style,
-/// Apple HIG / Fluent section titles): same-size regular text read
-/// at the same level as the items, so weight must carry hierarchy.
+/// Titled settings group. Header beats items on two channels: size
+/// 16 bold vs 14 regular (Apple HIG headline: size plus weight
+/// distinguish the heading; Fluent Strong = weight step). Spacing
+/// glues the header to its group (4 below) and separates groups
+/// (24): MS Forms groups sit 2x wider than controls (48 vs 24),
+/// same ratio here (24 vs 8-12). Weight alone failed on this stack:
+/// DejaVu has no Semibold, so Semibold fell back to serif.
+/// Header uses Bold, which DejaVu Sans provides.
 fn section<'a>(title: &str, rows: impl IntoIterator<Item = El<'a>>) -> El<'a> {
-    let mut items = column![text(title.to_string()).size(14).font(iced::Font {
+    let header = text(title.to_string()).size(16).font(iced::Font {
         weight: iced::font::Weight::Bold,
         ..iced::Font::default()
-    })]
-    .spacing(8);
+    });
+    let mut items = column![].spacing(8);
     for row in rows {
         items = items.push(row);
     }
-    column![items].spacing(8).into()
+    column![header, items].spacing(4).into()
 }
 
 fn labeled_pick_list<'a, T: Clone + PartialEq + Eq + 'static>(
