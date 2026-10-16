@@ -248,8 +248,8 @@ impl GtkOsd {
     }
 
     pub(crate) fn show_history(window: &gtk::ApplicationWindow, state: &Rc<RefCell<State>>) {
+        use nerust_gui_shell::session::notification::NotificationLevel;
         let language = state.borrow().settings_snapshot().shared.general.language;
-        let lines = state.borrow().notification_history_lines(language);
         let dialog = gtk::Dialog::with_buttons(
             Some(nerust_settings_core::i18n::text(
                 language,
@@ -259,16 +259,82 @@ impl GtkOsd {
             gtk::DialogFlags::MODAL,
             &[("Close", gtk::ResponseType::Close)],
         );
+        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let filter = gtk::ComboBoxText::new();
+        for (id, label) in [
+            ("all", "All"),
+            ("info", "Info"),
+            ("warning", "Warning"),
+            ("error", "Error"),
+        ] {
+            filter.append(Some(id), label);
+        }
+        filter.set_active_id(Some("all"));
+        let clear = gtk::Button::with_label("Clear");
+        toolbar.append(&filter);
+        toolbar.append(&clear);
         let scrolled = gtk::ScrolledWindow::new();
         scrolled.set_min_content_height(300);
         scrolled.set_min_content_width(380);
-        let buffer = gtk::TextBuffer::new(None);
-        buffer.set_text(&lines.join("\n"));
-        let view = gtk::TextView::with_buffer(&buffer);
-        view.set_editable(false);
-        view.set_cursor_visible(false);
-        scrolled.set_child(Some(&view));
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        scrolled.set_child(Some(&list));
+        dialog.content_area().append(&toolbar);
         dialog.content_area().append(&scrolled);
+        let refresh = Rc::new({
+            let state = Rc::clone(state);
+            let list = list.clone();
+            let filter = filter.clone();
+            move || {
+                let language = state.borrow().settings_snapshot().shared.general.language;
+                let lines = state.borrow().notification_history_lines(language);
+                let active = filter.active_id();
+                while let Some(child) = list.first_child() {
+                    list.remove(&child);
+                }
+                for line in lines.iter().filter(|line| {
+                    matches!(
+                        (active.as_deref(), line.level),
+                        (None, _)
+                            | (Some("all"), _)
+                            | (Some("info"), NotificationLevel::Info)
+                            | (Some("warning"), NotificationLevel::Warning)
+                            | (Some("error"), NotificationLevel::Error)
+                    )
+                }) {
+                    let (r, g, b) = match line.level {
+                        NotificationLevel::Info => (70u8, 70u8, 70u8),
+                        NotificationLevel::Warning => (170u8, 110u8, 0u8),
+                        NotificationLevel::Error => (190u8, 30u8, 30u8),
+                    };
+                    let mut text = line.text.clone();
+                    if line.count > 1 {
+                        text = format!("{text} ×{}", line.count);
+                    }
+                    let row = gtk::Label::new(None);
+                    row.set_markup(&format!(
+                        "<span font_family=\"monospace\" size=\"smaller\">{} </span><span foreground=\"#{r:02X}{g:02X}{b:02X}\">{} </span><span>{}</span>",
+                        glib::markup_escape_text(&line.time),
+                        nerust_gui_shell::session::osd::level_glyph(line.level),
+                        glib::markup_escape_text(&text),
+                    ));
+                    row.set_xalign(0.0);
+                    list.append(&row);
+                }
+            }
+        });
+        refresh();
+        filter.connect_changed({
+            let refresh = Rc::clone(&refresh);
+            move |_| refresh()
+        });
+        clear.connect_clicked({
+            let state = Rc::clone(state);
+            let refresh = Rc::clone(&refresh);
+            move |_| {
+                state.borrow_mut().clear_notification_history();
+                refresh();
+            }
+        });
         dialog.connect_response(|dialog, _| dialog.close());
         dialog.present();
     }
@@ -278,6 +344,17 @@ fn font_px_for(window: &gtk::ApplicationWindow) -> f64 {
     // Viewport-relative sizing (2.2% of height), no floor: the OSD
     // scales with the game area like the tao twin.
     f64::from(window.height().max(1)) * 0.022
+}
+
+fn osd_body_markup(text: &str, rgb: (u8, u8, u8), font_px: f64) -> String {
+    format!(
+        "<span font_desc=\"Sans {:.1}\" foreground=\"#{:02X}{:02X}{:02X}\">{}</span>",
+        font_px,
+        rgb.0,
+        rgb.1,
+        rgb.2,
+        glib::markup_escape_text(text)
+    )
 }
 
 fn osd_markup(glyph: char, text: &str, rgb: (u8, u8, u8), font_px: f64) -> String {
@@ -292,14 +369,25 @@ fn osd_markup(glyph: char, text: &str, rgb: (u8, u8, u8), font_px: f64) -> Strin
     )
 }
 
-fn osd_label(glyph: char, text: &str, rgb: (u8, u8, u8), font_px: f64) -> gtk::Label {
-    let label = gtk::Label::new(None);
-    label.set_markup(&osd_markup(glyph, text, rgb, font_px));
-    label.set_xalign(0.0);
-    label.set_can_target(false);
-    label.set_can_focus(false);
-    label.add_css_class("nerust-osd");
-    label
+fn osd_label(glyph: char, text: &str, rgb: (u8, u8, u8), font_px: f64) -> gtk::Box {
+    // Level badge: bordered circle around the glyph (mirrors tao).
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let badge = gtk::Label::new(None);
+    badge.set_markup(&osd_markup(glyph, "", rgb, font_px));
+    badge.add_css_class("nerust-osd-badge");
+    badge.set_can_target(false);
+    badge.set_can_focus(false);
+    let body = gtk::Label::new(None);
+    body.set_markup(&osd_body_markup(text, rgb, font_px));
+    body.set_xalign(0.0);
+    body.set_can_target(false);
+    body.set_can_focus(false);
+    row.append(&badge);
+    row.append(&body);
+    row.add_css_class("nerust-osd");
+    row.set_can_target(false);
+    row.set_can_focus(false);
+    row
 }
 
 fn clear_box(container: &gtk::Box) {
@@ -314,7 +402,7 @@ fn apply_osd_css() {
     DONE.get_or_init(|| {
         let css = gtk::CssProvider::new();
         css.load_from_data(
-            ".nerust-osd { background-color: alpha(black, 0.72); border-radius: 6px; padding: 2px 6px; }",
+            ".nerust-osd { background-color: alpha(black, 0.72); border-radius: 6px; padding: 2px 6px; } .nerust-osd-badge { border: 1.5px solid; border-radius: 10px; padding: 1px 6px; }",
         );
         gtk::style_context_add_provider_for_display(
             &gdk::Display::default().expect("gdk display for OSD css"),

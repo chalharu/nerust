@@ -120,11 +120,7 @@ impl HostState {
 
     fn sync_history_window(&mut self) {
         let language = self.notification_language();
-        let lines: Vec<String> = self
-            .session
-            .notification_history()
-            .map(|n| n.kind.text(language))
-            .collect();
+        let lines = self.session.notification_history_lines(language);
         if let Some(handle) = self.history_window.as_mut() {
             handle.sync(lines);
         }
@@ -137,6 +133,10 @@ impl HostState {
         }
         if let Some(handle) = self.history_window.as_mut() {
             crate::aux::shell::AuxWindow::pump_window_event(handle, event);
+            if handle.take_clear_request() {
+                self.session.clear_notification_history();
+                self.sync_history_window();
+            }
         }
     }
 
