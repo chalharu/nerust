@@ -31,7 +31,7 @@ mod settings;
 mod window;
 
 use self::focus::FocusState;
-use crate::aux::osd::{HistoryWindowHandle, OsdWindowHandle};
+use crate::aux::osd::HistoryWindowHandle;
 use crate::ports::DialogPorts;
 use nerust_gui_shell::session::osd::OsdManager;
 
@@ -128,9 +128,11 @@ pub(crate) struct HostState {
     /// Aux-window state (debugger + PPU viewer). Orchestration lives
     /// here; ownership lives there.
     pub(super) debug: DebugWindows,
-    /// OSD notification display state + overlay/history windows.
+    /// OSD notification display state plus the history window.
     pub(super) osd: OsdManager,
-    pub(super) osd_window: Option<OsdWindowHandle>,
+    pub(super) osd_raster: nerust_render_osd::OsdRaster,
+    pub(super) osd_layer_size: Option<(u32, u32)>,
+    pub(super) osd_layer_active: bool,
     pub(super) history_window: Option<HistoryWindowHandle>,
     /// In-flight async error dialog plus resume bookkeeping.
     pub(super) modal_flight: Option<ModalFlight>,
@@ -139,9 +141,6 @@ pub(crate) struct HostState {
     /// runs on every loop pass while the viewer is open; unchanged
     /// content skips the full row rebuild (P1 perf gate).
     pub(super) history_sync_key: Option<(u64, nerust_settings_core::model::language::AppLanguage)>,
-
-    /// Last synced main geometry (pos, size, scale bits).
-    pub(super) osd_geometry: Option<(i32, i32, u32, u32, u64)>,
     /// Linux render target below the muda menubar (`None` elsewhere).
     /// When it yields no native target (Wayland, pre-layout) the
     /// toplevel fallback applies and the menu stays occluded.
@@ -204,12 +203,13 @@ impl HostState {
             live_flight: None,
             debug: DebugWindows::new(),
             osd: OsdManager::new(),
-            osd_window: None,
+            osd_raster: nerust_render_osd::OsdRaster::new(),
+            osd_layer_size: None,
+            osd_layer_active: false,
             modal_flight: None,
             resume_after_modal: false,
             history_window: None,
             history_sync_key: None,
-            osd_geometry: None,
             #[cfg(any(
                 target_os = "linux",
                 target_os = "dragonfly",

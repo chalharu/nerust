@@ -102,11 +102,6 @@ pub(crate) trait WindowOpener {
         bridge: &Arc<DebugBridge>,
         position: Option<(i32, i32)>,
     ) -> Option<crate::aux::ppu::PpuWindowHandle>;
-    fn create_osd(
-        &self,
-        position: (i32, i32),
-        size: (f64, f64),
-    ) -> Option<crate::aux::osd::OsdWindowHandle>;
     fn create_history(&self, language: AppLanguage)
     -> Option<crate::aux::osd::HistoryWindowHandle>;
 }
@@ -168,14 +163,6 @@ impl WindowOpener for TaoWindowOpener<'_> {
         position: Option<(i32, i32)>,
     ) -> Option<crate::aux::ppu::PpuWindowHandle> {
         crate::aux::ppu::PpuWindowHandle::new(Arc::clone(bridge), self.target, position)
-    }
-
-    fn create_osd(
-        &self,
-        position: (i32, i32),
-        size: (f64, f64),
-    ) -> Option<crate::aux::osd::OsdWindowHandle> {
-        crate::aux::osd::OsdWindowHandle::new(self.target, position, size)
     }
 
     fn create_history(

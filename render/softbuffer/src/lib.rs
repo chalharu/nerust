@@ -40,6 +40,7 @@ pub struct SoftbufferRenderer {
     lut: LutEntry,
     resize_buffer: Vec<u32>,
     ntsc_buffer: Vec<u32>,
+    osd: Option<nerust_render_traits::renderer::OsdLayer>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -281,6 +282,7 @@ impl SoftbufferRenderer {
             render_profile: profile.clone(),
             size: SurfaceSize::new(0, 0),
             reserved: nerust_render_traits::ReservedStrip::default(),
+            osd: None,
             lut: LutEntry::new(),
             resize_buffer: Vec::new(),
             ntsc_buffer: Vec::new(),
@@ -470,6 +472,49 @@ impl SoftbufferRenderer {
     }
 }
 
+impl SoftbufferRenderer {
+    /// Straight-alpha blend of the OSD layer, clipped to the buffer.
+    fn blend_osd(
+        buffer: &mut [u32],
+        dst_w: usize,
+        dst_h: usize,
+        layer: &nerust_render_traits::renderer::OsdLayer,
+    ) {
+        let src_w = layer.width as usize;
+        let src_h = layer.height as usize;
+        if src_w == 0 || src_h == 0 || layer.rgba.len() < src_w * src_h * 4 {
+            return;
+        }
+        for row in 0..src_h {
+            let dst_y = layer.y as usize + row;
+            if dst_y >= dst_h {
+                break;
+            }
+            for col in 0..src_w {
+                let dst_x = layer.x as usize + col;
+                if dst_x >= dst_w {
+                    break;
+                }
+                let s = (row * src_w + col) * 4;
+                let alpha = f32::from(layer.rgba[s + 3]) / 255.0;
+                if alpha == 0.0 {
+                    continue;
+                }
+                let dst_pixel = buffer[dst_y * dst_w + dst_x].to_be_bytes();
+                let blend = |src: u8, dst: u8| {
+                    (f32::from(src) * alpha + f32::from(dst) * (1.0 - alpha)).round() as u8
+                };
+                buffer[dst_y * dst_w + dst_x] = u32::from_be_bytes([
+                    blend(layer.rgba[s], dst_pixel[0]),
+                    blend(layer.rgba[s + 1], dst_pixel[1]),
+                    blend(layer.rgba[s + 2], dst_pixel[2]),
+                    255,
+                ]);
+            }
+        }
+    }
+}
+
 impl GpuRenderer for SoftbufferRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
@@ -519,6 +564,10 @@ impl GpuRenderer for SoftbufferRenderer {
     fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
         self.reserved = strip;
         self.resize_lut();
+    }
+
+    fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
+        self.osd = layer;
     }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
@@ -660,6 +709,9 @@ impl GpuRenderer for SoftbufferRenderer {
             }
         }
 
+        if let Some(layer) = self.osd.as_ref() {
+            Self::blend_osd(buffer.as_mut(), dst_w, dst_h, layer);
+        }
         match buffer.present() {
             Ok(()) => RenderResult::Presented,
             Err(e) => {
