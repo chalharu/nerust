@@ -253,6 +253,10 @@ impl NotificationCenter {
     }
 }
 
+/// Log module emitting `notification:` lines; history rows map 1:1
+/// to those records so the module column greps the logs.
+pub const LOG_MODULE: &str = module_path!();
+
 fn kind_text(event: &UiNotification) -> String {
     // Logs stay English for grep stability; UI text is localized at render.
     event.kind.text(AppLanguage::English)

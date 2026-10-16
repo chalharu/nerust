@@ -32,14 +32,42 @@ pub struct OsdSnapshot {
     pub font_px: f32,
 }
 
-/// One rendered history line: wall-clock time plus content.
+/// One rendered history line: datetime plus grid columns.
+/// `module` is the log module so rows grep the `notification:` records.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryLine {
-    /// HH:MM:SS (UTC) of the push.
-    pub time: String,
+    /// YYYY-MM-DD HH:MM:SS (UTC) of the push.
+    pub datetime: String,
     pub level: NotificationLevel,
+    pub module: &'static str,
     pub text: String,
     pub count: u32,
+}
+
+/// Full UTC datetime from a `SystemTime` without extra dependencies.
+pub fn format_datetime(time: std::time::SystemTime) -> String {
+    let secs = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = secs / 86_400;
+    let clock = secs % 86_400;
+    // Howard Hinnant's civil-from-days; 719468 = days to 1970-01-01.
+    let era = (days as i64 + 719_468) / 146_097;
+    let doe = (days as i64 + 719_468) - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let full_year = (year + i64::from(month <= 2)) as u32;
+    format!(
+        "{full_year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}",
+        clock / 3600,
+        clock / 60 % 60,
+        clock % 60
+    )
 }
 
 pub fn format_time(time: std::time::SystemTime) -> String {
@@ -502,6 +530,14 @@ mod tests {
             ),
             (0, 0)
         );
+    }
+
+    #[test]
+    fn history_datetime_formats_utc_date() {
+        let epoch = std::time::UNIX_EPOCH;
+        assert_eq!(format_datetime(epoch), "1970-01-01 00:00:00");
+        let known = epoch + std::time::Duration::from_secs(1_769_990_400);
+        assert_eq!(format_datetime(known), "2026-02-02 00:00:00");
     }
 
     #[test]

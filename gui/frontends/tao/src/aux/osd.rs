@@ -144,16 +144,31 @@ impl Program for OsdProgram {
                 .into()
         };
         let status_widget: iced::Element<'_, OsdMessage> = match snapshot.status.as_ref() {
-            Some(status) => container(label('\u{25cf}', status, (200, 200, 200)))
-                .align_x(match snapshot.status_position {
-                    NotificationPosition::TopLeft | NotificationPosition::BottomLeft => {
-                        iced::alignment::Horizontal::Left
-                    }
-                    NotificationPosition::TopRight | NotificationPosition::BottomRight => {
-                        iced::alignment::Horizontal::Right
-                    }
-                })
-                .into(),
+            // Status is ambient (not severity): plain text, no level badge.
+            Some(status) => container(
+                container(text(status.clone()).size(font))
+                    .padding([2, 6])
+                    .style(|_theme: &iced::Theme| container::Style {
+                        background: Some(iced::Background::Color(iced::Color::from_rgba8(
+                            0, 0, 0, 0.72,
+                        ))),
+                        text_color: Some(iced::Color::from_rgb8(200, 200, 200)),
+                        border: iced::Border {
+                            radius: 6.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+            )
+            .align_x(match snapshot.status_position {
+                NotificationPosition::TopLeft | NotificationPosition::BottomLeft => {
+                    iced::alignment::Horizontal::Left
+                }
+                NotificationPosition::TopRight | NotificationPosition::BottomRight => {
+                    iced::alignment::Horizontal::Right
+                }
+            })
+            .into(),
             None => iced::widget::Space::new().into(),
         };
         // Same corner: one anchored column, status edge-most and
@@ -336,6 +351,12 @@ pub(crate) enum HistoryFilter {
     Error,
 }
 
+impl std::fmt::Display for HistoryFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 impl HistoryFilter {
     fn matches(self, level: NotificationLevel) -> bool {
         match self {
@@ -424,24 +445,35 @@ impl Program for HistoryProgram {
         state: &'a Self::State,
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
-        use iced::widget::{button, column, row, scrollable, text};
-        let mut filters = row![].spacing(4);
-        for filter in [
-            HistoryFilter::All,
-            HistoryFilter::Info,
-            HistoryFilter::Warning,
-            HistoryFilter::Error,
-        ] {
-            let label = if state.filter == filter {
-                format!("[{}]", filter.label())
-            } else {
-                filter.label().to_string()
-            };
-            filters = filters
-                .push(button(text(label).size(12)).on_press(HistoryMessage::SetFilter(filter)));
-        }
-        filters = filters.push(button(text("Clear").size(12)).on_press(HistoryMessage::Clear));
+        use iced::Length;
+        use iced::widget::{button, column, pick_list, row, scrollable, text};
+        let toolbar = row![
+            pick_list(
+                [
+                    HistoryFilter::All,
+                    HistoryFilter::Info,
+                    HistoryFilter::Warning,
+                    HistoryFilter::Error,
+                ],
+                Some(state.filter),
+                HistoryMessage::SetFilter,
+            )
+            .placeholder("Level"),
+            button(text("Clear").size(12)).on_press(HistoryMessage::Clear),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
         let mut items = column![].spacing(2);
+        // Header: datetime | level | module | message.
+        items = items.push(
+            row![
+                text("Datetime").size(12).width(Length::Fixed(150.0)),
+                text("Level").size(12).width(Length::Fixed(60.0)),
+                text("Module").size(12).width(Length::Fixed(220.0)),
+                text("Message").size(12).width(Length::Fill),
+            ]
+            .spacing(8),
+        );
         for line in state
             .lines
             .iter()
@@ -452,19 +484,26 @@ impl Program for HistoryProgram {
                 NotificationLevel::Warning => (iced::Color::from_rgb8(170, 110, 0), '!'),
                 NotificationLevel::Error => (iced::Color::from_rgb8(190, 30, 30), '×'),
             };
-            let mut count = String::new();
+            let mut message = line.text.clone();
             if line.count > 1 {
-                count = format!(" ×{}", line.count);
+                message = format!("{message} ×{}", line.count);
             }
             items = items.push(
                 row![
-                    text(format!("{glyph}")).size(13).color(glyph_color),
-                    text(format!("{} {}{}", line.time, line.text, count)).size(13),
+                    text(line.datetime.clone())
+                        .size(12)
+                        .width(Length::Fixed(150.0)),
+                    text(format!("{glyph}"))
+                        .size(12)
+                        .color(glyph_color)
+                        .width(Length::Fixed(60.0)),
+                    text(line.module).size(11).width(Length::Fixed(220.0)),
+                    text(message).size(13).width(Length::Fill),
                 ]
-                .spacing(6),
+                .spacing(8),
             );
         }
-        column![filters, scrollable(items)].spacing(8).into()
+        column![toolbar, scrollable(items)].spacing(8).into()
     }
 }
 
