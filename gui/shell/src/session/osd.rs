@@ -12,12 +12,13 @@ use nerust_settings_core::model::local::{
 
 use super::notification::{NotificationLevel, UiNotification};
 
-/// Glyph per level: shape (not color alone) distinguishes severity.
-pub fn level_glyph(level: NotificationLevel) -> char {
+/// Level tag prefixing OSD labels and history rows: text (not
+/// color or shape alone) carries severity.
+pub fn level_tag(level: NotificationLevel) -> &'static str {
     match level {
-        NotificationLevel::Info => 'i',
-        NotificationLevel::Warning => '!',
-        NotificationLevel::Error => '×',
+        NotificationLevel::Info => "[INFO]",
+        NotificationLevel::Warning => "[WARN]",
+        NotificationLevel::Error => "[ERROR]",
     }
 }
 
@@ -87,7 +88,7 @@ pub fn format_time(time: std::time::SystemTime) -> String {
 pub struct OsdRow {
     pub text: String,
     pub rgb: (u8, u8, u8),
-    pub glyph: char,
+    pub tag: &'static str,
 }
 
 #[derive(Debug)]
@@ -135,13 +136,13 @@ impl OsdManager {
         u64::from(raw.clamp(500, 60_000))
     }
 
-    fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), glyph: char) -> OsdRow {
+    fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: &'static str) -> OsdRow {
         let text = if count > 1 {
             format!("{base} ×{count}")
         } else {
             base.to_string()
         };
-        OsdRow { text, rgb, glyph }
+        OsdRow { text, rgb, tag }
     }
 
     fn color(level: NotificationLevel, settings: &NotificationSettings) -> (u8, u8, u8) {
@@ -180,7 +181,7 @@ impl OsdManager {
                 continue;
             }
             let rgb = Self::color(n.level, settings);
-            let glyph = level_glyph(n.level);
+            let tag = level_tag(n.level);
             let deadline = now + Duration::from_millis(Self::duration_ms(n.level, settings));
             // Merge with the showing label when identical.
             if let Some(current) = self.current.as_mut()
@@ -188,7 +189,7 @@ impl OsdManager {
                 && current.key == base
             {
                 current.count += n.count;
-                current.row = Self::counted_row(&base, current.count, rgb, glyph);
+                current.row = Self::counted_row(&base, current.count, rgb, tag);
                 current.deadline = deadline;
                 continue;
             }
@@ -198,11 +199,11 @@ impl OsdManager {
                 && back.key == base
             {
                 back.count += n.count;
-                back.row = Self::counted_row(&base, back.count, rgb, glyph);
+                back.row = Self::counted_row(&base, back.count, rgb, tag);
                 back.deadline = deadline;
                 continue;
             }
-            let row = Self::counted_row(&base, n.count, rgb, glyph);
+            let row = Self::counted_row(&base, n.count, rgb, tag);
             self.pending.push_back(OsdItem {
                 row,
                 level: n.level,
@@ -311,14 +312,18 @@ pub fn strip_rows(
     (top[0].max(top[1]), bottom[0].max(bottom[1]))
 }
 
-/// Physical strip pixels from the client height. Label rows scale
-/// with the viewport (2.2%); padding is fixed.
+/// Physical strip pixels from the client height. A plain tag row
+/// is ~1.6x the font plus pill padding; rows are spaced 4px with
+/// an 8px safe-area inset — the same constants the tao/gtk
+/// overlays lay out with, so a notification+status stack never
+/// overflows the strip into game content.
 pub fn strip_pixels(client_height: u32, rows: u32) -> u32 {
     if rows == 0 || client_height == 0 {
         return 0;
     }
     let font_px = (f64::from(client_height) * 0.022).ceil() as u32;
-    rows.saturating_mul(font_px.saturating_add(8))
+    let row = (font_px * 16).div_ceil(10) + 4;
+    rows.saturating_mul(row) + 8 + 4 * rows.saturating_sub(1)
 }
 
 #[cfg(test)]
@@ -542,7 +547,8 @@ mod tests {
 
     #[test]
     fn strip_pixels_scale_with_client_height() {
-        assert_eq!(strip_pixels(1000, 1), 30);
+        assert_eq!(strip_pixels(1000, 1), 48);
+        assert_eq!(strip_pixels(1000, 2), 92);
         assert_eq!(strip_pixels(0, 1), 0);
         assert_eq!(strip_pixels(1000, 0), 0);
     }
