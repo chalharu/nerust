@@ -524,7 +524,7 @@ impl HistoryWindowHandle {
         let scaffold = WindowScaffold::open(
             event_loop,
             title,
-            (420.0, 360.0),
+            (720.0, 360.0),
             None,
             None,
             "history window",
