@@ -156,19 +156,41 @@ impl Program for OsdProgram {
                 .into(),
             None => iced::widget::Space::new().into(),
         };
-        // Same edge: status pins to the edge side, transient inside.
-        let (top, bottom) = if top_is_transient == status_top {
+        // Same corner: one anchored column, status edge-most and
+        // transient just inside. Split corners anchor independently.
+        let same_corner = snapshot.position == snapshot.status_position;
+        let body: iced::Element<'_, OsdMessage> = if same_corner {
+            let mut items = column![].spacing(4);
             if top_is_transient {
-                (status_widget, transient)
+                items = items.push(status_widget);
+                items = items.push(transient);
             } else {
-                (transient, status_widget)
+                items = items.push(transient);
+                items = items.push(status_widget);
             }
-        } else if top_is_transient {
-            (transient, status_widget)
+            container(items)
+                .align_x(match snapshot.position {
+                    NotificationPosition::TopLeft | NotificationPosition::BottomLeft => {
+                        iced::alignment::Horizontal::Left
+                    }
+                    NotificationPosition::TopRight | NotificationPosition::BottomRight => {
+                        iced::alignment::Horizontal::Right
+                    }
+                })
+                .into()
         } else {
-            (status_widget, transient)
-        };
-        container(
+            // Same edge: status pins to the edge side, transient inside.
+            let (top, bottom) = if top_is_transient == status_top {
+                if top_is_transient {
+                    (status_widget, transient)
+                } else {
+                    (transient, status_widget)
+                }
+            } else if top_is_transient {
+                (transient, status_widget)
+            } else {
+                (status_widget, transient)
+            };
             column![
                 top,
                 iced::widget::Space::new()
@@ -177,12 +199,30 @@ impl Program for OsdProgram {
                 bottom,
             ]
             .width(Length::Fill)
-            .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(8)
-        .into()
+            .height(Length::Fill)
+            .into()
+        };
+        container(body)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(match snapshot.position {
+                NotificationPosition::TopLeft | NotificationPosition::BottomLeft => {
+                    iced::alignment::Horizontal::Left
+                }
+                NotificationPosition::TopRight | NotificationPosition::BottomRight => {
+                    iced::alignment::Horizontal::Right
+                }
+            })
+            .align_y(match snapshot.position {
+                NotificationPosition::TopLeft | NotificationPosition::TopRight => {
+                    iced::alignment::Vertical::Top
+                }
+                NotificationPosition::BottomLeft | NotificationPosition::BottomRight => {
+                    iced::alignment::Vertical::Bottom
+                }
+            })
+            .padding(8)
+            .into()
     }
 }
 
