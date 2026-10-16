@@ -638,6 +638,7 @@ mod tests {
             SettingsPage::Input,
             SettingsPage::Video,
             SettingsPage::Audio,
+            SettingsPage::Notifications,
             SettingsPage::System,
         ] {
             state.page = page;

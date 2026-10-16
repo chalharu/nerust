@@ -828,3 +828,39 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+    use nerust_gui_shell::session::osd::{OsdRow, OsdSnapshot};
+
+    fn snapshot_with_rows() -> OsdSnapshot {
+        OsdSnapshot {
+            rows: vec![
+                OsdRow {
+                    text: "Paused".to_string(),
+                    rgb: (255, 255, 255),
+                    tag: "[INFO]",
+                },
+                OsdRow {
+                    text: "slot is empty".to_string(),
+                    rgb: (255, 200, 0),
+                    tag: "[WARN]",
+                },
+            ],
+            status: Some("60.0 fps".to_string()),
+            ..OsdSnapshot::default()
+        }
+    }
+
+    #[test]
+    fn overlay_sync_and_view_build_headless() {
+        let program = OsdProgram;
+        let (mut state, _) = program.boot();
+        let _ = program.update(&mut state, OsdMessage::Sync(snapshot_with_rows()));
+        drop(program.view(&state, iced::window::Id::unique()));
+        // Status-less snapshot renders too.
+        let _ = program.update(&mut state, OsdMessage::Sync(OsdSnapshot::default()));
+        drop(program.view(&state, iced::window::Id::unique()));
+    }
+}

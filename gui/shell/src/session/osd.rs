@@ -334,7 +334,15 @@ impl OsdManager {
     }
 
     /// Queue one aggregated error batch for sequential display.
+    /// Capped: a stuck-open dialog plus a per-tick error flood must
+    /// not grow memory without bound. Drops the oldest, like the OSD
+    /// pending cap, and logs the loss (history keeps every event).
     pub fn queue_modal(&mut self, detail: String) {
+        const MAX_MODAL_QUEUED: usize = 8;
+        if self.modal_queue.len() >= MAX_MODAL_QUEUED {
+            log::warn!("error modal queue full; dropping oldest batch");
+            self.modal_queue.pop_front();
+        }
         self.modal_queue.push_back(detail);
     }
 
@@ -710,6 +718,127 @@ mod tests {
         assert_eq!(rows[0].text, "Paused");
         assert!(rows[1].text.ends_with(" ×3"));
         assert_eq!(rows[1].count, 3);
+    }
+
+    #[test]
+    fn modal_queue_caps_and_drops_oldest() {
+        let mut manager = OsdManager::new();
+        for i in 0..10 {
+            manager.queue_modal(format!("batch {i}"));
+        }
+        assert_eq!(manager.modal_pending(), 8);
+        // Oldest two dropped; order preserved after that.
+        assert_eq!(manager.take_modal_batch().as_deref(), Some("batch 2"));
+        manager.modal_closed();
+    }
+
+    #[test]
+    fn level_names_stay_distinct_per_surface() {
+        use super::super::notification::NotificationLevel as L;
+        assert_eq!(super::level_tag(L::Info), "[INFO]");
+        assert_eq!(super::level_name(L::Info), "Info");
+        assert_eq!(super::level_label(L::Info, AppLanguage::English), "Info");
+        assert_eq!(
+            super::level_label(L::Warning, AppLanguage::Japanese),
+            "警告"
+        );
+        assert_eq!(super::level_label(L::Error, AppLanguage::English), "Error");
+        assert_eq!(
+            super::level_label(L::Error, AppLanguage::Japanese),
+            "エラー"
+        );
+    }
+
+    #[test]
+    fn status_text_names_pause_state() {
+        assert_eq!(
+            OsdManager::status_text(60.0, true, AppLanguage::English),
+            "Paused 60.0 fps"
+        );
+        assert_eq!(
+            OsdManager::status_text(60.0, true, AppLanguage::Japanese),
+            "一時停止中 60.0 fps"
+        );
+        assert_eq!(
+            OsdManager::status_text(59.9, false, AppLanguage::English),
+            "59.9 fps"
+        );
+    }
+
+    #[test]
+    fn identical_pushes_merge_and_reset_the_timer() {
+        use super::super::notification::NotificationLevel as L;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        let note = |count| UiNotification {
+            level: L::Info,
+            kind: NotificationKind::Paused,
+            count,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now);
+        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now);
+        assert!(manager.poll(now));
+        assert_eq!(manager.rows().len(), 1);
+        assert!(manager.rows()[0].text.ends_with(" ×2"));
+        assert!(manager.has_visible());
+        // Still showing before the reset deadline; gone after it.
+        assert!(!manager.poll(now + std::time::Duration::from_secs(1)));
+        assert!(manager.poll(now + std::time::Duration::from_secs(61)));
+        assert!(!manager.has_visible());
+    }
+
+    #[test]
+    fn next_deadline_distinguishes_idle_and_queued() {
+        use super::super::notification::NotificationLevel as L;
+        let mut manager = OsdManager::new();
+        assert_eq!(manager.next_deadline(), None);
+        let now = Instant::now();
+        manager.push_all(
+            vec![UiNotification {
+                level: L::Info,
+                kind: NotificationKind::Paused,
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            }],
+            &settings(),
+            AppLanguage::English,
+            now,
+        );
+        // Promoted on the next poll; deadline lands on the duration.
+        assert!(manager.poll(now));
+        assert!(manager.next_deadline().is_some());
+    }
+
+    #[test]
+    fn strip_rows_counts_edges_and_sides() {
+        use nerust_settings_core::model::local::{
+            NotificationAreaMode as M, NotificationPosition as P,
+        };
+        assert_eq!(
+            super::strip_rows(M::Overlay, P::TopLeft, P::BottomLeft, true),
+            (0, 0)
+        );
+        assert_eq!(
+            super::strip_rows(M::Strip, P::TopLeft, P::BottomLeft, true),
+            (1, 1)
+        );
+        assert_eq!(
+            super::strip_rows(M::Strip, P::TopRight, P::BottomRight, true),
+            (1, 1)
+        );
+        // Same corner stacks two rows on one side.
+        assert_eq!(
+            super::strip_rows(M::Strip, P::TopLeft, P::TopLeft, true),
+            (2, 0)
+        );
+        // Status off: transient row only.
+        assert_eq!(
+            super::strip_rows(M::Strip, P::BottomLeft, P::TopLeft, false),
+            (0, 1)
+        );
     }
 
     #[test]
