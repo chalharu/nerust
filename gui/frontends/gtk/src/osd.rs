@@ -30,6 +30,10 @@ fn is_top(position: NotificationPosition) -> bool {
     )
 }
 
+/// One OSD entry: level glyph, text, color, and whether the level
+/// badge shows (transient yes, ambient status no).
+type OsdEntry = (char, String, (u8, u8, u8), bool);
+
 pub(crate) struct GtkOsd {
     manager: OsdManager,
     transient_box: gtk::Box,
@@ -153,10 +157,10 @@ impl GtkOsd {
         // Same-corner rule: status pins to the edge side, transient inside.
         let same_corner = settings.position == settings.status_position;
         let transient_top = is_top(settings.position);
-        let mut top_rows: Vec<(char, String, (u8, u8, u8))> = Vec::new();
-        let mut bottom_rows: Vec<(char, String, (u8, u8, u8))> = Vec::new();
+        let mut top_rows: Vec<OsdEntry> = Vec::new();
+        let mut bottom_rows: Vec<OsdEntry> = Vec::new();
         for row in &rows {
-            let entry = (row.glyph, row.text.clone(), row.rgb);
+            let entry = (row.glyph, row.text.clone(), row.rgb, true);
             if transient_top {
                 top_rows.push(entry);
             } else {
@@ -164,7 +168,8 @@ impl GtkOsd {
             }
         }
         if let Some(status) = status.as_ref() {
-            let entry = ('●', status.clone(), (200, 200, 200));
+            // Ambient status: plain text, no level badge.
+            let entry = ('\0', status.clone(), (200, 200, 200), false);
             if same_corner {
                 if transient_top {
                     top_rows.insert(0, entry);
@@ -179,16 +184,21 @@ impl GtkOsd {
         }
         // Transient/status boxes anchor independently when split.
         if same_corner || transient_top == is_top(settings.status_position) {
-            for (glyph, text, rgb) in top_rows.into_iter().chain(bottom_rows) {
-                self.transient_box
-                    .append(&osd_label(glyph, &text, rgb, font_px));
+            for (glyph, text, rgb, badged) in top_rows.into_iter().chain(bottom_rows) {
+                if badged {
+                    self.transient_box
+                        .append(&osd_label(glyph, &text, rgb, font_px));
+                } else {
+                    self.transient_box
+                        .append(&osd_plain_label(&text, rgb, font_px));
+                }
             }
             let (halign, valign) = corner_align(settings.position);
             self.transient_box.set_halign(halign);
             self.transient_box.set_valign(valign);
             self.status_label.set_visible(false);
         } else {
-            for (glyph, text, rgb) in top_rows {
+            for (glyph, text, rgb, _) in top_rows {
                 self.transient_box
                     .append(&osd_label(glyph, &text, rgb, font_px));
             }
@@ -198,7 +208,7 @@ impl GtkOsd {
             self.status_label.set_visible(true);
             if let Some(status) = status.as_ref() {
                 self.status_label
-                    .set_markup(&osd_markup('●', status, (200, 200, 200), font_px));
+                    .set_markup(&osd_body_markup(status, (200, 200, 200), font_px));
             }
             let (halign, valign) = corner_align(settings.status_position);
             self.status_label.set_halign(halign);
@@ -275,22 +285,36 @@ impl GtkOsd {
         toolbar.append(&clear);
         let scrolled = gtk::ScrolledWindow::new();
         scrolled.set_min_content_height(300);
-        scrolled.set_min_content_width(380);
-        let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        scrolled.set_child(Some(&list));
+        scrolled.set_min_content_width(560);
+        let grid = gtk::Grid::new();
+        grid.set_column_spacing(12);
+        grid.set_row_spacing(2);
+        scrolled.set_child(Some(&grid));
         dialog.content_area().append(&toolbar);
         dialog.content_area().append(&scrolled);
         let refresh = Rc::new({
             let state = Rc::clone(state);
-            let list = list.clone();
+            let grid = grid.clone();
             let filter = filter.clone();
             move || {
                 let language = state.borrow().settings_snapshot().shared.general.language;
                 let lines = state.borrow().notification_history_lines(language);
                 let active = filter.active_id();
-                while let Some(child) = list.first_child() {
-                    list.remove(&child);
+                while let Some(child) = grid.first_child() {
+                    grid.remove(&child);
                 }
+                // Header: datetime | level | module | message.
+                let mut row_idx = 0;
+                for (col, header) in ["Datetime", "Level", "Module", "Message"]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let label = gtk::Label::new(Some(header));
+                    label.set_xalign(0.0);
+                    label.add_css_class("heading");
+                    grid.attach(&label, col as i32, row_idx, 1, 1);
+                }
+                row_idx += 1;
                 for line in lines.iter().filter(|line| {
                     matches!(
                         (active.as_deref(), line.level),
@@ -310,15 +334,36 @@ impl GtkOsd {
                     if line.count > 1 {
                         text = format!("{text} ×{}", line.count);
                     }
-                    let row = gtk::Label::new(None);
-                    row.set_markup(&format!(
-                        "<span font_family=\"monospace\" size=\"smaller\">{} </span><span foreground=\"#{r:02X}{g:02X}{b:02X}\">{} </span><span>{}</span>",
-                        glib::markup_escape_text(&line.time),
-                        nerust_gui_shell::session::osd::level_glyph(line.level),
-                        glib::markup_escape_text(&text),
+                    let datetime = gtk::Label::new(None);
+                    datetime.set_markup(&format!(
+                        "<span font_family=\"monospace\" size=\"smaller\">{}</span>",
+                        glib::markup_escape_text(&line.datetime),
                     ));
-                    row.set_xalign(0.0);
-                    list.append(&row);
+                    datetime.set_xalign(0.0);
+                    let level = gtk::Label::new(None);
+                    level.set_markup(&format!(
+                        "<span foreground=\"#{r:02X}{g:02X}{b:02X}\">{}</span>",
+                        nerust_gui_shell::session::osd::level_glyph(line.level),
+                    ));
+                    level.set_xalign(0.0);
+                    let module = gtk::Label::new(None);
+                    module.set_markup(&format!(
+                        "<span font_family=\"monospace\" size=\"smaller\">{}</span>",
+                        glib::markup_escape_text(line.module),
+                    ));
+                    module.set_xalign(0.0);
+                    module.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+                    let message = gtk::Label::new(None);
+                    message
+                        .set_markup(&format!("<span>{}</span>", glib::markup_escape_text(&text),));
+                    message.set_xalign(0.0);
+                    message.set_wrap(true);
+                    message.set_hexpand(true);
+                    grid.attach(&datetime, 0, row_idx, 1, 1);
+                    grid.attach(&level, 1, row_idx, 1, 1);
+                    grid.attach(&module, 2, row_idx, 1, 1);
+                    grid.attach(&message, 3, row_idx, 1, 1);
+                    row_idx += 1;
                 }
             }
         });
@@ -367,6 +412,21 @@ fn osd_markup(glyph: char, text: &str, rgb: (u8, u8, u8), font_px: f64) -> Strin
         glyph,
         glib::markup_escape_text(text)
     )
+}
+
+fn osd_plain_label(text: &str, rgb: (u8, u8, u8), font_px: f64) -> gtk::Box {
+    // Ambient status: same pill, no level badge.
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let body = gtk::Label::new(None);
+    body.set_markup(&osd_body_markup(text, rgb, font_px));
+    body.set_xalign(0.0);
+    body.set_can_target(false);
+    body.set_can_focus(false);
+    row.append(&body);
+    row.add_css_class("nerust-osd");
+    row.set_can_target(false);
+    row.set_can_focus(false);
+    row
 }
 
 fn osd_label(glyph: char, text: &str, rgb: (u8, u8, u8), font_px: f64) -> gtk::Box {
