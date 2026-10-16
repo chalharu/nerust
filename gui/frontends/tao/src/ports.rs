@@ -25,7 +25,9 @@ use crate::event::UserEvent;
 
 /// Native file/error dialogs, seamed for headless tests. Production
 /// talks to rfd; fakes return canned picks and record errors.
-pub(crate) trait DialogPorts {
+/// `Send + Sync`: error dialogs run on a short-lived thread so the
+/// event loop never stalls behind a modal (see `ModalFlight`).
+pub(crate) trait DialogPorts: Send + Sync {
     fn pick_rom_file(
         &self,
         language: AppLanguage,

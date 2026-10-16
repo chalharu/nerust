@@ -45,7 +45,7 @@ impl WindowRuntime {
         let proxy = event_loop.create_proxy();
         let app_menu = AppMenu::new(proxy);
 
-        let host = HostState::new(ctx, Box::new(app_menu), Box::new(NativeDialogs))?;
+        let host = HostState::new(ctx, Box::new(app_menu), std::sync::Arc::new(NativeDialogs))?;
 
         Ok(Self {
             event_loop: Some(event_loop),
