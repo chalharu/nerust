@@ -11,7 +11,7 @@ use super::{State, renderer::GtkRenderer};
 pub(crate) struct SurfaceCore {
     window: gtk::ApplicationWindow,
     renderer: Rc<RefCell<GtkRenderer>>,
-    state: Rc<RefCell<State>>,
+    pub(crate) state: Rc<RefCell<State>>,
     pub(crate) osd: RefCell<super::osd::GtkOsd>,
     last_size: Cell<SurfaceSize>,
 }

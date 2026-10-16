@@ -48,7 +48,7 @@ pub struct OsdSnapshot {
 /// `module` is the log module so rows grep the `notification:` records.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryLine {
-    /// YYYY-MM-DD HH:MM:SS (UTC) of the push.
+    /// YYYY-MM-DD HH:MM:SS (local wall-clock) of the push.
     pub datetime: String,
     pub level: NotificationLevel,
     pub module: &'static str,
@@ -56,17 +56,19 @@ pub struct HistoryLine {
     pub count: u32,
 }
 
-/// Full UTC datetime from a `SystemTime` without extra dependencies.
+/// Local wall-clock datetime from a `SystemTime`: the UTC instant
+/// shifted by the platform zone offset, then rendered with the same
+/// dependency-free civil math. History shows time where the user
+/// sits (like Console/Event Viewer); UTC-only stays in the logs.
+/// Falls back to UTC when the zone is indeterminate.
 pub fn format_datetime(time: std::time::SystemTime) -> String {
-    let secs = time
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let days = secs / 86_400;
-    let clock = secs % 86_400;
+    let secs = local_epoch_secs(time);
+    // Floor-divide so pre-1970 instants keep a non-negative clock.
+    let days = secs.div_euclid(86_400);
+    let clock = secs.rem_euclid(86_400);
     // Howard Hinnant's civil-from-days; 719468 = days to 1970-01-01.
-    let era = (days as i64 + 719_468) / 146_097;
-    let doe = (days as i64 + 719_468) - era * 146_097;
+    let era = (days + 719_468) / 146_097;
+    let doe = (days + 719_468) - era * 146_097;
     let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
     let year = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
@@ -82,16 +84,27 @@ pub fn format_datetime(time: std::time::SystemTime) -> String {
     )
 }
 
-pub fn format_time(time: std::time::SystemTime) -> String {
-    let secs = time
+/// `SystemTime` as local epoch seconds for [`format_datetime`]:
+/// the UTC instant plus the platform zone offset. Mirrors the
+/// persistence slot-time precedent (`persistence::time`).
+fn local_epoch_secs(time: std::time::SystemTime) -> i64 {
+    let utc = time
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    let offset = time::UtcOffset::current_local_offset()
+        .map(|o| i64::from(o.whole_seconds()))
+        .unwrap_or(0);
+    (utc as i64).saturating_add(offset)
+}
+
+pub fn format_time(time: std::time::SystemTime) -> String {
+    let clock = local_epoch_secs(time).rem_euclid(86_400);
     format!(
         "{:02}:{:02}:{:02}",
-        secs / 3600 % 24,
-        secs / 60 % 60,
-        secs % 60
+        clock / 3600,
+        clock / 60 % 60,
+        clock % 60
     )
 }
 
@@ -584,11 +597,29 @@ mod tests {
     }
 
     #[test]
-    fn history_datetime_formats_utc_date() {
+    fn history_datetime_is_local_wall_clock() {
+        // Only this test writes TZ; the rest assert TZ-free
+        // structure, so parallel execution stays sound.
+        // SAFETY: single-process test env, no other TZ writer.
+        unsafe { std::env::set_var("TZ", "UTC0") };
         let epoch = std::time::UNIX_EPOCH;
         assert_eq!(format_datetime(epoch), "1970-01-01 00:00:00");
+        assert_eq!(format_time(epoch), "00:00:00");
         let known = epoch + std::time::Duration::from_secs(1_769_990_400);
         assert_eq!(format_datetime(known), "2026-02-02 00:00:00");
+    }
+
+    #[test]
+    fn history_datetime_keeps_fixed_shape_and_order() {
+        let epoch = std::time::UNIX_EPOCH;
+        let rendered = format_datetime(epoch);
+        assert_eq!(rendered.len(), 19);
+        assert_eq!(&rendered[4..5], "-");
+        assert_eq!(&rendered[10..11], " ");
+        assert_eq!(&rendered[13..14], ":");
+        // A full day always advances wall-clock, in any zone.
+        let next = format_datetime(epoch + std::time::Duration::from_secs(86_400));
+        assert!(rendered < next);
     }
 
     #[test]

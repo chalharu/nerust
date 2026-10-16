@@ -110,16 +110,21 @@ impl GtkOsd {
             self.manager.push_all(drained, &settings, language, now);
         }
         let modal = self.manager.take_modal();
+        // Auto-pause first (spec): the game must not advance
+        // behind the modal. Resume after the last ack: the pause
+        // exists only to freeze the game behind the dialog, mirroring
+        // the tao twin. Guarded by can_pause: pausing with no loaded
+        // core fails, and that failure is itself an Error, which
+        // would re-queue a modal and flood one dialog per tick. Only
+        // resume what we paused: a manually-paused game stays paused.
+        // The flag threads the async ack chain to the final close.
+        let mut resume_after_modal = false;
         if !modal.is_empty() {
-            // Auto-pause first (spec): the game must not advance
-            // behind the modal. Pause stays on; the user resumes.
-            // Guarded by can_pause: pausing with no loaded core
-            // fails, and that failure is itself an Error, which
-            // would re-queue a modal and flood one dialog per tick.
             {
                 use nerust_gui_shell::session::access::FrontendSession;
-                if state.can_pause() {
+                if state.can_pause() && !state.paused() {
                     state.pause();
+                    resume_after_modal = true;
                 }
             }
             let detail = modal
@@ -133,7 +138,7 @@ impl GtkOsd {
         // Surface Rc is only touched inside the ack closure, which
         // runs after the tick borrow is long gone.
         if let Some(detail) = self.manager.take_modal_batch() {
-            Self::present_modal(surface, window, detail);
+            Self::present_modal(surface, window, detail, resume_after_modal);
         }
         let (fps, paused) = metrics;
         let changed = self.manager.poll(now);
@@ -495,12 +500,14 @@ fn apply_osd_css() {
 impl GtkOsd {
     /// Present one error batch; the ack closes it, marks the queue,
     /// and presents the next batch, so errors display sequentially
-    /// and never stack.
+    /// and never stack. After the last batch, resume iff this modal
+    /// sequence auto-paused a running game (never between batches).
     /// No libadwaita in tree: gtk MessageDialog twins tao's rfd modal.
     fn present_modal(
         surface: &super::surface::Surface,
         window: &gtk::ApplicationWindow,
         detail: String,
+        resume_after_modal: bool,
     ) {
         let dialog = gtk::MessageDialog::new(
             Some(window),
@@ -520,7 +527,10 @@ impl GtkOsd {
                 osd.manager.take_modal_batch()
             };
             if let Some(next) = next {
-                Self::present_modal(&surface, &window, next);
+                Self::present_modal(&surface, &window, next, resume_after_modal);
+            } else if resume_after_modal {
+                use nerust_gui_shell::session::access::FrontendSession;
+                surface.borrow().state.borrow_mut().resume();
             }
         });
         dialog.present();

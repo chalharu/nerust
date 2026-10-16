@@ -21,6 +21,7 @@ serde.workspace = true
 thiserror.workspace = true
 nerust_keyboard = { default-features = false, workspace = true }
 nerust_settings_traits.workspace = true
+time.workspace = true
 
 [dev-dependencies]
 clap.workspace = true
