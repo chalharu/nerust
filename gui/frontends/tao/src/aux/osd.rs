@@ -359,13 +359,14 @@ fn short_module(module: &str) -> &str {
 }
 
 impl HistoryFilter {
+    /// Threshold match: this level and above. Info shows all.
     fn matches(self, level: NotificationLevel) -> bool {
-        match self {
-            HistoryFilter::All => true,
-            HistoryFilter::Info => level == NotificationLevel::Info,
-            HistoryFilter::Warning => level == NotificationLevel::Warning,
-            HistoryFilter::Error => level == NotificationLevel::Error,
-        }
+        let minimum = match self {
+            HistoryFilter::All | HistoryFilter::Info => 0,
+            HistoryFilter::Warning => 1,
+            HistoryFilter::Error => 2,
+        };
+        level.severity() >= minimum
     }
 
     /// Localized dropdown label. Levels reuse the settings table;
@@ -731,12 +732,13 @@ mod tests {
     }
 
     #[test]
-    fn filter_matches_only_its_level() {
+    fn filter_matches_that_level_and_above() {
         assert!(HistoryFilter::All.matches(NotificationLevel::Error));
-        assert!(HistoryFilter::Info.matches(NotificationLevel::Info));
-        assert!(!HistoryFilter::Info.matches(NotificationLevel::Warning));
+        // No level below Info exists, so Info shows everything.
+        assert!(HistoryFilter::Info.matches(NotificationLevel::Error));
         assert!(HistoryFilter::Warning.matches(NotificationLevel::Warning));
-        assert!(!HistoryFilter::Warning.matches(NotificationLevel::Error));
+        assert!(HistoryFilter::Warning.matches(NotificationLevel::Error));
+        assert!(!HistoryFilter::Warning.matches(NotificationLevel::Info));
         assert!(HistoryFilter::Error.matches(NotificationLevel::Error));
         assert!(!HistoryFilter::Error.matches(NotificationLevel::Info));
     }
