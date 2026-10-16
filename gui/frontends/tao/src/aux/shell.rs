@@ -114,38 +114,6 @@ impl WindowScaffold {
             surface,
         })
     }
-
-    /// Assemble around a caller-built window (transparent overlays
-    /// own their builder flags). Compositor steps mirror `open`.
-    pub(crate) fn open_transparent(window: Arc<TaoWindow>, log_tag: &'static str) -> Option<Self> {
-        let window_id = iced::window::Id::unique();
-        let scale_factor = window.scale_factor() as f32;
-        let window_size = window.inner_size();
-        let viewport_physical = (window_size.width, window_size.height);
-        let logical_size = window_size.to_logical::<f64>(scale_factor as f64);
-        let bounds = Size::new(logical_size.width as f32, logical_size.height as f32);
-        let mut compositor = compositor::new(
-            iced_tiny_skia::Settings {
-                default_font: default_font(),
-                default_text_size: iced::Pixels(16.0),
-            },
-            Arc::clone(&window),
-        );
-        let renderer = compositor.create_renderer();
-        let surface =
-            compositor.create_surface(Arc::clone(&window), window_size.width, window_size.height);
-        let _ = log_tag;
-        Some(Self {
-            window,
-            window_id,
-            scale_factor,
-            viewport_physical,
-            bounds,
-            compositor,
-            renderer,
-            surface,
-        })
-    }
 }
 
 /// Logical layout bounds for a physical viewport and scale factor.
@@ -493,19 +461,10 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
                 .resize(self.viewport_physical.0, self.viewport_physical.1);
             self.surface_size = self.viewport_physical;
         }
-        self.render_ui_with(log_tag, None);
+        self.render_ui_with(log_tag);
     }
 
-    /// Render with an explicit clear color (transparent overlays).
-    pub(crate) fn render_with_background(
-        &mut self,
-        log_tag: &'static str,
-        background: iced::Color,
-    ) {
-        self.render_ui_with(log_tag, Some(background));
-    }
-
-    fn render_ui_with(&mut self, log_tag: &'static str, background: Option<iced::Color>) {
+    fn render_ui_with(&mut self, log_tag: &'static str) {
         render_ui(
             &mut self.ui_state,
             &mut self.renderer,
@@ -514,7 +473,6 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
             self.cursor,
             &mut self.clipboard,
             log_tag,
-            background,
         );
     }
 }
@@ -527,9 +485,7 @@ pub(crate) trait AuxWindow {
 }
 
 /// Shared full render: Light theme, redraw pump, draw, present.
-/// Both viewers call this; only the failure log tag differs.
-/// `background_override` is `None` for the theme default, or a
-/// transparent clear for overlay windows on transparent surfaces.
+/// Viewers call this; only the failure log tag differs.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
     ui: &mut UiShell<P>,
@@ -539,7 +495,6 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
     cursor: mouse::Cursor,
     clipboard: &mut Clipboard,
     log_tag: &'static str,
-    background_override: Option<iced::Color>,
 ) {
     // Nothing to draw into yet (minimize/dock transient): presenting
     // a zero-size surface panics in the pixel-map creation.
@@ -577,10 +532,7 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
         },
         cursor,
     );
-    if let Err(error) = renderer.present(
-        &viewport,
-        background_override.unwrap_or(style.background_color),
-    ) {
+    if let Err(error) = renderer.present(&viewport, style.background_color) {
         log::warn!("{log_tag} render present failed: {error}");
     }
 }

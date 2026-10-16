@@ -1,91 +1,33 @@
-//! GTK OSD: overlay labels, error modals, history.
-//! Policy lives in shell `session::osd`; this renders into `GtkOverlay`.
+//! GTK OSD: in-frame layer, error modals, history.
+//! Policy lives in shell `session::osd`; rows rasterize to a layer
+//! the renderer composites, so no overlay widgets are needed.
 
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use gtk::{glib, prelude::*};
-use nerust_gui_shell::session::osd::{OsdManager, strip_pixels, strip_rows};
-use nerust_render_traits::ReservedStrip;
-use nerust_settings_core::model::local::{NotificationPosition, NotificationSettings};
+use nerust_gui_shell::session::osd::OsdManager;
+use nerust_settings_core::model::local::NotificationSettings;
 
 use super::{State, renderer::GtkRenderer};
 
-fn corner_align(position: NotificationPosition) -> (gtk::Align, gtk::Align) {
-    match position {
-        NotificationPosition::TopLeft => (gtk::Align::Start, gtk::Align::Start),
-        NotificationPosition::TopRight => (gtk::Align::End, gtk::Align::Start),
-        NotificationPosition::BottomLeft => (gtk::Align::Start, gtk::Align::End),
-        NotificationPosition::BottomRight => (gtk::Align::End, gtk::Align::End),
-    }
-}
-
-fn is_top(position: NotificationPosition) -> bool {
-    matches!(
-        position,
-        NotificationPosition::TopLeft | NotificationPosition::TopRight
-    )
-}
-
-/// Pill class for OSD labels. GTK4 exposes no background API
-/// for labels, so one static rule is the only way to paint the
-/// translucent pill; the provider installs once per process
-/// (see `apply_osd_css`), keeping runtime cost at class match.
-const OSD_PILL_CLASS: &str = "nerust-osd";
-const OSD_PILL_CSS: &str =
-    ".nerust-osd { background-color: alpha(black, 0.72); border-radius: 6px; padding: 2px 6px; }";
-
-/// One OSD entry: text plus color (severity rides on the
-/// `[INFO]`/`[WARN]`/`[ERROR]` tag prefix, not a badge).
-type OsdEntry = (String, (u8, u8, u8));
-
 pub(crate) struct GtkOsd {
     manager: OsdManager,
-    transient_box: gtk::Box,
-    status_label: gtk::Label,
-    last_signature: String,
-    last_strip: ReservedStrip,
+    raster: nerust_render_osd::OsdRaster,
+    layer_size: Option<(u32, u32)>,
+    layer_active: bool,
 }
 
 impl GtkOsd {
-    /// Wrap the window content in an overlay carrying OSD labels.
-    /// Rendering stays native; labels composite like the menubar.
-    pub(crate) fn attach(window: &gtk::ApplicationWindow) -> Self {
-        let overlay = gtk::Overlay::new();
-        let previous = window.child();
-        if let Some(child) = previous.as_ref() {
-            overlay.set_child(Some(child));
-        } else {
-            // An overlay without a main child may leave overlay
-            // children unallocated; a filling placeholder keeps
-            // their allocation identical to the window.
-            let placeholder = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            placeholder.set_hexpand(true);
-            placeholder.set_vexpand(true);
-            overlay.set_child(Some(&placeholder));
-        }
-        let transient_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        transient_box.set_can_target(false);
-        transient_box.set_can_focus(false);
-        let status_label = gtk::Label::new(None);
-        status_label.set_can_target(false);
-        status_label.set_can_focus(false);
-        overlay.add_overlay(&transient_box);
-        overlay.add_overlay(&status_label);
-
-        overlay.set_clip_overlay(&transient_box, false);
-        overlay.set_clip_overlay(&status_label, false);
-        window.set_child(Some(&overlay));
-        apply_osd_css();
+    pub(crate) fn new() -> Self {
         Self {
             manager: OsdManager::new(),
-            transient_box,
-            status_label,
-            last_signature: String::new(),
-            last_strip: ReservedStrip::default(),
+            raster: nerust_render_osd::OsdRaster::new(),
+            layer_size: None,
+            layer_active: false,
         }
     }
 
-    /// Drain the session queue, show modals, and refresh labels.
+    /// Drain the session queue, show modals, and sync the OSD layer.
     /// Called from the surface tick (every frame while running).
     /// Takes `&mut State` directly: the tick already holds the
     /// borrow, so re-borrowing the `Rc` would panic.
@@ -120,7 +62,7 @@ impl GtkOsd {
             }
             let detail = modal
                 .iter()
-                .map(|line| format!("• {line}"))
+                .map(|line| format!("\u{2022} {line}"))
                 .collect::<Vec<_>>()
                 .join("\n");
             self.manager.queue_modal(detail);
@@ -132,137 +74,69 @@ impl GtkOsd {
             Self::present_modal(surface, window, detail, resume_after_modal);
         }
         let (fps, paused) = metrics;
-        let changed = self.manager.poll(now);
-        self.refresh_labels(&settings, language, paused, fps, window);
-        self.apply_strip(&settings, renderer, window);
-        // Repaint only while labels show (or just changed): the game
-        // surface presents outside GTK paint and would otherwise cover
-        // one-shot label paints within a frame.
-        if changed || self.manager.has_visible() {
-            self.redraw();
-        }
+        self.manager.poll(now);
+        self.sync_layer(&settings, language, paused, fps, renderer, window);
     }
 
-    fn refresh_labels(
+    /// Rasterize on change and hand the layer to the renderer.
+    fn sync_layer(
         &mut self,
         settings: &NotificationSettings,
         language: nerust_settings_core::model::language::AppLanguage,
         paused: bool,
         fps: f32,
-        window: &gtk::ApplicationWindow,
-    ) {
-        let rows = self.manager.rows();
-        let status = settings
-            .status_enabled
-            .then(|| OsdManager::status_text(fps, paused, language));
-        let signature = format!(
-            "{:?}|{:?}|{:?}|{:?}",
-            rows.iter()
-                .map(|row| (&row.text, row.rgb, row.tag))
-                .collect::<Vec<_>>(),
-            status,
-            settings.position,
-            settings.status_position,
-        );
-        if signature == self.last_signature {
-            return;
-        }
-        self.last_signature = signature;
-        clear_box(&self.transient_box);
-        let font_px = font_px_for(window);
-        // Same-corner rule: status pins to the edge side, transient inside.
-        let same_corner = settings.position == settings.status_position;
-        let transient_top = is_top(settings.position);
-        let mut top_rows: Vec<OsdEntry> = Vec::new();
-        let mut bottom_rows: Vec<OsdEntry> = Vec::new();
-        for row in &rows {
-            let entry = (format!("{} {}", row.tag, row.text), row.rgb);
-            if transient_top {
-                top_rows.push(entry);
-            } else {
-                bottom_rows.push(entry);
-            }
-        }
-        if let Some(status) = status.as_ref() {
-            let entry = (status.clone(), (200, 200, 200));
-            if same_corner {
-                if transient_top {
-                    top_rows.insert(0, entry);
-                } else {
-                    bottom_rows.push(entry);
-                }
-            } else if is_top(settings.status_position) {
-                top_rows.insert(0, entry);
-            } else {
-                bottom_rows.push(entry);
-            }
-        }
-        // Transient/status boxes anchor independently when split.
-        if same_corner || transient_top == is_top(settings.status_position) {
-            for (text, rgb) in top_rows.into_iter().chain(bottom_rows) {
-                self.transient_box.append(&osd_label(&text, rgb, font_px));
-            }
-            let (halign, valign) = corner_align(settings.position);
-            self.transient_box.set_halign(halign);
-            self.transient_box.set_valign(valign);
-            self.status_label.set_visible(false);
-        } else {
-            for (text, rgb) in top_rows {
-                self.transient_box.append(&osd_label(&text, rgb, font_px));
-            }
-            let (halign, valign) = corner_align(settings.position);
-            self.transient_box.set_halign(halign);
-            self.transient_box.set_valign(valign);
-            self.status_label.set_visible(true);
-            if let Some(status) = status.as_ref() {
-                self.status_label
-                    .set_markup(&osd_body_markup(status, (200, 200, 200), font_px));
-            }
-            let (halign, valign) = corner_align(settings.status_position);
-            self.status_label.set_halign(halign);
-            self.status_label.set_valign(valign);
-        }
-        // Margins matching the shared strip math (8px safe-area).
-        for child in [
-            self.transient_box.upcast_ref::<gtk::Widget>(),
-            self.status_label.upcast_ref::<gtk::Widget>(),
-        ] {
-            child.set_margin_start(8);
-            child.set_margin_end(8);
-            child.set_margin_top(8);
-            child.set_margin_bottom(8);
-        }
-    }
-
-    /// Repaint labels over the freshly presented game frame. The
-    /// game surface presents outside GTK paint, so one-shot label
-    /// paints would be covered within a frame; repaint every tick.
-    pub(crate) fn redraw(&self) {
-        self.transient_box.queue_draw();
-        self.status_label.queue_draw();
-    }
-
-    fn apply_strip(
-        &mut self,
-        settings: &NotificationSettings,
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
     ) {
-        let client_h = window.height().max(0) as u32 * window.scale_factor().max(1) as u32;
-        let (top_rows, bottom_rows) = strip_rows(
-            settings.area_mode,
-            settings.position,
-            settings.status_position,
-            settings.status_enabled,
-        );
-        let strip = ReservedStrip {
-            top: strip_pixels(client_h, top_rows),
-            bottom: strip_pixels(client_h, bottom_rows),
-        };
-        if strip != self.last_strip {
-            self.last_strip = strip;
-            renderer.borrow_mut().set_reserved_strip(strip);
+        let scale = window.scale_factor().max(1) as u32;
+        let w = window.width().max(0) as u32 * scale;
+        let h = window.height().max(0) as u32 * scale;
+        if w == 0 || h == 0 {
+            if self.layer_active {
+                renderer.borrow_mut().set_osd_layer(None);
+                self.layer_active = false;
+            }
+            return;
         }
+        let dirty = self.manager.take_dirty();
+        if !dirty && self.layer_size == Some((w, h)) {
+            return;
+        }
+        self.layer_size = Some((w, h));
+        let status = settings.status_enabled.then(|| {
+            let text = OsdManager::status_text(fps, paused, language);
+            nerust_render_osd::OsdRow {
+                tag: String::new(),
+                text,
+                rgb: (200, 200, 200),
+            }
+        });
+        let rows = self
+            .manager
+            .rows()
+            .iter()
+            .map(|row| nerust_render_osd::OsdRow {
+                tag: row.tag.to_string(),
+                text: row.text.clone(),
+                rgb: row.rgb,
+            })
+            .collect();
+        let content = nerust_render_osd::OsdContent {
+            rows,
+            status,
+            position: settings.position,
+            status_position: settings.status_position,
+        };
+        if content.rows.is_empty() && content.status.is_none() {
+            if self.layer_active {
+                renderer.borrow_mut().set_osd_layer(None);
+                self.layer_active = false;
+            }
+            return;
+        }
+        let layer = self.raster.rasterize(&content, w, h);
+        self.layer_active = layer.is_some();
+        renderer.borrow_mut().set_osd_layer(layer);
     }
 
     pub(crate) fn show_history(window: &gtk::ApplicationWindow, state: &Rc<RefCell<State>>) {
@@ -453,63 +327,6 @@ impl GtkOsd {
         dialog.present();
     }
 }
-
-fn font_px_for(window: &gtk::ApplicationWindow) -> f64 {
-    // Viewport-relative sizing (2.2% of height), no floor: the OSD
-    // scales with the game area like the tao twin.
-    f64::from(window.height().max(1)) * 0.022
-}
-
-fn osd_body_markup(text: &str, rgb: (u8, u8, u8), font_px: f64) -> String {
-    format!(
-        "<span font_desc=\"Sans {:.1}\" foreground=\"#{:02X}{:02X}{:02X}\">{}</span>",
-        font_px,
-        rgb.0,
-        rgb.1,
-        rgb.2,
-        glib::markup_escape_text(text)
-    )
-}
-
-fn osd_label(text: &str, rgb: (u8, u8, u8), font_px: f64) -> gtk::Box {
-    // Tagged pill: `[LEVEL] message` in one label, no badge chrome.
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let body = gtk::Label::new(None);
-    body.set_markup(&osd_body_markup(text, rgb, font_px));
-    body.set_xalign(0.0);
-    body.set_can_target(false);
-    body.set_can_focus(false);
-    row.append(&body);
-    row.add_css_class(OSD_PILL_CLASS);
-    row.set_can_target(false);
-    row.set_can_focus(false);
-    row
-}
-
-fn clear_box(container: &gtk::Box) {
-    while let Some(child) = container.first_child() {
-        container.remove(&child);
-    }
-}
-
-fn apply_osd_css() {
-    use std::sync::OnceLock;
-    static DONE: OnceLock<()> = OnceLock::new();
-    DONE.get_or_init(|| {
-        let Some(display) = gdk::Display::default() else {
-            log::warn!("OSD pill style skipped: no gdk display");
-            return;
-        };
-        let css = gtk::CssProvider::new();
-        css.load_from_data(OSD_PILL_CSS);
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &css,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    });
-}
-
 impl GtkOsd {
     /// Present one error batch; the ack chains the next.
     /// Resume only after the last batch iff auto-paused.
@@ -546,5 +363,3 @@ impl GtkOsd {
         dialog.present();
     }
 }
-
-use gtk::gdk;

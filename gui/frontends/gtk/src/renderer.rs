@@ -83,9 +83,12 @@ impl GtkRenderer {
         }
     }
 
-    pub(crate) fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
+    pub(crate) fn set_osd_layer(
+        &mut self,
+        layer: Option<nerust_render_traits::renderer::OsdLayer>,
+    ) {
         if let Some(renderer) = self.renderer.as_mut() {
-            renderer.set_reserved_strip(strip);
+            renderer.set_osd_layer(layer);
         }
     }
 

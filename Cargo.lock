@@ -3560,6 +3560,7 @@ dependencies = [
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_persistence",
+ "nerust_render_osd",
  "nerust_render_traits",
  "nerust_run_options",
  "nerust_settings_core",
@@ -3754,6 +3755,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_render_osd"
+version = "0.1.0-dev"
+dependencies = [
+ "ab_glyph",
+ "fontdb",
+ "log",
+ "nerust_render_traits",
+ "nerust_settings_core",
+]
+
+[[package]]
 name = "nerust_render_softbuffer"
 version = "0.1.0-dev"
 dependencies = [
@@ -3897,6 +3909,7 @@ dependencies = [
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_persistence",
+ "nerust_render_osd",
  "nerust_render_traits",
  "nerust_run_options",
  "nerust_settings_core",

@@ -58,9 +58,6 @@ impl HostState {
         self.window = Some(window);
         self.sync_fullscreen_from_settings();
         self.sync_menu_state();
-        if std::env::var("NERUST_NO_OSD").is_err() {
-            self.ensure_osd_window(opener);
-        }
         self.request_redraw();
         self.refresh_window_title();
     }
@@ -177,10 +174,6 @@ impl HostState {
             *control_flow = ControlFlow::WaitUntil(earlier);
         }
 
-        // Overlay tracks the main client area (see sync_osd_geometry).
-        if self.osd_window.is_some() {
-            self.sync_osd_geometry();
-        }
         // Drain notifications here, not only in on_update: a paused
         // unfocused loop schedules no redraws, which is exactly when
         // pause/error notices must still land and expire.

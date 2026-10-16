@@ -1,17 +1,16 @@
-//! OSD notification orchestration: drain, modal flow, overlay sync,
-//! and strip computation. Display state lives in `OsdManager`
-//! (`crate::aux::osd`); this impl block wires it to the session,
-//! dialogs, overlay window, and renderer.
+//! OSD notification orchestration: drain, modal flow, and in-frame
+//! layer sync. Display state lives in `OsdManager`; this impl block
+//! wires it to the session, dialogs, history, and renderer.
 
 use std::time::Instant;
 
 use nerust_gui_shell::session::access::PauseControl;
-use nerust_render_traits::ReservedStrip;
+use nerust_render_traits::renderer::GpuRenderer;
 use tao::event::WindowEvent;
 
 use super::HostState;
 use crate::ports::WindowOpener;
-use nerust_gui_shell::session::osd::{OsdManager, OsdSnapshot, strip_pixels, strip_rows};
+use nerust_gui_shell::session::osd::OsdManager;
 
 /// In-flight error dialog: blocking `show_error` runs on a thread.
 /// `resume_after` resumes only what we paused, after the last ack.
@@ -29,90 +28,10 @@ impl HostState {
         self.session.settings_snapshot().shared.general.language
     }
 
-    /// Main client rect in logical points: outer frame minus decorations.
-    /// Positions arrive in physical pixels, so scale them like sizes.
-    fn main_client_rect(&self) -> Option<((i32, i32), (f64, f64))> {
-        let window = self.window.as_ref()?;
-        let size = window.inner_size();
-        let scale = window.scale_factor();
-        let outer = window.outer_position().ok()?;
-        let outer_size = window.outer_size();
-        let side = outer_size.width.saturating_sub(size.width) / 2;
-        let top = outer_size
-            .height
-            .saturating_sub(size.height)
-            .saturating_sub(side);
-        let to_logical = |physical: i32| (physical as f64 / scale) as i32;
-        Some((
-            (
-                to_logical(outer.x + side as i32),
-                to_logical(outer.y + top as i32),
-            ),
-            (size.width as f64 / scale, size.height as f64 / scale),
-        ))
-    }
-
-    /// Create the overlay window tracking the main client area.
-    /// Transparency refusal degrades to no OSD (log + history remain).
-    pub(crate) fn ensure_osd_window(&mut self, opener: &dyn WindowOpener) {
-        if self.osd_window.is_some() {
-            return;
-        }
-        let Some((position, size)) = self.main_client_rect() else {
-            return;
-        };
-        self.osd_window = opener.create_osd(position, size);
-    }
-
-    /// Reposition the overlay on geometry change (polled).
-    /// Skipped when the overlay is absent.
-    pub(crate) fn sync_osd_geometry(&mut self) {
-        let window = self.window.as_ref();
-        let size = window.map(|window| window.inner_size());
-        let scale = window.map(|window| window.scale_factor());
-        let Some((position, logical_size)) = self.main_client_rect() else {
-            return;
-        };
-        let (size, scale) = match (size, scale) {
-            (Some(size), Some(scale)) => (size, scale),
-            _ => return,
-        };
-        let current = (
-            position.0,
-            position.1,
-            size.width,
-            size.height,
-            scale.to_bits(),
-        );
-        if self.osd_geometry == Some(current) {
-            return;
-        }
-        self.osd_geometry = Some(current);
-        if let Some(handle) = self.osd_window.as_mut() {
-            handle.move_to(position, logical_size);
-        }
-    }
-
-    pub(crate) fn is_osd_window(&self, id: tao::window::WindowId) -> bool {
-        self.osd_window
-            .as_ref()
-            .is_some_and(|handle| handle.shell.window.id() == id)
-    }
-
     pub(crate) fn is_history_window(&self, id: tao::window::WindowId) -> bool {
         self.history_window
             .as_ref()
             .is_some_and(|handle| handle.shell.window.id() == id)
-    }
-
-    pub(crate) fn on_osd_event(&mut self, event: WindowEvent) {
-        if matches!(event, WindowEvent::Destroyed) {
-            self.osd_window = None;
-            return;
-        }
-        if let Some(handle) = self.osd_window.as_mut() {
-            crate::aux::shell::AuxWindow::pump_window_event(handle, event);
-        }
     }
 
     pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
@@ -163,27 +82,6 @@ impl HostState {
                 self.session.clear_notification_history();
                 self.sync_history_window();
             }
-        }
-    }
-
-    /// Reserved edge strips in physical pixels. Static per settings
-    /// (not per frame) so the renderer never churns surfaces.
-    pub(crate) fn reserved_strip(&self) -> ReservedStrip {
-        let settings = self.notification_settings();
-        let client_h = self
-            .window
-            .as_ref()
-            .map(|window| window.inner_size().height)
-            .unwrap_or(0);
-        let (top_rows, bottom_rows) = strip_rows(
-            settings.area_mode,
-            settings.position,
-            settings.status_position,
-            settings.status_enabled,
-        );
-        ReservedStrip {
-            top: strip_pixels(client_h, top_rows),
-            bottom: strip_pixels(client_h, bottom_rows),
         }
     }
 
@@ -288,7 +186,6 @@ impl HostState {
         self.reap_modal();
         self.present_modal();
         if self.osd.take_dirty() {
-            self.sync_osd_snapshot();
             // Paint even idle: no main redraw is scheduled while
             // paused+unfocused, which is exactly when Paused lands.
             self.request_redraw();
@@ -298,38 +195,70 @@ impl HostState {
         }
     }
 
-    fn sync_osd_snapshot(&mut self) {
-        if self.osd_window.is_none() {
-            return;
-        }
-        let settings = self.notification_settings();
-        let language = self.notification_language();
-        let metrics = self.session.metrics();
-        let status = settings
-            .status_enabled
-            .then(|| OsdManager::status_text(metrics.emulation_fps, metrics.paused, language));
-        let client_h = self
+    /// Rasterize the OSD layer on change and hand it to the renderer.
+    /// Size changes re-rasterize; empty content clears the layer.
+    pub(crate) fn sync_osd_layer(&mut self, renderer: &mut dyn GpuRenderer) {
+        let (w, h) = self
             .window
             .as_ref()
             .map(|window| {
                 let size = window.inner_size();
-                size.height as f64 / window.scale_factor()
+                (size.width, size.height)
             })
-            .unwrap_or(0.0);
-        let rows = self.osd.rows();
-        let handle = self.osd_window.as_mut().expect("checked above");
-        handle.sync(OsdSnapshot {
+            .unwrap_or((0, 0));
+        if w == 0 || h == 0 {
+            if self.osd_layer_active {
+                renderer.set_osd_layer(None);
+                self.osd_layer_active = false;
+            }
+            return;
+        }
+        let dirty = self.osd.take_dirty();
+        if !dirty && self.osd_layer_size == Some((w, h)) {
+            return;
+        }
+        self.osd_layer_size = Some((w, h));
+        let settings = self.notification_settings();
+        let language = self.notification_language();
+        let metrics = self.session.metrics();
+        let status = settings.status_enabled.then(|| {
+            let text = OsdManager::status_text(metrics.emulation_fps, metrics.paused, language);
+            nerust_render_osd::OsdRow {
+                tag: String::new(),
+                text,
+                rgb: (200, 200, 200),
+            }
+        });
+        let rows = self
+            .osd
+            .rows()
+            .iter()
+            .map(|row| nerust_render_osd::OsdRow {
+                tag: row.tag.to_string(),
+                text: row.text.clone(),
+                rgb: row.rgb,
+            })
+            .collect();
+        let content = nerust_render_osd::OsdContent {
             rows,
             status,
             position: settings.position,
             status_position: settings.status_position,
-            font_px: (client_h * 0.022) as f32,
-        });
+        };
+        if content.rows.is_empty() && content.status.is_none() {
+            if self.osd_layer_active {
+                renderer.set_osd_layer(None);
+                self.osd_layer_active = false;
+            }
+            return;
+        }
+        let layer = self.osd_raster.rasterize(&content, w, h);
+        self.osd_layer_active = layer.is_some();
+        renderer.set_osd_layer(layer);
     }
 
     /// Wake the loop for OSD expiry while labels are visible.
     pub(crate) fn osd_wakeup(&self) -> Option<Instant> {
-        self.osd_window.as_ref()?;
         self.osd.next_deadline()
     }
 }

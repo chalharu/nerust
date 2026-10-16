@@ -47,17 +47,6 @@ pub fn level_label(
     }
 }
 
-/// Render contract handed to frontends: rows plus status placement.
-#[derive(Debug, Clone, Default)]
-pub struct OsdSnapshot {
-    pub rows: Vec<OsdRow>,
-    pub status: Option<String>,
-    pub position: NotificationPosition,
-    pub status_position: NotificationPosition,
-    /// Logical pixels (viewport-relative sizing applied by frontend).
-    pub font_px: f32,
-}
-
 /// One rendered history line: datetime plus grid columns.
 /// `module` is the log module so rows grep the `notification:` records.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -39,6 +39,19 @@ impl std::error::Error for RendererError {
     }
 }
 
+/// In-frame OSD layer: cropped straight-alpha RGBA composited
+/// over the game image at surface size. Origin is top-left.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OsdLayer {
+    /// Top-left corner in physical surface pixels.
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    /// Row-major straight-alpha RGBA, `width * height * 4` bytes.
+    pub rgba: Vec<u8>,
+}
+
 /// Outcome reported by [`GpuRenderer::render`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RenderResult {
@@ -83,6 +96,10 @@ pub trait GpuRenderer: std::fmt::Debug {
     /// the remaining rect on the next resize/render; strips stay clear.
     /// Default ignores the reservation (full-surface game).
     fn set_reserved_strip(&mut self, _strip: ReservedStrip) {}
+
+    /// Overlay an OSD layer over the game image on the next render.
+    /// Backends composite after filters at surface size; `None` clears.
+    fn set_osd_layer(&mut self, layer: Option<OsdLayer>);
 
     /// Update the render pipeline for a new render profile.
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;

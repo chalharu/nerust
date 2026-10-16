@@ -1,0 +1,14 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "nerust_render_osd"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+ab_glyph.workspace = true
+fontdb.workspace = true
+log.workspace = true
+nerust_render_traits.workspace = true
+nerust_settings_core.workspace = true

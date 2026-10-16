@@ -10,7 +10,6 @@ pub(crate) enum OpenerCall {
     Settings,
     Debug,
     Ppu,
-    Osd,
     History,
 }
 
@@ -72,15 +71,6 @@ impl crate::ports::WindowOpener for FakeOpener {
         _position: Option<(i32, i32)>,
     ) -> Option<crate::aux::ppu::PpuWindowHandle> {
         crate::aux::bridge::lock_recovered(&self.calls).push(OpenerCall::Ppu);
-        None
-    }
-
-    fn create_osd(
-        &self,
-        _position: (i32, i32),
-        _size: (f64, f64),
-    ) -> Option<crate::aux::osd::OsdWindowHandle> {
-        crate::aux::bridge::lock_recovered(&self.calls).push(OpenerCall::Osd);
         None
     }
 
