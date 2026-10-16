@@ -814,7 +814,7 @@ pub(crate) fn present_preferences_dialog(
     // display/status groups, so each control's scope reads off its
     // header. Error presentation is an exclusive radio pair.
     section_header(&notifications_page, ui_text(lang, UiText::NotificationInfo));
-    let info_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationInfo));
+    let info_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
     notifications_page.append(&info_check);
     let info_duration_spin = gtk::SpinButton::with_range(1000.0, 30000.0, 500.0);
     notifications_page.append(&labeled_row(
@@ -836,7 +836,7 @@ pub(crate) fn present_preferences_dialog(
         &notifications_page,
         ui_text(lang, UiText::NotificationWarning),
     );
-    let warning_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationWarning));
+    let warning_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
     notifications_page.append(&warning_check);
     let warning_duration_spin = gtk::SpinButton::with_range(1000.0, 30000.0, 500.0);
     notifications_page.append(&labeled_row(
@@ -855,7 +855,7 @@ pub(crate) fn present_preferences_dialog(
         &warning_color_combo,
     ));
     section_header(&notifications_page, ui_text(lang, UiText::Error));
-    let error_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationError));
+    let error_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
     notifications_page.append(&error_check);
     let error_modal_radio =
         gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationErrorModal));
@@ -1403,13 +1403,13 @@ pub(crate) fn present_preferences_dialog(
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// Titled settings group header: heading plus rule.
+/// Titled settings group header. No rule: whitespace alone groups
+/// (matches the tao form; rules drew false containment lines).
 fn section_header(container: &gtk::Box, title: &str) {
     let label = gtk::Label::new(Some(title));
     label.set_xalign(0.0);
     label.add_css_class("heading");
     container.append(&label);
-    container.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 }
 
 fn labeled_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {

@@ -4,9 +4,7 @@
 
 use iced::{
     Alignment, Length, Theme,
-    widget::{
-        Column, button, checkbox, column, pick_list, radio, row, rule, slider, text, text_input,
-    },
+    widget::{Column, button, checkbox, column, pick_list, radio, row, slider, text, text_input},
 };
 use nerust_gui_viewmodel::settings::dto::ChoiceView;
 use nerust_settings_core::i18n::{UiText, text as ui_text};
@@ -263,7 +261,7 @@ impl SettingsAppState {
             ui_text(language, UiText::NotificationInfo),
             [
                 checkbox(view.info_enabled)
-                    .label(ui_text(language, UiText::NotificationInfo))
+                    .label(ui_text(language, UiText::NotificationEnabled))
                     .on_toggle(Message::ToggleInfoEnabled)
                     .into(),
                 labeled_slider(
@@ -287,7 +285,7 @@ impl SettingsAppState {
             ui_text(language, UiText::NotificationWarning),
             [
                 checkbox(view.warning_enabled)
-                    .label(ui_text(language, UiText::NotificationWarning))
+                    .label(ui_text(language, UiText::NotificationEnabled))
                     .on_toggle(Message::ToggleWarningEnabled)
                     .into(),
                 labeled_slider(
@@ -311,7 +309,7 @@ impl SettingsAppState {
             ui_text(language, UiText::Error),
             [
                 checkbox(view.error_enabled)
-                    .label(ui_text(language, UiText::NotificationError))
+                    .label(ui_text(language, UiText::NotificationEnabled))
                     .on_toggle(Message::ToggleErrorEnabled)
                     .into(),
                 row![
@@ -501,9 +499,11 @@ pub(super) fn page_radio(
     .into()
 }
 
-/// Titled settings group: header plus rule, then the controls.
+/// Titled settings group: header plus controls, grouped by
+/// whitespace alone (12 between sections, 8 within). Rules drew
+/// false containment lines, so they stay out of settings forms.
 fn section<'a>(title: &str, rows: impl IntoIterator<Item = El<'a>>) -> El<'a> {
-    let mut items = column![text(title.to_string()).size(14), rule::horizontal(1)].spacing(8);
+    let mut items = column![text(title.to_string()).size(14)].spacing(8);
     for row in rows {
         items = items.push(row);
     }
