@@ -124,7 +124,12 @@ impl GtkOsd {
                 .join("\n");
             self.manager.queue_modal(detail);
         }
-        Self::present_next_modal(surface, window);
+        // The batch take runs on the already-borrowed manager: the
+        // Surface Rc is only touched inside the ack closure, which
+        // runs after the tick borrow is long gone.
+        if let Some(detail) = self.manager.take_modal_batch() {
+            Self::present_modal(surface, window, detail);
+        }
         let (fps, paused) = metrics;
         let changed = self.manager.poll(now);
         self.refresh_labels(&settings, language, paused, fps, window);
@@ -483,20 +488,15 @@ fn apply_osd_css() {
 }
 
 impl GtkOsd {
-    /// Present the next queued error batch only when no dialog is
-    /// showing; the ack chains to the following batch, so errors
-    /// display sequentially and never stack.
-    fn present_next_modal(surface: &super::surface::Surface, window: &gtk::ApplicationWindow) {
-        // No libadwaita in tree: gtk MessageDialog twins tao's rfd modal.
-        let detail = surface
-            .borrow_mut()
-            .osd
-            .borrow_mut()
-            .manager
-            .take_modal_batch();
-        let Some(detail) = detail else {
-            return;
-        };
+    /// Present one error batch; the ack closes it, marks the queue,
+    /// and presents the next batch, so errors display sequentially
+    /// and never stack.
+    /// No libadwaita in tree: gtk MessageDialog twins tao's rfd modal.
+    fn present_modal(
+        surface: &super::surface::Surface,
+        window: &gtk::ApplicationWindow,
+        detail: String,
+    ) {
         let dialog = gtk::MessageDialog::new(
             Some(window),
             gtk::DialogFlags::MODAL,
@@ -508,8 +508,15 @@ impl GtkOsd {
         let window = window.clone();
         dialog.connect_response(move |dialog, _| {
             dialog.close();
-            surface.borrow_mut().osd.borrow_mut().manager.modal_closed();
-            Self::present_next_modal(&surface, &window);
+            let next = {
+                let surface = surface.borrow_mut();
+                let mut osd = surface.osd.borrow_mut();
+                osd.manager.modal_closed();
+                osd.manager.take_modal_batch()
+            };
+            if let Some(next) = next {
+                Self::present_modal(&surface, &window, next);
+            }
         });
         dialog.present();
     }
