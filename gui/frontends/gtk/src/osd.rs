@@ -340,18 +340,16 @@ impl GtkOsd {
                 while let Some(child) = grid.first_child() {
                     grid.remove(&child);
                 }
+                // Threshold match like the tao twin: this level and
+                // above, so Info shows all (no lower level exists).
+                let minimum = match active.as_deref() {
+                    None | Some("all") | Some("info") => 0,
+                    Some("warning") => 1,
+                    _ => 2,
+                };
                 let visible: Vec<_> = lines
                     .iter()
-                    .filter(|line| {
-                        matches!(
-                            (active.as_deref(), line.level),
-                            (None, _)
-                                | (Some("all"), _)
-                                | (Some("info"), NotificationLevel::Info)
-                                | (Some("warning"), NotificationLevel::Warning)
-                                | (Some("error"), NotificationLevel::Error)
-                        )
-                    })
+                    .filter(|line| line.level.severity() >= minimum)
                     .collect();
                 count.set_text(&nerust_settings_core::i18n::history_count(
                     language,
@@ -446,6 +444,11 @@ impl GtkOsd {
         });
         // Modeless like the tao twin: a modal would park all keys
         // in the dialog. Destroy (not hide) so focus returns.
+        if let Some(close) = dialog.widget_for_response(gtk::ResponseType::Close) {
+            close.set_margin_start(16);
+            close.set_margin_end(16);
+            close.set_margin_bottom(16);
+        }
         dialog.connect_response(|dialog, _| dialog.destroy());
         dialog.present();
     }

@@ -19,6 +19,18 @@ pub enum NotificationLevel {
     Error,
 }
 
+impl NotificationLevel {
+    /// Severity rank: filters show this level and above, so Info
+    /// shows everything (no Debug/Trace exists below it).
+    pub fn severity(self) -> u8 {
+        match self {
+            NotificationLevel::Info => 0,
+            NotificationLevel::Warning => 1,
+            NotificationLevel::Error => 2,
+        }
+    }
+}
+
 /// Structured notification content. Frontends render via [`NotificationKind::text`];
 /// no per-frontend message table is needed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,6 +289,16 @@ pub fn outcome_notifications(
     vec![kind]
 }
 
+/// Resolve TogglePause to the steady arm entered from `was_paused`.
+/// Notifications name the entered state, not the invoked command.
+pub fn resolve_toggle(command: SessionCommand, was_paused: bool) -> SessionCommand {
+    match (command, was_paused) {
+        (SessionCommand::TogglePause, false) => SessionCommand::Pause,
+        (SessionCommand::TogglePause, true) => SessionCommand::Resume,
+        (other, _) => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,6 +405,32 @@ mod tests {
             .text(AppLanguage::Japanese)
             .contains("スロット7")
         );
+    }
+
+    #[test]
+    fn toggle_resolves_to_the_entered_state() {
+        use super::resolve_toggle as resolve;
+        use SessionCommand as C;
+        assert_eq!(resolve(C::TogglePause, false), C::Pause);
+        assert_eq!(resolve(C::TogglePause, true), C::Resume);
+        assert_eq!(resolve(C::Resume, true), C::Resume);
+        // The resolved arm drives the notification: toggling out of
+        // pause reads Resumed, never Paused.
+        let ok = SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+            slot_failure: None,
+        };
+        assert_eq!(
+            outcome_notifications(resolve(C::TogglePause, true), &ok, None),
+            [NotificationKind::Resumed]
+        );
+    }
+
+    #[test]
+    fn severity_orders_info_below_warning_below_error() {
+        assert!(NotificationLevel::Info.severity() < NotificationLevel::Warning.severity());
+        assert!(NotificationLevel::Warning.severity() < NotificationLevel::Error.severity());
     }
 
     #[test]

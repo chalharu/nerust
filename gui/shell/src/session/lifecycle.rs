@@ -413,16 +413,18 @@ impl SessionHandle {
         // Resolve TogglePause to its steady arm so notifications name
         // the state actually entered.
         let was_paused = self.paused();
-        let effective = match (command, was_paused) {
-            (SessionCommand::TogglePause, false) => SessionCommand::Pause,
-            (SessionCommand::TogglePause, true) => SessionCommand::Resume,
-            (other, _) => other,
-        };
+        let effective = super::notification::resolve_toggle(command, was_paused);
         let result = self.run_command_inner(effective);
         match &result {
             Ok(outcome) => {
                 let active = self.active_slot_id();
-                for kind in super::notification::outcome_notifications(command, outcome, active) {
+                // Notify the entered state: TogglePause from paused
+                // must read Resumed, not the invoked command name.
+                let notified = match command {
+                    SessionCommand::TogglePause => effective,
+                    other => other,
+                };
+                for kind in super::notification::outcome_notifications(notified, outcome, active) {
                     self.notifications.push(kind);
                 }
             }
