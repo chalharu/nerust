@@ -456,12 +456,12 @@ impl Program for HistoryProgram {
             .iter()
             .filter(|line| state.filter.matches(line.level))
             .collect();
-        // Toolbar above the table: level filter only (the Console /
-        // Event Viewer / DevTools / logcat pattern). History clearing
-        // lives in the footer as an explicit "Clear History" action so
-        // the two are never confused (cf. Event Viewer "Clear Filter"
-        // vs "Clear Log").
-        let toolbar = row![
+        // Toolbar above the table (the Console / DevTools / logcat
+        // pattern: filter plus clear live together at the top).
+        // "Clear History" names the target explicitly so filter-clear
+        // and history-clear are never confused (cf. Event Viewer
+        // "Clear Filter" vs "Clear Log"); the item count trails right.
+        let toolbar: iced::Element<'_, HistoryMessage> = row![
             text("Level").size(12),
             pick_list(
                 [
@@ -474,18 +474,13 @@ impl Program for HistoryProgram {
                 HistoryMessage::SetFilter,
             )
             .placeholder("Level"),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center);
-        // Footer: item count leading, Clear History trailing (dialog
-        // action placement, Apple HIG / Fluent dialog footer).
-        let footer = row![
-            text(format!("{} items", visible.len())).size(12),
-            iced::widget::Space::new().width(Length::Fill),
             button(text("Clear History").size(12)).on_press(HistoryMessage::Clear),
+            iced::widget::Space::new().width(Length::Fill),
+            text(format!("{} items", visible.len())).size(12),
         ]
         .spacing(8)
-        .align_y(iced::Alignment::Center);
+        .align_y(iced::Alignment::Center)
+        .into();
         let mut items = column![].spacing(2);
         // Descriptive nouns, title case, no punctuation (Apple HIG).
         items = items.push(
@@ -547,7 +542,7 @@ impl Program for HistoryProgram {
             );
         }
         // 16 content margin, 12 between groups, 8 between controls.
-        column![column![toolbar, scrollable(items)].spacing(12), footer,]
+        column![toolbar, scrollable(items)]
             .spacing(12)
             .padding(16)
             .into()
