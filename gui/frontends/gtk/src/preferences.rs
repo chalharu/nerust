@@ -1403,12 +1403,15 @@ pub(crate) fn present_preferences_dialog(
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// Titled settings group header. No rule: whitespace alone groups
-/// (matches the tao form; rules drew false containment lines).
+/// Titled settings group header: semibold headline plus extra top
+/// gap (matches the tao form). Weight carries hierarchy: same-size
+/// regular text read at the same level as the items.
 fn section_header(container: &gtk::Box, title: &str) {
-    let label = gtk::Label::new(Some(title));
+    let label = gtk::Label::new(None);
+    label.set_markup(&format!("<b>{}</b>", gtk::glib::markup_escape_text(title)));
     label.set_xalign(0.0);
     label.add_css_class("heading");
+    label.set_margin_top(4);
     container.append(&label);
 }
 

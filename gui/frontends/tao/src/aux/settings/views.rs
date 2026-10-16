@@ -499,11 +499,15 @@ pub(super) fn page_radio(
     .into()
 }
 
-/// Titled settings group: header plus controls, grouped by
-/// whitespace alone (12 between sections, 8 within). Rules drew
-/// false containment lines, so they stay out of settings forms.
+/// Titled settings group. The header is bold (headline style,
+/// Apple HIG / Fluent section titles): same-size regular text read
+/// at the same level as the items, so weight must carry hierarchy.
 fn section<'a>(title: &str, rows: impl IntoIterator<Item = El<'a>>) -> El<'a> {
-    let mut items = column![text(title.to_string()).size(14)].spacing(8);
+    let mut items = column![text(title.to_string()).size(14).font(iced::Font {
+        weight: iced::font::Weight::Bold,
+        ..iced::Font::default()
+    })]
+    .spacing(8);
     for row in rows {
         items = items.push(row);
     }
