@@ -30,9 +30,9 @@ fn is_top(position: NotificationPosition) -> bool {
     )
 }
 
-/// One OSD entry: level glyph, text, color, and whether the level
-/// badge shows (transient yes, ambient status no).
-type OsdEntry = (char, String, (u8, u8, u8), bool);
+/// One OSD entry: text plus color (severity rides on the
+/// `[INFO]`/`[WARN]`/`[ERROR]` tag prefix, not a badge).
+type OsdEntry = (String, (u8, u8, u8));
 
 pub(crate) struct GtkOsd {
     manager: OsdManager,
@@ -142,7 +142,7 @@ impl GtkOsd {
         let signature = format!(
             "{:?}|{:?}|{:?}|{:?}",
             rows.iter()
-                .map(|row| (&row.text, row.rgb, row.glyph))
+                .map(|row| (&row.text, row.rgb, row.tag))
                 .collect::<Vec<_>>(),
             status,
             settings.position,
@@ -160,7 +160,7 @@ impl GtkOsd {
         let mut top_rows: Vec<OsdEntry> = Vec::new();
         let mut bottom_rows: Vec<OsdEntry> = Vec::new();
         for row in &rows {
-            let entry = (row.glyph, row.text.clone(), row.rgb, true);
+            let entry = (format!("{} {}", row.tag, row.text), row.rgb);
             if transient_top {
                 top_rows.push(entry);
             } else {
@@ -168,8 +168,7 @@ impl GtkOsd {
             }
         }
         if let Some(status) = status.as_ref() {
-            // Ambient status: plain text, no level badge.
-            let entry = ('\0', status.clone(), (200, 200, 200), false);
+            let entry = (status.clone(), (200, 200, 200));
             if same_corner {
                 if transient_top {
                     top_rows.insert(0, entry);
@@ -184,23 +183,16 @@ impl GtkOsd {
         }
         // Transient/status boxes anchor independently when split.
         if same_corner || transient_top == is_top(settings.status_position) {
-            for (glyph, text, rgb, badged) in top_rows.into_iter().chain(bottom_rows) {
-                if badged {
-                    self.transient_box
-                        .append(&osd_label(glyph, &text, rgb, font_px));
-                } else {
-                    self.transient_box
-                        .append(&osd_plain_label(&text, rgb, font_px));
-                }
+            for (text, rgb) in top_rows.into_iter().chain(bottom_rows) {
+                self.transient_box.append(&osd_label(&text, rgb, font_px));
             }
             let (halign, valign) = corner_align(settings.position);
             self.transient_box.set_halign(halign);
             self.transient_box.set_valign(valign);
             self.status_label.set_visible(false);
         } else {
-            for (glyph, text, rgb, _) in top_rows {
-                self.transient_box
-                    .append(&osd_label(glyph, &text, rgb, font_px));
+            for (text, rgb) in top_rows {
+                self.transient_box.append(&osd_label(&text, rgb, font_px));
             }
             let (halign, valign) = corner_align(settings.position);
             self.transient_box.set_halign(halign);
@@ -214,15 +206,15 @@ impl GtkOsd {
             self.status_label.set_halign(halign);
             self.status_label.set_valign(valign);
         }
-        // Margins approximating the safe-area inset.
+        // Margins matching the shared strip math (8px safe-area).
         for child in [
             self.transient_box.upcast_ref::<gtk::Widget>(),
             self.status_label.upcast_ref::<gtk::Widget>(),
         ] {
-            child.set_margin_start(12);
-            child.set_margin_end(12);
-            child.set_margin_top(12);
-            child.set_margin_bottom(12);
+            child.set_margin_start(8);
+            child.set_margin_end(8);
+            child.set_margin_top(8);
+            child.set_margin_bottom(8);
         }
     }
 
@@ -343,7 +335,7 @@ impl GtkOsd {
                     let level = gtk::Label::new(None);
                     level.set_markup(&format!(
                         "<span foreground=\"#{r:02X}{g:02X}{b:02X}\">{}</span>",
-                        nerust_gui_shell::session::osd::level_glyph(line.level),
+                        nerust_gui_shell::session::osd::level_tag(line.level),
                     ));
                     level.set_xalign(0.0);
                     let module = gtk::Label::new(None);
@@ -402,47 +394,14 @@ fn osd_body_markup(text: &str, rgb: (u8, u8, u8), font_px: f64) -> String {
     )
 }
 
-fn osd_markup(glyph: char, text: &str, rgb: (u8, u8, u8), font_px: f64) -> String {
-    format!(
-        "<span font_desc=\"Sans {:.1}\" foreground=\"#{:02X}{:02X}{:02X}\">{} {}</span>",
-        font_px,
-        rgb.0,
-        rgb.1,
-        rgb.2,
-        glyph,
-        glib::markup_escape_text(text)
-    )
-}
-
-fn osd_plain_label(text: &str, rgb: (u8, u8, u8), font_px: f64) -> gtk::Box {
-    // Ambient status: same pill, no level badge.
+fn osd_label(text: &str, rgb: (u8, u8, u8), font_px: f64) -> gtk::Box {
+    // Tagged pill: `[LEVEL] message` in one label, no badge chrome.
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let body = gtk::Label::new(None);
     body.set_markup(&osd_body_markup(text, rgb, font_px));
     body.set_xalign(0.0);
     body.set_can_target(false);
     body.set_can_focus(false);
-    row.append(&body);
-    row.add_css_class("nerust-osd");
-    row.set_can_target(false);
-    row.set_can_focus(false);
-    row
-}
-
-fn osd_label(glyph: char, text: &str, rgb: (u8, u8, u8), font_px: f64) -> gtk::Box {
-    // Level badge: bordered circle around the glyph (mirrors tao).
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let badge = gtk::Label::new(None);
-    badge.set_markup(&osd_markup(glyph, "", rgb, font_px));
-    badge.add_css_class("nerust-osd-badge");
-    badge.set_can_target(false);
-    badge.set_can_focus(false);
-    let body = gtk::Label::new(None);
-    body.set_markup(&osd_body_markup(text, rgb, font_px));
-    body.set_xalign(0.0);
-    body.set_can_target(false);
-    body.set_can_focus(false);
-    row.append(&badge);
     row.append(&body);
     row.add_css_class("nerust-osd");
     row.set_can_target(false);
@@ -462,7 +421,7 @@ fn apply_osd_css() {
     DONE.get_or_init(|| {
         let css = gtk::CssProvider::new();
         css.load_from_data(
-            ".nerust-osd { background-color: alpha(black, 0.72); border-radius: 6px; padding: 2px 6px; } .nerust-osd-badge { border: 1.5px solid; border-radius: 10px; padding: 1px 6px; }",
+            ".nerust-osd { background-color: alpha(black, 0.72); border-radius: 6px; padding: 2px 6px; }",
         );
         gtk::style_context_add_provider_for_display(
             &gdk::Display::default().expect("gdk display for OSD css"),
