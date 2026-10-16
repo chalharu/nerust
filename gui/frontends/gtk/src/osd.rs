@@ -121,7 +121,7 @@ impl GtkOsd {
         let mut resume_after_modal = false;
         if !modal.is_empty() {
             {
-                use nerust_gui_shell::session::access::FrontendSession;
+                use nerust_gui_shell::session::access::PauseControl;
                 if state.can_pause() && !state.paused() {
                     state.pause();
                     resume_after_modal = true;
@@ -546,7 +546,7 @@ impl GtkOsd {
             if let Some(next) = next {
                 Self::present_modal(&surface, &window, next, resume_after_modal);
             } else if resume_after_modal {
-                use nerust_gui_shell::session::access::FrontendSession;
+                use nerust_gui_shell::session::access::PauseControl;
                 surface.borrow().state.borrow_mut().resume();
             }
         });

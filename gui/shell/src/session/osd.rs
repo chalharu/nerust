@@ -79,8 +79,37 @@ pub struct HistoryLine {
 /// sits (like Console/Event Viewer); UTC-only stays in the logs.
 /// Falls back to UTC when the zone is indeterminate.
 pub fn format_datetime(time: std::time::SystemTime) -> String {
-    let secs = local_epoch_secs(time);
+    format_datetime_in(time, local_utc_offset_secs())
+}
+
+/// `SystemTime` as local epoch seconds for [`format_datetime`]:
+/// the UTC instant plus the platform zone offset. Mirrors the
+/// persistence slot-time precedent (`persistence::time`).
+fn local_epoch_secs(time: std::time::SystemTime) -> i64 {
+    let utc = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    (utc as i64).saturating_add(local_utc_offset_secs())
+}
+
+/// Platform zone offset in seconds, resolved once per sync — not per
+/// row. Falls back to UTC when the zone is indeterminate.
+fn local_utc_offset_secs() -> i64 {
+    time::UtcOffset::current_local_offset()
+        .map(|o| i64::from(o.whole_seconds()))
+        .unwrap_or(0)
+}
+
+/// Datetime with a pre-resolved offset (see
+/// [`local_utc_offset_secs`]).
+fn format_datetime_in(time: std::time::SystemTime, offset_secs: i64) -> String {
+    let utc = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     // Floor-divide so pre-1970 instants keep a non-negative clock.
+    let secs = (utc as i64).saturating_add(offset_secs);
     let days = secs.div_euclid(86_400);
     let clock = secs.rem_euclid(86_400);
     // Howard Hinnant's civil-from-days; 719468 = days to 1970-01-01.
@@ -101,18 +130,29 @@ pub fn format_datetime(time: std::time::SystemTime) -> String {
     )
 }
 
-/// `SystemTime` as local epoch seconds for [`format_datetime`]:
-/// the UTC instant plus the platform zone offset. Mirrors the
-/// persistence slot-time precedent (`persistence::time`).
-fn local_epoch_secs(time: std::time::SystemTime) -> i64 {
-    let utc = time
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let offset = time::UtcOffset::current_local_offset()
-        .map(|o| i64::from(o.whole_seconds()))
-        .unwrap_or(0);
-    (utc as i64).saturating_add(offset)
+/// Build render-ready history lines in one pass, resolving the zone
+/// offset once for all rows. Lifecycle delegates here so every
+/// frontend shares identical rows without duplicating the mapping.
+pub fn history_lines<'a>(
+    history: impl Iterator<Item = &'a UiNotification>,
+    language: AppLanguage,
+) -> Vec<HistoryLine> {
+    let offset_secs = local_utc_offset_secs();
+    history
+        .map(|n| {
+            let mut text = n.kind.text(language);
+            if n.count > 1 {
+                text = format!("{text} ×{}", n.count);
+            }
+            HistoryLine {
+                datetime: format_datetime_in(n.at, offset_secs),
+                level: n.level,
+                module: super::notification::LOG_MODULE,
+                text,
+                count: n.count,
+            }
+        })
+        .collect()
 }
 
 pub fn format_time(time: std::time::SystemTime) -> String {
@@ -637,6 +677,39 @@ mod tests {
         // A full day always advances wall-clock, in any zone.
         let next = format_datetime(epoch + std::time::Duration::from_secs(86_400));
         assert!(rendered < next);
+    }
+
+    #[test]
+    fn history_lines_batch_matches_single_formatting() {
+        use super::super::notification::{NotificationKind, UiNotification};
+        // Injecting SystemTime directly is impossible here, so the
+        // batch is checked structurally: one row per event, ×N suffix
+        // preserved, level carried through.
+        let events = [
+            UiNotification {
+                level: super::super::notification::NotificationLevel::Info,
+                kind: NotificationKind::Paused,
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            },
+            UiNotification {
+                level: super::super::notification::NotificationLevel::Error,
+                kind: NotificationKind::CommandFailed("Save"),
+                count: 3,
+                seq: 1,
+                at: std::time::UNIX_EPOCH,
+            },
+        ];
+        let rows = history_lines(
+            events.iter(),
+            nerust_settings_core::model::language::AppLanguage::English,
+        );
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].datetime, format_datetime(std::time::UNIX_EPOCH));
+        assert_eq!(rows[0].text, "Paused");
+        assert!(rows[1].text.ends_with(" ×3"));
+        assert_eq!(rows[1].count, 3);
     }
 
     #[test]

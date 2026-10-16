@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use nerust_gui_shell::session::access::FrontendSession;
+use nerust_gui_shell::session::access::PauseControl;
 use nerust_render_traits::ReservedStrip;
 use tao::event::WindowEvent;
 
@@ -114,12 +114,21 @@ impl HostState {
         }
         if let Some(handle) = opener.create_history(self.notification_language()) {
             self.history_window = Some(handle);
+            // Fresh window needs full content regardless of cache.
+            self.history_sync_key = None;
             self.sync_history_window();
         }
     }
 
     fn sync_history_window(&mut self) {
         let language = self.notification_language();
+        let key = (self.session.notification_history_seq(), language);
+        // Dirty gate: the sync runs every loop pass while open, but
+        // row building is skipped unless content or language changed.
+        if self.history_sync_key == Some(key) {
+            return;
+        }
+        self.history_sync_key = Some(key);
         let lines = self.session.notification_history_lines(language);
         if let Some(handle) = self.history_window.as_mut() {
             handle.sync(lines, language);
@@ -129,6 +138,7 @@ impl HostState {
     pub(crate) fn on_history_event(&mut self, event: WindowEvent) {
         if matches!(event, WindowEvent::Destroyed) {
             self.history_window = None;
+            self.history_sync_key = None;
             return;
         }
         if let Some(handle) = self.history_window.as_mut() {

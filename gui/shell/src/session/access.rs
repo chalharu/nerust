@@ -19,14 +19,17 @@ pub struct SettingsResult {
     pub scaling_changed: bool,
 }
 
-/// Frontend-facing session operations.
-///
-/// Hides `SessionCommand`, `SessionCommandOutcome`, and `SettingsApplyPlan`
-/// from frontend code. Each frontend's state struct implements this trait.
-pub trait FrontendSession {
+/// Pause control: the only session operations the modal auto-pause
+/// path needs. Kept separate so callers (and test fakes) depend on
+/// three methods, not the whole session surface.
+pub trait PauseControl {
     fn pause(&mut self);
     fn resume(&mut self);
     fn toggle_pause(&mut self);
+}
+
+/// Save-slot control: slot CRUD plus reset.
+pub trait SlotControl {
     fn save_active_slot(&mut self) -> bool;
     fn load_active_slot(&mut self) -> bool;
     fn select_next_slot(&mut self);
@@ -37,6 +40,10 @@ pub trait FrontendSession {
     fn select_slot(&mut self, slot_id: u64);
     fn create_slot(&mut self);
     fn reset(&mut self);
+}
+
+/// Session-level operations: teardown and settings application.
+pub trait SessionControl {
     /// Unload the current ROM, flushing mapper saves. Closing the
     /// ROM rides this trait like every other session operation so no
     /// frontend bypasses the session behind its back.
@@ -46,8 +53,19 @@ pub trait FrontendSession {
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError>;
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError>;
-    fn run_command(&mut self, command: crate::session::commands::SessionCommand);
 }
+
+/// Frontend-facing session operations.
+///
+/// Hides `SessionCommand`, `SessionCommandOutcome`, and `SettingsApplyPlan`
+/// from frontend code. Each frontend's state struct implements the
+/// three control traits; the blanket impl below assembles this port.
+/// (The former `run_command` escape hatch is gone: menu dispatch goes
+/// through the typed methods, and frontends drive `SessionHandle`
+/// directly for anything else.)
+pub trait FrontendSession: PauseControl + SlotControl + SessionControl {}
+
+impl<T> FrontendSession for T where T: PauseControl + SlotControl + SessionControl {}
 
 /// Dispatch one schema session action to any frontend session.
 /// Window-chrome actions never arrive here (dedicated variants).
@@ -80,7 +98,7 @@ mod tests {
         calls: Vec<&'static str>,
     }
 
-    impl FrontendSession for Recorder {
+    impl PauseControl for Recorder {
         fn pause(&mut self) {
             self.calls.push("pause");
         }
@@ -90,6 +108,9 @@ mod tests {
         fn toggle_pause(&mut self) {
             self.calls.push("toggle_pause");
         }
+    }
+
+    impl SlotControl for Recorder {
         fn save_active_slot(&mut self) -> bool {
             self.calls.push("save_active_slot");
             true
@@ -123,6 +144,9 @@ mod tests {
         fn reset(&mut self) {
             self.calls.push("reset");
         }
+    }
+
+    impl SessionControl for Recorder {
         fn unload(&mut self) {
             self.calls.push("unload");
         }
@@ -137,9 +161,6 @@ mod tests {
             _fullscreen: bool,
         ) -> Result<SettingsResult, SessionError> {
             unimplemented!("routing test never touches fullscreen")
-        }
-        fn run_command(&mut self, _command: crate::session::commands::SessionCommand) {
-            self.calls.push("run_command");
         }
     }
 

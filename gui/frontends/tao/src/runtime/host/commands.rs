@@ -8,7 +8,9 @@ use tao::event::KeyEvent;
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
-    KeyboardShortcut, SessionError, access::FrontendSession, access::SettingsResult,
+    KeyboardShortcut, SessionError,
+    access::SettingsResult,
+    access::{PauseControl, SessionControl, SlotControl},
     commands::SessionCommand,
 };
 
@@ -58,7 +60,9 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Session(command) => {
-                self.run_command(command);
+                if let Err(e) = self.session.run_command(command) {
+                    log::warn!("session command failed: {e}");
+                }
                 self.sync_menu_state();
                 self.refresh_window_title();
                 HostAction::None
@@ -122,7 +126,7 @@ impl HostState {
     }
 
     fn close_rom(&mut self) {
-        FrontendSession::unload(self);
+        SessionControl::unload(self);
         self.sync_menu_state();
         self.request_redraw();
         self.refresh_window_title();
@@ -147,7 +151,7 @@ impl HostState {
     }
 }
 
-impl FrontendSession for HostState {
+impl PauseControl for HostState {
     fn pause(&mut self) {
         if let Err(e) = self.session.run_command(SessionCommand::Pause) {
             log::warn!("session command failed: {e}");
@@ -163,6 +167,9 @@ impl FrontendSession for HostState {
             log::warn!("session command failed: {e}");
         }
     }
+}
+
+impl SlotControl for HostState {
     fn save_active_slot(&mut self) -> bool {
         self.session
             .run_command(SessionCommand::SaveActiveSlotOrNew)
@@ -222,14 +229,12 @@ impl FrontendSession for HostState {
             log::warn!("session command failed: {e}");
         }
     }
+}
+
+impl SessionControl for HostState {
     fn unload(&mut self) {
         if let Err(error) = self.session.unload() {
             log::warn!("ROM unload failed: {error}");
-        }
-    }
-    fn run_command(&mut self, command: SessionCommand) {
-        if let Err(e) = self.session.run_command(command) {
-            log::warn!("session command failed: {e}");
         }
     }
     fn apply_settings(
@@ -429,7 +434,7 @@ mod tests {
 
     #[test]
     fn session_delegates_stay_total_without_core() {
-        use nerust_gui_shell::session::access::FrontendSession;
+        use nerust_gui_shell::session::access::{PauseControl, SessionControl, SlotControl};
         let support = TestHost::new();
         let mut host = support.host;
         assert!(!host.session.paused());
@@ -448,7 +453,6 @@ mod tests {
         host.create_slot();
         host.reset();
         host.unload();
-        host.run_command(nerust_gui_shell::session::commands::SessionCommand::Reset);
         assert!(!host.session.loaded());
     }
 
@@ -480,7 +484,7 @@ mod tests {
 
     #[test]
     fn apply_paths_stay_total_without_core() {
-        use nerust_gui_shell::session::access::FrontendSession;
+        use nerust_gui_shell::session::access::SessionControl;
         let support = TestHost::new();
         let mut host = support.host;
         let snapshot = host.session.settings_snapshot().clone();
