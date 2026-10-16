@@ -184,16 +184,6 @@ impl WindowRuntime {
             }
             Event::WindowEvent {
                 event, window_id, ..
-            } if self.host.is_osd_window(window_id) => {
-                self.host.on_osd_event(event);
-            }
-            Event::RedrawRequested(window_id) if self.host.is_osd_window(window_id) => {
-                if let Some(handle) = self.host.osd_window.as_mut() {
-                    handle.render();
-                }
-            }
-            Event::WindowEvent {
-                event, window_id, ..
             } if self.host.is_history_window(window_id) => {
                 self.host.on_history_event(event);
             }
@@ -248,9 +238,9 @@ impl WindowRuntime {
             renderer.resize(window_size);
         }
 
-        let strip = self.host.reserved_strip();
-        renderer.set_reserved_strip(strip);
+        renderer.set_reserved_strip(nerust_render_traits::ReservedStrip::default());
         self.host.poll_notifications();
+        self.host.sync_osd_layer(renderer.as_mut());
 
         self.host.session_mut().swap_frame_buffer();
         if let Some(fb) = self.host.session_mut().frame_buffer() {

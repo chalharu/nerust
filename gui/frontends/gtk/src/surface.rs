@@ -35,7 +35,7 @@ impl SurfaceExtend for Surface {
     ) -> Surface {
         state.borrow_mut().renderer_reload_pending = true;
         let renderer = Rc::new(RefCell::new(GtkRenderer::new(factory)));
-        let osd = super::osd::GtkOsd::attach(window);
+        let osd = super::osd::GtkOsd::new();
         let result = Rc::new(RefCell::new(SurfaceCore {
             window: window.clone(),
             renderer,

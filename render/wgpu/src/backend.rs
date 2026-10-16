@@ -1,6 +1,8 @@
 use nerust_render_traits::{
     FrameBuffer, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
-    renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
+    renderer::{
+        GpuFactory, GpuRenderer, OpaqueError, OsdLayer, RenderResult, RendererConfig, RendererError,
+    },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -21,6 +23,8 @@ pub struct WgpuRenderer {
     surface: Option<wgpu::Surface<'static>>,
     size: SurfaceSize,
     last_render_error: Option<String>,
+    osd: Option<OsdLayer>,
+    osd_dirty: bool,
 }
 
 impl std::fmt::Debug for WgpuRenderer {
@@ -100,6 +104,11 @@ impl GpuRenderer for WgpuRenderer {
         }
     }
 
+    fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
+        self.osd = layer;
+        self.osd_dirty = true;
+    }
+
     fn resize(&mut self, size: SurfaceSize) {
         self.size = size;
         let Some(ref surface) = self.surface else {
@@ -138,6 +147,10 @@ impl GpuRenderer for WgpuRenderer {
 
         if let Some(p) = frame.palette_as_rgba8() {
             pipeline.update_palette_texture(&p);
+        }
+        if self.osd_dirty {
+            crate::renderer::setup::set_osd_layer(pipeline, self.osd.clone());
+            self.osd_dirty = false;
         }
 
         match pipeline.render(surface, self.size, frame.as_ref(), frame.stride()) {
@@ -215,6 +228,8 @@ impl GpuFactory for WgpuFactory {
             surface: None,
             size: SurfaceSize::new(0, 0),
             last_render_error: None,
+            osd: None,
+            osd_dirty: false,
         }))
     }
 }

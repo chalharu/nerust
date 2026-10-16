@@ -28,6 +28,7 @@ members = [
   "render/gl",
   "render/glwrap",
   "render/ntsc",
+  "render/osd",
   "render/softbuffer",
   "render/traits",
   "render/wgpu",
@@ -192,6 +193,9 @@ nerust_persistence = { path = "persistence" }
 nerust_render_filters = { path = "render/filters" }
 nerust_render_gl = { path = "render/gl" }
 nerust_render_ntsc = { path = "render/ntsc" }
+nerust_render_osd = { path = "render/osd" }
+ab_glyph = { version = "=0.2.32" }
+fontdb = { version = "=0.23.0" }
 nerust_render_softbuffer = { path = "render/softbuffer" }
 nerust_render_traits = { path = "render/traits" }
 nerust_render_wgpu = { path = "render/wgpu" }

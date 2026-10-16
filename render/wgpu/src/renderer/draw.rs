@@ -183,6 +183,7 @@ impl RenderPipeline {
             render_pass.set_bind_group(0, &self.bind_group, &[]);
             render_pass.draw(0..3, 0..1);
         }
+        self.draw_osd(&mut encoder, &view);
 
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(surface_texture);
