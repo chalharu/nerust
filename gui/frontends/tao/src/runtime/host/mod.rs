@@ -25,6 +25,7 @@ use super::debug_windows::DebugWindows;
 mod commands;
 mod focus;
 mod osd;
+use osd::ModalFlight;
 mod presentation;
 mod settings;
 mod window;
@@ -76,7 +77,7 @@ impl TestHost {
         let host = HostState::new_with_settings_paths(
             support.ctx,
             menu.clone().into_box(),
-            Box::new(dialogs.clone()),
+            std::sync::Arc::new(dialogs.clone()),
             Some(paths),
         )
         .expect("headless host builds on temp settings paths");
@@ -109,7 +110,7 @@ pub(crate) struct HostState {
     pub(super) session: SessionHandle,
     ctx: FrontendContext,
     app_menu: Box<dyn MenuSink>,
-    dialogs: Box<dyn DialogPorts>,
+    dialogs: std::sync::Arc<dyn DialogPorts>,
     shell: NativeShellState,
     pub(super) settings_window: Option<crate::aux::settings::window::SettingsWindowHandle>,
     settings_open: bool,
@@ -131,6 +132,9 @@ pub(crate) struct HostState {
     pub(super) osd: OsdManager,
     pub(super) osd_window: Option<OsdWindowHandle>,
     pub(super) history_window: Option<HistoryWindowHandle>,
+    /// In-flight async error dialog plus resume bookkeeping.
+    pub(super) modal_flight: Option<ModalFlight>,
+    pub(super) resume_after_modal: bool,
     /// Last synced history content: sequence plus language. The sync
     /// runs on every loop pass while the viewer is open; unchanged
     /// content skips the full row rebuild (P1 perf gate).
@@ -155,7 +159,7 @@ impl HostState {
     pub(crate) fn new(
         ctx: FrontendContext,
         app_menu: Box<dyn MenuSink>,
-        dialogs: Box<dyn DialogPorts>,
+        dialogs: std::sync::Arc<dyn DialogPorts>,
     ) -> Result<Self, String> {
         Self::new_with_settings_paths(ctx, app_menu, dialogs, None)
     }
@@ -163,7 +167,7 @@ impl HostState {
     pub(crate) fn new_with_settings_paths(
         ctx: FrontendContext,
         app_menu: Box<dyn MenuSink>,
-        dialogs: Box<dyn DialogPorts>,
+        dialogs: std::sync::Arc<dyn DialogPorts>,
         paths: Option<nerust_gui_runtime::settings::SettingsPaths>,
     ) -> Result<Self, String> {
         let session = match paths {
@@ -201,6 +205,8 @@ impl HostState {
             debug: DebugWindows::new(),
             osd: OsdManager::new(),
             osd_window: None,
+            modal_flight: None,
+            resume_after_modal: false,
             history_window: None,
             history_sync_key: None,
             osd_geometry: None,
@@ -336,7 +342,7 @@ mod tests {
         let host = super::HostState::new(
             support.ctx,
             MenuRecorderHandle::default().into_box(),
-            Box::new(crate::ports::NativeDialogs),
+            std::sync::Arc::new(crate::ports::NativeDialogs),
         );
         assert!(host.is_ok());
     }

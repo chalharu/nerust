@@ -13,6 +13,17 @@ use super::HostState;
 use crate::ports::WindowOpener;
 use nerust_gui_shell::session::osd::{OsdManager, OsdSnapshot, strip_pixels, strip_rows};
 
+/// In-flight error dialog: the blocking `show_error` runs on a
+/// short-lived thread so the event loop (and frame rendering) never
+/// stalls behind a modal. Sync dialogs served from the loop freeze
+/// every window and deadlock backends needing loop cooperation (this
+/// bit rfd's gtk3 backend). `resume_after` mirrors the settings
+/// window: only what we paused gets resumed, after the last ack.
+pub(crate) struct ModalFlight {
+    done: std::sync::mpsc::Receiver<()>,
+    resume_after: bool,
+}
+
 impl HostState {
     fn notification_settings(&self) -> nerust_settings_core::model::local::NotificationSettings {
         self.session.settings_snapshot().local.notifications.clone()
@@ -179,6 +190,37 @@ impl HostState {
         }
     }
 
+    /// Present one error batch without blocking the loop.
+    fn spawn_modal(&mut self, detail: String) {
+        let dialogs = std::sync::Arc::clone(&self.dialogs);
+        let language = self.notification_language();
+        let resume_after = self.resume_after_modal;
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        self.modal_flight = Some(ModalFlight {
+            done: done_rx,
+            resume_after,
+        });
+        if std::thread::Builder::new()
+            .name("nerust-error-dialog".to_string())
+            .spawn(move || {
+                dialogs.show_error(language, &detail);
+                let _ = done_tx.send(());
+            })
+            .is_err()
+        {
+            // Thread spawn all but never fails; if it does, unblock
+            // the queue and resume only what we paused, rather than
+            // wedge the game behind an unseen error (history and logs
+            // keep the record).
+            log::error!("error dialog thread failed to spawn");
+            self.modal_flight = None;
+            self.osd.modal_closed();
+            if std::mem::replace(&mut self.resume_after_modal, false) {
+                self.resume();
+            }
+        }
+    }
+
     /// Drain shell notifications into display state, show aggregated
     /// error modals (auto-pausing first), and refresh the overlay.
     /// Cheap when idle (dirty-gated sync); safe to call every loop
@@ -193,19 +235,16 @@ impl HostState {
         }
         self.osd.poll(now);
         let modal = self.osd.take_modal();
-        // Auto-pause first (spec): the game must not advance
-        // behind the modal. Resume after the last ack: the pause
-        // exists only to freeze the game behind the dialog, mirroring
-        // the settings window's resume_after_settings. Guarded by
-        // can_pause: pausing with no loaded core fails, and that
-        // failure is itself an Error notification, which would
-        // re-queue a modal and flood one dialog per tick. Only resume
-        // what we paused: a manually-paused game stays paused.
-        let mut resume_after_modal = false;
         if !modal.is_empty() {
-            resume_after_modal = self.session.can_pause() && !self.session.paused();
-            if resume_after_modal {
+            // Auto-pause first (spec): the game must not advance
+            // behind the modal. Guarded by can_pause: pausing with no
+            // loaded core fails, and that failure is itself an Error
+            // notification, which would re-queue a modal and flood one
+            // dialog per tick. Only resume what we paused, after the
+            // last ack: a manually-paused game stays paused.
+            if self.session.can_pause() && !self.session.paused() {
                 self.pause();
+                self.resume_after_modal = true;
             }
             let detail = modal
                 .iter()
@@ -214,16 +253,29 @@ impl HostState {
                 .join("\n");
             self.osd.queue_modal(detail);
         }
-        // Sequential display: rfd blocks per dialog, so each batch
-        // shows alone and the next follows its ack (never stacked).
-        // Resume once, after the last ack, not between batches.
-        while let Some(detail) = self.osd.take_modal_batch() {
-            self.dialogs
-                .show_error(self.notification_language(), &detail);
+        // Reap a finished dialog, chain the next batch, and resume
+        // only once the queue drains (never between batches).
+        if let Some(flight) = self.modal_flight.as_ref()
+            && flight.done.try_recv().is_ok()
+        {
+            let resume_after = flight.resume_after;
+            self.modal_flight = None;
             self.osd.modal_closed();
+            if self.osd.modal_pending() == 0 {
+                self.resume_after_modal = false;
+                if resume_after {
+                    self.resume();
+                }
+            }
         }
-        if resume_after_modal {
-            self.resume();
+        // Present the next batch only when no dialog is showing.
+        // The blocking `show_error` runs on a short-lived thread
+        // (see `ModalFlight`): presenting from the loop would freeze
+        // every window and starve backends needing loop cooperation.
+        if self.modal_flight.is_none()
+            && let Some(detail) = self.osd.take_modal_batch()
+        {
+            self.spawn_modal(detail);
         }
         if self.osd.take_dirty() {
             self.sync_osd_snapshot();

@@ -457,6 +457,30 @@ mod tests {
     }
 
     #[test]
+    fn error_modal_returns_without_blocking() {
+        use nerust_gui_shell::session::commands::SessionCommand;
+        let support = TestHost::new();
+        let mut host = support.host;
+        // No core: TogglePause fails into a CommandFailed error,
+        // which routes to the modal path (error_modal defaults on).
+        let _ = host.session.run_command(SessionCommand::TogglePause);
+        host.poll_notifications();
+        // Bounded wait for the background ack. The loop itself never
+        // blocked: rfd runs on its own thread (see `ModalFlight`).
+        // FakeDialogs answers instantly, so this exits on an early pass.
+        let mut tries = 0;
+        while support.dialogs.errors().is_empty() || host.osd.modal_pending() != 0 {
+            host.poll_notifications();
+            tries += 1;
+            assert!(tries < 500, "modal ack never arrived");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(support.dialogs.errors().len(), 1);
+        assert!(support.dialogs.errors()[0].contains("TogglePause"));
+        assert_eq!(host.osd.modal_pending(), 0);
+    }
+
+    #[test]
     fn keyboard_shortcuts_route_without_keys() {
         use nerust_gui_shell::session::KeyboardShortcut;
         use nerust_settings_core::model::input::ShortcutAction;
