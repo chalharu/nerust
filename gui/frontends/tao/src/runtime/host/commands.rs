@@ -481,6 +481,38 @@ mod tests {
     }
 
     #[test]
+    fn dead_dialog_thread_unwedges_the_queue() {
+        use super::super::osd::ModalFlight;
+        let support = TestHost::new();
+        let mut host = support.host;
+        // Simulate a dialog thread that died before acking: the
+        // sender is dropped without sending (Disconnected).
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        drop(tx);
+        host.modal_flight = Some(ModalFlight {
+            done: rx,
+            resume_after: false,
+        });
+        host.poll_notifications();
+        // Reaped as a failed ack: flight gone, queue unblocked.
+        assert!(host.modal_flight.is_none());
+        assert_eq!(host.osd.modal_pending(), 0);
+    }
+
+    #[test]
+    fn idle_poll_touches_nothing() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        // No notifications, no windows: drain, expiry, dirty gate,
+        // and the history fast path all no-op without a core.
+        host.poll_notifications();
+        host.poll_notifications();
+        assert!(support.dialogs.errors().is_empty());
+        assert_eq!(host.osd.modal_pending(), 0);
+        assert!(host.history_sync_key.is_none());
+    }
+
+    #[test]
     fn keyboard_shortcuts_route_without_keys() {
         use nerust_gui_shell::session::KeyboardShortcut;
         use nerust_settings_core::model::input::ShortcutAction;

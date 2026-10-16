@@ -342,6 +342,97 @@ mod tests {
     }
 
     #[test]
+    fn texts_cover_every_variant_in_both_languages() {
+        use crate::session::commands::SlotOpFailure;
+        let variants = vec![
+            NotificationKind::Paused,
+            NotificationKind::Resumed,
+            NotificationKind::Reset,
+            NotificationKind::SavedSlot(1),
+            NotificationKind::LoadedSlot(2),
+            NotificationKind::DeletedSlot(3),
+            NotificationKind::CreatedSlot,
+            NotificationKind::SelectedSlot(4),
+            NotificationKind::CommandFailed("Reset"),
+        ];
+        for kind in &variants {
+            assert!(!kind.text(AppLanguage::English).is_empty());
+            assert!(!kind.text(AppLanguage::Japanese).is_empty());
+        }
+        // Slot suffixes and failure reasons in both languages.
+        for reason in [
+            SlotOpFailure::Empty,
+            SlotOpFailure::Missing,
+            SlotOpFailure::Storage,
+            SlotOpFailure::Corrupt,
+            SlotOpFailure::Incompatible,
+            SlotOpFailure::Unavailable,
+        ] {
+            for slot in [None, Some(7)] {
+                let kind = NotificationKind::SlotFailed { slot, reason };
+                assert!(!kind.text(AppLanguage::English).is_empty());
+                assert!(!kind.text(AppLanguage::Japanese).is_empty());
+            }
+        }
+        assert!(
+            NotificationKind::SavedSlot(7)
+                .text(AppLanguage::English)
+                .contains('7')
+        );
+        assert!(
+            NotificationKind::SlotFailed {
+                slot: Some(7),
+                reason: SlotOpFailure::Storage,
+            }
+            .text(AppLanguage::Japanese)
+            .contains("スロット7")
+        );
+    }
+
+    #[test]
+    fn outcome_success_maps_each_command() {
+        let ok = SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+            slot_failure: None,
+        };
+        let cases = [
+            (SessionCommand::Pause, NotificationKind::Paused),
+            (SessionCommand::Resume, NotificationKind::Resumed),
+            (SessionCommand::Reset, NotificationKind::Reset),
+            (SessionCommand::CreateSlot, NotificationKind::CreatedSlot),
+            (
+                SessionCommand::SelectNextSlot,
+                NotificationKind::SelectedSlot(0),
+            ),
+            (
+                SessionCommand::SelectPreviousSlot,
+                NotificationKind::SelectedSlot(0),
+            ),
+            (SessionCommand::SaveSlot(2), NotificationKind::SavedSlot(2)),
+            (SessionCommand::LoadSlot(2), NotificationKind::LoadedSlot(2)),
+            (
+                SessionCommand::DeleteSlot(2),
+                NotificationKind::DeletedSlot(2),
+            ),
+            (
+                SessionCommand::LoadActiveSlot,
+                NotificationKind::LoadedSlot(0),
+            ),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(outcome_notifications(command, &ok, Some(0)), [expected]);
+        }
+        // Unexecuted commands notify nothing.
+        let skipped = SessionCommandOutcome {
+            executed: false,
+            needs_redraw: false,
+            slot_failure: None,
+        };
+        assert!(outcome_notifications(SessionCommand::Pause, &skipped, Some(0)).is_empty());
+    }
+
+    #[test]
     fn history_seq_advances_on_push_and_clear_only() {
         let mut center = NotificationCenter::new();
         assert_eq!(center.history_seq(), 0);
