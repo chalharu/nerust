@@ -469,6 +469,31 @@ impl SessionHandle {
         self.notifications.history()
     }
 
+    pub fn notification_history_lines(
+        &self,
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) -> Vec<super::osd::HistoryLine> {
+        self.notifications
+            .history()
+            .map(|n| {
+                let mut text = n.kind.text(language);
+                if n.count > 1 {
+                    text = format!("{text} ×{}", n.count);
+                }
+                super::osd::HistoryLine {
+                    time: super::osd::format_time(n.at),
+                    level: n.level,
+                    text,
+                    count: n.count,
+                }
+            })
+            .collect()
+    }
+
+    pub fn clear_notification_history(&mut self) {
+        self.notifications.clear_history();
+    }
+
     fn cmd_pause(&mut self) -> Result<SessionCommandOutcome, SessionError> {
         if self.paused() {
             return Ok(SessionCommandOutcome::default());

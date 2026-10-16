@@ -10,7 +10,10 @@
 use iced::{Length, Task};
 use iced_winit::program::{self, Program};
 
-use nerust_gui_shell::session::osd::OsdSnapshot;
+use nerust_gui_shell::session::{
+    notification::NotificationLevel,
+    osd::{HistoryLine, OsdSnapshot},
+};
 use nerust_settings_core::model::{language::AppLanguage, local::NotificationPosition};
 use tao::event_loop::EventLoopWindowTarget;
 
@@ -78,13 +81,26 @@ impl Program for OsdProgram {
         use iced::widget::{column, container, row, text};
         let snapshot = &state.snapshot;
         let font = iced::Pixels(snapshot.font_px.max(6.0));
+        // Level badge: bordered circle around the glyph (no emoji
+        // font dependency; shape + color both carry severity).
+        let badge = |glyph: char, rgb: (u8, u8, u8)| {
+            container(text(format!("{glyph}")).size(font))
+                .padding([1, 6])
+                .style(move |_theme: &iced::Theme| container::Style {
+                    text_color: Some(iced::Color::from_rgb8(rgb.0, rgb.1, rgb.2)),
+                    border: iced::Border {
+                        color: iced::Color::from_rgb8(rgb.0, rgb.1, rgb.2),
+                        width: 1.5,
+                        radius: 10.0.into(),
+                    },
+                    ..Default::default()
+                })
+        };
         let label = |glyph: char, body: &str, rgb: (u8, u8, u8)| -> iced::Element<'_, OsdMessage> {
             container(
-                row![
-                    text(format!("{glyph} ")).size(font),
-                    text(body.to_string()).size(font),
-                ]
-                .spacing(4),
+                row![badge(glyph, rgb), text(body.to_string()).size(font),]
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center),
             )
             .padding([2, 6])
             .style(move |_theme: &iced::Theme| container::Style {
@@ -266,14 +282,49 @@ impl AuxWindow for OsdWindowHandle {
 
 #[derive(Debug, Clone)]
 pub(crate) enum HistoryMessage {
-    Sync(Vec<String>),
+    Sync(Vec<HistoryLine>),
+    SetFilter(HistoryFilter),
+    Clear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum HistoryFilter {
+    #[default]
+    All,
+    Info,
+    Warning,
+    Error,
+}
+
+impl HistoryFilter {
+    fn matches(self, level: NotificationLevel) -> bool {
+        match self {
+            HistoryFilter::All => true,
+            HistoryFilter::Info => level == NotificationLevel::Info,
+            HistoryFilter::Warning => level == NotificationLevel::Warning,
+            HistoryFilter::Error => level == NotificationLevel::Error,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            HistoryFilter::All => "All",
+            HistoryFilter::Info => "Info",
+            HistoryFilter::Warning => "Warning",
+            HistoryFilter::Error => "Error",
+        }
+    }
 }
 
 pub(crate) struct HistoryState {
-    lines: Vec<String>,
+    lines: Vec<HistoryLine>,
+    filter: HistoryFilter,
+    clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
-pub(crate) struct HistoryProgram;
+pub(crate) struct HistoryProgram {
+    clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
 
 impl Program for HistoryProgram {
     type State = HistoryState;
@@ -299,13 +350,30 @@ impl Program for HistoryProgram {
     }
 
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
-        (HistoryState { lines: Vec::new() }, Task::none())
+        (
+            HistoryState {
+                lines: Vec::new(),
+                filter: HistoryFilter::All,
+                clear_requested: std::sync::Arc::clone(&self.clear_requested),
+            },
+            Task::none(),
+        )
     }
 
     fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
         match message {
             HistoryMessage::Sync(lines) => {
                 state.lines = lines;
+                Task::none()
+            }
+            HistoryMessage::SetFilter(filter) => {
+                state.filter = filter;
+                Task::none()
+            }
+            HistoryMessage::Clear => {
+                state
+                    .clear_requested
+                    .store(true, std::sync::atomic::Ordering::Release);
                 Task::none()
             }
         }
@@ -316,18 +384,53 @@ impl Program for HistoryProgram {
         state: &'a Self::State,
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
-        use iced::widget::{column, scrollable, text};
-        let lines = &state.lines;
-        let mut items = column![].spacing(2);
-        for line in lines {
-            items = items.push(text(line.clone()).size(13));
+        use iced::widget::{button, column, row, scrollable, text};
+        let mut filters = row![].spacing(4);
+        for filter in [
+            HistoryFilter::All,
+            HistoryFilter::Info,
+            HistoryFilter::Warning,
+            HistoryFilter::Error,
+        ] {
+            let label = if state.filter == filter {
+                format!("[{}]", filter.label())
+            } else {
+                filter.label().to_string()
+            };
+            filters = filters
+                .push(button(text(label).size(12)).on_press(HistoryMessage::SetFilter(filter)));
         }
-        scrollable(items).into()
+        filters = filters.push(button(text("Clear").size(12)).on_press(HistoryMessage::Clear));
+        let mut items = column![].spacing(2);
+        for line in state
+            .lines
+            .iter()
+            .filter(|line| state.filter.matches(line.level))
+        {
+            let (glyph_color, glyph) = match line.level {
+                NotificationLevel::Info => (iced::Color::from_rgb8(70, 70, 70), 'i'),
+                NotificationLevel::Warning => (iced::Color::from_rgb8(170, 110, 0), '!'),
+                NotificationLevel::Error => (iced::Color::from_rgb8(190, 30, 30), '×'),
+            };
+            let mut count = String::new();
+            if line.count > 1 {
+                count = format!(" ×{}", line.count);
+            }
+            items = items.push(
+                row![
+                    text(format!("{glyph}")).size(13).color(glyph_color),
+                    text(format!("{} {}{}", line.time, line.text, count)).size(13),
+                ]
+                .spacing(6),
+            );
+        }
+        column![filters, scrollable(items)].spacing(8).into()
     }
 }
 
 pub(crate) struct HistoryWindowHandle {
     pub(crate) shell: crate::aux::shell::AuxShell<HistoryProgram>,
+    clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl HistoryWindowHandle {
@@ -347,16 +450,27 @@ impl HistoryWindowHandle {
             None,
             "history window",
         )?;
-        let (instance, _task) = program::Instance::new(HistoryProgram);
+        let clear_requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (instance, _task) = program::Instance::new(HistoryProgram {
+            clear_requested: std::sync::Arc::clone(&clear_requested),
+        });
         let shell = crate::aux::shell::AuxShell::assemble(
             scaffold,
             instance,
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
-        Some(Self { shell })
+        Some(Self {
+            shell,
+            clear_requested,
+        })
     }
 
-    pub(crate) fn sync(&mut self, lines: Vec<String>) {
+    pub(crate) fn take_clear_request(&self) -> bool {
+        self.clear_requested
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+    }
+
+    pub(crate) fn sync(&mut self, lines: Vec<HistoryLine>) {
         let bounds = self.shell.logical_bounds();
         let window_id = self.shell.window_id;
         self.shell.ui_state.process_messages(
@@ -376,9 +490,40 @@ impl HistoryWindowHandle {
     }
 }
 
+impl HistoryWindowHandle {
+    fn handle_event(&mut self, mapped: iced::Event) {
+        let (messages, outcome) = self.shell.ui_state.pump(
+            mapped,
+            self.shell.cursor,
+            &mut self.shell.clipboard,
+            &mut self.shell.renderer.backend,
+        );
+        if matches!(
+            outcome,
+            crate::aux::shell::PumpOutcome::Repaint | crate::aux::shell::PumpOutcome::Rebuild
+        ) {
+            self.shell.window.request_redraw();
+        }
+        if !messages.is_empty() {
+            let bounds = self.shell.logical_bounds();
+            self.shell.ui_state.process_messages(
+                messages,
+                self.shell.window_id,
+                bounds,
+                &mut self.shell.renderer.backend,
+                &self.shell.should_close,
+            );
+            self.shell.window.request_redraw();
+        }
+    }
+}
+
 impl AuxWindow for HistoryWindowHandle {
     fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
         self.shell.handle_common_event(&event);
+        if let Some(mapped) = self.shell.feed_tao_event(event) {
+            self.handle_event(mapped);
+        }
         self.shell.window.request_redraw();
     }
 }

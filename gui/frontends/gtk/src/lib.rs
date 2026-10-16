@@ -138,11 +138,12 @@ impl State {
     pub(crate) fn notification_history_lines(
         &self,
         language: nerust_settings_core::model::language::AppLanguage,
-    ) -> Vec<String> {
-        self.session
-            .notification_history()
-            .map(|n| n.kind.text(language))
-            .collect()
+    ) -> Vec<nerust_gui_shell::session::osd::HistoryLine> {
+        self.session.notification_history_lines(language)
+    }
+
+    pub(crate) fn clear_notification_history(&mut self) {
+        self.session.clear_notification_history();
     }
 
     pub(crate) fn emulation_status(&self) -> (f32, bool) {
