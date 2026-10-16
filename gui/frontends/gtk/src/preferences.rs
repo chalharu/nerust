@@ -813,7 +813,7 @@ pub(crate) fn present_preferences_dialog(
     // ---- Notifications page: one section per level plus
     // display/status groups, so each control's scope reads off its
     // header. Error presentation is an exclusive radio pair.
-    section_header(&notifications_page, ui_text(lang, UiText::NotificationInfo));
+    section_header_first(&notifications_page, ui_text(lang, UiText::NotificationInfo));
     let info_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
     notifications_page.append(&info_check);
     let info_duration_spin = gtk::SpinButton::with_range(1000.0, 30000.0, 500.0);
@@ -1403,15 +1403,28 @@ pub(crate) fn present_preferences_dialog(
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// Titled settings group header: semibold headline plus extra top
-/// gap (matches the tao form). Weight carries hierarchy: same-size
-/// regular text read at the same level as the items.
+/// Titled settings group header: bold, larger than items, glued to
+/// its group (2 below) with the gap above carried by the page.
+/// Matches the tao form (16 bold vs 14 items; 24 between groups).
+/// First group takes no top gap; the rest take 20.
 fn section_header(container: &gtk::Box, title: &str) {
+    section_header_spaced(container, title, 20);
+}
+
+/// First group header: no top gap.
+fn section_header_first(container: &gtk::Box, title: &str) {
+    section_header_spaced(container, title, 0);
+}
+
+fn section_header_spaced(container: &gtk::Box, title: &str, margin_top: i32) {
     let label = gtk::Label::new(None);
-    label.set_markup(&format!("<b>{}</b>", gtk::glib::markup_escape_text(title)));
+    label.set_markup(&format!(
+        "<b><span size=\"larger\">{}</span></b>",
+        gtk::glib::markup_escape_text(title)
+    ));
     label.set_xalign(0.0);
-    label.add_css_class("heading");
-    label.set_margin_top(4);
+    label.set_margin_top(margin_top);
+    label.set_margin_bottom(2);
     container.append(&label);
 }
 
