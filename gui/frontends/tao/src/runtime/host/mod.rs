@@ -131,6 +131,11 @@ pub(crate) struct HostState {
     pub(super) osd: OsdManager,
     pub(super) osd_window: Option<OsdWindowHandle>,
     pub(super) history_window: Option<HistoryWindowHandle>,
+    /// Last synced history content: sequence plus language. The sync
+    /// runs on every loop pass while the viewer is open; unchanged
+    /// content skips the full row rebuild (P1 perf gate).
+    pub(super) history_sync_key: Option<(u64, nerust_settings_core::model::language::AppLanguage)>,
+
     /// Last synced main geometry (pos, size, scale bits).
     pub(super) osd_geometry: Option<(i32, i32, u32, u32, u64)>,
     /// Linux render target below the muda menubar (`None` elsewhere).
@@ -197,6 +202,7 @@ impl HostState {
             osd: OsdManager::new(),
             osd_window: None,
             history_window: None,
+            history_sync_key: None,
             osd_geometry: None,
             #[cfg(any(
                 target_os = "linux",

@@ -473,22 +473,12 @@ impl SessionHandle {
         &self,
         language: nerust_settings_core::model::language::AppLanguage,
     ) -> Vec<super::osd::HistoryLine> {
-        self.notifications
-            .history()
-            .map(|n| {
-                let mut text = n.kind.text(language);
-                if n.count > 1 {
-                    text = format!("{text} ×{}", n.count);
-                }
-                super::osd::HistoryLine {
-                    datetime: super::osd::format_datetime(n.at),
-                    level: n.level,
-                    module: super::notification::LOG_MODULE,
-                    text,
-                    count: n.count,
-                }
-            })
-            .collect()
+        super::osd::history_lines(self.notifications.history(), language)
+    }
+
+    /// Current history version for dirty-gated viewer syncs.
+    pub fn notification_history_seq(&self) -> u64 {
+        self.notifications.history_seq()
     }
 
     pub fn clear_notification_history(&mut self) {

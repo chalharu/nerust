@@ -4,7 +4,7 @@ use super::HostState;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
     SessionError,
-    access::{FrontendSession, SettingsResult},
+    access::{PauseControl, SessionControl, SettingsResult},
 };
 
 use crate::ports::WindowOpener;
@@ -14,7 +14,7 @@ impl HostState {
         &mut self,
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
-        let result = FrontendSession::apply_settings(self, settings)?;
+        let result = SessionControl::apply_settings(self, settings)?;
         if result.fullscreen_default_changed {
             self.sync_fullscreen_from_settings();
         }
