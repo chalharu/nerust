@@ -113,9 +113,14 @@ impl GtkOsd {
         if !modal.is_empty() {
             // Auto-pause first (spec): the game must not advance
             // behind the modal. Pause stays on; the user resumes.
+            // Guarded by can_pause: pausing with no loaded core
+            // fails, and that failure is itself an Error, which
+            // would re-queue a modal and flood one dialog per tick.
             {
                 use nerust_gui_shell::session::access::FrontendSession;
-                state.pause();
+                if state.can_pause() {
+                    state.pause();
+                }
             }
             let detail = modal
                 .iter()
