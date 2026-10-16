@@ -434,7 +434,15 @@ impl Program for HistoryProgram {
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::Length;
-        use iced::widget::{button, column, pick_list, row, scrollable, text};
+        use iced::widget::{button, column, pick_list, row, rule, scrollable, text};
+        use nerust_gui_shell::session::osd::level_name;
+        let visible: Vec<&HistoryLine> = state
+            .lines
+            .iter()
+            .filter(|line| state.filter.matches(line.level))
+            .collect();
+        // Toolbar above the table: level filter plus Clear, with an
+        // item count (Fluent toolbar pattern).
         let toolbar = row![
             pick_list(
                 [
@@ -448,29 +456,30 @@ impl Program for HistoryProgram {
             )
             .placeholder("Level"),
             button(text("Clear").size(12)).on_press(HistoryMessage::Clear),
+            text(format!("{} items", visible.len())).size(12),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center);
         let mut items = column![].spacing(2);
-        // Header: datetime | level | module | message.
+        // Descriptive nouns, title case, no punctuation (Apple HIG).
         items = items.push(
             row![
                 text("Datetime").size(12).width(Length::Fixed(150.0)),
-                text("Level").size(12).width(Length::Fixed(60.0)),
+                text("Level").size(12).width(Length::Fixed(70.0)),
                 text("Module").size(12).width(Length::Fixed(220.0)),
                 text("Message").size(12).width(Length::Fill),
             ]
             .spacing(8),
         );
-        for line in state
-            .lines
-            .iter()
-            .filter(|line| state.filter.matches(line.level))
-        {
-            let (level_color, tag) = match line.level {
-                NotificationLevel::Info => (iced::Color::from_rgb8(70, 70, 70), "[INFO]"),
-                NotificationLevel::Warning => (iced::Color::from_rgb8(170, 110, 0), "[WARN]"),
-                NotificationLevel::Error => (iced::Color::from_rgb8(190, 30, 30), "[ERROR]"),
+        items = items.push(rule::horizontal(1));
+        if visible.is_empty() {
+            items = items.push(text("No notifications").size(13));
+        }
+        for line in visible {
+            let level_color = match line.level {
+                NotificationLevel::Info => iced::Color::from_rgb8(70, 70, 70),
+                NotificationLevel::Warning => iced::Color::from_rgb8(170, 110, 0),
+                NotificationLevel::Error => iced::Color::from_rgb8(190, 30, 30),
             };
             let mut message = line.text.clone();
             if line.count > 1 {
@@ -480,12 +489,16 @@ impl Program for HistoryProgram {
                 row![
                     text(line.datetime.clone())
                         .size(12)
+                        .font(iced::Font::MONOSPACE)
                         .width(Length::Fixed(150.0)),
-                    text(tag)
+                    text(level_name(line.level))
                         .size(12)
                         .color(level_color)
                         .width(Length::Fixed(70.0)),
-                    text(line.module).size(11).width(Length::Fixed(220.0)),
+                    text(line.module)
+                        .size(11)
+                        .font(iced::Font::MONOSPACE)
+                        .width(Length::Fixed(220.0)),
                     text(message).size(13).width(Length::Fill),
                 ]
                 .spacing(8),
