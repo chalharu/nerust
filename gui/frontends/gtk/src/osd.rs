@@ -30,6 +30,14 @@ fn is_top(position: NotificationPosition) -> bool {
     )
 }
 
+/// Pill class for OSD labels. GTK4 exposes no background API
+/// for labels, so one static rule is the only way to paint the
+/// translucent pill; the provider installs once per process
+/// (see `apply_osd_css`), keeping runtime cost at class match.
+const OSD_PILL_CLASS: &str = "nerust-osd";
+const OSD_PILL_CSS: &str =
+    ".nerust-osd { background-color: alpha(black, 0.72); border-radius: 6px; padding: 2px 6px; }";
+
 /// One OSD entry: text plus color (severity rides on the
 /// `[INFO]`/`[WARN]`/`[ERROR]` tag prefix, not a badge).
 type OsdEntry = (String, (u8, u8, u8));
@@ -275,6 +283,10 @@ impl GtkOsd {
         let clear = gtk::Button::with_label("Clear");
         toolbar.append(&filter);
         toolbar.append(&clear);
+        // Item count in the toolbar (Fluent toolbar pattern).
+        let count = gtk::Label::new(None);
+        count.set_xalign(0.0);
+        toolbar.append(&count);
         let scrolled = gtk::ScrolledWindow::new();
         scrolled.set_min_content_height(300);
         scrolled.set_min_content_width(560);
@@ -288,6 +300,7 @@ impl GtkOsd {
             let state = Rc::clone(state);
             let grid = grid.clone();
             let filter = filter.clone();
+            let count = count.clone();
             move || {
                 let language = state.borrow().settings_snapshot().shared.general.language;
                 let lines = state.borrow().notification_history_lines(language);
@@ -295,7 +308,21 @@ impl GtkOsd {
                 while let Some(child) = grid.first_child() {
                     grid.remove(&child);
                 }
-                // Header: datetime | level | module | message.
+                let visible: Vec<_> = lines
+                    .iter()
+                    .filter(|line| {
+                        matches!(
+                            (active.as_deref(), line.level),
+                            (None, _)
+                                | (Some("all"), _)
+                                | (Some("info"), NotificationLevel::Info)
+                                | (Some("warning"), NotificationLevel::Warning)
+                                | (Some("error"), NotificationLevel::Error)
+                        )
+                    })
+                    .collect();
+                count.set_text(&format!("{} items", visible.len()));
+                // Header: descriptive nouns, title case (Apple HIG).
                 let mut row_idx = 0;
                 for (col, header) in ["Datetime", "Level", "Module", "Message"]
                     .into_iter()
@@ -307,16 +334,21 @@ impl GtkOsd {
                     grid.attach(&label, col as i32, row_idx, 1, 1);
                 }
                 row_idx += 1;
-                for line in lines.iter().filter(|line| {
-                    matches!(
-                        (active.as_deref(), line.level),
-                        (None, _)
-                            | (Some("all"), _)
-                            | (Some("info"), NotificationLevel::Info)
-                            | (Some("warning"), NotificationLevel::Warning)
-                            | (Some("error"), NotificationLevel::Error)
-                    )
-                }) {
+                grid.attach(
+                    &gtk::Separator::new(gtk::Orientation::Horizontal),
+                    0,
+                    row_idx,
+                    4,
+                    1,
+                );
+                row_idx += 1;
+                if visible.is_empty() {
+                    let empty = gtk::Label::new(Some("No notifications"));
+                    empty.set_xalign(0.0);
+                    grid.attach(&empty, 0, row_idx, 4, 1);
+                    return;
+                }
+                for line in visible {
                     let (r, g, b) = match line.level {
                         NotificationLevel::Info => (70u8, 70u8, 70u8),
                         NotificationLevel::Warning => (170u8, 110u8, 0u8),
@@ -335,7 +367,7 @@ impl GtkOsd {
                     let level = gtk::Label::new(None);
                     level.set_markup(&format!(
                         "<span foreground=\"#{r:02X}{g:02X}{b:02X}\">{}</span>",
-                        nerust_gui_shell::session::osd::level_tag(line.level),
+                        nerust_gui_shell::session::osd::level_name(line.level),
                     ));
                     level.set_xalign(0.0);
                     let module = gtk::Label::new(None);
@@ -403,7 +435,7 @@ fn osd_label(text: &str, rgb: (u8, u8, u8), font_px: f64) -> gtk::Box {
     body.set_can_target(false);
     body.set_can_focus(false);
     row.append(&body);
-    row.add_css_class("nerust-osd");
+    row.add_css_class(OSD_PILL_CLASS);
     row.set_can_target(false);
     row.set_can_focus(false);
     row
@@ -419,12 +451,14 @@ fn apply_osd_css() {
     use std::sync::OnceLock;
     static DONE: OnceLock<()> = OnceLock::new();
     DONE.get_or_init(|| {
+        let Some(display) = gdk::Display::default() else {
+            log::warn!("OSD pill style skipped: no gdk display");
+            return;
+        };
         let css = gtk::CssProvider::new();
-        css.load_from_data(
-            ".nerust-osd { background-color: alpha(black, 0.72); border-radius: 6px; padding: 2px 6px; }",
-        );
+        css.load_from_data(OSD_PILL_CSS);
         gtk::style_context_add_provider_for_display(
-            &gdk::Display::default().expect("gdk display for OSD css"),
+            &display,
             &css,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );

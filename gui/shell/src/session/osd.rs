@@ -12,13 +12,24 @@ use nerust_settings_core::model::local::{
 
 use super::notification::{NotificationLevel, UiNotification};
 
-/// Level tag prefixing OSD labels and history rows: text (not
-/// color or shape alone) carries severity.
+/// Level tag prefixing OSD labels: text (not color or shape
+/// alone) carries severity. History uses [`level_name`]
+/// instead: the grid Level column and the OSD tag are managed
+/// separately by design (review feedback).
 pub fn level_tag(level: NotificationLevel) -> &'static str {
     match level {
         NotificationLevel::Info => "[INFO]",
         NotificationLevel::Warning => "[WARN]",
         NotificationLevel::Error => "[ERROR]",
+    }
+}
+
+/// Full level name for the history grid Level column.
+pub fn level_name(level: NotificationLevel) -> &'static str {
+    match level {
+        NotificationLevel::Info => "Info",
+        NotificationLevel::Warning => "Warning",
+        NotificationLevel::Error => "Error",
     }
 }
 
@@ -535,6 +546,14 @@ mod tests {
             ),
             (0, 0)
         );
+    }
+
+    #[test]
+    fn level_tag_and_name_stay_distinct() {
+        use super::super::notification::NotificationLevel as L;
+        assert_eq!(super::level_tag(L::Warning), "[WARN]");
+        assert_eq!(super::level_name(L::Warning), "Warning");
+        assert_eq!(super::level_name(L::Error), "Error");
     }
 
     #[test]
