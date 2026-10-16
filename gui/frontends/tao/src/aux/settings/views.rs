@@ -4,7 +4,9 @@
 
 use iced::{
     Alignment, Length, Theme,
-    widget::{Column, button, checkbox, column, pick_list, radio, row, slider, text, text_input},
+    widget::{
+        Column, button, checkbox, column, pick_list, radio, row, rule, slider, text, text_input,
+    },
 };
 use nerust_gui_viewmodel::settings::dto::ChoiceView;
 use nerust_settings_core::i18n::{UiText, text as ui_text};
@@ -253,79 +255,124 @@ impl SettingsAppState {
                 label: ui_text(language, UiText::AreaStrip).to_string(),
             },
         ];
-        column![
-            checkbox(view.info_enabled)
-                .label(ui_text(language, UiText::NotificationInfo))
-                .on_toggle(Message::ToggleInfoEnabled),
-            labeled_slider(
-                ui_text(language, UiText::NotificationDuration),
-                format!("{} ms", view.info_duration_ms),
-                slider(
-                    1000..=30000,
-                    view.info_duration_ms,
-                    Message::SetInfoDuration
-                )
-            ),
-            labeled_pick_list(
-                ui_text(language, UiText::NotificationColor),
-                colors.clone(),
-                pick_selected(&colors, &view.info_color),
-                Message::SetInfoColor
-            ),
-            checkbox(view.warning_enabled)
-                .label(ui_text(language, UiText::NotificationWarning))
-                .on_toggle(Message::ToggleWarningEnabled),
-            labeled_slider(
-                ui_text(language, UiText::NotificationDuration),
-                format!("{} ms", view.warning_duration_ms),
-                slider(
-                    1000..=30000,
-                    view.warning_duration_ms,
-                    Message::SetWarningDuration
-                )
-            ),
-            labeled_pick_list(
-                ui_text(language, UiText::NotificationColor),
-                colors.clone(),
-                pick_selected(&colors, &view.warning_color),
-                Message::SetWarningColor
-            ),
-            checkbox(view.error_enabled)
-                .label(ui_text(language, UiText::NotificationError))
-                .on_toggle(Message::ToggleErrorEnabled),
-            checkbox(view.error_modal)
-                .label(ui_text(language, UiText::NotificationErrorModal))
-                .on_toggle(Message::ToggleErrorModal),
-            labeled_pick_list(
-                ui_text(language, UiText::NotificationColor),
-                colors.clone(),
-                pick_selected(&colors, &view.error_color),
-                Message::SetErrorColor
-            ),
-            checkbox(view.status_enabled)
-                .label(ui_text(language, UiText::NotificationStatus))
-                .on_toggle(Message::ToggleStatusEnabled),
-            labeled_pick_list(
-                ui_text(language, UiText::NotificationPosition),
-                positions.clone(),
-                pick_selected(&positions, &view.position),
-                Message::SetPosition
-            ),
-            labeled_pick_list(
-                ui_text(language, UiText::NotificationStatusPosition),
-                positions.clone(),
-                pick_selected(&positions, &view.status_position),
-                Message::SetStatusPosition
-            ),
-            labeled_pick_list(
-                ui_text(language, UiText::NotificationAreaMode),
-                areas.clone(),
-                pick_selected(&areas, &view.area_mode),
-                Message::SetAreaMode
-            ),
-        ]
-        .spacing(16)
-        .into()
+        // One section per level plus display/status groups, so each
+        // control's scope reads off its header (Apple HIG grouping).
+        // Error presentation is an exclusive pair: modal dialog XOR
+        // on-screen display, matching the delivery contract.
+        let info = section(
+            ui_text(language, UiText::NotificationInfo),
+            [
+                checkbox(view.info_enabled)
+                    .label(ui_text(language, UiText::NotificationInfo))
+                    .on_toggle(Message::ToggleInfoEnabled)
+                    .into(),
+                labeled_slider(
+                    ui_text(language, UiText::NotificationDuration),
+                    format!("{} ms", view.info_duration_ms),
+                    slider(
+                        1000..=30000,
+                        view.info_duration_ms,
+                        Message::SetInfoDuration,
+                    ),
+                ),
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationColor),
+                    colors.clone(),
+                    pick_selected(&colors, &view.info_color),
+                    Message::SetInfoColor,
+                ),
+            ],
+        );
+        let warning = section(
+            ui_text(language, UiText::NotificationWarning),
+            [
+                checkbox(view.warning_enabled)
+                    .label(ui_text(language, UiText::NotificationWarning))
+                    .on_toggle(Message::ToggleWarningEnabled)
+                    .into(),
+                labeled_slider(
+                    ui_text(language, UiText::NotificationDuration),
+                    format!("{} ms", view.warning_duration_ms),
+                    slider(
+                        1000..=30000,
+                        view.warning_duration_ms,
+                        Message::SetWarningDuration,
+                    ),
+                ),
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationColor),
+                    colors.clone(),
+                    pick_selected(&colors, &view.warning_color),
+                    Message::SetWarningColor,
+                ),
+            ],
+        );
+        let error = section(
+            ui_text(language, UiText::Error),
+            [
+                checkbox(view.error_enabled)
+                    .label(ui_text(language, UiText::NotificationError))
+                    .on_toggle(Message::ToggleErrorEnabled)
+                    .into(),
+                row![
+                    radio(
+                        ui_text(language, UiText::NotificationErrorModal).to_string(),
+                        true,
+                        Some(view.error_modal),
+                        Message::ToggleErrorModal
+                    ),
+                    radio(
+                        ui_text(language, UiText::NotificationErrorOnScreen).to_string(),
+                        false,
+                        Some(view.error_modal),
+                        Message::ToggleErrorModal
+                    ),
+                ]
+                .spacing(16)
+                .into(),
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationColor),
+                    colors.clone(),
+                    pick_selected(&colors, &view.error_color),
+                    Message::SetErrorColor,
+                ),
+            ],
+        );
+        let display = section(
+            ui_text(language, UiText::NotificationSectionDisplay),
+            [
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationPosition),
+                    positions.clone(),
+                    pick_selected(&positions, &view.position),
+                    Message::SetPosition,
+                ),
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationAreaMode),
+                    areas.clone(),
+                    pick_selected(&areas, &view.area_mode),
+                    Message::SetAreaMode,
+                ),
+            ],
+        );
+        let status = section(
+            ui_text(language, UiText::NotificationSectionStatus),
+            [
+                checkbox(view.status_enabled)
+                    .label(ui_text(language, UiText::NotificationStatus))
+                    .on_toggle(Message::ToggleStatusEnabled)
+                    .into(),
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationStatusPosition),
+                    positions.clone(),
+                    pick_selected(&positions, &view.status_position),
+                    Message::SetStatusPosition,
+                ),
+            ],
+        );
+        column![info, warning, error, display, status]
+            .spacing(12)
+            .into()
     }
 
     fn system_page(&self) -> El<'_> {
@@ -452,6 +499,15 @@ pub(super) fn page_radio(
         Message::SelectPage,
     )
     .into()
+}
+
+/// Titled settings group: header plus rule, then the controls.
+fn section<'a>(title: &str, rows: impl IntoIterator<Item = El<'a>>) -> El<'a> {
+    let mut items = column![text(title.to_string()).size(14), rule::horizontal(1)].spacing(8);
+    for row in rows {
+        items = items.push(row);
+    }
+    column![items].spacing(8).into()
 }
 
 fn labeled_pick_list<'a, T: Clone + PartialEq + Eq + 'static>(

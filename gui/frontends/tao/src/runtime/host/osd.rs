@@ -193,8 +193,14 @@ impl HostState {
                 .map(|line| format!("• {line}"))
                 .collect::<Vec<_>>()
                 .join("\n");
+            self.osd.queue_modal(detail);
+        }
+        // Sequential display: rfd blocks per dialog, so each batch
+        // shows alone and the next follows its ack (never stacked).
+        while let Some(detail) = self.osd.take_modal_batch() {
             self.dialogs
                 .show_error(self.notification_language(), &detail);
+            self.osd.modal_closed();
         }
         if self.osd.take_dirty() {
             self.sync_osd_snapshot();

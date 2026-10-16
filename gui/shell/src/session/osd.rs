@@ -122,6 +122,8 @@ pub struct OsdManager {
     current: Option<OsdItem>,
     pending: std::collections::VecDeque<OsdItem>,
     modal: Vec<String>,
+    modal_queue: std::collections::VecDeque<String>,
+    modal_open: bool,
     dirty: bool,
 }
 
@@ -259,6 +261,31 @@ impl OsdManager {
 
     pub fn take_modal(&mut self) -> Vec<String> {
         std::mem::take(&mut self.modal)
+    }
+
+    /// Queue one aggregated error batch for sequential display.
+    pub fn queue_modal(&mut self, detail: String) {
+        self.modal_queue.push_back(detail);
+    }
+
+    /// Take the next batch only when no dialog is showing: frontends
+    /// present one dialog at a time and call [`OsdManager::modal_closed`]
+    /// on ack, so errors never stack.
+    pub fn take_modal_batch(&mut self) -> Option<String> {
+        if self.modal_open {
+            return None;
+        }
+        let next = self.modal_queue.pop_front()?;
+        self.modal_open = true;
+        Some(next)
+    }
+
+    pub fn modal_closed(&mut self) {
+        self.modal_open = false;
+    }
+
+    pub fn modal_pending(&self) -> usize {
+        self.modal_queue.len()
     }
 
     pub fn has_visible(&self) -> bool {
@@ -562,6 +589,21 @@ mod tests {
         assert_eq!(format_datetime(epoch), "1970-01-01 00:00:00");
         let known = epoch + std::time::Duration::from_secs(1_769_990_400);
         assert_eq!(format_datetime(known), "2026-02-02 00:00:00");
+    }
+
+    #[test]
+    fn modal_queue_shows_one_at_a_time() {
+        let mut manager = OsdManager::new();
+        manager.queue_modal("first".to_string());
+        manager.queue_modal("second".to_string());
+        assert_eq!(manager.take_modal_batch().as_deref(), Some("first"));
+        // Open dialog blocks the next batch.
+        assert_eq!(manager.take_modal_batch(), None);
+        assert_eq!(manager.modal_pending(), 1);
+        manager.modal_closed();
+        assert_eq!(manager.take_modal_batch().as_deref(), Some("second"));
+        manager.modal_closed();
+        assert_eq!(manager.take_modal_batch(), None);
     }
 
     #[test]

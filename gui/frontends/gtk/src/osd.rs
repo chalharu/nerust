@@ -95,6 +95,7 @@ impl GtkOsd {
     /// borrow, so re-borrowing the `Rc` would panic.
     pub(crate) fn poll(
         &mut self,
+        surface: &super::surface::Surface,
         state: &mut State,
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
@@ -121,8 +122,9 @@ impl GtkOsd {
                 .map(|line| format!("• {line}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            show_error_modal(window, &detail);
+            self.manager.queue_modal(detail);
         }
+        Self::present_next_modal(surface, window);
         let (fps, paused) = metrics;
         let changed = self.manager.poll(now);
         self.refresh_labels(&settings, language, paused, fps, window);
@@ -480,17 +482,37 @@ fn apply_osd_css() {
     });
 }
 
-fn show_error_modal(parent: &gtk::ApplicationWindow, detail: &str) {
-    // No libadwaita in tree: gtk MessageDialog twins tao's rfd modal.
-    let dialog = gtk::MessageDialog::new(
-        Some(parent),
-        gtk::DialogFlags::MODAL,
-        gtk::MessageType::Error,
-        gtk::ButtonsType::Ok,
-        detail,
-    );
-    dialog.connect_response(|dialog, _| dialog.close());
-    dialog.present();
+impl GtkOsd {
+    /// Present the next queued error batch only when no dialog is
+    /// showing; the ack chains to the following batch, so errors
+    /// display sequentially and never stack.
+    fn present_next_modal(surface: &super::surface::Surface, window: &gtk::ApplicationWindow) {
+        // No libadwaita in tree: gtk MessageDialog twins tao's rfd modal.
+        let detail = surface
+            .borrow_mut()
+            .osd
+            .borrow_mut()
+            .manager
+            .take_modal_batch();
+        let Some(detail) = detail else {
+            return;
+        };
+        let dialog = gtk::MessageDialog::new(
+            Some(window),
+            gtk::DialogFlags::MODAL,
+            gtk::MessageType::Error,
+            gtk::ButtonsType::Ok,
+            &detail,
+        );
+        let surface = surface.clone();
+        let window = window.clone();
+        dialog.connect_response(move |dialog, _| {
+            dialog.close();
+            surface.borrow_mut().osd.borrow_mut().manager.modal_closed();
+            Self::present_next_modal(&surface, &window);
+        });
+        dialog.present();
+    }
 }
 
 use gtk::gdk;

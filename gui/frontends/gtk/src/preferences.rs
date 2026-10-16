@@ -70,7 +70,8 @@ struct NotificationWidgets {
     warning_duration_spin: gtk::SpinButton,
     warning_color_combo: gtk::ComboBoxText,
     error_check: gtk::CheckButton,
-    error_modal_check: gtk::CheckButton,
+    error_modal_radio: gtk::CheckButton,
+    error_onscreen_radio: gtk::CheckButton,
     error_color_combo: gtk::ComboBoxText,
     status_check: gtk::CheckButton,
     position_combo: gtk::ComboBoxText,
@@ -367,7 +368,8 @@ impl PreferencesBinding {
         n.warning_color_combo
             .set_active_id(Some(map_color_id(view.warning_color)));
         n.error_check.set_active(view.error_enabled);
-        n.error_modal_check.set_active(view.error_modal);
+        n.error_modal_radio.set_active(view.error_modal);
+        n.error_onscreen_radio.set_active(!view.error_modal);
         n.error_color_combo
             .set_active_id(Some(map_color_id(view.error_color)));
         n.status_check.set_active(view.status_enabled);
@@ -808,7 +810,10 @@ pub(crate) fn present_preferences_dialog(
     lat_row.append(&latency_spin);
     audio_page.append(&lat_row);
 
-    // ---- Notifications page ----
+    // ---- Notifications page: one section per level plus
+    // display/status groups, so each control's scope reads off its
+    // header. Error presentation is an exclusive radio pair.
+    section_header(&notifications_page, ui_text(lang, UiText::NotificationInfo));
     let info_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationInfo));
     notifications_page.append(&info_check);
     let info_duration_spin = gtk::SpinButton::with_range(1000.0, 30000.0, 500.0);
@@ -827,6 +832,10 @@ pub(crate) fn present_preferences_dialog(
         ui_text(lang, UiText::NotificationColor),
         &info_color_combo,
     ));
+    section_header(
+        &notifications_page,
+        ui_text(lang, UiText::NotificationWarning),
+    );
     let warning_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationWarning));
     notifications_page.append(&warning_check);
     let warning_duration_spin = gtk::SpinButton::with_range(1000.0, 30000.0, 500.0);
@@ -845,11 +854,16 @@ pub(crate) fn present_preferences_dialog(
         ui_text(lang, UiText::NotificationColor),
         &warning_color_combo,
     ));
+    section_header(&notifications_page, ui_text(lang, UiText::Error));
     let error_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationError));
     notifications_page.append(&error_check);
-    let error_modal_check =
+    let error_modal_radio =
         gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationErrorModal));
-    notifications_page.append(&error_modal_check);
+    let error_onscreen_radio =
+        gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationErrorOnScreen));
+    error_onscreen_radio.set_group(Some(&error_modal_radio));
+    notifications_page.append(&error_modal_radio);
+    notifications_page.append(&error_onscreen_radio);
     let error_color_combo = combo_box(&[
         ("white", ui_text(lang, UiText::ColorWhite)),
         ("yellow", ui_text(lang, UiText::ColorYellow)),
@@ -861,8 +875,10 @@ pub(crate) fn present_preferences_dialog(
         ui_text(lang, UiText::NotificationColor),
         &error_color_combo,
     ));
-    let status_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationStatus));
-    notifications_page.append(&status_check);
+    section_header(
+        &notifications_page,
+        ui_text(lang, UiText::NotificationSectionDisplay),
+    );
     let position_combo = combo_box(&[
         ("top_left", ui_text(lang, UiText::PosTopLeft)),
         ("top_right", ui_text(lang, UiText::PosTopRight)),
@@ -879,10 +895,6 @@ pub(crate) fn present_preferences_dialog(
         ("bottom_left", ui_text(lang, UiText::PosBottomLeft)),
         ("bottom_right", ui_text(lang, UiText::PosBottomRight)),
     ]);
-    notifications_page.append(&labeled_row(
-        ui_text(lang, UiText::NotificationStatusPosition),
-        &status_position_combo,
-    ));
     let area_combo = combo_box(&[
         ("overlay", ui_text(lang, UiText::AreaOverlay)),
         ("strip", ui_text(lang, UiText::AreaStrip)),
@@ -890,6 +902,16 @@ pub(crate) fn present_preferences_dialog(
     notifications_page.append(&labeled_row(
         ui_text(lang, UiText::NotificationAreaMode),
         &area_combo,
+    ));
+    section_header(
+        &notifications_page,
+        ui_text(lang, UiText::NotificationSectionStatus),
+    );
+    let status_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationStatus));
+    notifications_page.append(&status_check);
+    notifications_page.append(&labeled_row(
+        ui_text(lang, UiText::NotificationStatusPosition),
+        &status_position_combo,
     ));
 
     // ---- Input page (tabs) ----
@@ -960,7 +982,8 @@ pub(crate) fn present_preferences_dialog(
         warning_duration_spin: warning_duration_spin.clone(),
         warning_color_combo: warning_color_combo.clone(),
         error_check: error_check.clone(),
-        error_modal_check: error_modal_check.clone(),
+        error_modal_radio: error_modal_radio.clone(),
+        error_onscreen_radio: error_onscreen_radio.clone(),
         error_color_combo: error_color_combo.clone(),
         status_check: status_check.clone(),
         position_combo: position_combo.clone(),
@@ -1210,14 +1233,24 @@ pub(crate) fn present_preferences_dialog(
             cmd(&b, b.vm.notifications.set_error_enabled(button.is_active()));
         }
     });
-    error_modal_check.connect_toggled({
+    error_modal_radio.connect_toggled({
         let w = weak_handler(&_binding);
         move |button| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
+            if b.refreshing.get() || !button.is_active() {
                 return;
             }
-            cmd(&b, b.vm.notifications.set_error_modal(button.is_active()));
+            cmd(&b, b.vm.notifications.set_error_modal(true));
+        }
+    });
+    error_onscreen_radio.connect_toggled({
+        let w = weak_handler(&_binding);
+        move |button| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() || !button.is_active() {
+                return;
+            }
+            cmd(&b, b.vm.notifications.set_error_modal(false));
         }
     });
     error_color_combo.connect_changed({
@@ -1369,6 +1402,15 @@ pub(crate) fn present_preferences_dialog(
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
+
+/// Titled settings group header: heading plus rule.
+fn section_header(container: &gtk::Box, title: &str) {
+    let label = gtk::Label::new(Some(title));
+    label.set_xalign(0.0);
+    label.add_css_class("heading");
+    container.append(&label);
+    container.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+}
 
 fn labeled_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -1713,7 +1755,8 @@ mod tests {
                     warning_duration_spin: gtk::SpinButton::with_range(1000.0, 30000.0, 500.0),
                     warning_color_combo: gtk::ComboBoxText::new(),
                     error_check: gtk::CheckButton::new(),
-                    error_modal_check: gtk::CheckButton::new(),
+                    error_modal_radio: gtk::CheckButton::new(),
+                    error_onscreen_radio: gtk::CheckButton::new(),
                     error_color_combo: gtk::ComboBoxText::new(),
                     status_check: gtk::CheckButton::new(),
                     position_combo: gtk::ComboBoxText::new(),
