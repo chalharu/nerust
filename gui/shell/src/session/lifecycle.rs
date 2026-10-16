@@ -481,8 +481,9 @@ impl SessionHandle {
                     text = format!("{text} ×{}", n.count);
                 }
                 super::osd::HistoryLine {
-                    time: super::osd::format_time(n.at),
+                    datetime: super::osd::format_datetime(n.at),
                     level: n.level,
+                    module: super::notification::LOG_MODULE,
                     text,
                     count: n.count,
                 }
