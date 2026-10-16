@@ -81,26 +81,14 @@ impl Program for OsdProgram {
         use iced::widget::{column, container, row, text};
         let snapshot = &state.snapshot;
         let font = iced::Pixels(snapshot.font_px.max(6.0));
-        // Level badge: bordered circle around the glyph (no emoji
-        // font dependency; shape + color both carry severity).
-        let badge = |glyph: char, rgb: (u8, u8, u8)| {
-            container(text(format!("{glyph}")).size(font))
-                .padding([1, 6])
-                .style(move |_theme: &iced::Theme| container::Style {
-                    text_color: Some(iced::Color::from_rgb8(rgb.0, rgb.1, rgb.2)),
-                    border: iced::Border {
-                        color: iced::Color::from_rgb8(rgb.0, rgb.1, rgb.2),
-                        width: 1.5,
-                        radius: 10.0.into(),
-                    },
-                    ..Default::default()
-                })
-        };
-        let label = |glyph: char, body: &str, rgb: (u8, u8, u8)| -> iced::Element<'_, OsdMessage> {
+        let label = |tag: &str, body: &str, rgb: (u8, u8, u8)| -> iced::Element<'_, OsdMessage> {
             container(
-                row![badge(glyph, rgb), text(body.to_string()).size(font),]
-                    .spacing(6)
-                    .align_y(iced::Alignment::Center),
+                row![
+                    text(tag.to_string()).size(font),
+                    text(body.to_string()).size(font),
+                ]
+                .spacing(6)
+                .align_y(iced::Alignment::Center),
             )
             .padding([2, 6])
             .style(move |_theme: &iced::Theme| container::Style {
@@ -130,7 +118,7 @@ impl Program for OsdProgram {
         let transient: iced::Element<'_, OsdMessage> = {
             let mut items = column![].spacing(4);
             for row_data in &snapshot.rows {
-                items = items.push(label(row_data.glyph, &row_data.text, row_data.rgb));
+                items = items.push(label(row_data.tag, &row_data.text, row_data.rgb));
             }
             container(items)
                 .align_x(match snapshot.position {
@@ -479,10 +467,10 @@ impl Program for HistoryProgram {
             .iter()
             .filter(|line| state.filter.matches(line.level))
         {
-            let (glyph_color, glyph) = match line.level {
-                NotificationLevel::Info => (iced::Color::from_rgb8(70, 70, 70), 'i'),
-                NotificationLevel::Warning => (iced::Color::from_rgb8(170, 110, 0), '!'),
-                NotificationLevel::Error => (iced::Color::from_rgb8(190, 30, 30), '×'),
+            let (level_color, tag) = match line.level {
+                NotificationLevel::Info => (iced::Color::from_rgb8(70, 70, 70), "[INFO]"),
+                NotificationLevel::Warning => (iced::Color::from_rgb8(170, 110, 0), "[WARN]"),
+                NotificationLevel::Error => (iced::Color::from_rgb8(190, 30, 30), "[ERROR]"),
             };
             let mut message = line.text.clone();
             if line.count > 1 {
@@ -493,10 +481,10 @@ impl Program for HistoryProgram {
                     text(line.datetime.clone())
                         .size(12)
                         .width(Length::Fixed(150.0)),
-                    text(format!("{glyph}"))
+                    text(tag)
                         .size(12)
-                        .color(glyph_color)
-                        .width(Length::Fixed(60.0)),
+                        .color(level_color)
+                        .width(Length::Fixed(70.0)),
                     text(line.module).size(11).width(Length::Fixed(220.0)),
                     text(message).size(13).width(Length::Fill),
                 ]
