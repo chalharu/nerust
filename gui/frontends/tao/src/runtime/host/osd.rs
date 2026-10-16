@@ -13,12 +13,8 @@ use super::HostState;
 use crate::ports::WindowOpener;
 use nerust_gui_shell::session::osd::{OsdManager, OsdSnapshot, strip_pixels, strip_rows};
 
-/// In-flight error dialog: the blocking `show_error` runs on a
-/// short-lived thread so the event loop (and frame rendering) never
-/// stalls behind a modal. Sync dialogs served from the loop freeze
-/// every window and deadlock backends needing loop cooperation (this
-/// bit rfd's gtk3 backend). `resume_after` mirrors the settings
-/// window: only what we paused gets resumed, after the last ack.
+/// In-flight error dialog: blocking `show_error` runs on a thread.
+/// `resume_after` resumes only what we paused, after the last ack.
 pub(crate) struct ModalFlight {
     pub(super) done: std::sync::mpsc::Receiver<()>,
     pub(super) resume_after: bool,
@@ -64,11 +60,8 @@ impl HostState {
         self.osd_window = opener.create_osd(position, size);
     }
 
-    /// Reposition the overlay when the main geometry changed.
-    /// Polled (not only event-driven): WM-driven moves/resizes do not
-    /// reliably surface as tao events on every backend, and a missed
-    /// event would strand the overlay forever. Cheap: two X queries
-    /// per loop pass, skipped when the overlay is absent.
+    /// Reposition the overlay on geometry change (polled).
+    /// Skipped when the overlay is absent.
     pub(crate) fn sync_osd_geometry(&mut self) {
         let window = self.window.as_ref();
         let size = window.map(|window| window.inner_size());
@@ -275,12 +268,8 @@ impl HostState {
         self.osd.poll(now);
         let modal = self.osd.take_modal();
         if !modal.is_empty() {
-            // Auto-pause first (spec): the game must not advance
-            // behind the modal. Guarded by can_pause: pausing with no
-            // loaded core fails, and that failure is itself an Error
-            // notification, which would re-queue a modal and flood one
-            // dialog per tick. Only resume what we paused, after the
-            // last ack: a manually-paused game stays paused.
+            // Auto-pause first, guarded by can_pause.
+            // Only what we paused resumes, after the last ack.
             if self.session.can_pause() && !self.session.paused() {
                 self.pause();
                 self.resume_after_modal = true;

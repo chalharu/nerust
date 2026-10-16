@@ -380,12 +380,8 @@ pub fn history_count(language: AppLanguage, count: usize) -> String {
     localized!(language, format!("{count} items"), format!("{count}件"))
 }
 
-/// Screen-reader label for a level enable toggle. The visible
-/// "Enabled" carries no level, so assistive tech gets the full group
-/// name ("Info notifications" / "情報通知"). Pass the short level
-/// name (`NotificationInfo` / `NotificationWarning` / `Error` text);
-/// Error and Status read full elsewhere via `NotificationError` /
-/// `NotificationStatus`, which this matches exactly.
+/// Screen-reader label for a level enable toggle.
+/// Pass the short level name; Error/Status read full elsewhere.
 pub fn notification_group_label(language: AppLanguage, level: &str) -> String {
     localized!(
         language,

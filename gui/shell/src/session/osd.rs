@@ -33,11 +33,8 @@ pub fn level_name(level: NotificationLevel) -> &'static str {
     }
 }
 
-/// Localized level name for display surfaces (history grid, filter
-/// options). The canonical English [`level_name`] stays for logs and
-/// tests; UI text goes through the single i18n table. Note `Error`
-/// maps to `UiText::Error` ("Error"), not `NotificationError`
-/// ("Error notifications"), to match the column width and siblings.
+/// Localized level name for history grid and filter options.
+/// `Error` maps to `UiText::Error` for column width.
 pub fn level_label(
     level: NotificationLevel,
     language: nerust_settings_core::model::language::AppLanguage,
@@ -73,10 +70,7 @@ pub struct HistoryLine {
     pub count: u32,
 }
 
-/// Local wall-clock datetime from a `SystemTime`: the UTC instant
-/// shifted by the platform zone offset, then rendered with the same
-/// dependency-free civil math. History shows time where the user
-/// sits (like Console/Event Viewer); UTC-only stays in the logs.
+/// Local wall-clock datetime from a `SystemTime`.
 /// Falls back to UTC when the zone is indeterminate.
 pub fn format_datetime(time: std::time::SystemTime) -> String {
     format_datetime_in(time, local_utc_offset_secs())
@@ -428,11 +422,8 @@ pub fn strip_rows(
     (top[0].max(top[1]), bottom[0].max(bottom[1]))
 }
 
-/// Physical strip pixels from the client height. A plain tag row
-/// is ~1.6x the font plus pill padding; rows are spaced 4px with
-/// an 8px safe-area inset — the same constants the tao/gtk
-/// overlays lay out with, so a notification+status stack never
-/// overflows the strip into game content.
+/// Physical strip pixels from the client height.
+/// Matches the tao/gtk overlay layout constants.
 pub fn strip_pixels(client_height: u32, rows: u32) -> u32 {
     if rows == 0 || client_height == 0 {
         return 0;

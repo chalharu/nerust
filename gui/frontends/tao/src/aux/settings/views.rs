@@ -497,14 +497,8 @@ pub(super) fn page_radio(
     .into()
 }
 
-/// Titled settings group. Header beats items on two channels: size
-/// 16 bold vs 14 regular (Apple HIG headline: size plus weight
-/// distinguish the heading; Fluent Strong = weight step). Spacing
-/// glues the header to its group (4 below) and separates groups
-/// (24): MS Forms groups sit 2x wider than controls (48 vs 24),
-/// same ratio here (24 vs 8-12). Weight alone failed on this stack:
-/// DejaVu has no Semibold, so Semibold fell back to serif.
-/// Header uses Bold, which DejaVu Sans provides.
+/// Titled settings group: 16 bold header, 4 below / 24 between.
+/// Header uses Bold (DejaVu has no Semibold).
 fn section<'a>(title: &'a str, rows: impl IntoIterator<Item = El<'a>>) -> El<'a> {
     section_inner(header_text(title), None, rows)
 }

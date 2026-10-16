@@ -1,11 +1,5 @@
-//! OSD notifications: display queue, transparent overlay window,
-//! and history viewer.
-//!
-//! Shell owns event capture (`NotificationCenter`); this module owns
-//! presentation state. `OsdManager` is display-free so headless tests
-//! cover queueing, expiry, burst caps, and strip math. The overlay
-//! window itself (`OsdWindowHandle`) is a transparent click-through
-//! iced shell tracking the main client area.
+//! OSD: display queue, transparent overlay, history viewer.
+//! Shell owns events; this module owns presentation state.
 
 use iced::{Length, Task};
 use iced_winit::program::{self, Program};
@@ -276,11 +270,8 @@ impl OsdWindowHandle {
     }
 
     pub(crate) fn sync(&mut self, snapshot: OsdSnapshot) {
-        // Message-driven (not shared-state): iced rebuilds the cached
-        // tree only on update(), so silent Arc mutation never paints.
-        // Self-healing viewport: a fresh transparent window reports a
-        // degenerate size, and Resized events are not guaranteed on
-        // every backend. Without this the layout collapses to nothing.
+        // Message-driven: iced paints only on update().
+        // Heals a degenerate fresh-window viewport.
         let live = self.shell.window.inner_size();
         self.shell.resize(live.width, live.height);
         let bounds = self.shell.logical_bounds();
@@ -477,11 +468,7 @@ impl Program for HistoryProgram {
             .iter()
             .filter(|line| state.filter.matches(line.level))
             .collect();
-        // Toolbar above the table (the Console / DevTools / logcat
-        // pattern: filter plus clear live together at the top).
-        // "Clear History" names the target explicitly so filter-clear
-        // and history-clear are never confused (cf. Event Viewer
-        // "Clear Filter" vs "Clear Log"); the item count trails right.
+        // Toolbar: filter plus clear on top; count trails right.
         let options: Vec<String> = [
             HistoryFilter::All,
             HistoryFilter::Info,

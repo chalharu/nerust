@@ -1,9 +1,5 @@
-//! GTK OSD notifications: overlay labels, error modals, history.
-//!
-//! Display policy (queue folding, expiry, burst caps, strips) lives in
-//! `nerust_gui_shell::session::osd` and is shared with tao; this module
-//! only renders into `GtkOverlay` children and honors wakeups via the
-//! surface tick.
+//! GTK OSD: overlay labels, error modals, history.
+//! Policy lives in shell `session::osd`; this renders into `GtkOverlay`.
 
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
@@ -110,14 +106,8 @@ impl GtkOsd {
             self.manager.push_all(drained, &settings, language, now);
         }
         let modal = self.manager.take_modal();
-        // Auto-pause first (spec): the game must not advance
-        // behind the modal. Resume after the last ack: the pause
-        // exists only to freeze the game behind the dialog, mirroring
-        // the tao twin. Guarded by can_pause: pausing with no loaded
-        // core fails, and that failure is itself an Error, which
-        // would re-queue a modal and flood one dialog per tick. Only
-        // resume what we paused: a manually-paused game stays paused.
-        // The flag threads the async ack chain to the final close.
+        // Auto-pause first, resume after the last ack.
+        // Guarded by can_pause; only what we paused resumes.
         let mut resume_after_modal = false;
         if !modal.is_empty() {
             {
@@ -515,11 +505,8 @@ fn apply_osd_css() {
 }
 
 impl GtkOsd {
-    /// Present one error batch; the ack closes it, marks the queue,
-    /// and presents the next batch, so errors display sequentially
-    /// and never stack. After the last batch, resume iff this modal
-    /// sequence auto-paused a running game (never between batches).
-    /// No libadwaita in tree: gtk MessageDialog twins tao's rfd modal.
+    /// Present one error batch; the ack chains the next.
+    /// Resume only after the last batch iff auto-paused.
     fn present_modal(
         surface: &super::surface::Surface,
         window: &gtk::ApplicationWindow,
