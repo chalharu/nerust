@@ -10,7 +10,7 @@ use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationPosition, NotificationSettings,
 };
 
-use super::notification::{MAX_PENDING, NotificationLevel, UiNotification};
+use super::notification::{NotificationLevel, UiNotification};
 
 /// Glyph per level: shape (not color alone) distinguishes severity.
 pub fn level_glyph(level: NotificationLevel) -> char {
@@ -32,6 +32,29 @@ pub struct OsdSnapshot {
     pub font_px: f32,
 }
 
+/// One rendered history line: wall-clock time plus content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryLine {
+    /// HH:MM:SS (UTC) of the push.
+    pub time: String,
+    pub level: NotificationLevel,
+    pub text: String,
+    pub count: u32,
+}
+
+pub fn format_time(time: std::time::SystemTime) -> String {
+    let secs = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!(
+        "{:02}:{:02}:{:02}",
+        secs / 3600 % 24,
+        secs / 60 % 60,
+        secs % 60
+    )
+}
+
 #[derive(Debug, Clone)]
 pub struct OsdRow {
     pub text: String,
@@ -42,17 +65,23 @@ pub struct OsdRow {
 #[derive(Debug)]
 struct OsdItem {
     row: OsdRow,
-    /// `None` holds indefinitely (Error-as-OSD without successor).
-    deadline: Option<Instant>,
-    /// Earliest replacement time (Error-as-OSD holds 5s minimum).
-    replaceable_at: Instant,
+    level: NotificationLevel,
+    /// Identity for coalescing (text before the `×N` suffix).
+    key: String,
+    count: u32,
+    deadline: Instant,
 }
+
+/// Single sequential display (no stacking): one label at a time,
+/// FIFO by push order. `pending` is capped at two so the total
+/// (current + pending) never exceeds three.
+const MAX_QUEUED: usize = 2;
 
 #[derive(Debug, Default)]
 pub struct OsdManager {
-    items: Vec<OsdItem>,
+    current: Option<OsdItem>,
+    pending: std::collections::VecDeque<OsdItem>,
     modal: Vec<String>,
-    error_hold: Option<OsdItem>,
     dirty: bool,
 }
 
@@ -78,6 +107,15 @@ impl OsdManager {
         u64::from(raw.clamp(500, 60_000))
     }
 
+    fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), glyph: char) -> OsdRow {
+        let text = if count > 1 {
+            format!("{base} ×{count}")
+        } else {
+            base.to_string()
+        };
+        OsdRow { text, rgb, glyph }
+    }
+
     fn color(level: NotificationLevel, settings: &NotificationSettings) -> (u8, u8, u8) {
         match level {
             NotificationLevel::Info => settings.info_color.rgb(),
@@ -87,7 +125,9 @@ impl OsdManager {
     }
 
     /// Fold drained shell notifications into display state.
-    /// Errors go modal (aggregated) or OSD-hold per settings.
+    /// Errors go modal (aggregated) or OSD (minimum 5s) per settings.
+    /// New arrivals queue behind the showing label; identical text
+    /// merges with the showing label or the queue tail (`×N`, timer reset).
     pub fn push_all(
         &mut self,
         notifications: Vec<UiNotification>,
@@ -102,85 +142,66 @@ impl OsdManager {
             if !Self::enabled(n.level, settings) {
                 continue;
             }
-            let mut text = n.kind.text(language);
+            let base = n.kind.text(language);
+            let mut text = base.clone();
             if n.count > 1 {
                 text = format!("{text} ×{}", n.count);
             }
-            let row = OsdRow {
-                text,
-                rgb: Self::color(n.level, settings),
-                glyph: level_glyph(n.level),
-            };
-            if n.level == NotificationLevel::Error {
-                if settings.error_modal {
-                    self.modal.push(row.text);
-                    continue;
-                }
-                // Error hold: minimum 5s, replaced by the next error
-                // once mature. An immature hold keeps its slot.
-                let mature = self
-                    .error_hold
-                    .as_ref()
-                    .is_none_or(|hold| hold.replaceable_at <= now);
-                if mature {
-                    self.error_hold = Some(OsdItem {
-                        row,
-                        deadline: None,
-                        replaceable_at: now + Duration::from_secs(5),
-                    });
-                } else {
-                    self.push_transient(
-                        OsdItem {
-                            row,
-                            deadline: Some(
-                                now + Duration::from_millis(Self::duration_ms(
-                                    NotificationLevel::Error,
-                                    settings,
-                                )),
-                            ),
-                            replaceable_at: now,
-                        },
-                        now,
-                    );
-                }
+            if n.level == NotificationLevel::Error && settings.error_modal {
+                self.modal.push(text);
                 continue;
             }
-            self.push_transient(
-                OsdItem {
-                    row,
-                    deadline: Some(
-                        now + Duration::from_millis(Self::duration_ms(n.level, settings)),
-                    ),
-                    replaceable_at: now,
-                },
-                now,
-            );
-        }
-    }
-
-    fn push_transient(&mut self, item: OsdItem, now: Instant) {
-        // Error hold yields to fresh transients once mature.
-        if let Some(hold) = self.error_hold.take() {
-            if hold.replaceable_at <= now {
-                drop(hold);
-            } else {
-                self.error_hold = Some(hold);
+            let rgb = Self::color(n.level, settings);
+            let glyph = level_glyph(n.level);
+            let deadline = now + Duration::from_millis(Self::duration_ms(n.level, settings));
+            // Merge with the showing label when identical.
+            if let Some(current) = self.current.as_mut()
+                && current.level == n.level
+                && current.key == base
+            {
+                current.count += n.count;
+                current.row = Self::counted_row(&base, current.count, rgb, glyph);
+                current.deadline = deadline;
+                continue;
+            }
+            // Merge with the queue tail when identical.
+            if let Some(back) = self.pending.back_mut()
+                && back.level == n.level
+                && back.key == base
+            {
+                back.count += n.count;
+                back.row = Self::counted_row(&base, back.count, rgb, glyph);
+                back.deadline = deadline;
+                continue;
+            }
+            let row = Self::counted_row(&base, n.count, rgb, glyph);
+            self.pending.push_back(OsdItem {
+                row,
+                level: n.level,
+                key: base,
+                count: n.count,
+                deadline,
+            });
+            // Never preempt the showing label; drop oldest pending.
+            while self.pending.len() > MAX_QUEUED {
+                self.pending.pop_front();
             }
         }
-        if self.items.len() >= MAX_PENDING {
-            self.items.remove(0);
-        }
-        self.items.push(item);
     }
 
-    /// Drop expired items. Returns true when the view changed.
+    /// Advance the showing label. Promotes pending immediately when
+    /// idle; advances on expiry otherwise. Returns true on change.
     pub fn poll(&mut self, now: Instant) -> bool {
-        let before = self.items.len();
-        self.items
-            .retain(|item| item.deadline.is_none_or(|deadline| deadline > now));
-        let changed = before != self.items.len();
-        self.dirty = self.dirty || changed;
-        changed
+        let need = match &self.current {
+            None => !self.pending.is_empty(),
+            Some(current) => current.deadline <= now,
+        };
+        if !need {
+            return false;
+        }
+        self.current = self.pending.pop_front();
+        self.dirty = true;
+        true
     }
 
     /// True when display state changed since the last sync.
@@ -188,12 +209,12 @@ impl OsdManager {
         std::mem::replace(&mut self.dirty, false)
     }
 
+    /// The single showing row (empty when idle).
     pub fn rows(&self) -> Vec<OsdRow> {
-        let mut rows: Vec<OsdRow> = self.items.iter().map(|item| item.row.clone()).collect();
-        if let Some(hold) = self.error_hold.as_ref() {
-            rows.push(hold.row.clone());
-        }
-        rows
+        self.current
+            .as_ref()
+            .map(|current| vec![current.row.clone()])
+            .unwrap_or_default()
     }
 
     pub fn take_modal(&mut self) -> Vec<String> {
@@ -201,11 +222,16 @@ impl OsdManager {
     }
 
     pub fn has_visible(&self) -> bool {
-        !self.items.is_empty() || self.error_hold.is_some()
+        self.current.is_some()
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {
-        self.items.iter().filter_map(|item| item.deadline).min()
+        match &self.current {
+            Some(current) => Some(current.deadline),
+            // Pending work with nothing showing: wake immediately.
+            None if !self.pending.is_empty() => Some(Instant::now()),
+            None => None,
+        }
     }
 
     pub fn status_text(fps: f32, paused: bool, language: AppLanguage) -> String {
@@ -291,6 +317,7 @@ mod tests {
                 },
                 count: 1,
                 seq: 0,
+                at: std::time::SystemTime::now(),
             }],
             &settings(),
             AppLanguage::English,
@@ -310,18 +337,113 @@ mod tests {
                 kind: NotificationKind::Paused,
                 count: 1,
                 seq: 0,
+                at: std::time::SystemTime::now(),
             }],
             &settings(),
             AppLanguage::English,
             now,
         );
+        assert!(manager.poll(now));
         assert_eq!(manager.rows().len(), 1);
         assert!(manager.poll(now + Duration::from_millis(2_001)));
         assert!(manager.rows().is_empty());
     }
 
     #[test]
-    fn error_osd_holds_until_replaced() {
+    fn sequential_shows_one_then_next() {
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        for seq in 0..2 {
+            manager.push_all(
+                vec![UiNotification {
+                    level: NotificationLevel::Info,
+                    kind: if seq == 0 {
+                        NotificationKind::Paused
+                    } else {
+                        NotificationKind::Resumed
+                    },
+                    count: 1,
+                    seq,
+                    at: std::time::SystemTime::now(),
+                }],
+                &settings(),
+                AppLanguage::English,
+                now,
+            );
+        }
+        // Showing the first; the second waits its turn.
+        assert!(manager.poll(now));
+        assert_eq!(manager.rows().len(), 1);
+        assert_eq!(manager.rows()[0].text, "Paused");
+        // First expires after 2s; the second takes over.
+        assert!(manager.poll(now + Duration::from_millis(2_001)));
+        assert_eq!(manager.rows()[0].text, "Resumed");
+        // Second expires; idle afterwards.
+        assert!(manager.poll(now + Duration::from_millis(4_002)));
+        assert!(manager.rows().is_empty());
+        assert!(!manager.has_visible());
+    }
+
+    #[test]
+    fn queue_caps_pending_and_coalesces_tail() {
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        // Five distinct pushes: showing + two queued, oldest dropped.
+        for (seq, kind) in [
+            NotificationKind::Paused,
+            NotificationKind::Resumed,
+            NotificationKind::Reset,
+            NotificationKind::CreatedSlot,
+            NotificationKind::Paused,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            manager.push_all(
+                vec![UiNotification {
+                    level: NotificationLevel::Info,
+                    kind,
+                    count: 1,
+                    seq: seq as u64,
+                    at: std::time::SystemTime::now(),
+                }],
+                &settings(),
+                AppLanguage::English,
+                now,
+            );
+        }
+        // Identical repeat merges with the tail (×2) instead of queuing.
+        manager.push_all(
+            vec![UiNotification {
+                level: NotificationLevel::Info,
+                kind: NotificationKind::Paused,
+                count: 1,
+                seq: 99,
+                at: std::time::SystemTime::now(),
+            }],
+            &settings(),
+            AppLanguage::English,
+            now,
+        );
+        assert!(manager.poll(now));
+        // Oldest pending (CreatedSlot) shows first; drops removed older.
+        assert!(manager.rows()[0].text.contains("Slot"));
+        // Drain fully: CreatedSlot, then merged Paused ×2, then idle.
+        let mut shown = vec![manager.rows()[0].text.clone()];
+        let mut t = now;
+        for _ in 0..5 {
+            t += Duration::from_millis(2_001);
+            if manager.poll(t) && !manager.rows().is_empty() {
+                shown.push(manager.rows()[0].text.clone());
+            }
+        }
+        assert!(manager.rows().is_empty());
+        assert_eq!(shown.len(), 2);
+        assert!(shown[1].contains("×2"));
+    }
+
+    #[test]
+    fn error_osd_holds_five_second_minimum() {
         let mut altered = settings();
         altered.error_modal = false;
         let mut manager = OsdManager::new();
@@ -335,15 +457,19 @@ mod tests {
                 },
                 count: 1,
                 seq: 0,
+                at: std::time::SystemTime::now(),
             }],
             &altered,
             AppLanguage::English,
             now,
         );
+        assert!(manager.poll(now));
         assert_eq!(manager.rows().len(), 1);
-        // No deadline: still showing after Info would have expired.
-        assert!(!manager.poll(now + Duration::from_secs(30)));
+        // Still showing past the Info duration: 5s minimum.
+        assert!(!manager.poll(now + Duration::from_millis(2_001)));
         assert_eq!(manager.rows().len(), 1);
+        assert!(manager.poll(now + Duration::from_millis(5_001)));
+        assert!(manager.rows().is_empty());
     }
 
     #[test]

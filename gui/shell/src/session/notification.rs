@@ -179,6 +179,7 @@ pub struct UiNotification {
     /// Coalesced repeat count (1 = shown once).
     pub count: u32,
     pub seq: u64,
+    pub at: std::time::SystemTime,
 }
 
 #[derive(Debug, Default)]
@@ -205,6 +206,7 @@ impl NotificationCenter {
             kind: kind.clone(),
             count: 1,
             seq,
+            at: std::time::SystemTime::now(),
         };
         match level {
             NotificationLevel::Info => log::info!("notification: {}", kind_text(&event)),
@@ -230,6 +232,7 @@ impl NotificationCenter {
             kind,
             count: 1,
             seq,
+            at: std::time::SystemTime::now(),
         });
     }
 
@@ -239,6 +242,10 @@ impl NotificationCenter {
 
     pub fn history(&self) -> impl Iterator<Item = &UiNotification> {
         self.history.iter()
+    }
+
+    pub fn clear_history(&mut self) {
+        self.history.clear();
     }
 
     pub fn pending_len(&self) -> usize {
