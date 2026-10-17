@@ -176,7 +176,7 @@ impl ControllerProfile for StandardPadProfile {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Controller, ControllerProfile, StandardPad, StandardPadProfile};
     use nerust_input_traits::SimplePort;
 
     fn player1() -> SimplePort {

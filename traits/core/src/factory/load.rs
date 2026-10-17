@@ -180,7 +180,10 @@ mod media_tests {
 
 #[cfg(test)]
 mod wrapper_tests {
-    use super::*;
+    use super::{
+        DynSystemLoadOptions, DynSystemLoadOptionsExt, DynSystemLoadOptionsSchema,
+        SystemLoadOptions, SystemLoadOptionsSchema, SystemLoadOptionsSchemaWrapper,
+    };
 
     #[derive(Debug, Clone, PartialEq, Eq, clap::Parser)]
     struct StubOptions {
