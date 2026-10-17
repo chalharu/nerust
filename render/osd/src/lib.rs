@@ -168,20 +168,21 @@ impl OsdRaster {
             let base_y = b.y - min_y;
             match &b.body {
                 RowBody::Line { span } => {
-                    let top = base_y as i32 + PILL_PAD_Y as i32;
+                    let baseline = base_y as i32 + PILL_PAD_Y as i32 + span.ascent as i32;
                     self.draw_span(
                         &mut rgba,
                         width,
                         span,
                         (b.x - min_x + PILL_PAD_X) as i32,
-                        top,
+                        baseline,
                         b.rgb,
                     );
                 }
                 RowBody::Status { left, right } => {
+                    let ascent = left.span.ascent.max(right.span.ascent);
+                    let baseline = base_y as i32 + PILL_PAD_Y as i32 + ascent as i32;
                     let base_x = (b.x - min_x + PILL_PAD_X) as i32;
-                    let top = base_y as i32 + PILL_PAD_Y as i32;
-                    self.draw_span(&mut rgba, width, &left.span, base_x, top, b.rgb);
+                    self.draw_span(&mut rgba, width, &left.span, base_x, baseline, b.rgb);
                     // Right span starts after the left span plus the
                     // shared gap, so no separator is drawn twice.
                     let gap = self.shape_line(" ", font_px).width.max(1.0);
@@ -189,7 +190,7 @@ impl OsdRaster {
                     let right_x = base_x
                         + left.span.width.ceil() as i32
                         + if empty { 0 } else { gap.ceil() as i32 };
-                    self.draw_span(&mut rgba, width, &right.span, right_x, top, b.rgb);
+                    self.draw_span(&mut rgba, width, &right.span, right_x, baseline, b.rgb);
                 }
             }
         }
@@ -392,7 +393,7 @@ impl OsdRaster {
         stride_w: u32,
         span: &ShapedSpan,
         x0: i32,
-        line_top: i32,
+        baseline: i32,
         rgb: (u8, u8, u8),
     ) {
         for glyph in &span.glyphs {
@@ -406,8 +407,10 @@ impl OsdRaster {
             if w == 0 || h == 0 {
                 continue;
             }
+            // Same mapping as cosmic Buffer::draw: integer pen plus
+            // placement, with the y offset negated to screen coords.
             let base_x = x0 + glyph.x + image.placement.left;
-            let base_y = line_top + glyph.y + image.placement.top;
+            let base_y = baseline + glyph.y - image.placement.top;
             let row_bytes = w as usize;
             for (row, chunk) in image.data.chunks_exact(row_bytes).enumerate() {
                 for (col, coverage) in chunk.iter().enumerate() {
@@ -579,7 +582,6 @@ mod tests {
         assert!(upper.x + upper.width + 8 >= 960);
         assert!(upper.y <= 8);
     }
-
 
     #[test]
     fn advanced_shaping_kerns_pairs() {
