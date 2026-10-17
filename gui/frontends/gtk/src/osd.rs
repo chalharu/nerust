@@ -25,7 +25,10 @@ pub(crate) struct GtkOsd {
         nerust_settings_core::model::local::NotificationPosition,
         nerust_settings_core::model::local::NotificationPosition,
         nerust_settings_core::model::local::NotificationAreaMode,
+        nerust_settings_core::model::local::NotificationAreaMode,
     )>,
+    /// Throttles fps digits to 2Hz; pause flips pass through.
+    gate: nerust_gui_shell::session::osd::StatusGate,
 }
 
 impl GtkOsd {
@@ -37,6 +40,7 @@ impl GtkOsd {
             layer_active: false,
             last_strip: nerust_render_traits::ReservedStrip::default(),
             last_status: None,
+            gate: nerust_gui_shell::session::osd::StatusGate::new(),
         }
     }
 
@@ -106,6 +110,7 @@ impl GtkOsd {
         let (top_rows, bottom_rows) = strip_rows(
             settings.area_mode,
             settings.position,
+            settings.status_area_mode,
             settings.status_position,
             settings.status_enabled,
         );
@@ -140,25 +145,26 @@ impl GtkOsd {
             return;
         }
         let dirty = self.manager.take_dirty();
-        // Status rides outside the dirty flag: fps ticks, pause
-        // flips, and settings toggles must all re-rasterize now.
-        let status_key = settings.status_enabled.then(|| {
-            let (label, value) = OsdManager::status_parts(fps, paused, language);
-            (
-                label,
-                value,
-                settings.position,
-                settings.status_position,
-                settings.area_mode,
-            )
-        });
+        // Status rides outside the dirty flag: pause flips and
+        // settings toggles must re-rasterize now; fps digits refresh
+        // at 2Hz through the gate.
+        let (label, fresh_value) = OsdManager::status_parts(fps, paused, language);
+        let (label, value) = self.gate.gate(Instant::now(), label, fresh_value);
+        let status_key = settings.status_enabled.then_some((
+            label,
+            value,
+            settings.position,
+            settings.status_position,
+            settings.area_mode,
+            settings.status_area_mode,
+        ));
         let status_changed = status_key != self.last_status;
         if !dirty && !status_changed && self.layer_size == Some((w, h)) {
             return;
         }
         self.layer_size = Some((w, h));
         self.last_status = status_key.clone();
-        let status = status_key.map(|(label, value, _, _, _)| nerust_render_osd::OsdStatus {
+        let status = status_key.map(|(label, value, _, _, _, _)| nerust_render_osd::OsdStatus {
             label,
             value,
             rgb: (200, 200, 200),

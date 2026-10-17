@@ -89,6 +89,7 @@ pub struct NotificationView {
     pub position: NotificationPosition,
     pub status_position: NotificationPosition,
     pub area_mode: NotificationAreaMode,
+    pub status_area_mode: NotificationAreaMode,
 }
 
 // ── System tab ───────────────────────────────────────────────────────

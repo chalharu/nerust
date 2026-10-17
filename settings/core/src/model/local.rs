@@ -239,6 +239,9 @@ pub struct NotificationSettings {
     pub position: NotificationPosition,
     pub status_position: NotificationPosition,
     pub area_mode: NotificationAreaMode,
+    /// Dedicated band for the status readout alone: notifications can
+    /// keep a strip while the persistent status overlays (or reverse).
+    pub status_area_mode: NotificationAreaMode,
 }
 
 impl Default for NotificationSettings {
@@ -257,6 +260,7 @@ impl Default for NotificationSettings {
             position: NotificationPosition::BottomLeft,
             status_position: NotificationPosition::TopLeft,
             area_mode: NotificationAreaMode::Overlay,
+            status_area_mode: NotificationAreaMode::Overlay,
         }
     }
 }

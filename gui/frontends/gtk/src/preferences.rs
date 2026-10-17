@@ -78,6 +78,7 @@ struct NotificationWidgets {
     position_combo: gtk::ComboBoxText,
     status_position_combo: gtk::ComboBoxText,
     area_combo: gtk::ComboBoxText,
+    status_area_combo: gtk::ComboBoxText,
 }
 
 struct InputTabWidgets {
@@ -377,6 +378,8 @@ impl PreferencesBinding {
             .set_active_id(Some(map_position_id(view.status_position)));
         n.area_combo
             .set_active_id(Some(map_area_id(view.area_mode)));
+        n.status_area_combo
+            .set_active_id(Some(map_area_id(view.status_area_mode)));
     }
 
     fn refresh_audio(&self, view: &AudioView) {
@@ -927,6 +930,14 @@ pub(crate) fn present_preferences_dialog(
         ui_text(lang, UiText::NotificationStatusPosition),
         &status_position_combo,
     ));
+    let status_area_combo = combo_box(&[
+        ("overlay", ui_text(lang, UiText::AreaOverlay)),
+        ("strip", ui_text(lang, UiText::AreaStrip)),
+    ]);
+    notifications_page.append(&labeled_sub_row(
+        ui_text(lang, UiText::NotificationStatusAreaMode),
+        &status_area_combo,
+    ));
 
     // ---- Input page (tabs) ----
     let input_notebook = gtk::Notebook::new();
@@ -1003,6 +1014,7 @@ pub(crate) fn present_preferences_dialog(
         position_combo: position_combo.clone(),
         status_position_combo: status_position_combo.clone(),
         area_combo: area_combo.clone(),
+        status_area_combo: status_area_combo.clone(),
     };
     let input_w = InputTabWidgets {
         _notebook: input_notebook,
@@ -1333,6 +1345,20 @@ pub(crate) fn present_preferences_dialog(
                 &b,
                 b.vm.notifications
                     .set_area_mode(parse_area_id(combo.active_id().as_deref())),
+            );
+        }
+    });
+    status_area_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications
+                    .set_status_area_mode(parse_area_id(combo.active_id().as_deref())),
             );
         }
     });
@@ -1822,6 +1848,7 @@ mod tests {
                     position_combo: gtk::ComboBoxText::new(),
                     status_position_combo: gtk::ComboBoxText::new(),
                     area_combo: gtk::ComboBoxText::new(),
+                    status_area_combo: gtk::ComboBoxText::new(),
                 },
                 input: InputTabWidgets {
                     _notebook: gtk::Notebook::new(),
