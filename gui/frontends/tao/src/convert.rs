@@ -239,13 +239,21 @@ pub(crate) fn tao_key_to_iced_key(key: &tao::keyboard::Key) -> keyboard::Key {
     }
 }
 
-/// Default font for settings window.
+/// Default font for auxiliary windows. CJK must resolve to a
+/// complete sans face on every OS: cosmic-text falls back per
+/// glyph through a hardcoded family list, so a bare SansSerif can
+/// mix Mincho/serif into bold CJK headers on machines without Noto
+/// CJK (Yu Gothic UI / Hiragino Sans cover Windows / macOS).
 pub(crate) fn default_font() -> Font {
     #[cfg(target_os = "windows")]
     {
         Font::with_name("Yu Gothic UI")
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        Font::with_name("Hiragino Sans")
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         Font::DEFAULT
     }
@@ -746,7 +754,9 @@ mod tests {
     fn default_font_matches_platform() {
         #[cfg(target_os = "windows")]
         assert_eq!(default_font(), Font::with_name("Yu Gothic UI"));
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "macos")]
+        assert_eq!(default_font(), Font::with_name("Hiragino Sans"));
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         assert_eq!(default_font(), Font::DEFAULT);
     }
 

@@ -516,13 +516,14 @@ fn section_toggled<'a>(
 }
 
 fn header_text(title: &str) -> El<'static> {
-    text(title.to_string())
-        .size(16)
-        .font(iced::Font {
-            weight: iced::font::Weight::Bold,
-            ..iced::Font::default()
-        })
-        .into()
+    // Bold on the platform CJK sans (not bare SansSerif): the
+    // section titles are Japanese on CJK systems, and a generic
+    // family lets the shaper mix serif fallbacks per glyph.
+    let font = iced::Font {
+        weight: iced::font::Weight::Bold,
+        ..crate::convert::default_font()
+    };
+    text(title.to_string()).size(16).font(font).into()
 }
 
 fn section_inner<'a>(
