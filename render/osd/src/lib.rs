@@ -116,12 +116,15 @@ impl OsdFonts {
         let first = self.face_ids.first().copied()?;
         self.load_face(first)
     }
-    /// Font index holding `c`, loading faces lazily. Primary first.
+    /// Font index holding `c`, loading faces lazily. Primary first,
+    /// then CJK-likely families (they sort late in dense font dirs
+    /// and would otherwise starve behind the load cap), then rest.
     fn font_for(&mut self, c: char) -> Option<usize> {
         if let Some(&index) = self.char_font.get(&c) {
             return Some(index);
         }
-        for position in 0..self.face_ids.len() {
+        let order = self.fallback_order();
+        for position in order {
             let id = self.face_ids[position];
             let Some(index) = self.load_face(id) else {
                 continue;
@@ -132,6 +135,32 @@ impl OsdFonts {
             }
         }
         None
+    }
+
+    fn fallback_order(&self) -> Vec<usize> {
+        fn cjk(name: &str) -> bool {
+            let lower = name.to_lowercase();
+            lower.contains("cjk")
+                || lower.contains("fallback")
+                || lower.contains("droid")
+                || lower.contains("mincho")
+                || lower.contains("gothic")
+        }
+        let mut first = Vec::new();
+        let mut rest = Vec::new();
+        for (position, id) in self.face_ids.iter().enumerate() {
+            let hit = self
+                .db
+                .face(*id)
+                .is_some_and(|face| face.families.iter().any(|(name, _)| cjk(name)));
+            if hit {
+                first.push(position);
+            } else {
+                rest.push(position);
+            }
+        }
+        first.extend(rest);
+        first
     }
 
     pub fn has_fonts(&self) -> bool {
@@ -575,6 +604,52 @@ mod tests {
         let upper = raster.rasterize(&top_right, 960, 720).expect("layer");
         assert!(upper.x + upper.width + 8 >= 960);
         assert!(upper.y <= 8);
+    }
+
+    #[test]
+    fn cjk_renders_nonblank() {
+        let mut raster = super::OsdRaster::new();
+        if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
+            return;
+        }
+        let content = super::OsdContent {
+            rows: vec![super::OsdRow {
+                tag: "[INFO]".to_string(),
+                text: "一時停止しました".to_string(),
+                rgb: (255, 255, 255),
+            }],
+            status: None,
+            position: super::NotificationPosition::BottomLeft,
+            status_position: super::NotificationPosition::TopLeft,
+        };
+        let layer = raster.rasterize(&content, 960, 720).expect("cjk rows");
+        let lit = layer
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] > 200)
+            .count();
+        assert!(lit > 50, "cjk text must produce opaque pixels, got {lit}");
+        // Body-only: the tag alone must not satisfy the assert above.
+        let body = super::OsdContent {
+            rows: vec![super::OsdRow {
+                tag: String::new(),
+                text: "一時停止しました".to_string(),
+                rgb: (255, 255, 255),
+            }],
+            ..content
+        };
+        let layer = raster.rasterize(&body, 960, 720).expect("cjk body");
+        let body_lit = layer
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] > 200)
+            .count();
+        assert!(body_lit > 50, "cjk body must render, got {body_lit}");
     }
 
     #[test]
