@@ -331,7 +331,7 @@ impl TryFrom<usize> for CpuStatesEnum {
 
 #[cfg(test)]
 mod tests {
-    use super::{CpuStatesEnum, InternalStat};
+    use crate::cpu::internal_stat::{CpuStatesEnum, InternalStat};
 
     #[test]
     fn fields_round_trip_and_validate() {
