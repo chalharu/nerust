@@ -1,6 +1,7 @@
 mod bridge;
 mod menu;
 mod messages;
+mod osd;
 mod picker;
 mod saf;
 mod settings;
@@ -36,7 +37,7 @@ use nerust_gui_shell::{
     session::{
         SessionError, SessionHandle,
         access::{PauseControl, SessionControl, SettingsResult, SlotControl},
-        commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
+        commands::{SessionCommand, SessionCommandOutcome},
     },
 };
 use nerust_input_traits::{AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent};
@@ -191,31 +192,6 @@ fn show_toast(app: &AndroidApp, message: &str) {
     }));
 }
 
-/// User-facing text for a failed LoadState menu action. `None` (command
-/// itself errored) and genuinely-missing states share the familiar
-/// message; real failures name the cause (detail stays in logcat).
-fn load_failure_text(failure: Option<SlotOpFailure>) -> &'static str {
-    match failure {
-        None | Some(SlotOpFailure::Empty) | Some(SlotOpFailure::Missing) => "No save state to load",
-        Some(SlotOpFailure::Incompatible) => "Save state is incompatible",
-        Some(SlotOpFailure::Corrupt) => "Save state is corrupt",
-        Some(SlotOpFailure::Storage) => "Load failed: storage error",
-        Some(SlotOpFailure::Unavailable) => "Load failed",
-    }
-}
-
-/// User-facing text for a failed SaveState menu action.
-fn save_failure_text(failure: Option<SlotOpFailure>) -> &'static str {
-    match failure {
-        None | Some(SlotOpFailure::Unavailable) => "Save state failed",
-        Some(SlotOpFailure::Storage) => "Save failed: storage error",
-        Some(SlotOpFailure::Empty)
-        | Some(SlotOpFailure::Missing)
-        | Some(SlotOpFailure::Corrupt)
-        | Some(SlotOpFailure::Incompatible) => "Save state failed",
-    }
-}
-
 fn configure_controls_overlay(
     app: &AndroidApp,
     settings: &nerust_settings_core::model::local::TouchOverlaySettings,
@@ -318,35 +294,6 @@ fn set_cartridge_rumble(app: &AndroidApp, intensity: u8) {
         });
         if let Err(error) = result {
             log::warn!("failed to update Android cartridge rumble: {error:?}");
-        }
-    }));
-}
-
-/// Push the current emulation FPS to the small Android overlay label.
-///
-/// Called at the 2Hz title-refresh cadence; `visible` is false when no ROM
-/// is loaded so Kotlin can hide the label instead of showing stale numbers.
-fn update_fps_overlay(app: &AndroidApp, fps: f32, visible: bool) {
-    let app = app.clone();
-    let callback_app = app.clone();
-    app.run_on_java_main_thread(Box::new(move || {
-        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
-            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-            env.call_method(
-                &activity,
-                jni_str!("updateFpsOverlay"),
-                jni_sig!("(FZ)V"),
-                &[
-                    jni::objects::JValue::Float(fps),
-                    jni::objects::JValue::Bool(visible),
-                ],
-            )?;
-            Ok(())
-        });
-        if let Err(error) = result {
-            log::warn!("failed to update Android FPS overlay: {error:?}");
         }
     }));
 }
@@ -552,7 +499,10 @@ struct AndroidFrontend {
     pending_legacy_digest: Option<[u8; 32]>,
     last_peripheral_config: Option<(bool, bool, u8, RumbleTarget)>,
     last_rumble_intensity: Option<u8>,
-    last_fps_sent: Option<(bool, i32)>,
+    osd: nerust_gui_shell::session::osd::OsdManager,
+    osd_raster: nerust_render_osd::OsdRaster,
+    osd_presenter: nerust_gui_shell::session::osd::OsdPresenter,
+    osd_last_strip: nerust_render_traits::ReservedStrip,
 }
 
 impl AndroidFrontend {
@@ -633,7 +583,10 @@ impl AndroidFrontend {
             pending_legacy_digest: None,
             last_peripheral_config: None,
             last_rumble_intensity: None,
-            last_fps_sent: None,
+            osd: nerust_gui_shell::session::osd::OsdManager::new(),
+            osd_raster: nerust_render_osd::OsdRaster::new(),
+            osd_presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
+            osd_last_strip: nerust_render_traits::ReservedStrip::default(),
         };
         if frontend.lifecycle_restore_pending {
             log::info!(
@@ -1094,19 +1047,7 @@ impl AndroidFrontend {
                 self.request_redraw();
             }
             MenuAction::LoadState => {
-                let outcome = self
-                    .exec(SessionCommand::LoadActiveSlot)
-                    .unwrap_or_default();
-                if outcome.executed {
-                    match self.session.active_slot_id() {
-                        Some(slot_id) => {
-                            show_toast(&self.app, &format!("State loaded from slot {slot_id}"))
-                        }
-                        None => show_toast(&self.app, "State loaded"),
-                    }
-                } else {
-                    show_toast(&self.app, load_failure_text(outcome.slot_failure));
-                }
+                let _ = self.exec(SessionCommand::LoadActiveSlot);
             }
             MenuAction::OpenRom => self.request_open_rom(),
             MenuAction::OpenSettings => self.request_settings_dialog(),
@@ -1119,19 +1060,7 @@ impl AndroidFrontend {
             }
             MenuAction::Reset => self.reset(),
             MenuAction::SaveState => {
-                let outcome = self
-                    .exec(SessionCommand::SaveActiveSlotOrNew)
-                    .unwrap_or_default();
-                if outcome.executed {
-                    match self.session.active_slot_id() {
-                        Some(slot_id) => {
-                            show_toast(&self.app, &format!("State saved to slot {slot_id}"));
-                        }
-                        None => show_toast(&self.app, "State saved"),
-                    }
-                } else {
-                    show_toast(&self.app, save_failure_text(outcome.slot_failure));
-                }
+                let _ = self.exec(SessionCommand::SaveActiveSlotOrNew);
             }
             MenuAction::TogglePause => self.toggle_pause(),
         }
@@ -1560,7 +1489,12 @@ impl AndroidFrontend {
         if renderer.size() != window_size {
             renderer.resize(window_size);
         }
+        self.sync_osd_layer(window_size);
         let Some(fb) = self.session.frame_buffer() else {
+            self.shell.needs_redraw = false;
+            return;
+        };
+        let Some(renderer) = self.renderer.as_mut() else {
             self.shell.needs_redraw = false;
             return;
         };
@@ -1581,25 +1515,10 @@ impl AndroidFrontend {
     }
 
     fn maybe_refresh_title(&mut self, now: Instant) {
-        if self.shell.should_refresh_title(now) {
-            if let Some(window) = self.window.as_ref() {
-                window.set_title(&self.session.window_title());
-            }
-            self.sync_fps_overlay();
-        }
-    }
-
-    /// Forward the emulation FPS to the Android overlay label at 2Hz.
-    ///
-    /// Sends only on visibility change or >= 0.1 FPS drift so the Java main
-    /// thread is not spammed with identical runnables.
-    fn sync_fps_overlay(&mut self) {
-        let metrics = self.session.metrics();
-        let visible = metrics.loaded && !metrics.paused;
-        let fps_tenth = (metrics.emulation_fps * 10.0).round() as i32;
-        if self.last_fps_sent != Some((visible, fps_tenth)) {
-            update_fps_overlay(&self.app, fps_tenth as f32 / 10.0, visible);
-            self.last_fps_sent = Some((visible, fps_tenth));
+        if self.shell.should_refresh_title(now)
+            && let Some(window) = self.window.as_ref()
+        {
+            window.set_title(&self.session.window_title());
         }
     }
 
@@ -1998,6 +1917,7 @@ impl ApplicationHandler for AndroidFrontend {
         }
         self.sync_cartridge_peripherals();
         self.maybe_refresh_title(now);
+        self.poll_notifications();
 
         if let Some(window) = self.window.as_ref() {
             let frame_counter = self.session.metrics().frame_counter;
@@ -2005,7 +1925,12 @@ impl ApplicationHandler for AndroidFrontend {
                 window.request_redraw();
             }
             // Render loop is self-sustaining via request_redraw() after each present.
-            event_loop.set_control_flow(ControlFlow::Wait);
+            // OSD expiry still needs a wake while paused, when no frames arrive.
+            if let Some(deadline) = self.osd_wakeup() {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            } else {
+                event_loop.set_control_flow(ControlFlow::Wait);
+            }
         } else {
             if self.is_resumed || self.foreground_resume_pending {
                 event_loop.set_control_flow(ControlFlow::Poll);
