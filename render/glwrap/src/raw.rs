@@ -223,6 +223,18 @@ pub fn viewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei) -> Result<(
     gl_error_handle(|| unsafe { gl::Viewport(x, y, width, height) })
 }
 
+pub fn enable(cap: GLenum) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::Enable(cap) })
+}
+
+pub fn disable(cap: GLenum) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::Disable(cap) })
+}
+
+pub fn blend_func(sfactor: GLenum, dfactor: GLenum) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::BlendFunc(sfactor, dfactor) })
+}
+
 pub fn gl_string(name: u32) -> Option<String> {
     let value = unsafe { gl::GetString(name) };
     if value.is_null() {

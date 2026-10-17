@@ -35,7 +35,7 @@ use nerust_gui_shell::{
     registry::SystemRegistry,
     session::{
         SessionError, SessionHandle,
-        access::{FrontendSession, SettingsResult},
+        access::{PauseControl, SessionControl, SettingsResult, SlotControl},
         commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
     },
 };
@@ -1832,11 +1832,7 @@ fn update_floating_dpad_visual(
     }));
 }
 
-impl FrontendSession for AndroidFrontend {
-    fn run_command(&mut self, command: SessionCommand) {
-        self.exec(command);
-    }
-
+impl PauseControl for AndroidFrontend {
     fn pause(&mut self) {
         self.exec(SessionCommand::Pause);
     }
@@ -1848,7 +1844,9 @@ impl FrontendSession for AndroidFrontend {
     fn toggle_pause(&mut self) {
         self.exec(SessionCommand::TogglePause);
     }
+}
 
+impl SlotControl for AndroidFrontend {
     fn save_active_slot(&mut self) -> bool {
         self.exec(SessionCommand::SaveActiveSlotOrNew)
             .unwrap_or_default()
@@ -1894,7 +1892,9 @@ impl FrontendSession for AndroidFrontend {
     fn reset(&mut self) {
         self.exec(SessionCommand::Reset);
     }
+}
 
+impl SessionControl for AndroidFrontend {
     fn unload(&mut self) {
         if let Err(error) = self.session.unload() {
             log::warn!("ROM unload failed: {error}");

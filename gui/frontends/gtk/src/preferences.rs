@@ -13,17 +13,18 @@ use gtk::prelude::{
     EditableExt as _, GtkWindowExt as _, WidgetExt as _,
 };
 use nerust_core_traits::factory::CoreFactory;
-use nerust_gui_shell::session::access::FrontendSession as _;
+use nerust_gui_shell::session::access::SessionControl;
 use nerust_gui_viewmodel::settings::{
-    SettingsViewModel, StoragePathError, StoragePathValidator, Subscription,
+    ReadOnlyObservableProperty, SettingsViewModel, StoragePathError, StoragePathValidator,
+    Subscription,
     dto::{
         AudioView, BindingRowView, BindingValueView, ControllerSlotView, GeneralView, InputTabView,
-        SystemTabView, VideoView,
+        NotificationView, SystemTabView, VideoView,
     },
 };
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{UiText, text as ui_text},
+    i18n::{UiText, notification_group_label, text as ui_text},
 };
 
 use nerust_settings_core::model::{language::AppLanguage, local::ScalingMode};
@@ -62,6 +63,24 @@ struct AudioWidgets {
     latency_label: gtk::Label,
 }
 
+struct NotificationWidgets {
+    info_check: gtk::CheckButton,
+    info_duration_spin: gtk::SpinButton,
+    info_color_combo: gtk::ComboBoxText,
+    warning_check: gtk::CheckButton,
+    warning_duration_spin: gtk::SpinButton,
+    warning_color_combo: gtk::ComboBoxText,
+    error_check: gtk::CheckButton,
+    error_modal_radio: gtk::CheckButton,
+    error_onscreen_radio: gtk::CheckButton,
+    error_color_combo: gtk::ComboBoxText,
+    status_check: gtk::CheckButton,
+    position_combo: gtk::ComboBoxText,
+    status_position_combo: gtk::ComboBoxText,
+    area_combo: gtk::ComboBoxText,
+    status_area_combo: gtk::ComboBoxText,
+}
+
 struct InputTabWidgets {
     _notebook: gtk::Notebook,
     pages: Vec<gtk::Box>,
@@ -77,6 +96,7 @@ struct PreferencesWidgets {
     general: GeneralWidgets,
     video: VideoWidgets,
     audio: AudioWidgets,
+    notifications: NotificationWidgets,
     input: InputTabWidgets,
     system: SystemTabWidgets,
     ok_button: gtk::Widget,
@@ -98,6 +118,7 @@ struct PreferencesBinding {
     general: GeneralWidgets,
     video: VideoWidgets,
     audio: AudioWidgets,
+    notifications: NotificationWidgets,
     input: InputTabWidgets,
     system: SystemTabWidgets,
     ok_button: gtk::Widget,
@@ -115,6 +136,7 @@ impl PreferencesBinding {
             general,
             video,
             audio,
+            notifications,
             input,
             system,
             ok_button,
@@ -127,30 +149,16 @@ impl PreferencesBinding {
         let gv = vm.general.view.get();
         let vv = vm.video.view.get();
         let av = vm.audio.view.get();
+        let nv = vm.notifications.view.get();
 
         let binding: Rc<Self> = Rc::new_cyclic(|weak: &std::rc::Weak<Self>| {
-            let mut subs = Vec::new();
-            subs.push(vm.general.view.observe({
-                let weak = weak.clone();
-                move |v| {
-                    let Some(b) = weak.upgrade() else { return };
-                    b.with_refreshing(|| b.refresh_general(v));
-                }
-            }));
-            subs.push(vm.video.view.observe({
-                let weak = weak.clone();
-                move |v| {
-                    let Some(b) = weak.upgrade() else { return };
-                    b.with_refreshing(|| b.refresh_video(v));
-                }
-            }));
-            subs.push(vm.audio.view.observe({
-                let weak = weak.clone();
-                move |v| {
-                    let Some(b) = weak.upgrade() else { return };
-                    b.with_refreshing(|| b.refresh_audio(v));
-                }
-            }));
+            // One observer per view (vec! literal, not a push chain).
+            let mut subs = vec![
+                Self::observe_view(weak, &vm.general.view, Self::refresh_general),
+                Self::observe_view(weak, &vm.video.view, Self::refresh_video),
+                Self::observe_view(weak, &vm.audio.view, Self::refresh_audio),
+                Self::observe_view(weak, &vm.notifications.view, Self::refresh_notifications),
+            ];
             for (index, input_vm) in vm.inputs().iter().enumerate() {
                 subs.push(input_vm.view.observe({
                     let weak = weak.clone();
@@ -191,6 +199,7 @@ impl PreferencesBinding {
                 general,
                 video,
                 audio,
+                notifications,
                 input,
                 system,
                 ok_button,
@@ -207,12 +216,32 @@ impl PreferencesBinding {
             binding.refresh_general(&gv);
             binding.refresh_video(&vv);
             binding.refresh_audio(&av);
+            binding.refresh_notifications(&nv);
             binding.rebuild_all_input_pages();
             binding.rebuild_all_system_pages();
         });
         binding.refresh_validation();
 
         binding
+    }
+
+    /// Observe one settings view, refreshing while guarded. Shared by
+    /// the four fixed views so the subscription list stays a literal.
+    fn observe_view<T>(
+        weak: &std::rc::Weak<Self>,
+        view: &ReadOnlyObservableProperty<T>,
+        refresh: fn(&Self, &T),
+    ) -> Subscription
+    where
+        T: Clone + PartialEq + 'static,
+    {
+        let weak = weak.clone();
+        view.observe(move |v| {
+            let Some(binding) = weak.upgrade() else {
+                return;
+            };
+            binding.with_refreshing(|| refresh(&binding, v));
+        })
     }
 
     fn with_refreshing(&self, f: impl FnOnce()) {
@@ -233,6 +262,7 @@ impl PreferencesBinding {
                     "input" => ui_text(lang, UiText::Input),
                     "video" => ui_text(lang, UiText::Video),
                     "audio" => ui_text(lang, UiText::Audio),
+                    "notifications" => ui_text(lang, UiText::Notifications),
                     "system" => ui_text(lang, UiText::System),
                     _ => continue,
                 };
@@ -322,6 +352,42 @@ impl PreferencesBinding {
             .scaling_combo
             .set_active_id(Some(map_scaling_id(view.scaling)));
         self.video.vsync_check.set_active(view.vsync);
+    }
+
+    fn refresh_notifications(&self, view: &NotificationView) {
+        let n = &self.notifications;
+        n.info_check.set_active(view.info_enabled);
+        n.info_duration_spin
+            .set_value(f64::from(view.info_duration_ms));
+        n.info_color_combo
+            .set_active_id(Some(map_color_id(view.info_color)));
+        n.warning_check.set_active(view.warning_enabled);
+        n.warning_duration_spin
+            .set_value(f64::from(view.warning_duration_ms));
+        n.warning_color_combo
+            .set_active_id(Some(map_color_id(view.warning_color)));
+        n.error_check.set_active(view.error_enabled);
+        n.error_modal_radio.set_active(view.error_modal);
+        n.error_onscreen_radio.set_active(!view.error_modal);
+        n.error_color_combo
+            .set_active_id(Some(map_color_id(view.error_color)));
+        // Color only affects the on-screen pill; a modal dialog has
+        // no tinted text.
+        n.error_color_combo.set_sensitive(!view.error_modal);
+        n.status_check.set_active(view.status_enabled);
+        n.position_combo
+            .set_active_id(Some(map_position_id(view.position)));
+        n.status_position_combo
+            .set_active_id(Some(map_position_id(view.status_position)));
+        n.area_combo
+            .set_active_id(Some(map_area_id(view.area_mode)));
+        n.status_area_combo
+            .set_active_id(Some(map_area_id(view.status_area_mode)));
+        // Same band: the transient area mode governs the edge, so the
+        // status picker is insensitive (an overlay status would dangle
+        // half inside the reserved strip).
+        n.status_area_combo
+            .set_sensitive(!view.position.same_edge(view.status_position));
     }
 
     fn refresh_audio(&self, view: &AudioView) {
@@ -630,6 +696,7 @@ pub(crate) fn present_preferences_dialog(
     let (input_page_scroller, input_page) = stack_page();
     let (video_page_scroller, video_page) = stack_page();
     let (audio_page_scroller, audio_page) = stack_page();
+    let (notifications_page_scroller, notifications_page) = stack_page();
     let (system_page_scroller, system_page) = stack_page();
     stack.add_titled(
         &general_page_scroller,
@@ -650,6 +717,11 @@ pub(crate) fn present_preferences_dialog(
         &audio_page_scroller,
         Some("audio"),
         ui_text(lang, UiText::Audio),
+    );
+    stack.add_titled(
+        &notifications_page_scroller,
+        Some("notifications"),
+        ui_text(lang, UiText::Notifications),
     );
     stack.add_titled(
         &system_page_scroller,
@@ -747,6 +819,134 @@ pub(crate) fn present_preferences_dialog(
     lat_row.append(&latency_spin);
     audio_page.append(&lat_row);
 
+    // ---- Notifications page: one section per level plus
+    // display/status groups, so each control's scope reads off its
+    // header. Error presentation is an exclusive radio pair.
+    let info_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
+    section_header_toggled(
+        &notifications_page,
+        ui_text(lang, UiText::NotificationInfo),
+        &info_check,
+        &notification_group_label(lang, ui_text(lang, UiText::NotificationInfo)),
+        true,
+    );
+    let info_duration_spin = gtk::SpinButton::with_range(1000.0, 30000.0, 500.0);
+    notifications_page.append(&labeled_sub_row(
+        ui_text(lang, UiText::NotificationDuration),
+        &info_duration_spin,
+    ));
+    let info_color_combo = combo_box(&[
+        ("white", ui_text(lang, UiText::ColorWhite)),
+        ("yellow", ui_text(lang, UiText::ColorYellow)),
+        ("red", ui_text(lang, UiText::ColorRed)),
+        ("green", ui_text(lang, UiText::ColorGreen)),
+        ("cyan", ui_text(lang, UiText::ColorCyan)),
+    ]);
+    notifications_page.append(&labeled_sub_row(
+        ui_text(lang, UiText::NotificationColor),
+        &info_color_combo,
+    ));
+    let warning_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
+    section_header_toggled(
+        &notifications_page,
+        ui_text(lang, UiText::NotificationWarning),
+        &warning_check,
+        &notification_group_label(lang, ui_text(lang, UiText::NotificationWarning)),
+        false,
+    );
+    let warning_duration_spin = gtk::SpinButton::with_range(1000.0, 30000.0, 500.0);
+    notifications_page.append(&labeled_sub_row(
+        ui_text(lang, UiText::NotificationDuration),
+        &warning_duration_spin,
+    ));
+    let warning_color_combo = combo_box(&[
+        ("white", ui_text(lang, UiText::ColorWhite)),
+        ("yellow", ui_text(lang, UiText::ColorYellow)),
+        ("red", ui_text(lang, UiText::ColorRed)),
+        ("green", ui_text(lang, UiText::ColorGreen)),
+        ("cyan", ui_text(lang, UiText::ColorCyan)),
+    ]);
+    notifications_page.append(&labeled_sub_row(
+        ui_text(lang, UiText::NotificationColor),
+        &warning_color_combo,
+    ));
+    let error_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
+    section_header_toggled(
+        &notifications_page,
+        ui_text(lang, UiText::Error),
+        &error_check,
+        &notification_group_label(lang, ui_text(lang, UiText::Error)),
+        false,
+    );
+    let error_modal_radio =
+        gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationErrorModal));
+    let error_onscreen_radio =
+        gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationErrorOnScreen));
+    error_onscreen_radio.set_group(Some(&error_modal_radio));
+    error_modal_radio.set_margin_start(16);
+    error_onscreen_radio.set_margin_start(16);
+    notifications_page.append(&error_modal_radio);
+    notifications_page.append(&error_onscreen_radio);
+    let error_color_combo = combo_box(&[
+        ("white", ui_text(lang, UiText::ColorWhite)),
+        ("yellow", ui_text(lang, UiText::ColorYellow)),
+        ("red", ui_text(lang, UiText::ColorRed)),
+        ("green", ui_text(lang, UiText::ColorGreen)),
+        ("cyan", ui_text(lang, UiText::ColorCyan)),
+    ]);
+    notifications_page.append(&labeled_sub_row(
+        ui_text(lang, UiText::NotificationColor),
+        &error_color_combo,
+    ));
+    section_header(
+        &notifications_page,
+        ui_text(lang, UiText::NotificationSectionDisplay),
+    );
+    let position_combo = combo_box(&[
+        ("top_left", ui_text(lang, UiText::PosTopLeft)),
+        ("top_right", ui_text(lang, UiText::PosTopRight)),
+        ("bottom_left", ui_text(lang, UiText::PosBottomLeft)),
+        ("bottom_right", ui_text(lang, UiText::PosBottomRight)),
+    ]);
+    notifications_page.append(&labeled_sub_row(
+        ui_text(lang, UiText::NotificationPosition),
+        &position_combo,
+    ));
+    let status_position_combo = combo_box(&[
+        ("top_left", ui_text(lang, UiText::PosTopLeft)),
+        ("top_right", ui_text(lang, UiText::PosTopRight)),
+        ("bottom_left", ui_text(lang, UiText::PosBottomLeft)),
+        ("bottom_right", ui_text(lang, UiText::PosBottomRight)),
+    ]);
+    let area_combo = combo_box(&[
+        ("overlay", ui_text(lang, UiText::AreaOverlay)),
+        ("strip", ui_text(lang, UiText::AreaStrip)),
+    ]);
+    notifications_page.append(&labeled_sub_row(
+        ui_text(lang, UiText::NotificationAreaMode),
+        &area_combo,
+    ));
+    let status_check = gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationEnabled));
+    section_header_toggled(
+        &notifications_page,
+        ui_text(lang, UiText::NotificationSectionStatus),
+        &status_check,
+        ui_text(lang, UiText::NotificationStatus),
+        false,
+    );
+    notifications_page.append(&labeled_sub_row(
+        ui_text(lang, UiText::NotificationStatusPosition),
+        &status_position_combo,
+    ));
+    let status_area_combo = combo_box(&[
+        ("overlay", ui_text(lang, UiText::AreaOverlay)),
+        ("strip", ui_text(lang, UiText::AreaStrip)),
+    ]);
+    notifications_page.append(&labeled_sub_row(
+        ui_text(lang, UiText::NotificationStatusAreaMode),
+        &status_area_combo,
+    ));
+
     // ---- Input page (tabs) ----
     let input_notebook = gtk::Notebook::new();
     input_notebook.set_scrollable(true);
@@ -807,6 +1007,23 @@ pub(crate) fn present_preferences_dialog(
         latency_spin: latency_spin.clone(),
         latency_label,
     };
+    let notifications_w = NotificationWidgets {
+        info_check: info_check.clone(),
+        info_duration_spin: info_duration_spin.clone(),
+        info_color_combo: info_color_combo.clone(),
+        warning_check: warning_check.clone(),
+        warning_duration_spin: warning_duration_spin.clone(),
+        warning_color_combo: warning_color_combo.clone(),
+        error_check: error_check.clone(),
+        error_modal_radio: error_modal_radio.clone(),
+        error_onscreen_radio: error_onscreen_radio.clone(),
+        error_color_combo: error_color_combo.clone(),
+        status_check: status_check.clone(),
+        position_combo: position_combo.clone(),
+        status_position_combo: status_position_combo.clone(),
+        area_combo: area_combo.clone(),
+        status_area_combo: status_area_combo.clone(),
+    };
     let input_w = InputTabWidgets {
         _notebook: input_notebook,
         section_notebooks: RefCell::new(vec![None; input_pages.len()]),
@@ -817,13 +1034,21 @@ pub(crate) fn present_preferences_dialog(
         pages: system_pages,
     };
 
-    let page_ids: Vec<&'static str> = vec!["general", "input", "video", "audio", "system"];
+    let page_ids: Vec<&'static str> = vec![
+        "general",
+        "input",
+        "video",
+        "audio",
+        "notifications",
+        "system",
+    ];
     let _binding = PreferencesBinding::new(
         vm,
         PreferencesWidgets {
             general: general_w,
             video: video_w,
             audio: audio_w,
+            notifications: notifications_w,
             input: input_w,
             system: system_w,
             ok_button,
@@ -954,6 +1179,197 @@ pub(crate) fn present_preferences_dialog(
             cmd(&b, b.vm.audio.set_latency(spin.value() as u16));
         }
     });
+    info_check.connect_toggled({
+        let w = weak_handler(&_binding);
+        move |button| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(&b, b.vm.notifications.set_info_enabled(button.is_active()));
+        }
+    });
+    info_duration_spin.connect_value_changed({
+        let w = weak_handler(&_binding);
+        move |spin| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications.set_info_duration_ms(spin.value() as u32),
+            );
+        }
+    });
+    info_color_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications
+                    .set_info_color(parse_color_id(combo.active_id().as_deref())),
+            );
+        }
+    });
+    warning_check.connect_toggled({
+        let w = weak_handler(&_binding);
+        move |button| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications.set_warning_enabled(button.is_active()),
+            );
+        }
+    });
+    warning_duration_spin.connect_value_changed({
+        let w = weak_handler(&_binding);
+        move |spin| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications
+                    .set_warning_duration_ms(spin.value() as u32),
+            );
+        }
+    });
+    warning_color_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications
+                    .set_warning_color(parse_color_id(combo.active_id().as_deref())),
+            );
+        }
+    });
+    error_check.connect_toggled({
+        let w = weak_handler(&_binding);
+        move |button| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(&b, b.vm.notifications.set_error_enabled(button.is_active()));
+        }
+    });
+    error_modal_radio.connect_toggled({
+        let w = weak_handler(&_binding);
+        move |button| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() || !button.is_active() {
+                return;
+            }
+            cmd(&b, b.vm.notifications.set_error_modal(true));
+        }
+    });
+    error_onscreen_radio.connect_toggled({
+        let w = weak_handler(&_binding);
+        move |button| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() || !button.is_active() {
+                return;
+            }
+            cmd(&b, b.vm.notifications.set_error_modal(false));
+        }
+    });
+    error_color_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications
+                    .set_error_color(parse_color_id(combo.active_id().as_deref())),
+            );
+        }
+    });
+    status_check.connect_toggled({
+        let w = weak_handler(&_binding);
+        move |button| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications.set_status_enabled(button.is_active()),
+            );
+        }
+    });
+    position_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications
+                    .set_position(parse_position_id(combo.active_id().as_deref())),
+            );
+        }
+    });
+    status_position_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications
+                    .set_status_position(parse_position_id(combo.active_id().as_deref())),
+            );
+        }
+    });
+    area_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications
+                    .set_area_mode(parse_area_id(combo.active_id().as_deref())),
+            );
+        }
+    });
+    status_area_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.notifications
+                    .set_status_area_mode(parse_area_id(combo.active_id().as_deref())),
+            );
+        }
+    });
 
     let key_controller = gtk::EventControllerKey::new();
     key_controller.connect_key_pressed({
@@ -1035,6 +1451,53 @@ pub(crate) fn present_preferences_dialog(
 // Helper functions
 // ---------------------------------------------------------------------------
 
+/// Titled settings group header: bold, larger than items, glued to
+/// its group (2 below) with the gap above carried by the page.
+/// Matches the tao form (16 bold vs 14 items; 24 between groups).
+/// First group takes no top gap; the rest take 20.
+fn section_header(container: &gtk::Box, title: &str) {
+    section_header_spaced(container, title, 20);
+}
+
+/// Section header with the master toggle on the same row.
+/// The generic "Enabled" carries the level as a tooltip.
+fn section_header_toggled(
+    container: &gtk::Box,
+    title: &str,
+    toggle: &gtk::CheckButton,
+    accessible_label: &str,
+    first: bool,
+) {
+    let label = gtk::Label::new(None);
+    label.set_markup(&format!(
+        "<b><span size=\"larger\">{}</span></b>",
+        gtk::glib::markup_escape_text(title)
+    ));
+    label.set_xalign(0.0);
+    // Governing toggle sits next to its title: Apple HIG aligns a
+    // governing checkbox on the leading edge, and proximity beats
+    // a full-width gap (Microsoft cards share one control column).
+    toggle.set_tooltip_text(Some(accessible_label));
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    row.set_margin_top(if first { 0 } else { 20 });
+    row.set_margin_bottom(2);
+    row.append(&label);
+    row.append(toggle);
+    container.append(&row);
+}
+
+fn section_header_spaced(container: &gtk::Box, title: &str, margin_top: i32) {
+    let label = gtk::Label::new(None);
+    label.set_markup(&format!(
+        "<b><span size=\"larger\">{}</span></b>",
+        gtk::glib::markup_escape_text(title)
+    ));
+    label.set_xalign(0.0);
+    label.set_margin_top(margin_top);
+    label.set_margin_bottom(2);
+    container.append(&label);
+}
+
 fn labeled_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let label = gtk::Label::new(Some(label));
@@ -1042,6 +1505,14 @@ fn labeled_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
     label.set_width_chars(24);
     row.append(&label);
     row.append(widget);
+    row
+}
+
+/// Subordinate row under a toggled section header: indented to show
+/// the hierarchy (Apple HIG checkbox grouping).
+fn labeled_sub_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
+    let row = labeled_row(label, widget);
+    row.set_margin_start(16);
     row
 }
 
@@ -1369,6 +1840,23 @@ mod tests {
                     sample_rate_label: gtk::Label::new(None),
                     latency_spin: gtk::SpinButton::with_range(10.0, 200.0, 1.0),
                     latency_label: gtk::Label::new(None),
+                },
+                notifications: NotificationWidgets {
+                    info_check: gtk::CheckButton::new(),
+                    info_duration_spin: gtk::SpinButton::with_range(1000.0, 30000.0, 500.0),
+                    info_color_combo: gtk::ComboBoxText::new(),
+                    warning_check: gtk::CheckButton::new(),
+                    warning_duration_spin: gtk::SpinButton::with_range(1000.0, 30000.0, 500.0),
+                    warning_color_combo: gtk::ComboBoxText::new(),
+                    error_check: gtk::CheckButton::new(),
+                    error_modal_radio: gtk::CheckButton::new(),
+                    error_onscreen_radio: gtk::CheckButton::new(),
+                    error_color_combo: gtk::ComboBoxText::new(),
+                    status_check: gtk::CheckButton::new(),
+                    position_combo: gtk::ComboBoxText::new(),
+                    status_position_combo: gtk::ComboBoxText::new(),
+                    area_combo: gtk::ComboBoxText::new(),
+                    status_area_combo: gtk::ComboBoxText::new(),
                 },
                 input: InputTabWidgets {
                     _notebook: gtk::Notebook::new(),

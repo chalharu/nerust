@@ -19,6 +19,7 @@ impl SettingsAppState {
             SettingsPage::Input => self.input_page(),
             SettingsPage::Video => self.video_page(),
             SettingsPage::Audio => self.audio_page(),
+            SettingsPage::Notifications => self.notifications_page(),
             SettingsPage::System => self.system_page(),
         }
     }
@@ -196,6 +197,209 @@ impl SettingsAppState {
         .into()
     }
 
+    fn notifications_page(&self) -> El<'_> {
+        use nerust_settings_core::model::local::{
+            NotificationAreaMode, NotificationColor, NotificationPosition,
+        };
+        let view = self.vm.notifications.view.get();
+        let language = self.language();
+        let colors = vec![
+            ChoiceView {
+                value: NotificationColor::White,
+                label: ui_text(language, UiText::ColorWhite).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Yellow,
+                label: ui_text(language, UiText::ColorYellow).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Red,
+                label: ui_text(language, UiText::ColorRed).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Green,
+                label: ui_text(language, UiText::ColorGreen).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Cyan,
+                label: ui_text(language, UiText::ColorCyan).to_string(),
+            },
+        ];
+        let positions = vec![
+            ChoiceView {
+                value: NotificationPosition::TopLeft,
+                label: ui_text(language, UiText::PosTopLeft).to_string(),
+            },
+            ChoiceView {
+                value: NotificationPosition::TopRight,
+                label: ui_text(language, UiText::PosTopRight).to_string(),
+            },
+            ChoiceView {
+                value: NotificationPosition::BottomLeft,
+                label: ui_text(language, UiText::PosBottomLeft).to_string(),
+            },
+            ChoiceView {
+                value: NotificationPosition::BottomRight,
+                label: ui_text(language, UiText::PosBottomRight).to_string(),
+            },
+        ];
+        let areas = vec![
+            ChoiceView {
+                value: NotificationAreaMode::Overlay,
+                label: ui_text(language, UiText::AreaOverlay).to_string(),
+            },
+            ChoiceView {
+                value: NotificationAreaMode::Strip,
+                label: ui_text(language, UiText::AreaStrip).to_string(),
+            },
+        ];
+        // One section per level plus display/status groups, so each
+        // control's scope reads off its header (Apple HIG grouping).
+        // Error presentation is an exclusive pair: modal dialog XOR
+        // on-screen display, matching the delivery contract.
+        let info = section_toggled(
+            language,
+            ui_text(language, UiText::NotificationInfo),
+            checkbox(view.info_enabled)
+                .label(ui_text(language, UiText::NotificationEnabled))
+                .on_toggle(Message::ToggleInfoEnabled)
+                .into(),
+            [
+                labeled_slider(
+                    ui_text(language, UiText::NotificationDuration),
+                    format!("{} ms", view.info_duration_ms),
+                    slider(
+                        1000..=30000,
+                        view.info_duration_ms,
+                        Message::SetInfoDuration,
+                    ),
+                ),
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationColor),
+                    colors.clone(),
+                    pick_selected(&colors, &view.info_color),
+                    Message::SetInfoColor,
+                ),
+            ],
+        );
+        let warning = section_toggled(
+            language,
+            ui_text(language, UiText::NotificationWarning),
+            checkbox(view.warning_enabled)
+                .label(ui_text(language, UiText::NotificationEnabled))
+                .on_toggle(Message::ToggleWarningEnabled)
+                .into(),
+            [
+                labeled_slider(
+                    ui_text(language, UiText::NotificationDuration),
+                    format!("{} ms", view.warning_duration_ms),
+                    slider(
+                        1000..=30000,
+                        view.warning_duration_ms,
+                        Message::SetWarningDuration,
+                    ),
+                ),
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationColor),
+                    colors.clone(),
+                    pick_selected(&colors, &view.warning_color),
+                    Message::SetWarningColor,
+                ),
+            ],
+        );
+        let mut error_rows = vec![
+            row![
+                radio(
+                    ui_text(language, UiText::NotificationErrorModal).to_string(),
+                    true,
+                    Some(view.error_modal),
+                    Message::ToggleErrorModal
+                ),
+                radio(
+                    ui_text(language, UiText::NotificationErrorOnScreen).to_string(),
+                    false,
+                    Some(view.error_modal),
+                    Message::ToggleErrorModal
+                ),
+            ]
+            .spacing(16)
+            .into(),
+        ];
+        // Color only affects the on-screen pill; a modal dialog has
+        // no tinted text, so the picker hides in modal mode instead
+        // of offering an ineffective control.
+        if !view.error_modal {
+            error_rows.push(labeled_pick_list(
+                ui_text(language, UiText::NotificationColor),
+                colors.clone(),
+                pick_selected(&colors, &view.error_color),
+                Message::SetErrorColor,
+            ));
+        }
+        let error = section_toggled(
+            language,
+            ui_text(language, UiText::Error),
+            checkbox(view.error_enabled)
+                .label(ui_text(language, UiText::NotificationEnabled))
+                .on_toggle(Message::ToggleErrorEnabled)
+                .into(),
+            error_rows,
+        );
+        let display = section(
+            language,
+            ui_text(language, UiText::NotificationSectionDisplay),
+            [
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationPosition),
+                    positions.clone(),
+                    pick_selected(&positions, &view.position),
+                    Message::SetPosition,
+                ),
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationAreaMode),
+                    areas.clone(),
+                    pick_selected(&areas, &view.area_mode),
+                    Message::SetAreaMode,
+                ),
+            ],
+        );
+        let status = section_toggled(
+            language,
+            ui_text(language, UiText::NotificationSectionStatus),
+            checkbox(view.status_enabled)
+                .label(ui_text(language, UiText::NotificationEnabled))
+                .on_toggle(Message::ToggleStatusEnabled)
+                .into(),
+            [
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationStatusPosition),
+                    positions.clone(),
+                    pick_selected(&positions, &view.status_position),
+                    Message::SetStatusPosition,
+                ),
+                if view.position.same_edge(view.status_position) {
+                    // Same band: the transient area mode governs the
+                    // edge, so no second picker (an overlay status
+                    // would dangle half inside the reserved strip).
+                    labeled_note(
+                        ui_text(language, UiText::NotificationStatusAreaMode),
+                        ui_text(language, UiText::NotificationStatusAreaFollows),
+                    )
+                } else {
+                    labeled_pick_list(
+                        ui_text(language, UiText::NotificationStatusAreaMode),
+                        areas.clone(),
+                        pick_selected(&areas, &view.status_area_mode),
+                        Message::SetStatusAreaMode,
+                    )
+                },
+            ],
+        );
+        column![info, warning, error, display, status]
+            .spacing(24)
+            .into()
+    }
+
     fn system_page(&self) -> El<'_> {
         let system_tab_index = self.system_tab_index;
         let Some(system_tab_index) = system_tab_index else {
@@ -322,6 +526,68 @@ pub(super) fn page_radio(
     .into()
 }
 
+/// Titled settings group: 16 bold header, 4 below / 24 between.
+/// Header uses Bold (DejaVu has no Semibold).
+fn section<'a>(
+    language: AppLanguage,
+    title: &'a str,
+    rows: impl IntoIterator<Item = El<'a>>,
+) -> El<'a> {
+    section_inner(header_text(language, title), None, rows)
+}
+
+/// Section whose master enable sits on the header row (MS
+/// SettingsExpander pattern: title plus primary action on one row).
+/// Screen readers meet title then toggle in order, so the generic
+/// "Enabled" label keeps its level context without visual duplication.
+fn section_toggled<'a>(
+    language: AppLanguage,
+    title: &'a str,
+    toggle: El<'a>,
+    rows: impl IntoIterator<Item = El<'a>>,
+) -> El<'a> {
+    section_inner(header_text(language, title), Some(toggle), rows)
+}
+
+fn header_text(language: AppLanguage, title: &str) -> El<'static> {
+    // Bold on the i18n CJK sans when the language needs it (not bare
+    // SansSerif): the section titles are Japanese on CJK systems, and
+    // a generic family lets the shaper mix serif fallbacks per glyph.
+    let base = nerust_settings_core::i18n::font_family(language)
+        .map(iced::Font::with_name)
+        .unwrap_or_default();
+    let font = iced::Font {
+        weight: iced::font::Weight::Bold,
+        ..base
+    };
+    text(title.to_string()).size(16).font(font).into()
+}
+
+fn section_inner<'a>(
+    header: El<'a>,
+    toggle: Option<El<'a>>,
+    rows: impl IntoIterator<Item = El<'a>>,
+) -> El<'a> {
+    let header_row: El<'a> = match toggle {
+        // Governing toggle sits next to its title: Apple HIG aligns a
+        // governing checkbox on the leading edge, and proximity beats
+        // a full-width gap (Microsoft cards share one control column).
+        Some(toggle) => row![header, toggle]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into(),
+        None => header,
+    };
+    let mut items = column![].spacing(8);
+    for row in rows {
+        items = items.push(row);
+    }
+    // Subordinate rows indent under the header (Apple HIG hierarchy).
+    column![header_row, items.padding(iced::padding::left(16.0))]
+        .spacing(4)
+        .into()
+}
+
 fn labeled_pick_list<'a, T: Clone + PartialEq + Eq + 'static>(
     label: &str,
     options: Vec<ChoiceView<T>>,
@@ -333,6 +599,18 @@ fn labeled_pick_list<'a, T: Clone + PartialEq + Eq + 'static>(
         // Stretch to the pane: Shrink rows strand the fixed window
         // (General shows two short rows in a 960px frame otherwise).
         pick_list(options, selected, on_select).width(Length::Fill)
+    ]
+    .spacing(12)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Static note in place of a disabled picker: same label column,
+/// dimmed trailing text instead of a control.
+fn labeled_note<'a>(label: &'static str, note: &'static str) -> El<'a> {
+    row![
+        text(label.to_string()).width(Length::Fixed(220.0)),
+        text(note.to_string()).size(13).width(Length::Fill)
     ]
     .spacing(12)
     .align_y(Alignment::Center)
@@ -407,6 +685,7 @@ mod tests {
             SettingsPage::Input,
             SettingsPage::Video,
             SettingsPage::Audio,
+            SettingsPage::Notifications,
             SettingsPage::System,
         ] {
             state.page = page;

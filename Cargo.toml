@@ -28,6 +28,7 @@ members = [
   "render/gl",
   "render/glwrap",
   "render/ntsc",
+  "render/osd",
   "render/softbuffer",
   "render/traits",
   "render/wgpu",
@@ -192,6 +193,10 @@ nerust_persistence = { path = "persistence" }
 nerust_render_filters = { path = "render/filters" }
 nerust_render_gl = { path = "render/gl" }
 nerust_render_ntsc = { path = "render/ntsc" }
+nerust_render_osd = { path = "render/osd" }
+ab_glyph = { version = "=0.2.32" }
+cosmic-text = { version = "=0.15.0" }
+fontdb = { version = "=0.23.0" }
 nerust_render_softbuffer = { path = "render/softbuffer" }
 nerust_render_traits = { path = "render/traits" }
 nerust_render_wgpu = { path = "render/wgpu" }
@@ -222,6 +227,13 @@ open = { version = "=5.4.4" }
 png = { version = "=0.18.1" }
 pollster = { version = "=1.0.1" }
 raw-window-handle = { version = "=0.6.2" }
+# NOTE: do NOT enable rfd `gtk3` here (verified twice). Its backend
+# serves dialogs from its own thread: called from tao's GTK main loop
+# it deadlocked (no window, frozen loop), and with the call moved to a
+# worker thread it instead aborts the process when the icon theme is
+# broken (`Gtk:ERROR` loading the dialog icon — always fatal). The
+# default portal backend shells out to zenity: no dialog where zenity
+# is absent, but the app stays alive. Robust fix is an in-app dialog.
 rfd = { version = "=0.17.2" }
 rmp-serde = { version = "=1.3.1" }
 serde = { default-features = false, version = "=1.0.229" }

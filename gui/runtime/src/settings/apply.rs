@@ -46,6 +46,8 @@ pub fn derive_apply_plan(
     // session decides rebuild vs swap from here.
     let audio_backend_changed = audio_changed && !audio_volume_changed;
     let needs_rebuild = audio_backend_changed || visual_changed;
+    // Notification presentation is frontend-only: no core rebuild.
+    let notifications_changed = before.local.notifications != after.local.notifications;
 
     SettingsApplyPlan {
         language_changed: before.shared.general != after.shared.general,
@@ -60,6 +62,7 @@ pub fn derive_apply_plan(
         scaling_changed,
         vsync_changed,
         fullscreen_default_changed,
+        notifications_changed,
     }
 }
 
@@ -216,6 +219,7 @@ mod tests {
                 scaling_changed: true,
                 vsync_changed: false,
                 fullscreen_default_changed: false,
+                notifications_changed: false,
             }
         );
     }

@@ -3,6 +3,8 @@ pub mod commands;
 pub mod debug_ops;
 pub mod input;
 pub mod lifecycle;
+pub mod notification;
+pub mod osd;
 pub mod persistence;
 #[cfg(test)]
 mod persistence_test;
@@ -110,6 +112,7 @@ pub struct SessionHandle {
     /// Shell-owned two-phase memory write transaction (Phase B).
     /// `Arc`: async debug-drain flights share it across UI ticks.
     debug_txn: Arc<Mutex<debug_vm::WriteTransaction>>,
+    notifications: notification::NotificationCenter,
 }
 
 impl SessionHandle {
@@ -304,6 +307,7 @@ impl SessionHandle {
             persistence: PersistenceManager::new(),
             audio_registry,
             debug_txn: Arc::new(Mutex::new(debug_vm::WriteTransaction::Empty)),
+            notifications: notification::NotificationCenter::new(),
         };
         result.rebuild_key_field_map();
         Ok(result)

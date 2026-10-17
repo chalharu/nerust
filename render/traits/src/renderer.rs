@@ -1,6 +1,6 @@
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::{FrameBuffer, SurfaceSize, VideoRenderProfile};
+use crate::{FrameBuffer, ReservedStrip, SurfaceSize, VideoRenderProfile};
 
 /// Wraps a static or formatted message as an `std::error::Error`.
 #[derive(Debug)]
@@ -36,6 +36,49 @@ impl std::fmt::Display for RendererError {
 impl std::error::Error for RendererError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&*self.source)
+    }
+}
+
+/// In-frame OSD layer: cropped straight-alpha RGBA composited
+/// over the game image at surface size. Origin is top-left.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OsdLayer {
+    /// Top-left corner in physical surface pixels.
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    /// Row-major straight-alpha RGBA, `width * height * 4` bytes.
+    pub rgba: Vec<u8>,
+}
+
+/// OSD anchor corner in render space. This is the rasterizer's own
+/// vocabulary: settings positions map to it once at the shell
+/// boundary, so the render crates never depend on settings types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OsdAnchor {
+    TopLeft,
+    TopRight,
+    #[default]
+    BottomLeft,
+    BottomRight,
+}
+
+impl OsdAnchor {
+    /// Top edge (top-left/top-right) vs bottom edge.
+    pub fn is_top(self) -> bool {
+        matches!(self, OsdAnchor::TopLeft | OsdAnchor::TopRight)
+    }
+
+    /// Left side (top-left/bottom-left): the value pill pins here.
+    pub fn is_left(self) -> bool {
+        matches!(self, OsdAnchor::TopLeft | OsdAnchor::BottomLeft)
+    }
+
+    /// Same horizontal band (both top or both bottom): entries share
+    /// one edge, so opposite sides can share a single row.
+    pub fn same_edge(self, other: Self) -> bool {
+        self.is_top() == other.is_top()
     }
 }
 
@@ -78,6 +121,15 @@ pub trait GpuRenderer: std::fmt::Debug {
 
     /// Resize the output (swapchain for wgpu; stored for GL).
     fn resize(&mut self, size: SurfaceSize);
+
+    /// Reserve edge strips for OSD labels. The game viewport fits into
+    /// the remaining rect on the next resize/render; strips stay clear.
+    /// Default ignores the reservation (full-surface game).
+    fn set_reserved_strip(&mut self, _strip: ReservedStrip) {}
+
+    /// Overlay an OSD layer over the game image on the next render.
+    /// Backends composite after filters at surface size; `None` clears.
+    fn set_osd_layer(&mut self, layer: Option<OsdLayer>);
 
     /// Update the render pipeline for a new render profile.
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;

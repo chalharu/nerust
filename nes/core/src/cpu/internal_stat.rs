@@ -328,3 +328,56 @@ impl TryFrom<usize> for CpuStatesEnum {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::cpu::internal_stat::{CpuStatesEnum, InternalStat};
+
+    #[test]
+    fn fields_round_trip_and_validate() {
+        let mut stat = InternalStat::new();
+        assert!(stat.validate().is_ok());
+        stat.set_opcode(0xA9);
+        stat.set_address(0x1234);
+        stat.set_step(3);
+        stat.set_tempaddr(0xABCD);
+        stat.set_data(0x42);
+        stat.set_interrupt(true);
+        stat.set_crossed(true);
+        assert_eq!(stat.get_opcode(), 0xA9);
+        assert_eq!(stat.get_address(), 0x1234);
+        assert_eq!(stat.get_step(), 3);
+        assert_eq!(stat.get_tempaddr(), 0xABCD);
+        assert_eq!(stat.get_data(), 0x42);
+        assert!(stat.get_interrupt());
+        assert!(stat.get_crossed());
+        assert!(stat.validate().is_ok());
+        stat.reset();
+        assert_eq!(stat.get_step(), 0);
+        assert_eq!(stat.get_state(), CpuStatesEnum::Reset);
+    }
+
+    #[test]
+    fn validate_rejects_out_of_range_fields() {
+        let mut stat = InternalStat::new();
+        stat.set_opcode(0x100);
+        assert!(stat.validate().is_err());
+        stat.set_opcode(0);
+        stat.set_address(0x1_0000);
+        assert!(stat.validate().is_err());
+        stat.set_address(0);
+        stat.set_tempaddr(0x1_0000);
+        assert!(stat.validate().is_err());
+        stat.set_tempaddr(0);
+        stat.set_step(9);
+        assert!(stat.validate().is_err());
+    }
+
+    #[test]
+    fn state_numbering_round_trips() {
+        assert_eq!(CpuStatesEnum::try_from(0), Ok(CpuStatesEnum::FetchOpCode));
+        assert_eq!(CpuStatesEnum::try_from(97), Ok(CpuStatesEnum::Txs));
+        assert_eq!(CpuStatesEnum::try_from(98), Err(()));
+        assert_eq!(CpuStatesEnum::try_from(usize::MAX), Err(()));
+    }
+}

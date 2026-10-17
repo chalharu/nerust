@@ -1,6 +1,8 @@
 use nerust_render_traits::{
-    FrameBuffer, SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
-    renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
+    FrameBuffer, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
+    renderer::{
+        GpuFactory, GpuRenderer, OpaqueError, OsdLayer, RenderResult, RendererConfig, RendererError,
+    },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -21,6 +23,8 @@ pub struct WgpuRenderer {
     surface: Option<wgpu::Surface<'static>>,
     size: SurfaceSize,
     last_render_error: Option<String>,
+    osd: Option<OsdLayer>,
+    osd_dirty: bool,
 }
 
 impl std::fmt::Debug for WgpuRenderer {
@@ -63,6 +67,16 @@ impl WgpuRenderer {
     }
 }
 
+impl WgpuRenderer {
+    /// Push the staged layer into a fresh pipeline. Rebuilds drop
+    /// GPU objects, so attach/profile paths must re-apply.
+    fn reapply_osd(&mut self) {
+        if self.osd.is_some() {
+            self.osd_dirty = true;
+        }
+    }
+}
+
 impl GpuRenderer for WgpuRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
@@ -86,12 +100,24 @@ impl GpuRenderer for WgpuRenderer {
         )?;
         self.surface = Some(wgpu_surface);
         self.pipeline = Some(pipeline);
+        self.reapply_osd();
         Ok(())
     }
 
     fn detach(&mut self) {
         self.surface = None;
         self.pipeline = None;
+    }
+
+    fn set_reserved_strip(&mut self, strip: ReservedStrip) {
+        if let Some(ref mut pipeline) = self.pipeline {
+            pipeline.set_reserved_strip(strip);
+        }
+    }
+
+    fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
+        self.osd = layer;
+        self.osd_dirty = true;
     }
 
     fn resize(&mut self, size: SurfaceSize) {
@@ -119,6 +145,7 @@ impl GpuRenderer for WgpuRenderer {
             profile,
             true,
         )?);
+        self.reapply_osd();
         Ok(())
     }
 
@@ -132,6 +159,10 @@ impl GpuRenderer for WgpuRenderer {
 
         if let Some(p) = frame.palette_as_rgba8() {
             pipeline.update_palette_texture(&p);
+        }
+        if self.osd_dirty {
+            crate::renderer::setup::set_osd_layer(pipeline, self.osd.clone());
+            self.osd_dirty = false;
         }
 
         match pipeline.render(surface, self.size, frame.as_ref(), frame.stride()) {
@@ -209,6 +240,8 @@ impl GpuFactory for WgpuFactory {
             surface: None,
             size: SurfaceSize::new(0, 0),
             last_render_error: None,
+            osd: None,
+            osd_dirty: false,
         }))
     }
 }

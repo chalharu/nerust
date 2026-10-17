@@ -45,7 +45,7 @@ impl WindowRuntime {
         let proxy = event_loop.create_proxy();
         let app_menu = AppMenu::new(proxy);
 
-        let host = HostState::new(ctx, Box::new(app_menu), Box::new(NativeDialogs))?;
+        let host = HostState::new(ctx, Box::new(app_menu), std::sync::Arc::new(NativeDialogs))?;
 
         Ok(Self {
             event_loop: Some(event_loop),
@@ -182,6 +182,16 @@ impl WindowRuntime {
             } if self.host.debug.is_ppu_window(window_id) => {
                 self.on_ppu_event(event);
             }
+            Event::WindowEvent {
+                event, window_id, ..
+            } if self.host.is_history_window(window_id) => {
+                self.host.on_history_event(event);
+            }
+            Event::RedrawRequested(window_id) if self.host.is_history_window(window_id) => {
+                if let Some(handle) = self.host.history_window.as_mut() {
+                    handle.render();
+                }
+            }
             Event::RedrawRequested(window_id) if self.host.debug.is_ppu_window(window_id) => {
                 if let Some(handle) = self.host.debug.ppu_window.as_mut() {
                     handle.render();
@@ -227,6 +237,14 @@ impl WindowRuntime {
         if renderer.size() != window_size {
             renderer.resize(window_size);
         }
+
+        let strip = self.host.reserved_strip();
+        if strip != self.host.osd_last_strip {
+            self.host.osd_last_strip = strip;
+            renderer.set_reserved_strip(strip);
+        }
+        self.host.poll_notifications();
+        self.host.sync_osd_layer(renderer.as_mut(), window_size);
 
         self.host.session_mut().swap_frame_buffer();
         if let Some(fb) = self.host.session_mut().frame_buffer() {

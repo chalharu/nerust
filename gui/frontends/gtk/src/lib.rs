@@ -1,6 +1,7 @@
 mod debugger;
 mod gdk_raw;
 pub mod mapping;
+mod osd;
 mod ppu_window;
 mod preferences;
 mod renderer;
@@ -25,7 +26,7 @@ use nerust_gui_shell::{
     context::FrontendContext,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
-        access::{FrontendSession, SettingsResult},
+        access::{PauseControl, SessionControl, SettingsResult, SlotControl},
         commands::SessionCommand,
     },
 };
@@ -127,9 +128,31 @@ impl State {
     pub(crate) fn take_renderer_reload_pending(&mut self) -> bool {
         std::mem::take(&mut self.renderer_reload_pending)
     }
+
+    pub(crate) fn drain_notifications(
+        &mut self,
+    ) -> Vec<nerust_gui_shell::session::notification::UiNotification> {
+        self.session.drain_notifications()
+    }
+
+    pub(crate) fn notification_history_lines(
+        &self,
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) -> Vec<nerust_gui_shell::session::osd::HistoryLine> {
+        self.session.notification_history_lines(language)
+    }
+
+    pub(crate) fn clear_notification_history(&mut self) {
+        self.session.clear_notification_history();
+    }
+
+    pub(crate) fn emulation_status(&self) -> (f32, bool) {
+        let metrics = self.session.metrics();
+        (metrics.emulation_fps, metrics.paused)
+    }
 }
 
-impl FrontendSession for State {
+impl PauseControl for State {
     fn pause(&mut self) {
         let _ = self.session.run_command(SessionCommand::Pause);
     }
@@ -139,6 +162,9 @@ impl FrontendSession for State {
     fn toggle_pause(&mut self) {
         let _ = self.session.run_command(SessionCommand::TogglePause);
     }
+}
+
+impl SlotControl for State {
     fn save_active_slot(&mut self) -> bool {
         self.session
             .run_command(SessionCommand::SaveActiveSlotOrNew)
@@ -182,13 +208,13 @@ impl FrontendSession for State {
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
     }
+}
+
+impl SessionControl for State {
     fn unload(&mut self) {
         if let Err(error) = self.session.unload() {
             log::warn!("ROM unload failed: {error}");
         }
-    }
-    fn run_command(&mut self, command: SessionCommand) {
-        let _ = self.session.run_command(command);
     }
     fn apply_settings(
         &mut self,
@@ -405,6 +431,10 @@ pub(crate) fn build_menu_model(
             ShortcutAction::OpenDebugger,
         )),
         Some("win.debugger"),
+    );
+    emulation_menu.append(
+        Some(text(language, UiText::NotificationHistory)),
+        Some("win.history"),
     );
 
     let help_menu = gio::Menu::new();
