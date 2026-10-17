@@ -500,15 +500,17 @@ impl SoftbufferRenderer {
                 if alpha == 0.0 {
                     continue;
                 }
+                // Buffer words are 0xAARRGGBB: big-endian bytes
+                // are [A, R, G, B], not RGBA.
                 let dst_pixel = buffer[dst_y * dst_w + dst_x].to_be_bytes();
                 let blend = |src: u8, dst: u8| {
                     (f32::from(src) * alpha + f32::from(dst) * (1.0 - alpha)).round() as u8
                 };
                 buffer[dst_y * dst_w + dst_x] = u32::from_be_bytes([
-                    blend(layer.rgba[s], dst_pixel[0]),
-                    blend(layer.rgba[s + 1], dst_pixel[1]),
-                    blend(layer.rgba[s + 2], dst_pixel[2]),
                     255,
+                    blend(layer.rgba[s], dst_pixel[1]),
+                    blend(layer.rgba[s + 1], dst_pixel[2]),
+                    blend(layer.rgba[s + 2], dst_pixel[3]),
                 ]);
             }
         }
@@ -739,6 +741,25 @@ impl GpuFactory for SoftbufferFactory {
 mod tests {
     use super::*;
     use nerust_render_traits::{VideoFrameFormat, logical::LogicalSize, physical::PhysicalSize};
+
+    #[test]
+    fn blend_osd_writes_argb_words() {
+        // Buffers are 0xAARRGGBB: opaque red over opaque black stays red.
+        let mut buffer = vec![0xFF00_0000u32; 4];
+        let layer = nerust_render_traits::renderer::OsdLayer {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 1,
+            rgba: vec![
+                255, 0, 0, 255, // opaque red
+                0, 0, 0, 0, // transparent keeps dst
+            ],
+        };
+        SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &layer);
+        assert_eq!(buffer[0], 0xFFFF_0000);
+        assert_eq!(buffer[1], 0xFF00_0000);
+    }
 
     fn test_profile() -> VideoRenderProfile {
         VideoRenderProfile {
