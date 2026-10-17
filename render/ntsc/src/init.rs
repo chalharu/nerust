@@ -8,9 +8,6 @@ use crate::{
 
 pub(crate) struct Init {
     pub(crate) to_rgb: Vec<Vec<f32>>, //[f32; BURST_COUNT * 6],
-    // to_float: Vec<f32>,        // [f32; GAMMA_SIZE],
-    // contrast: f32,
-    // brightness: f32,
     pub(crate) artifacts: f32,
     pub(crate) fringing: f32,
     pub(crate) kernel: Vec<f32>, // [f32; RESCALE_OUT * KERNEL_SIZE * 2]
@@ -61,9 +58,6 @@ impl Init {
         };
         Self {
             to_rgb,
-            // to_float,
-            // contrast,
-            // brightness,
             artifacts,
             fringing,
             kernel,

@@ -234,10 +234,8 @@ fn run_command(
 }
 
 fn print_outcome(outcome: &CaseOutcome, full_bytes: bool) {
-    // In capture mode the console is machine-consumed for pinning:
-    // print full serial bytes (a truncated preview once caused a
-    // complete suite to be misread as stalled). Validate mode keeps
-    // the compact preview.
+    // Capture mode is machine-consumed: print full serial bytes.
+    // Validate mode keeps the compact preview.
     fn serial_text(bytes: &[u8], full: bool) -> String {
         if full {
             bytes.iter().map(|b| format!("{b:02X}")).collect()

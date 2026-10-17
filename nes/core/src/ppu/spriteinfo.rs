@@ -21,14 +21,4 @@ impl SpriteInfo {
             position: 0,
         }
     }
-
-    // pub fn reset(&mut self) {
-    //     self.low_byte = 0;
-    //     self.high_byte = 0;
-    //     self.palette_offset = 0;
-    //     self.tile_addr = 0;
-    //     self.horizontal_mirror = false;
-    //     self.priority = false;
-    //     self.position = 0;
-    // }
 }

@@ -130,9 +130,7 @@ impl SessionHandle {
 pub(crate) const DEBUG_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Poll result for [`DrainFlight`]: either the batch needs more ticks
-/// or it finished with the render-ready display. The output rides
-/// boxed: a finished drain crosses this boundary once, so there is
-/// no reason to move ~240 bytes of display through every tick poll.
+/// or it finished with the render-ready display (boxed).
 pub enum DrainPoll {
     Pending,
     Done(Box<DebugDrainOutput>),

@@ -43,10 +43,8 @@ pub struct DisplayCache {
 }
 
 impl DisplayCache {
-    /// Clone everything but the system images. The debugger view
-    /// never renders images (the PPU viewer owns them through its
-    /// own Sync cache), so dragging up to 512KB of RGBA through
-    /// every rebuild is pure waste.
+    /// Clone everything but the system images (owned by the PPU
+    /// viewer through its own Sync cache).
     pub fn clone_without_images(&self) -> Self {
         Self {
             regs: self.regs.clone(),
