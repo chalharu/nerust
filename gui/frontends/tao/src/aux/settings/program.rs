@@ -622,6 +622,35 @@ mod tests {
     }
 
     #[test]
+    fn status_area_message_reaches_viewmodel() {
+        use nerust_settings_core::model::local::NotificationAreaMode;
+        let (mut state, _task) = SettingsAppProgram {
+            snapshot: empty_snapshot(),
+            registry: Arc::new(SystemRegistry::new(Vec::new())),
+            audio_registry: Arc::new(AudioBackendRegistry::new()),
+            should_close: Arc::new(AtomicBool::new(false)),
+            pending_apply: Arc::new(Mutex::new(None)),
+            view_invalidated: Arc::new(AtomicBool::new(false)),
+        }
+        .boot();
+        dispatch(
+            &mut state,
+            Message::SetStatusAreaMode(ChoiceView {
+                value: NotificationAreaMode::Strip,
+                label: String::new(),
+            }),
+        );
+        assert_eq!(
+            state.vm.notifications.view.get().status_area_mode,
+            NotificationAreaMode::Strip
+        );
+        // The notifications page (with the new Status area row)
+        // builds without panicking.
+        state.page = SettingsPage::Notifications;
+        let _ = state.page_content();
+    }
+
+    #[test]
     fn program_update_and_error_paths_stay_headless() {
         let program = SettingsAppProgram {
             snapshot: empty_snapshot(),
