@@ -135,10 +135,6 @@ pub fn clear_color(
     gl_error_handle(|| unsafe { gl::ClearColor(red, green, blue, alpha) })
 }
 
-// pub fn clear_depth(depth: GLdouble) -> Result<(), Error> {
-//     gl_error_handle(|| unsafe { gl::ClearDepth(depth) })
-// }
-
 pub fn clear(mask: GLbitfield) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::Clear(mask) })
 }

@@ -24,9 +24,6 @@ use crate::{
     persistence_error::PersistenceError,
 };
 
-// // 240Hz フレームシーケンサ
-// const FRAME_COUNTER_RATE: f64 = 7457.3875;
-// const FRAME_COUNTER_RATE: f64 = 29829.55;
 const CLOCK_RATE: u64 = 1_789_773;
 const MIN_BULK_SAMPLE_INTERVAL: u64 = 32;
 
@@ -72,10 +69,6 @@ impl Core {
             // https://wiki.nesdev.com/w/index.php/APU_Mixer
             pulse_table: make_pulse_table(),
             tnd_table: make_tnd_table(),
-            // filter: PassFilter::get_highpass_filter(filter_sample_rate, 90.0)
-            //     .chain(PassFilter::get_highpass_filter(filter_sample_rate, 440.0))
-            //     .chain(PassFilter::get_lowpass_filter(filter_sample_rate, 14000.0)),
-            // sample_rate,
             pulse1: Pulse::new(true),
             pulse2: Pulse::new(false),
             triangle: Triangle::new(),
@@ -296,9 +289,6 @@ impl Core {
         mixer.push(StereoSample::mono(
             self.output(expansion_audio_output, expansion_audio_inverted),
         ));
-        // let output = self.output();
-        // let filtered = self.filter.step(output);
-        // speaker.push(((filtered * 65535.0) as i32 - 32768) as i16);
     }
 
     pub(crate) fn output(

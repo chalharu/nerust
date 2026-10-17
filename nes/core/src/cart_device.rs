@@ -308,7 +308,3 @@ pub(crate) trait Cartridge: Mapper {
         Some(ciram[mirror_address(self.mirror_mode(), address) & 0x7FF])
     }
 }
-
-// 本当はこうしたい
-// #[typetag::serde]
-// impl<T: Mapper> Cartridge for T {}

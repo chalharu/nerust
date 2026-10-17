@@ -36,16 +36,6 @@ pub(crate) trait SetupValues {
     fn fringing(&self) -> f32; // color artifacts caused by brightness changes
     fn bleed(&self) -> f32; // color bleed (color resolution reduction)
     fn merge_fields(&self) -> bool; // if true, merges even and odd fields together to reduce flicker
-
-    // decoder_matrix: &[f32; 6], // optional RGB decoder matrix, 6 elements
-
-    // palette_out: &mut [u8], // optional RGB palette out, 3 bytes per color
-
-    // // You can replace the standard NES color generation with an RGB palette. The
-    // // first replaces all color generation, while the second replaces only the core
-    // // 64-color generation and does standard color emphasis calculations on it.
-    // palette: &[u8; 512 * 3], // optional 512-entry RGB palette in, 3 bytes per color
-    // base_palette: &[u8; 64 * 3], // optional 64-entry RGB palette in, 3 bytes per color
 }
 
 impl SetupValues for Setup {
