@@ -531,20 +531,23 @@ fn section_inner<'a>(
     rows: impl IntoIterator<Item = El<'a>>,
 ) -> El<'a> {
     let header_row: El<'a> = match toggle {
-        Some(toggle) => row![
-            header,
-            iced::widget::Space::new().width(Length::Fill),
-            toggle
-        ]
-        .align_y(Alignment::Center)
-        .into(),
+        // Governing toggle sits next to its title: Apple HIG aligns a
+        // governing checkbox on the leading edge, and proximity beats
+        // a full-width gap (Microsoft cards share one control column).
+        Some(toggle) => row![header, toggle]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into(),
         None => header,
     };
     let mut items = column![].spacing(8);
     for row in rows {
         items = items.push(row);
     }
-    column![header_row, items].spacing(4).into()
+    // Subordinate rows indent under the header (Apple HIG hierarchy).
+    column![header_row, items.padding(iced::padding::left(16.0))]
+        .spacing(4)
+        .into()
 }
 
 fn labeled_pick_list<'a, T: Clone + PartialEq + Eq + 'static>(
