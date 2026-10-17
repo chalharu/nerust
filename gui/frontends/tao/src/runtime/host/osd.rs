@@ -243,19 +243,23 @@ impl HostState {
         // flips, and settings toggles must all re-rasterize now.
         // Fps digits refresh at 2Hz through the gate; pause flips
         // and settings changes pass through immediately.
-        let (label, fresh_value) =
-            OsdManager::status_parts(metrics.emulation_fps, metrics.paused, language);
-        let (label, value) = self
-            .osd_status_gate
-            .gate(Instant::now(), label, fresh_value);
-        let status_key = settings.status_enabled.then_some((
-            label,
-            value,
-            settings.position,
-            settings.status_position,
-            settings.area_mode,
-            settings.status_area_mode,
-        ));
+        // Untouched while disabled: no per-frame formatting, and the
+        // stale gate passes the first fresh value on re-enable.
+        let status_key = settings.status_enabled.then(|| {
+            let (label, fresh_value) =
+                OsdManager::status_parts(metrics.emulation_fps, metrics.paused, language);
+            let (label, value) = self
+                .osd_status_gate
+                .gate(Instant::now(), label, fresh_value);
+            (
+                label,
+                value,
+                settings.position,
+                settings.status_position,
+                settings.area_mode,
+                settings.status_area_mode,
+            )
+        });
         let status_changed = status_key != self.osd_last_status;
         if !dirty && !status_changed && self.osd_layer_size == Some((w, h)) {
             return;

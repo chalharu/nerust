@@ -387,7 +387,11 @@ impl<T: CoreOptions> From<T> for Box<dyn CoreOptions> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        ConsoleCore, CoreCapabilities, CoreConfig, CoreError, SwapAudioCommand, VideoSignalKind,
+        audio,
+    };
+    use nerust_render_traits::FrameBuffer;
 
     #[derive(Debug, Default)]
     struct StubCore {
