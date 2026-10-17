@@ -355,7 +355,9 @@ impl RenderPipeline {
             osd_sampler,
             osd_texture: None,
             osd_bind_group: None,
-            osd_rect: None,
+            osd_visible: false,
+            osd_surface: surface_size,
+            osd_prev: None,
             osd_staging: Vec::new(),
             frame_logical_size,
             content_size,
@@ -521,31 +523,26 @@ pub(super) fn composed_shader_source() -> String {
     .join("\n\n")
 }
 
-/// Upload an OSD layer: (re)create the texture on size change,
-/// then copy rows with 256-byte pitch padding.
+/// Upload an OSD layer into a full-surface texture at its offset.
+/// Viewport quirks vary across drivers, so placement rides on texture
+/// coordinates (always identity-mapped) instead of small viewports.
 pub(crate) fn set_osd_layer(
     pipeline: &mut RenderPipeline,
     layer: Option<nerust_render_traits::renderer::OsdLayer>,
 ) {
-    let Some(layer) = layer else {
-        pipeline.osd_texture = None;
-        pipeline.osd_bind_group = None;
-        pipeline.osd_rect = None;
-        return;
-    };
-    if layer.width == 0 || layer.height == 0 {
+    let surface = pipeline.osd_surface;
+    if surface.width == 0 || surface.height == 0 {
         return;
     }
-    let sized = pipeline
-        .osd_texture
-        .as_ref()
-        .is_some_and(|texture| texture.width() == layer.width && texture.height() == layer.height);
+    let sized = pipeline.osd_texture.as_ref().is_some_and(|texture| {
+        texture.width() == surface.width && texture.height() == surface.height
+    });
     if !sized {
         let texture = pipeline.device.create_texture(&TextureDescriptor {
             label: Some("nerust_osd_texture"),
             size: Extent3d {
-                width: layer.width,
-                height: layer.height,
+                width: surface.width,
+                height: surface.height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -573,39 +570,97 @@ pub(crate) fn set_osd_layer(
             },
         ));
         pipeline.osd_texture = Some(texture);
+        pipeline.osd_prev = None;
     }
-    let row_bytes = layer.width as usize * 4;
+    let Some(texture) = pipeline.osd_texture.clone() else {
+        return;
+    };
+    // Clear the previous rect so moved/shrunk layers leave no ghosts.
+    let clear_rect = match (&layer, pipeline.osd_prev) {
+        (Some(next), Some(prev)) if (next.x, next.y, next.width, next.height) != prev => Some(prev),
+        (None, Some(prev)) => Some(prev),
+        _ => None,
+    };
+    if let Some((x, y, w, h)) = clear_rect {
+        upload_rect(
+            pipeline,
+            &texture,
+            x,
+            y,
+            w.min(surface.width.saturating_sub(x)),
+            h.min(surface.height.saturating_sub(y)),
+            None,
+        );
+    }
+    let Some(layer) = layer else {
+        pipeline.osd_visible = false;
+        pipeline.osd_prev = None;
+        return;
+    };
+    if layer.width == 0 || layer.height == 0 {
+        return;
+    }
+    let w = layer.width.min(surface.width.saturating_sub(layer.x));
+    let h = layer.height.min(surface.height.saturating_sub(layer.y));
+    if w == 0 || h == 0 {
+        return;
+    }
+    upload_rect(
+        pipeline,
+        &texture,
+        layer.x,
+        layer.y,
+        w,
+        h,
+        Some(&layer.rgba),
+    );
+    pipeline.osd_visible = true;
+    pipeline.osd_prev = Some((layer.x, layer.y, w, h));
+}
+
+/// Upload RGBA rows (or zeros) into a texture subrect with 256-byte
+/// pitch padding.
+fn upload_rect(
+    pipeline: &mut RenderPipeline,
+    texture: &wgpu::Texture,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    rgba: Option<&[u8]>,
+) {
+    let row_bytes = w as usize * 4;
     let pitch = row_bytes.next_multiple_of(256);
-    let needed = pitch * layer.height as usize;
+    let needed = pitch * h as usize;
     if pipeline.osd_staging.len() < needed {
         pipeline.osd_staging.resize(needed, 0);
     }
-    for (index, row) in layer.rgba.chunks_exact(row_bytes).enumerate() {
-        pipeline.osd_staging[index * pitch..index * pitch + row_bytes].copy_from_slice(row);
+    if let Some(rgba) = rgba {
+        for (index, row) in rgba.chunks_exact(row_bytes).take(h as usize).enumerate() {
+            pipeline.osd_staging[index * pitch..index * pitch + row_bytes].copy_from_slice(row);
+        }
+    } else {
+        pipeline.osd_staging[..needed].fill(0);
     }
-    let Some(texture) = pipeline.osd_texture.as_ref() else {
-        return;
-    };
     pipeline.queue.write_texture(
         TexelCopyTextureInfo {
             texture,
             mip_level: 0,
-            origin: Origin3d::ZERO,
+            origin: Origin3d { x, y, z: 0 },
             aspect: wgpu::TextureAspect::All,
         },
         &pipeline.osd_staging[..needed],
         TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(pitch as u32),
-            rows_per_image: Some(layer.height),
+            rows_per_image: Some(h),
         },
         Extent3d {
-            width: layer.width,
-            height: layer.height,
+            width: w,
+            height: h,
             depth_or_array_layers: 1,
         },
     );
-    pipeline.osd_rect = Some((layer.x, layer.y, layer.width, layer.height));
 }
 
 fn frame_pipeline_kind(
