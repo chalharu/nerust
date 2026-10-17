@@ -820,7 +820,7 @@ pub(crate) fn present_preferences_dialog(
         true,
     );
     let info_duration_spin = gtk::SpinButton::with_range(1000.0, 30000.0, 500.0);
-    notifications_page.append(&labeled_row(
+    notifications_page.append(&labeled_sub_row(
         ui_text(lang, UiText::NotificationDuration),
         &info_duration_spin,
     ));
@@ -831,7 +831,7 @@ pub(crate) fn present_preferences_dialog(
         ("green", ui_text(lang, UiText::ColorGreen)),
         ("cyan", ui_text(lang, UiText::ColorCyan)),
     ]);
-    notifications_page.append(&labeled_row(
+    notifications_page.append(&labeled_sub_row(
         ui_text(lang, UiText::NotificationColor),
         &info_color_combo,
     ));
@@ -844,7 +844,7 @@ pub(crate) fn present_preferences_dialog(
         false,
     );
     let warning_duration_spin = gtk::SpinButton::with_range(1000.0, 30000.0, 500.0);
-    notifications_page.append(&labeled_row(
+    notifications_page.append(&labeled_sub_row(
         ui_text(lang, UiText::NotificationDuration),
         &warning_duration_spin,
     ));
@@ -855,7 +855,7 @@ pub(crate) fn present_preferences_dialog(
         ("green", ui_text(lang, UiText::ColorGreen)),
         ("cyan", ui_text(lang, UiText::ColorCyan)),
     ]);
-    notifications_page.append(&labeled_row(
+    notifications_page.append(&labeled_sub_row(
         ui_text(lang, UiText::NotificationColor),
         &warning_color_combo,
     ));
@@ -872,6 +872,8 @@ pub(crate) fn present_preferences_dialog(
     let error_onscreen_radio =
         gtk::CheckButton::with_label(ui_text(lang, UiText::NotificationErrorOnScreen));
     error_onscreen_radio.set_group(Some(&error_modal_radio));
+    error_modal_radio.set_margin_start(16);
+    error_onscreen_radio.set_margin_start(16);
     notifications_page.append(&error_modal_radio);
     notifications_page.append(&error_onscreen_radio);
     let error_color_combo = combo_box(&[
@@ -881,7 +883,7 @@ pub(crate) fn present_preferences_dialog(
         ("green", ui_text(lang, UiText::ColorGreen)),
         ("cyan", ui_text(lang, UiText::ColorCyan)),
     ]);
-    notifications_page.append(&labeled_row(
+    notifications_page.append(&labeled_sub_row(
         ui_text(lang, UiText::NotificationColor),
         &error_color_combo,
     ));
@@ -895,7 +897,7 @@ pub(crate) fn present_preferences_dialog(
         ("bottom_left", ui_text(lang, UiText::PosBottomLeft)),
         ("bottom_right", ui_text(lang, UiText::PosBottomRight)),
     ]);
-    notifications_page.append(&labeled_row(
+    notifications_page.append(&labeled_sub_row(
         ui_text(lang, UiText::NotificationPosition),
         &position_combo,
     ));
@@ -909,7 +911,7 @@ pub(crate) fn present_preferences_dialog(
         ("overlay", ui_text(lang, UiText::AreaOverlay)),
         ("strip", ui_text(lang, UiText::AreaStrip)),
     ]);
-    notifications_page.append(&labeled_row(
+    notifications_page.append(&labeled_sub_row(
         ui_text(lang, UiText::NotificationAreaMode),
         &area_combo,
     ));
@@ -921,7 +923,7 @@ pub(crate) fn present_preferences_dialog(
         ui_text(lang, UiText::NotificationStatus),
         false,
     );
-    notifications_page.append(&labeled_row(
+    notifications_page.append(&labeled_sub_row(
         ui_text(lang, UiText::NotificationStatusPosition),
         &status_position_combo,
     ));
@@ -1438,7 +1440,9 @@ fn section_header_toggled(
         gtk::glib::markup_escape_text(title)
     ));
     label.set_xalign(0.0);
-    label.set_hexpand(true);
+    // Governing toggle sits next to its title: Apple HIG aligns a
+    // governing checkbox on the leading edge, and proximity beats
+    // a full-width gap (Microsoft cards share one control column).
     toggle.set_tooltip_text(Some(accessible_label));
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     row.set_margin_top(if first { 0 } else { 20 });
@@ -1467,6 +1471,14 @@ fn labeled_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
     label.set_width_chars(24);
     row.append(&label);
     row.append(widget);
+    row
+}
+
+/// Subordinate row under a toggled section header: indented to show
+/// the hierarchy (Apple HIG checkbox grouping).
+fn labeled_sub_row(label: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
+    let row = labeled_row(label, widget);
+    row.set_margin_start(16);
     row
 }
 
