@@ -19,10 +19,9 @@ pub fn window_title(
         None => String::new(),
     };
     if console_metrics.loaded {
-        format!(
-            "{state}{slot} | FPS {:.1} | Speed x{:.2}",
-            console_metrics.emulation_fps, console_metrics.speed_multiplier
-        )
+        // Runtime metrics live in the status readout, not here:
+        // fps duplicates the OSD status pill and speed is noise.
+        format!("{state}{slot}")
     } else {
         format!("{state}{slot} | No ROM")
     }
@@ -35,7 +34,7 @@ mod tests {
     use super::window_title;
 
     #[test]
-    fn window_title_surfaces_runtime_metrics() {
+    fn window_title_omits_runtime_metrics() {
         let title = window_title(
             false,
             ConsoleMetrics {
@@ -49,8 +48,8 @@ mod tests {
             3,
         );
 
-        assert!(title.contains("FPS 59.9"));
-        assert!(title.contains("Speed x1.01"));
+        assert!(!title.contains("FPS"));
+        assert!(!title.contains("Speed"));
         assert!(title.contains("Slot 2"));
         assert!(title.contains("3 slots"));
     }
