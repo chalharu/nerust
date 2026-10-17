@@ -45,13 +45,8 @@ impl OsdFonts {
             face_ids,
             char_font: HashMap::new(),
         };
-        let query = fontdb::Query {
-            families: &[fontdb::Family::SansSerif],
-            ..fontdb::Query::default()
-        };
-        match fonts.db.query(&query) {
-            Some(id) if fonts.load_face(id).is_some() => {}
-            _ => log::warn!("osd: default sans font failed to load"),
+        if fonts.load_best_sans().is_none() {
+            log::warn!("osd sans query found nothing");
         }
         fonts
     }
@@ -64,12 +59,63 @@ impl OsdFonts {
             return None;
         }
         let bytes: Vec<u8> = self.db.with_face_data(id, |data, _index| data.to_vec())?;
-        let font = FontArc::try_from_vec(bytes).ok()?;
+        let font = match FontArc::try_from_vec(bytes) {
+            Ok(font) => font,
+            Err(error) => {
+                log::warn!("osd font parse failed: {error}");
+                return None;
+            }
+        };
         self.loaded.push(font);
         self.loaded_ids.push(id);
         Some(self.loaded.len() - 1)
     }
 
+    /// Load the best available sans face. fontdb's SansSerif
+    /// defaults to Arial (often absent on Linux), so prefer common
+    /// families, then any sans-named face, then the first face.
+    fn load_best_sans(&mut self) -> Option<usize> {
+        for name in [
+            "Noto Sans",
+            "DejaVu Sans",
+            "Liberation Sans",
+            "Arial",
+            "Helvetica",
+        ] {
+            let query = fontdb::Query {
+                families: &[fontdb::Family::Name(name)],
+                ..fontdb::Query::default()
+            };
+            if let Some(id) = self.db.query(&query)
+                && let Some(index) = self.load_face(id)
+            {
+                return Some(index);
+            }
+        }
+        let mut names: Vec<String> = self
+            .db
+            .faces()
+            .flat_map(|face| face.families.iter().map(|(family, _)| family.clone()))
+            .collect();
+        names.sort();
+        names.dedup();
+        if let Some(name) = names
+            .iter()
+            .find(|name| name.to_lowercase().contains("sans"))
+        {
+            let query = fontdb::Query {
+                families: &[fontdb::Family::Name(name)],
+                ..fontdb::Query::default()
+            };
+            if let Some(id) = self.db.query(&query)
+                && let Some(index) = self.load_face(id)
+            {
+                return Some(index);
+            }
+        }
+        let first = self.face_ids.first().copied()?;
+        self.load_face(first)
+    }
     /// Font index holding `c`, loading faces lazily. Primary first.
     fn font_for(&mut self, c: char) -> Option<usize> {
         if let Some(&index) = self.char_font.get(&c) {
@@ -478,6 +524,7 @@ mod tests {
     fn ascii_rows_produce_a_cropped_layer() {
         let mut raster = OsdRaster::new();
         if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
             return;
         }
         let layer = raster.rasterize(&content(), 960, 720).expect("ascii rows");
@@ -505,6 +552,7 @@ mod tests {
     fn row_height_follows_the_shared_formula() {
         let mut raster = OsdRaster::new();
         if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
             return;
         }
         // 720p: font 16px, row 16*16/10+4 = 29.
@@ -516,6 +564,7 @@ mod tests {
     fn corners_mirror_position() {
         let mut raster = OsdRaster::new();
         if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
             return;
         }
         let layer = raster.rasterize(&content(), 960, 720).expect("layer");
