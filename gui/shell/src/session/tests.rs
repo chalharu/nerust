@@ -155,16 +155,8 @@ fn session_commands_drive_pause_resume_toggle_and_reset() {
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
 
-    assert!(session.can_resume());
-    assert_eq!(
-        session.run_command(SessionCommand::Resume).unwrap(),
-        SessionCommandOutcome {
-            executed: true,
-            needs_redraw: true,
-            slot_failure: None,
-        }
-    );
     assert!(session.can_pause());
+    assert!(!session.can_resume());
     assert_eq!(
         session.run_command(SessionCommand::Pause).unwrap(),
         SessionCommandOutcome {
@@ -183,6 +175,7 @@ fn session_commands_drive_pause_resume_toggle_and_reset() {
             .unwrap()
             .executed
     );
+    assert!(session.can_pause());
     assert!(session.run_command(SessionCommand::Reset).unwrap().executed);
 }
 
@@ -951,6 +944,11 @@ fn loaded_debug_session() -> SessionHandle {
     session
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .expect("test ROM loads");
+    // Real debugger opens pause first; the helper mirrors that instead
+    // of relying on the load stamping a paused mirror.
+    session
+        .run_command(SessionCommand::Pause)
+        .expect("debug sessions start paused");
     assert!(session.debug_paused());
     session
 }
