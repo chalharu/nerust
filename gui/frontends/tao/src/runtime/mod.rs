@@ -238,7 +238,7 @@ impl WindowRuntime {
             renderer.resize(window_size);
         }
 
-        renderer.set_reserved_strip(nerust_render_traits::ReservedStrip::default());
+        renderer.set_reserved_strip(self.host.reserved_strip());
         self.host.poll_notifications();
         self.host.sync_osd_layer(renderer.as_mut(), window_size);
 

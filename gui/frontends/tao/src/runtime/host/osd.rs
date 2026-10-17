@@ -10,7 +10,8 @@ use tao::event::WindowEvent;
 
 use super::HostState;
 use crate::ports::WindowOpener;
-use nerust_gui_shell::session::osd::OsdManager;
+use nerust_gui_shell::session::osd::{OsdManager, strip_pixels, strip_rows};
+use nerust_render_traits::ReservedStrip;
 
 /// In-flight error dialog: blocking `show_error` runs on a thread.
 /// `resume_after` resumes only what we paused, after the last ack.
@@ -82,6 +83,27 @@ impl HostState {
                 self.session.clear_notification_history();
                 self.sync_history_window();
             }
+        }
+    }
+
+    /// Reserved edge strips in physical pixels. Static per settings
+    /// (not per frame) so the renderer never churns surfaces.
+    pub(crate) fn reserved_strip(&self) -> ReservedStrip {
+        let settings = self.notification_settings();
+        let client_h = self
+            .window
+            .as_ref()
+            .map(|window| window.inner_size().height)
+            .unwrap_or(0);
+        let (top_rows, bottom_rows) = strip_rows(
+            settings.area_mode,
+            settings.position,
+            settings.status_position,
+            settings.status_enabled,
+        );
+        ReservedStrip {
+            top: strip_pixels(client_h, top_rows),
+            bottom: strip_pixels(client_h, bottom_rows),
         }
     }
 
