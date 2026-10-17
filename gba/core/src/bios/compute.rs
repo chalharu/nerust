@@ -490,19 +490,15 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         d = d.wrapping_add(4);
     }
     bus.end_block_batch();
-    // 実測表示 TIMER0: COPY 0x1FDE / FIXED 0x1AE8 (len=0x400, 4096byte)
-    // WRAM waitは size*0x1400/0x400 に比例。30ステップで4096byteが
-    // 終了することはなく、HLE stallもsize比例で数千cycleかかる。
+    // Display value and wait scaled by len; the HLE stall grows with len.
     let base_disp = if fixed { 0x1AE8u32 } else { 0x1FDEu32 };
     let base_wait = 0x1400u32;
     let base_len = 0x400u32;
     let disp = base_disp * len / base_len;
     let wait = base_wait * len / base_len;
-    // EWRAM-source bulk called from IWRAM costs a flat +66 over the
-    // fitted rate (mgba-suite Timing CpuSet cells, len 0x100
-    // EWRAM->EWRAM). ROM callers (mgba ROM/WRAM cells) and IWRAM-source
-    // bulk (PeterLemon display stays exactly base_disp) are excluded,
-    // like the 16-bit ROM-source +93 below.
+    // EWRAM-source bulk from an IWRAM caller costs a flat +66;
+    // ROM callers and IWRAM-source bulk are excluded, as is
+    // 16-bit ROM-source +93 below.
     let src_adjust = if (0x02000000..=0x02FFFFFF).contains(&src) && bus.swi_caller_is_iwram() {
         66
     } else {

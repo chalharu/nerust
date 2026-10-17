@@ -249,17 +249,10 @@ pub(crate) fn expand_thumb_into(
     if expand_thumb_alu_imm_mul(instr, regs, out).is_some() {
         return Some(());
     }
-    // Sequential attempts (not `or_else` chains): each link of an
-    // `or_else` chain moves the whole inline buffer through a generic
-    // `Option::or_else` instantiation, which codegen outlines as a
-    // `memcpy` call on the hot path. Leaves truncate on failure, and
-    // the base/truncate below makes that bulletproof.
-    //
-    // Nibble pre-dispatch: the leaves are class-disjoint by top nibble
-    // (each leaf rejects every other nibble in its first bit tests), so
-    // each route below is the legacy attempt order with provably-dead
-    // attempts removed — identical outcomes, fewer failed attempts on
-    // the hot path.
+    // Sequential attempts, not `or_else` chains (codegen outlines those
+    // as hot-path `memcpy`); failed leaves truncate via base below.
+    // Leaves are class-disjoint by top nibble, so dead attempts are
+    // removed with identical outcomes.
     let base = out.len();
     match instr >> 12 {
         // Shift-imm / add-sub (0x0-0x1) and ADR (0xA): ALU-rest only.

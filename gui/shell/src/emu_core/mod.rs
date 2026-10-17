@@ -116,9 +116,7 @@ impl EmuThreadPort for EmuThread {
 
 /// Clone shares the transport, metrics, frame slot, and image cache
 /// (`Arc`s); the display framebuffer is reset to empty instead of
-/// copied. Rationale: clones exist for debugger drain flights, which
-/// never touch `disp_fb` (no swap, no blit) — copying 61-164KB per
-/// drain begin would be pure waste.
+/// copied (drain flights never touch it).
 impl Clone for EmuCore {
     fn clone(&self) -> Self {
         Self {
