@@ -1,6 +1,6 @@
 //! NES debugger: read-only observation plus controlled WRAM edits.
 //!
-//! Design: `debugger-trait-design.md` v7.0 §6.5. The observer is per-use
+//! Design: `debugger-trait.md` v7.0 §6.5. The observer is per-use
 //! (built, read, dropped); `registers()` borrows a buffer filled once in
 //! `new`, since `RefCell` cannot hand out borrows (E0515).
 
