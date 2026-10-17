@@ -3,8 +3,7 @@
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use cosmic_text::{CacheKey, SwashContent};
-use nerust_render_traits::renderer::OsdLayer;
-use nerust_settings_core::model::local::NotificationPosition;
+use nerust_render_traits::renderer::{OsdAnchor, OsdLayer};
 
 /// One pill row: tag plus body in a single color.
 #[derive(Debug, Clone)]
@@ -28,8 +27,8 @@ pub struct OsdStatus {
 pub struct OsdContent {
     pub rows: Vec<OsdRow>,
     pub status: Option<OsdStatus>,
-    pub position: NotificationPosition,
-    pub status_position: NotificationPosition,
+    pub position: OsdAnchor,
+    pub status_position: OsdAnchor,
 }
 
 /// System font preference. cosmic-text shapes and rasterizes;
@@ -338,7 +337,7 @@ impl OsdRaster {
 
     /// Horizontal anchor: left edge pins to the margin, right edge
     /// pins the box against the margin.
-    fn anchor_x(anchor: NotificationPosition, w: u32, surface_w: u32) -> u32 {
+    fn anchor_x(anchor: OsdAnchor, w: u32, surface_w: u32) -> u32 {
         if anchor.is_left() {
             MARGIN
         } else {
@@ -390,12 +389,7 @@ impl OsdRaster {
     /// margin, so a Paused flip or a language change only grows the
     /// inner label pill (left anchors read "value label", right
     /// anchors "label value").
-    fn shape_status(
-        &mut self,
-        status: OsdStatus,
-        anchor: NotificationPosition,
-        font_px: u32,
-    ) -> Shaped {
+    fn shape_status(&mut self, status: OsdStatus, anchor: OsdAnchor, font_px: u32) -> Shaped {
         let label = self.shape_line(&status.label, font_px);
         let value = self.shape_line(&status.value, font_px);
         if status.label.is_empty() {
@@ -552,13 +546,13 @@ struct PlacedRow {
 
 /// Layout entry: each carries its own anchor corner for split placement.
 enum Entry {
-    Line(String, (u8, u8, u8), NotificationPosition),
-    Status(OsdStatus, NotificationPosition),
+    Line(String, (u8, u8, u8), OsdAnchor),
+    Status(OsdStatus, OsdAnchor),
 }
 
 /// Shaped entry: intrinsic width plus row height.
 struct Shaped {
-    anchor: NotificationPosition,
+    anchor: OsdAnchor,
     body: RowBody,
     rgb: (u8, u8, u8),
     w: u32,
@@ -632,8 +626,8 @@ mod tests {
                 rgb: (255, 255, 255),
             }],
             status: None,
-            position: NotificationPosition::BottomLeft,
-            status_position: NotificationPosition::TopLeft,
+            position: OsdAnchor::BottomLeft,
+            status_position: OsdAnchor::TopLeft,
         }
     }
 
@@ -687,8 +681,8 @@ mod tests {
                 rgb: (255, 255, 255),
             }],
             status: None,
-            position: NotificationPosition::BottomLeft,
-            status_position: NotificationPosition::TopLeft,
+            position: OsdAnchor::BottomLeft,
+            status_position: OsdAnchor::TopLeft,
         };
         let layer = raster.rasterize(&content, 960, 720).expect("row");
         assert_eq!(layer.height, 16 * 16 / 10 + 4);
@@ -705,7 +699,7 @@ mod tests {
         assert!(layer.x <= 8);
         assert!(layer.y + layer.height + 8 >= 720);
         let mut top_right = content();
-        top_right.position = NotificationPosition::TopRight;
+        top_right.position = OsdAnchor::TopRight;
         let upper = raster.rasterize(&top_right, 960, 720).expect("layer");
         assert!(upper.x + upper.width + 8 >= 960);
         assert!(upper.y <= 8);
@@ -744,8 +738,8 @@ mod tests {
                 rgb: (255, 255, 255),
             }],
             status: None,
-            position: super::NotificationPosition::BottomLeft,
-            status_position: super::NotificationPosition::TopLeft,
+            position: OsdAnchor::BottomLeft,
+            status_position: OsdAnchor::TopLeft,
         };
         let layer = raster.rasterize(&content, 960, 720).expect("cjk rows");
         let lit = layer
@@ -799,18 +793,18 @@ mod tests {
             return;
         }
         // Value outside (margin side), label inside, tight pill.
-        let content = |label: &str, value: &str, anchor: NotificationPosition| OsdContent {
+        let content = |label: &str, value: &str, anchor: OsdAnchor| OsdContent {
             rows: Vec::new(),
             status: Some(super::OsdStatus {
                 label: label.to_string(),
                 value: value.to_string(),
                 rgb: (200, 200, 200),
             }),
-            position: super::NotificationPosition::BottomLeft,
+            position: OsdAnchor::BottomLeft,
             status_position: anchor,
         };
-        let left = super::NotificationPosition::BottomLeft;
-        let right = super::NotificationPosition::BottomRight;
+        let left = OsdAnchor::BottomLeft;
+        let right = OsdAnchor::BottomRight;
         let label_w = raster.shape_line("Paused", 16).width;
         // Left anchor: value first, so the digit block starts at the pad.
         let running = raster
@@ -871,8 +865,8 @@ mod tests {
                 value: "60.1 fps".to_string(),
                 rgb: (200, 200, 200),
             }),
-            position: super::NotificationPosition::BottomLeft,
-            status_position: super::NotificationPosition::BottomRight,
+            position: OsdAnchor::BottomLeft,
+            status_position: OsdAnchor::BottomRight,
         };
         let running = raster.rasterize(&content(""), 960, 720).expect("layer");
         let paused = raster
@@ -903,8 +897,8 @@ mod tests {
                 value: "60.1 fps".to_string(),
                 rgb: (200, 200, 200),
             }),
-            position: super::NotificationPosition::BottomLeft,
-            status_position: super::NotificationPosition::BottomRight,
+            position: OsdAnchor::BottomLeft,
+            status_position: OsdAnchor::BottomRight,
         };
         let layer = raster.rasterize(&content, 960, 720).expect("layer");
         assert_eq!(layer.height, 16 * 16 / 10 + 4);

@@ -10,7 +10,7 @@ use tao::event::WindowEvent;
 
 use super::HostState;
 use crate::ports::WindowOpener;
-use nerust_gui_shell::session::osd::{OsdManager, strip_pixels, strip_rows};
+use nerust_gui_shell::session::osd::{strip_pixels, strip_rows};
 use nerust_render_traits::ReservedStrip;
 
 /// In-flight error dialog: blocking `show_error` runs on a thread.
@@ -227,76 +227,55 @@ impl HostState {
         renderer: &mut dyn GpuRenderer,
         size: nerust_render_traits::SurfaceSize,
     ) {
-        let (w, h) = (size.width, size.height);
-        if w == 0 || h == 0 {
-            if self.osd_layer_active {
-                renderer.set_osd_layer(None);
-                self.osd_layer_active = false;
-            }
-            return;
-        }
-        let dirty = self.osd.take_dirty();
+        use nerust_gui_shell::session::osd::{OSD_STATUS_RGB, OsdSync, OsdSyncInput};
         let settings = self.notification_settings();
         let language = self.notification_language();
         let metrics = self.session.metrics();
-        // Status rides outside the dirty flag: fps ticks, pause
-        // flips, and settings toggles must all re-rasterize now.
-        // Fps digits refresh at 2Hz through the gate; pause flips
-        // and settings changes pass through immediately.
-        // Untouched while disabled: no per-frame formatting, and the
-        // stale gate passes the first fresh value on re-enable.
-        let status_key = settings.status_enabled.then(|| {
-            let (label, fresh_value) =
-                OsdManager::status_parts(metrics.emulation_fps, metrics.paused, language);
-            let (label, value) = self
-                .osd_status_gate
-                .gate(Instant::now(), label, fresh_value);
-            (
-                label,
-                value,
-                settings.position,
-                settings.status_position,
-                settings.area_mode,
-                settings.status_area_mode,
-            )
-        });
-        let status_changed = status_key != self.osd_last_status;
-        if !dirty && !status_changed && self.osd_layer_size == Some((w, h)) {
-            return;
-        }
-        self.osd_layer_size = Some((w, h));
-        self.osd_last_status = status_key.clone();
-        let status = status_key.map(|(label, value, _, _, _, _)| nerust_render_osd::OsdStatus {
-            label,
-            value,
-            rgb: (200, 200, 200),
-        });
-        let rows = self
-            .osd
-            .rows()
-            .iter()
-            .map(|row| nerust_render_osd::OsdRow {
-                tag: row.tag.to_string(),
-                text: row.text.clone(),
-                rgb: row.rgb,
-            })
-            .collect();
-        let content = nerust_render_osd::OsdContent {
-            rows,
-            status,
-            position: settings.position,
-            status_position: settings.status_position,
-        };
-        if content.rows.is_empty() && content.status.is_none() {
-            if self.osd_layer_active {
-                renderer.set_osd_layer(None);
-                self.osd_layer_active = false;
+        let decision = self.osd_presenter.sync(
+            &mut self.osd,
+            OsdSyncInput {
+                settings: &settings,
+                language,
+                fps: metrics.emulation_fps,
+                paused: metrics.paused,
+                now: Instant::now(),
+                width: size.width,
+                height: size.height,
+            },
+        );
+        match decision {
+            OsdSync::Skip => {}
+            OsdSync::Clear => renderer.set_osd_layer(None),
+            OsdSync::Render(plan) => {
+                let rows = plan
+                    .rows
+                    .iter()
+                    .map(|row| nerust_render_osd::OsdRow {
+                        tag: row.tag.to_string(),
+                        text: row.text.clone(),
+                        rgb: row.rgb,
+                    })
+                    .collect();
+                let status = plan
+                    .status
+                    .map(|(label, value)| nerust_render_osd::OsdStatus {
+                        label,
+                        value,
+                        rgb: OSD_STATUS_RGB,
+                    });
+                let content = nerust_render_osd::OsdContent {
+                    rows,
+                    status,
+                    position: plan.position,
+                    status_position: plan.status_position,
+                };
+                renderer.set_osd_layer(self.osd_raster.rasterize(
+                    &content,
+                    plan.width,
+                    plan.height,
+                ));
             }
-            return;
         }
-        let layer = self.osd_raster.rasterize(&content, w, h);
-        self.osd_layer_active = layer.is_some();
-        renderer.set_osd_layer(layer);
     }
 
     /// Wake the loop for OSD expiry while labels are visible.

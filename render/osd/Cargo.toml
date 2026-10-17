@@ -11,4 +11,3 @@ cosmic-text.workspace = true
 fontdb.workspace = true
 log.workspace = true
 nerust_render_traits.workspace = true
-nerust_settings_core.workspace = true

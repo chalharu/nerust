@@ -3762,7 +3762,6 @@ dependencies = [
  "fontdb",
  "log",
  "nerust_render_traits",
- "nerust_settings_core",
 ]
 
 [[package]]

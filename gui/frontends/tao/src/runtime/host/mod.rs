@@ -131,23 +131,11 @@ pub(crate) struct HostState {
     /// OSD notification display state plus the history window.
     pub(super) osd: OsdManager,
     pub(super) osd_raster: nerust_render_osd::OsdRaster,
-    pub(super) osd_layer_size: Option<(u32, u32)>,
-    pub(super) osd_layer_active: bool,
-    /// Last rasterized status readout. Transient rows ride the
-    /// `OsdManager` dirty flag, but the live status (fps digits,
-    /// pause label, on/off, corners) changes without ever touching
-    /// it — without this key the layer would freeze until the next
-    /// notification.
-    pub(super) osd_last_status: Option<(
-        String,
-        String,
-        nerust_settings_core::model::local::NotificationPosition,
-        nerust_settings_core::model::local::NotificationPosition,
-        nerust_settings_core::model::local::NotificationAreaMode,
-        nerust_settings_core::model::local::NotificationAreaMode,
-    )>,
-    /// Throttles fps digits to 2Hz; pause flips pass through.
-    pub(super) osd_status_gate: nerust_gui_shell::session::osd::StatusGate,
+    /// Owns the whole OSD sync fingerprint (dirty flag, status
+    /// gate, surface size, layer liveness). The per-frame decision
+    /// procedure lives in shell [`OsdPresenter`](nerust_gui_shell::session::osd::OsdPresenter);
+    /// this host only rasterizes the resulting plan.
+    pub(super) osd_presenter: nerust_gui_shell::session::osd::OsdPresenter,
     /// Last applied edge strip. The reservation only changes with
     /// settings or surface size, so unchanged strips skip the
     /// renderer call (same gate pattern as the gtk frontend).
@@ -223,10 +211,7 @@ impl HostState {
             debug: DebugWindows::new(),
             osd: OsdManager::new(),
             osd_raster: nerust_render_osd::OsdRaster::new(),
-            osd_layer_size: None,
-            osd_layer_active: false,
-            osd_last_status: None,
-            osd_status_gate: nerust_gui_shell::session::osd::StatusGate::new(),
+            osd_presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
             osd_last_strip: nerust_render_traits::ReservedStrip::default(),
             modal_flight: None,
             resume_after_modal: false,
