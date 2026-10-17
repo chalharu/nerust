@@ -368,14 +368,20 @@ impl OsdManager {
         }
     }
 
-    pub fn status_text(fps: f32, paused: bool, language: AppLanguage) -> String {
+    /// Status readout split into label and value. Frontends lay out
+    /// the label left and the value right-aligned in a fixed-width
+    /// pill, so the digits never shift when the label appears,
+    /// disappears, or changes language.
+    pub fn status_parts(fps: f32, paused: bool, language: AppLanguage) -> (String, String) {
+        let value = format!("{fps:.1} fps");
         if paused {
-            match language {
-                AppLanguage::Japanese => format!("一時停止中 {fps:.1} fps"),
-                _ => format!("Paused {fps:.1} fps"),
-            }
+            let label = match language {
+                AppLanguage::Japanese => "一時停止中".to_string(),
+                _ => "Paused".to_string(),
+            };
+            (label, value)
         } else {
-            format!("{fps:.1} fps")
+            (String::new(), value)
         }
     }
 }
@@ -738,16 +744,16 @@ mod tests {
     #[test]
     fn status_text_names_pause_state() {
         assert_eq!(
-            OsdManager::status_text(60.0, true, AppLanguage::English),
-            "Paused 60.0 fps"
+            OsdManager::status_parts(60.0, true, AppLanguage::English),
+            ("Paused".to_string(), "60.0 fps".to_string())
         );
         assert_eq!(
-            OsdManager::status_text(60.0, true, AppLanguage::Japanese),
-            "一時停止中 60.0 fps"
+            OsdManager::status_parts(60.0, true, AppLanguage::Japanese),
+            ("一時停止中".to_string(), "60.0 fps".to_string())
         );
         assert_eq!(
-            OsdManager::status_text(59.9, false, AppLanguage::English),
-            "59.9 fps"
+            OsdManager::status_parts(59.9, false, AppLanguage::English),
+            (String::new(), "59.9 fps".to_string())
         );
     }
 
