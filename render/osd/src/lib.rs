@@ -234,12 +234,20 @@ impl OsdRaster {
         surface_h: u32,
     ) -> Option<Vec<PlacedRow>> {
         let same_corner = content.position == content.status_position;
-        let transient_top = is_top(content.position);
-        let status_top = is_top(content.status_position);
+        let transient_top = content.position.is_top();
+        let status_top = content.status_position.is_top();
         // Each entry carries its own anchor corner for split placement.
         enum Entry {
             Line(String, (u8, u8, u8), NotificationPosition),
             Status(OsdStatus, NotificationPosition),
+        }
+        /// Shaped entry: intrinsic width plus row height.
+        struct Shaped {
+            anchor: NotificationPosition,
+            body: RowBody,
+            rgb: (u8, u8, u8),
+            w: u32,
+            row_h: u32,
         }
         let mut top: Vec<Entry> = Vec::new();
         let mut bottom: Vec<Entry> = Vec::new();
@@ -273,86 +281,130 @@ impl OsdRaster {
             return None;
         }
         let mut boxes = Vec::new();
+        // Shape one entry: intrinsic width plus row height.
+        let shape = |entry: Entry, raster: &mut Self| -> Shaped {
+            match entry {
+                Entry::Line(line, rgb, anchor) => {
+                    let span = raster.shape_line(&line, font_px);
+                    let row_h = raster.row_height(font_px, span.ascent, span.descent);
+                    let w = span.width.ceil() as u32 + PILL_PAD_X * 2;
+                    let body = RowBody::Line { span };
+                    Shaped {
+                        anchor,
+                        body,
+                        rgb,
+                        w,
+                        row_h,
+                    }
+                }
+                Entry::Status(status, anchor) => {
+                    let label = raster.shape_line(&status.label, font_px);
+                    let value = raster.shape_line(&status.value, font_px);
+                    if status.label.is_empty() {
+                        // Solo value pill, as before.
+                        let row_h = raster.row_height(font_px, value.ascent, value.descent);
+                        let w = value.width.ceil() as u32 + PILL_PAD_X * 2;
+                        let body = RowBody::Line { span: value };
+                        Shaped {
+                            anchor,
+                            body,
+                            rgb: status.rgb,
+                            w,
+                            row_h,
+                        }
+                    } else {
+                        let ascent = label.ascent.max(value.ascent);
+                        let descent = label.descent.min(value.descent);
+                        let row_h = raster.row_height(font_px, ascent, descent);
+                        // Value always on the outside (margin side) so the
+                        // digits never shift: left anchors read
+                        // "value label", right anchors "label value".
+                        // Either way the value pill's outer edge pins to
+                        // the margin, so a Paused flip or a language
+                        // change only grows the inner label pill.
+                        let outer_left = anchor.is_left();
+                        let (outer, inner) =
+                            (StatusSpan { span: value }, StatusSpan { span: label });
+                        let outer_w = outer.span.width.ceil() as u32 + PILL_PAD_X * 2;
+                        let inner_w = inner.span.width.ceil() as u32 + PILL_PAD_X * 2;
+                        let w = outer_w + ROW_GAP + inner_w;
+                        let body = RowBody::Pair {
+                            outer,
+                            inner,
+                            ascent,
+                            descent,
+                            outer_left,
+                        };
+                        Shaped {
+                            anchor,
+                            body,
+                            rgb: status.rgb,
+                            w,
+                            row_h,
+                        }
+                    }
+                }
+            }
+        };
         let mut place = |list: Vec<Entry>, from_top: bool, raster: &mut Self| {
+            let mut shaped: Vec<Shaped> =
+                list.into_iter().map(|entry| shape(entry, raster)).collect();
+            if !from_top {
+                shaped.reverse();
+            }
             let mut cursor = if from_top {
                 MARGIN
             } else {
                 surface_h.saturating_sub(MARGIN)
             };
-            let mut ordered = list;
-            if !from_top {
-                ordered.reverse();
-            }
-            for entry in ordered {
-                let (anchor, body, rgb, w, row_h) = match entry {
-                    Entry::Line(line, rgb, anchor) => {
-                        let span = raster.shape_line(&line, font_px);
-                        let row_h = raster.row_height(font_px, span.ascent, span.descent);
-                        let w = span.width.ceil() as u32 + PILL_PAD_X * 2;
-                        let body = RowBody::Line { span };
-                        (anchor, body, rgb, w, row_h)
-                    }
-                    Entry::Status(status, anchor) => {
-                        let label = raster.shape_line(&status.label, font_px);
-                        let value = raster.shape_line(&status.value, font_px);
-                        if status.label.is_empty() {
-                            // Solo value pill, as before.
-                            let row_h = raster.row_height(font_px, value.ascent, value.descent);
-                            let w = value.width.ceil() as u32 + PILL_PAD_X * 2;
-                            let body = RowBody::Line { span: value };
-                            (anchor, body, status.rgb, w, row_h)
+            // Opposite sides on the same edge share one row: a status on
+            // the right no longer stacks under a notification on the
+            // left, it sits beside it at the same height.
+            while !shaped.is_empty() {
+                let pair =
+                    shaped.len() > 1 && shaped[0].anchor.is_left() != shaped[1].anchor.is_left();
+                let end = if pair { 2 } else { 1 };
+                let row_h = shaped[..end]
+                    .iter()
+                    .map(|entry| entry.row_h)
+                    .max()
+                    .unwrap_or(0);
+                if from_top {
+                    for entry in shaped.drain(..end) {
+                        let x = if entry.anchor.is_left() {
+                            MARGIN
                         } else {
-                            let ascent = label.ascent.max(value.ascent);
-                            let descent = label.descent.min(value.descent);
-                            let row_h = raster.row_height(font_px, ascent, descent);
-                            // Value always on the outside (margin side) so the
-                            // digits never shift: left anchors read
-                            // "value label", right anchors "label value".
-                            let outer_left = matches!(
-                                anchor,
-                                NotificationPosition::TopLeft | NotificationPosition::BottomLeft
-                            );
-                            let (outer, inner) = if outer_left {
-                                (StatusSpan { span: value }, StatusSpan { span: label })
-                            } else {
-                                (StatusSpan { span: label }, StatusSpan { span: value })
-                            };
-                            let outer_w = outer.span.width.ceil() as u32 + PILL_PAD_X * 2;
-                            let inner_w = inner.span.width.ceil() as u32 + PILL_PAD_X * 2;
-                            let w = outer_w + ROW_GAP + inner_w;
-                            let body = RowBody::Pair {
-                                outer,
-                                inner,
-                                ascent,
-                                descent,
-                                outer_left,
-                            };
-                            (anchor, body, status.rgb, w, row_h)
-                        }
+                            surface_w.saturating_sub(entry.w + MARGIN)
+                        };
+                        boxes.push(PlacedRow {
+                            x,
+                            y: cursor,
+                            w: entry.w,
+                            h: entry.row_h,
+                            rgb: entry.rgb,
+                            body: entry.body,
+                        });
                     }
-                };
-                let x = match anchor {
-                    NotificationPosition::TopLeft | NotificationPosition::BottomLeft => MARGIN,
-                    _ => surface_w.saturating_sub(w + MARGIN),
-                };
-                let y = if from_top {
-                    let y = cursor;
                     cursor += row_h + ROW_GAP;
-                    y
                 } else {
-                    cursor = cursor.saturating_sub(row_h);
-                    let y = cursor;
-                    cursor = cursor.saturating_sub(ROW_GAP);
-                    y
-                };
-                boxes.push(PlacedRow {
-                    x,
-                    y,
-                    w,
-                    h: row_h,
-                    rgb,
-                    body,
-                });
+                    let row_bottom = cursor;
+                    for entry in shaped.drain(..end) {
+                        let x = if entry.anchor.is_left() {
+                            MARGIN
+                        } else {
+                            surface_w.saturating_sub(entry.w + MARGIN)
+                        };
+                        boxes.push(PlacedRow {
+                            x,
+                            y: row_bottom.saturating_sub(entry.row_h),
+                            w: entry.w,
+                            h: entry.row_h,
+                            rgb: entry.rgb,
+                            body: entry.body,
+                        });
+                    }
+                    cursor = row_bottom.saturating_sub(row_h).saturating_sub(ROW_GAP);
+                }
             }
         };
         place(top, true, self);
@@ -493,13 +545,6 @@ enum RowBody {
 
 struct StatusSpan {
     span: ShapedSpan,
-}
-
-fn is_top(position: NotificationPosition) -> bool {
-    matches!(
-        position,
-        NotificationPosition::TopLeft | NotificationPosition::TopRight
-    )
 }
 
 /// Baseline that centers the content block in the pill. The pill is
@@ -757,13 +802,79 @@ mod tests {
         assert_eq!(paused_left.width, expect);
         assert_eq!(paused_right.width, expect);
         // The margin between the pills stays transparent: a full-height
-        // seam with zero alpha separates value and label.
-        let seam_x = value_w.ceil() as u32 + super::PILL_PAD_X * 2 + super::ROW_GAP / 2;
+        // seam with zero alpha separates value and label. Left anchors
+        // read "value label", right anchors "label value" (the value
+        // pill stays on the margin side either way).
+        let seam_left = value_w.ceil() as u32 + super::PILL_PAD_X * 2 + super::ROW_GAP / 2;
         for y in 0..paused_left.height {
             let alpha = paused_left.rgba
-                [(y as usize * paused_left.width as usize + seam_x as usize) * 4 + 3];
+                [(y as usize * paused_left.width as usize + seam_left as usize) * 4 + 3];
             assert_eq!(alpha, 0, "seam must be transparent at y={y}");
         }
+        let seam_right = label_w.ceil() as u32 + super::PILL_PAD_X * 2 + super::ROW_GAP / 2;
+        for y in 0..paused_right.height {
+            let alpha = paused_right.rgba
+                [(y as usize * paused_right.width as usize + seam_right as usize) * 4 + 3];
+            assert_eq!(alpha, 0, "seam must be transparent at y={y}");
+        }
+    }
+
+    #[test]
+    fn status_right_pins_value_to_margin() {
+        let mut raster = OsdRaster::new();
+        if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
+            return;
+        }
+        // Right anchors keep the value pill on the margin side: the
+        // layer's outer edge never moves when Paused appears, so the
+        // fps digits hold still instead of sliding with the label.
+        let content = |label: &str| OsdContent {
+            rows: Vec::new(),
+            status: Some(super::OsdStatus {
+                label: label.to_string(),
+                value: "60.1 fps".to_string(),
+                rgb: (200, 200, 200),
+            }),
+            position: super::NotificationPosition::BottomLeft,
+            status_position: super::NotificationPosition::BottomRight,
+        };
+        let running = raster.rasterize(&content(""), 960, 720).expect("layer");
+        let paused = raster
+            .rasterize(&content("Paused"), 960, 720)
+            .expect("layer");
+        assert_eq!(running.x + running.width + super::MARGIN, 960);
+        assert_eq!(paused.x + paused.width + super::MARGIN, 960);
+    }
+
+    #[test]
+    fn opposite_sides_share_one_row() {
+        let mut raster = OsdRaster::new();
+        if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
+            return;
+        }
+        // Notification bottom-left plus status bottom-right: one row,
+        // the status sits beside the transient instead of stacking
+        // under it, spanning margin to margin.
+        let content = OsdContent {
+            rows: vec![OsdRow {
+                tag: "[INFO]".to_string(),
+                text: "Paused".to_string(),
+                rgb: (255, 255, 255),
+            }],
+            status: Some(super::OsdStatus {
+                label: String::new(),
+                value: "60.1 fps".to_string(),
+                rgb: (200, 200, 200),
+            }),
+            position: super::NotificationPosition::BottomLeft,
+            status_position: super::NotificationPosition::BottomRight,
+        };
+        let layer = raster.rasterize(&content, 960, 720).expect("layer");
+        assert_eq!(layer.height, 16 * 16 / 10 + 4);
+        assert!(layer.x <= super::MARGIN);
+        assert_eq!(layer.x + layer.width + super::MARGIN, 960);
     }
 
     #[test]
