@@ -298,6 +298,31 @@ pub enum NotificationPosition {
     BottomRight,
 }
 
+impl NotificationPosition {
+    /// Top edge (top-left/top-right) vs bottom edge.
+    pub fn is_top(self) -> bool {
+        matches!(
+            self,
+            NotificationPosition::TopLeft | NotificationPosition::TopRight
+        )
+    }
+
+    /// Left side (top-left/bottom-left): the value pill pins here.
+    pub fn is_left(self) -> bool {
+        matches!(
+            self,
+            NotificationPosition::TopLeft | NotificationPosition::BottomLeft
+        )
+    }
+
+    /// Same horizontal band (both top or both bottom): the two
+    /// readouts share one edge, so one area mode governs both and
+    /// opposite sides can share a single row.
+    pub fn same_edge(self, other: Self) -> bool {
+        self.is_top() == other.is_top()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationAreaMode {

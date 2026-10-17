@@ -451,6 +451,10 @@ impl StatusGate {
 /// Strip rows per edge from transient + status corners.
 /// Same edge, different sides share one strip; same corner stacks two.
 /// Each readout reserves only under its own area mode.
+/// When both readouts share one horizontal band (both top or both
+/// bottom), the transient area mode governs the edge: the status
+/// picker follows it in the UI, so an overlay status never dangles
+/// half inside a strip the transient reserved.
 pub fn strip_rows(
     transient_mode: NotificationAreaMode,
     transient: NotificationPosition,
@@ -458,6 +462,11 @@ pub fn strip_rows(
     status: NotificationPosition,
     status_on: bool,
 ) -> (u32, u32) {
+    let status_mode = if status_on && transient.same_edge(status) {
+        transient_mode
+    } else {
+        status_mode
+    };
     fn edge(position: NotificationPosition) -> bool {
         matches!(
             position,
@@ -1018,6 +1027,24 @@ mod tests {
         assert_eq!(
             super::strip_rows(M::Strip, P::BottomLeft, M::Strip, P::TopLeft, false),
             (0, 1)
+        );
+        // Same band: the transient area mode governs the edge, so the
+        // status picker cannot dangle an overlay inside a strip.
+        assert_eq!(
+            super::strip_rows(M::Strip, P::BottomLeft, M::Overlay, P::BottomLeft, true),
+            (0, 2)
+        );
+        assert_eq!(
+            super::strip_rows(M::Overlay, P::BottomLeft, M::Strip, P::BottomLeft, true),
+            (0, 0)
+        );
+        assert_eq!(
+            super::strip_rows(M::Strip, P::BottomLeft, M::Overlay, P::BottomRight, true),
+            (0, 1)
+        );
+        assert_eq!(
+            super::strip_rows(M::Overlay, P::BottomLeft, M::Strip, P::BottomRight, true),
+            (0, 0)
         );
     }
 

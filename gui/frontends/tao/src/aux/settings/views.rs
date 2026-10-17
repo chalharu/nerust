@@ -371,12 +371,22 @@ impl SettingsAppState {
                     pick_selected(&positions, &view.status_position),
                     Message::SetStatusPosition,
                 ),
-                labeled_pick_list(
-                    ui_text(language, UiText::NotificationStatusAreaMode),
-                    areas.clone(),
-                    pick_selected(&areas, &view.status_area_mode),
-                    Message::SetStatusAreaMode,
-                ),
+                if view.position.same_edge(view.status_position) {
+                    // Same band: the transient area mode governs the
+                    // edge, so no second picker (an overlay status
+                    // would dangle half inside the reserved strip).
+                    labeled_note(
+                        ui_text(language, UiText::NotificationStatusAreaMode),
+                        ui_text(language, UiText::NotificationStatusAreaFollows),
+                    )
+                } else {
+                    labeled_pick_list(
+                        ui_text(language, UiText::NotificationStatusAreaMode),
+                        areas.clone(),
+                        pick_selected(&areas, &view.status_area_mode),
+                        Message::SetStatusAreaMode,
+                    )
+                },
             ],
         );
         column![info, warning, error, display, status]
@@ -583,6 +593,18 @@ fn labeled_pick_list<'a, T: Clone + PartialEq + Eq + 'static>(
         // Stretch to the pane: Shrink rows strand the fixed window
         // (General shows two short rows in a 960px frame otherwise).
         pick_list(options, selected, on_select).width(Length::Fill)
+    ]
+    .spacing(12)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Static note in place of a disabled picker: same label column,
+/// dimmed trailing text instead of a control.
+fn labeled_note<'a>(label: &'static str, note: &'static str) -> El<'a> {
+    row![
+        text(label.to_string()).width(Length::Fixed(220.0)),
+        text(note.to_string()).size(13).width(Length::Fill)
     ]
     .spacing(12)
     .align_y(Alignment::Center)

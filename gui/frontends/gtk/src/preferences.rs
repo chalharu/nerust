@@ -380,6 +380,11 @@ impl PreferencesBinding {
             .set_active_id(Some(map_area_id(view.area_mode)));
         n.status_area_combo
             .set_active_id(Some(map_area_id(view.status_area_mode)));
+        // Same band: the transient area mode governs the edge, so the
+        // status picker is insensitive (an overlay status would dangle
+        // half inside the reserved strip).
+        n.status_area_combo
+            .set_sensitive(!view.position.same_edge(view.status_position));
     }
 
     fn refresh_audio(&self, view: &AudioView) {
