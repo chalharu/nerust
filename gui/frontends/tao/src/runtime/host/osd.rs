@@ -243,10 +243,11 @@ impl HostState {
         let language = self.notification_language();
         let metrics = self.session.metrics();
         let status = settings.status_enabled.then(|| {
-            let text = OsdManager::status_text(metrics.emulation_fps, metrics.paused, language);
-            nerust_render_osd::OsdRow {
-                tag: String::new(),
-                text,
+            let (label, value) =
+                OsdManager::status_parts(metrics.emulation_fps, metrics.paused, language);
+            nerust_render_osd::OsdStatus {
+                label,
+                value,
                 rgb: (200, 200, 200),
             }
         });

@@ -134,10 +134,10 @@ impl GtkOsd {
         }
         self.layer_size = Some((w, h));
         let status = settings.status_enabled.then(|| {
-            let text = OsdManager::status_text(fps, paused, language);
-            nerust_render_osd::OsdRow {
-                tag: String::new(),
-                text,
+            let (label, value) = OsdManager::status_parts(fps, paused, language);
+            nerust_render_osd::OsdStatus {
+                label,
+                value,
                 rgb: (200, 200, 200),
             }
         });

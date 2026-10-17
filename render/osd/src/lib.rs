@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use ab_glyph::{Font, FontArc, Glyph, PxScale};
+use ab_glyph::{Font, FontArc, Glyph, GlyphId, PxScale};
 use nerust_render_traits::renderer::OsdLayer;
 use nerust_settings_core::model::local::NotificationPosition;
 
@@ -15,11 +15,20 @@ pub struct OsdRow {
     pub rgb: (u8, u8, u8),
 }
 
+/// Status readout: label on the left, value right-aligned in a
+/// fixed-width pill so digits never shift.
+#[derive(Debug, Clone)]
+pub struct OsdStatus {
+    pub label: String,
+    pub value: String,
+    pub rgb: (u8, u8, u8),
+}
+
 /// Raster input: transient rows plus optional status, with corners.
 #[derive(Debug, Clone, Default)]
 pub struct OsdContent {
     pub rows: Vec<OsdRow>,
-    pub status: Option<OsdRow>,
+    pub status: Option<OsdStatus>,
     pub position: NotificationPosition,
     pub status_position: NotificationPosition,
 }
@@ -181,15 +190,25 @@ struct GlyphKey {
     font: u32,
     glyph: u16,
     px: u32,
+    qfrac: u8,
 }
 
 struct CachedGlyph {
     width: u32,
     height: u32,
-    dx: i32,
-    dy: i32,
-    advance: f32,
+    dx: f32,
+    dy: f32,
     alpha: Vec<u8>,
+}
+
+/// One laid-out glyph: absolute fractional pen plus quantized
+/// subpixel shift. Measure and draw share the run, so the box
+/// always fits the text.
+struct RunGlyph {
+    font: usize,
+    glyph: u16,
+    pen_x: f32,
+    qfrac: u8,
 }
 
 /// Rasterizer with a glyph cache. Pixels are device pixels.
@@ -238,15 +257,40 @@ impl OsdRaster {
         let mut rgba = vec![0u8; width as usize * height as usize * 4];
         for b in &boxes {
             draw_pill(&mut rgba, width, b.x - min_x, b.y - min_y, b.w, b.h);
-            self.draw_text(
-                &mut rgba,
-                width,
-                &b.line,
-                b.x - min_x + PILL_PAD_X,
-                b.y - min_y,
-                font_px,
-                b.rgb,
-            );
+            let base_y = b.y - min_y;
+            match &b.body {
+                RowBody::Line { run, ascent } => {
+                    let baseline = base_y as f32 + PILL_PAD_Y as f32 + ascent;
+                    self.draw_run(
+                        &mut rgba,
+                        width,
+                        run,
+                        (b.x - min_x + PILL_PAD_X) as f32,
+                        baseline,
+                        font_px,
+                        b.rgb,
+                    );
+                }
+                RowBody::Status {
+                    left,
+                    right,
+                    ascent,
+                } => {
+                    let baseline = base_y as f32 + PILL_PAD_Y as f32 + ascent;
+                    let base_x = (b.x - min_x + PILL_PAD_X) as f32;
+                    self.draw_run(
+                        &mut rgba, width, &left.run, base_x, baseline, font_px, b.rgb,
+                    );
+                    // Right span starts after the left span plus the
+                    // shared gap, so no separator is drawn twice.
+                    let gap = self.layout_run(" ", font_px).1.max(1.0);
+                    let empty = left.run.is_empty() || right.run.is_empty();
+                    let right_x = base_x + left.width + if empty { 0.0 } else { gap };
+                    self.draw_run(
+                        &mut rgba, width, &right.run, right_x, baseline, font_px, b.rgb,
+                    );
+                }
+            }
         }
         Some(OsdLayer {
             x: min_x,
@@ -267,11 +311,15 @@ impl OsdRaster {
         let same_corner = content.position == content.status_position;
         let transient_top = is_top(content.position);
         let status_top = is_top(content.status_position);
-        // Each line carries its own anchor corner for split placement.
-        let mut top: Vec<(String, (u8, u8, u8), NotificationPosition)> = Vec::new();
-        let mut bottom: Vec<(String, (u8, u8, u8), NotificationPosition)> = Vec::new();
+        // Each entry carries its own anchor corner for split placement.
+        enum Entry {
+            Line(String, (u8, u8, u8), NotificationPosition),
+            Status(OsdStatus, NotificationPosition),
+        }
+        let mut top: Vec<Entry> = Vec::new();
+        let mut bottom: Vec<Entry> = Vec::new();
         for row in &content.rows {
-            let entry = (
+            let entry = Entry::Line(
                 format!("{} {}", row.tag, row.text),
                 row.rgb,
                 content.position,
@@ -283,7 +331,7 @@ impl OsdRaster {
             }
         }
         if let Some(status) = content.status.as_ref() {
-            let entry = (status.text.clone(), status.rgb, content.status_position);
+            let entry = Entry::Status(status.clone(), content.status_position);
             if same_corner {
                 if transient_top {
                     top.insert(0, entry);
@@ -299,10 +347,10 @@ impl OsdRaster {
         if top.is_empty() && bottom.is_empty() {
             return None;
         }
+        // Space advance doubles as the label/value separator.
+        let gap = self.layout_run(" ", font_px).1.max(1.0);
         let mut boxes = Vec::new();
-        let mut place = |list: Vec<(String, (u8, u8, u8), NotificationPosition)>,
-                         from_top: bool,
-                         raster: &mut Self| {
+        let mut place = |list: Vec<Entry>, from_top: bool, raster: &mut Self| {
             let mut cursor = if from_top {
                 MARGIN
             } else {
@@ -312,9 +360,66 @@ impl OsdRaster {
             if !from_top {
                 ordered.reverse();
             }
-            for (line, rgb, anchor) in ordered {
-                let (text_w, row_h) = raster.measure(&line, font_px);
-                let w = text_w + PILL_PAD_X * 2;
+            for entry in ordered {
+                let (anchor, body, rgb, w, row_h) = match entry {
+                    Entry::Line(line, rgb, anchor) => {
+                        let (run, width, ascent, descent) = raster.layout_run(&line, font_px);
+                        let row_h = raster.row_height(font_px, ascent, descent);
+                        let w = width.ceil() as u32 + PILL_PAD_X * 2;
+                        let body = RowBody::Line { run, ascent };
+                        (anchor, body, rgb, w, row_h)
+                    }
+                    Entry::Status(status, anchor) => {
+                        let (label_run, label_w, ascent_l, _) =
+                            raster.layout_run(&status.label, font_px);
+                        let (value_run, value_w, ascent_v, descent_v) =
+                            raster.layout_run(&status.value, font_px);
+                        let ascent = ascent_l.max(ascent_v);
+                        let row_h = raster.row_height(font_px, ascent, descent_v);
+                        // Value always on the outside (margin side) so the
+                        // digits never shift: left anchors read
+                        // "value label", right anchors "label value".
+                        let outer_left = matches!(
+                            anchor,
+                            NotificationPosition::TopLeft | NotificationPosition::BottomLeft
+                        );
+                        let (left, right) = if outer_left {
+                            (
+                                StatusSpan {
+                                    run: value_run,
+                                    width: value_w,
+                                },
+                                StatusSpan {
+                                    run: label_run,
+                                    width: label_w,
+                                },
+                            )
+                        } else {
+                            (
+                                StatusSpan {
+                                    run: label_run,
+                                    width: label_w,
+                                },
+                                StatusSpan {
+                                    run: value_run,
+                                    width: value_w,
+                                },
+                            )
+                        };
+                        let middle = if status.label.is_empty() || status.value.is_empty() {
+                            0.0
+                        } else {
+                            gap
+                        };
+                        let w = (left.width + middle + right.width).ceil() as u32 + PILL_PAD_X * 2;
+                        let body = RowBody::Status {
+                            left,
+                            right,
+                            ascent,
+                        };
+                        (anchor, body, status.rgb, w, row_h)
+                    }
+                };
                 let x = match anchor {
                     NotificationPosition::TopLeft | NotificationPosition::BottomLeft => MARGIN,
                     _ => surface_w.saturating_sub(w + MARGIN),
@@ -334,8 +439,8 @@ impl OsdRaster {
                     y,
                     w,
                     h: row_h,
-                    line,
                     rgb,
+                    body,
                 });
             }
         };
@@ -344,63 +449,97 @@ impl OsdRaster {
         Some(boxes)
     }
 
-    fn measure(&mut self, line: &str, font_px: u32) -> (u32, u32) {
-        let mut width = 0f32;
+    /// Lay out one line into absolute-pen glyphs with kerning.
+    /// Empty outlines (spaces) still advance the pen; the pen stays
+    /// fractional and each glyph carries its own quantized subpixel
+    /// shift, so spacing never jitters.
+    fn layout_run(&mut self, line: &str, font_px: u32) -> (Vec<RunGlyph>, f32, f32, f32) {
+        let mut run = Vec::new();
+        let mut pen = 0f32;
         let mut ascent = 0f32;
         let mut descent = 0f32;
+        let mut prev: Option<(usize, u16)> = None;
         for c in line.chars() {
             let Some(index) = self.fonts.font_for(c) else {
+                prev = None;
                 continue;
             };
             let font = &self.fonts.loaded[index];
             let units = font.units_per_em().unwrap_or(2048.0);
             let factor = font_px as f32 / units;
-            width += font.h_advance_unscaled(font.glyph_id(c)) * factor;
+            let id = font.glyph_id(c);
+            if let Some((pi, pid)) = prev
+                && pi == index
+            {
+                pen += font.kern_unscaled(GlyphId(pid), id) * factor;
+            }
+            let frac = pen - pen.floor();
+            let qfrac = ((frac * 4.0).round() as i32).clamp(0, 4) as u8;
+            run.push(RunGlyph {
+                font: index,
+                glyph: id.0,
+                pen_x: pen,
+                qfrac,
+            });
+            pen += font.h_advance_unscaled(id) * factor;
             ascent = ascent.max(font.ascent_unscaled() * factor);
             descent = descent.min(font.descent_unscaled() * factor);
+            prev = Some((index, id.0));
         }
-        let content_h = (ascent - descent).ceil().max(1.0) as u32;
-        let row_h = (font_px * 16 / 10 + PILL_PAD_Y * 2).max(content_h + PILL_PAD_Y * 2);
-        (width.ceil().max(1.0) as u32, row_h)
+        (run, pen, ascent, descent)
     }
 
+    fn row_height(&self, font_px: u32, ascent: f32, descent: f32) -> u32 {
+        let content_h = (ascent - descent).ceil().max(1.0) as u32;
+        (font_px * 16 / 10 + PILL_PAD_Y * 2).max(content_h + PILL_PAD_Y * 2)
+    }
+
+    /// Blit one laid-out run at an integer base position.
     #[allow(clippy::too_many_arguments)]
-    fn draw_text(
+    fn draw_run(
         &mut self,
         rgba: &mut [u8],
         stride_w: u32,
-        line: &str,
-        x0: u32,
-        y0: u32,
+        run: &[RunGlyph],
+        x_base: f32,
+        baseline: f32,
         font_px: u32,
         rgb: (u8, u8, u8),
     ) {
         let scale = PxScale::from(font_px as f32);
-        let Some(primary) = self.fonts.loaded.first() else {
-            return;
-        };
-        let units = primary.units_per_em().unwrap_or(2048.0);
-        let ascent = primary.ascent_unscaled() * font_px as f32 / units;
-        let baseline = y0 as f32 + PILL_PAD_Y as f32 + ascent;
-        let mut pen = x0 as f32;
-        for c in line.chars() {
-            let Some(index) = self.fonts.font_for(c) else {
-                continue;
-            };
+        for g in run {
             let key = GlyphKey {
-                font: index as u32,
-                glyph: self.fonts.loaded[index].glyph_id(c).0,
+                font: g.font as u32,
+                glyph: g.glyph,
                 px: font_px,
+                qfrac: g.qfrac,
             };
-            if !self.glyphs.contains_key(&key) {
-                let font = &self.fonts.loaded[index];
-                let id = font.glyph_id(c);
-                let glyph = Glyph {
+            let cached = if let Some(cached) = self.glyphs.get(&key) {
+                cached
+            } else {
+                let font = &self.fonts.loaded[g.font];
+                let id = GlyphId(g.glyph);
+                let outlined = font.outline_glyph(Glyph {
                     id,
                     scale,
-                    position: ab_glyph::Point { x: 0.0, y: 0.0 },
-                };
-                let Some(outlined) = font.outline_glyph(glyph) else {
+                    position: ab_glyph::Point {
+                        x: f32::from(g.qfrac) / 4.0,
+                        y: 0.0,
+                    },
+                });
+                let Some(outlined) = outlined else {
+                    // No outline (e.g. space): advance already counted
+                    // in the run, so record an empty slot and move on.
+                    self.glyphs.insert(
+                        key,
+                        CachedGlyph {
+                            width: 0,
+                            height: 0,
+                            dx: 0.0,
+                            dy: 0.0,
+                            alpha: Vec::new(),
+                        },
+                    );
                     continue;
                 };
                 let bounds = outlined.px_bounds();
@@ -410,32 +549,28 @@ impl OsdRaster {
                 outlined.draw(|x, y, coverage| {
                     alpha[y as usize * w as usize + x as usize] = (coverage * 255.0).round() as u8;
                 });
-                let units = font.units_per_em().unwrap_or(2048.0);
-                let advance = font.h_advance_unscaled(id) * font_px as f32 / units;
                 self.glyphs.insert(
                     key,
                     CachedGlyph {
                         width: w,
                         height: h,
-                        dx: bounds.min.x.round() as i32,
-                        dy: bounds.min.y.round() as i32,
-                        advance,
+                        dx: bounds.min.x,
+                        dy: bounds.min.y,
                         alpha,
                     },
                 );
-            }
-            let g = &self.glyphs[&key];
+                &self.glyphs[&key]
+            };
             blit_glyph(
                 rgba,
                 stride_w,
-                &g.alpha,
-                g.width,
-                g.height,
-                (pen + g.dx as f32).round() as i32,
-                (baseline + g.dy as f32).round() as i32,
+                &cached.alpha,
+                cached.width,
+                cached.height,
+                (x_base + g.pen_x.floor() + cached.dx).round() as i32,
+                (baseline + cached.dy).round() as i32,
                 rgb,
             );
-            pen += g.advance;
         }
     }
 }
@@ -451,8 +586,25 @@ struct PlacedRow {
     y: u32,
     w: u32,
     h: u32,
-    line: String,
     rgb: (u8, u8, u8),
+    body: RowBody,
+}
+
+enum RowBody {
+    Line {
+        run: Vec<RunGlyph>,
+        ascent: f32,
+    },
+    Status {
+        left: StatusSpan,
+        right: StatusSpan,
+        ascent: f32,
+    },
+}
+
+struct StatusSpan {
+    run: Vec<RunGlyph>,
+    width: f32,
 }
 
 fn is_top(position: NotificationPosition) -> bool {
@@ -585,8 +737,18 @@ mod tests {
             return;
         }
         // 720p: font 16px, row 16*16/10+4 = 29.
-        let (_, row_h) = raster.measure("[INFO] Paused", 16);
-        assert_eq!(row_h, 16 * 16 / 10 + 4);
+        let content = OsdContent {
+            rows: vec![OsdRow {
+                tag: "[INFO]".to_string(),
+                text: "Paused".to_string(),
+                rgb: (255, 255, 255),
+            }],
+            status: None,
+            position: NotificationPosition::BottomLeft,
+            status_position: NotificationPosition::TopLeft,
+        };
+        let layer = raster.rasterize(&content, 960, 720).expect("row");
+        assert_eq!(layer.height, 16 * 16 / 10 + 4);
     }
 
     #[test]
@@ -650,6 +812,61 @@ mod tests {
             .filter(|pixel| pixel[3] > 200)
             .count();
         assert!(body_lit > 50, "cjk body must render, got {body_lit}");
+    }
+
+    #[test]
+    fn space_advances_the_pen() {
+        let mut raster = OsdRaster::new();
+        if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
+            return;
+        }
+        let (_, plain_w, _, _) = raster.layout_run("ab", 16);
+        let (_, spaced_w, _, _) = raster.layout_run("a b", 16);
+        assert!(
+            spaced_w > plain_w + 1.0,
+            "space must advance the pen: {plain_w} vs {spaced_w}"
+        );
+    }
+
+    #[test]
+    fn status_orders_value_outside_and_packs_tight() {
+        let mut raster = OsdRaster::new();
+        if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
+            return;
+        }
+        // Value outside (margin side), label inside, tight pill.
+        let content = |label: &str, value: &str, anchor: NotificationPosition| OsdContent {
+            rows: Vec::new(),
+            status: Some(super::OsdStatus {
+                label: label.to_string(),
+                value: value.to_string(),
+                rgb: (200, 200, 200),
+            }),
+            position: super::NotificationPosition::BottomLeft,
+            status_position: anchor,
+        };
+        let left = super::NotificationPosition::BottomLeft;
+        let right = super::NotificationPosition::BottomRight;
+        let gap = raster.layout_run(" ", 16).1;
+        let label_w = raster.layout_run("Paused", 16).1;
+        // Left anchor: value first, so the digit block starts at the pad.
+        let running = raster
+            .rasterize(&content("", "60.1 fps", left), 960, 720)
+            .expect("status layer");
+        let value_w = raster.layout_run("60.1 fps", 16).1;
+        assert_eq!(running.width, value_w.ceil() as u32 + super::PILL_PAD_X * 2);
+        // Paused adds label plus one gap, symmetric on both anchors.
+        let paused_left = raster
+            .rasterize(&content("Paused", "60.1 fps", left), 960, 720)
+            .expect("status layer");
+        let paused_right = raster
+            .rasterize(&content("Paused", "60.1 fps", right), 960, 720)
+            .expect("status layer");
+        let expect = (value_w + gap + label_w).ceil() as u32 + super::PILL_PAD_X * 2;
+        assert_eq!(paused_left.width, expect);
+        assert_eq!(paused_right.width, expect);
     }
 
     #[test]
