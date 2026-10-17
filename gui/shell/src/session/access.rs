@@ -178,4 +178,33 @@ mod tests {
         dispatch_session_action(&mut recorder, ShortcutAction::OpenDebugger);
         assert_eq!(recorder.calls.len(), 6);
     }
+
+    #[test]
+    fn recorder_pins_each_slot_and_lifecycle_call() {
+        // The remaining Recorder methods are not reachable through
+        // dispatch; pin their recording so the fake stays faithful.
+        let mut recorder = Recorder::default();
+        recorder.pause();
+        recorder.resume();
+        assert!(recorder.save_active_slot());
+        assert!(recorder.load_active_slot());
+        recorder.save_slot(1);
+        recorder.load_slot(1);
+        recorder.delete_slot(1);
+        recorder.select_slot(1);
+        recorder.create_slot();
+        recorder.unload();
+        for name in [
+            "pause",
+            "resume",
+            "save_slot",
+            "load_slot",
+            "delete_slot",
+            "select_slot",
+            "create_slot",
+            "unload",
+        ] {
+            assert!(recorder.calls.contains(&name), "{name}");
+        }
+    }
 }

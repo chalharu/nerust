@@ -106,11 +106,6 @@ fn validate_unique_cli_arguments(
 pub fn run() {
     SimpleLogger::new()
         .with_level(LevelFilter::Warn)
-        // tiny-skia warns on sub-pixel clip slivers (e.g. a history
-        // row landing within 1e-4px of the scrollable edge): the fill
-        // is skipped for an invisible fragment and rendering is
-        // pixel-identical, so the warning is unactionable noise.
-        .with_module_level("tiny_skia::mask", LevelFilter::Error)
         .env()
         .init()
         .unwrap();

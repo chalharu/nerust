@@ -40,7 +40,6 @@ mod tests {
             ConsoleMetrics {
                 loaded: true,
                 emulation_fps: 59.9,
-                speed_multiplier: 1.01,
                 ..ConsoleMetrics::default()
             },
             Some("Nes"),
