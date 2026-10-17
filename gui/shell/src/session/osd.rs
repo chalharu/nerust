@@ -386,17 +386,53 @@ impl OsdManager {
     }
 }
 
+/// Minimum gap between fps-digit refreshes of the status readout.
+/// Pause flips pass through immediately (events); the ticking digits
+/// refresh at 2Hz so the readout stays calm and the layer is not
+/// re-rasterized every frame on timer jitter.
+pub const STATUS_FPS_MIN_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Gates the status value: label changes pass through, fps digits at
+/// most every [`STATUS_FPS_MIN_INTERVAL`]. Frontends fold the gated
+/// pair into their raster fingerprint alongside the settings.
+#[derive(Debug, Default)]
+pub struct StatusGate {
+    last_label: Option<String>,
+    last_value: Option<String>,
+    last_tick: Option<Instant>,
+}
+
+impl StatusGate {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn gate(&mut self, now: Instant, label: String, fresh_value: String) -> (String, String) {
+        let label_changed = self.last_label.as_deref() != Some(label.as_str());
+        let tick_due = self
+            .last_tick
+            .is_none_or(|t| now.duration_since(t) >= STATUS_FPS_MIN_INTERVAL);
+        if label_changed || tick_due {
+            self.last_label = Some(label.clone());
+            self.last_value = Some(fresh_value.clone());
+            self.last_tick = Some(now);
+            (label, fresh_value)
+        } else {
+            (label, self.last_value.clone().unwrap_or(fresh_value))
+        }
+    }
+}
+
 /// Strip rows per edge from transient + status corners.
 /// Same edge, different sides share one strip; same corner stacks two.
+/// Each readout reserves only under its own area mode.
 pub fn strip_rows(
-    area_mode: NotificationAreaMode,
+    transient_mode: NotificationAreaMode,
     transient: NotificationPosition,
+    status_mode: NotificationAreaMode,
     status: NotificationPosition,
     status_on: bool,
 ) -> (u32, u32) {
-    if !matches!(area_mode, NotificationAreaMode::Strip) {
-        return (0, 0);
-    }
     fn edge(position: NotificationPosition) -> bool {
         matches!(
             position,
@@ -405,9 +441,12 @@ pub fn strip_rows(
     }
     let mut top = [0u32, 0u32];
     let mut bottom = [0u32, 0u32];
-    let sides = [(transient, true), (status, status_on)];
-    for (position, on) in sides {
-        if !on {
+    let sides = [
+        (transient_mode, transient, true),
+        (status_mode, status, status_on),
+    ];
+    for (mode, position, on) in sides {
+        if !on || !matches!(mode, NotificationAreaMode::Strip) {
             continue;
         }
         let side = usize::from(matches!(
@@ -620,6 +659,7 @@ mod tests {
             strip_rows(
                 NotificationAreaMode::Strip,
                 P::BottomLeft,
+                NotificationAreaMode::Strip,
                 P::BottomRight,
                 true
             ),
@@ -629,6 +669,7 @@ mod tests {
             strip_rows(
                 NotificationAreaMode::Strip,
                 P::BottomLeft,
+                NotificationAreaMode::Strip,
                 P::BottomLeft,
                 true
             ),
@@ -638,10 +679,33 @@ mod tests {
             strip_rows(
                 NotificationAreaMode::Overlay,
                 P::BottomLeft,
+                NotificationAreaMode::Overlay,
                 P::TopLeft,
                 true
             ),
             (0, 0)
+        );
+        // Independent modes: overlay status reserves nothing.
+        assert_eq!(
+            strip_rows(
+                NotificationAreaMode::Strip,
+                P::BottomLeft,
+                NotificationAreaMode::Overlay,
+                P::TopLeft,
+                true
+            ),
+            (0, 1)
+        );
+        // ... and an overlay transient leaves a strip status alone.
+        assert_eq!(
+            strip_rows(
+                NotificationAreaMode::Overlay,
+                P::BottomLeft,
+                NotificationAreaMode::Strip,
+                P::TopLeft,
+                true
+            ),
+            (1, 0)
         );
     }
 
@@ -758,6 +822,41 @@ mod tests {
     }
 
     #[test]
+    fn status_gate_throttles_digits_but_not_labels() {
+        use super::{STATUS_FPS_MIN_INTERVAL, StatusGate};
+        let mut gate = StatusGate::new();
+        let now = Instant::now();
+        // First sample passes.
+        assert_eq!(
+            gate.gate(now, String::new(), "60.1 fps".to_string()),
+            (String::new(), "60.1 fps".to_string())
+        );
+        // Jitter within the interval holds the old digits.
+        assert_eq!(
+            gate.gate(now, String::new(), "60.2 fps".to_string()),
+            (String::new(), "60.1 fps".to_string())
+        );
+        // After the interval the fresh digits pass.
+        assert_eq!(
+            gate.gate(
+                now + STATUS_FPS_MIN_INTERVAL,
+                String::new(),
+                "60.2 fps".to_string()
+            ),
+            (String::new(), "60.2 fps".to_string())
+        );
+        // A pause flip passes immediately even inside the interval.
+        assert_eq!(
+            gate.gate(
+                now + STATUS_FPS_MIN_INTERVAL,
+                "Paused".to_string(),
+                "60.3 fps".to_string()
+            ),
+            ("Paused".to_string(), "60.3 fps".to_string())
+        );
+    }
+
+    #[test]
     fn identical_pushes_merge_and_reset_the_timer() {
         use super::super::notification::NotificationLevel as L;
         let mut manager = OsdManager::new();
@@ -810,25 +909,25 @@ mod tests {
             NotificationAreaMode as M, NotificationPosition as P,
         };
         assert_eq!(
-            super::strip_rows(M::Overlay, P::TopLeft, P::BottomLeft, true),
+            super::strip_rows(M::Overlay, P::TopLeft, M::Overlay, P::BottomLeft, true),
             (0, 0)
         );
         assert_eq!(
-            super::strip_rows(M::Strip, P::TopLeft, P::BottomLeft, true),
+            super::strip_rows(M::Strip, P::TopLeft, M::Strip, P::BottomLeft, true),
             (1, 1)
         );
         assert_eq!(
-            super::strip_rows(M::Strip, P::TopRight, P::BottomRight, true),
+            super::strip_rows(M::Strip, P::TopRight, M::Strip, P::BottomRight, true),
             (1, 1)
         );
         // Same corner stacks two rows on one side.
         assert_eq!(
-            super::strip_rows(M::Strip, P::TopLeft, P::TopLeft, true),
+            super::strip_rows(M::Strip, P::TopLeft, M::Strip, P::TopLeft, true),
             (2, 0)
         );
         // Status off: transient row only.
         assert_eq!(
-            super::strip_rows(M::Strip, P::BottomLeft, P::TopLeft, false),
+            super::strip_rows(M::Strip, P::BottomLeft, M::Strip, P::TopLeft, false),
             (0, 1)
         );
     }

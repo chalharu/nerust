@@ -88,6 +88,7 @@ pub(crate) enum Message {
     SetPosition(ChoiceView<NotificationPosition>),
     SetStatusPosition(ChoiceView<NotificationPosition>),
     SetAreaMode(ChoiceView<NotificationAreaMode>),
+    SetStatusAreaMode(ChoiceView<NotificationAreaMode>),
     SetSystemChoice(
         String,
         ChoiceView<nerust_core_traits::factory::descriptor::SystemSettingsChoiceId>,
@@ -415,6 +416,9 @@ impl SettingsAppState {
             }
             Message::SetAreaMode(choice) => {
                 self.err(self.vm.notifications.set_area_mode(choice.value))
+            }
+            Message::SetStatusAreaMode(choice) => {
+                self.err(self.vm.notifications.set_status_area_mode(choice.value))
             }
             Message::SetSystemChoice(field, choice) => self.set_system_choice(field, choice),
             Message::SetControllerSlot {

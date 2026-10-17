@@ -117,6 +117,13 @@ impl NotificationSettingsViewModel {
             Ok(())
         })
     }
+
+    pub fn set_status_area_mode(&self, value: NotificationAreaMode) -> Result<(), ViewModelError> {
+        self._editor.transact(|state| {
+            state.draft_mut().local.notifications.status_area_mode = value;
+            Ok(())
+        })
+    }
 }
 
 fn project_view(state: &super::EditorState) -> NotificationView {
@@ -135,6 +142,7 @@ fn project_view(state: &super::EditorState) -> NotificationView {
         position: n.position,
         status_position: n.status_position,
         area_mode: n.area_mode,
+        status_area_mode: n.status_area_mode,
     }
 }
 
@@ -173,6 +181,9 @@ mod tests {
         notifications
             .set_area_mode(NotificationAreaMode::Strip)
             .unwrap();
+        notifications
+            .set_status_area_mode(NotificationAreaMode::Strip)
+            .unwrap();
         let view = notifications.view.get();
         assert!(!view.info_enabled);
         assert_eq!(view.info_duration_ms, 1_000);
@@ -187,6 +198,7 @@ mod tests {
         assert_eq!(view.status_position, NotificationPosition::BottomLeft);
         assert_eq!(view.position, NotificationPosition::TopLeft);
         assert_eq!(view.area_mode, NotificationAreaMode::Strip);
+        assert_eq!(view.status_area_mode, NotificationAreaMode::Strip);
     }
 
     #[test]

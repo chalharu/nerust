@@ -98,6 +98,7 @@ impl HostState {
         let (top_rows, bottom_rows) = strip_rows(
             settings.area_mode,
             settings.position,
+            settings.status_area_mode,
             settings.status_position,
             settings.status_enabled,
         );
@@ -240,24 +241,28 @@ impl HostState {
         let metrics = self.session.metrics();
         // Status rides outside the dirty flag: fps ticks, pause
         // flips, and settings toggles must all re-rasterize now.
-        let status_key = settings.status_enabled.then(|| {
-            let (label, value) =
-                OsdManager::status_parts(metrics.emulation_fps, metrics.paused, language);
-            (
-                label,
-                value,
-                settings.position,
-                settings.status_position,
-                settings.area_mode,
-            )
-        });
+        // Fps digits refresh at 2Hz through the gate; pause flips
+        // and settings changes pass through immediately.
+        let (label, fresh_value) =
+            OsdManager::status_parts(metrics.emulation_fps, metrics.paused, language);
+        let (label, value) = self
+            .osd_status_gate
+            .gate(Instant::now(), label, fresh_value);
+        let status_key = settings.status_enabled.then_some((
+            label,
+            value,
+            settings.position,
+            settings.status_position,
+            settings.area_mode,
+            settings.status_area_mode,
+        ));
         let status_changed = status_key != self.osd_last_status;
         if !dirty && !status_changed && self.osd_layer_size == Some((w, h)) {
             return;
         }
         self.osd_layer_size = Some((w, h));
         self.osd_last_status = status_key.clone();
-        let status = status_key.map(|(label, value, _, _, _)| nerust_render_osd::OsdStatus {
+        let status = status_key.map(|(label, value, _, _, _, _)| nerust_render_osd::OsdStatus {
             label,
             value,
             rgb: (200, 200, 200),

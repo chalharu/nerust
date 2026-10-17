@@ -364,12 +364,20 @@ impl SettingsAppState {
                 .label(ui_text(language, UiText::NotificationEnabled))
                 .on_toggle(Message::ToggleStatusEnabled)
                 .into(),
-            [labeled_pick_list(
-                ui_text(language, UiText::NotificationStatusPosition),
-                positions.clone(),
-                pick_selected(&positions, &view.status_position),
-                Message::SetStatusPosition,
-            )],
+            [
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationStatusPosition),
+                    positions.clone(),
+                    pick_selected(&positions, &view.status_position),
+                    Message::SetStatusPosition,
+                ),
+                labeled_pick_list(
+                    ui_text(language, UiText::NotificationStatusAreaMode),
+                    areas.clone(),
+                    pick_selected(&areas, &view.status_area_mode),
+                    Message::SetStatusAreaMode,
+                ),
+            ],
         );
         column![info, warning, error, display, status]
             .spacing(24)

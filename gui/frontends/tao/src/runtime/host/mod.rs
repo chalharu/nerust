@@ -144,7 +144,10 @@ pub(crate) struct HostState {
         nerust_settings_core::model::local::NotificationPosition,
         nerust_settings_core::model::local::NotificationPosition,
         nerust_settings_core::model::local::NotificationAreaMode,
+        nerust_settings_core::model::local::NotificationAreaMode,
     )>,
+    /// Throttles fps digits to 2Hz; pause flips pass through.
+    pub(super) osd_status_gate: nerust_gui_shell::session::osd::StatusGate,
     pub(super) history_window: Option<HistoryWindowHandle>,
     /// In-flight async error dialog plus resume bookkeeping.
     pub(super) modal_flight: Option<ModalFlight>,
@@ -219,6 +222,7 @@ impl HostState {
             osd_layer_size: None,
             osd_layer_active: false,
             osd_last_status: None,
+            osd_status_gate: nerust_gui_shell::session::osd::StatusGate::new(),
             modal_flight: None,
             resume_after_modal: false,
             history_window: None,
