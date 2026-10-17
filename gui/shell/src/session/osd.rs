@@ -162,6 +162,10 @@ struct OsdItem {
     /// Identity for coalescing (text before the `×N` suffix).
     key: String,
     count: u32,
+    /// Display duration: the deadline is stamped at promotion so a
+    /// queued label always shows for its full duration instead of
+    /// carrying the push-time remainder.
+    duration: Duration,
     deadline: Instant,
 }
 
@@ -178,6 +182,10 @@ pub struct OsdManager {
     modal_queue: std::collections::VecDeque<String>,
     modal_open: bool,
     dirty: bool,
+    /// Last accepted notification identity. Merging (`×N`) applies
+    /// only to strictly consecutive duplicates; anything interleaved
+    /// queues separately so flapping states keep full slots.
+    last_key: Option<(NotificationLevel, String)>,
 }
 
 impl OsdManager {
@@ -221,8 +229,10 @@ impl OsdManager {
 
     /// Fold drained shell notifications into display state.
     /// Errors go modal (aggregated) or OSD (minimum 5s) per settings.
-    /// New arrivals queue behind the showing label; identical text
-    /// merges with the showing label or the queue tail (`×N`, timer reset).
+    /// New arrivals queue behind the showing label in arrival order.
+    /// Only strictly consecutive duplicates merge (`×N`, timer reset):
+    /// an interleaved label breaks the run, so pause/resume flaps
+    /// show each leg for its full duration instead of collapsing.
     pub fn push_all(
         &mut self,
         notifications: Vec<UiNotification>,
@@ -248,9 +258,16 @@ impl OsdManager {
             }
             let rgb = Self::color(n.level, settings);
             let tag = level_tag(n.level);
-            let deadline = now + Duration::from_millis(Self::duration_ms(n.level, settings));
-            // Merge with the showing label when identical.
-            if let Some(current) = self.current.as_mut()
+            let duration = Duration::from_millis(Self::duration_ms(n.level, settings));
+            let deadline = now + duration;
+            let consecutive = self
+                .last_key
+                .as_ref()
+                .is_some_and(|(level, key)| *level == n.level && key == &base);
+            self.last_key = Some((n.level, base.clone()));
+            // Merge with the showing label only for a consecutive run.
+            if consecutive
+                && let Some(current) = self.current.as_mut()
                 && current.level == n.level
                 && current.key == base
             {
@@ -259,8 +276,9 @@ impl OsdManager {
                 current.deadline = deadline;
                 continue;
             }
-            // Merge with the queue tail when identical.
-            if let Some(back) = self.pending.back_mut()
+            // Merge with the queue tail only for a consecutive run.
+            if consecutive
+                && let Some(back) = self.pending.back_mut()
                 && back.level == n.level
                 && back.key == base
             {
@@ -275,6 +293,7 @@ impl OsdManager {
                 level: n.level,
                 key: base,
                 count: n.count,
+                duration,
                 deadline,
             });
             // Never preempt the showing label; drop oldest pending.
@@ -294,7 +313,13 @@ impl OsdManager {
         if !need {
             return false;
         }
-        self.current = self.pending.pop_front();
+        if let Some(mut item) = self.pending.pop_front() {
+            // Fresh full duration from the moment it shows.
+            item.deadline = now + item.duration;
+            self.current = Some(item);
+        } else {
+            self.current = None;
+        }
         self.dirty = true;
         true
     }
@@ -854,6 +879,70 @@ mod tests {
             ),
             ("Paused".to_string(), "60.3 fps".to_string())
         );
+    }
+
+    #[test]
+    fn interleaved_pause_resume_queues_sequentially() {
+        use super::super::notification::NotificationKind as K;
+        use super::super::notification::NotificationLevel as L;
+        let mut manager = OsdManager::new();
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        let note = |kind| UiNotification {
+            level: L::Info,
+            kind,
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        macro_rules! shown {
+            () => {
+                manager.rows().first().map(|row| row.text.clone())
+            };
+        }
+        // Pause, +0.5s resume, +0.5s pause, +0.5s resume (2s slots).
+        manager.push_all(
+            vec![note(K::Paused)],
+            &settings(),
+            AppLanguage::English,
+            at(0),
+        );
+        assert!(manager.poll(at(0)));
+        assert_eq!(shown!().as_deref(), Some("Paused"));
+        manager.push_all(
+            vec![note(K::Resumed)],
+            &settings(),
+            AppLanguage::English,
+            at(500),
+        );
+        assert!(!manager.poll(at(500)));
+        // Interleaved: must queue behind, never merge into the showing label.
+        manager.push_all(
+            vec![note(K::Paused)],
+            &settings(),
+            AppLanguage::English,
+            at(1000),
+        );
+        assert_eq!(shown!().as_deref(), Some("Paused"));
+        manager.push_all(
+            vec![note(K::Resumed)],
+            &settings(),
+            AppLanguage::English,
+            at(1500),
+        );
+        // Full 2s slots in arrival order; promoted labels measure
+        // from promotion, not from push time. The cap drops the
+        // oldest pending (the first resume), so the legs read
+        // pause, pause, resume with no accumulation.
+        assert!(manager.poll(at(2000)));
+        assert_eq!(shown!().as_deref(), Some("Paused"));
+        assert!(!manager.poll(at(3500)));
+        assert!(manager.poll(at(4000)));
+        assert_eq!(shown!().as_deref(), Some("Resumed"));
+        assert!(!manager.poll(at(5500)));
+        assert!(manager.poll(at(6000)));
+        assert!(manager.rows().is_empty());
+        assert!(!manager.poll(at(8000)));
     }
 
     #[test]
