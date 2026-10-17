@@ -80,6 +80,24 @@ mod tests {
     }
 
     #[test]
+    fn const_builders_match_runtime_evaluation() {
+        // The LUT constants above are const-evaluated (invisible to
+        // coverage); exercise the same builders at runtime so the
+        // Newton iteration and both transfer branches stay covered.
+        for (index, expected) in SRGB_TO_LINEAR_LUT.iter().enumerate() {
+            assert_eq!(
+                super::srgb_to_linear_value(index).to_bits(),
+                expected.to_bits(),
+                "index {index}"
+            );
+        }
+        assert_eq!(
+            super::encode_lut_bytes(SRGB_TO_LINEAR_LUT),
+            SRGB_TO_LINEAR_LUT_BYTES
+        );
+    }
+
+    #[test]
     fn lut_matches_reference_formula() {
         for (index, value) in SRGB_TO_LINEAR_LUT.iter().enumerate() {
             let srgb = index as f64 / 255.0;

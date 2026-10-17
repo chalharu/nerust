@@ -159,7 +159,7 @@ impl Program for HistoryProgram {
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::Length;
-        use iced::widget::{button, column, container, pick_list, row, rule, scrollable, text};
+        use iced::widget::{button, column, pick_list, row, rule, scrollable, text};
         use nerust_gui_shell::session::osd::level_label;
         let language = state.language;
         let visible: Vec<&HistoryLine> = state
@@ -228,36 +228,29 @@ impl Program for HistoryProgram {
             if line.count > 1 {
                 message = format!("{message} ×{}", line.count);
             }
-            // Cells clip at their column: overlong values truncate
-            // instead of bleeding into the neighbour (HIG).
+            // Cells wrap inside their column: overlong values wrap
+            // instead of bleeding into the neighbour (HIG). No clip
+            // containers: a clipped cell exactly at the scrollable
+            // edge produces a sub-pixel clip rect, which tiny-skia
+            // can only skip with a warning.
             items = items.push(
                 row![
-                    container(
-                        text(line.datetime.clone())
-                            .size(12)
-                            .font(iced::Font::MONOSPACE)
-                            .width(Length::Fill)
-                    )
-                    .clip(true)
-                    .width(Length::Fixed(150.0)),
-                    container(
-                        text(level_label(line.level, language))
-                            .size(12)
-                            .color(level_color)
-                            .width(Length::Fill)
-                    )
-                    .clip(true)
-                    .width(Length::Fixed(70.0)),
-                    container(
-                        text(short_module(line.module))
-                            .size(11)
-                            .font(iced::Font::MONOSPACE)
-                            .width(Length::Fill)
-                    )
-                    .clip(true)
-                    .width(Length::Fixed(220.0)),
-                    container(text(message).size(13).width(Length::Fill))
-                        .clip(true)
+                    text(line.datetime.clone())
+                        .size(12)
+                        .font(iced::Font::MONOSPACE)
+                        .width(Length::Fixed(150.0)),
+                    text(level_label(line.level, language))
+                        .size(12)
+                        .color(level_color)
+                        .width(Length::Fixed(70.0)),
+                    text(short_module(line.module))
+                        .size(11)
+                        .font(iced::Font::MONOSPACE)
+                        .wrapping(iced::advanced::text::Wrapping::WordOrGlyph)
+                        .width(Length::Fixed(220.0)),
+                    text(message)
+                        .size(13)
+                        .wrapping(iced::advanced::text::Wrapping::WordOrGlyph)
                         .width(Length::Fill),
                 ]
                 .spacing(12),

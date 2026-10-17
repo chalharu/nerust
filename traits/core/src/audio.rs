@@ -260,3 +260,108 @@ mod tests {
         assert!(reconnected.load(SeqCst));
     }
 }
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    struct StubFactory {
+        name: &'static str,
+        rates: Vec<u32>,
+    }
+
+    impl AudioBackendFactory for StubFactory {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn probe(&self) -> Vec<u32> {
+            self.rates.clone()
+        }
+        fn build(&self, _: u32, _: u32) -> Option<Box<dyn AudioBackend>> {
+            None
+        }
+    }
+
+    #[test]
+    fn empty_registry_reports_no_rates() {
+        let registry = AudioBackendRegistry::new();
+        assert!(registry.supported_rates().is_empty());
+    }
+
+    #[test]
+    fn supported_rates_prefers_priority_and_sorts_ascending() {
+        let mut registry = AudioBackendRegistry::new();
+        registry.register(
+            10,
+            Box::new(StubFactory {
+                name: "low",
+                rates: vec![48_000, 44_100],
+            }),
+        );
+        registry.register(
+            1,
+            Box::new(StubFactory {
+                name: "high-empty",
+                rates: Vec::new(),
+            }),
+        );
+        // First non-empty probe wins, sorted ascending; cached after.
+        assert_eq!(registry.supported_rates(), &[44_100, 48_000]);
+        assert_eq!(registry.supported_rates(), &[44_100, 48_000]);
+    }
+
+    #[test]
+    fn autoselect_falls_back_to_silent_null_audio() {
+        let mut registry = AudioBackendRegistry::new();
+        registry.register(
+            1,
+            Box::new(StubFactory {
+                name: "never-builds",
+                rates: vec![48_000],
+            }),
+        );
+        let mut backend = registry.autoselect(48_000, 90);
+        backend.start();
+        backend.push(StereoSample::mono(0.5));
+        backend.pause();
+        assert_eq!(backend.sample_rate(), 48_000);
+        assert_eq!(backend.buffered(), 0);
+        assert_eq!(backend.buffer_capacity(), 0);
+    }
+
+    #[test]
+    fn backend_defaults_are_zero_or_noop() {
+        let mut null = NullAudio;
+        null.start();
+        null.pause();
+        null.push(StereoSample::mono(0.5));
+        null.reconnect();
+        null.set_volume(0.5);
+        assert_eq!(null.sample_rate(), 48_000);
+        assert_eq!(null.buffered(), 0);
+        assert_eq!(null.buffer_capacity(), 0);
+    }
+
+    #[test]
+    fn gain_backend_applies_volume_and_delegates_rate() {
+        let samples = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        struct Capture(std::sync::Arc<std::sync::Mutex<Vec<StereoSample>>>);
+        impl AudioBackend for Capture {
+            fn start(&mut self) {}
+            fn pause(&mut self) {}
+            fn push(&mut self, sample: StereoSample) {
+                self.0.lock().unwrap().push(sample);
+            }
+        }
+        let mut backend = GainBackend::new(Box::new(Capture(std::sync::Arc::clone(&samples))), 1.0);
+        backend.set_volume(0.25);
+        backend.push(StereoSample::new(0.8, -0.4));
+        assert_eq!(
+            samples.lock().unwrap().as_slice(),
+            &[StereoSample::new(0.2, -0.1)]
+        );
+        assert_eq!(backend.sample_rate(), 48_000);
+        assert_eq!(backend.buffered(), 0);
+        assert_eq!(backend.buffer_capacity(), 0);
+    }
+}

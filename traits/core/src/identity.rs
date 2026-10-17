@@ -179,7 +179,8 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        SystemId, SystemIdRegistration, validate_registrations, validate_system_id_registrations,
+        SystemId, SystemIdRegistration, SystemIdentity, validate_registrations,
+        validate_system_id_registrations,
     };
 
     crate::declare_system_id!(FirstSystemId, "first");
@@ -249,5 +250,14 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(ids.contains(&"first"));
         assert!(ids.contains(&"second"));
+    }
+
+    #[test]
+    fn system_identity_carries_id_and_bytes() {
+        let identity = SystemIdentity::new(Box::new(FirstSystemId), vec![1, 2, 3]);
+        assert_eq!(identity.identity_bytes, vec![1, 2, 3]);
+        assert_eq!(identity.system_id.to_string(), "first");
+        assert_eq!(format!("{}", identity.system_id), "first");
+        assert_eq!(identity.system_id.clone_box().to_string(), "first");
     }
 }

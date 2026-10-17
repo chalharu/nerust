@@ -431,3 +431,29 @@ impl Key {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use strum::IntoEnumIterator as _;
+
+    #[test]
+    fn every_key_has_a_display_label() {
+        // The binding UI shows these labels verbatim: a blank label
+        // would strand a row with no key name.
+        let mut count = 0;
+        for key in crate::Key::iter() {
+            assert!(!key.label().is_empty(), "{key:?} must have a label");
+            count += 1;
+        }
+        assert!(count >= 190, "key table must stay exhaustive, got {count}");
+    }
+
+    #[test]
+    fn common_labels_match_platform_names() {
+        assert_eq!(crate::Key::KeyA.label(), "A");
+        assert_eq!(crate::Key::Space.label(), "Space");
+        assert_eq!(crate::Key::Escape.label(), "Esc");
+        assert_eq!(crate::Key::F4.label(), "F4");
+        assert_eq!(crate::Key::ArrowUp.label(), "↑");
+    }
+}

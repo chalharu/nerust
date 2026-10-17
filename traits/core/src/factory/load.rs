@@ -177,3 +177,57 @@ mod media_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod wrapper_tests {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq, clap::Parser)]
+    struct StubOptions {
+        #[arg(long, default_value = "1")]
+        level: u8,
+    }
+
+    impl SystemLoadOptions for StubOptions {}
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct StubSchema;
+
+    impl SystemLoadOptionsSchema for StubSchema {
+        type Options = StubOptions;
+    }
+
+    #[test]
+    fn schema_wrapper_round_trips_cli_args() {
+        let schema = SystemLoadOptionsSchemaWrapper(StubSchema);
+        let cmd = schema.augment_args(clap::Command::new("test"));
+        let matches = cmd.try_get_matches_from(["test", "--level", "3"]).unwrap();
+        let options: Box<dyn DynSystemLoadOptions> =
+            Box::new(schema.arg_matches(&matches).unwrap());
+        let inner: StubOptions = options.into_inner().unwrap();
+        assert_eq!(inner.level, 3);
+        // Box conversions used by factories.
+        let boxed: Box<dyn DynSystemLoadOptions> = StubOptions { level: 5 }.into();
+        let back: StubOptions = boxed.into_inner().unwrap();
+        assert_eq!(back.level, 5);
+        let boxed_schema: Box<dyn DynSystemLoadOptionsSchema> = StubSchema.into();
+        let cmd = boxed_schema.augment_args(clap::Command::new("test"));
+        let matches = cmd.try_get_matches_from(["test"]).unwrap();
+        let options = boxed_schema.arg_matches(&matches).unwrap();
+        let inner: StubOptions = options.into_inner().unwrap();
+        assert_eq!(inner.level, 1);
+    }
+
+    #[test]
+    fn into_inner_rejects_foreign_options() {
+        #[derive(Debug, Clone, PartialEq, Eq, clap::Parser)]
+        struct OtherOptions {
+            #[arg(long, default_value_t = false)]
+            flag: bool,
+        }
+        impl SystemLoadOptions for OtherOptions {}
+
+        let boxed: Box<dyn DynSystemLoadOptions> = StubOptions { level: 1 }.into();
+        assert!(boxed.into_inner::<OtherOptions>().is_err());
+    }
+}
