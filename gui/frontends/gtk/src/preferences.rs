@@ -371,6 +371,9 @@ impl PreferencesBinding {
         n.error_onscreen_radio.set_active(!view.error_modal);
         n.error_color_combo
             .set_active_id(Some(map_color_id(view.error_color)));
+        // Color only affects the on-screen pill; a modal dialog has
+        // no tinted text.
+        n.error_color_combo.set_sensitive(!view.error_modal);
         n.status_check.set_active(view.status_enabled);
         n.position_combo
             .set_active_id(Some(map_position_id(view.position)));
