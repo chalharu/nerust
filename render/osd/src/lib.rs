@@ -233,22 +233,23 @@ impl OsdRaster {
         surface_w: u32,
         surface_h: u32,
     ) -> Option<Vec<PlacedRow>> {
+        let (top, bottom) = Self::collect_entries(content);
+        if top.is_empty() && bottom.is_empty() {
+            return None;
+        }
+        let mut boxes = Vec::new();
+        self.place_entries(top, true, font_px, surface_w, surface_h, &mut boxes);
+        self.place_entries(bottom, false, font_px, surface_w, surface_h, &mut boxes);
+        Some(boxes)
+    }
+
+    /// Split transient rows and the status readout by vertical edge.
+    /// Same-corner entries stack in push order; the status otherwise
+    /// joins its own edge.
+    fn collect_entries(content: &OsdContent) -> (Vec<Entry>, Vec<Entry>) {
         let same_corner = content.position == content.status_position;
         let transient_top = content.position.is_top();
         let status_top = content.status_position.is_top();
-        // Each entry carries its own anchor corner for split placement.
-        enum Entry {
-            Line(String, (u8, u8, u8), NotificationPosition),
-            Status(OsdStatus, NotificationPosition),
-        }
-        /// Shaped entry: intrinsic width plus row height.
-        struct Shaped {
-            anchor: NotificationPosition,
-            body: RowBody,
-            rgb: (u8, u8, u8),
-            w: u32,
-            row_h: u32,
-        }
         let mut top: Vec<Entry> = Vec::new();
         let mut bottom: Vec<Entry> = Vec::new();
         for row in &content.rows {
@@ -277,139 +278,158 @@ impl OsdRaster {
                 bottom.push(entry);
             }
         }
-        if top.is_empty() && bottom.is_empty() {
-            return None;
+        (top, bottom)
+    }
+
+    /// Shape one edge: opposite sides sharing the edge sit side by
+    /// side on one row instead of stacking, so a status on the right
+    /// no longer stacks under a notification on the left.
+    fn place_entries(
+        &mut self,
+        list: Vec<Entry>,
+        from_top: bool,
+        font_px: u32,
+        surface_w: u32,
+        surface_h: u32,
+        boxes: &mut Vec<PlacedRow>,
+    ) {
+        let mut shaped: Vec<Shaped> = list
+            .into_iter()
+            .map(|entry| self.shape_entry(entry, font_px))
+            .collect();
+        if !from_top {
+            shaped.reverse();
         }
-        let mut boxes = Vec::new();
-        // Shape one entry: intrinsic width plus row height.
-        let shape = |entry: Entry, raster: &mut Self| -> Shaped {
-            match entry {
-                Entry::Line(line, rgb, anchor) => {
-                    let span = raster.shape_line(&line, font_px);
-                    let row_h = raster.row_height(font_px, span.ascent, span.descent);
-                    let w = span.width.ceil() as u32 + PILL_PAD_X * 2;
-                    let body = RowBody::Line { span };
-                    Shaped {
-                        anchor,
-                        body,
-                        rgb,
-                        w,
-                        row_h,
-                    }
-                }
-                Entry::Status(status, anchor) => {
-                    let label = raster.shape_line(&status.label, font_px);
-                    let value = raster.shape_line(&status.value, font_px);
-                    if status.label.is_empty() {
-                        // Solo value pill, as before.
-                        let row_h = raster.row_height(font_px, value.ascent, value.descent);
-                        let w = value.width.ceil() as u32 + PILL_PAD_X * 2;
-                        let body = RowBody::Line { span: value };
-                        Shaped {
-                            anchor,
-                            body,
-                            rgb: status.rgb,
-                            w,
-                            row_h,
-                        }
-                    } else {
-                        let ascent = label.ascent.max(value.ascent);
-                        let descent = label.descent.min(value.descent);
-                        let row_h = raster.row_height(font_px, ascent, descent);
-                        // Value always on the outside (margin side) so the
-                        // digits never shift: left anchors read
-                        // "value label", right anchors "label value".
-                        // Either way the value pill's outer edge pins to
-                        // the margin, so a Paused flip or a language
-                        // change only grows the inner label pill.
-                        let outer_left = anchor.is_left();
-                        let (outer, inner) =
-                            (StatusSpan { span: value }, StatusSpan { span: label });
-                        let outer_w = outer.span.width.ceil() as u32 + PILL_PAD_X * 2;
-                        let inner_w = inner.span.width.ceil() as u32 + PILL_PAD_X * 2;
-                        let w = outer_w + ROW_GAP + inner_w;
-                        let body = RowBody::Pair {
-                            outer,
-                            inner,
-                            ascent,
-                            descent,
-                            outer_left,
-                        };
-                        Shaped {
-                            anchor,
-                            body,
-                            rgb: status.rgb,
-                            w,
-                            row_h,
-                        }
-                    }
-                }
-            }
+        let mut cursor = if from_top {
+            MARGIN
+        } else {
+            surface_h.saturating_sub(MARGIN)
         };
-        let mut place = |list: Vec<Entry>, from_top: bool, raster: &mut Self| {
-            let mut shaped: Vec<Shaped> =
-                list.into_iter().map(|entry| shape(entry, raster)).collect();
-            if !from_top {
-                shaped.reverse();
+        while !shaped.is_empty() {
+            let end = Self::pair_width(&shaped);
+            let row_h = shaped[..end]
+                .iter()
+                .map(|entry| entry.row_h)
+                .max()
+                .unwrap_or(0);
+            for entry in shaped.drain(..end) {
+                boxes.push(PlacedRow {
+                    x: Self::anchor_x(entry.anchor, entry.w, surface_w),
+                    y: Self::entry_y(from_top, cursor, entry.row_h),
+                    w: entry.w,
+                    h: entry.row_h,
+                    rgb: entry.rgb,
+                    body: entry.body,
+                });
             }
-            let mut cursor = if from_top {
-                MARGIN
-            } else {
-                surface_h.saturating_sub(MARGIN)
+            cursor = Self::advance_cursor(from_top, cursor, row_h);
+        }
+    }
+
+    /// Entries sharing a row: two when the leading pair anchors on
+    /// opposite sides, one otherwise.
+    fn pair_width(shaped: &[Shaped]) -> usize {
+        if shaped.len() > 1 && shaped[0].anchor.is_left() != shaped[1].anchor.is_left() {
+            2
+        } else {
+            1
+        }
+    }
+
+    /// Horizontal anchor: left edge pins to the margin, right edge
+    /// pins the box against the margin.
+    fn anchor_x(anchor: NotificationPosition, w: u32, surface_w: u32) -> u32 {
+        if anchor.is_left() {
+            MARGIN
+        } else {
+            surface_w.saturating_sub(w + MARGIN)
+        }
+    }
+
+    /// Row origin: top rows grow down from the cursor, bottom rows
+    /// align their bottoms to it.
+    fn entry_y(from_top: bool, cursor: u32, row_h: u32) -> u32 {
+        if from_top {
+            cursor
+        } else {
+            cursor.saturating_sub(row_h)
+        }
+    }
+
+    /// Cursor step past one placed row plus the inter-row margin.
+    fn advance_cursor(from_top: bool, cursor: u32, row_h: u32) -> u32 {
+        if from_top {
+            cursor + row_h + ROW_GAP
+        } else {
+            cursor.saturating_sub(row_h).saturating_sub(ROW_GAP)
+        }
+    }
+
+    /// Shape one entry: intrinsic width plus row height.
+    fn shape_entry(&mut self, entry: Entry, font_px: u32) -> Shaped {
+        match entry {
+            Entry::Line(line, rgb, anchor) => {
+                let span = self.shape_line(&line, font_px);
+                let row_h = self.row_height(font_px, span.ascent, span.descent);
+                let w = span.width.ceil() as u32 + PILL_PAD_X * 2;
+                Shaped {
+                    anchor,
+                    body: RowBody::Line { span },
+                    rgb,
+                    w,
+                    row_h,
+                }
+            }
+            Entry::Status(status, anchor) => self.shape_status(status, anchor, font_px),
+        }
+    }
+
+    /// Shape the status readout: solo value pill, or a label/value
+    /// pair with the value on the margin side so the digits never
+    /// shift. Either way the value pill's outer edge pins to the
+    /// margin, so a Paused flip or a language change only grows the
+    /// inner label pill (left anchors read "value label", right
+    /// anchors "label value").
+    fn shape_status(
+        &mut self,
+        status: OsdStatus,
+        anchor: NotificationPosition,
+        font_px: u32,
+    ) -> Shaped {
+        let label = self.shape_line(&status.label, font_px);
+        let value = self.shape_line(&status.value, font_px);
+        if status.label.is_empty() {
+            // Solo value pill, as before.
+            let row_h = self.row_height(font_px, value.ascent, value.descent);
+            let w = value.width.ceil() as u32 + PILL_PAD_X * 2;
+            return Shaped {
+                anchor,
+                body: RowBody::Line { span: value },
+                rgb: status.rgb,
+                w,
+                row_h,
             };
-            // Opposite sides on the same edge share one row: a status on
-            // the right no longer stacks under a notification on the
-            // left, it sits beside it at the same height.
-            while !shaped.is_empty() {
-                let pair =
-                    shaped.len() > 1 && shaped[0].anchor.is_left() != shaped[1].anchor.is_left();
-                let end = if pair { 2 } else { 1 };
-                let row_h = shaped[..end]
-                    .iter()
-                    .map(|entry| entry.row_h)
-                    .max()
-                    .unwrap_or(0);
-                if from_top {
-                    for entry in shaped.drain(..end) {
-                        let x = if entry.anchor.is_left() {
-                            MARGIN
-                        } else {
-                            surface_w.saturating_sub(entry.w + MARGIN)
-                        };
-                        boxes.push(PlacedRow {
-                            x,
-                            y: cursor,
-                            w: entry.w,
-                            h: entry.row_h,
-                            rgb: entry.rgb,
-                            body: entry.body,
-                        });
-                    }
-                    cursor += row_h + ROW_GAP;
-                } else {
-                    let row_bottom = cursor;
-                    for entry in shaped.drain(..end) {
-                        let x = if entry.anchor.is_left() {
-                            MARGIN
-                        } else {
-                            surface_w.saturating_sub(entry.w + MARGIN)
-                        };
-                        boxes.push(PlacedRow {
-                            x,
-                            y: row_bottom.saturating_sub(entry.row_h),
-                            w: entry.w,
-                            h: entry.row_h,
-                            rgb: entry.rgb,
-                            body: entry.body,
-                        });
-                    }
-                    cursor = row_bottom.saturating_sub(row_h).saturating_sub(ROW_GAP);
-                }
-            }
-        };
-        place(top, true, self);
-        place(bottom, false, self);
-        Some(boxes)
+        }
+        let ascent = label.ascent.max(value.ascent);
+        let descent = label.descent.min(value.descent);
+        let row_h = self.row_height(font_px, ascent, descent);
+        let outer = StatusSpan { span: value };
+        let inner = StatusSpan { span: label };
+        let outer_w = outer.span.width.ceil() as u32 + PILL_PAD_X * 2;
+        let inner_w = inner.span.width.ceil() as u32 + PILL_PAD_X * 2;
+        Shaped {
+            anchor,
+            body: RowBody::Pair {
+                outer,
+                inner,
+                ascent,
+                descent,
+                outer_left: anchor.is_left(),
+            },
+            rgb: status.rgb,
+            w: outer_w + ROW_GAP + inner_w,
+            row_h,
+        }
     }
 
     /// Shape one line with full GPOS kerning and script fallback.
@@ -528,6 +548,21 @@ struct PlacedRow {
     h: u32,
     rgb: (u8, u8, u8),
     body: RowBody,
+}
+
+/// Layout entry: each carries its own anchor corner for split placement.
+enum Entry {
+    Line(String, (u8, u8, u8), NotificationPosition),
+    Status(OsdStatus, NotificationPosition),
+}
+
+/// Shaped entry: intrinsic width plus row height.
+struct Shaped {
+    anchor: NotificationPosition,
+    body: RowBody,
+    rgb: (u8, u8, u8),
+    w: u32,
+    row_h: u32,
 }
 
 enum RowBody {
