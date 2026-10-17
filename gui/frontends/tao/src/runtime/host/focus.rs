@@ -6,15 +6,15 @@
 //! set the flag.
 
 use super::HostState;
-use nerust_gui_shell::session::access::FrontendSession;
+use nerust_gui_shell::session::access::PauseControl;
 
 impl HostState {
     pub(crate) fn resume_session(&mut self) {
-        FrontendSession::resume(self);
+        PauseControl::resume(self);
     }
 
     pub(crate) fn pause_session(&mut self) {
-        FrontendSession::pause(self);
+        PauseControl::pause(self);
     }
 
     /// Execute a still-armed auto-pause at the end of the event burst.

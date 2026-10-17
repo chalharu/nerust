@@ -410,6 +410,38 @@ impl SessionHandle {
         &mut self,
         command: SessionCommand,
     ) -> Result<SessionCommandOutcome, SessionError> {
+        // Resolve TogglePause to its steady arm so notifications name
+        // the state actually entered.
+        let was_paused = self.paused();
+        let effective = super::notification::resolve_toggle(command, was_paused);
+        let result = self.run_command_inner(effective);
+        match &result {
+            Ok(outcome) => {
+                let active = self.active_slot_id();
+                // Notify the entered state: TogglePause from paused
+                // must read Resumed, not the invoked command name.
+                let notified = match command {
+                    SessionCommand::TogglePause => effective,
+                    other => other,
+                };
+                for kind in super::notification::outcome_notifications(notified, outcome, active) {
+                    self.notifications.push(kind);
+                }
+            }
+            Err(_) => {
+                self.notifications
+                    .push(super::notification::NotificationKind::CommandFailed(
+                        command_name(command),
+                    ))
+            }
+        }
+        result
+    }
+
+    fn run_command_inner(
+        &mut self,
+        command: SessionCommand,
+    ) -> Result<SessionCommandOutcome, SessionError> {
         match command {
             SessionCommand::Pause => self.cmd_pause(),
             SessionCommand::Resume => self.cmd_resume(),
@@ -429,6 +461,32 @@ impl SessionHandle {
         }
     }
 
+    pub fn drain_notifications(&mut self) -> Vec<super::notification::UiNotification> {
+        self.notifications.drain()
+    }
+
+    pub fn notification_history(
+        &self,
+    ) -> impl Iterator<Item = &super::notification::UiNotification> {
+        self.notifications.history()
+    }
+
+    pub fn notification_history_lines(
+        &self,
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) -> Vec<super::osd::HistoryLine> {
+        super::osd::history_lines(self.notifications.history(), language)
+    }
+
+    /// Current history version for dirty-gated viewer syncs.
+    pub fn notification_history_seq(&self) -> u64 {
+        self.notifications.history_seq()
+    }
+
+    pub fn clear_notification_history(&mut self) {
+        self.notifications.clear_history();
+    }
+
     fn cmd_pause(&mut self) -> Result<SessionCommandOutcome, SessionError> {
         if self.paused() {
             return Ok(SessionCommandOutcome::default());
@@ -440,7 +498,27 @@ impl SessionHandle {
             slot_failure: None,
         })
     }
+}
 
+fn command_name(command: SessionCommand) -> &'static str {
+    match command {
+        SessionCommand::Pause => "Pause",
+        SessionCommand::Resume => "Resume",
+        SessionCommand::TogglePause => "TogglePause",
+        SessionCommand::Reset => "Reset",
+        SessionCommand::CreateSlot => "CreateSlot",
+        SessionCommand::SaveActiveSlotOrNew => "SaveActiveSlotOrNew",
+        SessionCommand::LoadActiveSlot => "LoadActiveSlot",
+        SessionCommand::SelectActiveSlot(_) => "SelectActiveSlot",
+        SessionCommand::SaveSlot(_) => "SaveSlot",
+        SessionCommand::LoadSlot(_) => "LoadSlot",
+        SessionCommand::DeleteSlot(_) => "DeleteSlot",
+        SessionCommand::SelectNextSlot => "SelectNextSlot",
+        SessionCommand::SelectPreviousSlot => "SelectPreviousSlot",
+    }
+}
+
+impl SessionHandle {
     fn cmd_resume(&mut self) -> Result<SessionCommandOutcome, SessionError> {
         if !self.paused() {
             return Ok(SessionCommandOutcome::default());

@@ -36,9 +36,11 @@ pub struct SoftbufferRenderer {
     surface: Option<Surface<WindowHandlePair, WindowHandlePair>>,
     render_profile: VideoRenderProfile,
     size: SurfaceSize,
+    reserved: nerust_render_traits::ReservedStrip,
     lut: LutEntry,
     resize_buffer: Vec<u32>,
     ntsc_buffer: Vec<u32>,
+    osd: Option<nerust_render_traits::renderer::OsdLayer>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,10 +281,17 @@ impl SoftbufferRenderer {
             surface: None,
             render_profile: profile.clone(),
             size: SurfaceSize::new(0, 0),
+            reserved: nerust_render_traits::ReservedStrip::default(),
+            osd: None,
             lut: LutEntry::new(),
             resize_buffer: Vec::new(),
             ntsc_buffer: Vec::new(),
         }
+    }
+
+    fn available_size(&self) -> SurfaceSize {
+        let loss = self.reserved.height_loss(self.size.height);
+        SurfaceSize::new(self.size.width, self.size.height.saturating_sub(loss))
     }
 
     fn resize_lut(&mut self) {
@@ -292,7 +301,7 @@ impl SoftbufferRenderer {
                 height: self.render_profile.logical_size.height as u32,
             },
             self.render_profile.physical_size.width / self.render_profile.physical_size.height,
-            self.size,
+            self.available_size(),
         );
         self.ntsc_buffer.resize(
             self.render_profile.logical_size.width * self.render_profile.logical_size.height,
@@ -463,6 +472,51 @@ impl SoftbufferRenderer {
     }
 }
 
+impl SoftbufferRenderer {
+    /// Straight-alpha blend of the OSD layer, clipped to the buffer.
+    fn blend_osd(
+        buffer: &mut [u32],
+        dst_w: usize,
+        dst_h: usize,
+        layer: &nerust_render_traits::renderer::OsdLayer,
+    ) {
+        let src_w = layer.width as usize;
+        let src_h = layer.height as usize;
+        if src_w == 0 || src_h == 0 || layer.rgba.len() < src_w * src_h * 4 {
+            return;
+        }
+        for row in 0..src_h {
+            let dst_y = layer.y as usize + row;
+            if dst_y >= dst_h {
+                break;
+            }
+            for col in 0..src_w {
+                let dst_x = layer.x as usize + col;
+                if dst_x >= dst_w {
+                    break;
+                }
+                let s = (row * src_w + col) * 4;
+                let alpha = f32::from(layer.rgba[s + 3]) / 255.0;
+                if alpha == 0.0 {
+                    continue;
+                }
+                // Buffer words are 0xAARRGGBB: big-endian bytes
+                // are [A, R, G, B], not RGBA.
+                let dst_pixel = buffer[dst_y * dst_w + dst_x].to_be_bytes();
+                let blend = |src: u8, dst: u8| {
+                    (f32::from(src) * alpha + f32::from(dst) * (1.0 - alpha)).round() as u8
+                };
+                buffer[dst_y * dst_w + dst_x] = u32::from_be_bytes([
+                    255,
+                    blend(layer.rgba[s], dst_pixel[1]),
+                    blend(layer.rgba[s + 1], dst_pixel[2]),
+                    blend(layer.rgba[s + 2], dst_pixel[3]),
+                ]);
+            }
+        }
+    }
+}
+
 impl GpuRenderer for SoftbufferRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
@@ -507,6 +561,15 @@ impl GpuRenderer for SoftbufferRenderer {
             }
         }
         self.resize_lut();
+    }
+
+    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
+        self.reserved = strip;
+        self.resize_lut();
+    }
+
+    fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
+        self.osd = layer;
     }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
@@ -560,9 +623,23 @@ impl GpuRenderer for SoftbufferRenderer {
             return RenderResult::Skipped;
         }
 
+        let top = (self.reserved.top as usize).min(dst_h);
+        let avail_h = dst_h.saturating_sub((self.reserved.height_loss(self.size.height)) as usize);
+        // Strip rows keep the cleared black: the surface buffer is
+        // reused across frames, so stale game pixels must not linger.
+        for row in buffer.as_mut()[..top.saturating_mul(dst_w)].iter_mut() {
+            *row = 0;
+        }
+        for row in buffer.as_mut()[(top.saturating_add(avail_h)).saturating_mul(dst_w)..].iter_mut()
+        {
+            *row = 0;
+        }
+
         let src_stride = frame.stride();
         let src = frame.as_ref();
-        let dst = buffer.as_mut();
+        let game_rows = top.saturating_mul(dst_w);
+        let game_len = avail_h.saturating_mul(dst_w);
+        let dst = &mut buffer.as_mut()[game_rows..game_rows.saturating_add(game_len)];
         // let src_w = self.render_profile.source_logical_size.width;
         let src_h = self.render_profile.source_logical_size.height;
         // Short source images would panic every indexer below (the
@@ -587,7 +664,7 @@ impl GpuRenderer for SoftbufferRenderer {
                     src_stride / 4,
                     src_h,
                     dst_w,
-                    dst_h,
+                    avail_h,
                     move |i| src[i * 4..i * 4 + 4].try_into().unwrap(),
                     &self.lut,
                     &mut self.resize_buffer,
@@ -606,7 +683,7 @@ impl GpuRenderer for SoftbufferRenderer {
                         self.render_profile.logical_size.width,
                         src_h,
                         dst_w,
-                        dst_h,
+                        avail_h,
                         |i| self.ntsc_buffer[i].to_be_bytes(),
                         &self.lut,
                         &mut self.resize_buffer,
@@ -619,7 +696,7 @@ impl GpuRenderer for SoftbufferRenderer {
                         src_stride,
                         src_h,
                         dst_w,
-                        dst_h,
+                        avail_h,
                         move |i| {
                             palette
                                 .get(src.get(i).copied().unwrap_or(0) as usize)
@@ -634,6 +711,9 @@ impl GpuRenderer for SoftbufferRenderer {
             }
         }
 
+        if let Some(layer) = self.osd.as_ref() {
+            Self::blend_osd(buffer.as_mut(), dst_w, dst_h, layer);
+        }
         match buffer.present() {
             Ok(()) => RenderResult::Presented,
             Err(e) => {
@@ -661,6 +741,25 @@ impl GpuFactory for SoftbufferFactory {
 mod tests {
     use super::*;
     use nerust_render_traits::{VideoFrameFormat, logical::LogicalSize, physical::PhysicalSize};
+
+    #[test]
+    fn blend_osd_writes_argb_words() {
+        // Buffers are 0xAARRGGBB: opaque red over opaque black stays red.
+        let mut buffer = vec![0xFF00_0000u32; 4];
+        let layer = nerust_render_traits::renderer::OsdLayer {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 1,
+            rgba: vec![
+                255, 0, 0, 255, // opaque red
+                0, 0, 0, 0, // transparent keeps dst
+            ],
+        };
+        SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &layer);
+        assert_eq!(buffer[0], 0xFFFF_0000);
+        assert_eq!(buffer[1], 0xFF00_0000);
+    }
 
     fn test_profile() -> VideoRenderProfile {
         VideoRenderProfile {

@@ -43,3 +43,17 @@ pub struct SystemSettingsChoiceOption {
     pub id: SystemSettingsChoiceId,
     pub label_id: &'static str,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{SystemSettingsChoiceId, SystemSettingsFieldId};
+
+    #[test]
+    fn setting_ids_expose_their_string_forms() {
+        assert_eq!(
+            SystemSettingsFieldId("nes.filter".into()).as_str(),
+            "nes.filter"
+        );
+        assert_eq!(SystemSettingsChoiceId("ntsc".into()).as_str(), "ntsc");
+    }
+}

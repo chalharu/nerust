@@ -3560,6 +3560,7 @@ dependencies = [
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_persistence",
+ "nerust_render_osd",
  "nerust_render_traits",
  "nerust_run_options",
  "nerust_settings_core",
@@ -3608,6 +3609,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "thiserror 2.0.21",
+ "time",
 ]
 
 [[package]]
@@ -3748,6 +3750,16 @@ dependencies = [
 name = "nerust_render_ntsc"
 version = "0.1.0-dev"
 dependencies = [
+ "log",
+ "nerust_render_traits",
+]
+
+[[package]]
+name = "nerust_render_osd"
+version = "0.1.0-dev"
+dependencies = [
+ "cosmic-text",
+ "fontdb",
  "log",
  "nerust_render_traits",
 ]
@@ -3896,6 +3908,7 @@ dependencies = [
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_persistence",
+ "nerust_render_osd",
  "nerust_render_traits",
  "nerust_run_options",
  "nerust_settings_core",

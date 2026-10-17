@@ -11,7 +11,8 @@ use super::{State, renderer::GtkRenderer};
 pub(crate) struct SurfaceCore {
     window: gtk::ApplicationWindow,
     renderer: Rc<RefCell<GtkRenderer>>,
-    state: Rc<RefCell<State>>,
+    pub(crate) state: Rc<RefCell<State>>,
+    pub(crate) osd: RefCell<super::osd::GtkOsd>,
     last_size: Cell<SurfaceSize>,
 }
 
@@ -34,10 +35,12 @@ impl SurfaceExtend for Surface {
     ) -> Surface {
         state.borrow_mut().renderer_reload_pending = true;
         let renderer = Rc::new(RefCell::new(GtkRenderer::new(factory)));
+        let osd = super::osd::GtkOsd::new();
         let result = Rc::new(RefCell::new(SurfaceCore {
             window: window.clone(),
             renderer,
             state,
+            osd: RefCell::new(osd),
             last_size: Cell::new(SurfaceSize::new(0, 0)),
         }));
         {
@@ -93,6 +96,11 @@ impl SurfaceExtend for Surface {
             if let Some(fb) = state.frame_buffer() {
                 s.renderer.borrow_mut().render(fb, physical_size);
             }
+
+            let surface = self.clone();
+            s.osd
+                .borrow_mut()
+                .poll(&surface, &mut state, &s.renderer, &s.window);
         }
 
         true

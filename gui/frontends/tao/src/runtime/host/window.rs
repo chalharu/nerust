@@ -174,6 +174,26 @@ impl HostState {
             *control_flow = ControlFlow::WaitUntil(earlier);
         }
 
+        // Drain notifications here, not only in on_update: a paused
+        // unfocused loop schedules no redraws, which is exactly when
+        // pause/error notices must still land and expire.
+        self.poll_notifications();
+        // OSD expiry wakes the loop for relabel: plain Wait would
+        // leave a stale label up until the next input event.
+        // Redraw while labels show so expiry applies even paused.
+        if self.osd.has_visible()
+            && let Some(window) = self.window.as_ref()
+        {
+            window.request_redraw();
+        }
+        if let Some(deadline) = self.osd_wakeup() {
+            let earlier = match *control_flow {
+                ControlFlow::WaitUntil(at) => at.min(deadline),
+                _ => deadline,
+            };
+            *control_flow = ControlFlow::WaitUntil(earlier);
+        }
+
         // Inactive loop sleeps; redraw while focused, while the PPU
         // follows a running core, or while the session runs (a bare
         // WaitUntil alone would not reliably wake the loop, at the

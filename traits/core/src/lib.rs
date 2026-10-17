@@ -384,3 +384,152 @@ impl<T: CoreOptions> From<T> for Box<dyn CoreOptions> {
         Box::new(value)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ConsoleCore, CoreCapabilities, CoreConfig, CoreError, SwapAudioCommand, VideoSignalKind,
+        audio,
+    };
+    use nerust_render_traits::FrameBuffer;
+
+    #[derive(Debug, Default)]
+    struct StubCore {
+        paused: bool,
+    }
+
+    impl ConsoleCore for StubCore {
+        fn capabilities(&self) -> CoreCapabilities {
+            CoreCapabilities {
+                output_formats: Vec::new(),
+                video_signal: VideoSignalKind::Other,
+            }
+        }
+
+        fn render_frame(
+            &mut self,
+            _frame_slot: &mut FrameBuffer,
+            _audio_out: &mut Vec<audio::StereoSample>,
+        ) -> Result<(), CoreError> {
+            Err(CoreError::NoRomLoaded)
+        }
+
+        fn load(&mut self, _rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
+            Err(CoreError::NoRomLoaded)
+        }
+
+        fn unload(&mut self) {}
+
+        fn reset(&mut self) {
+            self.paused = false;
+        }
+
+        fn paused(&self) -> bool {
+            self.paused
+        }
+
+        fn set_paused(&mut self, paused: bool) {
+            self.paused = paused;
+        }
+
+        fn set_audio_sample_rate(&mut self, _sample_rate: u32) {}
+
+        fn save_state(&self) -> Result<Vec<u8>, CoreError> {
+            Err(CoreError::NoRomLoaded)
+        }
+
+        fn load_state(&mut self, _data: &[u8]) -> Result<(), CoreError> {
+            Err(CoreError::NoRomLoaded)
+        }
+    }
+
+    #[test]
+    fn default_channels_are_empty_and_identity_fails_without_rom() {
+        let mut core = StubCore::default();
+        assert_eq!(core.mapper_save().unwrap(), None);
+        assert!(core.import_mapper_save(&[]).is_ok());
+        assert!(core.debugger().is_none());
+        assert!(core.debug_control().is_none());
+        assert!(core.output_channels().is_empty());
+        assert!(core.take_channel_bytes("main").is_empty());
+        assert!(matches!(core.identity(), Err(CoreError::NoRomLoaded)));
+        assert_eq!(core.rewind_state_size(), None);
+        core.set_paused(true);
+        assert!(core.paused());
+        // Required lifecycle methods stay callable on the stub.
+        let config = CoreConfig {
+            region: None,
+            bios_paths: std::collections::HashMap::new(),
+            controllers: std::collections::HashMap::new(),
+            core_options: None,
+            audio_sample_rate: None,
+        };
+        assert!(matches!(
+            core.load(&[], &config),
+            Err(CoreError::NoRomLoaded)
+        ));
+        let mut frame =
+            FrameBuffer::with_capacity(256, 240, nerust_render_traits::PixelFormat::Rgba);
+        let mut audio_out = Vec::new();
+        assert!(matches!(
+            core.render_frame(&mut frame, &mut audio_out),
+            Err(CoreError::NoRomLoaded)
+        ));
+        assert!(matches!(core.save_state(), Err(CoreError::NoRomLoaded)));
+        assert!(matches!(core.load_state(&[]), Err(CoreError::NoRomLoaded)));
+        core.unload();
+        core.reset();
+        assert!(!core.paused());
+    }
+
+    #[test]
+    #[should_panic(expected = "rewind not supported")]
+    fn rewind_save_panics_without_support() {
+        StubCore::default().rewind_save(&mut [0; 8]);
+    }
+
+    #[test]
+    #[should_panic(expected = "rewind not supported")]
+    fn rewind_restore_panics_without_support() {
+        StubCore::default().rewind_restore(&[0; 8]);
+    }
+
+    #[test]
+    fn core_errors_render_stable_messages() {
+        assert_eq!(format!("{}", CoreError::NoRomLoaded), "no ROM loaded");
+        assert_eq!(
+            format!("{}", CoreError::InvalidCoreOptions),
+            "invalid core options"
+        );
+    }
+
+    #[test]
+    fn swap_audio_command_debug_hides_backend_but_shows_rate() {
+        use std::sync::mpsc::channel;
+
+        #[derive(Debug)]
+        struct StubBackend;
+        impl audio::AudioBackend for StubBackend {
+            fn start(&mut self) {}
+            fn pause(&mut self) {}
+            fn push(&mut self, _sample: audio::StereoSample) {}
+        }
+
+        let (reply, _rx) = channel();
+        let command = SwapAudioCommand {
+            backend: Box::new(StubBackend),
+            sample_rate: 48_000,
+            reply,
+        };
+        let rendered = format!("{command:?}");
+        assert!(rendered.contains("48000"), "{rendered}");
+    }
+
+    #[test]
+    fn stereo_sample_math_matches_scalar_expectations() {
+        let stereo = audio::StereoSample::new(0.5, -0.25);
+        assert_eq!(stereo.downmix(), 0.125);
+        assert_eq!(stereo.scale(2.0).downmix(), 0.25);
+        assert_eq!(audio::StereoSample::mono(0.5).downmix(), 0.5);
+    }
+}

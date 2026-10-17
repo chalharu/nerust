@@ -173,3 +173,95 @@ impl ControllerProfile for StandardPadProfile {
         G
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Controller, ControllerProfile, StandardPad, StandardPadProfile};
+    use nerust_input_traits::SimplePort;
+
+    fn player1() -> SimplePort {
+        SimplePort::new(0, "nes.attachment.player1")
+    }
+
+    #[test]
+    fn strobe_high_holds_first_button() {
+        let mut pad = StandardPad::new(0x1F);
+        pad.sync_input(&[0b1010_0101, 0]);
+        let port = player1();
+        pad.write(&port, 1);
+        // A (bit 0) reads back while strobe stays high.
+        assert_eq!(pad.read(&port).data & 1, 1);
+        assert_eq!(pad.read(&port).data & 1, 1);
+        assert_eq!(pad.read(&port).mask, 0x1F);
+    }
+
+    #[test]
+    fn strobe_fall_shifts_out_buttons_then_ones() {
+        let mut pad = StandardPad::new(0x1F);
+        pad.sync_input(&[0b1010_0101, 0]);
+        let port = player1();
+        pad.write(&port, 1);
+        pad.write(&port, 0);
+        // A, B, Select, Start, Up, Down, Left, Right, then open 1s.
+        let bits: Vec<u8> = (0..10).map(|_| pad.read(&port).data & 1).collect();
+        assert_eq!(&bits[..8], &[1, 0, 1, 0, 0, 1, 0, 1]);
+        assert_eq!(&bits[8..], &[1, 1]);
+    }
+
+    #[test]
+    fn second_port_reads_second_byte() {
+        let mut pad = StandardPad::new(0x1F);
+        pad.sync_input(&[0, 0b0000_0010]);
+        let port = SimplePort::new(1, "nes.attachment.player2");
+        pad.write(&port, 1);
+        pad.write(&port, 0);
+        let bits: Vec<u8> = (0..8).map(|_| pad.read(&port).data & 1).collect();
+        assert_eq!(&bits, &[0, 1, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn reset_runtime_clears_shift_register() {
+        let mut pad = StandardPad::new(0x1F);
+        pad.sync_input(&[0xFF, 0xFF]);
+        let port = player1();
+        pad.write(&port, 1);
+        pad.write(&port, 0);
+        pad.read(&port);
+        pad.reset_runtime();
+        // Strobe latches fresh input again after reset.
+        pad.write(&port, 1);
+        assert_eq!(pad.read(&port).data & 1, 1);
+    }
+
+    #[test]
+    fn field_map_covers_eight_buttons_in_order() {
+        let pad = StandardPad::default();
+        let map = pad.field_map(&player1());
+        let ids: Vec<&str> = map.iter().map(|(_, id, _)| id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "nes.control.a",
+                "nes.control.b",
+                "nes.control.select",
+                "nes.control.start",
+                "nes.control.up",
+                "nes.control.down",
+                "nes.control.left",
+                "nes.control.right",
+            ]
+        );
+        let offsets: Vec<usize> = map.iter().map(|(_, _, bit)| *bit).collect();
+        assert_eq!(offsets, [0, 1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn profile_describes_two_ports_and_eight_controls() {
+        let profile = StandardPadProfile;
+        assert_eq!(profile.profile_id().as_str(), "nes.standard_pad");
+        assert_eq!(profile.label(), "NES Standard Controller");
+        assert_eq!(profile.port_sets().len(), 2);
+        assert_eq!(profile.port_groups().len(), 1);
+        assert_eq!(profile.port_groups()[0].len(), 8);
+    }
+}

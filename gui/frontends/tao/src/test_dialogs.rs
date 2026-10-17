@@ -47,4 +47,12 @@ impl crate::ports::DialogPorts for FakeDialogs {
     ) {
         crate::aux::bridge::lock_recovered(&self.inner.errors).push(detail.to_string());
     }
+
+    fn show_error(
+        &self,
+        _language: nerust_settings_core::model::language::AppLanguage,
+        detail: &str,
+    ) {
+        crate::aux::bridge::lock_recovered(&self.inner.errors).push(detail.to_string());
+    }
 }

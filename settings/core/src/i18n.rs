@@ -117,6 +117,43 @@ pub enum UiText {
     PausedState,
     RunningState,
     RomLoadFailed,
+    Error,
+    NotificationHistory,
+    Notifications,
+    NotificationInfo,
+    NotificationWarning,
+    NotificationError,
+    NotificationStatus,
+    NotificationDuration,
+    NotificationColor,
+    NotificationPosition,
+    NotificationStatusPosition,
+    NotificationAreaMode,
+    NotificationStatusAreaMode,
+    NotificationStatusAreaFollows,
+    NotificationErrorModal,
+    NotificationEnabled,
+    NotificationErrorOnScreen,
+    NotificationSectionDisplay,
+    NotificationSectionStatus,
+    HistoryFilterAll,
+    HistoryLevel,
+    HistoryClear,
+    HistoryDatetime,
+    HistoryModule,
+    HistoryMessage,
+    HistoryEmpty,
+    ColorWhite,
+    ColorYellow,
+    ColorRed,
+    ColorGreen,
+    ColorCyan,
+    PosTopLeft,
+    PosTopRight,
+    PosBottomLeft,
+    PosBottomRight,
+    AreaOverlay,
+    AreaStrip,
 }
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
@@ -139,6 +176,34 @@ pub fn text(language: AppLanguage, key: UiText) -> &'static str {
         AppLanguage::Japanese => japanese,
         AppLanguage::English | AppLanguage::SystemDefault => english,
     }
+}
+
+/// CJK-capable sans family for the UI language, when the platform
+/// default font cannot cover it. The iced shaper falls back per
+/// glyph through a hardcoded family list, so Japanese text under a
+/// generic family can mix serif faces on machines without Noto CJK;
+/// naming the platform CJK sans keeps it uniform. `None` means the
+/// frontend default already covers the language.
+pub fn font_family(language: AppLanguage) -> Option<&'static str> {
+    if !matches!(resolve_language(language), AppLanguage::Japanese) {
+        return None;
+    }
+    platform_cjk_sans()
+}
+
+#[cfg(target_os = "windows")]
+fn platform_cjk_sans() -> Option<&'static str> {
+    Some("Yu Gothic UI")
+}
+
+#[cfg(target_os = "macos")]
+fn platform_cjk_sans() -> Option<&'static str> {
+    Some("Hiragino Sans")
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn platform_cjk_sans() -> Option<&'static str> {
+    None
 }
 
 /// (English, Japanese) pair per key: one match instead of two
@@ -275,6 +340,46 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::PausedState => ("paused", "一時停止中"),
         UiText::RunningState => ("running", "実行中"),
         UiText::RomLoadFailed => ("Failed to load ROM", "ROMの読み込みに失敗しました"),
+        UiText::Error => ("Error", "エラー"),
+        UiText::NotificationHistory => ("Notification history", "通知履歴"),
+        UiText::Notifications => ("Notifications", "通知"),
+        UiText::NotificationInfo => ("Info", "情報"),
+        UiText::NotificationWarning => ("Warning", "警告"),
+        UiText::NotificationError => ("Error notifications", "エラー通知"),
+        UiText::NotificationStatus => ("Status display", "ステータス表示"),
+        UiText::NotificationDuration => ("Duration (ms)", "表示時間 (ms)"),
+        UiText::NotificationColor => ("Color", "色"),
+        UiText::NotificationPosition => ("Position", "表示位置"),
+        UiText::NotificationStatusPosition => ("Status position", "ステータス位置"),
+        UiText::NotificationAreaMode => ("Area", "表示領域"),
+        UiText::NotificationStatusAreaMode => ("Status area", "ステータス領域"),
+        UiText::NotificationStatusAreaFollows => (
+            "Follows notification area (same edge)",
+            "通知の領域に従う（同じ辺）",
+        ),
+        UiText::NotificationErrorModal => ("Modal dialog", "モーダルダイアログ"),
+        UiText::NotificationEnabled => ("Enabled", "有効"),
+        UiText::NotificationErrorOnScreen => ("On-screen display", "画面内表示"),
+        UiText::NotificationSectionDisplay => ("Display", "表示"),
+        UiText::NotificationSectionStatus => ("Status indicator", "状態表示"),
+        UiText::HistoryFilterAll => ("All", "すべて"),
+        UiText::HistoryLevel => ("Level", "レベル"),
+        UiText::HistoryClear => ("Clear History", "履歴を消去"),
+        UiText::HistoryDatetime => ("Datetime", "日時"),
+        UiText::HistoryModule => ("Module", "モジュール"),
+        UiText::HistoryMessage => ("Message", "メッセージ"),
+        UiText::HistoryEmpty => ("No notifications", "通知はありません"),
+        UiText::ColorWhite => ("White", "白"),
+        UiText::ColorYellow => ("Yellow", "黄"),
+        UiText::ColorRed => ("Red", "赤"),
+        UiText::ColorGreen => ("Green", "緑"),
+        UiText::ColorCyan => ("Cyan", "水色"),
+        UiText::PosTopLeft => ("Top left", "左上"),
+        UiText::PosTopRight => ("Top right", "右上"),
+        UiText::PosBottomLeft => ("Bottom left", "左下"),
+        UiText::PosBottomRight => ("Bottom right", "右下"),
+        UiText::AreaOverlay => ("Overlay", "重ねる"),
+        UiText::AreaStrip => ("Strip", "専用帯"),
     }
 }
 
@@ -301,6 +406,22 @@ pub fn parse_failed(language: AppLanguage, input: &str) -> String {
         language,
         format!("parse failed: {input}"),
         format!("解析失敗: {input}")
+    )
+}
+
+/// History item count (`42 items` / `42件`). The number leads in
+/// both languages (Console / Event Viewer pattern).
+pub fn history_count(language: AppLanguage, count: usize) -> String {
+    localized!(language, format!("{count} items"), format!("{count}件"))
+}
+
+/// Screen-reader label for a level enable toggle.
+/// Pass the short level name; Error/Status read full elsewhere.
+pub fn notification_group_label(language: AppLanguage, level: &str) -> String {
+    localized!(
+        language,
+        format!("{level} notifications"),
+        format!("{level}通知")
     )
 }
 
@@ -482,11 +603,75 @@ mod tests {
             NoSaveSlots,
             Help,
             RomLoadFailed,
+            Error,
+            NotificationHistory,
+            Notifications,
+            NotificationInfo,
+            NotificationWarning,
+            NotificationError,
+            NotificationStatus,
+            NotificationDuration,
+            NotificationColor,
+            NotificationPosition,
+            NotificationStatusPosition,
+            NotificationAreaMode,
+            NotificationStatusAreaMode,
+            NotificationStatusAreaFollows,
+            NotificationErrorModal,
+            NotificationEnabled,
+            NotificationErrorOnScreen,
+            NotificationSectionDisplay,
+            NotificationSectionStatus,
+            HistoryFilterAll,
+            HistoryLevel,
+            HistoryClear,
+            HistoryDatetime,
+            HistoryModule,
+            HistoryMessage,
+            HistoryEmpty,
+            ColorWhite,
+            ColorYellow,
+            ColorRed,
+            ColorGreen,
+            ColorCyan,
+            PosTopLeft,
+            PosTopRight,
+            PosBottomLeft,
+            PosBottomRight,
+            AreaOverlay,
+            AreaStrip,
         ] {
             assert!(!text(en(), key).is_empty());
             assert!(!text(ja(), key).is_empty());
             assert_ne!(text(en(), key), text(ja(), key));
         }
+    }
+
+    #[test]
+    fn history_count_leads_with_the_number() {
+        assert_eq!(history_count(en(), 6), "6 items");
+        assert_eq!(history_count(ja(), 6), "6件");
+        assert_eq!(history_count(en(), 0), "0 items");
+    }
+
+    #[test]
+    fn notification_group_label_names_the_level() {
+        assert_eq!(notification_group_label(en(), "Info"), "Info notifications");
+        assert_eq!(notification_group_label(ja(), "情報"), "情報通知");
+        assert_eq!(
+            notification_group_label(en(), "Warning"),
+            "Warning notifications"
+        );
+        assert_eq!(notification_group_label(ja(), "警告"), "警告通知");
+        // Matches the existing full-name keys exactly.
+        assert_eq!(
+            notification_group_label(en(), text(en(), UiText::Error)),
+            text(en(), UiText::NotificationError)
+        );
+        assert_eq!(
+            notification_group_label(ja(), text(ja(), UiText::Error)),
+            text(ja(), UiText::NotificationError)
+        );
     }
 
     #[test]
@@ -553,5 +738,19 @@ mod tests {
             tile_hover(ja(), "Tiles", 21, 44, 13, 0x150),
             "Tiles タイル #21 (px 44,13, +0x0150)"
         );
+    }
+
+    #[test]
+    fn cjk_font_family_follows_ui_language() {
+        // English needs no override: the frontend default covers Latin.
+        assert_eq!(font_family(en()), None);
+        // Japanese needs an explicit CJK sans on Noto-less platforms;
+        // Linux keeps the default (system fallback is consistent there).
+        #[cfg(target_os = "windows")]
+        assert_eq!(font_family(ja()), Some("Yu Gothic UI"));
+        #[cfg(target_os = "macos")]
+        assert_eq!(font_family(ja()), Some("Hiragino Sans"));
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        assert_eq!(font_family(ja()), None);
     }
 }
