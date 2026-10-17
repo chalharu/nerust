@@ -432,14 +432,13 @@ impl OsdRaster {
         let size = font_px as f32;
         let metrics = Metrics::new(size, size);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
-        buffer.set_size(&mut self.font_system, Some(8192.0), None);
+        buffer.set_size(Some(8192.0), None);
         let family = if self.sans_name.is_empty() {
             Family::SansSerif
         } else {
             Family::Name(&self.sans_name)
         };
         buffer.set_text(
-            &mut self.font_system,
             line,
             &Attrs::new().family(family),
             Shaping::Advanced,
