@@ -168,7 +168,7 @@ impl OsdRaster {
             let base_y = b.y - min_y;
             match &b.body {
                 RowBody::Line { span } => {
-                    let baseline = base_y as i32 + PILL_PAD_Y as i32 + span.ascent as i32;
+                    let baseline = centered_baseline(base_y, b.h, span.ascent, span.descent);
                     self.draw_span(
                         &mut rgba,
                         width,
@@ -180,7 +180,8 @@ impl OsdRaster {
                 }
                 RowBody::Status { left, right } => {
                     let ascent = left.span.ascent.max(right.span.ascent);
-                    let baseline = base_y as i32 + PILL_PAD_Y as i32 + ascent as i32;
+                    let descent = left.span.descent.min(right.span.descent);
+                    let baseline = centered_baseline(base_y, b.h, ascent, descent);
                     let base_x = (b.x - min_x + PILL_PAD_X) as i32;
                     self.draw_span(&mut rgba, width, &left.span, base_x, baseline, b.rgb);
                     // Right span starts after the left span plus the
@@ -460,6 +461,14 @@ fn is_top(position: NotificationPosition) -> bool {
         position,
         NotificationPosition::TopLeft | NotificationPosition::TopRight
     )
+}
+
+/// Baseline that centers the content block in the pill. The pill is
+/// taller than the text, so top-anchoring leaves the bottom empty.
+fn centered_baseline(base_y: u32, row_h: u32, ascent: f32, descent: f32) -> i32 {
+    let content_h = ascent - descent;
+    let extra = row_h as f32 - (content_h + PILL_PAD_Y as f32 * 2.0);
+    base_y as i32 + PILL_PAD_Y as i32 + (extra / 2.0).round() as i32 + ascent as i32
 }
 
 /// Straight-alpha blend of one pixel over the layer buffer.
