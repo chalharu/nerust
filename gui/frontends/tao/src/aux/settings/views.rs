@@ -307,6 +307,35 @@ impl SettingsAppState {
                 ),
             ],
         );
+        let mut error_rows = vec![
+            row![
+                radio(
+                    ui_text(language, UiText::NotificationErrorModal).to_string(),
+                    true,
+                    Some(view.error_modal),
+                    Message::ToggleErrorModal
+                ),
+                radio(
+                    ui_text(language, UiText::NotificationErrorOnScreen).to_string(),
+                    false,
+                    Some(view.error_modal),
+                    Message::ToggleErrorModal
+                ),
+            ]
+            .spacing(16)
+            .into(),
+        ];
+        // Color only affects the on-screen pill; a modal dialog has
+        // no tinted text, so the picker hides in modal mode instead
+        // of offering an ineffective control.
+        if !view.error_modal {
+            error_rows.push(labeled_pick_list(
+                ui_text(language, UiText::NotificationColor),
+                colors.clone(),
+                pick_selected(&colors, &view.error_color),
+                Message::SetErrorColor,
+            ));
+        }
         let error = section_toggled(
             language,
             ui_text(language, UiText::Error),
@@ -314,30 +343,7 @@ impl SettingsAppState {
                 .label(ui_text(language, UiText::NotificationEnabled))
                 .on_toggle(Message::ToggleErrorEnabled)
                 .into(),
-            [
-                row![
-                    radio(
-                        ui_text(language, UiText::NotificationErrorModal).to_string(),
-                        true,
-                        Some(view.error_modal),
-                        Message::ToggleErrorModal
-                    ),
-                    radio(
-                        ui_text(language, UiText::NotificationErrorOnScreen).to_string(),
-                        false,
-                        Some(view.error_modal),
-                        Message::ToggleErrorModal
-                    ),
-                ]
-                .spacing(16)
-                .into(),
-                labeled_pick_list(
-                    ui_text(language, UiText::NotificationColor),
-                    colors.clone(),
-                    pick_selected(&colors, &view.error_color),
-                    Message::SetErrorColor,
-                ),
-            ],
+            error_rows,
         );
         let display = section(
             language,
