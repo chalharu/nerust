@@ -83,7 +83,9 @@ pub struct RenderPipeline {
     osd_sampler: wgpu::Sampler,
     osd_texture: Option<wgpu::Texture>,
     osd_bind_group: Option<BindGroup>,
-    osd_rect: Option<(u32, u32, u32, u32)>,
+    osd_visible: bool,
+    osd_surface: SurfaceSize,
+    osd_prev: Option<(u32, u32, u32, u32)>,
     osd_staging: Vec<u8>,
     frame_logical_size: LogicalSize,
     content_size: PhysicalSize,
@@ -111,10 +113,12 @@ impl RenderPipeline {
     /// Composite the OSD layer after the game pass, if one is set.
     /// Same surface, viewport clipped to the layer rect.
     pub fn draw_osd(&self, encoder: &mut CommandEncoder, view: &TextureView) {
-        let (Some(bind_group), Some((x, y, w, h))) = (self.osd_bind_group.as_ref(), self.osd_rect)
-        else {
+        let Some(bind_group) = self.osd_bind_group.as_ref() else {
             return;
         };
+        if !self.osd_visible {
+            return;
+        }
         let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("nerust_osd_pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
@@ -131,7 +135,14 @@ impl RenderPipeline {
             timestamp_writes: None,
             multiview_mask: None,
         });
-        render_pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+        render_pass.set_viewport(
+            0.0,
+            0.0,
+            self.osd_surface.width as f32,
+            self.osd_surface.height as f32,
+            0.0,
+            1.0,
+        );
         render_pass.set_pipeline(&self.osd_pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
         render_pass.draw(0..3, 0..1);

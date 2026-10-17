@@ -65,6 +65,7 @@ impl RenderPipeline {
         if surface_size.width == 0 || surface_size.height == 0 {
             return;
         }
+        self.osd_surface = surface_size;
         let surface_size =
             fit_surface_size_to_limit(surface_size, self.device.limits().max_texture_dimension_2d);
         self.config.width = surface_size.width;
