@@ -8,7 +8,9 @@ use tao::event::KeyEvent;
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
-    KeyboardShortcut, SessionError, access::FrontendSession, access::SettingsResult,
+    KeyboardShortcut, SessionError,
+    access::SettingsResult,
+    access::{PauseControl, SessionControl, SlotControl},
     commands::SessionCommand,
 };
 
@@ -53,8 +55,14 @@ impl HostState {
                 self.open_debug_windows(opener, false);
                 HostAction::None
             }
+            MenuCommand::NotificationHistory => {
+                self.open_history(opener);
+                HostAction::None
+            }
             MenuCommand::Session(command) => {
-                self.run_command(command);
+                if let Err(e) = self.session.run_command(command) {
+                    log::warn!("session command failed: {e}");
+                }
                 self.sync_menu_state();
                 self.refresh_window_title();
                 HostAction::None
@@ -118,7 +126,7 @@ impl HostState {
     }
 
     fn close_rom(&mut self) {
-        FrontendSession::unload(self);
+        SessionControl::unload(self);
         self.sync_menu_state();
         self.request_redraw();
         self.refresh_window_title();
@@ -143,7 +151,7 @@ impl HostState {
     }
 }
 
-impl FrontendSession for HostState {
+impl PauseControl for HostState {
     fn pause(&mut self) {
         if let Err(e) = self.session.run_command(SessionCommand::Pause) {
             log::warn!("session command failed: {e}");
@@ -159,6 +167,9 @@ impl FrontendSession for HostState {
             log::warn!("session command failed: {e}");
         }
     }
+}
+
+impl SlotControl for HostState {
     fn save_active_slot(&mut self) -> bool {
         self.session
             .run_command(SessionCommand::SaveActiveSlotOrNew)
@@ -218,14 +229,12 @@ impl FrontendSession for HostState {
             log::warn!("session command failed: {e}");
         }
     }
+}
+
+impl SessionControl for HostState {
     fn unload(&mut self) {
         if let Err(error) = self.session.unload() {
             log::warn!("ROM unload failed: {error}");
-        }
-    }
-    fn run_command(&mut self, command: SessionCommand) {
-        if let Err(e) = self.session.run_command(command) {
-            log::warn!("session command failed: {e}");
         }
     }
     fn apply_settings(
@@ -425,7 +434,7 @@ mod tests {
 
     #[test]
     fn session_delegates_stay_total_without_core() {
-        use nerust_gui_shell::session::access::FrontendSession;
+        use nerust_gui_shell::session::access::{PauseControl, SessionControl, SlotControl};
         let support = TestHost::new();
         let mut host = support.host;
         assert!(!host.session.paused());
@@ -444,8 +453,63 @@ mod tests {
         host.create_slot();
         host.reset();
         host.unload();
-        host.run_command(nerust_gui_shell::session::commands::SessionCommand::Reset);
         assert!(!host.session.loaded());
+    }
+
+    #[test]
+    fn error_modal_returns_without_blocking() {
+        use nerust_gui_shell::session::commands::SessionCommand;
+        let support = TestHost::new();
+        let mut host = support.host;
+        // No core: TogglePause fails into a CommandFailed error,
+        // which routes to the modal path (error_modal defaults on).
+        let _ = host.session.run_command(SessionCommand::TogglePause);
+        host.poll_notifications();
+        // Bounded wait for the background ack. The loop itself never
+        // blocked: rfd runs on its own thread (see `ModalFlight`).
+        // FakeDialogs answers instantly, so this exits on an early pass.
+        let mut tries = 0;
+        while support.dialogs.errors().is_empty() || host.osd.modal_pending() != 0 {
+            host.poll_notifications();
+            tries += 1;
+            assert!(tries < 500, "modal ack never arrived");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(support.dialogs.errors().len(), 1);
+        assert!(support.dialogs.errors()[0].contains("TogglePause"));
+        assert_eq!(host.osd.modal_pending(), 0);
+    }
+
+    #[test]
+    fn dead_dialog_thread_unwedges_the_queue() {
+        use super::super::osd::ModalFlight;
+        let support = TestHost::new();
+        let mut host = support.host;
+        // Simulate a dialog thread that died before acking: the
+        // sender is dropped without sending (Disconnected).
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        drop(tx);
+        host.modal_flight = Some(ModalFlight {
+            done: rx,
+            resume_after: false,
+        });
+        host.poll_notifications();
+        // Reaped as a failed ack: flight gone, queue unblocked.
+        assert!(host.modal_flight.is_none());
+        assert_eq!(host.osd.modal_pending(), 0);
+    }
+
+    #[test]
+    fn idle_poll_touches_nothing() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        // No notifications, no windows: drain, expiry, dirty gate,
+        // and the history fast path all no-op without a core.
+        host.poll_notifications();
+        host.poll_notifications();
+        assert!(support.dialogs.errors().is_empty());
+        assert_eq!(host.osd.modal_pending(), 0);
+        assert!(host.history_sync_key.is_none());
     }
 
     #[test]
@@ -476,7 +540,7 @@ mod tests {
 
     #[test]
     fn apply_paths_stay_total_without_core() {
-        use nerust_gui_shell::session::access::FrontendSession;
+        use nerust_gui_shell::session::access::SessionControl;
         let support = TestHost::new();
         let mut host = support.host;
         let snapshot = host.session.settings_snapshot().clone();

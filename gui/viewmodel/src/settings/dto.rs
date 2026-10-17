@@ -7,7 +7,9 @@ use nerust_core_traits::{
 use nerust_input_traits::AttachmentId;
 use nerust_settings_core::editor::CaptureTarget;
 use nerust_settings_core::model::{
-    language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
+    language::AppLanguage,
+    local::{NotificationAreaMode, NotificationColor, NotificationPosition, ScalingMode},
+    shared::StoragePolicy,
 };
 
 /// A labeled choice for pick-list widgets.
@@ -68,6 +70,26 @@ pub struct AudioView {
     pub sample_rate: u32,
     pub sample_rate_choices: Vec<ChoiceView<u32>>,
     pub latency_ms: u16,
+}
+
+// ── Notifications ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationView {
+    pub info_enabled: bool,
+    pub info_duration_ms: u32,
+    pub info_color: NotificationColor,
+    pub warning_enabled: bool,
+    pub warning_duration_ms: u32,
+    pub warning_color: NotificationColor,
+    pub error_enabled: bool,
+    pub error_modal: bool,
+    pub error_color: NotificationColor,
+    pub status_enabled: bool,
+    pub position: NotificationPosition,
+    pub status_position: NotificationPosition,
+    pub area_mode: NotificationAreaMode,
+    pub status_area_mode: NotificationAreaMode,
 }
 
 // ── System tab ───────────────────────────────────────────────────────

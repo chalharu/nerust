@@ -24,12 +24,16 @@ use super::debug_windows::DebugWindows;
 
 mod commands;
 mod focus;
+mod osd;
+use osd::ModalFlight;
 mod presentation;
 mod settings;
 mod window;
 
 use self::focus::FocusState;
+use crate::aux::osd::HistoryWindowHandle;
 use crate::ports::DialogPorts;
+use nerust_gui_shell::session::osd::OsdManager;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {
@@ -73,7 +77,7 @@ impl TestHost {
         let host = HostState::new_with_settings_paths(
             support.ctx,
             menu.clone().into_box(),
-            Box::new(dialogs.clone()),
+            std::sync::Arc::new(dialogs.clone()),
             Some(paths),
         )
         .expect("headless host builds on temp settings paths");
@@ -106,7 +110,7 @@ pub(crate) struct HostState {
     pub(super) session: SessionHandle,
     ctx: FrontendContext,
     app_menu: Box<dyn MenuSink>,
-    dialogs: Box<dyn DialogPorts>,
+    dialogs: std::sync::Arc<dyn DialogPorts>,
     shell: NativeShellState,
     pub(super) settings_window: Option<crate::aux::settings::window::SettingsWindowHandle>,
     settings_open: bool,
@@ -124,6 +128,38 @@ pub(crate) struct HostState {
     /// Aux-window state (debugger + PPU viewer). Orchestration lives
     /// here; ownership lives there.
     pub(super) debug: DebugWindows,
+    /// OSD notification display state plus the history window.
+    pub(super) osd: OsdManager,
+    pub(super) osd_raster: nerust_render_osd::OsdRaster,
+    pub(super) osd_layer_size: Option<(u32, u32)>,
+    pub(super) osd_layer_active: bool,
+    /// Last rasterized status readout. Transient rows ride the
+    /// `OsdManager` dirty flag, but the live status (fps digits,
+    /// pause label, on/off, corners) changes without ever touching
+    /// it — without this key the layer would freeze until the next
+    /// notification.
+    pub(super) osd_last_status: Option<(
+        String,
+        String,
+        nerust_settings_core::model::local::NotificationPosition,
+        nerust_settings_core::model::local::NotificationPosition,
+        nerust_settings_core::model::local::NotificationAreaMode,
+        nerust_settings_core::model::local::NotificationAreaMode,
+    )>,
+    /// Throttles fps digits to 2Hz; pause flips pass through.
+    pub(super) osd_status_gate: nerust_gui_shell::session::osd::StatusGate,
+    /// Last applied edge strip. The reservation only changes with
+    /// settings or surface size, so unchanged strips skip the
+    /// renderer call (same gate pattern as the gtk frontend).
+    pub(super) osd_last_strip: nerust_render_traits::ReservedStrip,
+    pub(super) history_window: Option<HistoryWindowHandle>,
+    /// In-flight async error dialog plus resume bookkeeping.
+    pub(super) modal_flight: Option<ModalFlight>,
+    pub(super) resume_after_modal: bool,
+    /// Last synced history content: sequence plus language. The sync
+    /// runs on every loop pass while the viewer is open; unchanged
+    /// content skips the full row rebuild (P1 perf gate).
+    pub(super) history_sync_key: Option<(u64, nerust_settings_core::model::language::AppLanguage)>,
     /// Linux render target below the muda menubar (`None` elsewhere).
     /// When it yields no native target (Wayland, pre-layout) the
     /// toplevel fallback applies and the menu stays occluded.
@@ -141,7 +177,7 @@ impl HostState {
     pub(crate) fn new(
         ctx: FrontendContext,
         app_menu: Box<dyn MenuSink>,
-        dialogs: Box<dyn DialogPorts>,
+        dialogs: std::sync::Arc<dyn DialogPorts>,
     ) -> Result<Self, String> {
         Self::new_with_settings_paths(ctx, app_menu, dialogs, None)
     }
@@ -149,7 +185,7 @@ impl HostState {
     pub(crate) fn new_with_settings_paths(
         ctx: FrontendContext,
         app_menu: Box<dyn MenuSink>,
-        dialogs: Box<dyn DialogPorts>,
+        dialogs: std::sync::Arc<dyn DialogPorts>,
         paths: Option<nerust_gui_runtime::settings::SettingsPaths>,
     ) -> Result<Self, String> {
         let session = match paths {
@@ -185,6 +221,17 @@ impl HostState {
             drain_flight: None,
             live_flight: None,
             debug: DebugWindows::new(),
+            osd: OsdManager::new(),
+            osd_raster: nerust_render_osd::OsdRaster::new(),
+            osd_layer_size: None,
+            osd_layer_active: false,
+            osd_last_status: None,
+            osd_status_gate: nerust_gui_shell::session::osd::StatusGate::new(),
+            osd_last_strip: nerust_render_traits::ReservedStrip::default(),
+            modal_flight: None,
+            resume_after_modal: false,
+            history_window: None,
+            history_sync_key: None,
             #[cfg(any(
                 target_os = "linux",
                 target_os = "dragonfly",
@@ -317,7 +364,7 @@ mod tests {
         let host = super::HostState::new(
             support.ctx,
             MenuRecorderHandle::default().into_box(),
-            Box::new(crate::ports::NativeDialogs),
+            std::sync::Arc::new(crate::ports::NativeDialogs),
         );
         assert!(host.is_ok());
     }

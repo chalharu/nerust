@@ -3,6 +3,7 @@
 
 pub(crate) mod bridge;
 pub(crate) mod debug;
+pub(crate) mod osd;
 pub(crate) mod ppu;
 pub(crate) mod settings;
 pub(crate) mod shell;

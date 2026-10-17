@@ -11,7 +11,9 @@ use glutin::{
 };
 use nerust_render_traits::{
     FrameBuffer, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
-    renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
+    renderer::{
+        GpuFactory, GpuRenderer, OpaqueError, OsdLayer, RenderResult, RendererConfig, RendererError,
+    },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -26,6 +28,8 @@ pub struct GlRenderer {
     gl_surface: Option<glutin::surface::Surface<WindowSurface>>,
     expected_frame_len: usize,
     size: SurfaceSize,
+    reserved: nerust_render_traits::ReservedStrip,
+    osd: Option<OsdLayer>,
     /// Fixed-size staging for the pre-GLES3 pack path (see `render`).
     tight: Vec<u8>,
 }
@@ -115,6 +119,9 @@ impl GpuRenderer for GlRenderer {
         };
 
         self.view = Some(view);
+        if let Some(view) = self.view.as_mut() {
+            view.set_osd_layer(self.osd.clone());
+        }
         self.context = Some(ctx);
         self.gl_surface = Some(surf);
         self.expected_frame_len =
@@ -126,6 +133,17 @@ impl GpuRenderer for GlRenderer {
         self.view = None;
         self.context = None;
         drop(self.gl_surface.take());
+    }
+
+    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
+        self.reserved = strip;
+    }
+
+    fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
+        self.osd = layer;
+        if let Some(view) = self.view.as_mut() {
+            view.set_osd_layer(self.osd.clone());
+        }
     }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
@@ -155,6 +173,9 @@ impl GpuRenderer for GlRenderer {
         };
         self.expected_frame_len = fs.width * fs.height * profile.frame_format.bytes_per_pixel();
         self.view = Some(view);
+        if let Some(view) = self.view.as_mut() {
+            view.set_osd_layer(self.osd.clone());
+        }
         Ok(())
     }
 
@@ -176,7 +197,11 @@ impl GpuRenderer for GlRenderer {
             return RenderResult::Error;
         }
 
-        view.on_resize(self.size.width as i32, self.size.height as i32);
+        view.on_resize_with_strip(
+            self.size.width as i32,
+            self.size.height as i32,
+            self.reserved,
+        );
         if let Some(p) = frame_buffer.palette_as_rgba8() {
             view.update_palette_texture(&p);
         }
@@ -235,6 +260,8 @@ impl GpuRenderer for GlRenderer {
             pack_rows_stripped(data, stride, fs.height, &mut self.tight, row_bytes);
             view.on_update(&self.tight, fs.width as i32);
         };
+        view.set_osd_layer(self.osd.clone());
+        view.draw_osd(self.size.width as i32, self.size.height as i32);
         if let Err(e) = surf.swap_buffers(ctx) {
             log::warn!("GlRenderer: swap_buffers failed: {e}");
             return RenderResult::Error;
@@ -329,6 +356,8 @@ impl GpuFactory for GlFactory {
             gl_surface: None,
             expected_frame_len: 0,
             size: SurfaceSize::new(0, 0),
+            reserved: nerust_render_traits::ReservedStrip::default(),
+            osd: None,
             tight: Vec::new(),
         }))
     }

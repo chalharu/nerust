@@ -8,8 +8,8 @@ use wgpu::{
     CompositeAlphaMode, Device, Extent3d, FragmentState, MultisampleState, Origin3d,
     PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode, PrimitiveState, Queue,
     RenderPipelineDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
-    TexelCopyTextureInfo, Texture, TextureDescriptor, TextureDimension, TextureFormat,
-    TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
+    TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureDescriptor, TextureDimension,
+    TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
 };
 use zerocopy::{Immutable, IntoBytes};
 
@@ -254,6 +254,41 @@ impl RenderPipeline {
             ],
         });
 
+        let osd_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("nerust_osd_bind_group_layout"),
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        sample_type: TextureSampleType::Float { filterable: true },
+                        view_dimension: TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let osd_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("nerust_osd_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let osd_layout_handle = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("nerust_osd_pipeline_layout"),
+            bind_group_layouts: &[Some(&osd_layout)],
+            immediate_size: 0,
+        });
+
         let shader_source = composed_shader_source();
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("nerust_wgpu_shader"),
@@ -271,6 +306,31 @@ impl RenderPipeline {
             config.format,
             fragment_entry_point(pipeline_kind, config.format.is_srgb()),
         );
+        let osd_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("nerust_osd_pipeline"),
+            layout: Some(&osd_layout_handle),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_osd"),
+                buffers: &[],
+                compilation_options: PipelineCompilationOptions::default(),
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: Some("fs_osd"),
+                compilation_options: PipelineCompilationOptions::default(),
+                targets: &[Some(ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            primitive: PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
 
         // uniforms_buffer / bind_group_layout は BindGroup 構築後に不要。
         // GPU リソースは BindGroup が内部参照を保持するため drop して安全。
@@ -290,8 +350,18 @@ impl RenderPipeline {
             frame_upload_staging,
             bind_group,
             pipeline,
+            osd_pipeline,
+            osd_layout,
+            osd_sampler,
+            osd_texture: None,
+            osd_bind_group: None,
+            osd_visible: false,
+            osd_surface: surface_size,
+            osd_prev: None,
+            osd_staging: Vec::new(),
             frame_logical_size,
             content_size,
+            reserved: nerust_render_traits::ReservedStrip::default(),
         })
     }
 
@@ -448,8 +518,149 @@ pub(super) fn composed_shader_source() -> String {
         include_str!("../shader/palette_decode.wgsl"),
         include_str!("../shader/ntsc_decode.wgsl"),
         include_str!("../shader/presentation.wgsl"),
+        include_str!("../shader/overlay.wgsl"),
     ]
     .join("\n\n")
+}
+
+/// Upload an OSD layer into a full-surface texture at its offset.
+/// Viewport quirks vary across drivers, so placement rides on texture
+/// coordinates (always identity-mapped) instead of small viewports.
+pub(crate) fn set_osd_layer(
+    pipeline: &mut RenderPipeline,
+    layer: Option<nerust_render_traits::renderer::OsdLayer>,
+) {
+    let surface = pipeline.osd_surface;
+    if surface.width == 0 || surface.height == 0 {
+        return;
+    }
+    let sized = pipeline.osd_texture.as_ref().is_some_and(|texture| {
+        texture.width() == surface.width && texture.height() == surface.height
+    });
+    if !sized {
+        let texture = pipeline.device.create_texture(&TextureDescriptor {
+            label: Some("nerust_osd_texture"),
+            size: Extent3d {
+                width: surface.width,
+                height: surface.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&TextureViewDescriptor::default());
+        pipeline.osd_bind_group = Some(pipeline.device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                label: Some("nerust_osd_bind_group"),
+                layout: &pipeline.osd_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&pipeline.osd_sampler),
+                    },
+                ],
+            },
+        ));
+        pipeline.osd_texture = Some(texture);
+        pipeline.osd_prev = None;
+    }
+    let Some(texture) = pipeline.osd_texture.clone() else {
+        return;
+    };
+    // Clear the previous rect so moved/shrunk layers leave no ghosts.
+    let clear_rect = match (&layer, pipeline.osd_prev) {
+        (Some(next), Some(prev)) if (next.x, next.y, next.width, next.height) != prev => Some(prev),
+        (None, Some(prev)) => Some(prev),
+        _ => None,
+    };
+    if let Some((x, y, w, h)) = clear_rect {
+        upload_rect(
+            pipeline,
+            &texture,
+            x,
+            y,
+            w.min(surface.width.saturating_sub(x)),
+            h.min(surface.height.saturating_sub(y)),
+            None,
+        );
+    }
+    let Some(layer) = layer else {
+        pipeline.osd_visible = false;
+        pipeline.osd_prev = None;
+        return;
+    };
+    if layer.width == 0 || layer.height == 0 {
+        return;
+    }
+    let w = layer.width.min(surface.width.saturating_sub(layer.x));
+    let h = layer.height.min(surface.height.saturating_sub(layer.y));
+    if w == 0 || h == 0 {
+        return;
+    }
+    upload_rect(
+        pipeline,
+        &texture,
+        layer.x,
+        layer.y,
+        w,
+        h,
+        Some(&layer.rgba),
+    );
+    pipeline.osd_visible = true;
+    pipeline.osd_prev = Some((layer.x, layer.y, w, h));
+}
+
+/// Upload RGBA rows (or zeros) into a texture subrect with 256-byte
+/// pitch padding.
+fn upload_rect(
+    pipeline: &mut RenderPipeline,
+    texture: &wgpu::Texture,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    rgba: Option<&[u8]>,
+) {
+    let row_bytes = w as usize * 4;
+    let pitch = row_bytes.next_multiple_of(256);
+    let needed = pitch * h as usize;
+    if pipeline.osd_staging.len() < needed {
+        pipeline.osd_staging.resize(needed, 0);
+    }
+    if let Some(rgba) = rgba {
+        for (index, row) in rgba.chunks_exact(row_bytes).take(h as usize).enumerate() {
+            pipeline.osd_staging[index * pitch..index * pitch + row_bytes].copy_from_slice(row);
+        }
+    } else {
+        pipeline.osd_staging[..needed].fill(0);
+    }
+    pipeline.queue.write_texture(
+        TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: Origin3d { x, y, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        &pipeline.osd_staging[..needed],
+        TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(pitch as u32),
+            rows_per_image: Some(h),
+        },
+        Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
 }
 
 fn frame_pipeline_kind(

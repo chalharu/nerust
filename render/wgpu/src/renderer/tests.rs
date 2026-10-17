@@ -1,8 +1,8 @@
 use nerust_render_filters::FilterTypeExt;
 use nerust_render_ntsc::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
 use nerust_render_traits::{
-    SurfaceSize, VideoFrameFormat, VideoFrameSpec, VideoPresentation, filter::FilterType,
-    logical::LogicalSize, physical::PhysicalSize,
+    ReservedStrip, SurfaceSize, VideoFrameFormat, VideoFrameSpec, VideoPresentation,
+    filter::FilterType, logical::LogicalSize, physical::PhysicalSize,
 };
 
 use super::{
@@ -19,12 +19,34 @@ fn viewport_preserves_aspect_ratio() {
             width: 512.0,
             height: 480.0,
         },
+        ReservedStrip::default(),
     );
 
     assert_eq!(viewport.width, 960.0);
     assert_eq!(viewport.height, 900.0);
     assert_eq!(viewport.x, 320.0);
     assert_eq!(viewport.y, 0.0);
+}
+
+#[test]
+fn viewport_avoids_reserved_strips() {
+    let viewport = compute_viewport(
+        SurfaceSize::new(1600, 900),
+        PhysicalSize {
+            width: 512.0,
+            height: 480.0,
+        },
+        ReservedStrip {
+            top: 40,
+            bottom: 60,
+        },
+    );
+
+    // Available height 800: 512x480 fits at 800 high, 853 wide.
+    assert_eq!(viewport.width, 853.333_3);
+    assert_eq!(viewport.height, 800.0);
+    assert_eq!(viewport.x, 373.333_34);
+    assert_eq!(viewport.y, 40.0);
 }
 
 #[test]

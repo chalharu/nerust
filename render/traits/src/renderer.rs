@@ -1,6 +1,6 @@
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::{FrameBuffer, SurfaceSize, VideoRenderProfile};
+use crate::{FrameBuffer, ReservedStrip, SurfaceSize, VideoRenderProfile};
 
 /// Wraps a static or formatted message as an `std::error::Error`.
 #[derive(Debug)]
@@ -37,6 +37,19 @@ impl std::error::Error for RendererError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&*self.source)
     }
+}
+
+/// In-frame OSD layer: cropped straight-alpha RGBA composited
+/// over the game image at surface size. Origin is top-left.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OsdLayer {
+    /// Top-left corner in physical surface pixels.
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    /// Row-major straight-alpha RGBA, `width * height * 4` bytes.
+    pub rgba: Vec<u8>,
 }
 
 /// Outcome reported by [`GpuRenderer::render`].
@@ -78,6 +91,15 @@ pub trait GpuRenderer: std::fmt::Debug {
 
     /// Resize the output (swapchain for wgpu; stored for GL).
     fn resize(&mut self, size: SurfaceSize);
+
+    /// Reserve edge strips for OSD labels. The game viewport fits into
+    /// the remaining rect on the next resize/render; strips stay clear.
+    /// Default ignores the reservation (full-surface game).
+    fn set_reserved_strip(&mut self, _strip: ReservedStrip) {}
+
+    /// Overlay an OSD layer over the game image on the next render.
+    /// Backends composite after filters at surface size; `None` clears.
+    fn set_osd_layer(&mut self, layer: Option<OsdLayer>);
 
     /// Update the render pipeline for a new render profile.
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;

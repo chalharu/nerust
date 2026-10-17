@@ -105,3 +105,36 @@ fn project_view(state: &EditorState, factory: &dyn CoreFactory) -> SystemTabView
             .collect(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::settings::test_support::test_vm;
+
+    #[test]
+    fn system_tab_projects_factory_identity_and_empty_fields() {
+        let vm = test_vm();
+        let systems = vm.systems();
+        assert_eq!(systems.len(), 1);
+        let tab = &systems[0];
+        assert_eq!(tab.display_name(), "Test");
+        assert_eq!(tab.system_id().to_string(), "test");
+        let view = tab.view.get();
+        assert_eq!(view.label, "Test");
+        assert!(view.fields.is_empty());
+    }
+
+    #[test]
+    fn system_choice_applies_through_test_factory() {
+        use nerust_core_traits::factory::descriptor::{
+            SystemSettingsChoiceId, SystemSettingsFieldId,
+        };
+
+        let vm = test_vm();
+        let tab = &vm.systems()[0];
+        tab.set_choice(
+            &SystemSettingsFieldId("field".into()),
+            &SystemSettingsChoiceId("choice".into()),
+        )
+        .unwrap();
+    }
+}

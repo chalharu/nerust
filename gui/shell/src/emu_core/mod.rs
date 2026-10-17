@@ -434,9 +434,12 @@ impl EmuCore {
             .map_err(|e| OperationError::Reply(e.to_string()));
         if result.is_ok() {
             match self.metrics.lock() {
+                // Mirror the requested state, not "paused": stamping
+                // true unconditionally turns the load-then-resume flow
+                // into a bogus Resumed notice on every ROM open.
                 Ok(mut guard) => {
                     guard.loaded = true;
-                    guard.paused = true;
+                    guard.paused = start_paused;
                 }
                 Err(e) => log::warn!("metrics lock poisoned in load: {e}"),
             }
@@ -911,7 +914,7 @@ mod tests {
         let (core, _, _, _) = EmuCore::from_parts(build_test_core_parts());
         let media = MediaObject::new(None, vec![0u8; 16]);
         core.load(&media, None).expect("mock ROM loads");
-        assert!(core.metrics().paused);
+        assert!(!core.metrics().paused);
         core
     }
 

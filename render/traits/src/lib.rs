@@ -18,6 +18,21 @@ impl SurfaceSize {
     }
 }
 
+/// Physical pixels reserved at the surface edges for OSD strips.
+/// The game viewport fits into the remaining rect; strips stay clear
+/// color for the frontend's overlay labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ReservedStrip {
+    pub top: u32,
+    pub bottom: u32,
+}
+
+impl ReservedStrip {
+    pub fn height_loss(&self, surface_height: u32) -> u32 {
+        self.top.saturating_add(self.bottom).min(surface_height)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum VideoFrameFormat {
     Rgba,

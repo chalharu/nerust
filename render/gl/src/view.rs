@@ -3,7 +3,7 @@ use std::{os::raw::c_void, ptr, rc::Rc};
 use gl::types::GLint;
 use nerust_glwrap::{Shader, raw::*, vertex::*};
 use nerust_render_ntsc::NTSC_TEXTURE_HEIGHT;
-use nerust_render_traits::{VideoFrameFormat, VideoRenderProfile};
+use nerust_render_traits::{VideoFrameFormat, VideoRenderProfile, renderer::OsdLayer};
 
 use crate::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
 
@@ -28,6 +28,25 @@ void main(void) {
 
 const PALETTE_FRAGMENT_DESKTOP: &str = include_str!("fragment_desktop_combined.glsl");
 
+const OSD_FRAGMENT_DESKTOP: &str = r#"
+uniform sampler2D osd_texture;
+in vec2 vuv;
+out vec4 frag_color;
+
+void main(void) {
+    frag_color = texture(osd_texture, vuv);
+}
+"#;
+
+const OSD_FRAGMENT_COMPAT: &str = r#"
+uniform sampler2D osd_texture;
+varying NERUST_MEDIUMP vec2 vuv;
+
+void main(void) {
+    gl_FragColor = texture2D(osd_texture, vuv);
+}
+"#;
+
 fn allocate(size: usize) -> Box<[u8]> {
     vec![0; size].into_boxed_slice()
 }
@@ -44,6 +63,12 @@ pub struct GlView {
     shader: Option<Shader>,
     use_vao: bool,
     unpack_row_length: bool,
+    osd_texture: u32,
+    osd_size: (i32, i32),
+    osd_prev: Option<(i32, i32, i32, i32)>,
+    osd_dirty: bool,
+    osd_shader: Option<Shader>,
+    osd_layer: Option<OsdLayer>,
     vba: Option<VertexArray>,
     vbo: Option<Rc<VertexBuffer>>,
     logical_width: i32,
@@ -63,6 +88,12 @@ impl GlView {
             shader: None,
             use_vao: false,
             unpack_row_length: false,
+            osd_texture: 0,
+            osd_size: (0, 0),
+            osd_prev: None,
+            osd_dirty: false,
+            osd_shader: None,
+            osd_layer: None,
             vba: None,
             vbo: None,
             logical_width: 0,
@@ -258,11 +289,197 @@ impl GlView {
         .unwrap();
         uniform_1i(shader.get_uniform("frame_texture"), 0).unwrap();
         self.shader = Some(shader);
+        self.init_osd(is_gles);
         Ok(())
     }
 
-    /// PaletteIndex 形式のパレットデータを palette texture にアップロードする。
-    /// `on_update()` の前に呼ばれることを想定。
+    /// Best-effort overlay program plus a placeholder texture.
+    /// Unlike the game pipeline, failure only drops the OSD.
+    fn init_osd(&mut self, is_gles: bool) {
+        let mut names = [0u32; 1];
+        if gen_textures(1, names.as_mut_ptr()).is_err() {
+            return;
+        }
+        self.osd_texture = names[0];
+        configure_frame_texture(
+            0,
+            self.osd_texture,
+            1,
+            1,
+            gl::RGBA as i32,
+            gl::RGBA,
+            &[0, 0, 0, 0],
+        );
+        self.osd_size = (1, 1);
+        let candidates: Vec<(&str, String, String)> = if is_gles {
+            vec![
+                (
+                    "osd-gles3",
+                    build_glsl_source(
+                        include_str!("vertex_desktop.glsl"),
+                        Some("#version 300 es"),
+                        &["precision mediump float;"],
+                    ),
+                    compose_glsl_source(
+                        "#version 300 es",
+                        &["precision mediump float;"],
+                        &[OSD_FRAGMENT_DESKTOP],
+                    ),
+                ),
+                (
+                    "osd-gles2",
+                    include_str!("vertex.glsl").to_owned(),
+                    compose_glsl_source(
+                        "#version 100",
+                        &["#define NERUST_MEDIUMP mediump"],
+                        &[OSD_FRAGMENT_COMPAT],
+                    ),
+                ),
+            ]
+        } else {
+            vec![(
+                "osd-desktop",
+                include_str!("vertex_desktop.glsl").to_owned(),
+                compose_glsl_source("#version 150", &[], &[OSD_FRAGMENT_DESKTOP]),
+            )]
+        };
+        for (name, vertex, fragment) in candidates {
+            match Shader::try_new(vertex.as_str(), fragment.as_str()) {
+                Ok(shader) => {
+                    log::info!("selected {name} osd pipeline");
+                    self.osd_shader = Some(shader);
+                    return;
+                }
+                Err(err) => log::warn!("osd shader {name} unavailable: {err}"),
+            }
+        }
+    }
+
+    /// Stage an OSD layer for the next present. `None` clears.
+    pub fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
+        self.osd_layer = layer;
+        self.osd_dirty = true;
+    }
+
+    /// Composite the staged layer over the game image, if any.
+    /// Runs inside the current frame (context already current).
+    pub fn draw_osd(&mut self, surface_w: i32, surface_h: i32) {
+        if std::mem::replace(&mut self.osd_dirty, false) {
+            self.sync_osd_texture(surface_w, surface_h);
+        }
+        let (Some(shader), Some(_)) = (self.osd_shader.as_ref(), self.osd_layer.as_ref()) else {
+            return;
+        };
+        shader.use_program();
+        uniform_matrix_4fv(
+            shader.get_uniform("unif_matrix"),
+            1,
+            gl::FALSE,
+            Mat4::identity().as_ptr(),
+        )
+        .unwrap();
+        uniform_1i(shader.get_uniform("osd_texture"), 0).unwrap();
+        active_texture(gl::TEXTURE0).unwrap();
+        bind_texture(gl::TEXTURE_2D, self.osd_texture).unwrap();
+        if self.use_vao {
+            self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();
+        } else {
+            bind_buffer(gl::ARRAY_BUFFER, self.vbo.as_ref().unwrap().id).unwrap();
+        }
+        viewport(0, 0, surface_w, surface_h).unwrap();
+        enable(gl::BLEND).unwrap();
+        blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA).unwrap();
+        draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
+        disable(gl::BLEND).unwrap();
+    }
+
+    /// Upload the staged layer into the full-surface texture.
+    /// Runs only when the layer changed; the draw path only binds.
+    fn sync_osd_texture(&mut self, surface_w: i32, surface_h: i32) {
+        let layer = self.osd_layer.clone();
+        // Layer cleared: wipe the last rect so no ghost remains.
+        let Some(layer) = layer else {
+            if let Some((px, py, pw, ph)) = self.osd_prev.take() {
+                Self::blit_rect(self.osd_texture, px, py, pw, ph, None);
+            }
+            return;
+        };
+        if self.osd_texture == 0 {
+            return;
+        }
+        // Full-surface texture: placement rides on texture coordinates
+        // instead of small viewports (driver-quirky on some backends).
+        if self.osd_size != (surface_w, surface_h) {
+            active_texture(gl::TEXTURE0).unwrap();
+            bind_texture(gl::TEXTURE_2D, self.osd_texture).unwrap();
+            let zeros = vec![0u8; surface_w.max(1) as usize * surface_h.max(1) as usize * 4];
+            tex_image_2d(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGBA as i32,
+                surface_w,
+                surface_h,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                zeros.as_ptr().cast(),
+            )
+            .unwrap();
+            self.osd_size = (surface_w, surface_h);
+        }
+        if layer.width == 0 || layer.height == 0 {
+            return;
+        }
+        let (w, h) = (layer.width as i32, layer.height as i32);
+        // Clear the previous rect so moved/shrunk layers leave no ghosts.
+        let rect = (layer.x as i32, layer.y as i32, w, h);
+        if self.osd_prev != Some(rect) {
+            if let Some((px, py, pw, ph)) = self.osd_prev {
+                Self::blit_rect(self.osd_texture, px, py, pw, ph, None);
+            }
+            self.osd_prev = Some(rect);
+        }
+        let stride = w as usize * 4;
+        let mut padded = vec![0u8; stride * h as usize];
+        for (index, row) in layer.rgba.chunks_exact(stride).take(h as usize).enumerate() {
+            padded[index * stride..index * stride + stride].copy_from_slice(row);
+        }
+        Self::blit_rect(
+            self.osd_texture,
+            layer.x as i32,
+            layer.y as i32,
+            w,
+            h,
+            Some(&padded),
+        );
+    }
+
+    /// Upload RGBA rows (or zeros) into a texture subrect.
+    fn blit_rect(texture: u32, x: i32, y: i32, w: i32, h: i32, rgba: Option<&[u8]>) {
+        let blank;
+        let bytes = match rgba {
+            Some(bytes) => bytes,
+            None => {
+                blank = vec![0u8; w.max(1) as usize * h.max(1) as usize * 4];
+                &blank
+            }
+        };
+        active_texture(gl::TEXTURE0).unwrap();
+        bind_texture(gl::TEXTURE_2D, texture).unwrap();
+        tex_sub_image_2d(
+            gl::TEXTURE_2D,
+            0,
+            x,
+            y,
+            w,
+            h,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            bytes.as_ptr().cast(),
+        )
+        .unwrap();
+    }
+
     pub fn update_palette_texture(&self, rgba8: &[u8; 256]) {
         if !self.is_palette_format {
             return;
@@ -352,8 +569,20 @@ impl GlView {
         self.unpack_row_length
     }
 
-    pub fn on_resize(&mut self, viewport_width: i32, viewport_height: i32) {
-        let window_aspect = viewport_width as f32 / viewport_height as f32;
+    /// Fit the game into the surface minus reserved OSD strips.
+    /// GL viewports start at the bottom-left, so the drawable rect
+    /// sits `strip.bottom` above the surface base.
+    pub fn on_resize_with_strip(
+        &mut self,
+        viewport_width: i32,
+        viewport_height: i32,
+        strip: nerust_render_traits::ReservedStrip,
+    ) {
+        let height_i = viewport_height.max(0);
+        let top = strip.top.min(height_i as u32) as i32;
+        let bottom = strip.bottom.min(height_i as u32 - top as u32) as i32;
+        let area_height = (height_i - top - bottom).max(1);
+        let window_aspect = viewport_width as f32 / area_height as f32;
         let content_aspect = self.logical_width as f32 / self.logical_height as f32;
 
         let (scale_x, scale_y) = if window_aspect > content_aspect {
@@ -370,7 +599,7 @@ impl GlView {
         } else {
             bind_buffer(gl::ARRAY_BUFFER, self.vbo.as_ref().unwrap().id).unwrap();
         }
-        viewport(0, 0, viewport_width, viewport_height).unwrap();
+        viewport(0, bottom, viewport_width, area_height).unwrap();
         uniform_matrix_4fv(
             self.shader.as_ref().unwrap().get_uniform("unif_matrix"),
             1,

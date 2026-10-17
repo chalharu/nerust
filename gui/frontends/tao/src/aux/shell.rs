@@ -150,6 +150,11 @@ impl ShellRenderer {
     }
 
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
+        // Zero-size configures poison the next present (tiny-skia
+        // pixel-map mismatch): skip until a real size arrives.
+        if width == 0 || height == 0 {
+            return;
+        }
         self.compositor
             .configure_surface(&mut self.surface, width, height);
     }
@@ -456,6 +461,10 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
                 .resize(self.viewport_physical.0, self.viewport_physical.1);
             self.surface_size = self.viewport_physical;
         }
+        self.render_ui_with(log_tag);
+    }
+
+    fn render_ui_with(&mut self, log_tag: &'static str) {
         render_ui(
             &mut self.ui_state,
             &mut self.renderer,
@@ -476,7 +485,7 @@ pub(crate) trait AuxWindow {
 }
 
 /// Shared full render: Light theme, redraw pump, draw, present.
-/// Both viewers call this; only the failure log tag differs.
+/// Viewers call this; only the failure log tag differs.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
     ui: &mut UiShell<P>,
@@ -487,6 +496,11 @@ pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
     clipboard: &mut Clipboard,
     log_tag: &'static str,
 ) {
+    // Nothing to draw into yet (minimize/dock transient): presenting
+    // a zero-size surface panics in the pixel-map creation.
+    if viewport_physical.0 == 0 || viewport_physical.1 == 0 {
+        return;
+    }
     // Light theme for OS light-theme nativeness.
     let theme = iced::Theme::Light;
     let style = <iced::Theme as theme::Base>::base(&theme);
