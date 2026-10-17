@@ -258,6 +258,7 @@ impl SettingsAppState {
         // Error presentation is an exclusive pair: modal dialog XOR
         // on-screen display, matching the delivery contract.
         let info = section_toggled(
+            language,
             ui_text(language, UiText::NotificationInfo),
             checkbox(view.info_enabled)
                 .label(ui_text(language, UiText::NotificationEnabled))
@@ -282,6 +283,7 @@ impl SettingsAppState {
             ],
         );
         let warning = section_toggled(
+            language,
             ui_text(language, UiText::NotificationWarning),
             checkbox(view.warning_enabled)
                 .label(ui_text(language, UiText::NotificationEnabled))
@@ -306,6 +308,7 @@ impl SettingsAppState {
             ],
         );
         let error = section_toggled(
+            language,
             ui_text(language, UiText::Error),
             checkbox(view.error_enabled)
                 .label(ui_text(language, UiText::NotificationEnabled))
@@ -337,6 +340,7 @@ impl SettingsAppState {
             ],
         );
         let display = section(
+            language,
             ui_text(language, UiText::NotificationSectionDisplay),
             [
                 labeled_pick_list(
@@ -354,6 +358,7 @@ impl SettingsAppState {
             ],
         );
         let status = section_toggled(
+            language,
             ui_text(language, UiText::NotificationSectionStatus),
             checkbox(view.status_enabled)
                 .label(ui_text(language, UiText::NotificationEnabled))
@@ -499,8 +504,12 @@ pub(super) fn page_radio(
 
 /// Titled settings group: 16 bold header, 4 below / 24 between.
 /// Header uses Bold (DejaVu has no Semibold).
-fn section<'a>(title: &'a str, rows: impl IntoIterator<Item = El<'a>>) -> El<'a> {
-    section_inner(header_text(title), None, rows)
+fn section<'a>(
+    language: AppLanguage,
+    title: &'a str,
+    rows: impl IntoIterator<Item = El<'a>>,
+) -> El<'a> {
+    section_inner(header_text(language, title), None, rows)
 }
 
 /// Section whose master enable sits on the header row (MS
@@ -508,20 +517,24 @@ fn section<'a>(title: &'a str, rows: impl IntoIterator<Item = El<'a>>) -> El<'a>
 /// Screen readers meet title then toggle in order, so the generic
 /// "Enabled" label keeps its level context without visual duplication.
 fn section_toggled<'a>(
+    language: AppLanguage,
     title: &'a str,
     toggle: El<'a>,
     rows: impl IntoIterator<Item = El<'a>>,
 ) -> El<'a> {
-    section_inner(header_text(title), Some(toggle), rows)
+    section_inner(header_text(language, title), Some(toggle), rows)
 }
 
-fn header_text(title: &str) -> El<'static> {
-    // Bold on the platform CJK sans (not bare SansSerif): the
-    // section titles are Japanese on CJK systems, and a generic
-    // family lets the shaper mix serif fallbacks per glyph.
+fn header_text(language: AppLanguage, title: &str) -> El<'static> {
+    // Bold on the i18n CJK sans when the language needs it (not bare
+    // SansSerif): the section titles are Japanese on CJK systems, and
+    // a generic family lets the shaper mix serif fallbacks per glyph.
+    let base = nerust_settings_core::i18n::font_family(language)
+        .map(iced::Font::with_name)
+        .unwrap_or_default();
     let font = iced::Font {
         weight: iced::font::Weight::Bold,
-        ..crate::convert::default_font()
+        ..base
     };
     text(title.to_string()).size(16).font(font).into()
 }
