@@ -240,10 +240,12 @@ pub(crate) fn tao_key_to_iced_key(key: &tao::keyboard::Key) -> keyboard::Key {
 }
 
 /// Default font for auxiliary windows. CJK must resolve to a
-/// complete sans face on every OS: cosmic-text falls back per
-/// glyph through a hardcoded family list, so a bare SansSerif can
-/// mix Mincho/serif into bold CJK headers on machines without Noto
-/// CJK (Yu Gothic UI / Hiragino Sans cover Windows / macOS).
+/// complete sans face on every OS: the shaper falls back per glyph
+/// through a hardcoded family list, so a bare SansSerif can mix
+/// serif faces into CJK text on machines without Noto CJK.
+/// Language-specific needs live in
+/// `nerust_settings_core::i18n::font_family`; this stays the
+/// language-agnostic window default (it also covers Latin).
 pub(crate) fn default_font() -> Font {
     #[cfg(target_os = "windows")]
     {

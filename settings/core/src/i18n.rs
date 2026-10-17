@@ -176,6 +176,34 @@ pub fn text(language: AppLanguage, key: UiText) -> &'static str {
     }
 }
 
+/// CJK-capable sans family for the UI language, when the platform
+/// default font cannot cover it. The iced shaper falls back per
+/// glyph through a hardcoded family list, so Japanese text under a
+/// generic family can mix serif faces on machines without Noto CJK;
+/// naming the platform CJK sans keeps it uniform. `None` means the
+/// frontend default already covers the language.
+pub fn font_family(language: AppLanguage) -> Option<&'static str> {
+    if !matches!(resolve_language(language), AppLanguage::Japanese) {
+        return None;
+    }
+    platform_cjk_sans()
+}
+
+#[cfg(target_os = "windows")]
+fn platform_cjk_sans() -> Option<&'static str> {
+    Some("Yu Gothic UI")
+}
+
+#[cfg(target_os = "macos")]
+fn platform_cjk_sans() -> Option<&'static str> {
+    Some("Hiragino Sans")
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn platform_cjk_sans() -> Option<&'static str> {
+    None
+}
+
 /// (English, Japanese) pair per key: one match instead of two
 /// parallel 120-arm tables, so the languages can never drift apart.
 fn localized_pair(key: UiText) -> (&'static str, &'static str) {
@@ -701,5 +729,19 @@ mod tests {
             tile_hover(ja(), "Tiles", 21, 44, 13, 0x150),
             "Tiles タイル #21 (px 44,13, +0x0150)"
         );
+    }
+
+    #[test]
+    fn cjk_font_family_follows_ui_language() {
+        // English needs no override: the frontend default covers Latin.
+        assert_eq!(font_family(en()), None);
+        // Japanese needs an explicit CJK sans on Noto-less platforms;
+        // Linux keeps the default (system fallback is consistent there).
+        #[cfg(target_os = "windows")]
+        assert_eq!(font_family(ja()), Some("Yu Gothic UI"));
+        #[cfg(target_os = "macos")]
+        assert_eq!(font_family(ja()), Some("Hiragino Sans"));
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        assert_eq!(font_family(ja()), None);
     }
 }
