@@ -78,6 +78,15 @@ impl Timer {
     pub fn as_fps(&self) -> f32 {
         self.fps
     }
+
+    /// Drop pacing history after a gap the loop did not pace
+    /// (pause park, blocking load): stale instants would
+    /// otherwise collapse `as_fps` until they drain out.
+    pub fn reset(&mut self) {
+        self.instants.clear();
+        self.fps = 0.0;
+        self.next_deadline = Instant::now() + self.frame_interval;
+    }
 }
 
 fn advance_deadline(next_deadline: Instant, now: Instant, frame_interval: Duration) -> Instant {
@@ -121,6 +130,35 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{Timer, advance_deadline};
+
+    #[test]
+    fn reset_drops_stale_pacing_history() {
+        let mut timer = Timer::new();
+        timer.wait();
+        timer.wait();
+        assert!(timer.as_fps() > 0.0);
+        // A pause-length gap with no pacing: the next sample spans
+        // the whole stall and craters fps ...
+        std::thread::sleep(Duration::from_millis(300));
+        timer.wait();
+        assert!(
+            timer.as_fps() < 30.0,
+            "stale gap must crater fps, got {}",
+            timer.as_fps()
+        );
+        // ... unless the gap is discarded first.
+        timer.reset();
+        assert_eq!(timer.as_fps(), 0.0);
+        timer.wait();
+        timer.wait();
+        timer.wait();
+        timer.wait();
+        assert!(
+            timer.as_fps() > 40.0,
+            "fresh pacing must recover, got {}",
+            timer.as_fps()
+        );
+    }
 
     #[test]
     fn slight_lag_keeps_single_frame_catch_up() {

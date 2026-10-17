@@ -107,6 +107,7 @@ impl EmuThread {
                         Ok(cmd) => match cmd {
                             EmuCommand::Load(cmd) => {
                                 loaded = handle_load(&mut *core, &mut *audio, &mut filter, *cmd);
+                                timer.reset();
                             }
                             EmuCommand::Quit => return,
                             // Reply-bearing commands must answer even when
@@ -178,6 +179,9 @@ impl EmuThread {
                     match cmd {
                         EmuCommand::Load(cmd) => {
                             loaded = handle_load(&mut *core, &mut *audio, &mut filter, *cmd);
+                            // Blocking IO is an unpaced gap: same
+                            // stale-instant hazard as the pause park.
+                            timer.reset();
                         }
                         EmuCommand::Unload => {
                             core.unload();
@@ -185,7 +189,12 @@ impl EmuThread {
                             filter.reset();
                         }
                         EmuCommand::Pause => core.set_paused(true),
-                        EmuCommand::Resume => core.set_paused(false),
+                        EmuCommand::Resume => {
+                            core.set_paused(false);
+                            // Parked iterations never paced: stale
+                            // instants would crater fps until drained.
+                            timer.reset();
+                        }
                         EmuCommand::Reset => {
                             core.reset();
                             filter.reset();
@@ -939,6 +948,20 @@ mod tests {
             .send(EmuCommand::Step { unit, reply: tx })
             .expect("step send");
         rx.recv().expect("step reply")
+    }
+
+    #[test]
+    fn resume_recovers_fps_without_stall_hangover() {
+        let thread = spawn_loaded();
+        // Fill the pacing window with free-run frames.
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        thread.send(EmuCommand::Pause).expect("pause send");
+        // Park longer than the pacing window spans.
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        thread.send(EmuCommand::Resume).expect("resume send");
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let fps = thread.fps();
+        assert!(fps > 40.0, "fps must recover right after resume, got {fps}");
     }
 
     #[test]
