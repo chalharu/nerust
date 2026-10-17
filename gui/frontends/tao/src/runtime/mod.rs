@@ -240,7 +240,7 @@ impl WindowRuntime {
 
         renderer.set_reserved_strip(nerust_render_traits::ReservedStrip::default());
         self.host.poll_notifications();
-        self.host.sync_osd_layer(renderer.as_mut());
+        self.host.sync_osd_layer(renderer.as_mut(), window_size);
 
         self.host.session_mut().swap_frame_buffer();
         if let Some(fb) = self.host.session_mut().frame_buffer() {

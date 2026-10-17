@@ -304,6 +304,12 @@ impl OsdManager {
         std::mem::replace(&mut self.dirty, false)
     }
 
+    /// Peek the dirty flag without consuming it. The layer sync owns
+    /// consumption; the poll loop only peeks for redraw decisions.
+    pub fn dirty(&self) -> bool {
+        self.dirty
+    }
+
     /// The single showing row (empty when idle).
     pub fn rows(&self) -> Vec<OsdRow> {
         self.current
