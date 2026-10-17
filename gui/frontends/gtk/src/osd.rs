@@ -15,6 +15,7 @@ pub(crate) struct GtkOsd {
     raster: nerust_render_osd::OsdRaster,
     layer_size: Option<(u32, u32)>,
     layer_active: bool,
+    last_strip: nerust_render_traits::ReservedStrip,
 }
 
 impl GtkOsd {
@@ -24,6 +25,7 @@ impl GtkOsd {
             raster: nerust_render_osd::OsdRaster::new(),
             layer_size: None,
             layer_active: false,
+            last_strip: nerust_render_traits::ReservedStrip::default(),
         }
     }
 
@@ -75,7 +77,35 @@ impl GtkOsd {
         }
         let (fps, paused) = metrics;
         self.manager.poll(now);
+        self.apply_strip(&settings, renderer, window);
         self.sync_layer(&settings, language, paused, fps, renderer, window);
+    }
+
+    /// Reserve edge strips from settings. Game viewport fits into
+    /// the remaining rect; strips stay clear for the OSD layer.
+    fn apply_strip(
+        &mut self,
+        settings: &NotificationSettings,
+        renderer: &Rc<RefCell<GtkRenderer>>,
+        window: &gtk::ApplicationWindow,
+    ) {
+        use nerust_gui_shell::session::osd::{strip_pixels, strip_rows};
+        use nerust_render_traits::ReservedStrip;
+        let client_h = window.height().max(0) as u32 * window.scale_factor().max(1) as u32;
+        let (top_rows, bottom_rows) = strip_rows(
+            settings.area_mode,
+            settings.position,
+            settings.status_position,
+            settings.status_enabled,
+        );
+        let strip = ReservedStrip {
+            top: strip_pixels(client_h, top_rows),
+            bottom: strip_pixels(client_h, bottom_rows),
+        };
+        if strip != self.last_strip {
+            self.last_strip = strip;
+            renderer.borrow_mut().set_reserved_strip(strip);
+        }
     }
 
     /// Rasterize on change and hand the layer to the renderer.
