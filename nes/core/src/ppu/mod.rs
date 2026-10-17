@@ -783,9 +783,6 @@ impl Core {
         self.next_tile.reset();
         self.sprites = [SpriteInfo::new(); 64];
         self.has_first_sprite = false;
-        // self.render_executing = false;
-        // self.post_render_executing = false;
-        // self.oam_read_buffer = 0;
         self.has_next_sprite = false;
     }
 

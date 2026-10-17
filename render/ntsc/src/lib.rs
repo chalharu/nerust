@@ -116,20 +116,6 @@ struct ShaderKernelEntryI32 {
     blue: i32,
 }
 
-// pub trait NesNtscExt<I1: IntoIterator<Item = u8>, I2: Iterator<Item = I1>> {
-//     fn filter(self, kernel: &Engine) -> NesNtscIterator<I1, I2>;
-// }
-
-// impl<I1, I2> NesNtscExt<I1, I2::IntoIter> for I2
-// where
-//     I1: IntoIterator<Item = u8>,
-//     I2: IntoIterator<Item = I1>,
-// {
-//     fn filter(self, kernel: &Engine) -> NesNtscIterator<I1, I2::IntoIter> {
-//         NesNtscIterator::new(self.into_iter(), kernel)
-//     }
-// }
-
 #[derive(Debug)]
 pub struct Engine {
     burst: usize,

@@ -157,14 +157,12 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     // EWRAM/IWRAM/OAM keep fixed charges (zero or uniform waits).
     // Always sets DISPCNT=0x0080.
     bus.write16(0x04000000, 0x0080);
-    // 各リージョンのクリアは size に比例し、30ステップで終わることはない。
-    // 実測 TIMER0 (size=full) から求めた base を size比でスケールする。
-    // クリア範囲はGBATEK RegisterRamResetのflag定義通り。
+    // Per-region clear cost scaled by size; ranges follow the flag definition.
     if flags & 1 != 0 {
         for addr in (0x02000000..0x02040000).step_by(4) {
             bus.write32(addr, 0);
         }
-        // WRAM 0x40000 bytes, 65536 writes, 実測 0xA0FA (size比例)
+        // WRAM 0x40000 bytes, 65536 writes.
         cycles = cycles.wrapping_add(0xA0FA);
     }
     if flags & 2 != 0 {
@@ -172,7 +170,7 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
             bus.write32(addr, 0);
         }
         // Don't clear 0x03007E00-0x03007FFF (stack + test code)
-        // IWRAM 0x7E00 bytes, 0x1F80 writes, 実測 0x342A (size比例)
+        // IWRAM 0x7E00 bytes, 0x1F80 writes.
         cycles = cycles.wrapping_add(0x342A);
     }
     if flags & 4 != 0 {
@@ -180,7 +178,7 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         for addr in (0x05000000..0x05000400).step_by(4) {
             bus.write32(addr, 0);
         }
-        // VPAL 0x400 bytes, HW display total 0x039A (size比例)
+        // VPAL 0x400 bytes, scaled by size.
         let incurred = bus
             .accumulated_wait_cycles()
             .saturating_sub(w_before)
@@ -192,7 +190,7 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         for addr in (0x06000000..0x06018000).step_by(4) {
             bus.write32(addr, 0);
         }
-        // VRAM 0x18000 bytes, HW display total 0xFCFA (size比例, 30ステップで終わらない)
+        // VRAM 0x18000 bytes, scaled by size.
         let incurred = bus
             .accumulated_wait_cycles()
             .saturating_sub(w_before)
@@ -203,11 +201,10 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         for addr in (0x07000000..0x07000400).step_by(4) {
             bus.write32(addr, 0);
         }
-        // OAM 0x400 bytes, 実測 0x029A (size比例)
+        // OAM 0x400 bytes, scaled by size.
         cycles = cycles.wrapping_add(0x029A);
     }
-    // SIO/SOUND/OTHER はレジスタクリアで size小、実測値をそのまま加算
-    // これらも size (レジスタ数) に比例し、30ステップで終わらない
+    // SIO/SOUND/OTHER are register clears; add fixed charges.
     if flags & 0x20 != 0 {
         // SIO 0x0154 (SIOCNT/RCNT/JOYCNT/JOY_RECV/TRANS)
         cycles += 0x0154u32;
@@ -222,16 +219,8 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     }
     bus.reset_io_groups(flags);
     regs.set_r(0, 0);
-    // HLE は size比例で数千～数万cycle、30ステップで完了しない
-    // WRAM wait等は既に cycles に含まれるためそのまま返す
-    // 複数フラグの場合は合算（実測は個別テストだが、合算で size比例を維持）
-    if cycles == 0 {
-        1
-    } else {
-        // 汎用スケール: 既に size比例だが、異なる size で呼ばれた場合も
-        // 正しくスケールするように、呼び出し元が size を変えても対応可能
-        cycles
-    }
+    // Incurred waits are already included; flags accumulate.
+    if cycles == 0 { 1 } else { cycles }
 }
 
 fn halt(bus: &mut GbaMemoryBus) {

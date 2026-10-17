@@ -8,9 +8,6 @@ use crate::{
 
 pub(crate) struct Init {
     pub(crate) to_rgb: Vec<Vec<f32>>, //[f32; BURST_COUNT * 6],
-    // to_float: Vec<f32>,        // [f32; GAMMA_SIZE],
-    // contrast: f32,
-    // brightness: f32,
     pub(crate) artifacts: f32,
     pub(crate) fringing: f32,
     pub(crate) kernel: Vec<f32>, // [f32; RESCALE_OUT * KERNEL_SIZE * 2]
@@ -37,18 +34,6 @@ impl Init {
 
         let kernel = Self::init_filters(setup);
 
-        // generate gamma table
-        // let to_float = if GAMMA_SIZE > 1 {
-        //     let to_float = 1.0 / (GAMMA_SIZE - 1) as f32;
-        //     let gamma = 1.1333 - setup.gamma as f32 * 0.5;
-        //     // match common PC's 2.2 gamma to TV's 2.65 gamma
-        //     (0..GAMMA_SIZE)
-        //         .map(|i| (i as f32 * to_float).powf(gamma) * contrast + brightness)
-        //         .collect::<Vec<_>>()
-        // } else {
-        //     vec![]
-        // };
-
         // setup decoder matricies
         let to_rgb = {
             let hue = (setup.hue() * f32::consts::PI) + (f32::consts::PI / 180.0 * STD_DECODER_HUE);
@@ -73,9 +58,6 @@ impl Init {
         };
         Self {
             to_rgb,
-            // to_float,
-            // contrast,
-            // brightness,
             artifacts,
             fringing,
             kernel,

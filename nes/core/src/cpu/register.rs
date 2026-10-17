@@ -77,9 +77,6 @@ impl Register {
     pub(crate) fn get_v(&self) -> bool {
         self.v
     }
-    // pub fn get_b(&self) -> bool {
-    //     self.b
-    // }
     pub(crate) fn get_n(&self) -> bool {
         self.n
     }
@@ -144,9 +141,6 @@ impl Register {
     pub(crate) fn set_d(&mut self, value: bool) {
         self.d = value;
     }
-    // pub fn set_b(&mut self, value: bool) {
-    //     self.b = value;
-    // }
     pub(crate) fn set_v(&mut self, value: bool) {
         self.v = value;
     }

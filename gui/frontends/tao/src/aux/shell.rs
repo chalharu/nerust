@@ -285,10 +285,8 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         if messages.is_empty() && !invalidated.load(Ordering::Acquire) {
             return;
         }
-        // Single build: take the old UI out (the `Option` left by
-        // the relayout change makes this a move, not a swap), harvest
-        // its cache, run the messages, and rebuild once. The old code
-        // built a throwaway placeholder plus the real UI per batch.
+        // Single build: take the old UI out, harvest its cache, run
+        // the messages, and rebuild once.
         let old = self.ui.take().map(std::mem::ManuallyDrop::into_inner);
         for msg in messages {
             let _task = self.instance.update(msg);

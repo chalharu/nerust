@@ -24,9 +24,8 @@ impl RomEvent {
     }
 }
 
-/// Default output channel: the link-cable serial stream. Keeps the
-/// 1057 existing serial pins working untouched; log-sink cases name
-/// their channel explicitly.
+/// Default output channel: the link-cable serial stream; log-sink
+/// cases name their channel explicitly.
 fn default_serial_channel() -> String {
     "serial".to_string()
 }

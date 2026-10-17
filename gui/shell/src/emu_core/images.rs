@@ -34,9 +34,7 @@ pub(crate) struct StoredImages {
     pub(crate) fresh: bool,
 }
 
-/// FNV-1a content hash over decoded image bytes. ~100ns per 64KB on
-/// modern cores: orders of magnitude cheaper than the 512KB RGBA
-/// blit it can skip, and dependency-free.
+/// FNV-1a content hash over decoded image bytes (dependency-free).
 fn hash_debug_images(images: &[DebugImage]) -> u64 {
     const OFFSET: u64 = 0xcbf29ce484222325;
     const PRIME: u64 = 0x100000001b3;

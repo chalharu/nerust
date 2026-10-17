@@ -1,21 +1,7 @@
 use crate::cpu_registers::CpuRegisters;
 
-// Long-multiply C flag from the multiplier array (original implementation).
-//
-// After xMULLS/xMLALS the C flag is not a function of the 64-bit product
-// (e.g. UMULL(0xFFFFFFFF, 0x80000000) and UMULL(0x80000000, 0xFFFFFFFF)
-// share a product but report different C): it is the carry-out of the
-// ARM7TDMI's Booth-recoded carry-save multiplier array, sampled through
-// the final ALU add. The datapath below is written from the publicly
-// documented organization of that array: radix-4 Booth recoding emitting
-// four addends per multiplier cycle, carry-save compression with settled
-// 2-bit result latching, early termination on the 33-bit multiplier, and
-// a final ALU add whose barrel-shifter carry-out is the observed bit
-// (ARM multiply-accumulate patents; Furber, "ARM System-on-Chip
-// Architecture"; ARM7TDMI datasheet). No third-party code is used.
-// HW truth is pinned by `mull_carry_matches_suite_table` plus the
-// mgba-suite multiply-long ROM; model fidelity (result lane) by
-// `mull_array_matches_product` below.
+// Long-multiply C flag: carry-out of the Booth-recoded carry-save
+// multiplier array, not a function of the 64-bit product.
 
 /// 33-bit multiplier lane mask (bit 32 = sign extension).
 const ARRAY33: u64 = 0x1_FFFF_FFFF;

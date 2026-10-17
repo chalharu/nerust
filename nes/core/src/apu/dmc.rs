@@ -117,9 +117,6 @@ impl DMC {
             self.current_address = self.current_address.wrapping_add(1);
             self.length_value -= 1;
 
-            // if self.current_address == 0 {
-            //     self.current_address = 0x8000;
-            // }
             if self.length_value == 0 {
                 if self.is_loop {
                     self.restart();
