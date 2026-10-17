@@ -52,6 +52,36 @@ pub struct OsdLayer {
     pub rgba: Vec<u8>,
 }
 
+/// OSD anchor corner in render space. This is the rasterizer's own
+/// vocabulary: settings positions map to it once at the shell
+/// boundary, so the render crates never depend on settings types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OsdAnchor {
+    TopLeft,
+    TopRight,
+    #[default]
+    BottomLeft,
+    BottomRight,
+}
+
+impl OsdAnchor {
+    /// Top edge (top-left/top-right) vs bottom edge.
+    pub fn is_top(self) -> bool {
+        matches!(self, OsdAnchor::TopLeft | OsdAnchor::TopRight)
+    }
+
+    /// Left side (top-left/bottom-left): the value pill pins here.
+    pub fn is_left(self) -> bool {
+        matches!(self, OsdAnchor::TopLeft | OsdAnchor::BottomLeft)
+    }
+
+    /// Same horizontal band (both top or both bottom): entries share
+    /// one edge, so opposite sides can share a single row.
+    pub fn same_edge(self, other: Self) -> bool {
+        self.is_top() == other.is_top()
+    }
+}
+
 /// Outcome reported by [`GpuRenderer::render`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RenderResult {

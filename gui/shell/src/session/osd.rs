@@ -3,6 +3,7 @@
 //! `rows()` and honor `next_deadline()`; all policy lives here so
 //! tao/gtk/android behave identically.
 
+use nerust_render_traits::renderer::OsdAnchor;
 use std::time::{Duration, Instant};
 
 use nerust_settings_core::model::language::AppLanguage;
@@ -445,6 +446,150 @@ impl StatusGate {
         } else {
             (label, self.last_value.clone().unwrap_or(fresh_value))
         }
+    }
+}
+
+/// Settings corner mapped once to the render-space anchor. The
+/// rasterizer only speaks [`OsdAnchor`], so this is the single
+/// place where settings vocabulary crosses into render vocabulary.
+pub fn osd_anchor(position: NotificationPosition) -> OsdAnchor {
+    match position {
+        NotificationPosition::TopLeft => OsdAnchor::TopLeft,
+        NotificationPosition::TopRight => OsdAnchor::TopRight,
+        NotificationPosition::BottomLeft => OsdAnchor::BottomLeft,
+        NotificationPosition::BottomRight => OsdAnchor::BottomRight,
+    }
+}
+
+/// Status pill color. One constant so every frontend renders the
+/// persistent readout identically; transient rows keep per-level
+/// colors from [`OsdManager::push_all`].
+pub const OSD_STATUS_RGB: (u8, u8, u8) = (200, 200, 200);
+
+/// Raster-ready frame decided by [`OsdPresenter`]: rows plus the
+/// gated status text, with anchors already mapped to render space.
+#[derive(Debug, Clone)]
+pub struct OsdPlan {
+    pub rows: Vec<OsdRow>,
+    pub status: Option<(String, String)>,
+    pub position: OsdAnchor,
+    pub status_position: OsdAnchor,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Per-frame inputs for [`OsdPresenter::sync`]. Bundled so the
+/// decision signature stays narrow as inputs evolve.
+pub struct OsdSyncInput<'a> {
+    pub settings: &'a NotificationSettings,
+    pub language: AppLanguage,
+    pub fps: f32,
+    pub paused: bool,
+    pub now: Instant,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Per-frame layer decision. `Clear` is only emitted while a layer
+/// is live, so frontends call the renderer exactly as told.
+#[derive(Debug, Clone)]
+pub enum OsdSync {
+    Skip,
+    Clear,
+    Render(OsdPlan),
+}
+
+/// Owns the whole sync fingerprint (transient dirty flag, status
+/// gate, surface size, layer liveness) so tao/gtk/android share one
+/// decision procedure instead of reimplementing it per frontend.
+/// Frontends only rasterize the [`OsdPlan`] and hand it to the
+/// renderer; all policy lives here and is headless-testable.
+#[derive(Debug, Default)]
+pub struct OsdPresenter {
+    gate: StatusGate,
+    last_status: Option<(
+        String,
+        String,
+        NotificationPosition,
+        NotificationPosition,
+        NotificationAreaMode,
+        NotificationAreaMode,
+    )>,
+    last_size: Option<(u32, u32)>,
+    active: bool,
+}
+
+impl OsdPresenter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Decide the layer action for this frame. Consumes the
+    /// manager's dirty flag. Status rides outside that flag: pause
+    /// flips and settings toggles re-render immediately, fps digits
+    /// refresh at 2Hz through the gate. Untouched while disabled:
+    /// no per-frame formatting, and the stale gate passes the first
+    /// fresh value on re-enable.
+    pub fn sync(&mut self, manager: &mut OsdManager, input: OsdSyncInput<'_>) -> OsdSync {
+        let OsdSyncInput {
+            settings,
+            language,
+            fps,
+            paused,
+            now,
+            width,
+            height,
+        } = input;
+        if width == 0 || height == 0 {
+            if self.active {
+                self.active = false;
+                return OsdSync::Clear;
+            }
+            return OsdSync::Skip;
+        }
+        let dirty = manager.take_dirty();
+        let status_key = settings.status_enabled.then(|| {
+            let (label, fresh_value) = OsdManager::status_parts(fps, paused, language);
+            let (label, value) = self.gate.gate(now, label, fresh_value);
+            (
+                label,
+                value,
+                settings.position,
+                settings.status_position,
+                settings.area_mode,
+                settings.status_area_mode,
+            )
+        });
+        let status_changed = status_key != self.last_status;
+        if !dirty && !status_changed && self.last_size == Some((width, height)) {
+            return OsdSync::Skip;
+        }
+        self.last_size = Some((width, height));
+        self.last_status = status_key.clone();
+        let rows = manager.rows();
+        let empty = rows.is_empty() && status_key.is_none();
+        if empty {
+            if self.active {
+                self.active = false;
+                return OsdSync::Clear;
+            }
+            return OsdSync::Skip;
+        }
+        self.active = true;
+        let (label_value, position, status_position) = match status_key {
+            Some((label, value, position, status_position, _, _)) => {
+                (Some((label, value)), position, status_position)
+            }
+            None => (None, settings.position, settings.status_position),
+        };
+        OsdSync::Render(OsdPlan {
+            rows,
+            status: label_value,
+            position: osd_anchor(position),
+            status_position: osd_anchor(status_position),
+            width,
+            height,
+        })
     }
 }
 
@@ -1069,5 +1214,157 @@ mod tests {
         assert_eq!(strip_pixels(1000, 2), 92);
         assert_eq!(strip_pixels(0, 1), 0);
         assert_eq!(strip_pixels(1000, 0), 0);
+    }
+
+    #[test]
+    fn anchor_mapping_covers_all_corners() {
+        use nerust_render_traits::renderer::OsdAnchor as A;
+        use nerust_settings_core::model::local::NotificationPosition as P;
+        assert_eq!(super::osd_anchor(P::TopLeft), A::TopLeft);
+        assert_eq!(super::osd_anchor(P::TopRight), A::TopRight);
+        assert_eq!(super::osd_anchor(P::BottomLeft), A::BottomLeft);
+        assert_eq!(super::osd_anchor(P::BottomRight), A::BottomRight);
+    }
+
+    fn presenter_settings() -> nerust_settings_core::model::local::NotificationSettings {
+        nerust_settings_core::model::local::NotificationSettings::default()
+    }
+
+    #[test]
+    fn presenter_skips_when_idle_and_clears_zero_size() {
+        use super::{OsdPresenter, OsdSync};
+        use std::time::Instant;
+        let mut manager = OsdManager::new();
+        let mut presenter = OsdPresenter::new();
+        let settings = presenter_settings();
+        // Idle, no status: nothing to draw, nothing live.
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                super::OsdSyncInput {
+                    settings: &settings,
+                    language: AppLanguage::English,
+                    fps: 60.0,
+                    paused: false,
+                    now: Instant::now(),
+                    width: 960,
+                    height: 720
+                }
+            ),
+            OsdSync::Skip
+        ));
+        // Zero-size while idle stays skipped.
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                super::OsdSyncInput {
+                    settings: &settings,
+                    language: AppLanguage::English,
+                    fps: 60.0,
+                    paused: false,
+                    now: Instant::now(),
+                    width: 0,
+                    height: 0
+                }
+            ),
+            OsdSync::Skip
+        ));
+    }
+
+    #[test]
+    fn presenter_renders_status_then_skips_and_clears() {
+        use super::{OsdPresenter, OsdSync};
+        use std::time::Instant;
+        let mut manager = OsdManager::new();
+        let mut presenter = OsdPresenter::new();
+        let mut settings = presenter_settings();
+        settings.status_enabled = true;
+        let now = Instant::now();
+        // First frame renders the status readout.
+        let plan = match presenter.sync(
+            &mut manager,
+            super::OsdSyncInput {
+                settings: &settings,
+                language: AppLanguage::English,
+                fps: 60.0,
+                paused: false,
+                now,
+                width: 960,
+                height: 720,
+            },
+        ) {
+            OsdSync::Render(plan) => plan,
+            other => panic!("expected render, got {other:?}"),
+        };
+        assert_eq!(
+            plan.status.as_ref().map(|(l, v)| (l.as_str(), v.as_str())),
+            Some(("", "60.0 fps"))
+        );
+        assert_eq!(plan.width, 960);
+        // Same inputs: fps jitter inside the gate holds the digits.
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                super::OsdSyncInput {
+                    settings: &settings,
+                    language: AppLanguage::English,
+                    fps: 60.2,
+                    paused: false,
+                    now,
+                    width: 960,
+                    height: 720
+                }
+            ),
+            OsdSync::Skip
+        ));
+        // Pause flips pass through immediately.
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                super::OsdSyncInput {
+                    settings: &settings,
+                    language: AppLanguage::English,
+                    fps: 60.2,
+                    paused: true,
+                    now,
+                    width: 960,
+                    height: 720
+                }
+            ),
+            OsdSync::Render(_)
+        ));
+        // Disabling status with no rows clears the live layer.
+        settings.status_enabled = false;
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                super::OsdSyncInput {
+                    settings: &settings,
+                    language: AppLanguage::English,
+                    fps: 60.2,
+                    paused: false,
+                    now,
+                    width: 960,
+                    height: 720
+                }
+            ),
+            OsdSync::Clear
+        ));
+        // Clearing again stays skipped: nothing live.
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                super::OsdSyncInput {
+                    settings: &settings,
+                    language: AppLanguage::English,
+                    fps: 60.2,
+                    paused: false,
+                    now,
+                    width: 960,
+                    height: 720
+                }
+            ),
+            OsdSync::Skip
+        ));
     }
 }
