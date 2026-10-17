@@ -438,12 +438,7 @@ impl OsdRaster {
         } else {
             Family::Name(&self.sans_name)
         };
-        buffer.set_text(
-            line,
-            &Attrs::new().family(family),
-            Shaping::Advanced,
-            None,
-        );
+        buffer.set_text(line, &Attrs::new().family(family), Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut self.font_system, false);
         let Some(run) = buffer.layout_runs().next() else {
             return ShapedSpan {
