@@ -46,7 +46,7 @@ pub struct SystemSettingsChoiceOption {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{SystemSettingsChoiceId, SystemSettingsFieldId};
 
     #[test]
     fn setting_ids_expose_their_string_forms() {

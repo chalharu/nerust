@@ -238,7 +238,11 @@ impl WindowRuntime {
             renderer.resize(window_size);
         }
 
-        renderer.set_reserved_strip(self.host.reserved_strip());
+        let strip = self.host.reserved_strip();
+        if strip != self.host.osd_last_strip {
+            self.host.osd_last_strip = strip;
+            renderer.set_reserved_strip(strip);
+        }
         self.host.poll_notifications();
         self.host.sync_osd_layer(renderer.as_mut(), window_size);
 

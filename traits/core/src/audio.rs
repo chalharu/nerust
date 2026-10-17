@@ -263,7 +263,10 @@ mod tests {
 
 #[cfg(test)]
 mod registry_tests {
-    use super::*;
+    use super::{
+        AudioBackend, AudioBackendFactory, AudioBackendRegistry, GainBackend, NullAudio,
+        StereoSample,
+    };
 
     struct StubFactory {
         name: &'static str,

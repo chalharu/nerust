@@ -148,6 +148,10 @@ pub(crate) struct HostState {
     )>,
     /// Throttles fps digits to 2Hz; pause flips pass through.
     pub(super) osd_status_gate: nerust_gui_shell::session::osd::StatusGate,
+    /// Last applied edge strip. The reservation only changes with
+    /// settings or surface size, so unchanged strips skip the
+    /// renderer call (same gate pattern as the gtk frontend).
+    pub(super) osd_last_strip: nerust_render_traits::ReservedStrip,
     pub(super) history_window: Option<HistoryWindowHandle>,
     /// In-flight async error dialog plus resume bookkeeping.
     pub(super) modal_flight: Option<ModalFlight>,
@@ -223,6 +227,7 @@ impl HostState {
             osd_layer_active: false,
             osd_last_status: None,
             osd_status_gate: nerust_gui_shell::session::osd::StatusGate::new(),
+            osd_last_strip: nerust_render_traits::ReservedStrip::default(),
             modal_flight: None,
             resume_after_modal: false,
             history_window: None,

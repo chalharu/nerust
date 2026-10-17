@@ -94,7 +94,8 @@ pub fn map_area_id(mode: NotificationAreaMode) -> &'static str {
 }
 
 /// Parse a GTK combo active_id string back to ScalingMode.
-/// Returns `ScalingMode::FitToWindow` for unknown/unset ids.
+/// Unknown/unset ids fall back to `FitToWindow` with a warning: the
+/// combo only offers known ids, so anything else is corrupt state.
 pub fn parse_scaling_id(id: Option<&str>) -> ScalingMode {
     match id {
         Some("1") => ScalingMode::X1,
@@ -102,36 +103,54 @@ pub fn parse_scaling_id(id: Option<&str>) -> ScalingMode {
         Some("3") => ScalingMode::X3,
         Some("4") => ScalingMode::X4,
         Some("5") => ScalingMode::X5,
-        _ => ScalingMode::FitToWindow,
+        unknown => {
+            log::warn!("unknown scaling id {unknown:?}, falling back to fit-to-window");
+            ScalingMode::FitToWindow
+        }
     }
 }
 
 /// Parse a GTK combo active_id string back to NotificationColor.
+/// Unknown/unset ids fall back to white with a warning.
 pub fn parse_color_id(id: Option<&str>) -> NotificationColor {
     match id {
         Some("yellow") => NotificationColor::Yellow,
         Some("red") => NotificationColor::Red,
         Some("green") => NotificationColor::Green,
         Some("cyan") => NotificationColor::Cyan,
-        _ => NotificationColor::White,
+        Some("white") => NotificationColor::White,
+        unknown => {
+            log::warn!("unknown color id {unknown:?}, falling back to white");
+            NotificationColor::White
+        }
     }
 }
 
 /// Parse a GTK combo active_id string back to NotificationPosition.
+/// Unknown/unset ids fall back to bottom-left with a warning.
 pub fn parse_position_id(id: Option<&str>) -> NotificationPosition {
     match id {
         Some("top_left") => NotificationPosition::TopLeft,
         Some("top_right") => NotificationPosition::TopRight,
+        Some("bottom_left") => NotificationPosition::BottomLeft,
         Some("bottom_right") => NotificationPosition::BottomRight,
-        _ => NotificationPosition::BottomLeft,
+        unknown => {
+            log::warn!("unknown position id {unknown:?}, falling back to bottom-left");
+            NotificationPosition::BottomLeft
+        }
     }
 }
 
 /// Parse a GTK combo active_id string back to NotificationAreaMode.
+/// Unknown/unset ids fall back to overlay with a warning.
 pub fn parse_area_id(id: Option<&str>) -> NotificationAreaMode {
     match id {
+        Some("overlay") => NotificationAreaMode::Overlay,
         Some("strip") => NotificationAreaMode::Strip,
-        _ => NotificationAreaMode::Overlay,
+        unknown => {
+            log::warn!("unknown area id {unknown:?}, falling back to overlay");
+            NotificationAreaMode::Overlay
+        }
     }
 }
 

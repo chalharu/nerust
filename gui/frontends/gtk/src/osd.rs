@@ -147,17 +147,21 @@ impl GtkOsd {
         let dirty = self.manager.take_dirty();
         // Status rides outside the dirty flag: pause flips and
         // settings toggles must re-rasterize now; fps digits refresh
-        // at 2Hz through the gate.
-        let (label, fresh_value) = OsdManager::status_parts(fps, paused, language);
-        let (label, value) = self.gate.gate(Instant::now(), label, fresh_value);
-        let status_key = settings.status_enabled.then_some((
-            label,
-            value,
-            settings.position,
-            settings.status_position,
-            settings.area_mode,
-            settings.status_area_mode,
-        ));
+        // at 2Hz through the gate. Untouched while disabled: no
+        // per-frame formatting, and the stale gate passes the first
+        // fresh value on re-enable.
+        let status_key = settings.status_enabled.then(|| {
+            let (label, fresh_value) = OsdManager::status_parts(fps, paused, language);
+            let (label, value) = self.gate.gate(Instant::now(), label, fresh_value);
+            (
+                label,
+                value,
+                settings.position,
+                settings.status_position,
+                settings.area_mode,
+                settings.status_area_mode,
+            )
+        });
         let status_changed = status_key != self.last_status;
         if !dirty && !status_changed && self.layer_size == Some((w, h)) {
             return;
