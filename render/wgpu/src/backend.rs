@@ -67,6 +67,16 @@ impl WgpuRenderer {
     }
 }
 
+impl WgpuRenderer {
+    /// Push the staged layer into a fresh pipeline. Rebuilds drop
+    /// GPU objects, so attach/profile paths must re-apply.
+    fn reapply_osd(&mut self) {
+        if self.osd.is_some() {
+            self.osd_dirty = true;
+        }
+    }
+}
+
 impl GpuRenderer for WgpuRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
@@ -90,6 +100,7 @@ impl GpuRenderer for WgpuRenderer {
         )?;
         self.surface = Some(wgpu_surface);
         self.pipeline = Some(pipeline);
+        self.reapply_osd();
         Ok(())
     }
 
@@ -134,6 +145,7 @@ impl GpuRenderer for WgpuRenderer {
             profile,
             true,
         )?);
+        self.reapply_osd();
         Ok(())
     }
 

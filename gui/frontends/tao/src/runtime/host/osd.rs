@@ -185,7 +185,7 @@ impl HostState {
         }
         self.reap_modal();
         self.present_modal();
-        if self.osd.take_dirty() {
+        if self.osd.dirty() {
             // Paint even idle: no main redraw is scheduled while
             // paused+unfocused, which is exactly when Paused lands.
             self.request_redraw();
@@ -197,15 +197,14 @@ impl HostState {
 
     /// Rasterize the OSD layer on change and hand it to the renderer.
     /// Size changes re-rasterize; empty content clears the layer.
-    pub(crate) fn sync_osd_layer(&mut self, renderer: &mut dyn GpuRenderer) {
-        let (w, h) = self
-            .window
-            .as_ref()
-            .map(|window| {
-                let size = window.inner_size();
-                (size.width, size.height)
-            })
-            .unwrap_or((0, 0));
+    /// Coordinates are renderer surface pixels (the content area
+    /// below the menubar), not the full window.
+    pub(crate) fn sync_osd_layer(
+        &mut self,
+        renderer: &mut dyn GpuRenderer,
+        size: nerust_render_traits::SurfaceSize,
+    ) {
+        let (w, h) = (size.width, size.height);
         if w == 0 || h == 0 {
             if self.osd_layer_active {
                 renderer.set_osd_layer(None);
