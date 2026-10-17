@@ -1,9 +1,8 @@
 //! CPU OSD rasterizer: notification rows to a cropped RGBA layer.
 //! One implementation shared by every GPU backend; backends only blit.
 
-use std::collections::HashMap;
-
-use ab_glyph::{Font, FontArc, Glyph, GlyphId, PxScale};
+use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
+use cosmic_text::{CacheKey, SwashContent};
 use nerust_render_traits::renderer::OsdLayer;
 use nerust_settings_core::model::local::NotificationPosition;
 
@@ -33,57 +32,30 @@ pub struct OsdContent {
     pub status_position: NotificationPosition,
 }
 
-/// System fonts with lazy fallback. Load once, share everywhere.
+/// System font preference. cosmic-text shapes and rasterizes;
+/// this only picks the sans family (Arial is often absent on
+/// Linux, so prefer common families, then any sans-named face).
 pub struct OsdFonts {
-    db: fontdb::Database,
-    loaded: Vec<FontArc>,
-    loaded_ids: Vec<fontdb::ID>,
-    face_ids: Vec<fontdb::ID>,
-    char_font: HashMap<char, usize>,
+    sans_name: String,
+    has_fonts: bool,
 }
 
 impl OsdFonts {
     pub fn load() -> Self {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
-        let face_ids: Vec<fontdb::ID> = db.faces().map(|face| face.id).collect();
-        let mut fonts = Self {
-            db,
-            loaded: Vec::new(),
-            loaded_ids: Vec::new(),
-            face_ids,
-            char_font: HashMap::new(),
-        };
-        if fonts.load_best_sans().is_none() {
+        let has_fonts = !db.is_empty();
+        let sans_name = Self::best_sans_name(&db).unwrap_or_default();
+        if sans_name.is_empty() {
             log::warn!("osd sans query found nothing");
         }
-        fonts
+        Self {
+            sans_name,
+            has_fonts,
+        }
     }
 
-    fn load_face(&mut self, id: fontdb::ID) -> Option<usize> {
-        if let Some(position) = self.loaded_ids.iter().position(|face| *face == id) {
-            return Some(position);
-        }
-        if self.loaded.len() >= 8 {
-            return None;
-        }
-        let bytes: Vec<u8> = self.db.with_face_data(id, |data, _index| data.to_vec())?;
-        let font = match FontArc::try_from_vec(bytes) {
-            Ok(font) => font,
-            Err(error) => {
-                log::warn!("osd font parse failed: {error}");
-                return None;
-            }
-        };
-        self.loaded.push(font);
-        self.loaded_ids.push(id);
-        Some(self.loaded.len() - 1)
-    }
-
-    /// Load the best available sans face. fontdb's SansSerif
-    /// defaults to Arial (often absent on Linux), so prefer common
-    /// families, then any sans-named face, then the first face.
-    fn load_best_sans(&mut self) -> Option<usize> {
+    fn best_sans_name(db: &fontdb::Database) -> Option<String> {
         for name in [
             "Noto Sans",
             "DejaVu Sans",
@@ -95,85 +67,23 @@ impl OsdFonts {
                 families: &[fontdb::Family::Name(name)],
                 ..fontdb::Query::default()
             };
-            if let Some(id) = self.db.query(&query)
-                && let Some(index) = self.load_face(id)
-            {
-                return Some(index);
+            if db.query(&query).is_some() {
+                return Some(name.to_string());
             }
         }
-        let mut names: Vec<String> = self
-            .db
+        let mut names: Vec<String> = db
             .faces()
             .flat_map(|face| face.families.iter().map(|(family, _)| family.clone()))
             .collect();
         names.sort();
         names.dedup();
-        if let Some(name) = names
-            .iter()
+        names
+            .into_iter()
             .find(|name| name.to_lowercase().contains("sans"))
-        {
-            let query = fontdb::Query {
-                families: &[fontdb::Family::Name(name)],
-                ..fontdb::Query::default()
-            };
-            if let Some(id) = self.db.query(&query)
-                && let Some(index) = self.load_face(id)
-            {
-                return Some(index);
-            }
-        }
-        let first = self.face_ids.first().copied()?;
-        self.load_face(first)
-    }
-    /// Font index holding `c`, loading faces lazily. Primary first,
-    /// then CJK-likely families (they sort late in dense font dirs
-    /// and would otherwise starve behind the load cap), then rest.
-    fn font_for(&mut self, c: char) -> Option<usize> {
-        if let Some(&index) = self.char_font.get(&c) {
-            return Some(index);
-        }
-        let order = self.fallback_order();
-        for position in order {
-            let id = self.face_ids[position];
-            let Some(index) = self.load_face(id) else {
-                continue;
-            };
-            if self.loaded[index].glyph_id(c).0 != 0 {
-                self.char_font.insert(c, index);
-                return Some(index);
-            }
-        }
-        None
-    }
-
-    fn fallback_order(&self) -> Vec<usize> {
-        fn cjk(name: &str) -> bool {
-            let lower = name.to_lowercase();
-            lower.contains("cjk")
-                || lower.contains("fallback")
-                || lower.contains("droid")
-                || lower.contains("mincho")
-                || lower.contains("gothic")
-        }
-        let mut first = Vec::new();
-        let mut rest = Vec::new();
-        for (position, id) in self.face_ids.iter().enumerate() {
-            let hit = self
-                .db
-                .face(*id)
-                .is_some_and(|face| face.families.iter().any(|(name, _)| cjk(name)));
-            if hit {
-                first.push(position);
-            } else {
-                rest.push(position);
-            }
-        }
-        first.extend(rest);
-        first
     }
 
     pub fn has_fonts(&self) -> bool {
-        !self.loaded.is_empty()
+        self.has_fonts
     }
 }
 
@@ -185,48 +95,46 @@ const PILL_PAD_Y: u32 = 2;
 const PILL_RADIUS: u32 = 6;
 const PILL_BG: (u8, u8, u8, u8) = (0, 0, 0, 184);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct GlyphKey {
-    font: u32,
-    glyph: u16,
-    px: u32,
-    qfrac: u8,
+/// One shaped glyph: raster cache key plus integer line offset.
+/// Measure and draw share the span, so the box always fits.
+#[derive(Clone, Copy)]
+struct ShapedGlyph {
+    key: CacheKey,
+    x: i32,
+    y: i32,
 }
 
-struct CachedGlyph {
-    width: u32,
-    height: u32,
-    dx: f32,
-    dy: f32,
-    alpha: Vec<u8>,
+/// One shaped line: glyph positions plus total advance.
+struct ShapedSpan {
+    glyphs: Vec<ShapedGlyph>,
+    width: f32,
+    ascent: f32,
+    descent: f32,
 }
 
-/// One laid-out glyph: absolute fractional pen plus quantized
-/// subpixel shift. Measure and draw share the run, so the box
-/// always fits the text.
-struct RunGlyph {
-    font: usize,
-    glyph: u16,
-    pen_x: f32,
-    qfrac: u8,
-}
-
-/// Rasterizer with a glyph cache. Pixels are device pixels.
+/// Rasterizer backed by cosmic-text shaping. Pixels are device pixels.
 pub struct OsdRaster {
-    fonts: OsdFonts,
-    glyphs: HashMap<GlyphKey, CachedGlyph>,
+    font_system: FontSystem,
+    swash: SwashCache,
+    sans_name: String,
+    has_fonts: bool,
 }
 
 impl OsdRaster {
     pub fn new() -> Self {
+        let fonts = OsdFonts::load();
+        let font_system = FontSystem::new();
+        let has_fonts = fonts.has_fonts();
         Self {
-            fonts: OsdFonts::load(),
-            glyphs: HashMap::new(),
+            font_system,
+            swash: SwashCache::new(),
+            sans_name: fonts.sans_name,
+            has_fonts,
         }
     }
 
     pub fn has_fonts(&self) -> bool {
-        self.fonts.has_fonts()
+        self.has_fonts
     }
 
     /// Rasterize rows into a cropped layer. `None` when empty/fontless.
@@ -236,7 +144,7 @@ impl OsdRaster {
         surface_w: u32,
         surface_h: u32,
     ) -> Option<OsdLayer> {
-        if surface_w == 0 || surface_h == 0 || !self.fonts.has_fonts() {
+        if surface_w == 0 || surface_h == 0 || !self.has_fonts() {
             return None;
         }
         let font_px = (f64::from(surface_h) * 0.022).ceil().max(6.0) as u32;
@@ -259,36 +167,29 @@ impl OsdRaster {
             draw_pill(&mut rgba, width, b.x - min_x, b.y - min_y, b.w, b.h);
             let base_y = b.y - min_y;
             match &b.body {
-                RowBody::Line { run, ascent } => {
-                    let baseline = base_y as f32 + PILL_PAD_Y as f32 + ascent;
-                    self.draw_run(
+                RowBody::Line { span } => {
+                    let top = base_y as i32 + PILL_PAD_Y as i32;
+                    self.draw_span(
                         &mut rgba,
                         width,
-                        run,
-                        (b.x - min_x + PILL_PAD_X) as f32,
-                        baseline,
-                        font_px,
+                        span,
+                        (b.x - min_x + PILL_PAD_X) as i32,
+                        top,
                         b.rgb,
                     );
                 }
-                RowBody::Status {
-                    left,
-                    right,
-                    ascent,
-                } => {
-                    let baseline = base_y as f32 + PILL_PAD_Y as f32 + ascent;
-                    let base_x = (b.x - min_x + PILL_PAD_X) as f32;
-                    self.draw_run(
-                        &mut rgba, width, &left.run, base_x, baseline, font_px, b.rgb,
-                    );
+                RowBody::Status { left, right } => {
+                    let base_x = (b.x - min_x + PILL_PAD_X) as i32;
+                    let top = base_y as i32 + PILL_PAD_Y as i32;
+                    self.draw_span(&mut rgba, width, &left.span, base_x, top, b.rgb);
                     // Right span starts after the left span plus the
                     // shared gap, so no separator is drawn twice.
-                    let gap = self.layout_run(" ", font_px).1.max(1.0);
-                    let empty = left.run.is_empty() || right.run.is_empty();
-                    let right_x = base_x + left.width + if empty { 0.0 } else { gap };
-                    self.draw_run(
-                        &mut rgba, width, &right.run, right_x, baseline, font_px, b.rgb,
-                    );
+                    let gap = self.shape_line(" ", font_px).width.max(1.0);
+                    let empty = left.span.glyphs.is_empty() || right.span.glyphs.is_empty();
+                    let right_x = base_x
+                        + left.span.width.ceil() as i32
+                        + if empty { 0 } else { gap.ceil() as i32 };
+                    self.draw_span(&mut rgba, width, &right.span, right_x, top, b.rgb);
                 }
             }
         }
@@ -348,7 +249,7 @@ impl OsdRaster {
             return None;
         }
         // Space advance doubles as the label/value separator.
-        let gap = self.layout_run(" ", font_px).1.max(1.0);
+        let gap = self.shape_line(" ", font_px).width.max(1.0);
         let mut boxes = Vec::new();
         let mut place = |list: Vec<Entry>, from_top: bool, raster: &mut Self| {
             let mut cursor = if from_top {
@@ -363,19 +264,17 @@ impl OsdRaster {
             for entry in ordered {
                 let (anchor, body, rgb, w, row_h) = match entry {
                     Entry::Line(line, rgb, anchor) => {
-                        let (run, width, ascent, descent) = raster.layout_run(&line, font_px);
-                        let row_h = raster.row_height(font_px, ascent, descent);
-                        let w = width.ceil() as u32 + PILL_PAD_X * 2;
-                        let body = RowBody::Line { run, ascent };
+                        let span = raster.shape_line(&line, font_px);
+                        let row_h = raster.row_height(font_px, span.ascent, span.descent);
+                        let w = span.width.ceil() as u32 + PILL_PAD_X * 2;
+                        let body = RowBody::Line { span };
                         (anchor, body, rgb, w, row_h)
                     }
                     Entry::Status(status, anchor) => {
-                        let (label_run, label_w, ascent_l, _) =
-                            raster.layout_run(&status.label, font_px);
-                        let (value_run, value_w, ascent_v, descent_v) =
-                            raster.layout_run(&status.value, font_px);
-                        let ascent = ascent_l.max(ascent_v);
-                        let row_h = raster.row_height(font_px, ascent, descent_v);
+                        let label = raster.shape_line(&status.label, font_px);
+                        let value = raster.shape_line(&status.value, font_px);
+                        let ascent = label.ascent.max(value.ascent);
+                        let row_h = raster.row_height(font_px, ascent, value.descent);
                         // Value always on the outside (margin side) so the
                         // digits never shift: left anchors read
                         // "value label", right anchors "label value".
@@ -384,39 +283,18 @@ impl OsdRaster {
                             NotificationPosition::TopLeft | NotificationPosition::BottomLeft
                         );
                         let (left, right) = if outer_left {
-                            (
-                                StatusSpan {
-                                    run: value_run,
-                                    width: value_w,
-                                },
-                                StatusSpan {
-                                    run: label_run,
-                                    width: label_w,
-                                },
-                            )
+                            (StatusSpan { span: value }, StatusSpan { span: label })
                         } else {
-                            (
-                                StatusSpan {
-                                    run: label_run,
-                                    width: label_w,
-                                },
-                                StatusSpan {
-                                    run: value_run,
-                                    width: value_w,
-                                },
-                            )
+                            (StatusSpan { span: label }, StatusSpan { span: value })
                         };
                         let middle = if status.label.is_empty() || status.value.is_empty() {
                             0.0
                         } else {
                             gap
                         };
-                        let w = (left.width + middle + right.width).ceil() as u32 + PILL_PAD_X * 2;
-                        let body = RowBody::Status {
-                            left,
-                            right,
-                            ascent,
-                        };
+                        let w = (left.span.width + middle + right.span.width).ceil() as u32
+                            + PILL_PAD_X * 2;
+                        let body = RowBody::Status { left, right };
                         (anchor, body, status.rgb, w, row_h)
                     }
                 };
@@ -449,44 +327,55 @@ impl OsdRaster {
         Some(boxes)
     }
 
-    /// Lay out one line into absolute-pen glyphs with kerning.
-    /// Empty outlines (spaces) still advance the pen; the pen stays
-    /// fractional and each glyph carries its own quantized subpixel
-    /// shift, so spacing never jitters.
-    fn layout_run(&mut self, line: &str, font_px: u32) -> (Vec<RunGlyph>, f32, f32, f32) {
-        let mut run = Vec::new();
-        let mut pen = 0f32;
-        let mut ascent = 0f32;
-        let mut descent = 0f32;
-        let mut prev: Option<(usize, u16)> = None;
-        for c in line.chars() {
-            let Some(index) = self.fonts.font_for(c) else {
-                prev = None;
-                continue;
+    /// Shape one line with full GPOS kerning and script fallback.
+    /// Measure and draw share the span, so the box always fits.
+    fn shape_line(&mut self, line: &str, font_px: u32) -> ShapedSpan {
+        let size = font_px as f32;
+        let metrics = Metrics::new(size, size);
+        let mut buffer = Buffer::new(&mut self.font_system, metrics);
+        buffer.set_size(&mut self.font_system, Some(8192.0), None);
+        let family = if self.sans_name.is_empty() {
+            Family::SansSerif
+        } else {
+            Family::Name(&self.sans_name)
+        };
+        buffer.set_text(
+            &mut self.font_system,
+            line,
+            &Attrs::new().family(family),
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut self.font_system, false);
+        let Some(run) = buffer.layout_runs().next() else {
+            return ShapedSpan {
+                glyphs: Vec::new(),
+                width: 0.0,
+                ascent: size,
+                descent: 0.0,
             };
-            let font = &self.fonts.loaded[index];
-            let units = font.units_per_em().unwrap_or(2048.0);
-            let factor = font_px as f32 / units;
-            let id = font.glyph_id(c);
-            if let Some((pi, pid)) = prev
-                && pi == index
-            {
-                pen += font.kern_unscaled(GlyphId(pid), id) * factor;
-            }
-            let frac = pen - pen.floor();
-            let qfrac = ((frac * 4.0).round() as i32).clamp(0, 4) as u8;
-            run.push(RunGlyph {
-                font: index,
-                glyph: id.0,
-                pen_x: pen,
-                qfrac,
-            });
-            pen += font.h_advance_unscaled(id) * factor;
-            ascent = ascent.max(font.ascent_unscaled() * factor);
-            descent = descent.min(font.descent_unscaled() * factor);
-            prev = Some((index, id.0));
+        };
+        let ascent = run.line_y - run.line_top;
+        let glyphs = run
+            .glyphs
+            .iter()
+            .map(|glyph| {
+                let physical = glyph.physical((0.0, 0.0), 1.0);
+                ShapedGlyph {
+                    key: physical.cache_key,
+                    x: physical.x,
+                    y: physical.y,
+                }
+            })
+            .collect();
+        ShapedSpan {
+            glyphs,
+            width: run.line_w,
+            ascent,
+            // Rest of the em below the baseline; the row formula
+            // floors the pill height, so this only needs to be stable.
+            descent: ascent - size,
         }
-        (run, pen, ascent, descent)
     }
 
     fn row_height(&self, font_px: u32, ascent: f32, descent: f32) -> u32 {
@@ -494,83 +383,47 @@ impl OsdRaster {
         (font_px * 16 / 10 + PILL_PAD_Y * 2).max(content_h + PILL_PAD_Y * 2)
     }
 
-    /// Blit one laid-out run at an integer base position.
-    #[allow(clippy::too_many_arguments)]
-    fn draw_run(
+    /// Blit one shaped span at an integer base position.
+    /// Glyph images come from the shared swash cache, keyed by
+    /// shaping output, so hinting stays consistent everywhere.
+    fn draw_span(
         &mut self,
         rgba: &mut [u8],
         stride_w: u32,
-        run: &[RunGlyph],
-        x_base: f32,
-        baseline: f32,
-        font_px: u32,
+        span: &ShapedSpan,
+        x0: i32,
+        line_top: i32,
         rgb: (u8, u8, u8),
     ) {
-        let scale = PxScale::from(font_px as f32);
-        for g in run {
-            let key = GlyphKey {
-                font: g.font as u32,
-                glyph: g.glyph,
-                px: font_px,
-                qfrac: g.qfrac,
+        for glyph in &span.glyphs {
+            let Some(image) = self.swash.get_image(&mut self.font_system, glyph.key) else {
+                continue;
             };
-            let cached = if let Some(cached) = self.glyphs.get(&key) {
-                cached
-            } else {
-                let font = &self.fonts.loaded[g.font];
-                let id = GlyphId(g.glyph);
-                let outlined = font.outline_glyph(Glyph {
-                    id,
-                    scale,
-                    position: ab_glyph::Point {
-                        x: f32::from(g.qfrac) / 4.0,
-                        y: 0.0,
-                    },
-                });
-                let Some(outlined) = outlined else {
-                    // No outline (e.g. space): advance already counted
-                    // in the run, so record an empty slot and move on.
-                    self.glyphs.insert(
-                        key,
-                        CachedGlyph {
-                            width: 0,
-                            height: 0,
-                            dx: 0.0,
-                            dy: 0.0,
-                            alpha: Vec::new(),
-                        },
-                    );
-                    continue;
-                };
-                let bounds = outlined.px_bounds();
-                let w = bounds.width() as u32;
-                let h = bounds.height() as u32;
-                let mut alpha = vec![0u8; w as usize * h as usize];
-                outlined.draw(|x, y, coverage| {
-                    alpha[y as usize * w as usize + x as usize] = (coverage * 255.0).round() as u8;
-                });
-                self.glyphs.insert(
-                    key,
-                    CachedGlyph {
-                        width: w,
-                        height: h,
-                        dx: bounds.min.x,
-                        dy: bounds.min.y,
-                        alpha,
-                    },
-                );
-                &self.glyphs[&key]
+            let SwashContent::Mask = image.content else {
+                continue;
             };
-            blit_glyph(
-                rgba,
-                stride_w,
-                &cached.alpha,
-                cached.width,
-                cached.height,
-                (x_base + g.pen_x.floor() + cached.dx).round() as i32,
-                (baseline + cached.dy).round() as i32,
-                rgb,
-            );
+            let (w, h) = (image.placement.width, image.placement.height);
+            if w == 0 || h == 0 {
+                continue;
+            }
+            let base_x = x0 + glyph.x + image.placement.left;
+            let base_y = line_top + glyph.y + image.placement.top;
+            let row_bytes = w as usize;
+            for (row, chunk) in image.data.chunks_exact(row_bytes).enumerate() {
+                for (col, coverage) in chunk.iter().enumerate() {
+                    if *coverage == 0 {
+                        continue;
+                    }
+                    let (dx, dy) = (base_x + col as i32, base_y + row as i32);
+                    if dx < 0 || dy < 0 {
+                        continue;
+                    }
+                    let offset = (dy as u32 * stride_w + dx as u32) as usize * 4;
+                    if let Some(pixel) = rgba.get_mut(offset..offset + 4) {
+                        blend_over(pixel, rgb.0, rgb.1, rgb.2, *coverage);
+                    }
+                }
+            }
         }
     }
 }
@@ -591,20 +444,12 @@ struct PlacedRow {
 }
 
 enum RowBody {
-    Line {
-        run: Vec<RunGlyph>,
-        ascent: f32,
-    },
-    Status {
-        left: StatusSpan,
-        right: StatusSpan,
-        ascent: f32,
-    },
+    Line { span: ShapedSpan },
+    Status { left: StatusSpan, right: StatusSpan },
 }
 
 struct StatusSpan {
-    run: Vec<RunGlyph>,
-    width: f32,
+    span: ShapedSpan,
 }
 
 fn is_top(position: NotificationPosition) -> bool {
@@ -639,39 +484,6 @@ fn draw_pill(rgba: &mut [u8], stride_w: u32, x: u32, y: u32, w: u32, h: u32) {
                 if let Some(pixel) = rgba.get_mut(offset..offset + 4) {
                     blend_over(pixel, PILL_BG.0, PILL_BG.1, PILL_BG.2, PILL_BG.3);
                 }
-            }
-        }
-    }
-}
-
-/// Blit one cached glyph bitmap at integer layer coordinates.
-#[allow(clippy::too_many_arguments)]
-fn blit_glyph(
-    rgba: &mut [u8],
-    stride_w: u32,
-    alpha: &[u8],
-    glyph_w: u32,
-    glyph_h: u32,
-    x: i32,
-    y: i32,
-    rgb: (u8, u8, u8),
-) {
-    if glyph_w == 0 || glyph_h == 0 {
-        return;
-    }
-    for row in 0..glyph_h {
-        for col in 0..glyph_w {
-            let coverage = alpha[row as usize * glyph_w as usize + col as usize];
-            if coverage == 0 {
-                continue;
-            }
-            let (dx, dy) = (x + col as i32, y + row as i32);
-            if dx < 0 || dy < 0 {
-                continue;
-            }
-            let offset = (dy as u32 * stride_w + dx as u32) as usize * 4;
-            if let Some(pixel) = rgba.get_mut(offset..offset + 4) {
-                blend_over(pixel, rgb.0, rgb.1, rgb.2, coverage);
             }
         }
     }
@@ -768,6 +580,26 @@ mod tests {
         assert!(upper.y <= 8);
     }
 
+
+    #[test]
+    fn advanced_shaping_kerns_pairs() {
+        let mut raster = super::OsdRaster::new();
+        if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
+            return;
+        }
+        // Full GPOS shaping must tighten kerned pairs versus the
+        // sum of isolated advances. Skip when the system font
+        // lacks this pair instead of asserting font specifics.
+        let pair = raster.shape_line("AV", 16).width;
+        let isolated = raster.shape_line("A", 16).width + raster.shape_line("V", 16).width;
+        if pair >= isolated {
+            eprintln!("SKIP: system font has no AV kern");
+            return;
+        }
+        assert!(pair < isolated, "AV must kern: {pair} vs {isolated}");
+    }
+
     #[test]
     fn cjk_renders_nonblank() {
         let mut raster = super::OsdRaster::new();
@@ -821,8 +653,8 @@ mod tests {
             eprintln!("SKIP: no system fonts");
             return;
         }
-        let (_, plain_w, _, _) = raster.layout_run("ab", 16);
-        let (_, spaced_w, _, _) = raster.layout_run("a b", 16);
+        let plain_w = raster.shape_line("ab", 16).width;
+        let spaced_w = raster.shape_line("a b", 16).width;
         assert!(
             spaced_w > plain_w + 1.0,
             "space must advance the pen: {plain_w} vs {spaced_w}"
@@ -849,13 +681,13 @@ mod tests {
         };
         let left = super::NotificationPosition::BottomLeft;
         let right = super::NotificationPosition::BottomRight;
-        let gap = raster.layout_run(" ", 16).1;
-        let label_w = raster.layout_run("Paused", 16).1;
+        let gap = raster.shape_line(" ", 16).width;
+        let label_w = raster.shape_line("Paused", 16).width;
         // Left anchor: value first, so the digit block starts at the pad.
         let running = raster
             .rasterize(&content("", "60.1 fps", left), 960, 720)
             .expect("status layer");
-        let value_w = raster.layout_run("60.1 fps", 16).1;
+        let value_w = raster.shape_line("60.1 fps", 16).width;
         assert_eq!(running.width, value_w.ceil() as u32 + super::PILL_PAD_X * 2);
         // Paused adds label plus one gap, symmetric on both anchors.
         let paused_left = raster

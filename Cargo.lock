@@ -3758,7 +3758,7 @@ dependencies = [
 name = "nerust_render_osd"
 version = "0.1.0-dev"
 dependencies = [
- "ab_glyph",
+ "cosmic-text",
  "fontdb",
  "log",
  "nerust_render_traits",
