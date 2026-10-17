@@ -164,10 +164,10 @@ impl OsdRaster {
         let height = max_y - min_y;
         let mut rgba = vec![0u8; width as usize * height as usize * 4];
         for b in &boxes {
-            draw_pill(&mut rgba, width, b.x - min_x, b.y - min_y, b.w, b.h);
             let base_y = b.y - min_y;
             match &b.body {
                 RowBody::Line { span } => {
+                    draw_pill(&mut rgba, width, b.x - min_x, b.y - min_y, b.w, b.h);
                     let baseline = centered_baseline(base_y, b.h, span.ascent, span.descent);
                     self.draw_span(
                         &mut rgba,
@@ -178,20 +178,42 @@ impl OsdRaster {
                         b.rgb,
                     );
                 }
-                RowBody::Status { left, right } => {
-                    let ascent = left.span.ascent.max(right.span.ascent);
-                    let descent = left.span.descent.min(right.span.descent);
-                    let baseline = centered_baseline(base_y, b.h, ascent, descent);
-                    let base_x = (b.x - min_x + PILL_PAD_X) as i32;
-                    self.draw_span(&mut rgba, width, &left.span, base_x, baseline, b.rgb);
-                    // Right span starts after the left span plus the
-                    // shared gap, so no separator is drawn twice.
-                    let gap = self.shape_line(" ", font_px).width.max(1.0);
-                    let empty = left.span.glyphs.is_empty() || right.span.glyphs.is_empty();
-                    let right_x = base_x
-                        + left.span.width.ceil() as i32
-                        + if empty { 0 } else { gap.ceil() as i32 };
-                    self.draw_span(&mut rgba, width, &right.span, right_x, baseline, b.rgb);
+                RowBody::Pair {
+                    outer,
+                    inner,
+                    ascent,
+                    descent,
+                    outer_left,
+                } => {
+                    // Two separate pills with a margin: value stays on
+                    // the margin side so digits never shift.
+                    let baseline = centered_baseline(base_y, b.h, *ascent, *descent);
+                    let outer_w = outer.span.width.ceil() as u32 + PILL_PAD_X * 2;
+                    let inner_w = inner.span.width.ceil() as u32 + PILL_PAD_X * 2;
+                    let cbx = (b.x - min_x) as i32;
+                    let (ox, ix) = if *outer_left {
+                        (cbx, cbx + outer_w as i32 + ROW_GAP as i32)
+                    } else {
+                        (cbx + b.w as i32 - outer_w as i32, cbx)
+                    };
+                    draw_pill(&mut rgba, width, ox as u32, base_y, outer_w, b.h);
+                    draw_pill(&mut rgba, width, ix as u32, base_y, inner_w, b.h);
+                    self.draw_span(
+                        &mut rgba,
+                        width,
+                        &outer.span,
+                        ox + PILL_PAD_X as i32,
+                        baseline,
+                        b.rgb,
+                    );
+                    self.draw_span(
+                        &mut rgba,
+                        width,
+                        &inner.span,
+                        ix + PILL_PAD_X as i32,
+                        baseline,
+                        b.rgb,
+                    );
                 }
             }
         }
@@ -250,8 +272,6 @@ impl OsdRaster {
         if top.is_empty() && bottom.is_empty() {
             return None;
         }
-        // Space advance doubles as the label/value separator.
-        let gap = self.shape_line(" ", font_px).width.max(1.0);
         let mut boxes = Vec::new();
         let mut place = |list: Vec<Entry>, from_top: bool, raster: &mut Self| {
             let mut cursor = if from_top {
@@ -275,29 +295,40 @@ impl OsdRaster {
                     Entry::Status(status, anchor) => {
                         let label = raster.shape_line(&status.label, font_px);
                         let value = raster.shape_line(&status.value, font_px);
-                        let ascent = label.ascent.max(value.ascent);
-                        let row_h = raster.row_height(font_px, ascent, value.descent);
-                        // Value always on the outside (margin side) so the
-                        // digits never shift: left anchors read
-                        // "value label", right anchors "label value".
-                        let outer_left = matches!(
-                            anchor,
-                            NotificationPosition::TopLeft | NotificationPosition::BottomLeft
-                        );
-                        let (left, right) = if outer_left {
-                            (StatusSpan { span: value }, StatusSpan { span: label })
+                        if status.label.is_empty() {
+                            // Solo value pill, as before.
+                            let row_h = raster.row_height(font_px, value.ascent, value.descent);
+                            let w = value.width.ceil() as u32 + PILL_PAD_X * 2;
+                            let body = RowBody::Line { span: value };
+                            (anchor, body, status.rgb, w, row_h)
                         } else {
-                            (StatusSpan { span: label }, StatusSpan { span: value })
-                        };
-                        let middle = if status.label.is_empty() || status.value.is_empty() {
-                            0.0
-                        } else {
-                            gap
-                        };
-                        let w = (left.span.width + middle + right.span.width).ceil() as u32
-                            + PILL_PAD_X * 2;
-                        let body = RowBody::Status { left, right };
-                        (anchor, body, status.rgb, w, row_h)
+                            let ascent = label.ascent.max(value.ascent);
+                            let descent = label.descent.min(value.descent);
+                            let row_h = raster.row_height(font_px, ascent, descent);
+                            // Value always on the outside (margin side) so the
+                            // digits never shift: left anchors read
+                            // "value label", right anchors "label value".
+                            let outer_left = matches!(
+                                anchor,
+                                NotificationPosition::TopLeft | NotificationPosition::BottomLeft
+                            );
+                            let (outer, inner) = if outer_left {
+                                (StatusSpan { span: value }, StatusSpan { span: label })
+                            } else {
+                                (StatusSpan { span: label }, StatusSpan { span: value })
+                            };
+                            let outer_w = outer.span.width.ceil() as u32 + PILL_PAD_X * 2;
+                            let inner_w = inner.span.width.ceil() as u32 + PILL_PAD_X * 2;
+                            let w = outer_w + ROW_GAP + inner_w;
+                            let body = RowBody::Pair {
+                                outer,
+                                inner,
+                                ascent,
+                                descent,
+                                outer_left,
+                            };
+                            (anchor, body, status.rgb, w, row_h)
+                        }
                     }
                 };
                 let x = match anchor {
@@ -448,8 +479,16 @@ struct PlacedRow {
 }
 
 enum RowBody {
-    Line { span: ShapedSpan },
-    Status { left: StatusSpan, right: StatusSpan },
+    Line {
+        span: ShapedSpan,
+    },
+    Pair {
+        outer: StatusSpan,
+        inner: StatusSpan,
+        ascent: f32,
+        descent: f32,
+        outer_left: bool,
+    },
 }
 
 struct StatusSpan {
@@ -692,7 +731,6 @@ mod tests {
         };
         let left = super::NotificationPosition::BottomLeft;
         let right = super::NotificationPosition::BottomRight;
-        let gap = raster.shape_line(" ", 16).width;
         let label_w = raster.shape_line("Paused", 16).width;
         // Left anchor: value first, so the digit block starts at the pad.
         let running = raster
@@ -700,16 +738,32 @@ mod tests {
             .expect("status layer");
         let value_w = raster.shape_line("60.1 fps", 16).width;
         assert_eq!(running.width, value_w.ceil() as u32 + super::PILL_PAD_X * 2);
-        // Paused adds label plus one gap, symmetric on both anchors.
+        // Paused adds a second pill plus the inter-pill margin,
+        // symmetric on both anchors.
+        let pair_w = |a: f32, b: f32| {
+            a.ceil() as u32
+                + super::PILL_PAD_X * 2
+                + super::ROW_GAP
+                + b.ceil() as u32
+                + super::PILL_PAD_X * 2
+        };
         let paused_left = raster
             .rasterize(&content("Paused", "60.1 fps", left), 960, 720)
             .expect("status layer");
         let paused_right = raster
             .rasterize(&content("Paused", "60.1 fps", right), 960, 720)
             .expect("status layer");
-        let expect = (value_w + gap + label_w).ceil() as u32 + super::PILL_PAD_X * 2;
+        let expect = pair_w(value_w, label_w);
         assert_eq!(paused_left.width, expect);
         assert_eq!(paused_right.width, expect);
+        // The margin between the pills stays transparent: a full-height
+        // seam with zero alpha separates value and label.
+        let seam_x = value_w.ceil() as u32 + super::PILL_PAD_X * 2 + super::ROW_GAP / 2;
+        for y in 0..paused_left.height {
+            let alpha = paused_left.rgba
+                [(y as usize * paused_left.width as usize + seam_x as usize) * 4 + 3];
+            assert_eq!(alpha, 0, "seam must be transparent at y={y}");
+        }
     }
 
     #[test]
