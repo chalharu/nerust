@@ -174,16 +174,14 @@ pub fn lz77(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
     let header = read_header(bus, src);
     let size = header >> 8;
     if header & 0xFF != 0x10 || size == 0 || !valid_source(src) {
-        // 不正ヘッダは最小コストで早期リターン（固定20は根拠なし）
+        // Invalid header: early return at minimum cost.
         return 1 + size / 0x100;
     }
     let Some(output) = decode_lz77_vec(bus, src.wrapping_add(4), size, width) else {
         return 1 + size / 0x100;
     };
     write_output(bus, regs.r(1), &output, width);
-    // 実測表示 TIMER0: WRAM 0xF643, VRAM 0x918E (size=0x1000)
-    // WRAM waitは size*0x2000/0x1000 に比例、VRAMは wait 0。
-    // 30ステップで4096byteが終わることはなく、HLE stallもsize比例で増加する。
+    // Display value minus HLE-incurred waits, scaled by size.
     match width {
         1 => {
             let displayed = 0xF643u32 * size / 0x1000;
@@ -261,11 +259,7 @@ pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         return 1 + size / 0x100;
     }
     decode_huffman(bus, src, regs.r(1), data_bits, size, &tree);
-    // 実測表示 TIMER0: 4BIT 0x626F, 8BIT 0x8D49 (size=0x1000)。
-    // HLE実行中に実際に生じたバスウェイトを差し引いて返すことで、
-    // 呼び出し側のwait再加算と合わせて表示値に一致させる。固定の
-    // 引き算（旧 4BIT 0x1400、8BIT 0）はバスモデル依存で脆く、
-    // VRAM 32bit=2cyc化のような正当な修正で崩れるため、実測引きを採用。
+    // Subtract HLE-incurred bus waits so the total matches the display value.
     let incurred = bus
         .accumulated_wait_cycles()
         .saturating_sub(entry_waits)
@@ -368,9 +362,7 @@ pub fn rl(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
     }
     let output = decode_rl(bus, src + 4, size);
     write_output(bus, regs.r(1), &output, width);
-    // 実測表示 TIMER0: WRAM 0xBEE3, VRAM 0x2580 (size=0x1000)
-    // WRAM waitは size*0x2000/0x1000 に比例。30ステップで4096byteが
-    // 終了することはなく、size比例でHLE stallも増加する。
+    // Display value minus HLE-incurred waits, scaled by size.
     match width {
         1 => {
             let displayed = 0xBEE3u32 * size / 0x1000;

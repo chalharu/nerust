@@ -37,18 +37,6 @@ impl Init {
 
         let kernel = Self::init_filters(setup);
 
-        // generate gamma table
-        // let to_float = if GAMMA_SIZE > 1 {
-        //     let to_float = 1.0 / (GAMMA_SIZE - 1) as f32;
-        //     let gamma = 1.1333 - setup.gamma as f32 * 0.5;
-        //     // match common PC's 2.2 gamma to TV's 2.65 gamma
-        //     (0..GAMMA_SIZE)
-        //         .map(|i| (i as f32 * to_float).powf(gamma) * contrast + brightness)
-        //         .collect::<Vec<_>>()
-        // } else {
-        //     vec![]
-        // };
-
         // setup decoder matricies
         let to_rgb = {
             let hue = (setup.hue() * f32::consts::PI) + (f32::consts::PI / 180.0 * STD_DECODER_HUE);
