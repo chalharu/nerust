@@ -18,7 +18,10 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 use nerust_settings_core::model::{
-    local::{RumbleTarget, ScreenOrientation, TouchOverlayVisibility},
+    local::{
+        NotificationAreaMode, NotificationPosition, RumbleTarget, ScreenOrientation,
+        TouchOverlayVisibility,
+    },
     shared::StoragePolicy,
 };
 use winit::platform::android::activity::AndroidApp;
@@ -67,6 +70,14 @@ pub(crate) struct AndroidSettings {
     pub rumble_enabled: bool,
     pub rumble_strength_percent: u8,
     pub rumble_target: RumbleTarget,
+    pub notifications_info_enabled: bool,
+    pub notifications_warning_enabled: bool,
+    pub notifications_error_enabled: bool,
+    pub notifications_position: NotificationPosition,
+    pub notifications_area_mode: NotificationAreaMode,
+    pub status_enabled: bool,
+    pub status_position: NotificationPosition,
+    pub status_area_mode: NotificationAreaMode,
     system_choices: Vec<AndroidSystemChoice>,
 }
 
@@ -152,6 +163,14 @@ impl AndroidSettings {
             rumble_enabled: snapshot.local.cartridge_peripherals.rumble_enabled,
             rumble_strength_percent: snapshot.local.cartridge_peripherals.rumble_strength_percent,
             rumble_target: snapshot.local.cartridge_peripherals.rumble_target,
+            notifications_info_enabled: snapshot.local.notifications.info_enabled,
+            notifications_warning_enabled: snapshot.local.notifications.warning_enabled,
+            notifications_error_enabled: snapshot.local.notifications.error_enabled,
+            notifications_position: snapshot.local.notifications.position,
+            notifications_area_mode: snapshot.local.notifications.area_mode,
+            status_enabled: snapshot.local.notifications.status_enabled,
+            status_position: snapshot.local.notifications.status_position,
+            status_area_mode: snapshot.local.notifications.status_area_mode,
             system_choices,
         }
     }
@@ -180,6 +199,14 @@ impl AndroidSettings {
         snapshot.local.cartridge_peripherals.rumble_enabled = self.rumble_enabled;
         snapshot.local.cartridge_peripherals.rumble_strength_percent = self.rumble_strength_percent;
         snapshot.local.cartridge_peripherals.rumble_target = self.rumble_target;
+        snapshot.local.notifications.info_enabled = self.notifications_info_enabled;
+        snapshot.local.notifications.warning_enabled = self.notifications_warning_enabled;
+        snapshot.local.notifications.error_enabled = self.notifications_error_enabled;
+        snapshot.local.notifications.position = self.notifications_position;
+        snapshot.local.notifications.area_mode = self.notifications_area_mode;
+        snapshot.local.notifications.status_enabled = self.status_enabled;
+        snapshot.local.notifications.status_position = self.status_position;
+        snapshot.local.notifications.status_area_mode = self.status_area_mode;
 
         for choice in &self.system_choices {
             let factory = registry
@@ -352,6 +379,82 @@ impl AndroidSettings {
                     RumbleTarget::Controller => 2,
                 },
             },
+            SettingDef {
+                key: "notifications.info".to_string(),
+                label: "Info Notifications".to_string(),
+                choices: off_on(),
+                current: usize::from(self.notifications_info_enabled),
+            },
+            SettingDef {
+                key: "notifications.warning".to_string(),
+                label: "Warning Notifications".to_string(),
+                choices: off_on(),
+                current: usize::from(self.notifications_warning_enabled),
+            },
+            SettingDef {
+                key: "notifications.error".to_string(),
+                label: "Error Notifications".to_string(),
+                choices: off_on(),
+                current: usize::from(self.notifications_error_enabled),
+            },
+            SettingDef {
+                key: "notifications.position".to_string(),
+                label: "Notification Position".to_string(),
+                choices: ["Bottom Left", "Bottom Right", "Top Left", "Top Right"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                current: match self.notifications_position {
+                    NotificationPosition::BottomLeft => 0,
+                    NotificationPosition::BottomRight => 1,
+                    NotificationPosition::TopLeft => 2,
+                    NotificationPosition::TopRight => 3,
+                },
+            },
+            SettingDef {
+                key: "notifications.area_mode".to_string(),
+                label: "Notification Area".to_string(),
+                choices: ["Overlay", "Strip"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                current: match self.notifications_area_mode {
+                    NotificationAreaMode::Overlay => 0,
+                    NotificationAreaMode::Strip => 1,
+                },
+            },
+            SettingDef {
+                key: "status.enabled".to_string(),
+                label: "Status Display".to_string(),
+                choices: off_on(),
+                current: usize::from(self.status_enabled),
+            },
+            SettingDef {
+                key: "status.position".to_string(),
+                label: "Status Position".to_string(),
+                choices: ["Bottom Left", "Bottom Right", "Top Left", "Top Right"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                current: match self.status_position {
+                    NotificationPosition::BottomLeft => 0,
+                    NotificationPosition::BottomRight => 1,
+                    NotificationPosition::TopLeft => 2,
+                    NotificationPosition::TopRight => 3,
+                },
+            },
+            SettingDef {
+                key: "status.area_mode".to_string(),
+                label: "Status Area".to_string(),
+                choices: ["Overlay", "Strip"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                current: match self.status_area_mode {
+                    NotificationAreaMode::Overlay => 0,
+                    NotificationAreaMode::Strip => 1,
+                },
+            },
         ];
         defs.extend(self.system_choices.iter().map(|choice| {
             SettingDef {
@@ -461,8 +564,52 @@ impl AndroidSettings {
             2 => RumbleTarget::Controller,
             _ => return None,
         };
+        let notifications_info_enabled = match indices[16] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let notifications_warning_enabled = match indices[17] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let notifications_error_enabled = match indices[18] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let notifications_position = match indices[19] {
+            0 => NotificationPosition::BottomLeft,
+            1 => NotificationPosition::BottomRight,
+            2 => NotificationPosition::TopLeft,
+            3 => NotificationPosition::TopRight,
+            _ => return None,
+        };
+        let notifications_area_mode = match indices[20] {
+            0 => NotificationAreaMode::Overlay,
+            1 => NotificationAreaMode::Strip,
+            _ => return None,
+        };
+        let status_enabled = match indices[21] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let status_position = match indices[22] {
+            0 => NotificationPosition::BottomLeft,
+            1 => NotificationPosition::BottomRight,
+            2 => NotificationPosition::TopLeft,
+            3 => NotificationPosition::TopRight,
+            _ => return None,
+        };
+        let status_area_mode = match indices[23] {
+            0 => NotificationAreaMode::Overlay,
+            1 => NotificationAreaMode::Strip,
+            _ => return None,
+        };
         let mut system_choices = current.system_choices.clone();
-        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[16..]) {
+        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[24..]) {
             choice.selected = choice.options.get(*selected_index)?.0.clone();
         }
 
@@ -483,6 +630,14 @@ impl AndroidSettings {
             rumble_enabled,
             rumble_strength_percent,
             rumble_target,
+            notifications_info_enabled,
+            notifications_warning_enabled,
+            notifications_error_enabled,
+            notifications_position,
+            notifications_area_mode,
+            status_enabled,
+            status_position,
+            status_area_mode,
             system_choices,
         })
     }
@@ -496,6 +651,8 @@ impl AndroidSettings {
                 "controls".to_string()
             } else if def.key.starts_with("storage.") {
                 "storage".to_string()
+            } else if def.key.starts_with("notifications.") || def.key.starts_with("status.") {
+                "notifications".to_string()
             } else if def.key == "vsync" || def.key.starts_with("screen.") {
                 "video".to_string()
             } else {
@@ -917,6 +1074,12 @@ mod tests {
         android.rumble_enabled = false;
         android.rumble_strength_percent = 35;
         android.rumble_target = RumbleTarget::Controller;
+        android.notifications_info_enabled = false;
+        android.notifications_position = NotificationPosition::TopRight;
+        android.notifications_area_mode = NotificationAreaMode::Strip;
+        android.status_enabled = true;
+        android.status_position = NotificationPosition::BottomRight;
+        android.status_area_mode = NotificationAreaMode::Strip;
         set_system_choice(&mut android, "video.filter", "ntsc_rgb");
         android.apply_to_snapshot(&mut snapshot, &registry).unwrap();
 
@@ -935,6 +1098,24 @@ mod tests {
             snapshot.local.cartridge_peripherals.rumble_target,
             RumbleTarget::Controller
         );
+        assert!(!snapshot.local.notifications.info_enabled);
+        assert_eq!(
+            snapshot.local.notifications.position,
+            NotificationPosition::TopRight
+        );
+        assert_eq!(
+            snapshot.local.notifications.area_mode,
+            NotificationAreaMode::Strip
+        );
+        assert!(snapshot.local.notifications.status_enabled);
+        assert_eq!(
+            snapshot.local.notifications.status_position,
+            NotificationPosition::BottomRight
+        );
+        assert_eq!(
+            snapshot.local.notifications.status_area_mode,
+            NotificationAreaMode::Strip
+        );
         let nes = snapshot
             .shared
             .systems
@@ -951,12 +1132,16 @@ mod tests {
         let android = android_settings(&snapshot, &registry);
         let indices = def_currents(&android);
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
-        // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
+        // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1.
+        // Notifications: info/warning/error on → 1; position BottomLeft → 0;
+        // areas Overlay → 0; status off → 0; status position TopLeft → 2.
         assert_eq!(
-            &indices[..16],
-            [0, 100, 40, 1, 1, 0, 0, 1, 65, 50, 30, 1, 1, 1, 100, 0]
+            &indices[..24],
+            [
+                0, 100, 40, 1, 1, 0, 0, 1, 65, 50, 30, 1, 1, 1, 100, 0, 1, 1, 1, 0, 0, 0, 2, 0
+            ]
         );
-        assert_eq!(indices.len(), 21);
+        assert_eq!(indices.len(), 29);
     }
 
     #[test]
