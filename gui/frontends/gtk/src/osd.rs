@@ -16,6 +16,16 @@ pub(crate) struct GtkOsd {
     layer_size: Option<(u32, u32)>,
     layer_active: bool,
     last_strip: nerust_render_traits::ReservedStrip,
+    /// Last rasterized status readout (see the tao twin): fps,
+    /// pause, on/off, and corners change without touching the
+    /// transient dirty flag.
+    last_status: Option<(
+        String,
+        String,
+        nerust_settings_core::model::local::NotificationPosition,
+        nerust_settings_core::model::local::NotificationPosition,
+        nerust_settings_core::model::local::NotificationAreaMode,
+    )>,
 }
 
 impl GtkOsd {
@@ -26,6 +36,7 @@ impl GtkOsd {
             layer_size: None,
             layer_active: false,
             last_strip: nerust_render_traits::ReservedStrip::default(),
+            last_status: None,
         }
     }
 
@@ -129,17 +140,28 @@ impl GtkOsd {
             return;
         }
         let dirty = self.manager.take_dirty();
-        if !dirty && self.layer_size == Some((w, h)) {
+        // Status rides outside the dirty flag: fps ticks, pause
+        // flips, and settings toggles must all re-rasterize now.
+        let status_key = settings.status_enabled.then(|| {
+            let (label, value) = OsdManager::status_parts(fps, paused, language);
+            (
+                label,
+                value,
+                settings.position,
+                settings.status_position,
+                settings.area_mode,
+            )
+        });
+        let status_changed = status_key != self.last_status;
+        if !dirty && !status_changed && self.layer_size == Some((w, h)) {
             return;
         }
         self.layer_size = Some((w, h));
-        let status = settings.status_enabled.then(|| {
-            let (label, value) = OsdManager::status_parts(fps, paused, language);
-            nerust_render_osd::OsdStatus {
-                label,
-                value,
-                rgb: (200, 200, 200),
-            }
+        self.last_status = status_key.clone();
+        let status = status_key.map(|(label, value, _, _, _)| nerust_render_osd::OsdStatus {
+            label,
+            value,
+            rgb: (200, 200, 200),
         });
         let rows = self
             .manager

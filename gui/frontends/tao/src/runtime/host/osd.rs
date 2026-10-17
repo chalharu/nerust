@@ -235,21 +235,32 @@ impl HostState {
             return;
         }
         let dirty = self.osd.take_dirty();
-        if !dirty && self.osd_layer_size == Some((w, h)) {
-            return;
-        }
-        self.osd_layer_size = Some((w, h));
         let settings = self.notification_settings();
         let language = self.notification_language();
         let metrics = self.session.metrics();
-        let status = settings.status_enabled.then(|| {
+        // Status rides outside the dirty flag: fps ticks, pause
+        // flips, and settings toggles must all re-rasterize now.
+        let status_key = settings.status_enabled.then(|| {
             let (label, value) =
                 OsdManager::status_parts(metrics.emulation_fps, metrics.paused, language);
-            nerust_render_osd::OsdStatus {
+            (
                 label,
                 value,
-                rgb: (200, 200, 200),
-            }
+                settings.position,
+                settings.status_position,
+                settings.area_mode,
+            )
+        });
+        let status_changed = status_key != self.osd_last_status;
+        if !dirty && !status_changed && self.osd_layer_size == Some((w, h)) {
+            return;
+        }
+        self.osd_layer_size = Some((w, h));
+        self.osd_last_status = status_key.clone();
+        let status = status_key.map(|(label, value, _, _, _)| nerust_render_osd::OsdStatus {
+            label,
+            value,
+            rgb: (200, 200, 200),
         });
         let rows = self
             .osd

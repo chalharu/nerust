@@ -133,6 +133,18 @@ pub(crate) struct HostState {
     pub(super) osd_raster: nerust_render_osd::OsdRaster,
     pub(super) osd_layer_size: Option<(u32, u32)>,
     pub(super) osd_layer_active: bool,
+    /// Last rasterized status readout. Transient rows ride the
+    /// `OsdManager` dirty flag, but the live status (fps digits,
+    /// pause label, on/off, corners) changes without ever touching
+    /// it — without this key the layer would freeze until the next
+    /// notification.
+    pub(super) osd_last_status: Option<(
+        String,
+        String,
+        nerust_settings_core::model::local::NotificationPosition,
+        nerust_settings_core::model::local::NotificationPosition,
+        nerust_settings_core::model::local::NotificationAreaMode,
+    )>,
     pub(super) history_window: Option<HistoryWindowHandle>,
     /// In-flight async error dialog plus resume bookkeeping.
     pub(super) modal_flight: Option<ModalFlight>,
@@ -206,6 +218,7 @@ impl HostState {
             osd_raster: nerust_render_osd::OsdRaster::new(),
             osd_layer_size: None,
             osd_layer_active: false,
+            osd_last_status: None,
             modal_flight: None,
             resume_after_modal: false,
             history_window: None,
