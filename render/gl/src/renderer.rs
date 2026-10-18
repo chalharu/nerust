@@ -252,7 +252,7 @@ impl GpuRenderer for GlRenderer {
 }
 
 /// Upload one frame through the three stride paths (direct,
-/// exact, repacked). Length failures skip; GL failures propagate.
+/// exact, repacked). Length failures refuse as Frame errors.
 fn upload_frame(
     view: &mut GlView,
     tight: &mut Vec<u8>,
