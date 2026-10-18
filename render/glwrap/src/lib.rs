@@ -15,7 +15,7 @@ use gl::types::{GLchar, GLenum, GLint, GLsizei, GLuint};
 use self::{
     error::*,
     raw::{
-        get_active_attrib, get_active_uniform, get_attrib_location, get_programiv,
+        delete_program, get_active_attrib, get_active_uniform, get_attrib_location, get_programiv,
         get_uniform_location,
     },
 };
@@ -76,6 +76,16 @@ impl Shader {
 
     pub fn use_program(&self) -> Result<(), Error> {
         use_program(self.program)
+    }
+}
+
+/// Programs die with the view: rebuilds and detach must not orphan names.
+/// Best-effort like the buffer drops; a dead context only warns.
+impl Drop for Shader {
+    fn drop(&mut self) {
+        if let Err(e) = delete_program(self.program) {
+            log::warn!("GL shader teardown failed: {e}");
+        }
     }
 }
 

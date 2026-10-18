@@ -117,6 +117,10 @@ pub fn delete_buffers(n: GLsizei, buffers: *const GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::DeleteBuffers(n, buffers) })
 }
 
+pub fn delete_program(program: GLuint) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::DeleteProgram(program) })
+}
+
 pub fn buffer_data(
     target: GLenum,
     size: GLsizeiptr,
