@@ -9,7 +9,7 @@ use std::{
 };
 
 /// Install the process-wide panic hook (idempotent, chains previous).
-/// Log facade only; backend untouched, safe from every frontend.
+/// Bare use covers pre-guard windows only; guarded entry is `run_guarded`.
 pub fn install() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {

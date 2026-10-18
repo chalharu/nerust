@@ -227,15 +227,17 @@ pub enum FrameChannel {
     Unpresented,
 }
 
-/// Modal fallback: without a composited frame every row goes modal
-/// regardless of `error_modal`.
+/// Modal fallback: without a composited frame every row goes modal.
+/// Exhaustive: a new channel must pick its route here.
 fn falls_back_to_modal(
     level: NotificationLevel,
     settings: &NotificationSettings,
     channel: FrameChannel,
 ) -> bool {
-    matches!(channel, FrameChannel::Unpresented)
-        || (level == NotificationLevel::Error && settings.error_modal)
+    match channel {
+        FrameChannel::Unpresented => true,
+        FrameChannel::Composited => level == NotificationLevel::Error && settings.error_modal,
+    }
 }
 
 /// Display-policy helpers using settings and row data only, never manager state.
