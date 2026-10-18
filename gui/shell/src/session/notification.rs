@@ -319,6 +319,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn log_level_marks_selection_screen_only() {
+        assert_eq!(NotificationKind::SelectedSlot(3).log_level(), None);
+        assert_eq!(
+            NotificationKind::Paused.log_level(),
+            Some(NotificationLevel::Info)
+        );
+        assert_eq!(
+            NotificationKind::SlotFailed {
+                slot: None,
+                reason: SlotOpFailure::Unavailable,
+            }
+            .log_level(),
+            Some(NotificationLevel::Warning)
+        );
+        assert_eq!(
+            NotificationKind::CommandFailed("Reset").log_level(),
+            Some(NotificationLevel::Error)
+        );
+    }
+
+    #[test]
     fn coalesces_identical_neighbours_and_caps_pending() {
         let mut center = NotificationCenter::new();
         center.push(NotificationKind::Paused);

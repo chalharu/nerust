@@ -194,6 +194,16 @@ pub struct OsdManager {
     last_key: Option<(NotificationLevel, String)>,
 }
 
+/// Which end the drop victim is taken from. Separate names keep
+/// call sites readable; a bool would not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VictimEdge {
+    /// Normal overflow: oldest row of the lowest severity present.
+    Oldest,
+    /// Demote insertion: newest row, so the just-demoted head survives.
+    Newest,
+}
+
 impl OsdManager {
     pub fn new() -> Self {
         Self::default()
@@ -233,29 +243,24 @@ impl OsdManager {
         }
     }
 
-    /// Index of the drop victim: the oldest row of the lowest
-    /// severity present (Info, then Warning). Scans from the front
-    /// for normal overflow or the back for demote overflow (so the
-    /// just-demoted head survives). `None` when every queued row is
-    /// an Error (the oldest drops, FIFO bound).
+    /// Index of the drop victim: the row of the lowest severity
+    /// present (Info, then Warning), taken from `edge`. `None` when
+    /// every queued row is an Error (the oldest drops, FIFO bound).
     fn victim_index(
         pending: &std::collections::VecDeque<OsdItem>,
-        from_back: bool,
+        edge: VictimEdge,
     ) -> Option<usize> {
-        let scan = |level| {
-            if from_back {
-                pending.iter().rposition(|item| item.level == level)
-            } else {
-                pending.iter().position(|item| item.level == level)
-            }
+        let scan = |level| match edge {
+            VictimEdge::Oldest => pending.iter().position(|item| item.level == level),
+            VictimEdge::Newest => pending.iter().rposition(|item| item.level == level),
         };
         scan(NotificationLevel::Info).or_else(|| scan(NotificationLevel::Warning))
     }
 
     /// Drop the overflow victim, never dropping an Error while a
     /// lower severity row exists.
-    fn evict_overflow(pending: &mut std::collections::VecDeque<OsdItem>, from_back: bool) {
-        match Self::victim_index(pending, from_back) {
+    fn evict_overflow(pending: &mut std::collections::VecDeque<OsdItem>, edge: VictimEdge) {
+        match Self::victim_index(pending, edge) {
             Some(index) => {
                 pending.remove(index);
             }
@@ -267,8 +272,14 @@ impl OsdManager {
 
     /// Merge a consecutive duplicate into the showing label or the
     /// queue tail (`×N`, timer reset). Anything interleaved breaks the
-    /// run, so pause/resume flaps keep full slots.
-    fn merge_consecutive(&mut self, item: &OsdItem, consecutive: bool) -> bool {
+    /// run, so pause/resume flaps keep full slots. Consecutiveness is
+    /// derived here from the last accepted identity, so callers pass
+    /// only the row.
+    fn merge_consecutive(&mut self, item: &OsdItem) -> bool {
+        let consecutive = self
+            .last_key
+            .as_ref()
+            .is_some_and(|(level, key)| *level == item.level && key == &item.key);
         if !consecutive {
             return false;
         }
@@ -311,7 +322,7 @@ impl OsdManager {
         self.current = Some(item);
         self.pending.push_front(demoted);
         while self.pending.len() > MAX_QUEUED {
-            Self::evict_overflow(&mut self.pending, true);
+            Self::evict_overflow(&mut self.pending, VictimEdge::Newest);
         }
         None
     }
@@ -339,8 +350,10 @@ impl OsdManager {
     /// Route one staged row through merge, preempt, and replace
     /// policies, queuing what survives. Ownership stays inside this
     /// dispatcher so helpers move rows instead of cloning them.
-    fn route_row(&mut self, item: OsdItem, consecutive: bool) {
-        if self.merge_consecutive(&item, consecutive) {
+    fn route_row(&mut self, item: OsdItem) {
+        let merged = self.merge_consecutive(&item);
+        self.last_key = Some((item.level, item.key.clone()));
+        if merged {
             return;
         }
         let Some(item) = self.preempt_for_error(item) else {
@@ -353,7 +366,7 @@ impl OsdManager {
         // Full queue drops the lowest severity first; Errors drop
         // only when every queued row is an Error.
         while self.pending.len() > MAX_QUEUED {
-            Self::evict_overflow(&mut self.pending, false);
+            Self::evict_overflow(&mut self.pending, VictimEdge::Oldest);
         }
     }
 
@@ -393,11 +406,6 @@ impl OsdManager {
             let rgb = Self::color(n.level, settings);
             let tag = level_tag(n.level);
             let duration = Duration::from_millis(Self::duration_ms(n.level, settings));
-            let consecutive = self
-                .last_key
-                .as_ref()
-                .is_some_and(|(level, key)| *level == n.level && key == &base);
-            self.last_key = Some((n.level, base.clone()));
             let item = OsdItem {
                 row: Self::counted_row(&base, n.count, rgb, tag),
                 level: n.level,
@@ -407,7 +415,7 @@ impl OsdManager {
                 deadline: now + duration,
                 selected: matches!(n.kind, NotificationKind::SelectedSlot(_)),
             };
-            self.route_row(item, consecutive);
+            self.route_row(item);
         }
     }
 
