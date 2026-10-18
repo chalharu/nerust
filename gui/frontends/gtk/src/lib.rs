@@ -28,6 +28,7 @@ use nerust_gui_shell::{
         KeyboardShortcut, SessionError, SessionHandle,
         access::{PauseControl, SessionControl, SettingsResult, SlotControl},
         commands::SessionCommand,
+        osd::FrameChannel,
     },
 };
 use nerust_keyboard::Key;
@@ -111,6 +112,10 @@ impl State {
 
     pub(crate) fn loaded(&self) -> bool {
         self.session.loaded()
+    }
+
+    pub(crate) fn frame_channel(&self) -> FrameChannel {
+        self.session.frame_channel()
     }
 
     pub(crate) fn paused(&self) -> bool {

@@ -204,6 +204,25 @@ enum VictimEdge {
     Newest,
 }
 
+/// Whether a composited frame will reach the screen. The OSD
+/// channel is invisible without one, so rows fall back to modal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameChannel {
+    Composited,
+    Unpresented,
+}
+
+/// Modal fallback: without a composited frame every row goes modal
+/// regardless of `error_modal`.
+fn falls_back_to_modal(
+    level: NotificationLevel,
+    settings: &NotificationSettings,
+    channel: FrameChannel,
+) -> bool {
+    matches!(channel, FrameChannel::Unpresented)
+        || (level == NotificationLevel::Error && settings.error_modal)
+}
+
 impl OsdManager {
     pub fn new() -> Self {
         Self::default()
@@ -386,7 +405,7 @@ impl OsdManager {
         settings: &NotificationSettings,
         language: AppLanguage,
         now: Instant,
-        core_active: bool,
+        channel: FrameChannel,
     ) {
         if !notifications.is_empty() {
             self.dirty = true;
@@ -400,10 +419,11 @@ impl OsdManager {
             if n.count > 1 {
                 text = format!("{text} ×{}", n.count);
             }
-            // Without a core no frame is composited, so the OSD
-            // channel is invisible; fall back to modal instead of
-            // staying silent. Nothing is interrupted (no gameplay).
-            if !core_active || n.level == NotificationLevel::Error && settings.error_modal {
+            // Without a composited frame the OSD channel is
+            // invisible, so every row falls back to modal instead of
+            // staying silent. Nothing is interrupted (no gameplay), and
+            // the modal batch cap absorbs no-core command spam.
+            if falls_back_to_modal(n.level, settings, channel) {
                 self.modal.push(text);
                 continue;
             }
@@ -850,10 +870,43 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.rows().is_empty());
         assert_eq!(manager.take_modal().len(), 1);
+    }
+
+    #[test]
+    fn falls_back_to_modal_covers_levels_and_channels() {
+        let mut modal = settings();
+        modal.error_modal = true;
+        let mut osd = settings();
+        osd.error_modal = false;
+        // Composited: only Error with modal enabled.
+        assert!(falls_back_to_modal(
+            NotificationLevel::Error,
+            &modal,
+            FrameChannel::Composited
+        ));
+        assert!(!falls_back_to_modal(
+            NotificationLevel::Error,
+            &osd,
+            FrameChannel::Composited
+        ));
+        assert!(!falls_back_to_modal(
+            NotificationLevel::Info,
+            &modal,
+            FrameChannel::Composited
+        ));
+        // Unpresented: every level, regardless of the modal setting.
+        for level in [
+            NotificationLevel::Info,
+            NotificationLevel::Warning,
+            NotificationLevel::Error,
+        ] {
+            assert!(falls_back_to_modal(level, &modal, FrameChannel::Unpresented));
+            assert!(falls_back_to_modal(level, &osd, FrameChannel::Unpresented));
+        }
     }
 
     #[test]
@@ -890,7 +943,7 @@ mod tests {
                 &without_modal,
                 AppLanguage::English,
                 now,
-                false,
+                FrameChannel::Unpresented,
             );
         }
         assert!(manager.rows().is_empty());
@@ -912,7 +965,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.poll(now));
         assert_eq!(manager.rows().len(), 1);
@@ -940,7 +993,7 @@ mod tests {
                 &settings(),
                 AppLanguage::English,
                 now,
-                true,
+                FrameChannel::Composited,
             );
         }
         // Showing the first; the second waits its turn.
@@ -982,7 +1035,7 @@ mod tests {
                 &settings(),
                 AppLanguage::English,
                 now,
-                true,
+                FrameChannel::Composited,
             );
         }
         // Identical repeat merges with the tail (×2) instead of queuing.
@@ -997,7 +1050,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.poll(now));
         // Oldest pending (CreatedSlot) shows first; drops removed older.
@@ -1036,7 +1089,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.poll(now));
         assert_eq!(manager.rows().len(), 1);
@@ -1077,7 +1130,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.poll(now));
         manager.push_all(
@@ -1085,18 +1138,18 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         manager.push_all(
             vec![note(NotificationKind::Reset, L::Info)],
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         // An Error preempts the showing Info; the demoted label waits
         // at the queue head while the tail sheds the newest Info.
-        manager.push_all(vec![error()], &altered, AppLanguage::English, now, true);
+        manager.push_all(vec![error()], &altered, AppLanguage::English, now, FrameChannel::Composited);
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
         assert!(manager.poll(now + Duration::from_millis(5_001)));
         assert!(manager.rows()[0].text.contains("Paused"));
@@ -1122,7 +1175,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.poll(now));
         assert_eq!(manager.rows()[0].tag, "[INFO]");
@@ -1140,7 +1193,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         // The Error takes the display at once; the demoted Info waits.
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
@@ -1164,7 +1217,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.poll(now));
         manager.push_all(
@@ -1181,7 +1234,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         // Only Errors preempt; the Warning waits for expiry.
         assert_eq!(manager.rows()[0].tag, "[INFO]");
@@ -1229,16 +1282,16 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.poll(now));
-        manager.push_all(vec![warning], &altered, AppLanguage::English, now, true);
+        manager.push_all(vec![warning], &altered, AppLanguage::English, now, FrameChannel::Composited);
         manager.push_all(
             vec![info(NotificationKind::Paused)],
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         // A second Info overflows: the oldest Info drops, Warning and
         // Error survive.
@@ -1247,7 +1300,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.poll(now + Duration::from_millis(5_001)));
         assert_eq!(manager.rows()[0].tag, "[WARN]");
@@ -1279,21 +1332,21 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         manager.push_all(
             vec![error(Some(2))],
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         manager.push_all(
             vec![error(Some(3))],
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.poll(now));
         assert!(manager.rows()[0].text.contains("Slot 2"));
@@ -1334,7 +1387,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.poll(now));
         manager.push_all(
@@ -1351,14 +1404,14 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         manager.push_all(
             vec![info(NotificationKind::Reset)],
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         // The Error preempts; the demote insert overflows and the
         // tail Info drops so the demoted head survives.
@@ -1367,7 +1420,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
         assert!(manager.poll(now + Duration::from_millis(5_000)));
@@ -1390,8 +1443,8 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now, true);
-        manager.push_all(vec![note(5)], &settings(), AppLanguage::English, now, true);
+        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
+        manager.push_all(vec![note(5)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
         // One row only, showing the latest selection.
         assert!(manager.poll(now));
         assert!(manager.rows()[0].text.contains("slot 5"));
@@ -1412,11 +1465,11 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now, true);
+        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
         assert!(manager.poll(now));
         assert!(manager.rows()[0].text.contains("slot 3"));
         // A newer selection rewrites the showing row instead of queuing.
-        manager.push_all(vec![note(7)], &settings(), AppLanguage::English, now, true);
+        manager.push_all(vec![note(7)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
         assert!(manager.rows()[0].text.contains("slot 7"));
         assert!(manager.poll(now + Duration::from_millis(2_001)));
         assert!(manager.rows().is_empty());
@@ -1651,7 +1704,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             at(0),
-            true,
+            FrameChannel::Composited,
         );
         assert!(manager.poll(at(0)));
         assert_eq!(shown!().as_deref(), Some("Paused"));
@@ -1660,7 +1713,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             at(500),
-            true,
+            FrameChannel::Composited,
         );
         assert!(!manager.poll(at(500)));
         // Interleaved: must queue behind, never merge into the showing label.
@@ -1669,7 +1722,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             at(1000),
-            true,
+            FrameChannel::Composited,
         );
         assert_eq!(shown!().as_deref(), Some("Paused"));
         manager.push_all(
@@ -1677,7 +1730,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             at(1500),
-            true,
+            FrameChannel::Composited,
         );
         // Full 2s slots in arrival order; promoted labels measure
         // from promotion, not from push time. The cap drops the
@@ -1706,8 +1759,8 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now, true);
-        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now, true);
+        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
+        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
         assert!(manager.poll(now));
         assert_eq!(manager.rows().len(), 1);
         assert!(manager.rows()[0].text.ends_with(" ×2"));
@@ -1735,7 +1788,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
-            true,
+            FrameChannel::Composited,
         );
         // Promoted on the next poll; deadline lands on the duration.
         assert!(manager.poll(now));
@@ -2093,7 +2146,7 @@ mod tests {
                 &settings(),
                 AppLanguage::English,
                 Instant::now(),
-                true,
+                FrameChannel::Composited,
             );
         }
         let detail = manager.take_modal_text().expect("joined batch");
