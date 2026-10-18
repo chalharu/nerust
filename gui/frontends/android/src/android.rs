@@ -504,7 +504,6 @@ struct AndroidFrontend {
     error_dialog_showing: bool,
     error_dialog_current: Option<String>,
     error_dialog_auto_paused: bool,
-    settings_dialog_open: bool,
 }
 
 impl AndroidFrontend {
@@ -589,7 +588,6 @@ impl AndroidFrontend {
             error_dialog_showing: false,
             error_dialog_current: None,
             error_dialog_auto_paused: false,
-            settings_dialog_open: false,
         };
         if frontend.lifecycle_restore_pending {
             log::info!(
@@ -842,7 +840,6 @@ impl AndroidFrontend {
     }
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult) {
-        self.settings_dialog_open = false;
         // Preempted dialog already released the shell gate on dismiss;
         // flush the queue now, orphan auto-pause only if none is up.
         self.maybe_show_error_dialog();
@@ -1014,11 +1011,7 @@ impl AndroidFrontend {
         );
         current.prioritize_system(self.session.active_system_id());
         match settings::request_show_settings_dialog(&self.app, &current) {
-            Ok(true) => {
-                // Optimistic: a Java-side show failure reports back as a
-                // normal dismiss result, which clears this flag.
-                self.settings_dialog_open = true;
-            }
+            Ok(true) => {}
             Ok(false) => {
                 log::warn!("Android settings dialog ignored while it is already open");
             }
@@ -1088,7 +1081,7 @@ impl AndroidFrontend {
     /// Show the oldest queued error unless a dialog is up or settings
     /// owns the screen. Storage and cap live in the shell `ModalBox`.
     fn maybe_show_error_dialog(&mut self) {
-        if self.error_dialog_showing || self.settings_dialog_open {
+        if self.error_dialog_showing || settings::is_dialog_open() {
             return;
         }
         let Some(detail) = self.osd.take_modal_batch() else {
@@ -1110,7 +1103,7 @@ impl AndroidFrontend {
     fn handle_error_dialog_dismissed(&mut self) {
         self.error_dialog_showing = false;
         self.osd.modal_closed();
-        if self.settings_dialog_open {
+        if settings::is_dialog_open() {
             // Preempted, never acked: re-queue for the settings-close
             // flush so the ack guarantee survives the replacement.
             if let Some(detail) = self.error_dialog_current.take() {
