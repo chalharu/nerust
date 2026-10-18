@@ -15,6 +15,7 @@ iced_tiny_skia.workspace = true
 iced_winit.workspace = true
 log.workspace = true
 muda.workspace = true
+nerust_crash_guard.workspace = true
 nerust_core_traits.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true

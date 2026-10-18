@@ -34,6 +34,25 @@ use nerust_gui_shell::context::FrontendContext;
 use nerust_run_options::RunOptions;
 
 pub fn run(ctx: FrontendContext, options: RunOptions) {
+    nerust_crash_guard::run_guarded(
+        || run_inner(ctx, options),
+        |report| {
+            // rfd spawns an external portal process, so it can still
+            // show after the event loop died. stderr stays the log home.
+            rfd::MessageDialog::new()
+                .set_title("nerust")
+                .set_description(format!(
+                    "The application crashed: {}\n\nDetails were written to the log (stderr).",
+                    report.message(),
+                ))
+                .set_level(rfd::MessageLevel::Error)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+        },
+    );
+}
+
+fn run_inner(ctx: FrontendContext, options: RunOptions) {
     let mut window = match app::Window::new(ctx) {
         Ok(window) => window,
         Err(detail) => {

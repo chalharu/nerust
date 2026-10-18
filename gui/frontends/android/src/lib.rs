@@ -6,11 +6,10 @@ mod android;
 
 use std::{
     any::Any,
-    backtrace::Backtrace,
     ffi::c_void,
     panic::{self, AssertUnwindSafe},
     rc::Rc,
-    sync::{Arc, Once},
+    sync::Arc,
 };
 
 use jni::{
@@ -34,17 +33,7 @@ fn init_android_logging() {
             .with_max_level(log::LevelFilter::Info),
     );
 
-    static PANIC_HOOK: Once = Once::new();
-    PANIC_HOOK.call_once(|| {
-        let previous_hook = panic::take_hook();
-        panic::set_hook(Box::new(move |panic_info| {
-            let thread = std::thread::current();
-            let thread_name = thread.name().unwrap_or("unnamed");
-            let backtrace = Backtrace::force_capture();
-            log::error!("panic on thread '{thread_name}': {panic_info}\nbacktrace:\n{backtrace}");
-            previous_hook(panic_info);
-        }));
-    });
+    nerust_crash_guard::install();
 }
 
 fn create_system_registry() -> Arc<SystemRegistry> {

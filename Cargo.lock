@@ -3415,6 +3415,7 @@ dependencies = [
  "jni 0.22.4",
  "log",
  "nerust_core_traits",
+ "nerust_crash_guard",
  "nerust_gba_core",
  "nerust_gba_factory",
  "nerust_gba_settings",
@@ -3456,6 +3457,13 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "typetag",
+]
+
+[[package]]
+name = "nerust_crash_guard"
+version = "0.1.0-dev"
+dependencies = [
+ "log",
 ]
 
 [[package]]
@@ -3601,6 +3609,7 @@ dependencies = [
  "gtk4",
  "log",
  "nerust_core_traits",
+ "nerust_crash_guard",
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
@@ -3949,6 +3958,7 @@ dependencies = [
  "log",
  "muda",
  "nerust_core_traits",
+ "nerust_crash_guard",
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
