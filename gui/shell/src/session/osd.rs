@@ -668,18 +668,9 @@ pub fn strip_rows(
 }
 
 /// Physical strip pixels from the client height.
-/// Matches the tao/gtk overlay layout constants at scale 1.0;
-/// dense-display frontends pass their raster scale.
-pub fn strip_pixels(client_height: u32, rows: u32, ui_scale: f32) -> u32 {
-    if rows == 0 || client_height == 0 {
-        return 0;
-    }
-    let font_px = (f64::from(client_height) * 0.022 * f64::from(ui_scale)).ceil() as u32;
-    let row = (font_px * 16).div_ceil(10) + (4.0 * ui_scale).round() as u32;
-    let margin = (8.0 * ui_scale).round() as u32;
-    let gap = (4.0 * ui_scale).round() as u32;
-    rows.saturating_mul(row) + margin + gap * rows.saturating_sub(1)
-}
+/// Re-exported from render traits: the rasterizer and reservation
+/// share one formula so the two can never drift.
+pub use nerust_render_traits::renderer::strip_pixels;
 
 #[cfg(test)]
 mod tests {

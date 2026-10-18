@@ -488,8 +488,8 @@ impl AndroidSettings {
             .map(|s| s.trim().parse::<usize>().ok())
             .collect::<Option<_>>()?;
 
-        // Key-driven: conditional rows (status area follows the
-        // notification edge) shift positions, so never index directly.
+        // Key-driven: field order never affects decoding, and a
+        // row missing from the payload keeps its current value.
         let defs = current.setting_defs();
         if indices.len() != defs.len() {
             return None;
