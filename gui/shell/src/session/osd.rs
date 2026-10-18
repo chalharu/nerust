@@ -600,10 +600,16 @@ impl OsdManager {
         self.transient.next_deadline()
     }
 
-    /// Take the display-state change since the last take. No peek
-    /// accessor exists by design: peeking would repaint idle frames.
+    /// Take the display-state change since the last take. The sync
+    /// owns consumption; the redraw poll only peeks (see `dirty`).
     pub fn take_dirty(&mut self) -> bool {
         std::mem::replace(&mut self.dirty, false)
+    }
+
+    /// Peek whether a change is pending without consuming it. The
+    /// redraw decision peeks first, then `sync` takes on the same pass.
+    pub fn dirty(&self) -> bool {
+        self.dirty
     }
 
     /// The single showing row (empty when idle).
@@ -2233,6 +2239,47 @@ mod tests {
         assert!(matches!(
             presenter.sync(&mut manager, input()),
             OsdSync::Render(_)
+        ));
+    }
+
+    #[test]
+    fn peek_does_not_starve_sync() {
+        use super::super::notification::NotificationKind;
+        use super::{FrameChannel, OsdPresenter, OsdSync};
+        let mut manager = OsdManager::new();
+        let mut presenter = OsdPresenter::new();
+        let settings = presenter_settings();
+        let now = std::time::Instant::now();
+        manager.push_all(
+            vec![UiNotification {
+                level: NotificationLevel::Info,
+                kind: NotificationKind::Paused,
+                count: 1,
+                seq: 0,
+                at: std::time::SystemTime::now(),
+            }],
+            &settings,
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        assert!(manager.poll(now));
+        // Frontend two-phase: redraw poll peeks, sync takes same pass.
+        assert!(manager.dirty());
+        assert!(manager.dirty());
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                sync_input(&settings, now, 960, 720, 1.0, Default::default())
+            ),
+            OsdSync::Render(_)
+        ));
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                sync_input(&settings, now, 960, 720, 1.0, Default::default())
+            ),
+            OsdSync::Skip
         ));
     }
 
