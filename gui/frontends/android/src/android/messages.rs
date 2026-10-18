@@ -9,6 +9,7 @@ pub(crate) enum MenuAction {
         key: AbstractKey,
         pressed: bool,
     },
+    ErrorDialogDismissed,
     Exit,
     LoadState,
     OpenRom,

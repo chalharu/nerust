@@ -1,4 +1,5 @@
 mod bridge;
+mod error_dialog;
 mod menu;
 mod messages;
 mod osd;
@@ -500,6 +501,10 @@ struct AndroidFrontend {
     last_peripheral_config: Option<(bool, bool, u8, RumbleTarget)>,
     last_rumble_intensity: Option<u8>,
     osd: osd::AndroidOsd,
+    error_dialog_queue: Vec<String>,
+    error_dialog_showing: bool,
+    error_dialog_auto_paused: bool,
+    settings_dialog_open: bool,
 }
 
 impl AndroidFrontend {
@@ -581,6 +586,10 @@ impl AndroidFrontend {
             last_peripheral_config: None,
             last_rumble_intensity: None,
             osd: osd::AndroidOsd::new(),
+            error_dialog_queue: Vec::new(),
+            error_dialog_showing: false,
+            error_dialog_auto_paused: false,
+            settings_dialog_open: false,
         };
         if frontend.lifecycle_restore_pending {
             log::info!(
@@ -833,6 +842,17 @@ impl AndroidFrontend {
     }
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult) {
+        self.settings_dialog_open = false;
+        // A replaced error dialog leaves pause+queue here: flush now,
+        // release an orphaned auto-pause when nothing is up.
+        self.maybe_show_error_dialog();
+        if !self.error_dialog_showing
+            && self.error_dialog_queue.is_empty()
+            && self.error_dialog_auto_paused
+        {
+            self.error_dialog_auto_paused = false;
+            self.resume();
+        }
         let SettingsDialogResult::Applied(values) = result else {
             log::info!("handle_settings_result: settings dialog dismissed");
             return;
@@ -994,7 +1014,9 @@ impl AndroidFrontend {
         );
         current.prioritize_system(self.session.active_system_id());
         match settings::request_show_settings_dialog(&self.app, &current) {
-            Ok(true) => {}
+            Ok(true) => {
+                self.settings_dialog_open = true;
+            }
             Ok(false) => {
                 log::warn!("Android settings dialog ignored while it is already open");
             }
@@ -1057,7 +1079,50 @@ impl AndroidFrontend {
                 let _ = self.exec(SessionCommand::SaveActiveSlotOrNew);
             }
             MenuAction::TogglePause => self.toggle_pause(),
+            MenuAction::ErrorDialogDismissed => self.handle_error_dialog_dismissed(),
         }
+    }
+
+    /// Move fresh error batches into the dialog queue and show the
+    /// head while no dialog is up. Called after every OSD poll.
+    fn drain_error_dialogs(&mut self) {
+        self.error_dialog_queue
+            .extend(self.osd.take_pending_errors());
+        self.maybe_show_error_dialog();
+    }
+
+    /// Show the oldest queued error unless a dialog is up or settings
+    /// owns the screen. Auto-pauses first, like the desktop modal flow.
+    fn maybe_show_error_dialog(&mut self) {
+        if self.error_dialog_showing
+            || self.settings_dialog_open
+            || self.error_dialog_queue.is_empty()
+        {
+            return;
+        }
+        let detail = self.error_dialog_queue.remove(0);
+        error_dialog::request_show_error_dialog(&self.app, &detail);
+        self.error_dialog_showing = true;
+        if self.session.can_pause() {
+            self.pause();
+            self.error_dialog_auto_paused = true;
+        }
+    }
+
+    /// Dismiss hook from the Kotlin dialog. Resumes only our own
+    /// auto-pause, then shows the next queued error, if any.
+    fn handle_error_dialog_dismissed(&mut self) {
+        self.error_dialog_showing = false;
+        // A settings dialog may have replaced the error dialog: leave
+        // the pause and the queue for its close handler.
+        if self.settings_dialog_open {
+            return;
+        }
+        if self.error_dialog_auto_paused {
+            self.error_dialog_auto_paused = false;
+            self.resume();
+        }
+        self.maybe_show_error_dialog();
     }
 
     fn control_for_physical_key(
@@ -1939,12 +2004,10 @@ impl ApplicationHandler for AndroidFrontend {
         self.maybe_refresh_title(now);
         let settings = self.notification_settings();
         let language = self.notification_language();
-        if self
-            .osd
-            .poll(&mut self.session, &settings, language, now, &self.app)
-        {
+        if self.osd.poll(&mut self.session, &settings, language, now) {
             self.request_redraw();
         }
+        self.drain_error_dialogs();
 
         if let Some(window) = self.window.as_ref() {
             let frame_counter = self.session.metrics().frame_counter;

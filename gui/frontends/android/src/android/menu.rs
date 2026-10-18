@@ -3,6 +3,9 @@ use nerust_input_traits::AbstractKey;
 
 use super::{bridge, messages::MenuAction, settings};
 
+/// Kotlin→Rust event IDs. Despite the name this is the general event
+/// confluence, not menu-only (dialog dismissals ride the same bridge).
+const ACTION_ERROR_DIALOG_DISMISSED: &str = "error_dialog_dismissed";
 const ACTION_EXIT: &str = "exit";
 const ACTION_LOAD_STATE: &str = "load_state";
 const ACTION_OPEN_ROM: &str = "open_rom";
@@ -51,6 +54,7 @@ fn decode_action(raw: &str) -> Option<MenuAction> {
         });
     }
     match raw {
+        ACTION_ERROR_DIALOG_DISMISSED => Some(MenuAction::ErrorDialogDismissed),
         ACTION_EXIT => Some(MenuAction::Exit),
         ACTION_LOAD_STATE => Some(MenuAction::LoadState),
         ACTION_OPEN_ROM => Some(MenuAction::OpenRom),
@@ -115,13 +119,17 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
 #[cfg(test)]
 mod tests {
     use super::{
-        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
-        ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE,
-        ACTION_UNLOAD, MenuAction, decode_action,
+        ACTION_ERROR_DIALOG_DISMISSED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM,
+        ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE,
+        ACTION_TOGGLE_PAUSE, ACTION_UNLOAD, MenuAction, decode_action,
     };
 
     #[test]
     fn decode_action_maps_known_ids() {
+        assert_eq!(
+            decode_action(ACTION_ERROR_DIALOG_DISMISSED),
+            Some(MenuAction::ErrorDialogDismissed)
+        );
         assert_eq!(decode_action(ACTION_OPEN_ROM), Some(MenuAction::OpenRom));
         assert_eq!(
             decode_action(ACTION_OPEN_SETTINGS),
