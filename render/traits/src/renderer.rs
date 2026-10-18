@@ -82,6 +82,33 @@ impl OsdAnchor {
     }
 }
 
+/// One raster pill row: tag plus body in a single color. Plain data;
+/// shaping lives in the rasterizer crate.
+#[derive(Debug, Clone)]
+pub struct OsdRow {
+    pub tag: String,
+    pub text: String,
+    pub rgb: (u8, u8, u8),
+}
+
+/// Status readout: label plus right-aligned value in a fixed-width
+/// pill so digits never shift.
+#[derive(Debug, Clone)]
+pub struct OsdStatus {
+    pub label: String,
+    pub value: String,
+    pub rgb: (u8, u8, u8),
+}
+
+/// Raster input: transient rows plus optional status, with corners.
+#[derive(Debug, Clone, Default)]
+pub struct OsdContent {
+    pub rows: Vec<OsdRow>,
+    pub status: Option<OsdStatus>,
+    pub position: OsdAnchor,
+    pub status_position: OsdAnchor,
+}
+
 /// Outcome reported by [`GpuRenderer::render`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RenderResult {

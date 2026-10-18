@@ -456,11 +456,9 @@ impl AndroidSettings {
                 },
             },
         ];
-        // Same edge: the notification area mode governs, so the status
-        // row would be dead. Drop it like the desktop follows-note.
-        if self.notifications_position.same_edge(self.status_position) {
-            defs.retain(|def| def.key != "status.area_mode");
-        }
+        // Same-edge follow is handled live in the dialog UI (the
+        // status row hides when it shares the notification edge);
+        // the codec stays key-driven so order never matters.
         defs.extend(self.system_choices.iter().map(|choice| {
             SettingDef {
                 key: format!("system.{}.{}", choice.system_id, choice.field_id.as_str()),
@@ -1387,16 +1385,20 @@ mod tests {
     }
 
     #[test]
-    fn same_edge_omits_status_area_row() {
+    fn same_edge_preserves_status_area() {
         let registry = registry();
         let mut android = android_settings(&default_snapshot(), &registry);
         android.status_position = NotificationPosition::BottomRight;
         android.status_area_mode = NotificationAreaMode::Strip;
+        // Same edge as the default BottomLeft notification: the row
+        // stays (the dialog UI hides it live), so the value follows
+        // the notification mode at render time regardless.
         let defs = android.setting_defs();
-        assert!(defs.iter().all(|def| def.key != "status.area_mode"));
-        let raw = defs
+        assert_eq!(defs.len(), 29);
+        assert!(defs.iter().any(|def| def.key == "status.area_mode"));
+        let raw = def_currents(&android)
             .into_iter()
-            .map(|def| def.current.to_string())
+            .map(|index| index.to_string())
             .collect::<Vec<_>>()
             .join(",");
         let back = AndroidSettings::from_choice_indices(&raw, &android).unwrap();
