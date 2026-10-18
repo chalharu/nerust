@@ -129,8 +129,15 @@ pub struct OsdRaster {
 impl OsdRaster {
     pub fn new() -> Self {
         let fonts = OsdFonts::load();
-        let font_system = FontSystem::new();
-        let has_fonts = fonts.has_fonts();
+        let mut font_system = FontSystem::new();
+        // FontSystem owns a second fontdb with the same Android blind
+        // spot; feed it the same roots or shaping panics on first text.
+        #[cfg(target_os = "android")]
+        {
+            font_system.db_mut().load_fonts_dir("/system/fonts");
+            font_system.db_mut().load_fonts_dir("/product/fonts");
+        }
+        let has_fonts = fonts.has_fonts() && !font_system.db().is_empty();
         Self {
             font_system,
             swash: SwashCache::new(),
