@@ -98,6 +98,11 @@ impl AndroidOsd {
         self.manager.queue_modal(detail);
     }
 
+    /// Re-queue an interrupted head batch preserving display order.
+    pub(super) fn requeue_front(&mut self, detail: String) {
+        self.manager.requeue_front(detail);
+    }
+
     /// Queued error batches still awaiting display.
     pub(super) fn modal_pending(&self) -> usize {
         self.manager.modal_pending()
