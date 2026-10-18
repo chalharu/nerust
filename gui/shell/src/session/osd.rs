@@ -156,7 +156,7 @@ pub struct OsdRow {
     pub tag: &'static str,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct OsdItem {
     row: OsdRow,
     level: NotificationLevel,
@@ -274,6 +274,75 @@ impl OsdManager {
         }
     }
 
+    /// Merge a consecutive duplicate into the showing label or the
+    /// queue tail (`×N`, timer reset). Anything interleaved breaks the
+    /// run, so pause/resume flaps keep full slots.
+    fn merge_consecutive(&mut self, item: &OsdItem, consecutive: bool) -> bool {
+        if !consecutive {
+            return false;
+        }
+        if let Some(current) = self.current.as_mut()
+            && current.level == item.level
+            && current.key == item.key
+        {
+            current.count += item.count;
+            current.row = Self::counted_row(&item.key, current.count, item.row.rgb, item.row.tag);
+            current.deadline = item.deadline;
+            return true;
+        }
+        if let Some(back) = self.pending.back_mut()
+            && back.level == item.level
+            && back.key == item.key
+        {
+            back.count += item.count;
+            back.row = Self::counted_row(&item.key, back.count, item.row.rgb, item.row.tag);
+            back.deadline = item.deadline;
+            return true;
+        }
+        false
+    }
+
+    /// Error rows preempt a non-Error showing label (Warnings wait
+    /// their turn). The demoted label waits at the queue head with
+    /// its duration intact.
+    fn preempt_for_error(&mut self, item: &OsdItem) -> bool {
+        if item.level != NotificationLevel::Error {
+            return false;
+        }
+        let Some(current) = self.current.as_ref() else {
+            return false;
+        };
+        if current.level == NotificationLevel::Error {
+            return false;
+        }
+        let demoted = self.current.take().expect("showing label checked");
+        self.current = Some(item.clone());
+        self.pending.push_front(demoted);
+        while self.pending.len() > MAX_QUEUED {
+            Self::evict_demote_overflow(&mut self.pending);
+        }
+        true
+    }
+
+    /// Selection echo keeps latest-wins: replace the existing row in
+    /// place instead of queuing stale echoes.
+    fn replace_selected(&mut self, item: &OsdItem) -> bool {
+        if !item.selected {
+            return false;
+        }
+        if let Some(current) = self.current.as_mut()
+            && current.selected
+        {
+            *current = item.clone();
+            return true;
+        }
+        if let Some(existing) = self.pending.iter_mut().find(|row| row.selected) {
+            *existing = item.clone();
+            return true;
+        }
+        false
+    }
+
     /// Fold drained shell notifications into display state.
     /// Errors go modal (aggregated) or OSD (minimum 5s) per settings.
     /// New arrivals queue behind the showing label in arrival order,
@@ -310,90 +379,30 @@ impl OsdManager {
             let rgb = Self::color(n.level, settings);
             let tag = level_tag(n.level);
             let duration = Duration::from_millis(Self::duration_ms(n.level, settings));
-            let deadline = now + duration;
-            let selected = matches!(n.kind, NotificationKind::SelectedSlot(_));
             let consecutive = self
                 .last_key
                 .as_ref()
                 .is_some_and(|(level, key)| *level == n.level && key == &base);
             self.last_key = Some((n.level, base.clone()));
-            // Merge with the showing label only for a consecutive run.
-            if consecutive
-                && let Some(current) = self.current.as_mut()
-                && current.level == n.level
-                && current.key == base
-            {
-                current.count += n.count;
-                current.row = Self::counted_row(&base, current.count, rgb, tag);
-                current.deadline = deadline;
-                continue;
-            }
-            // Merge with the queue tail only for a consecutive run.
-            if consecutive
-                && let Some(back) = self.pending.back_mut()
-                && back.level == n.level
-                && back.key == base
-            {
-                back.count += n.count;
-                back.row = Self::counted_row(&base, back.count, rgb, tag);
-                back.deadline = deadline;
-                continue;
-            }
-            // Error rows preempt a non-Error showing label (Warnings
-            // wait their turn). The demoted label waits at the queue
-            // head with its duration intact.
-            if n.level == NotificationLevel::Error
-                && let Some(current) = self.current.as_ref()
-                && current.level != NotificationLevel::Error
-            {
-                let demoted = self.current.take().expect("showing label checked");
-                self.current = Some(OsdItem {
-                    row: Self::counted_row(&base, n.count, rgb, tag),
-                    level: n.level,
-                    key: base,
-                    count: n.count,
-                    duration,
-                    deadline,
-                    selected,
-                });
-                self.pending.push_front(demoted);
-                while self.pending.len() > MAX_QUEUED {
-                    Self::evict_demote_overflow(&mut self.pending);
-                }
-                continue;
-            }
-            // Selection echo keeps latest-wins: replace the existing
-            // row in place instead of queuing stale echoes.
-            if selected {
-                if let Some(current) = self.current.as_mut()
-                    && current.selected
-                {
-                    current.row = Self::counted_row(&base, n.count, rgb, tag);
-                    current.key = base;
-                    current.count = n.count;
-                    current.duration = duration;
-                    current.deadline = deadline;
-                    continue;
-                }
-                if let Some(existing) = self.pending.iter_mut().find(|item| item.selected) {
-                    existing.row = Self::counted_row(&base, n.count, rgb, tag);
-                    existing.key = base;
-                    existing.count = n.count;
-                    existing.duration = duration;
-                    existing.deadline = deadline;
-                    continue;
-                }
-            }
-            let row = Self::counted_row(&base, n.count, rgb, tag);
-            self.pending.push_back(OsdItem {
-                row,
+            let item = OsdItem {
+                row: Self::counted_row(&base, n.count, rgb, tag),
                 level: n.level,
                 key: base,
                 count: n.count,
                 duration,
-                deadline,
-                selected,
-            });
+                deadline: now + duration,
+                selected: matches!(n.kind, NotificationKind::SelectedSlot(_)),
+            };
+            if self.merge_consecutive(&item, consecutive) {
+                continue;
+            }
+            if self.preempt_for_error(&item) {
+                continue;
+            }
+            if self.replace_selected(&item) {
+                continue;
+            }
+            self.pending.push_back(item);
             // Full queue drops the lowest severity first; Errors drop
             // only when every queued row is an Error.
             while self.pending.len() > MAX_QUEUED {
