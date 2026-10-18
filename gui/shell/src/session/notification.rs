@@ -77,7 +77,14 @@ impl NotificationKind {
             },
             NotificationKind::CommandFailed(_) => NotificationLevel::Error,
             NotificationKind::PersistenceUnavailable => NotificationLevel::Warning,
-            _ => NotificationLevel::Info,
+            NotificationKind::Paused
+            | NotificationKind::Resumed
+            | NotificationKind::Reset
+            | NotificationKind::SavedSlot(_)
+            | NotificationKind::LoadedSlot(_)
+            | NotificationKind::DeletedSlot(_)
+            | NotificationKind::CreatedSlot
+            | NotificationKind::SelectedSlot(_) => NotificationLevel::Info,
         }
     }
 

@@ -408,7 +408,11 @@ impl GlView {
     }
 
     /// Stage an OSD layer for the next present. `None` clears.
+    /// Equal layers skip: the texture already holds these bytes.
     pub fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
+        if self.osd_layer == layer {
+            return;
+        }
         self.osd_layer = layer;
         self.osd_dirty = true;
     }
@@ -695,6 +699,9 @@ impl GlView {
         }
         if self.ntsc_texture != 0 {
             ids.push(self.ntsc_texture);
+        }
+        if self.osd_texture != 0 {
+            ids.push(self.osd_texture);
         }
         // Teardown best-effort: a failed delete must not panic the
         // profile rebuild that called here.

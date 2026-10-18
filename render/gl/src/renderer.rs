@@ -239,7 +239,6 @@ impl GpuRenderer for GlRenderer {
             log::warn!("GlRenderer: frame upload failed: {e}");
             return RenderResult::Error;
         }
-        view.set_osd_layer(self.osd.clone());
         if let Err(e) = view.draw_osd(self.size.width as i32, self.size.height as i32) {
             log::debug!("GlRenderer: OSD composite failed: {e}");
         }
