@@ -10,8 +10,9 @@ use tao::event::WindowEvent;
 
 use super::HostState;
 use crate::ports::WindowOpener;
-use nerust_gui_shell::session::osd::{strip_pixels, strip_rows};
+use nerust_gui_shell::session::osd::strip_rows;
 use nerust_render_traits::ReservedStrip;
+use nerust_render_traits::renderer::strip_pixels;
 
 /// In-flight error dialog: blocking `show_error` runs on a thread.
 /// `resume_after` resumes only what we paused, after the last ack.
@@ -103,8 +104,8 @@ impl HostState {
             settings.status_enabled,
         );
         ReservedStrip {
-            top: strip_pixels(client_h, top_rows),
-            bottom: strip_pixels(client_h, bottom_rows),
+            top: strip_pixels(client_h, top_rows, 1.0),
+            bottom: strip_pixels(client_h, bottom_rows, 1.0),
         }
     }
 
@@ -191,19 +192,13 @@ impl HostState {
             self.osd.push_all(drained, &settings, language, now);
         }
         self.osd.poll(now);
-        let modal = self.osd.take_modal();
-        if !modal.is_empty() {
+        if let Some(detail) = self.osd.take_modal_text() {
             // Auto-pause first, guarded by can_pause.
             // Only what we paused resumes, after the last ack.
             if self.session.can_pause() && !self.session.paused() {
                 self.pause();
                 self.resume_after_modal = true;
             }
-            let detail = modal
-                .iter()
-                .map(|line| format!("• {line}"))
-                .collect::<Vec<_>>()
-                .join("\n");
             self.osd.queue_modal(detail);
         }
         self.reap_modal();
@@ -227,7 +222,7 @@ impl HostState {
         renderer: &mut dyn GpuRenderer,
         size: nerust_render_traits::SurfaceSize,
     ) {
-        use nerust_gui_shell::session::osd::{OSD_STATUS_RGB, OsdSync, OsdSyncInput};
+        use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput};
         let settings = self.notification_settings();
         let language = self.notification_language();
         let metrics = self.session.metrics();
@@ -241,34 +236,15 @@ impl HostState {
                 now: Instant::now(),
                 width: size.width,
                 height: size.height,
+                ui_scale: 1.0,
+                safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
             },
         );
         match decision {
             OsdSync::Skip => {}
             OsdSync::Clear => renderer.set_osd_layer(None),
             OsdSync::Render(plan) => {
-                let rows = plan
-                    .rows
-                    .iter()
-                    .map(|row| nerust_render_osd::OsdRow {
-                        tag: row.tag.to_string(),
-                        text: row.text.clone(),
-                        rgb: row.rgb,
-                    })
-                    .collect();
-                let status = plan
-                    .status
-                    .map(|(label, value)| nerust_render_osd::OsdStatus {
-                        label,
-                        value,
-                        rgb: OSD_STATUS_RGB,
-                    });
-                let content = nerust_render_osd::OsdContent {
-                    rows,
-                    status,
-                    position: plan.position,
-                    status_position: plan.status_position,
-                };
+                let content = plan.content();
                 renderer.set_osd_layer(self.osd_raster.rasterize(
                     &content,
                     plan.width,

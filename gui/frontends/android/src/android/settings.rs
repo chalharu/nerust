@@ -18,7 +18,10 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 use nerust_settings_core::model::{
-    local::{RumbleTarget, ScreenOrientation, TouchOverlayVisibility},
+    local::{
+        NotificationAreaMode, NotificationPosition, RumbleTarget, ScreenOrientation,
+        TouchOverlayVisibility,
+    },
     shared::StoragePolicy,
 };
 use winit::platform::android::activity::AndroidApp;
@@ -67,6 +70,14 @@ pub(crate) struct AndroidSettings {
     pub rumble_enabled: bool,
     pub rumble_strength_percent: u8,
     pub rumble_target: RumbleTarget,
+    pub notifications_info_enabled: bool,
+    pub notifications_warning_enabled: bool,
+    pub notifications_error_enabled: bool,
+    pub notifications_position: NotificationPosition,
+    pub notifications_area_mode: NotificationAreaMode,
+    pub status_enabled: bool,
+    pub status_position: NotificationPosition,
+    pub status_area_mode: NotificationAreaMode,
     system_choices: Vec<AndroidSystemChoice>,
 }
 
@@ -89,6 +100,42 @@ pub(crate) struct SettingDef {
     pub label: String,
     pub choices: Vec<String>,
     pub current: usize,
+    /// Edge class per choice ("top"/"bottom") for position pickers.
+    /// The dialog hides same-edge followers from these labels, so the
+    /// index→edge mapping lives in Rust alone. Empty for other rows.
+    pub edges: Vec<String>,
+}
+
+/// Canonical corner order shared by labels, indices, and edges.
+/// Every position picker follows this sequence; nothing else may
+/// assume an index→corner mapping.
+const CORNERS: [NotificationPosition; 4] = [
+    NotificationPosition::BottomLeft,
+    NotificationPosition::BottomRight,
+    NotificationPosition::TopLeft,
+    NotificationPosition::TopRight,
+];
+
+const CORNER_LABELS: [&str; 4] = ["Bottom Left", "Bottom Right", "Top Left", "Top Right"];
+
+fn corner_edges() -> Vec<String> {
+    CORNERS
+        .into_iter()
+        .map(|pos| {
+            if pos.is_top() {
+                "top".to_string()
+            } else {
+                "bottom".to_string()
+            }
+        })
+        .collect()
+}
+
+fn corner_index(position: NotificationPosition) -> usize {
+    CORNERS
+        .iter()
+        .position(|&corner| corner == position)
+        .unwrap_or(0)
 }
 
 impl AndroidSettings {
@@ -152,6 +199,14 @@ impl AndroidSettings {
             rumble_enabled: snapshot.local.cartridge_peripherals.rumble_enabled,
             rumble_strength_percent: snapshot.local.cartridge_peripherals.rumble_strength_percent,
             rumble_target: snapshot.local.cartridge_peripherals.rumble_target,
+            notifications_info_enabled: snapshot.local.notifications.info_enabled,
+            notifications_warning_enabled: snapshot.local.notifications.warning_enabled,
+            notifications_error_enabled: snapshot.local.notifications.error_enabled,
+            notifications_position: snapshot.local.notifications.position,
+            notifications_area_mode: snapshot.local.notifications.area_mode,
+            status_enabled: snapshot.local.notifications.status_enabled,
+            status_position: snapshot.local.notifications.status_position,
+            status_area_mode: snapshot.local.notifications.status_area_mode,
             system_choices,
         }
     }
@@ -180,6 +235,14 @@ impl AndroidSettings {
         snapshot.local.cartridge_peripherals.rumble_enabled = self.rumble_enabled;
         snapshot.local.cartridge_peripherals.rumble_strength_percent = self.rumble_strength_percent;
         snapshot.local.cartridge_peripherals.rumble_target = self.rumble_target;
+        snapshot.local.notifications.info_enabled = self.notifications_info_enabled;
+        snapshot.local.notifications.warning_enabled = self.notifications_warning_enabled;
+        snapshot.local.notifications.error_enabled = self.notifications_error_enabled;
+        snapshot.local.notifications.position = self.notifications_position;
+        snapshot.local.notifications.area_mode = self.notifications_area_mode;
+        snapshot.local.notifications.status_enabled = self.status_enabled;
+        snapshot.local.notifications.status_position = self.status_position;
+        snapshot.local.notifications.status_area_mode = self.status_area_mode;
 
         for choice in &self.system_choices {
             let factory = registry
@@ -213,12 +276,14 @@ impl AndroidSettings {
                 label: "Mute".to_string(),
                 choices: off_on(),
                 current: usize::from(self.audio_muted),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "master_volume".to_string(),
                 label: "Volume".to_string(),
                 choices: percent(VOLUME_MIN..=VOLUME_MAX),
                 current: usize::from(self.master_volume_percent.min(VOLUME_MAX)),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "latency_ms".to_string(),
@@ -227,6 +292,7 @@ impl AndroidSettings {
                     .map(|value| format!("{value} ms"))
                     .collect(),
                 current: usize::from(self.latency_ms.clamp(LATENCY_MIN, LATENCY_MAX) - LATENCY_MIN),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "sample_rate".to_string(),
@@ -240,12 +306,14 @@ impl AndroidSettings {
                     .iter()
                     .position(|&v| v == self.sample_rate)
                     .unwrap_or(SAMPLE_RATE_CHOICES.len().saturating_sub(1)),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "vsync".to_string(),
                 label: "VSync".to_string(),
                 choices: off_on(),
                 current: usize::from(self.vsync),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "screen.orientation".to_string(),
@@ -259,6 +327,7 @@ impl AndroidSettings {
                     ScreenOrientation::Portrait => 1,
                     ScreenOrientation::Landscape => 2,
                 },
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "storage.policy".to_string(),
@@ -272,6 +341,7 @@ impl AndroidSettings {
                     StoragePolicy::AppSharedData => 1,
                     StoragePolicy::CustomDirectory => 2,
                 },
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.overlay.visibility".to_string(),
@@ -285,12 +355,14 @@ impl AndroidSettings {
                     TouchOverlayVisibility::Auto => 1,
                     TouchOverlayVisibility::Hidden => 2,
                 },
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.overlay.opacity".to_string(),
                 label: "Overlay Opacity".to_string(),
                 choices: percent(0..=100),
                 current: usize::from(self.overlay_opacity_percent.min(100)),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.overlay.scale".to_string(),
@@ -301,6 +373,7 @@ impl AndroidSettings {
                         .clamp(OVERLAY_SCALE_MIN, OVERLAY_SCALE_MAX)
                         - OVERLAY_SCALE_MIN,
                 ),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.overlay.vertical_offset".to_string(),
@@ -314,30 +387,35 @@ impl AndroidSettings {
                 )
                 .checked_sub(i16::from(OVERLAY_OFFSET_MIN))
                 .unwrap_or_default() as usize,
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.overlay.haptics".to_string(),
                 label: "Overlay Haptics".to_string(),
                 choices: off_on(),
                 current: usize::from(self.overlay_haptics),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.cartridge.motion".to_string(),
                 label: "Cartridge Motion Sensor".to_string(),
                 choices: off_on(),
                 current: usize::from(self.motion_enabled),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.cartridge.rumble".to_string(),
                 label: "Cartridge Rumble".to_string(),
                 choices: off_on(),
                 current: usize::from(self.rumble_enabled),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.cartridge.rumble_strength".to_string(),
                 label: "Rumble Strength".to_string(),
                 choices: percent(0..=100),
                 current: usize::from(self.rumble_strength_percent.min(100)),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.cartridge.rumble_target".to_string(),
@@ -351,8 +429,80 @@ impl AndroidSettings {
                     RumbleTarget::Handset => 1,
                     RumbleTarget::Controller => 2,
                 },
+                edges: Vec::new(),
+            },
+            SettingDef {
+                key: "notifications.info".to_string(),
+                label: "Info Notifications".to_string(),
+                choices: off_on(),
+                current: usize::from(self.notifications_info_enabled),
+                edges: Vec::new(),
+            },
+            SettingDef {
+                key: "notifications.warning".to_string(),
+                label: "Warning Notifications".to_string(),
+                choices: off_on(),
+                current: usize::from(self.notifications_warning_enabled),
+                edges: Vec::new(),
+            },
+            SettingDef {
+                key: "notifications.error".to_string(),
+                label: "Error Notifications".to_string(),
+                choices: off_on(),
+                current: usize::from(self.notifications_error_enabled),
+                edges: Vec::new(),
+            },
+            SettingDef {
+                key: "notifications.position".to_string(),
+                label: "Notification Position".to_string(),
+                choices: CORNER_LABELS.into_iter().map(str::to_string).collect(),
+                current: corner_index(self.notifications_position),
+                edges: corner_edges(),
+            },
+            SettingDef {
+                key: "notifications.area_mode".to_string(),
+                label: "Notification Area".to_string(),
+                choices: ["Overlay", "Strip"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                current: match self.notifications_area_mode {
+                    NotificationAreaMode::Overlay => 0,
+                    NotificationAreaMode::Strip => 1,
+                },
+                edges: Vec::new(),
+            },
+            SettingDef {
+                key: "status.enabled".to_string(),
+                label: "Status Display".to_string(),
+                choices: off_on(),
+                current: usize::from(self.status_enabled),
+                edges: Vec::new(),
+            },
+            SettingDef {
+                key: "status.position".to_string(),
+                label: "Status Position".to_string(),
+                choices: CORNER_LABELS.into_iter().map(str::to_string).collect(),
+                current: corner_index(self.status_position),
+                edges: corner_edges(),
+            },
+            SettingDef {
+                key: "status.area_mode".to_string(),
+                label: "Status Area".to_string(),
+                choices: ["Overlay", "Strip"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                current: match self.status_area_mode {
+                    NotificationAreaMode::Overlay => 0,
+                    NotificationAreaMode::Strip => 1,
+                },
+                edges: Vec::new(),
             },
         ];
+        // Same-edge follow is handled live in the dialog UI (the
+        // status row hides when it shares the notification edge);
+        // the codec stays key-driven so order never matters.
         defs.extend(self.system_choices.iter().map(|choice| {
             SettingDef {
                 key: format!("system.{}.{}", choice.system_id, choice.field_id.as_str()),
@@ -367,16 +517,13 @@ impl AndroidSettings {
                     .iter()
                     .position(|(id, _)| id == &choice.selected)
                     .unwrap_or_default(),
+                edges: Vec::new(),
             }
         }));
         defs
     }
 
     /// Stable setting keys sent to Kotlin (also used for decoding the result).
-    pub(crate) fn dialog_keys(&self) -> Vec<String> {
-        self.setting_defs().into_iter().map(|def| def.key).collect()
-    }
-
     /// Build settings from a comma-separated list of choice indices.
     /// Index N is the choice for `setting_defs()[N]`; positions must
     /// come from the same defs list. `None` on malformed input.
@@ -386,84 +533,104 @@ impl AndroidSettings {
             .map(|s| s.trim().parse::<usize>().ok())
             .collect::<Option<_>>()?;
 
-        if indices.len() != current.dialog_keys().len() {
+        // Key-driven: field order never affects decoding, and a
+        // row missing from the payload keeps its current value.
+        let defs = current.setting_defs();
+        if indices.len() != defs.len() {
             return None;
         }
-
-        let audio_muted = match indices[0] {
-            0 => false,
-            1 => true,
-            _ => return None,
+        let by_key = |key: &str| -> Option<usize> {
+            defs.iter()
+                .position(|def| def.key == key)
+                .and_then(|pos| indices.get(pos).copied())
         };
-        let master_volume_percent = u8::try_from(indices[1])
+        let off_on = |key: &str| -> Option<bool> {
+            match by_key(key)? {
+                0 => Some(false),
+                1 => Some(true),
+                _ => None,
+            }
+        };
+        let position =
+            |key: &str| -> Option<NotificationPosition> { CORNERS.get(by_key(key)?).copied() };
+        let area_mode = |key: &str| -> Option<NotificationAreaMode> {
+            match by_key(key)? {
+                0 => Some(NotificationAreaMode::Overlay),
+                1 => Some(NotificationAreaMode::Strip),
+                _ => None,
+            }
+        };
+
+        let audio_muted = off_on("audio_muted")?;
+        let master_volume_percent = u8::try_from(by_key("master_volume")?)
             .ok()
             .filter(|value| *value <= VOLUME_MAX)?;
-        let latency_ms = u16::try_from(indices[2])
+        let latency_ms = u16::try_from(by_key("latency_ms")?)
             .ok()
             .filter(|value| *value <= LATENCY_MAX - LATENCY_MIN)
             .map(|value| value + LATENCY_MIN)?;
-        let sample_rate = *SAMPLE_RATE_CHOICES.get(indices[3])?;
-        let vsync = match indices[4] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let screen_orientation = match indices[5] {
+        let sample_rate = *SAMPLE_RATE_CHOICES.get(by_key("sample_rate")?)?;
+        let vsync = off_on("vsync")?;
+        let screen_orientation = match by_key("screen.orientation")? {
             0 => ScreenOrientation::Auto,
             1 => ScreenOrientation::Portrait,
             2 => ScreenOrientation::Landscape,
             _ => return None,
         };
-        let storage_policy = match indices[6] {
+        let storage_policy = match by_key("storage.policy")? {
             0 => StoragePolicy::Sidecar,
             1 => StoragePolicy::AppSharedData,
             2 => StoragePolicy::CustomDirectory,
             _ => return None,
         };
-        let overlay_visibility = match indices[7] {
+        let overlay_visibility = match by_key("controls.overlay.visibility")? {
             0 => TouchOverlayVisibility::Always,
             1 => TouchOverlayVisibility::Auto,
             2 => TouchOverlayVisibility::Hidden,
             _ => return None,
         };
-        let overlay_opacity_percent = u8::try_from(indices[8])
+        let overlay_opacity_percent = u8::try_from(by_key("controls.overlay.opacity")?)
             .ok()
             .filter(|value| *value <= 100)?;
-        let overlay_scale_percent = u8::try_from(indices[9])
+        let overlay_scale_percent = u8::try_from(by_key("controls.overlay.scale")?)
             .ok()
             .filter(|value| *value <= OVERLAY_SCALE_MAX - OVERLAY_SCALE_MIN)?
             + OVERLAY_SCALE_MIN;
-        let overlay_vertical_offset_percent = i8::try_from(indices[10])
-            .ok()
-            .filter(|value| *value <= OVERLAY_OFFSET_MAX - OVERLAY_OFFSET_MIN)?
-            + OVERLAY_OFFSET_MIN;
-        let overlay_haptics = match indices[11] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let motion_enabled = match indices[12] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let rumble_enabled = match indices[13] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let rumble_strength_percent = u8::try_from(indices[14])
+        let overlay_vertical_offset_percent =
+            i8::try_from(by_key("controls.overlay.vertical_offset")?)
+                .ok()
+                .filter(|value| *value <= OVERLAY_OFFSET_MAX - OVERLAY_OFFSET_MIN)?
+                + OVERLAY_OFFSET_MIN;
+        let overlay_haptics = off_on("controls.overlay.haptics")?;
+        let motion_enabled = off_on("controls.cartridge.motion")?;
+        let rumble_enabled = off_on("controls.cartridge.rumble")?;
+        let rumble_strength_percent = u8::try_from(by_key("controls.cartridge.rumble_strength")?)
             .ok()
             .filter(|value| *value <= 100)?;
-        let rumble_target = match indices[15] {
+        let rumble_target = match by_key("controls.cartridge.rumble_target")? {
             0 => RumbleTarget::Auto,
             1 => RumbleTarget::Handset,
             2 => RumbleTarget::Controller,
             _ => return None,
         };
+        let notifications_info_enabled = off_on("notifications.info")?;
+        let notifications_warning_enabled = off_on("notifications.warning")?;
+        let notifications_error_enabled = off_on("notifications.error")?;
+        let notifications_position = position("notifications.position")?;
+        let notifications_area_mode = area_mode("notifications.area_mode")?;
+        let status_enabled = off_on("status.enabled")?;
+        let status_position = position("status.position")?;
+        // Absent when same-edge (follows the notification mode):
+        // keep the current value instead of rejecting the payload.
+        let status_area_mode = match defs.iter().any(|def| def.key == "status.area_mode") {
+            true => area_mode("status.area_mode")?,
+            false => current.status_area_mode,
+        };
         let mut system_choices = current.system_choices.clone();
-        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[16..]) {
-            choice.selected = choice.options.get(*selected_index)?.0.clone();
+        for choice in system_choices.iter_mut() {
+            let key = format!("system.{}.{}", choice.system_id, choice.field_id.as_str());
+            let selected_index = by_key(&key)?;
+            choice.selected = choice.options.get(selected_index)?.0.clone();
         }
 
         Some(Self {
@@ -483,6 +650,14 @@ impl AndroidSettings {
             rumble_enabled,
             rumble_strength_percent,
             rumble_target,
+            notifications_info_enabled,
+            notifications_warning_enabled,
+            notifications_error_enabled,
+            notifications_position,
+            notifications_area_mode,
+            status_enabled,
+            status_position,
+            status_area_mode,
             system_choices,
         })
     }
@@ -496,12 +671,14 @@ impl AndroidSettings {
                 "controls".to_string()
             } else if def.key.starts_with("storage.") {
                 "storage".to_string()
+            } else if def.key.starts_with("notifications.") || def.key.starts_with("status.") {
+                "notifications".to_string()
             } else if def.key == "vsync" || def.key.starts_with("screen.") {
                 "video".to_string()
             } else {
                 "audio".to_string()
             };
-            let field = serde_json::json!({
+            let mut field = serde_json::json!({
                     "key": def.key,
                     "label": def.label,
                     "kind": "choice",
@@ -509,6 +686,9 @@ impl AndroidSettings {
                     "options": def.choices,
                     "enabled": true,
             });
+            if !def.edges.is_empty() {
+                field["edges"] = serde_json::json!(def.edges);
+            }
             if let Some((_, fields)) = sections.iter_mut().find(|(id, _)| id == &section) {
                 fields.push(field);
             } else {
@@ -917,6 +1097,12 @@ mod tests {
         android.rumble_enabled = false;
         android.rumble_strength_percent = 35;
         android.rumble_target = RumbleTarget::Controller;
+        android.notifications_info_enabled = false;
+        android.notifications_position = NotificationPosition::TopRight;
+        android.notifications_area_mode = NotificationAreaMode::Strip;
+        android.status_enabled = true;
+        android.status_position = NotificationPosition::BottomRight;
+        android.status_area_mode = NotificationAreaMode::Strip;
         set_system_choice(&mut android, "video.filter", "ntsc_rgb");
         android.apply_to_snapshot(&mut snapshot, &registry).unwrap();
 
@@ -935,6 +1121,24 @@ mod tests {
             snapshot.local.cartridge_peripherals.rumble_target,
             RumbleTarget::Controller
         );
+        assert!(!snapshot.local.notifications.info_enabled);
+        assert_eq!(
+            snapshot.local.notifications.position,
+            NotificationPosition::TopRight
+        );
+        assert_eq!(
+            snapshot.local.notifications.area_mode,
+            NotificationAreaMode::Strip
+        );
+        assert!(snapshot.local.notifications.status_enabled);
+        assert_eq!(
+            snapshot.local.notifications.status_position,
+            NotificationPosition::BottomRight
+        );
+        assert_eq!(
+            snapshot.local.notifications.status_area_mode,
+            NotificationAreaMode::Strip
+        );
         let nes = snapshot
             .shared
             .systems
@@ -951,19 +1155,27 @@ mod tests {
         let android = android_settings(&snapshot, &registry);
         let indices = def_currents(&android);
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
-        // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
+        // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1.
+        // Notifications: info/warning/error on → 1; position BottomLeft → 0;
+        // areas Overlay → 0; status off → 0; status position TopLeft → 2.
         assert_eq!(
-            &indices[..16],
-            [0, 100, 40, 1, 1, 0, 0, 1, 65, 50, 30, 1, 1, 1, 100, 0]
+            &indices[..24],
+            [
+                0, 100, 40, 1, 1, 0, 0, 1, 65, 50, 30, 1, 1, 1, 100, 0, 1, 1, 1, 0, 0, 0, 2, 0
+            ]
         );
-        assert_eq!(indices.len(), 21);
+        assert_eq!(indices.len(), 29);
     }
 
     #[test]
     fn dialog_payload_contains_gba_system_key() {
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
-        let keys = android.dialog_keys();
+        let keys: Vec<String> = android
+            .setting_defs()
+            .into_iter()
+            .map(|def| def.key)
+            .collect();
         assert!(keys.iter().any(|key| key.starts_with("system.gba.")));
     }
 
@@ -1199,6 +1411,32 @@ mod tests {
     }
 
     #[test]
+    fn dialog_payload_marks_position_edges() {
+        let registry = registry();
+        let android = android_settings(&default_snapshot(), &registry);
+        let doc: serde_json::Value = serde_json::from_str(&android.dialog_payload(1)).unwrap();
+        let fields: Vec<&serde_json::Value> = doc["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|section| section["fields"].as_array().unwrap().iter())
+            .collect();
+        let position = fields
+            .iter()
+            .find(|field| field["key"] == "notifications.position")
+            .unwrap();
+        assert_eq!(
+            position["edges"],
+            serde_json::json!(["bottom", "bottom", "top", "top"])
+        );
+        let volume = fields
+            .iter()
+            .find(|field| field["key"] == "master_volume")
+            .unwrap();
+        assert!(volume.get("edges").is_none());
+    }
+
+    #[test]
     fn keyed_indices_do_not_depend_on_map_order() {
         let registry = registry();
         let current = android_settings(&default_snapshot(), &registry);
@@ -1211,5 +1449,27 @@ mod tests {
             AndroidSettings::from_keyed_indices(&values, &current),
             Some(current)
         );
+    }
+
+    #[test]
+    fn same_edge_preserves_status_area() {
+        let registry = registry();
+        let mut android = android_settings(&default_snapshot(), &registry);
+        android.status_position = NotificationPosition::BottomRight;
+        android.status_area_mode = NotificationAreaMode::Strip;
+        // Same edge as the default BottomLeft notification: the row
+        // stays (the dialog UI hides it live), so the value follows
+        // the notification mode at render time regardless.
+        let defs = android.setting_defs();
+        assert_eq!(defs.len(), 29);
+        assert!(defs.iter().any(|def| def.key == "status.area_mode"));
+        let raw = def_currents(&android)
+            .into_iter()
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let back = AndroidSettings::from_choice_indices(&raw, &android).unwrap();
+        assert_eq!(back.status_position, NotificationPosition::BottomRight);
+        assert_eq!(back.status_area_mode, NotificationAreaMode::Strip);
     }
 }
