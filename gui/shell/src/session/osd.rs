@@ -198,6 +198,8 @@ struct ModalBox {
     batch: Vec<String>,
     queue: std::collections::VecDeque<String>,
     open: bool,
+    /// Drop-loss warn fires once per full episode; cleared on drain.
+    queue_warned_full: bool,
 }
 
 /// Notification display state: transient in-frame rows plus modal batches.
@@ -475,7 +477,10 @@ impl ModalBox {
     fn queue_modal(&mut self, detail: String) {
         const MAX_MODAL_QUEUED: usize = 8;
         if self.queue.len() >= MAX_MODAL_QUEUED {
-            log::warn!("error modal queue full; dropping oldest batch");
+            if !self.queue_warned_full {
+                log::warn!("error modal queue full; dropping oldest batch");
+                self.queue_warned_full = true;
+            }
             self.queue.pop_front();
         }
         self.queue.push_back(detail);
@@ -489,6 +494,7 @@ impl ModalBox {
             return None;
         }
         let next = self.queue.pop_front()?;
+        self.queue_warned_full = false;
         self.open = true;
         Some(next)
     }
