@@ -2,6 +2,8 @@ mod error;
 pub mod raw;
 pub mod vertex;
 
+pub use error::Error as GlError;
+
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},

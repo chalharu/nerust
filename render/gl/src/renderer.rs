@@ -112,7 +112,7 @@ impl GpuRenderer for GlRenderer {
         let mut view = GlView::new();
         view.use_vao(true);
         view.on_load(&self.render_profile)
-            .map_err(|e| RendererError::new("view", Box::new(OpaqueError(e))))?;
+            .map_err(|e| RendererError::new("view", Box::new(OpaqueError(e.to_string()))))?;
         let fs = match self.render_profile.frame_format {
             VideoFrameFormat::Rgba => self.render_profile.logical_size,
             VideoFrameFormat::Palette => self.render_profile.source_logical_size,
@@ -166,7 +166,7 @@ impl GpuRenderer for GlRenderer {
         let mut view = GlView::new();
         view.use_vao(true);
         view.on_load(profile)
-            .map_err(|e| RendererError::new("view", Box::new(OpaqueError(e))))?;
+            .map_err(|e| RendererError::new("view", Box::new(OpaqueError(e.to_string()))))?;
         let fs = match profile.frame_format {
             VideoFrameFormat::Rgba => profile.logical_size,
             VideoFrameFormat::Palette => profile.source_logical_size,
@@ -280,7 +280,9 @@ impl GpuRenderer for GlRenderer {
             }
         };
         view.set_osd_layer(self.osd.clone());
-        view.draw_osd(self.size.width as i32, self.size.height as i32);
+        if let Err(e) = view.draw_osd(self.size.width as i32, self.size.height as i32) {
+            log::debug!("GlRenderer: OSD composite failed: {e}");
+        }
         if let Err(e) = surf.swap_buffers(ctx) {
             log::warn!("GlRenderer: swap_buffers failed: {e}");
             return RenderResult::Error;
