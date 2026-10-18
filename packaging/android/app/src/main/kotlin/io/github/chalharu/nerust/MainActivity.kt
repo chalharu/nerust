@@ -36,7 +36,7 @@ import android.view.MotionEvent
 import android.view.Surface as AndroidSurface
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowInsets
+import android.view.WindowInsets as AndroidWindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.PopupWindow
@@ -737,13 +737,13 @@ class MainActivity :
         decor.requestApplyInsets()
     }
 
-    private fun windowInsetsToSafePx(insets: WindowInsets): IntArray {
+    private fun windowInsetsToSafePx(insets: AndroidWindowInsets): IntArray {
         var left = 0
         var top = 0
         var right = 0
         var bottom = 0
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bars = insets.getInsets(WindowInsets.Type.systemBars())
+            val bars = insets.getInsets(AndroidWindowInsets.Type.systemBars())
             left = bars.left
             top = bars.top
             right = bars.right
