@@ -1064,12 +1064,12 @@ class MainActivity :
         showSettingsDialogInternal(
             content =
                 SettingsDialogContent(
-                    keys = keys,
-                    labels = labels,
-                    choiceStrings = choiceStrings,
-                    currentIndices = currentIndices,
-                    sections = sections,
-                    edgeStrings = edgeStrings,
+                    keys = keys.toList(),
+                    labels = labels.toList(),
+                    choiceStrings = choiceStrings.toList(),
+                    currentIndices = currentIndices.toList(),
+                    sections = sections.toList(),
+                    edgeStrings = edgeStrings.toList(),
                 ),
             requestId = null,
             ownedByTest = true,
@@ -1120,12 +1120,12 @@ class MainActivity :
         showSettingsDialogInternal(
             content =
                 SettingsDialogContent(
-                    keys = keys,
-                    labels = labels,
-                    choiceStrings = choiceStrings,
-                    currentIndices = currentIndices,
-                    sections = sections,
-                    edgeStrings = edgeStrings,
+                    keys = keys.toList(),
+                    labels = labels.toList(),
+                    choiceStrings = choiceStrings.toList(),
+                    currentIndices = currentIndices.toList(),
+                    sections = sections.toList(),
+                    edgeStrings = edgeStrings.toList(),
                 ),
             requestId = requestId,
             ownedByTest = false,
@@ -1144,12 +1144,12 @@ class MainActivity :
     }
 
     private data class SettingsDialogContent(
-        val keys: Array<String>,
-        val labels: Array<String>,
-        val choiceStrings: Array<String>,
-        val currentIndices: Array<String>,
-        val sections: Array<String>,
-        val edgeStrings: Array<String>,
+        val keys: List<String>,
+        val labels: List<String>,
+        val choiceStrings: List<String>,
+        val currentIndices: List<String>,
+        val sections: List<String>,
+        val edgeStrings: List<String>,
     )
 
     private fun showSettingsDialogInternal(
