@@ -420,8 +420,11 @@ impl GlView {
     /// Composite the staged layer over the game image, if any (best-effort).
     /// A GL failure drops the overlay, never the frame.
     pub fn draw_osd(&mut self, surface_w: i32, surface_h: i32) -> Result<(), ViewError> {
-        if std::mem::replace(&mut self.osd_dirty, false) {
+        // Retry on failure: clearing only on success keeps a transient
+        // GL error from permanently losing this layer update.
+        if self.osd_dirty {
             self.sync_osd_texture(surface_w, surface_h)?;
+            self.osd_dirty = false;
         }
         let (Some(shader), Some(_)) = (self.osd_shader.as_ref(), self.osd_layer.as_ref()) else {
             return Ok(());
@@ -914,8 +917,31 @@ fn supports_unpack_row_length(version: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_glsl_source, compose_glsl_source, is_gles_context, supports_unpack_row_length,
+        GlView, build_glsl_source, compose_glsl_source, is_gles_context, supports_unpack_row_length,
     };
+    use nerust_render_traits::renderer::OsdLayer;
+
+    #[test]
+    fn set_osd_layer_skips_equal_upload() {
+        let mut view = GlView::default();
+        let layer = OsdLayer {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 1,
+            rgba: vec![255; 2 * 1 * 4],
+        };
+        view.set_osd_layer(Some(layer.clone()));
+        assert!(view.osd_dirty);
+        // Simulated upload consumed the flag; re-staging the same
+        // bytes must not re-dirty (no per-frame re-upload).
+        view.osd_dirty = false;
+        view.set_osd_layer(Some(layer));
+        assert!(!view.osd_dirty);
+        // Clearing is a change: the wipe must run.
+        view.set_osd_layer(None);
+        assert!(view.osd_dirty);
+    }
 
     #[test]
     fn detects_gles_context_strings() {

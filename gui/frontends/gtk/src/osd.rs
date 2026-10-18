@@ -30,6 +30,12 @@ impl GtkOsd {
         }
     }
 
+    /// Forget sync state after a renderer rebuild: the new object
+    /// holds no layer, so the next sync must re-push instead of skip.
+    pub(crate) fn invalidate(&mut self) {
+        self.presenter.invalidate();
+    }
+
     /// Drain the session queue, show modals, and sync the OSD layer.
     /// Called from the surface tick (every frame while running).
     /// Takes `&mut State` directly: the tick already holds the

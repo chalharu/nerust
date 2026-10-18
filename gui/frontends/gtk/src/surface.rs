@@ -90,6 +90,8 @@ impl SurfaceExtend for Surface {
                             .borrow_mut()
                             .realize(wh, dh, physical_size, profile);
                     });
+                    // Fresh renderer holds no layer; re-push next sync.
+                    s.osd.borrow_mut().invalidate();
                 }
             }
 
