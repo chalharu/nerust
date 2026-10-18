@@ -469,17 +469,11 @@ fn ensure_window(
 pub fn run(ctx: FrontendContext, _options: RunOptions) {
     // No dialog here: a GTK dialog needs the event loop, which died
     // with the panic. stderr (already logged by the guard) is the UX.
-    match nerust_crash_guard::run_guarded(
-        || run_inner(ctx),
-        |report| {
-            log::error!("{}", crash_note(report.message()));
-        },
-    ) {
-        nerust_crash_guard::GuardOutcome::Completed(()) => {}
-        // A crash must never look like a clean exit.
-        nerust_crash_guard::GuardOutcome::Crashed(_) => {
-            std::process::exit(nerust_crash_guard::CRASH_EXIT_CODE)
-        }
+    if let nerust_crash_guard::GuardOutcome::Crashed(report) =
+        nerust_crash_guard::run_guarded(|| run_inner(ctx))
+    {
+        log::error!("{}", crash_note(report.message()));
+        std::process::exit(nerust_crash_guard::CRASH_EXIT_CODE);
     }
 }
 

@@ -23,16 +23,11 @@ static LOGGER: StderrLogger = StderrLogger;
 fn main() {
     log::set_logger(&LOGGER).expect("probe logger installs once");
     log::set_max_level(log::LevelFilter::Error);
-    match nerust_crash_guard::run_guarded(
-        || panic!("probe crash"),
-        |report| {
-            eprintln!("probe dialog would show: {}", report.message());
-        },
-    ) {
-        // A crash must never look like a clean exit; hosts own this.
-        nerust_crash_guard::GuardOutcome::Completed(()) => {}
-        nerust_crash_guard::GuardOutcome::Crashed(_) => {
-            std::process::exit(nerust_crash_guard::CRASH_EXIT_CODE)
-        }
+    // The dialog runs in the Crashed arm, mirroring real frontends.
+    if let nerust_crash_guard::GuardOutcome::Crashed(report) =
+        nerust_crash_guard::run_guarded(|| panic!("probe crash"))
+    {
+        eprintln!("probe dialog would show: {}", report.message());
+        std::process::exit(nerust_crash_guard::CRASH_EXIT_CODE);
     }
 }
