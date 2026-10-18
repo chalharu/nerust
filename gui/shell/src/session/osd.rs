@@ -813,6 +813,10 @@ impl OsdPresenter {
                 settings.status_area_mode,
             )
         });
+        if status_key.is_none() {
+            // Forget the throttle: re-enable must pass fresh digits.
+            self.gate = StatusGate::new();
+        }
         let status_changed = status_key != self.last_status;
         let chrome = (safe_insets, ui_scale.to_bits());
         let chrome_changed = self.last_chrome != Some(chrome);
@@ -2326,6 +2330,78 @@ mod tests {
             ),
             OsdSync::Skip
         ));
+    }
+
+    #[test]
+    fn status_reenable_passes_fresh_value() {
+        use super::{OsdPresenter, OsdSync};
+        use nerust_render_traits::renderer::SafeInsets;
+        use std::time::Duration;
+        let mut manager = OsdManager::new();
+        let mut presenter = OsdPresenter::new();
+        let mut settings = presenter_settings();
+        settings.status_enabled = true;
+        let now = std::time::Instant::now();
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                super::OsdSyncInput {
+                    settings: &settings,
+                    language: AppLanguage::English,
+                    fps: 60.0,
+                    paused: false,
+                    now,
+                    width: 960,
+                    height: 720,
+                    ui_scale: 1.0,
+                    safe_insets: SafeInsets::default(),
+                }
+            ),
+            OsdSync::Render(_)
+        ));
+        // Disabled: the live layer clears, then idles.
+        settings.status_enabled = false;
+        let off = now + Duration::from_millis(100);
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                super::OsdSyncInput {
+                    settings: &settings,
+                    language: AppLanguage::English,
+                    fps: 61.0,
+                    paused: false,
+                    now: off,
+                    width: 960,
+                    height: 720,
+                    ui_scale: 1.0,
+                    safe_insets: SafeInsets::default(),
+                }
+            ),
+            OsdSync::Clear
+        ));
+        // Re-enabled within the throttle window: fresh digits, not stale.
+        settings.status_enabled = true;
+        let plan = match presenter.sync(
+            &mut manager,
+            super::OsdSyncInput {
+                settings: &settings,
+                language: AppLanguage::English,
+                fps: 61.0,
+                paused: false,
+                now: off,
+                width: 960,
+                height: 720,
+                ui_scale: 1.0,
+                safe_insets: SafeInsets::default(),
+            },
+        ) {
+            OsdSync::Render(plan) => plan,
+            other => panic!("expected render, got {other:?}"),
+        };
+        assert_eq!(
+            plan.status.as_ref().map(|(l, v)| (l.as_str(), v.as_str())),
+            Some(("", "61.0 fps"))
+        );
     }
 
     #[test]
