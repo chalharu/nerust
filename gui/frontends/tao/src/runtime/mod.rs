@@ -96,6 +96,9 @@ impl WindowRuntime {
         }
         self.surface_xid = xid;
         self.renderer = Some(renderer);
+        // Fresh view holds no layer; re-push on the next sync
+        // instead of skipping on a stale fingerprint.
+        self.host.osd_presenter.invalidate();
         Some(())
     }
 
