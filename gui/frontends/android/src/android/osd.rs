@@ -118,12 +118,15 @@ impl AndroidOsd {
     }
 
     /// Safe-area insets for rounded corners and the letterbox axis.
-    /// dp-based so the physical clearance is density-independent;
-    /// the bar axis (dead space) takes the extra shift.
+    /// dp-based corner base plus measured OS insets: physical
+    /// clearance is density-independent, and the bar axis (dead
+    /// space) takes the extra shift. `system` comes from the Java
+    /// window-insets cache; zeros when the bridge is unavailable.
     pub(super) fn safe_insets(
         scale_factor: f32,
         content: Option<PhysicalSize>,
         size: SurfaceSize,
+        system: SafeInsets,
     ) -> SafeInsets {
         let density = scale_factor.max(0.5);
         let base = (EDGE_SAFE_DP * density).round() as u32;
@@ -139,17 +142,51 @@ impl AndroidOsd {
         };
         if taller {
             SafeInsets {
-                top: base + extra,
-                right: base,
-                bottom: base + extra,
-                left: base,
+                top: base.max(system.top) + extra,
+                right: base.max(system.right),
+                bottom: base.max(system.bottom) + extra,
+                left: base.max(system.left),
             }
         } else {
             SafeInsets {
-                top: base,
-                right: base + extra,
-                bottom: base,
-                left: base + extra,
+                top: base.max(system.top),
+                right: base.max(system.right) + extra,
+                bottom: base.max(system.bottom),
+                left: base.max(system.left) + extra,
+            }
+        }
+    }
+
+    /// Root-window safe insets in physical pixels, cached on the Java
+    /// side and refreshed on every layout pass. Falls back to zeros
+    /// (corner dp base still applies) when the bridge is unavailable.
+    pub(super) fn query_system_insets(app: &AndroidApp) -> SafeInsets {
+        let insets: Option<[i32; 4]> = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) }
+            .attach_current_thread(|env| {
+                let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
+                let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+                let values = env.call_method(
+                    &activity,
+                    jni::jni_str!("getSafeInsetsPx"),
+                    jni::jni_sig!("()[I"),
+                    &[],
+                )?;
+                let array = env.cast_local::<jni::objects::JIntArray>(values.l()?)?;
+                let mut out = [0i32; 4];
+                array.get_region(env, 0, &mut out)?;
+                Ok::<_, jni::errors::Error>(out)
+            })
+            .ok();
+        match insets {
+            Some([top, right, bottom, left]) => SafeInsets {
+                top: top.max(0) as u32,
+                right: right.max(0) as u32,
+                bottom: bottom.max(0) as u32,
+                left: left.max(0) as u32,
+            },
+            None => {
+                log::debug!("system insets unavailable; using dp heuristics");
+                SafeInsets::default()
             }
         }
     }
