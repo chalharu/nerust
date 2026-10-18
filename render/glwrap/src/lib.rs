@@ -5,7 +5,7 @@ pub mod vertex;
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},
-    ptr, str,
+    ptr,
 };
 
 use gl::types::{GLchar, GLenum, GLint, GLsizei, GLuint};
@@ -52,10 +52,6 @@ pub struct Shader {
 }
 
 impl Shader {
-    pub fn new(vert_src: &str, flag_src: &str) -> Self {
-        Self::try_new(vert_src, flag_src).unwrap_or_else(|e| panic!("{e}"))
-    }
-
     pub fn try_new(vert_src: &str, flag_src: &str) -> Result<Self, String> {
         let vtx_shader_id = compile_shader(vert_src, gl::VERTEX_SHADER)?;
         let flag_shader_id = compile_shader(flag_src, gl::FRAGMENT_SHADER)?;
@@ -63,8 +59,8 @@ impl Shader {
 
         Ok(Self {
             program: program_id,
-            attributes: get_attributes(program_id),
-            uniforms: get_uniforms(program_id),
+            attributes: get_attributes(program_id)?,
+            uniforms: get_uniforms(program_id)?,
         })
     }
 
@@ -76,14 +72,14 @@ impl Shader {
         self.uniforms.get(key).map_or(-1, |&x| x)
     }
 
-    pub fn use_program(&self) {
-        use_program(self.program).unwrap();
+    pub fn use_program(&self) -> Result<(), Error> {
+        use_program(self.program)
     }
 }
 
-fn get_attributes(program_id: GLuint) -> HashMap<String, GLuint> {
+fn get_attributes(program_id: GLuint) -> Result<HashMap<String, GLuint>, String> {
     let mut count: GLint = 0;
-    get_programiv(program_id, gl::ACTIVE_ATTRIBUTES, &mut count).unwrap();
+    get_programiv(program_id, gl::ACTIVE_ATTRIBUTES, &mut count).map_err(|e| e.to_string())?;
 
     let mut size: GLint = 0;
     let mut ty: GLenum = 0;
@@ -103,25 +99,25 @@ fn get_attributes(program_id: GLuint) -> HashMap<String, GLuint> {
             &mut ty,
             name_buf.as_mut_ptr(),
         )
-        .unwrap();
+        .map_err(|e| e.to_string())?;
         let name = String::from(
             unsafe { CStr::from_ptr(name_buf.as_ptr()) }
                 .to_str()
-                .unwrap(),
+                .map_err(|e| e.to_string())?,
         );
         let location =
-            get_attrib_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) }).unwrap();
-        let _ = result.insert(
-            name,
-            u32::try_from(location).expect("OpenGL attribute location must be non-negative"),
-        );
+            get_attrib_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) })
+                .map_err(|e| e.to_string())?;
+        let location =
+            u32::try_from(location).map_err(|_| format!("attribute {name} has no location"))?;
+        let _ = result.insert(name, location);
     }
-    result
+    Ok(result)
 }
 
-fn get_uniforms(program_id: GLuint) -> HashMap<String, GLint> {
+fn get_uniforms(program_id: GLuint) -> Result<HashMap<String, GLint>, String> {
     let mut count: GLint = 0;
-    get_programiv(program_id, gl::ACTIVE_UNIFORMS, &mut count).unwrap();
+    get_programiv(program_id, gl::ACTIVE_UNIFORMS, &mut count).map_err(|e| e.to_string())?;
 
     let mut size: GLint = 0;
     let mut ty: GLenum = 0;
@@ -141,38 +137,37 @@ fn get_uniforms(program_id: GLuint) -> HashMap<String, GLint> {
             &mut ty,
             name_buf.as_mut_ptr(),
         )
-        .unwrap();
+        .map_err(|e| e.to_string())?;
         let name = String::from(
             unsafe { CStr::from_ptr(name_buf.as_ptr()) }
                 .to_str()
-                .unwrap(),
+                .map_err(|e| e.to_string())?,
         );
         let location =
-            get_uniform_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) }).unwrap();
+            get_uniform_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) })
+                .map_err(|e| e.to_string())?;
         let _ = result.insert(name, location);
     }
 
-    result
+    Ok(result)
 }
 
 fn info_log_buffer(len: GLint) -> Vec<u8> {
-    vec![0; usize::try_from(len).expect("OpenGL info log length must be non-negative")]
+    vec![0; len.max(0) as usize]
 }
 
-fn trim_info_log(buf: &mut Vec<u8>, written: GLsizei) -> &str {
-    let written =
-        usize::try_from(written).expect("OpenGL written info log length must be non-negative");
-    let written = written.min(buf.len());
+fn trim_info_log(buf: &mut Vec<u8>, written: GLsizei) -> String {
+    let written = (written.max(0) as usize).min(buf.len());
     buf.truncate(written);
     if buf.last() == Some(&0) {
         let _ = buf.pop();
     }
-    str::from_utf8(buf.as_slice()).expect("OpenGL info log not valid utf8")
+    String::from_utf8_lossy(buf.as_slice()).into_owned()
 }
 
 fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, String> {
     let shader = unsafe { gl::CreateShader(ty) };
-    let c_str = CString::new(src.as_bytes()).unwrap();
+    let c_str = CString::new(src.as_bytes()).map_err(|e| e.to_string())?;
     unsafe {
         gl::ShaderSource(shader, 1, &c_str.as_ptr(), ptr::null());
         gl::CompileShader(shader);
@@ -187,7 +182,7 @@ fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, String> {
             let mut buf = info_log_buffer(len);
             gl::GetShaderInfoLog(shader, len, &mut written, buf.as_mut_ptr().cast());
             gl::DeleteShader(shader);
-            return Err(trim_info_log(&mut buf, written).to_owned());
+            return Err(trim_info_log(&mut buf, written));
         }
     }
     Ok(shader)
@@ -201,16 +196,16 @@ fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, String> {
         gl::LinkProgram(program);
 
         let mut status = GLint::from(gl::FALSE);
-        get_programiv(program, gl::LINK_STATUS, &mut status).unwrap();
+        get_programiv(program, gl::LINK_STATUS, &mut status).map_err(|e| e.to_string())?;
 
         if status != GLint::from(gl::TRUE) {
             let mut len: GLint = 0;
-            get_programiv(program, gl::INFO_LOG_LENGTH, &mut len).unwrap();
+            get_programiv(program, gl::INFO_LOG_LENGTH, &mut len).map_err(|e| e.to_string())?;
             let mut written = 0;
             let mut buf = info_log_buffer(len);
             gl::GetProgramInfoLog(program, len, &mut written, buf.as_mut_ptr().cast());
             gl::DeleteProgram(program);
-            return Err(trim_info_log(&mut buf, written).to_owned());
+            return Err(trim_info_log(&mut buf, written));
         }
         Ok(program)
     }
