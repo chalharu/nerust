@@ -428,7 +428,11 @@ impl SessionHandle {
                     self.notifications.push(kind);
                 }
             }
-            Err(_) => {
+            Err(error) => {
+                // Single audit point for transport failures: frontends
+                // must not log these at their call sites. The push
+                // below logs the UX wording; this line keeps the cause.
+                log::warn!("run_command {} failed: {error}", command_name(command));
                 self.notifications
                     .push(super::notification::NotificationKind::CommandFailed(
                         command_name(command),

@@ -60,9 +60,7 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Session(command) => {
-                if let Err(e) = self.session.run_command(command) {
-                    log::warn!("session command failed: {e}");
-                }
+                let _ = self.session.run_command(command);
                 self.sync_menu_state();
                 self.refresh_window_title();
                 HostAction::None

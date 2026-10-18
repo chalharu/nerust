@@ -76,6 +76,16 @@ impl NotificationKind {
         }
     }
 
+    /// Channel policy: the log line for this kind, or `None` when the
+    /// kind is screen-only (history still records every event). New
+    /// kinds declare their channel here instead of editing `push`.
+    pub fn log_level(&self) -> Option<NotificationLevel> {
+        match self {
+            NotificationKind::SelectedSlot(_) => None,
+            other => Some(other.level()),
+        }
+    }
+
     fn slot_text(slot: Option<u64>, language: AppLanguage, en: &str, ja: &str) -> String {
         match (slot, language) {
             (Some(id), AppLanguage::Japanese) => format!("スロット{id}に{ja}"),
@@ -173,8 +183,7 @@ impl NotificationCenter {
     /// Push one event. History records every event; the pending queue
     /// coalesces identical neighbours (`×N`) and drops the oldest
     /// past [`MAX_PENDING`]. Logs record every event eagerly except
-    /// `SelectedSlot`: high-frequency nav echo would spam stderr, so
-    /// selection feedback is screen-only (history still keeps it).
+    /// screen-only kinds (see [`NotificationKind::log_level`]).
     pub fn push(&mut self, kind: NotificationKind) {
         let level = kind.level();
         let seq = self.next_seq;
@@ -187,11 +196,14 @@ impl NotificationCenter {
             seq,
             at: std::time::SystemTime::now(),
         };
-        match level {
-            NotificationLevel::Info if matches!(kind, NotificationKind::SelectedSlot(_)) => {}
-            NotificationLevel::Info => log::info!("notification: {}", kind_text(&event)),
-            NotificationLevel::Warning => log::warn!("notification: {}", kind_text(&event)),
-            NotificationLevel::Error => log::error!("notification: {}", kind_text(&event)),
+        // Channel policy lives on the kind: screen-only kinds skip
+        // the eager log line (history still records every event).
+        if let Some(emit) = kind.log_level() {
+            match emit {
+                NotificationLevel::Info => log::info!("notification: {}", kind_text(&event)),
+                NotificationLevel::Warning => log::warn!("notification: {}", kind_text(&event)),
+                NotificationLevel::Error => log::error!("notification: {}", kind_text(&event)),
+            }
         }
         if self.history.len() >= MAX_HISTORY {
             self.history.pop_front();
