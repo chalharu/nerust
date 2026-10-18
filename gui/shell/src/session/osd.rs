@@ -398,16 +398,8 @@ impl TransientQueue {
         }
     }
 
-    /// Fold drained shell notifications into display state.
-    /// Errors go modal (aggregated) or OSD (minimum 5s) per settings.
-    /// New arrivals queue behind the showing label in arrival order,
-    /// except Error rows (with `error_modal` off), which preempt a
-    /// non-Error showing label; the demoted label waits at the queue
-    /// head. Only strictly consecutive duplicates merge (`×N`, timer
-    /// reset): an interleaved label breaks the run, so pause/resume
-    /// flaps show each leg for its full duration instead of
-    /// collapsing. Selection echo is latest-wins: at most one
-    /// `SelectedSlot` row exists, updated in place.
+    /// Promote pending when idle, or advance on expiry. True only
+    /// on a visible change; unchanged steady state stays false.
     fn poll(&mut self, now: Instant) -> bool {
         let need = match &self.current {
             None => !self.pending.is_empty(),
@@ -521,9 +513,9 @@ impl OsdManager {
         now: Instant,
         channel: FrameChannel,
     ) {
-        if !notifications.is_empty() {
-            self.dirty = true;
-        }
+        // Dirty only on a real change: filtered rows and empty drains
+        // must not schedule a redraw.
+        let mut changed = false;
         for n in notifications {
             if !enabled(n.level, settings) {
                 continue;
@@ -536,6 +528,7 @@ impl OsdManager {
             // No composited frame: route everything to modal, never stay silent.
             if falls_back_to_modal(n.level, settings, channel) {
                 self.modal_box.push(text);
+                changed = true;
                 continue;
             }
             let rgb = color(n.level, settings);
@@ -551,6 +544,10 @@ impl OsdManager {
                 selected: matches!(n.kind, NotificationKind::SelectedSlot(_)),
             };
             self.transient.route_row(item);
+            changed = true;
+        }
+        if changed {
+            self.dirty = true;
         }
     }
 
@@ -566,10 +563,6 @@ impl OsdManager {
 
     pub fn rows(&self) -> Vec<OsdRow> {
         self.transient.rows()
-    }
-
-    pub fn take_modal(&mut self) -> Vec<String> {
-        self.modal_box.take_batch()
     }
 
     pub fn take_modal_text(&mut self) -> Option<String> {
@@ -936,7 +929,7 @@ mod tests {
             FrameChannel::Composited,
         );
         assert!(manager.rows().is_empty());
-        assert_eq!(manager.take_modal().len(), 1);
+        assert!(manager.take_modal_text().is_some());
     }
 
     #[test]
@@ -1014,7 +1007,8 @@ mod tests {
             );
         }
         assert!(manager.rows().is_empty());
-        assert_eq!(manager.take_modal().len(), 3);
+        let batch = manager.take_modal_text().expect("three modal lines");
+        assert_eq!(batch.lines().count(), 3);
     }
 
     #[test]
@@ -2278,6 +2272,57 @@ mod tests {
             presenter.sync(
                 &mut manager,
                 sync_input(&settings, now, 960, 720, 1.0, Default::default())
+            ),
+            OsdSync::Skip
+        ));
+    }
+
+    #[test]
+    fn peek_does_not_starve_expiry_clear() {
+        use super::super::notification::NotificationKind;
+        use super::{FrameChannel, OsdPresenter, OsdSync};
+        let mut manager = OsdManager::new();
+        let mut presenter = OsdPresenter::new();
+        let settings = presenter_settings();
+        let now = std::time::Instant::now();
+        manager.push_all(
+            vec![UiNotification {
+                level: NotificationLevel::Info,
+                kind: NotificationKind::Paused,
+                count: 1,
+                seq: 0,
+                at: std::time::SystemTime::now(),
+            }],
+            &settings,
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        assert!(manager.poll(now));
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                sync_input(&settings, now, 960, 720, 1.0, Default::default())
+            ),
+            OsdSync::Render(_)
+        ));
+        // Past the Info duration the row expires: same two-phase order
+        // must surface Clear, not Skip, then settle.
+        let later = now + Duration::from_millis(2_500);
+        assert!(manager.poll(later));
+        assert!(manager.dirty());
+        assert!(manager.dirty());
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                sync_input(&settings, later, 960, 720, 1.0, Default::default())
+            ),
+            OsdSync::Clear
+        ));
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                sync_input(&settings, later, 960, 720, 1.0, Default::default())
             ),
             OsdSync::Skip
         ));
