@@ -180,18 +180,37 @@ struct OsdItem {
 /// (current + pending) never exceeds three.
 const MAX_QUEUED: usize = 2;
 
+/// Transient in-frame queue: showing row plus pending rows with the
+/// merge/preempt/latest-wins discipline. No modal state.
 #[derive(Debug, Default)]
-pub struct OsdManager {
+struct TransientQueue {
     current: Option<OsdItem>,
     pending: std::collections::VecDeque<OsdItem>,
-    modal: Vec<String>,
-    modal_queue: std::collections::VecDeque<String>,
-    modal_open: bool,
-    dirty: bool,
     /// Last accepted notification identity. Merging (`×N`) applies
     /// only to strictly consecutive duplicates; anything interleaved
     /// queues separately so flapping states keep full slots.
     last_key: Option<(NotificationLevel, String)>,
+}
+
+/// Modal error batches: collected lines plus the sequential display
+/// queue. Independent from the transient queue except for the
+/// fallback routing in [`OsdManager::push_all`].
+#[derive(Debug, Default)]
+struct ModalBox {
+    batch: Vec<String>,
+    queue: std::collections::VecDeque<String>,
+    open: bool,
+}
+
+/// Notification display state: transient in-frame rows plus modal
+/// error batches. Queue discipline lives in [`TransientQueue`],
+/// batch pumping in [`ModalBox`]; this type only routes, aggregates
+/// reads, and owns the dirty flag.
+#[derive(Debug, Default)]
+pub struct OsdManager {
+    transient: TransientQueue,
+    modal_box: ModalBox,
+    dirty: bool,
 }
 
 /// Which end the drop victim is taken from. Separate names keep
@@ -223,48 +242,44 @@ fn falls_back_to_modal(
         || (level == NotificationLevel::Error && settings.error_modal)
 }
 
-impl OsdManager {
-    pub fn new() -> Self {
-        Self::default()
+/// Display-policy helpers shared by the router and the merger.
+/// Free functions: they use settings and row data only, never manager
+/// state, so neither sub-queue owns them.
+fn enabled(level: NotificationLevel, settings: &NotificationSettings) -> bool {
+    match level {
+        NotificationLevel::Info => settings.info_enabled,
+        NotificationLevel::Warning => settings.warning_enabled,
+        NotificationLevel::Error => settings.error_enabled,
     }
+}
 
-    fn enabled(level: NotificationLevel, settings: &NotificationSettings) -> bool {
-        match level {
-            NotificationLevel::Info => settings.info_enabled,
-            NotificationLevel::Warning => settings.warning_enabled,
-            NotificationLevel::Error => settings.error_enabled,
-        }
+fn duration_ms(level: NotificationLevel, settings: &NotificationSettings) -> u64 {
+    let raw = match level {
+        NotificationLevel::Info => settings.info_duration_ms,
+        NotificationLevel::Warning => settings.warning_duration_ms,
+        NotificationLevel::Error => 5_000,
+    };
+    u64::from(raw.clamp(500, 60_000))
+}
+
+fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: &'static str) -> OsdRow {
+    let text = if count > 1 {
+        format!("{base} ×{count}")
+    } else {
+        base.to_string()
+    };
+    OsdRow { text, rgb, tag }
+}
+
+fn color(level: NotificationLevel, settings: &NotificationSettings) -> (u8, u8, u8) {
+    match level {
+        NotificationLevel::Info => settings.info_color.rgb(),
+        NotificationLevel::Warning => settings.warning_color.rgb(),
+        NotificationLevel::Error => settings.error_color.rgb(),
     }
+}
 
-    fn duration_ms(level: NotificationLevel, settings: &NotificationSettings) -> u64 {
-        let raw = match level {
-            NotificationLevel::Info => settings.info_duration_ms,
-            NotificationLevel::Warning => settings.warning_duration_ms,
-            NotificationLevel::Error => 5_000,
-        };
-        u64::from(raw.clamp(500, 60_000))
-    }
-
-    fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: &'static str) -> OsdRow {
-        let text = if count > 1 {
-            format!("{base} ×{count}")
-        } else {
-            base.to_string()
-        };
-        OsdRow { text, rgb, tag }
-    }
-
-    fn color(level: NotificationLevel, settings: &NotificationSettings) -> (u8, u8, u8) {
-        match level {
-            NotificationLevel::Info => settings.info_color.rgb(),
-            NotificationLevel::Warning => settings.warning_color.rgb(),
-            NotificationLevel::Error => settings.error_color.rgb(),
-        }
-    }
-
-    /// Index of the drop victim: the row of the lowest severity
-    /// present (Info, then Warning), taken from `edge`. `None` when
-    /// every queued row is an Error (the oldest drops, FIFO bound).
+impl TransientQueue {
     fn victim_index(
         pending: &std::collections::VecDeque<OsdItem>,
         edge: VictimEdge,
@@ -307,7 +322,7 @@ impl OsdManager {
             && current.key == item.key
         {
             current.count += item.count;
-            current.row = Self::counted_row(&item.key, current.count, item.row.rgb, item.row.tag);
+            current.row = counted_row(&item.key, current.count, item.row.rgb, item.row.tag);
             current.deadline = item.deadline;
             return true;
         }
@@ -316,7 +331,7 @@ impl OsdManager {
             && back.key == item.key
         {
             back.count += item.count;
-            back.row = Self::counted_row(&item.key, back.count, item.row.rgb, item.row.tag);
+            back.row = counted_row(&item.key, back.count, item.row.rgb, item.row.tag);
             back.deadline = item.deadline;
             return true;
         }
@@ -399,53 +414,7 @@ impl OsdManager {
     /// flaps show each leg for its full duration instead of
     /// collapsing. Selection echo is latest-wins: at most one
     /// `SelectedSlot` row exists, updated in place.
-    pub fn push_all(
-        &mut self,
-        notifications: Vec<UiNotification>,
-        settings: &NotificationSettings,
-        language: AppLanguage,
-        now: Instant,
-        channel: FrameChannel,
-    ) {
-        if !notifications.is_empty() {
-            self.dirty = true;
-        }
-        for n in notifications {
-            if !Self::enabled(n.level, settings) {
-                continue;
-            }
-            let base = n.kind.text(language);
-            let mut text = base.clone();
-            if n.count > 1 {
-                text = format!("{text} ×{}", n.count);
-            }
-            // Without a composited frame the OSD channel is
-            // invisible, so every row falls back to modal instead of
-            // staying silent. Nothing is interrupted (no gameplay), and
-            // the modal batch cap absorbs no-core command spam.
-            if falls_back_to_modal(n.level, settings, channel) {
-                self.modal.push(text);
-                continue;
-            }
-            let rgb = Self::color(n.level, settings);
-            let tag = level_tag(n.level);
-            let duration = Duration::from_millis(Self::duration_ms(n.level, settings));
-            let item = OsdItem {
-                row: Self::counted_row(&base, n.count, rgb, tag),
-                level: n.level,
-                key: base,
-                count: n.count,
-                duration,
-                deadline: now + duration,
-                selected: matches!(n.kind, NotificationKind::SelectedSlot(_)),
-            };
-            self.route_row(item);
-        }
-    }
-
-    /// Advance the showing label. Promotes pending immediately when
-    /// idle; advances on expiry otherwise. Returns true on change.
-    pub fn poll(&mut self, now: Instant) -> bool {
+    fn poll(&mut self, now: Instant) -> bool {
         let need = match &self.current {
             None => !self.pending.is_empty(),
             Some(current) => current.deadline <= now,
@@ -460,37 +429,44 @@ impl OsdManager {
         } else {
             self.current = None;
         }
-        self.dirty = true;
         true
     }
 
     /// True when display state changed since the last sync.
-    pub fn take_dirty(&mut self) -> bool {
-        std::mem::replace(&mut self.dirty, false)
-    }
-
-    /// Peek the dirty flag without consuming it. The layer sync owns
-    /// consumption; the poll loop only peeks for redraw decisions.
-    pub fn dirty(&self) -> bool {
-        self.dirty
-    }
-
-    /// The single showing row (empty when idle).
-    pub fn rows(&self) -> Vec<OsdRow> {
+    fn rows(&self) -> Vec<OsdRow> {
         self.current
             .as_ref()
             .map(|current| vec![current.row.clone()])
             .unwrap_or_default()
     }
 
-    pub fn take_modal(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.modal)
+    fn has_visible(&self) -> bool {
+        self.current.is_some()
+    }
+
+    fn next_deadline(&self) -> Option<Instant> {
+        match &self.current {
+            Some(current) => Some(current.deadline),
+            // Pending work with nothing showing: wake immediately.
+            None if !self.pending.is_empty() => Some(Instant::now()),
+            None => None,
+        }
+    }
+}
+
+impl ModalBox {
+    fn push(&mut self, text: String) {
+        self.batch.push(text);
+    }
+
+    fn take_modal(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.batch)
     }
 
     /// Take pending error lines as one display batch, bulleted.
     /// Single source for the aggregation wording: dialogs show it
     /// as-is, Android toasts it as-is.
-    pub fn take_modal_text(&mut self) -> Option<String> {
+    fn take_modal_text(&mut self) -> Option<String> {
         let modal = self.take_modal();
         if modal.is_empty() {
             return None;
@@ -508,48 +484,142 @@ impl OsdManager {
     /// Capped: a stuck-open dialog plus a per-tick error flood must
     /// not grow memory without bound. Drops the oldest, like the OSD
     /// pending cap, and logs the loss (history keeps every event).
-    pub fn queue_modal(&mut self, detail: String) {
+    fn queue_modal(&mut self, detail: String) {
         const MAX_MODAL_QUEUED: usize = 8;
-        if self.modal_queue.len() >= MAX_MODAL_QUEUED {
+        if self.queue.len() >= MAX_MODAL_QUEUED {
             log::warn!("error modal queue full; dropping oldest batch");
-            self.modal_queue.pop_front();
+            self.queue.pop_front();
         }
-        self.modal_queue.push_back(detail);
+        self.queue.push_back(detail);
     }
 
     /// Take the next batch only when no dialog is showing: frontends
     /// present one dialog at a time and call [`OsdManager::modal_closed`]
     /// on ack, so errors never stack.
-    pub fn take_modal_batch(&mut self) -> Option<String> {
-        if self.modal_open {
+    fn take_modal_batch(&mut self) -> Option<String> {
+        if self.open {
             return None;
         }
-        let next = self.modal_queue.pop_front()?;
-        self.modal_open = true;
+        let next = self.queue.pop_front()?;
+        self.open = true;
         Some(next)
     }
 
-    pub fn modal_closed(&mut self) {
-        self.modal_open = false;
+    fn modal_closed(&mut self) {
+        self.open = false;
     }
 
-    pub fn modal_pending(&self) -> usize {
-        self.modal_queue.len()
+    fn modal_pending(&self) -> usize {
+        self.queue.len()
+    }
+}
+
+impl OsdManager {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn has_visible(&self) -> bool {
-        self.current.is_some()
-    }
-
-    pub fn next_deadline(&self) -> Option<Instant> {
-        match &self.current {
-            Some(current) => Some(current.deadline),
-            // Pending work with nothing showing: wake immediately.
-            None if !self.pending.is_empty() => Some(Instant::now()),
-            None => None,
+    pub fn push_all(
+        &mut self,
+        notifications: Vec<UiNotification>,
+        settings: &NotificationSettings,
+        language: AppLanguage,
+        now: Instant,
+        channel: FrameChannel,
+    ) {
+        if !notifications.is_empty() {
+            self.dirty = true;
+        }
+        for n in notifications {
+            if !enabled(n.level, settings) {
+                continue;
+            }
+            let base = n.kind.text(language);
+            let mut text = base.clone();
+            if n.count > 1 {
+                text = format!("{text} ×{}", n.count);
+            }
+            // Without a composited frame the OSD channel is
+            // invisible, so every row falls back to modal instead of
+            // staying silent. Nothing is interrupted (no gameplay), and
+            // the modal batch cap absorbs no-core command spam.
+            if falls_back_to_modal(n.level, settings, channel) {
+                self.modal_box.push(text);
+                continue;
+            }
+            let rgb = color(n.level, settings);
+            let tag = level_tag(n.level);
+            let duration = Duration::from_millis(duration_ms(n.level, settings));
+            let item = OsdItem {
+                row: counted_row(&base, n.count, rgb, tag),
+                level: n.level,
+                key: base,
+                count: n.count,
+                duration,
+                deadline: now + duration,
+                selected: matches!(n.kind, NotificationKind::SelectedSlot(_)),
+            };
+            self.transient.route_row(item);
         }
     }
 
+    /// Advance the showing label. Promotes pending immediately when
+    /// idle; advances on expiry otherwise. Returns true on change.
+    pub fn poll(&mut self, now: Instant) -> bool {
+        if self.transient.poll(now) {
+            self.dirty = true;
+            return true;
+        }
+        false
+    }
+
+    pub fn rows(&self) -> Vec<OsdRow> {
+        self.transient.rows()
+    }
+
+    pub fn take_modal(&mut self) -> Vec<String> {
+        self.modal_box.take_modal()
+    }
+
+    pub fn take_modal_text(&mut self) -> Option<String> {
+        self.modal_box.take_modal_text()
+    }
+
+    pub fn queue_modal(&mut self, detail: String) {
+        self.modal_box.queue_modal(detail)
+    }
+
+    pub fn take_modal_batch(&mut self) -> Option<String> {
+        self.modal_box.take_modal_batch()
+    }
+
+    pub fn modal_closed(&mut self) {
+        self.modal_box.modal_closed()
+    }
+
+    pub fn modal_pending(&self) -> usize {
+        self.modal_box.modal_pending()
+    }
+
+    pub fn has_visible(&self) -> bool {
+        self.transient.has_visible()
+    }
+
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.transient.next_deadline()
+    }
+
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::replace(&mut self.dirty, false)
+    }
+
+    /// Peek the dirty flag without consuming it. The layer sync owns
+    /// consumption; the poll loop only peeks for redraw decisions.
+    pub fn dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// The single showing row (empty when idle).
     /// Status readout split into label and value. Frontends lay out
     /// the label left and the value right-aligned in a fixed-width
     /// pill, so the digits never shift when the label appears,

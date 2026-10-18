@@ -114,8 +114,13 @@ impl State {
         self.session.loaded()
     }
 
-    pub(crate) fn frame_channel(&self) -> FrameChannel {
-        self.session.frame_channel()
+    pub(crate) fn drain_routed(
+        &mut self,
+    ) -> (
+        Vec<nerust_gui_shell::session::notification::UiNotification>,
+        FrameChannel,
+    ) {
+        self.session.drain_routed()
     }
 
     pub(crate) fn paused(&self) -> bool {
@@ -132,12 +137,6 @@ impl State {
 
     pub(crate) fn take_renderer_reload_pending(&mut self) -> bool {
         std::mem::take(&mut self.renderer_reload_pending)
-    }
-
-    pub(crate) fn drain_notifications(
-        &mut self,
-    ) -> Vec<nerust_gui_shell::session::notification::UiNotification> {
-        self.session.drain_notifications()
     }
 
     pub(crate) fn notification_history_lines(
@@ -470,12 +469,18 @@ fn ensure_window(
 pub fn run(ctx: FrontendContext, _options: RunOptions) {
     // No dialog here: a GTK dialog needs the event loop, which died
     // with the panic. stderr (already logged by the guard) is the UX.
-    nerust_crash_guard::run_guarded(
+    match nerust_crash_guard::run_guarded(
         || run_inner(ctx),
         |report| {
             log::error!("{}", crash_note(report.message()));
         },
-    );
+    ) {
+        nerust_crash_guard::GuardOutcome::Completed(()) => {}
+        // A crash must never look like a clean exit.
+        nerust_crash_guard::GuardOutcome::Crashed(_) => {
+            std::process::exit(nerust_crash_guard::CRASH_EXIT_CODE)
+        }
+    }
 }
 
 /// Crash log line: the guard already logged the full report; this

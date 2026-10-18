@@ -42,14 +42,13 @@ impl GtkOsd {
         window: &gtk::ApplicationWindow,
     ) {
         let now = Instant::now();
-        let drained = state.drain_notifications();
+        let (drained, channel) = state.drain_routed();
         let snapshot = state.settings_snapshot().clone();
         let language = snapshot.shared.general.language;
         let metrics = state.emulation_status();
         let settings = snapshot.local.notifications.clone();
         if !drained.is_empty() {
             log::debug!("gtk osd: showing {} notification(s)", drained.len());
-            let channel = state.frame_channel();
             self.manager
                 .push_all(drained, &settings, language, now, channel);
         }

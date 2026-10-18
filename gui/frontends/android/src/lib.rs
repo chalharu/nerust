@@ -4,19 +4,14 @@ mod import_metadata;
 
 mod android;
 
-use std::{
-    any::Any,
-    ffi::c_void,
-    panic::{self, AssertUnwindSafe},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{ffi::c_void, rc::Rc, sync::Arc};
 
 use jni::{
     JavaVM,
     sys::{JNI_VERSION_1_6, jint},
 };
 use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_crash_guard::GuardOutcome;
 use nerust_gba_factory::GbaFactory;
 use nerust_gbc_factory::GbcFactory;
 use nerust_gui_shell::registry::SystemRegistry;
@@ -56,16 +51,6 @@ fn create_gpu_factory() -> Rc<dyn GpuFactory> {
     Rc::new(nerust_render_wgpu::WgpuFactory)
 }
 
-fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
-    if let Some(message) = payload.downcast_ref::<&'static str>() {
-        (*message).to_owned()
-    } else if let Some(message) = payload.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        "non-string panic payload".to_owned()
-    }
-}
-
 #[unsafe(no_mangle)]
 pub fn android_main(app: AndroidApp) {
     init_android_logging();
@@ -76,25 +61,26 @@ pub fn android_main(app: AndroidApp) {
         .unwrap_or_else(|| "<unavailable>".to_owned());
     log::info!("android_main: starting (internal_data_path={internal_data_path})");
 
-    match panic::catch_unwind(AssertUnwindSafe(|| {
-        let system_registry = create_system_registry();
-        let audio_registry = create_audio_registry();
-        let gpu_factory = create_gpu_factory();
-        android::run(app, system_registry, audio_registry, gpu_factory)
-    })) {
-        Ok(Ok(())) => {
+    match nerust_crash_guard::run_guarded(
+        || {
+            let system_registry = create_system_registry();
+            let audio_registry = create_audio_registry();
+            let gpu_factory = create_gpu_factory();
+            android::run(app, system_registry, audio_registry, gpu_factory)
+        },
+        // Logged by the guard already; nothing to show on a dead loop.
+        |_| {},
+    ) {
+        GuardOutcome::Completed(Ok(())) => {
             log::info!("android_main: exited cleanly");
             std::process::exit(0);
         }
-        Ok(Err(error)) => {
+        GuardOutcome::Completed(Err(error)) => {
             log::error!("android_main: frontend failed: {error:#}");
         }
-        Err(payload) => {
-            log::error!(
-                "android_main: frontend panicked: {}",
-                panic_payload_message(payload.as_ref())
-            );
-        }
+        // Crash path: logged by the guard; return to the JVM instead
+        // of exiting, as before.
+        GuardOutcome::Crashed(_) => {}
     }
 }
 

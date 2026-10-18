@@ -271,12 +271,12 @@ fn upload_frame(
             .map_or(0, |rows| rows * stride + row_bytes);
         match data.get(..need) {
             Some(bytes) => view.on_update(bytes, stride_px as i32),
-            None => Err(ViewError::Shader("frame buffer too small".to_owned())),
+            None => Err(ViewError::Frame("frame buffer too small")),
         }
     } else if stride == row_bytes {
         match data.get(..expected_frame_len) {
             Some(bytes) => view.on_update(bytes, fs.width as i32),
-            None => Err(ViewError::Shader("frame buffer too small".to_owned())),
+            None => Err(ViewError::Frame("frame buffer too small")),
         }
     } else {
         if tight.len() != expected_frame_len {
@@ -284,10 +284,10 @@ fn upload_frame(
         }
         let src_need = match stride.checked_mul(fs.height) {
             Some(need) => need,
-            None => return Err(ViewError::Shader("frame dimensions overflow".to_owned())),
+            None => return Err(ViewError::Frame("frame dimensions overflow")),
         };
         if data.len() < src_need {
-            return Err(ViewError::Shader("frame buffer too small".to_owned()));
+            return Err(ViewError::Frame("frame buffer too small"));
         }
         pack_rows_stripped(data, stride, fs.height, tight, row_bytes);
         view.on_update(tight, fs.width as i32)

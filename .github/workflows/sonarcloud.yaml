@@ -326,6 +326,37 @@ jobs:
           name: lcov-bins
           path: coverage/*.info
           retention-days: 1
+  # Non-default backend integration: render/gl is only reachable via
+  # the root crate with --features opengl, which no coverage leg builds.
+  # SonarCloud analyzes these sources either way, so the pipeline must
+  # prove they compile (standalone -p check would miss the root wiring).
+  check-opengl:
+    name: Check OpenGL backend integration
+    needs: prepare-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ needs.prepare-image.outputs.image_tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      CARGO_TERM_COLOR: always
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-all-crates: "true"
+          workspaces: |
+            . -> target
+      - name: Check root with OpenGL backend
+        run: cargo check --locked --no-default-features --features opengl,tao
   sonarcloud:
     name: SonarCloud
     needs:

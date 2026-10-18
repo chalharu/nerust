@@ -30,11 +30,12 @@ pub(crate) mod test_session;
 pub(crate) mod aux;
 pub(crate) mod runtime;
 
+use nerust_crash_guard::{CRASH_EXIT_CODE, GuardOutcome};
 use nerust_gui_shell::context::FrontendContext;
 use nerust_run_options::RunOptions;
 
 pub fn run(ctx: FrontendContext, options: RunOptions) {
-    nerust_crash_guard::run_guarded(
+    match nerust_crash_guard::run_guarded(
         || run_inner(ctx, options),
         |report| {
             // rfd spawns an external portal process, so it can still
@@ -46,7 +47,12 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
                 .set_buttons(rfd::MessageButtons::Ok)
                 .show();
         },
-    );
+    ) {
+        GuardOutcome::Completed(()) => {}
+        // A crash must never look like a clean exit; the dialog
+        // already ran in `on_crash`.
+        GuardOutcome::Crashed(_) => std::process::exit(CRASH_EXIT_CODE),
+    }
 }
 
 /// Crash dialog copy: what happened plus where details live.
