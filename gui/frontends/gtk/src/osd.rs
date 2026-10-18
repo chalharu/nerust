@@ -51,11 +51,10 @@ impl GtkOsd {
             log::debug!("gtk osd: showing {} notification(s)", drained.len());
             self.manager.push_all(drained, &settings, language, now);
         }
-        let modal = self.manager.take_modal();
-        // Auto-pause first, resume after the last ack.
-        // Guarded by can_pause; only what we paused resumes.
         let mut resume_after_modal = false;
-        if !modal.is_empty() {
+        if let Some(detail) = self.manager.take_modal_text() {
+            // Auto-pause first, guarded by can_pause.
+            // Only what we paused resumes, after the last ack.
             {
                 use nerust_gui_shell::session::access::PauseControl;
                 if state.can_pause() && !state.paused() {
@@ -63,11 +62,6 @@ impl GtkOsd {
                     resume_after_modal = true;
                 }
             }
-            let detail = modal
-                .iter()
-                .map(|line| format!("\u{2022} {line}"))
-                .collect::<Vec<_>>()
-                .join("\n");
             self.manager.queue_modal(detail);
         }
         // The batch take runs on the already-borrowed manager: the
@@ -90,8 +84,9 @@ impl GtkOsd {
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
     ) {
-        use nerust_gui_shell::session::osd::{strip_pixels, strip_rows};
+        use nerust_gui_shell::session::osd::strip_rows;
         use nerust_render_traits::ReservedStrip;
+        use nerust_render_traits::renderer::strip_pixels;
         let client_h = window.height().max(0) as u32 * window.scale_factor().max(1) as u32;
         let (top_rows, bottom_rows) = strip_rows(
             settings.area_mode,
@@ -101,8 +96,8 @@ impl GtkOsd {
             settings.status_enabled,
         );
         let strip = ReservedStrip {
-            top: strip_pixels(client_h, top_rows),
-            bottom: strip_pixels(client_h, bottom_rows),
+            top: strip_pixels(client_h, top_rows, 1.0),
+            bottom: strip_pixels(client_h, bottom_rows, 1.0),
         };
         if strip != self.last_strip {
             self.last_strip = strip;
@@ -122,7 +117,7 @@ impl GtkOsd {
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
     ) {
-        use nerust_gui_shell::session::osd::{OSD_STATUS_RGB, OsdSync, OsdSyncInput};
+        use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput};
         let scale = window.scale_factor().max(1) as u32;
         let w = window.width().max(0) as u32 * scale;
         let h = window.height().max(0) as u32 * scale;
@@ -136,34 +131,15 @@ impl GtkOsd {
                 now: Instant::now(),
                 width: w,
                 height: h,
+                ui_scale: 1.0,
+                safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
             },
         );
         match decision {
             OsdSync::Skip => {}
             OsdSync::Clear => renderer.borrow_mut().set_osd_layer(None),
             OsdSync::Render(plan) => {
-                let rows = plan
-                    .rows
-                    .iter()
-                    .map(|row| nerust_render_osd::OsdRow {
-                        tag: row.tag.to_string(),
-                        text: row.text.clone(),
-                        rgb: row.rgb,
-                    })
-                    .collect();
-                let status = plan
-                    .status
-                    .map(|(label, value)| nerust_render_osd::OsdStatus {
-                        label,
-                        value,
-                        rgb: OSD_STATUS_RGB,
-                    });
-                let content = nerust_render_osd::OsdContent {
-                    rows,
-                    status,
-                    position: plan.position,
-                    status_position: plan.status_position,
-                };
+                let content = plan.content();
                 let layer = self.raster.rasterize(&content, plan.width, plan.height);
                 renderer.borrow_mut().set_osd_layer(layer);
             }

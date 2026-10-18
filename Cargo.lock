@@ -3426,6 +3426,7 @@ dependencies = [
  "nerust_nes_factory",
  "nerust_nes_settings",
  "nerust_persistence",
+ "nerust_render_osd",
  "nerust_render_traits",
  "nerust_render_wgpu",
  "nerust_settings_core",

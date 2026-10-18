@@ -3,90 +3,44 @@
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use cosmic_text::{CacheKey, SwashContent};
-use nerust_render_traits::renderer::{OsdAnchor, OsdLayer};
+use nerust_render_traits::renderer::{
+    OsdAnchor, OsdContent, OsdLayer, OsdStatus, SafeInsets, osd_font_px,
+};
 
-/// One pill row: tag plus body in a single color.
-#[derive(Debug, Clone)]
-pub struct OsdRow {
-    pub tag: String,
-    pub text: String,
-    pub rgb: (u8, u8, u8),
-}
-
-/// Status readout: label on the left, value right-aligned in a
-/// fixed-width pill so digits never shift.
-#[derive(Debug, Clone)]
-pub struct OsdStatus {
-    pub label: String,
-    pub value: String,
-    pub rgb: (u8, u8, u8),
-}
-
-/// Raster input: transient rows plus optional status, with corners.
-#[derive(Debug, Clone, Default)]
-pub struct OsdContent {
-    pub rows: Vec<OsdRow>,
-    pub status: Option<OsdStatus>,
-    pub position: OsdAnchor,
-    pub status_position: OsdAnchor,
-}
-
-/// System font preference. cosmic-text shapes and rasterizes;
-/// this only picks the sans family (Arial is often absent on
-/// Linux, so prefer common families, then any sans-named face).
-pub struct OsdFonts {
-    sans_name: String,
-    has_fonts: bool,
-}
-
-impl OsdFonts {
-    pub fn load() -> Self {
-        let mut db = fontdb::Database::new();
-        db.load_system_fonts();
-        let has_fonts = !db.is_empty();
-        let sans_name = Self::best_sans_name(&db).unwrap_or_default();
-        if sans_name.is_empty() {
-            log::warn!("osd sans query found nothing");
-        }
-        Self {
-            sans_name,
-            has_fonts,
+/// System font preference: the shaping database doubles as the
+/// query source, so one scan serves both. Extra scan roots are a
+/// frontend concern: fontdb excludes some platforms (e.g. Android)
+/// from its system scan, so the outer layer passes them via
+/// [`OsdRaster::with_font_dirs`].
+fn best_sans_name(db: &fontdb::Database) -> Option<String> {
+    for name in [
+        "Noto Sans",
+        "DejaVu Sans",
+        "Liberation Sans",
+        "Arial",
+        "Helvetica",
+    ] {
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Name(name)],
+            ..fontdb::Query::default()
+        };
+        if db.query(&query).is_some() {
+            return Some(name.to_string());
         }
     }
-
-    fn best_sans_name(db: &fontdb::Database) -> Option<String> {
-        for name in [
-            "Noto Sans",
-            "DejaVu Sans",
-            "Liberation Sans",
-            "Arial",
-            "Helvetica",
-        ] {
-            let query = fontdb::Query {
-                families: &[fontdb::Family::Name(name)],
-                ..fontdb::Query::default()
-            };
-            if db.query(&query).is_some() {
-                return Some(name.to_string());
-            }
-        }
-        let mut names: Vec<String> = db
-            .faces()
-            .flat_map(|face| face.families.iter().map(|(family, _)| family.clone()))
-            .collect();
-        names.sort();
-        names.dedup();
-        names
-            .into_iter()
-            .find(|name| name.to_lowercase().contains("sans"))
-    }
-
-    pub fn has_fonts(&self) -> bool {
-        self.has_fonts
-    }
+    let mut names: Vec<String> = db
+        .faces()
+        .flat_map(|face| face.families.iter().map(|(family, _)| family.clone()))
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+        .into_iter()
+        .find(|name| name.to_lowercase().contains("sans"))
 }
 
-/// Fixed layout constants shared with the old overlay math.
+/// Fixed layout constants at scale 1.0, shared with the old overlay
+/// math. [`OsdRaster::ui_scale`] multiplies them for dense displays.
 const MARGIN: u32 = 8;
 const ROW_GAP: u32 = 4;
 const PILL_PAD_X: u32 = 6;
@@ -117,19 +71,54 @@ pub struct OsdRaster {
     swash: SwashCache,
     sans_name: String,
     has_fonts: bool,
+    ui_scale: f32,
+    safe_insets: SafeInsets,
 }
 
 impl OsdRaster {
     pub fn new() -> Self {
-        let fonts = OsdFonts::load();
-        let font_system = FontSystem::new();
-        let has_fonts = fonts.has_fonts();
+        Self::with_font_dirs(&[])
+    }
+
+    /// Extra font scan roots plus one scan total: the shaping
+    /// database doubles as the query source. Platform font paths
+    /// (e.g. Android's `/system/fonts`) are the caller's vocabulary.
+    pub fn with_font_dirs(dirs: &[&str]) -> Self {
+        let mut font_system = FontSystem::new();
+        for dir in dirs {
+            font_system.db_mut().load_fonts_dir(dir);
+        }
+        let db = font_system.db();
+        let has_fonts = !db.is_empty();
+        let sans_name = best_sans_name(db).unwrap_or_default();
+        if sans_name.is_empty() {
+            log::warn!("osd sans query found nothing");
+        }
         Self {
             font_system,
             swash: SwashCache::new(),
-            sans_name: fonts.sans_name,
+            sans_name,
             has_fonts,
+            ui_scale: 1.0,
+            safe_insets: SafeInsets::default(),
         }
+    }
+
+    /// Display-density scale for fonts and pill geometry (1.0 keeps
+    /// the desktop-verified size). Frontends on dense screens shrink.
+    pub fn set_ui_scale(&mut self, scale: f32) {
+        self.ui_scale = scale.clamp(0.25, 4.0);
+    }
+
+    /// Extra edge padding for rounded corners, notches, or gesture
+    /// bars. Added to the layout margin on placement; zero by default
+    /// so desktop output is unchanged.
+    pub fn set_safe_insets(&mut self, insets: SafeInsets) {
+        self.safe_insets = insets;
+    }
+
+    fn scaled(&self, px: u32) -> u32 {
+        (px as f32 * self.ui_scale + 0.5) as u32
     }
 
     pub fn has_fonts(&self) -> bool {
@@ -146,7 +135,7 @@ impl OsdRaster {
         if surface_w == 0 || surface_h == 0 || !self.has_fonts() {
             return None;
         }
-        let font_px = (f64::from(surface_h) * 0.022).ceil().max(6.0) as u32;
+        let font_px = osd_font_px(surface_h, self.ui_scale);
         let boxes = self.layout(content, font_px, surface_w, surface_h)?;
         let (min_x, min_y, max_x, max_y) =
             boxes
@@ -162,17 +151,20 @@ impl OsdRaster {
         let width = max_x - min_x;
         let height = max_y - min_y;
         let mut rgba = vec![0u8; width as usize * height as usize * 4];
+        let pad_x = self.scaled(PILL_PAD_X);
+        let gap = self.scaled(ROW_GAP);
+        let radius = self.scaled(PILL_RADIUS);
         for b in &boxes {
             let base_y = b.y - min_y;
             match &b.body {
                 RowBody::Line { span } => {
-                    draw_pill(&mut rgba, width, b.x - min_x, b.y - min_y, b.w, b.h);
-                    let baseline = centered_baseline(base_y, b.h, span.ascent, span.descent);
+                    draw_pill(&mut rgba, width, b.x - min_x, b.y - min_y, b.w, b.h, radius);
+                    let baseline = self.centered_baseline(base_y, b.h, span.ascent, span.descent);
                     self.draw_span(
                         &mut rgba,
                         width,
                         span,
-                        (b.x - min_x + PILL_PAD_X) as i32,
+                        (b.x - min_x + pad_x) as i32,
                         baseline,
                         b.rgb,
                     );
@@ -186,22 +178,22 @@ impl OsdRaster {
                 } => {
                     // Two separate pills with a margin: value stays on
                     // the margin side so digits never shift.
-                    let baseline = centered_baseline(base_y, b.h, *ascent, *descent);
-                    let outer_w = outer.span.width.ceil() as u32 + PILL_PAD_X * 2;
-                    let inner_w = inner.span.width.ceil() as u32 + PILL_PAD_X * 2;
+                    let baseline = self.centered_baseline(base_y, b.h, *ascent, *descent);
+                    let outer_w = outer.span.width.ceil() as u32 + pad_x * 2;
+                    let inner_w = inner.span.width.ceil() as u32 + pad_x * 2;
                     let cbx = (b.x - min_x) as i32;
                     let (ox, ix) = if *outer_left {
-                        (cbx, cbx + outer_w as i32 + ROW_GAP as i32)
+                        (cbx, cbx + outer_w as i32 + gap as i32)
                     } else {
                         (cbx + b.w as i32 - outer_w as i32, cbx)
                     };
-                    draw_pill(&mut rgba, width, ox as u32, base_y, outer_w, b.h);
-                    draw_pill(&mut rgba, width, ix as u32, base_y, inner_w, b.h);
+                    draw_pill(&mut rgba, width, ox as u32, base_y, outer_w, b.h, radius);
+                    draw_pill(&mut rgba, width, ix as u32, base_y, inner_w, b.h, radius);
                     self.draw_span(
                         &mut rgba,
                         width,
                         &outer.span,
-                        ox + PILL_PAD_X as i32,
+                        ox + pad_x as i32,
                         baseline,
                         b.rgb,
                     );
@@ -209,7 +201,7 @@ impl OsdRaster {
                         &mut rgba,
                         width,
                         &inner.span,
-                        ix + PILL_PAD_X as i32,
+                        ix + pad_x as i32,
                         baseline,
                         b.rgb,
                     );
@@ -299,10 +291,13 @@ impl OsdRaster {
         if !from_top {
             shaped.reverse();
         }
+        let margin = self.scaled(MARGIN);
         let mut cursor = if from_top {
-            MARGIN
+            margin + self.safe_insets.top
         } else {
-            surface_h.saturating_sub(MARGIN)
+            surface_h
+                .saturating_sub(margin)
+                .saturating_sub(self.safe_insets.bottom)
         };
         while !shaped.is_empty() {
             let end = Self::pair_width(&shaped);
@@ -313,7 +308,7 @@ impl OsdRaster {
                 .unwrap_or(0);
             for entry in shaped.drain(..end) {
                 boxes.push(PlacedRow {
-                    x: Self::anchor_x(entry.anchor, entry.w, surface_w),
+                    x: self.anchor_x(entry.anchor, entry.w, surface_w),
                     y: Self::entry_y(from_top, cursor, entry.row_h),
                     w: entry.w,
                     h: entry.row_h,
@@ -321,7 +316,7 @@ impl OsdRaster {
                     body: entry.body,
                 });
             }
-            cursor = Self::advance_cursor(from_top, cursor, row_h);
+            cursor = self.advance_cursor(from_top, cursor, row_h);
         }
     }
 
@@ -337,11 +332,14 @@ impl OsdRaster {
 
     /// Horizontal anchor: left edge pins to the margin, right edge
     /// pins the box against the margin.
-    fn anchor_x(anchor: OsdAnchor, w: u32, surface_w: u32) -> u32 {
+    fn anchor_x(&self, anchor: OsdAnchor, w: u32, surface_w: u32) -> u32 {
+        let margin = self.scaled(MARGIN);
         if anchor.is_left() {
-            MARGIN
+            margin + self.safe_insets.left
         } else {
-            surface_w.saturating_sub(w + MARGIN)
+            surface_w
+                .saturating_sub(w + margin)
+                .saturating_sub(self.safe_insets.right)
         }
     }
 
@@ -356,21 +354,23 @@ impl OsdRaster {
     }
 
     /// Cursor step past one placed row plus the inter-row margin.
-    fn advance_cursor(from_top: bool, cursor: u32, row_h: u32) -> u32 {
+    fn advance_cursor(&self, from_top: bool, cursor: u32, row_h: u32) -> u32 {
+        let gap = self.scaled(ROW_GAP);
         if from_top {
-            cursor + row_h + ROW_GAP
+            cursor + row_h + gap
         } else {
-            cursor.saturating_sub(row_h).saturating_sub(ROW_GAP)
+            cursor.saturating_sub(row_h).saturating_sub(gap)
         }
     }
 
     /// Shape one entry: intrinsic width plus row height.
     fn shape_entry(&mut self, entry: Entry, font_px: u32) -> Shaped {
+        let pad_x = self.scaled(PILL_PAD_X);
         match entry {
             Entry::Line(line, rgb, anchor) => {
                 let span = self.shape_line(&line, font_px);
                 let row_h = self.row_height(font_px, span.ascent, span.descent);
-                let w = span.width.ceil() as u32 + PILL_PAD_X * 2;
+                let w = span.width.ceil() as u32 + pad_x * 2;
                 Shaped {
                     anchor,
                     body: RowBody::Line { span },
@@ -395,7 +395,8 @@ impl OsdRaster {
         if status.label.is_empty() {
             // Solo value pill, as before.
             let row_h = self.row_height(font_px, value.ascent, value.descent);
-            let w = value.width.ceil() as u32 + PILL_PAD_X * 2;
+            let pad_x = self.scaled(PILL_PAD_X);
+            let w = value.width.ceil() as u32 + pad_x * 2;
             return Shaped {
                 anchor,
                 body: RowBody::Line { span: value },
@@ -409,8 +410,10 @@ impl OsdRaster {
         let row_h = self.row_height(font_px, ascent, descent);
         let outer = StatusSpan { span: value };
         let inner = StatusSpan { span: label };
-        let outer_w = outer.span.width.ceil() as u32 + PILL_PAD_X * 2;
-        let inner_w = inner.span.width.ceil() as u32 + PILL_PAD_X * 2;
+        let pad_x = self.scaled(PILL_PAD_X);
+        let gap = self.scaled(ROW_GAP);
+        let outer_w = outer.span.width.ceil() as u32 + pad_x * 2;
+        let inner_w = inner.span.width.ceil() as u32 + pad_x * 2;
         Shaped {
             anchor,
             body: RowBody::Pair {
@@ -421,7 +424,7 @@ impl OsdRaster {
                 outer_left: anchor.is_left(),
             },
             rgb: status.rgb,
-            w: outer_w + ROW_GAP + inner_w,
+            w: outer_w + gap + inner_w,
             row_h,
         }
     }
@@ -472,8 +475,9 @@ impl OsdRaster {
     }
 
     fn row_height(&self, font_px: u32, ascent: f32, descent: f32) -> u32 {
+        let pad_y = self.scaled(PILL_PAD_Y);
         let content_h = (ascent - descent).ceil().max(1.0) as u32;
-        (font_px * 16 / 10 + PILL_PAD_Y * 2).max(content_h + PILL_PAD_Y * 2)
+        (font_px * 16 / 10 + pad_y * 2).max(content_h + pad_y * 2)
     }
 
     /// Blit one shaped span at an integer base position.
@@ -572,10 +576,13 @@ struct StatusSpan {
 
 /// Baseline that centers the content block in the pill. The pill is
 /// taller than the text, so top-anchoring leaves the bottom empty.
-fn centered_baseline(base_y: u32, row_h: u32, ascent: f32, descent: f32) -> i32 {
-    let content_h = ascent - descent;
-    let extra = row_h as f32 - (content_h + PILL_PAD_Y as f32 * 2.0);
-    base_y as i32 + PILL_PAD_Y as i32 + (extra / 2.0).round() as i32 + ascent as i32
+impl OsdRaster {
+    fn centered_baseline(&self, base_y: u32, row_h: u32, ascent: f32, descent: f32) -> i32 {
+        let content_h = ascent - descent;
+        let pad_y = self.scaled(PILL_PAD_Y) as f32;
+        let extra = row_h as f32 - (content_h + pad_y * 2.0);
+        base_y as i32 + pad_y as i32 + (extra / 2.0).round() as i32 + ascent as i32
+    }
 }
 
 /// Straight-alpha blend of one pixel over the layer buffer.
@@ -590,8 +597,8 @@ fn blend_over(dst: &mut [u8], r: u8, g: u8, b: u8, a: u8) {
 }
 
 /// Rounded-rect pill fill on the layer (top-left origin, cropped space).
-fn draw_pill(rgba: &mut [u8], stride_w: u32, x: u32, y: u32, w: u32, h: u32) {
-    let radius = PILL_RADIUS.min(w / 2).min(h / 2) as f32;
+fn draw_pill(rgba: &mut [u8], stride_w: u32, x: u32, y: u32, w: u32, h: u32, radius: u32) {
+    let radius = radius.min(w / 2).min(h / 2) as f32;
     for row in 0..h {
         for col in 0..w {
             let px = col as f32 + 0.5;
@@ -611,6 +618,7 @@ fn draw_pill(rgba: &mut [u8], stride_w: u32, x: u32, y: u32, w: u32, h: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus, SafeInsets};
 
     fn content() -> OsdContent {
         OsdContent {
@@ -658,6 +666,28 @@ mod tests {
         // Deterministic: the glyph cache makes the second pass identical.
         let again = raster.rasterize(&content(), 960, 720).expect("cached");
         assert_eq!(layer.rgba, again.rgba);
+    }
+
+    #[test]
+    fn safe_insets_shift_the_layer_inward() {
+        let mut raster = OsdRaster::new();
+        if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
+            return;
+        }
+        let plain = raster.rasterize(&content(), 960, 720).expect("plain");
+        raster.set_safe_insets(SafeInsets {
+            top: 60,
+            right: 40,
+            bottom: 60,
+            left: 40,
+        });
+        let inset = raster.rasterize(&content(), 960, 720).expect("inset");
+        // Bottom-left anchor: the box moves right and up.
+        assert!(inset.x > plain.x);
+        assert!(inset.y < plain.y);
+        assert_eq!(inset.width, plain.width);
+        assert_eq!(inset.height, plain.height);
     }
 
     #[test]
@@ -725,8 +755,8 @@ mod tests {
             eprintln!("SKIP: no system fonts");
             return;
         }
-        let content = super::OsdContent {
-            rows: vec![super::OsdRow {
+        let content = OsdContent {
+            rows: vec![OsdRow {
                 tag: "[INFO]".to_string(),
                 text: "一時停止しました".to_string(),
                 rgb: (255, 255, 255),
@@ -745,8 +775,8 @@ mod tests {
             .count();
         assert!(lit > 50, "cjk text must produce opaque pixels, got {lit}");
         // Body-only: the tag alone must not satisfy the assert above.
-        let body = super::OsdContent {
-            rows: vec![super::OsdRow {
+        let body = OsdContent {
+            rows: vec![OsdRow {
                 tag: String::new(),
                 text: "一時停止しました".to_string(),
                 rgb: (255, 255, 255),
@@ -789,7 +819,7 @@ mod tests {
         // Value outside (margin side), label inside, tight pill.
         let content = |label: &str, value: &str, anchor: OsdAnchor| OsdContent {
             rows: Vec::new(),
-            status: Some(super::OsdStatus {
+            status: Some(OsdStatus {
                 label: label.to_string(),
                 value: value.to_string(),
                 rgb: (200, 200, 200),
@@ -854,7 +884,7 @@ mod tests {
         // fps digits hold still instead of sliding with the label.
         let content = |label: &str| OsdContent {
             rows: Vec::new(),
-            status: Some(super::OsdStatus {
+            status: Some(OsdStatus {
                 label: label.to_string(),
                 value: "60.1 fps".to_string(),
                 rgb: (200, 200, 200),
@@ -886,7 +916,7 @@ mod tests {
                 text: "Paused".to_string(),
                 rgb: (255, 255, 255),
             }],
-            status: Some(super::OsdStatus {
+            status: Some(OsdStatus {
                 label: String::new(),
                 value: "60.1 fps".to_string(),
                 rgb: (200, 200, 200),

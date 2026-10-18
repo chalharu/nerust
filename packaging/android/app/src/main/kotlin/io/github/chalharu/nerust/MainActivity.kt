@@ -36,6 +36,7 @@ import android.view.MotionEvent
 import android.view.Surface as AndroidSurface
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets as AndroidWindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.PopupWindow
@@ -161,6 +162,7 @@ private data class AndroidSetting(
     val section: String,
     val label: String,
     val choices: List<String>,
+    val edges: List<String> = emptyList(),
 )
 
 private data class AndroidSettingsSection(
@@ -274,6 +276,10 @@ class MainActivity :
     private var lastDrawerStateForTest = "not requested"
     private var lastDialogStateForTest = "not requested"
 
+    // Root-window safe insets in physical pixels, order [top, right, bottom, left].
+    // Observed only: the listener refreshes this cache, dispatch continues untouched.
+    @Volatile private var cachedSafeInsetsPx: IntArray = intArrayOf(0, 0, 0, 0)
+
     @Volatile private var lastLoadedSystemForTest: String? = null
 
     override val lifecycle: Lifecycle
@@ -300,6 +306,7 @@ class MainActivity :
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        installSafeInsetsListener()
         scheduleChromeAttach()
     }
 
@@ -714,6 +721,53 @@ class MainActivity :
      * a plain decorView child is not reliably composited above the native
      * game surface.
      */
+    /**
+     * Cached root-window safe insets in physical pixels: [top, right, bottom, left].
+     * Read by Rust every frame; the cache is refreshed on the UI thread by
+     * [installSafeInsetsListener], so this call never touches the view tree.
+     */
+    fun getSafeInsetsPx(): IntArray = cachedSafeInsetsPx
+
+    private fun installSafeInsetsListener() {
+        val decor = window?.decorView ?: return
+        decor.setOnApplyWindowInsetsListener { _, insets ->
+            cachedSafeInsetsPx = windowInsetsToSafePx(insets)
+            insets
+        }
+        decor.requestApplyInsets()
+    }
+
+    private fun windowInsetsToSafePx(insets: AndroidWindowInsets): IntArray {
+        var left = 0
+        var top = 0
+        var right = 0
+        var bottom = 0
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bars = insets.getInsets(AndroidWindowInsets.Type.systemBars())
+            left = bars.left
+            top = bars.top
+            right = bars.right
+            bottom = bars.bottom
+        } else {
+            @Suppress("DEPRECATION")
+            with(insets) {
+                left = systemWindowInsetLeft
+                top = systemWindowInsetTop
+                right = systemWindowInsetRight
+                bottom = systemWindowInsetBottom
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            insets.displayCutout?.let { cutout ->
+                left = maxOf(left, cutout.safeInsetLeft)
+                top = maxOf(top, cutout.safeInsetTop)
+                right = maxOf(right, cutout.safeInsetRight)
+                bottom = maxOf(bottom, cutout.safeInsetBottom)
+            }
+        }
+        return intArrayOf(top, right, bottom, left)
+    }
+
     fun updateFpsOverlay(fps: Float, visible: Boolean) {
         Log.d(TAG, "updateFpsOverlay: fps=$fps visible=$visible")
         fpsValue = fps
@@ -1005,13 +1059,18 @@ class MainActivity :
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
         sections: Array<String> = emptyArray(),
+        edgeStrings: Array<String> = emptyArray(),
     ) {
         showSettingsDialogInternal(
-            keys = keys,
-            labels = labels,
-            choiceStrings = choiceStrings,
-            currentIndices = currentIndices,
-            sections = sections,
+            content =
+                SettingsDialogContent(
+                    keys = keys.toList(),
+                    labels = labels.toList(),
+                    choiceStrings = choiceStrings.toList(),
+                    currentIndices = currentIndices.toList(),
+                    sections = sections.toList(),
+                    edgeStrings = edgeStrings.toList(),
+                ),
             requestId = null,
             ownedByTest = true,
         )
@@ -1052,12 +1111,22 @@ class MainActivity :
             }
         val currentIndices =
             Array(fieldDocuments.size) { fieldDocuments[it].second.getInt("value").toString() }
+        val edgeStrings =
+            Array(fieldDocuments.size) { index ->
+                fieldDocuments[index].second.optJSONArray("edges")?.let { edges ->
+                    (0 until edges.length()).joinToString("\t") { edges.getString(it) }
+                } ?: ""
+            }
         showSettingsDialogInternal(
-            keys = keys,
-            labels = labels,
-            choiceStrings = choiceStrings,
-            currentIndices = currentIndices,
-            sections = sections,
+            content =
+                SettingsDialogContent(
+                    keys = keys.toList(),
+                    labels = labels.toList(),
+                    choiceStrings = choiceStrings.toList(),
+                    currentIndices = currentIndices.toList(),
+                    sections = sections.toList(),
+                    edgeStrings = edgeStrings.toList(),
+                ),
             requestId = requestId,
             ownedByTest = false,
         )
@@ -1074,15 +1143,26 @@ class MainActivity :
         }
     }
 
+    private data class SettingsDialogContent(
+        val keys: List<String>,
+        val labels: List<String>,
+        val choiceStrings: List<String>,
+        val currentIndices: List<String>,
+        val sections: List<String>,
+        val edgeStrings: List<String>,
+    )
+
     private fun showSettingsDialogInternal(
-        keys: Array<String>,
-        labels: Array<String>,
-        choiceStrings: Array<String>,
-        currentIndices: Array<String>,
-        sections: Array<String> = emptyArray(),
+        content: SettingsDialogContent,
         requestId: Long?,
         ownedByTest: Boolean,
     ) {
+        val keys = content.keys
+        val labels = content.labels
+        val choiceStrings = content.choiceStrings
+        val currentIndices = content.currentIndices
+        val sections = content.sections
+        val edgeStrings = content.edgeStrings
         val settings =
             labels.indices.map { index ->
                 AndroidSetting(
@@ -1096,6 +1176,12 @@ class MainActivity :
                             ?.filter(String::isNotEmpty)
                             ?.ifEmpty { listOf("?") }
                             ?: listOf("?"),
+                    edges =
+                        edgeStrings
+                            .getOrNull(index)
+                            ?.split('\t')
+                            ?.filter(String::isNotEmpty)
+                            ?: emptyList(),
                 )
             }
         val initialSelections =
@@ -1829,6 +1915,9 @@ private fun NerustSettingsDialogCard(
                     .padding(WindowInsets.safeDrawing.asPaddingValues()),
         ) {
             val activeSection = sections.find { it.id == activeSectionId }
+            val visibleSettingCount =
+                activeSection
+                    ?.let { visibleSettingIndices(settings, it, selections).size }
             SettingsNavigationHeader(
                 title =
                     activeSettingIndex?.let { settings[it].label }
@@ -1837,7 +1926,7 @@ private fun NerustSettingsDialogCard(
                 subtitle =
                     when {
                         activeSettingIndex != null -> "Choose a value"
-                        activeSection != null -> settingsCountLabel(activeSection.settingIndices.size)
+                        activeSection != null -> settingsCountLabel(visibleSettingCount ?: 0)
                         else -> "Choose a category"
                     },
                 canNavigateBack = activeSection != null || activeSettingIndex != null,
@@ -1867,8 +1956,13 @@ private fun NerustSettingsDialogCard(
                 }
 
                 activeSection != null -> {
+                    val visibleSection =
+                        activeSection.copy(
+                            settingIndices =
+                                visibleSettingIndices(settings, activeSection, selections),
+                        )
                     SettingsSectionList(
-                        section = activeSection,
+                        section = visibleSection,
                         settings = settings,
                         selections = selections,
                         onSettingClick = { activeSettingIndex = it },
@@ -1924,17 +2018,18 @@ private fun SettingsCategoryList(
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         itemsIndexed(sections) { index, section ->
+            val visibleIndices = visibleSettingIndices(settings, section, selections)
             val summary =
-                section.settingIndices.take(2).joinToString(" · ") { settingIndex ->
+                visibleIndices.take(2).joinToString(" · ") { settingIndex ->
                     val setting = settings[settingIndex]
                     val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
                     "${setting.label}: $value"
                 }
             SettingsNavigationRow(
                 title = section.label,
-                value = settingsCountLabel(section.settingIndices.size),
+                value = settingsCountLabel(visibleIndices.size),
                 supportingText = summary,
-                semanticsLabel = "${section.label}: ${settingsCountLabel(section.settingIndices.size)}",
+                semanticsLabel = "${section.label}: ${settingsCountLabel(visibleIndices.size)}",
                 onClick = { onSectionClick(section.id) },
             )
             if (index < sections.lastIndex) HorizontalDivider()
@@ -2033,6 +2128,31 @@ private fun settingsSectionLabel(id: String): String =
     }
 
 private fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) "setting" else "settings"}"
+
+// Same-edge follow (mirrors desktop): the notification area mode
+// governs the edge, so the status row hides while both position
+// pickers share the top or bottom band. Edge classes come from the
+// Rust payload ("top"/"bottom" per choice); nothing here assumes
+// choice indices.
+private fun visibleSettingIndices(
+    settings: List<AndroidSetting>,
+    section: AndroidSettingsSection,
+    selections: List<Int>,
+): List<Int> {
+    val notifPos = settings.indexOfFirst { it.key == "notifications.position" }
+    val statusPos = settings.indexOfFirst { it.key == "status.position" }
+    val statusArea = settings.indexOfFirst { it.key == "status.area_mode" }
+    if (notifPos < 0 || statusPos < 0 || statusArea < 0) return section.settingIndices
+    fun edgeOf(settingIndex: Int): String {
+        val setting = settings.getOrNull(settingIndex) ?: return ""
+        return setting.edges.getOrElse(selections.getOrElse(settingIndex) { 0 }) { "" }
+    }
+    val notifEdge = edgeOf(notifPos)
+    val statusEdge = edgeOf(statusPos)
+    if (notifEdge.isEmpty() || statusEdge.isEmpty()) return section.settingIndices
+    if (notifEdge != statusEdge) return section.settingIndices
+    return section.settingIndices.filter { it != statusArea }
+}
 
 @Composable
 private fun rememberSettingsSelections(
