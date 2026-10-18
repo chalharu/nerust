@@ -120,6 +120,32 @@ pub struct SafeInsets {
     pub left: u32,
 }
 
+/// Base OSD font size from the client height. Single source for
+/// the rasterizer and strip reservation; the 6px floor keeps tiny
+/// surfaces legible on both sides.
+pub fn osd_font_px(client_height: u32, ui_scale: f32) -> u32 {
+    if client_height == 0 {
+        return 0;
+    }
+    (f64::from(client_height) * 0.022 * f64::from(ui_scale))
+        .ceil()
+        .max(6.0) as u32
+}
+
+/// Strip reservation for `rows` of OSD pills. Rounds up where the
+/// rasterizer truncates (`font_px * 16 / 10`), so the reservation
+/// always covers the layer.
+pub fn strip_pixels(client_height: u32, rows: u32, ui_scale: f32) -> u32 {
+    if rows == 0 || client_height == 0 {
+        return 0;
+    }
+    let font_px = osd_font_px(client_height, ui_scale);
+    let row = (font_px * 16).div_ceil(10) + (4.0 * ui_scale).round() as u32;
+    let margin = (8.0 * ui_scale).round() as u32;
+    let gap = (4.0 * ui_scale).round() as u32;
+    rows.saturating_mul(row) + margin + gap * rows.saturating_sub(1)
+}
+
 /// Outcome reported by [`GpuRenderer::render`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RenderResult {
@@ -193,4 +219,24 @@ pub trait GpuFactory: std::fmt::Debug {
         config: &RendererConfig,
         display_handle: RawDisplayHandle,
     ) -> Result<Box<dyn GpuRenderer>, RendererError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_pixels_matches_raster_floor_at_scale_one() {
+        assert_eq!(strip_pixels(1000, 1, 1.0), 48);
+        assert_eq!(strip_pixels(1000, 2, 1.0), 92);
+        assert_eq!(strip_pixels(0, 1, 1.0), 0);
+        assert_eq!(strip_pixels(1000, 0, 1.0), 0);
+    }
+
+    #[test]
+    fn strip_pixels_halves_with_ui_scale() {
+        // 640px surface at 0.5: font 8px, rows stay covered.
+        assert_eq!(osd_font_px(640, 0.5), 8);
+        assert_eq!(strip_pixels(640, 1, 0.5), 19);
+    }
 }

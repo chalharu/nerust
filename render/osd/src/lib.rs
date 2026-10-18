@@ -3,7 +3,9 @@
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use cosmic_text::{CacheKey, SwashContent};
-use nerust_render_traits::renderer::{OsdAnchor, OsdContent, OsdLayer, OsdStatus, SafeInsets};
+use nerust_render_traits::renderer::{
+    OsdAnchor, OsdContent, OsdLayer, OsdStatus, SafeInsets, osd_font_px,
+};
 
 /// System font preference: the shaping database doubles as the
 /// query source, so one scan serves both. Extra scan roots are a
@@ -133,9 +135,7 @@ impl OsdRaster {
         if surface_w == 0 || surface_h == 0 || !self.has_fonts() {
             return None;
         }
-        let font_px = (f64::from(surface_h) * 0.022 * f64::from(self.ui_scale))
-            .ceil()
-            .max(6.0) as u32;
+        let font_px = osd_font_px(surface_h, self.ui_scale);
         let boxes = self.layout(content, font_px, surface_w, surface_h)?;
         let (min_x, min_y, max_x, max_y) =
             boxes
@@ -395,7 +395,8 @@ impl OsdRaster {
         if status.label.is_empty() {
             // Solo value pill, as before.
             let row_h = self.row_height(font_px, value.ascent, value.descent);
-            let w = value.width.ceil() as u32 + PILL_PAD_X * 2;
+            let pad_x = self.scaled(PILL_PAD_X);
+            let w = value.width.ceil() as u32 + pad_x * 2;
             return Shaped {
                 anchor,
                 body: RowBody::Line { span: value },
