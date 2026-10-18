@@ -2,7 +2,7 @@
 //! the shell `NotificationCenter` via `run_command`; this module drains
 //! them into `OsdManager`, rasterizes the layer, and hands it to the
 //! renderer. Error batches surface as a modal dialog (frontend-driven
-//! via `take_pending_errors`); the loop never blocks, so no auto-pause.
+//! via `take_modal_batch`); the loop never blocks, so no auto-pause.
 
 use std::time::Instant;
 
@@ -90,6 +90,12 @@ impl AndroidOsd {
     /// Release the shell modal gate after the dialog is dismissed.
     pub(super) fn modal_closed(&mut self) {
         self.manager.modal_closed();
+    }
+
+    /// Re-queue a batch the user never saw (dialog preempted).
+    /// Same cap and drop-oldest discipline as the normal path.
+    pub(super) fn queue_modal(&mut self, detail: String) {
+        self.manager.queue_modal(detail);
     }
 
     /// Queued error batches still awaiting display.

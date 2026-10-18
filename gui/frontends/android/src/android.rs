@@ -502,6 +502,7 @@ struct AndroidFrontend {
     last_rumble_intensity: Option<u8>,
     osd: osd::AndroidOsd,
     error_dialog_showing: bool,
+    error_dialog_current: Option<String>,
     error_dialog_auto_paused: bool,
     settings_dialog_open: bool,
 }
@@ -586,6 +587,7 @@ impl AndroidFrontend {
             last_rumble_intensity: None,
             osd: osd::AndroidOsd::new(),
             error_dialog_showing: false,
+            error_dialog_current: None,
             error_dialog_auto_paused: false,
             settings_dialog_open: false,
         };
@@ -841,8 +843,8 @@ impl AndroidFrontend {
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult) {
         self.settings_dialog_open = false;
-        // A replaced error dialog leaves pause+queue here: flush now,
-        // release an orphaned auto-pause when nothing is up.
+        // Preempted dialog already released the shell gate on dismiss;
+        // flush the queue now, orphan auto-pause only if none is up.
         self.maybe_show_error_dialog();
         if !self.error_dialog_showing
             && self.osd.modal_pending() == 0
@@ -1013,6 +1015,8 @@ impl AndroidFrontend {
         current.prioritize_system(self.session.active_system_id());
         match settings::request_show_settings_dialog(&self.app, &current) {
             Ok(true) => {
+                // Optimistic: a Java-side show failure reports back as a
+                // normal dismiss result, which clears this flag.
                 self.settings_dialog_open = true;
             }
             Ok(false) => {
@@ -1090,6 +1094,9 @@ impl AndroidFrontend {
         let Some(detail) = self.osd.take_modal_batch() else {
             return;
         };
+        // Shell opens before the fire-and-forget request: a lost request
+        // relies on the queue cap, since no dismiss will release it.
+        self.error_dialog_current = Some(detail.clone());
         error_dialog::request_show_error_dialog(&self.app, &detail);
         self.error_dialog_showing = true;
         if self.session.can_pause() {
@@ -1103,11 +1110,15 @@ impl AndroidFrontend {
     fn handle_error_dialog_dismissed(&mut self) {
         self.error_dialog_showing = false;
         self.osd.modal_closed();
-        // A settings dialog may have replaced the error dialog: leave
-        // the pause and the queue for its close handler.
         if self.settings_dialog_open {
+            // Preempted, never acked: re-queue for the settings-close
+            // flush so the ack guarantee survives the replacement.
+            if let Some(detail) = self.error_dialog_current.take() {
+                self.osd.queue_modal(detail);
+            }
             return;
         }
+        self.error_dialog_current = None;
         if self.error_dialog_auto_paused {
             self.error_dialog_auto_paused = false;
             self.resume();
