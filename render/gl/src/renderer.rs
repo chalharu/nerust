@@ -166,15 +166,18 @@ impl GpuRenderer for GlRenderer {
                 Box::new(OpaqueError("".to_string())),
             ));
         }
-        if let Some(ref mut v) = self.view {
-            v.on_close();
-        }
+        // Build before tearing down: a failed compile keeps the old
+        // view live instead of leaving a half-closed one behind.
+        let fresh = self.fresh_view(profile)?;
         let fs = match profile.frame_format {
             VideoFrameFormat::Rgba => profile.logical_size,
             VideoFrameFormat::Palette => profile.source_logical_size,
         };
         self.expected_frame_len = fs.width * fs.height * profile.frame_format.bytes_per_pixel();
-        self.view = Some(self.fresh_view(profile)?);
+        if let Some(ref mut v) = self.view {
+            v.on_close();
+        }
+        self.view = Some(fresh);
         Ok(())
     }
 

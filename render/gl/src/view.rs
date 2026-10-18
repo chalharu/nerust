@@ -438,11 +438,17 @@ impl GlView {
                     self.osd_upload_fails = 0;
                 }
                 Err(e) => {
+                    // Sticky counter: warns once per staged content, not
+                    // per frame on a dead driver with a live ticker.
                     self.osd_upload_fails = self.osd_upload_fails.saturating_add(1);
-                    if self.osd_upload_fails > MAX_OSD_UPLOAD_RETRIES {
-                        log::warn!("GlView: dropping OSD update after repeated upload failures");
+                    if self.osd_upload_fails >= MAX_OSD_UPLOAD_RETRIES {
+                        if self.osd_upload_fails == MAX_OSD_UPLOAD_RETRIES {
+                            log::warn!("GlView: dropping OSD layer after repeated upload failures");
+                        }
+                        // Drop the stale layer: no ghost composite, and the
+                        // next identical push re-stages via the equality gate.
+                        self.osd_layer = None;
                         self.osd_dirty = false;
-                        self.osd_upload_fails = 0;
                     }
                     return Err(e);
                 }
@@ -485,8 +491,11 @@ impl GlView {
         let layer = self.osd_layer.clone();
         // Layer cleared: wipe the last rect so no ghost remains.
         let Some(layer) = layer else {
-            if let Some((px, py, pw, ph)) = self.osd_prev.take() {
+            // Wipe the last rect so no ghost remains. Retain on failure:
+            // the retry must know which rect still needs erasing.
+            if let Some((px, py, pw, ph)) = self.osd_prev {
                 Self::blit_rect(self.osd_texture, px, py, pw, ph, None)?;
+                self.osd_prev = None;
             }
             return Ok(());
         };
