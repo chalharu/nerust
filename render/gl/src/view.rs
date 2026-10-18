@@ -7,24 +7,34 @@ use nerust_render_traits::{VideoFrameFormat, VideoRenderProfile, renderer::OsdLa
 
 use crate::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
 
+/// View failures: GL call errors plus shader-pipeline errors.
+/// Converted to a warned `RenderResult::Error` at the render boundary;
+/// OSD helpers degrade to a debug log instead.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ViewError {
+    #[error(transparent)]
+    Gl(#[from] nerust_glwrap::GlError),
+    #[error("{0}")]
+    Shader(String),
+}
+
 /// GL failures surface as view errors; init and per-frame game paths
 /// `?` into this, and render() turns it into a warned `Error` outcome.
-/// OSD helpers stay best-effort (`let ... else return`) so a dead
-/// overlay never kills the game frame.
-fn ok_gl<T, E: std::fmt::Display>(result: Result<T, E>) -> Result<T, String> {
-    result.map_err(|e| e.to_string())
+/// OSD helpers degrade to a debug log instead of killing the frame.
+fn ok_gl<T>(result: Result<T, nerust_glwrap::GlError>) -> Result<T, ViewError> {
+    result.map_err(ViewError::Gl)
 }
 
 /// Bind a texture unit in one step; the active/bind pair repeats at
 /// every upload and draw site.
-fn use_texture(unit: u32, texture: u32) -> Result<(), String> {
+fn use_texture(unit: u32, texture: u32) -> Result<(), ViewError> {
     ok_gl(active_texture(gl::TEXTURE0 + unit))?;
     ok_gl(bind_texture(gl::TEXTURE_2D, texture))?;
     Ok(())
 }
 
 /// Point-sampled clamp addressing, shared by all upload textures.
-fn set_nearest_params() -> Result<(), String> {
+fn set_nearest_params() -> Result<(), ViewError> {
     ok_gl(tex_parameteri(
         gl::TEXTURE_2D,
         gl::TEXTURE_WRAP_S,
@@ -150,7 +160,7 @@ impl GlView {
         gl::load_with(get_proc_address);
     }
 
-    pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), String> {
+    pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), ViewError> {
         self.is_palette_format = render_profile.frame_format == VideoFrameFormat::Palette;
         // Palette モードでは frame data は source_logical_size、RGBA では logical_size
         let frame_size = if self.is_palette_format {
@@ -348,6 +358,7 @@ impl GlView {
         )
         .is_err()
         {
+            log::debug!("GL view OSD placeholder upload failed; overlay disabled");
             return;
         }
         self.osd_size = (1, 1);
@@ -404,85 +415,62 @@ impl GlView {
     /// Composite the staged layer over the game image, if any.
     /// Runs inside the current frame (context already current).
     /// Best-effort: a GL failure drops the overlay, never the frame.
-    pub fn draw_osd(&mut self, surface_w: i32, surface_h: i32) {
+    pub fn draw_osd(&mut self, surface_w: i32, surface_h: i32) -> Result<(), ViewError> {
         if std::mem::replace(&mut self.osd_dirty, false) {
-            self.sync_osd_texture(surface_w, surface_h);
+            self.sync_osd_texture(surface_w, surface_h)?;
         }
         let (Some(shader), Some(_)) = (self.osd_shader.as_ref(), self.osd_layer.as_ref()) else {
-            return;
+            return Ok(());
         };
-        let Ok(()) = ok_gl(shader.use_program()) else {
-            return;
-        };
-        let Ok(()) = ok_gl(uniform_matrix_4fv(
+        ok_gl(shader.use_program())?;
+        ok_gl(uniform_matrix_4fv(
             shader.get_uniform("unif_matrix"),
             1,
             gl::FALSE,
             Mat4::identity().as_ptr(),
-        )) else {
-            return;
-        };
-        let Ok(()) = ok_gl(uniform_1i(shader.get_uniform("osd_texture"), 0)) else {
-            return;
-        };
-        if use_texture(0, self.osd_texture).is_err() {
-            return;
-        };
+        ))?;
+        ok_gl(uniform_1i(shader.get_uniform("osd_texture"), 0))?;
+        use_texture(0, self.osd_texture)?;
         if self.use_vao {
             let Some(vba) = self.vba.as_ref() else {
-                return;
+                return Err(ViewError::Shader("GL view has no vertex array".to_owned()));
             };
-            if ok_gl(vba.bind_vao(|_vac| Ok(()))).is_err() {
-                return;
-            }
+            ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.vbo.as_ref() else {
-                return;
+                return Err(ViewError::Shader("GL view has no vertex buffer".to_owned()));
             };
-            if ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id)).is_err() {
-                return;
-            }
+            ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
-        let Ok(()) = ok_gl(viewport(0, 0, surface_w, surface_h)) else {
-            return;
-        };
-        let Ok(()) = ok_gl(enable(gl::BLEND)) else {
-            return;
-        };
-        let Ok(()) = ok_gl(blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA)) else {
-            return;
-        };
-        let Ok(()) = ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4)) else {
-            return;
-        };
-        let Ok(()) = ok_gl(disable(gl::BLEND)) else {
-            return;
-        };
+        ok_gl(viewport(0, 0, surface_w, surface_h))?;
+        ok_gl(enable(gl::BLEND))?;
+        ok_gl(blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA))?;
+        ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
+        ok_gl(disable(gl::BLEND))?;
+        Ok(())
     }
 
     /// Upload the staged layer into the full-surface texture.
     /// Runs only when the layer changed; the draw path only binds.
     /// Best-effort: failures keep the previous texture, never panic.
-    fn sync_osd_texture(&mut self, surface_w: i32, surface_h: i32) {
+    fn sync_osd_texture(&mut self, surface_w: i32, surface_h: i32) -> Result<(), ViewError> {
         let layer = self.osd_layer.clone();
         // Layer cleared: wipe the last rect so no ghost remains.
         let Some(layer) = layer else {
             if let Some((px, py, pw, ph)) = self.osd_prev.take() {
-                Self::blit_rect(self.osd_texture, px, py, pw, ph, None);
+                Self::blit_rect(self.osd_texture, px, py, pw, ph, None)?;
             }
-            return;
+            return Ok(());
         };
         if self.osd_texture == 0 {
-            return;
+            return Ok(());
         }
         // Full-surface texture: placement rides on texture coordinates
         // instead of small viewports (driver-quirky on some backends).
         if self.osd_size != (surface_w, surface_h) {
-            if use_texture(0, self.osd_texture).is_err() {
-                return;
-            }
+            use_texture(0, self.osd_texture)?;
             let zeros = vec![0u8; surface_w.max(1) as usize * surface_h.max(1) as usize * 4];
-            if ok_gl(tex_image_2d(
+            ok_gl(tex_image_2d(
                 gl::TEXTURE_2D,
                 0,
                 gl::RGBA as i32,
@@ -492,22 +480,18 @@ impl GlView {
                 gl::RGBA,
                 gl::UNSIGNED_BYTE,
                 zeros.as_ptr().cast(),
-            ))
-            .is_err()
-            {
-                return;
-            }
+            ))?;
             self.osd_size = (surface_w, surface_h);
         }
         if layer.width == 0 || layer.height == 0 {
-            return;
+            return Ok(());
         }
         let (w, h) = (layer.width as i32, layer.height as i32);
         // Clear the previous rect so moved/shrunk layers leave no ghosts.
         let rect = (layer.x as i32, layer.y as i32, w, h);
         if self.osd_prev != Some(rect) {
             if let Some((px, py, pw, ph)) = self.osd_prev {
-                Self::blit_rect(self.osd_texture, px, py, pw, ph, None);
+                Self::blit_rect(self.osd_texture, px, py, pw, ph, None)?;
             }
             self.osd_prev = Some(rect);
         }
@@ -523,13 +507,21 @@ impl GlView {
             w,
             h,
             Some(&padded),
-        );
+        )?;
+        Ok(())
     }
 
     /// Upload RGBA rows (or zeros) into a texture subrect.
-    /// Best-effort like the rest of the OSD path: GL failure keeps
-    /// the previous texture, never panics the frame.
-    fn blit_rect(texture: u32, x: i32, y: i32, w: i32, h: i32, rgba: Option<&[u8]>) {
+    /// Best-effort like the rest of the OSD path: the caller degrades
+    /// to a debug log instead of killing the frame.
+    fn blit_rect(
+        texture: u32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        rgba: Option<&[u8]>,
+    ) -> Result<(), ViewError> {
         let blank;
         let bytes = match rgba {
             Some(bytes) => bytes,
@@ -538,10 +530,8 @@ impl GlView {
                 &blank
             }
         };
-        if use_texture(0, texture).is_err() {
-            return;
-        }
-        let _ = ok_gl(tex_sub_image_2d(
+        use_texture(0, texture)?;
+        ok_gl(tex_sub_image_2d(
             gl::TEXTURE_2D,
             0,
             x,
@@ -551,10 +541,11 @@ impl GlView {
             gl::RGBA,
             gl::UNSIGNED_BYTE,
             bytes.as_ptr().cast(),
-        ));
+        ))?;
+        Ok(())
     }
 
-    pub fn update_palette_texture(&self, rgba8: &[u8; 256]) -> Result<(), String> {
+    pub fn update_palette_texture(&self, rgba8: &[u8; 256]) -> Result<(), ViewError> {
         if !self.is_palette_format {
             return Ok(());
         }
@@ -574,10 +565,10 @@ impl GlView {
         Ok(())
     }
 
-    pub fn on_update(&self, screen: &[u8], row_length: i32) -> Result<(), String> {
+    pub fn on_update(&self, screen: &[u8], row_length: i32) -> Result<(), ViewError> {
         let screen_ptr = screen.as_ptr().cast();
         let Some(shader) = self.shader.as_ref() else {
-            return Err("GL view has no shader program".to_owned());
+            return Err(ViewError::Shader("GL view has no shader program".to_owned()));
         };
         ok_gl(shader.use_program())?;
 
@@ -610,12 +601,12 @@ impl GlView {
 
         if self.use_vao {
             let Some(vba) = self.vba.as_ref() else {
-                return Err("GL view has no vertex array".to_owned());
+                return Err(ViewError::Shader("GL view has no vertex array".to_owned()));
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.vbo.as_ref() else {
-                return Err("GL view has no vertex buffer".to_owned());
+                return Err(ViewError::Shader("GL view has no vertex buffer".to_owned()));
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -655,7 +646,7 @@ impl GlView {
         viewport_width: i32,
         viewport_height: i32,
         strip: nerust_render_traits::ReservedStrip,
-    ) -> Result<(), String> {
+    ) -> Result<(), ViewError> {
         let height_i = viewport_height.max(0);
         let top = strip.top.min(height_i as u32) as i32;
         let bottom = strip.bottom.min(height_i as u32 - top as u32) as i32;
@@ -672,17 +663,17 @@ impl GlView {
         };
 
         let Some(shader) = self.shader.as_ref() else {
-            return Err("GL view has no shader program".to_owned());
+            return Err(ViewError::Shader("GL view has no shader program".to_owned()));
         };
         ok_gl(shader.use_program())?;
         if self.use_vao {
             let Some(vba) = self.vba.as_ref() else {
-                return Err("GL view has no vertex array".to_owned());
+                return Err(ViewError::Shader("GL view has no vertex array".to_owned()));
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.vbo.as_ref() else {
-                return Err("GL view has no vertex buffer".to_owned());
+                return Err(ViewError::Shader("GL view has no vertex buffer".to_owned()));
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -732,7 +723,7 @@ fn configure_ntsc_texture(
     width: usize,
     height: usize,
     be_data: &[u8],
-) -> Result<(), String> {
+) -> Result<(), ViewError> {
     // be_data は PALETTE_TEXTURE_WIDTH × entry_stride × 4 bytes
     let entry_count = be_data.len() / (width * 4);
     let actual_height = entry_count.max(height);
@@ -771,7 +762,7 @@ fn configure_frame_texture(
     internal_fmt: gl::types::GLint,
     data_fmt: gl::types::GLenum,
     data: &[u8],
-) -> Result<(), String> {
+) -> Result<(), ViewError> {
     use_texture(unit, texture)?;
     set_nearest_params()?;
     ok_gl(tex_image_2d(
@@ -820,7 +811,7 @@ fn compose_glsl_source(version_line: &str, extra_preamble: &[&str], parts: &[&st
     output
 }
 
-fn compile_shader_program(is_palette: bool, is_gles: bool) -> Result<Shader, String> {
+fn compile_shader_program(is_palette: bool, is_gles: bool) -> Result<Shader, ViewError> {
     let context_version = gl_string(gl::VERSION);
     let shading_version = gl_string(gl::SHADING_LANGUAGE_VERSION);
 
@@ -893,10 +884,10 @@ fn compile_shader_program(is_palette: bool, is_gles: bool) -> Result<Shader, Str
         }
     }
 
-    Err(format!(
+    Err(ViewError::Shader(format!(
         "failed to compile shader pipeline for context {context_version:?} / {shading_version:?}: {}",
         errors.join(" | ")
-    ))
+    )))
 }
 
 fn is_gles_context(version: Option<&str>) -> bool {

@@ -14,3 +14,4 @@ nerust_glwrap.workspace = true
 nerust_render_ntsc.workspace = true
 nerust_render_traits.workspace = true
 raw-window-handle.workspace = true
+thiserror.workspace = true
