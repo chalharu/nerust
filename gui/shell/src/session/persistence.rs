@@ -560,10 +560,9 @@ impl PersistenceManager {
             Err(error) => {
                 // Fail loudly: callers propagate this to the UI instead
                 // of silently dropping the in-core battery save.
-                log::warn!("mapper save failed: {error}");
-                return Err(PersistenceError::Validation(format!(
-                    "mapper save export failed: {error}"
-                )));
+                let error = PersistenceError::from(error);
+                log::warn!("{error}");
+                return Err(error);
             }
         }
         Ok(())

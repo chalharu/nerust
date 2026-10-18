@@ -12,6 +12,8 @@ pub enum PersistenceError {
     Decode(#[from] rmp_serde::decode::Error),
     #[error("msgpack encode error: {0}")]
     Encode(#[from] rmp_serde::encode::Error),
+    #[error("mapper save export failed: {0}")]
+    Export(String),
     #[error("invalid state archive: {0}")]
     Validation(String),
 }

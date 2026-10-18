@@ -154,19 +154,13 @@ impl State {
 
 impl PauseControl for State {
     fn pause(&mut self) {
-        if let Err(error) = self.session.run_command(SessionCommand::Pause) {
-            log::warn!("pause failed: {error}");
-        }
+        let _ = self.session.run_command(SessionCommand::Pause);
     }
     fn resume(&mut self) {
-        if let Err(error) = self.session.run_command(SessionCommand::Resume) {
-            log::warn!("resume failed: {error}");
-        }
+        let _ = self.session.run_command(SessionCommand::Resume);
     }
     fn toggle_pause(&mut self) {
-        if let Err(error) = self.session.run_command(SessionCommand::TogglePause) {
-            log::warn!("toggle pause failed: {error}");
-        }
+        let _ = self.session.run_command(SessionCommand::TogglePause);
     }
 }
 
@@ -184,14 +178,10 @@ impl SlotControl for State {
             .executed
     }
     fn select_next_slot(&mut self) {
-        if let Err(error) = self.session.run_command(SessionCommand::SelectNextSlot) {
-            log::warn!("select next slot failed: {error}");
-        }
+        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
     }
     fn select_previous_slot(&mut self) {
-        if let Err(error) = self.session.run_command(SessionCommand::SelectPreviousSlot) {
-            log::warn!("select previous slot failed: {error}");
-        }
+        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
     }
     fn load_slot(&mut self, slot_id: u64) -> bool {
         self.session
@@ -200,35 +190,23 @@ impl SlotControl for State {
             .executed
     }
     fn save_slot(&mut self, slot_id: u64) {
-        if let Err(error) = self.session.run_command(SessionCommand::SaveSlot(slot_id)) {
-            log::warn!("save slot failed: {error}");
-        }
+        let _ = self.session.run_command(SessionCommand::SaveSlot(slot_id));
     }
     fn delete_slot(&mut self, slot_id: u64) {
-        if let Err(error) = self
+        let _ = self
             .session
-            .run_command(SessionCommand::DeleteSlot(slot_id))
-        {
-            log::warn!("delete slot failed: {error}");
-        }
+            .run_command(SessionCommand::DeleteSlot(slot_id));
     }
     fn select_slot(&mut self, slot_id: u64) {
-        if let Err(error) = self
+        let _ = self
             .session
-            .run_command(SessionCommand::SelectActiveSlot(slot_id))
-        {
-            log::warn!("select slot failed: {error}");
-        }
+            .run_command(SessionCommand::SelectActiveSlot(slot_id));
     }
     fn create_slot(&mut self) {
-        if let Err(error) = self.session.run_command(SessionCommand::CreateSlot) {
-            log::warn!("create slot failed: {error}");
-        }
+        let _ = self.session.run_command(SessionCommand::CreateSlot);
     }
     fn reset(&mut self) {
-        if let Err(error) = self.session.run_command(SessionCommand::Reset) {
-            log::warn!("reset failed: {error}");
-        }
+        let _ = self.session.run_command(SessionCommand::Reset);
     }
 }
 

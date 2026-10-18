@@ -169,6 +169,9 @@ struct OsdItem {
     duration: Duration,
     deadline: Instant,
     /// Selection echo rows collapse latest-wins; at most one exists.
+    /// This flags one specific shell notification kind inside display
+    /// state: if a second kind ever needs latest-wins, generalize to
+    /// a replace-group enum instead of adding another bool.
     selected: bool,
 }
 
@@ -230,41 +233,29 @@ impl OsdManager {
         }
     }
 
-    /// Drop victim for a full queue: the oldest row of the lowest
-    /// severity present (Info, then Warning). Errors drop only when
-    /// every queued row is an Error (oldest first, FIFO bound).
-    fn evict_victim(pending: &mut std::collections::VecDeque<OsdItem>) {
-        let victim = pending
-            .iter()
-            .position(|item| item.level == NotificationLevel::Info)
-            .or_else(|| {
-                pending
-                    .iter()
-                    .position(|item| item.level == NotificationLevel::Warning)
-            });
-        match victim {
-            Some(index) => {
-                pending.remove(index);
+    /// Index of the drop victim: the oldest row of the lowest
+    /// severity present (Info, then Warning). Scans from the front
+    /// for normal overflow or the back for demote overflow (so the
+    /// just-demoted head survives). `None` when every queued row is
+    /// an Error (the oldest drops, FIFO bound).
+    fn victim_index(
+        pending: &std::collections::VecDeque<OsdItem>,
+        from_back: bool,
+    ) -> Option<usize> {
+        let scan = |level| {
+            if from_back {
+                pending.iter().rposition(|item| item.level == level)
+            } else {
+                pending.iter().position(|item| item.level == level)
             }
-            None => {
-                pending.pop_front();
-            }
-        }
+        };
+        scan(NotificationLevel::Info).or_else(|| scan(NotificationLevel::Warning))
     }
 
-    /// Overflow from a demote insertion: drop from the tail so the
-    /// just-demoted head survives, still never dropping an Error
-    /// while a lower severity row exists.
-    fn evict_demote_overflow(pending: &mut std::collections::VecDeque<OsdItem>) {
-        let victim = pending
-            .iter()
-            .rposition(|item| item.level == NotificationLevel::Info)
-            .or_else(|| {
-                pending
-                    .iter()
-                    .rposition(|item| item.level == NotificationLevel::Warning)
-            });
-        match victim {
+    /// Drop the overflow victim, never dropping an Error while a
+    /// lower severity row exists.
+    fn evict_overflow(pending: &mut std::collections::VecDeque<OsdItem>, from_back: bool) {
+        match Self::victim_index(pending, from_back) {
             Some(index) => {
                 pending.remove(index);
             }
@@ -320,7 +311,7 @@ impl OsdManager {
         self.current = Some(item);
         self.pending.push_front(demoted);
         while self.pending.len() > MAX_QUEUED {
-            Self::evict_demote_overflow(&mut self.pending);
+            Self::evict_overflow(&mut self.pending, true);
         }
         None
     }
@@ -343,6 +334,27 @@ impl OsdManager {
             return None;
         }
         Some(item)
+    }
+
+    /// Route one staged row through merge, preempt, and replace
+    /// policies, queuing what survives. Ownership stays inside this
+    /// dispatcher so helpers move rows instead of cloning them.
+    fn route_row(&mut self, item: OsdItem, consecutive: bool) {
+        if self.merge_consecutive(&item, consecutive) {
+            return;
+        }
+        let Some(item) = self.preempt_for_error(item) else {
+            return;
+        };
+        let Some(item) = self.replace_selected(item) else {
+            return;
+        };
+        self.pending.push_back(item);
+        // Full queue drops the lowest severity first; Errors drop
+        // only when every queued row is an Error.
+        while self.pending.len() > MAX_QUEUED {
+            Self::evict_overflow(&mut self.pending, false);
+        }
     }
 
     /// Fold drained shell notifications into display state.
@@ -395,21 +407,7 @@ impl OsdManager {
                 deadline: now + duration,
                 selected: matches!(n.kind, NotificationKind::SelectedSlot(_)),
             };
-            if self.merge_consecutive(&item, consecutive) {
-                continue;
-            }
-            let Some(item) = self.preempt_for_error(item) else {
-                continue;
-            };
-            let Some(item) = self.replace_selected(item) else {
-                continue;
-            };
-            self.pending.push_back(item);
-            // Full queue drops the lowest severity first; Errors drop
-            // only when every queued row is an Error.
-            while self.pending.len() > MAX_QUEUED {
-                Self::evict_victim(&mut self.pending);
-            }
+            self.route_row(item, consecutive);
         }
     }
 
@@ -1209,6 +1207,74 @@ mod tests {
         assert!(manager.rows()[0].text.contains("Slot 2"));
         assert!(manager.poll(now + Duration::from_millis(5_001)));
         assert!(manager.rows()[0].text.contains("Slot 3"));
+    }
+
+    #[test]
+    fn demote_overflow_sheds_tail_info_first() {
+        use super::super::notification::NotificationLevel as L;
+        let mut altered = settings();
+        altered.error_modal = false;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        let error = |slot| UiNotification {
+            level: L::Error,
+            kind: NotificationKind::SlotFailed {
+                slot,
+                reason: SlotOpFailure::Storage,
+            },
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        let info = |kind| UiNotification {
+            level: L::Info,
+            kind,
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        // Showing Info with a Warning and an Info queued (full).
+        // Errors always preempt a showing Info, so a full Error
+        // queue behind it is unreachable; the demote victim here is
+        // the tail Info.
+        manager.push_all(
+            vec![info(NotificationKind::Paused)],
+            &altered,
+            AppLanguage::English,
+            now,
+        );
+        assert!(manager.poll(now));
+        manager.push_all(
+            vec![UiNotification {
+                level: L::Warning,
+                kind: NotificationKind::SlotFailed {
+                    slot: None,
+                    reason: SlotOpFailure::Missing,
+                },
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            }],
+            &altered,
+            AppLanguage::English,
+            now,
+        );
+        manager.push_all(
+            vec![info(NotificationKind::Reset)],
+            &altered,
+            AppLanguage::English,
+            now,
+        );
+        // The Error preempts; the demote insert overflows and the
+        // tail Info drops so the demoted head survives.
+        manager.push_all(vec![error(Some(1))], &altered, AppLanguage::English, now);
+        assert_eq!(manager.rows()[0].tag, "[ERROR]");
+        assert!(manager.poll(now + Duration::from_millis(5_000)));
+        assert!(manager.rows()[0].text.contains("Paused"));
+        assert!(manager.poll(now + Duration::from_millis(7_000)));
+        assert_eq!(manager.rows()[0].tag, "[WARN]");
+        assert!(manager.poll(now + Duration::from_millis(12_000)));
+        assert!(manager.rows().is_empty());
     }
 
     #[test]
