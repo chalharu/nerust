@@ -36,6 +36,7 @@ import android.view.MotionEvent
 import android.view.Surface as AndroidSurface
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.PopupWindow
@@ -275,6 +276,10 @@ class MainActivity :
     private var lastDrawerStateForTest = "not requested"
     private var lastDialogStateForTest = "not requested"
 
+    // Root-window safe insets in physical pixels, order [top, right, bottom, left].
+    // Observed only: the listener refreshes this cache, dispatch continues untouched.
+    @Volatile private var cachedSafeInsetsPx: IntArray = intArrayOf(0, 0, 0, 0)
+
     @Volatile private var lastLoadedSystemForTest: String? = null
 
     override val lifecycle: Lifecycle
@@ -301,6 +306,7 @@ class MainActivity :
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        installSafeInsetsListener()
         scheduleChromeAttach()
     }
 
@@ -715,6 +721,53 @@ class MainActivity :
      * a plain decorView child is not reliably composited above the native
      * game surface.
      */
+    /**
+     * Cached root-window safe insets in physical pixels: [top, right, bottom, left].
+     * Read by Rust every frame; the cache is refreshed on the UI thread by
+     * [installSafeInsetsListener], so this call never touches the view tree.
+     */
+    fun getSafeInsetsPx(): IntArray = cachedSafeInsetsPx
+
+    private fun installSafeInsetsListener() {
+        val decor = window?.decorView ?: return
+        decor.setOnApplyWindowInsetsListener { _, insets ->
+            cachedSafeInsetsPx = windowInsetsToSafePx(insets)
+            insets
+        }
+        decor.requestApplyInsets()
+    }
+
+    private fun windowInsetsToSafePx(insets: WindowInsets): IntArray {
+        var left = 0
+        var top = 0
+        var right = 0
+        var bottom = 0
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bars = insets.getInsets(WindowInsets.Type.systemBars())
+            left = bars.left
+            top = bars.top
+            right = bars.right
+            bottom = bars.bottom
+        } else {
+            @Suppress("DEPRECATION")
+            with(insets) {
+                left = systemWindowInsetLeft
+                top = systemWindowInsetTop
+                right = systemWindowInsetRight
+                bottom = systemWindowInsetBottom
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            insets.displayCutout?.let { cutout ->
+                left = maxOf(left, cutout.safeInsetLeft)
+                top = maxOf(top, cutout.safeInsetTop)
+                right = maxOf(right, cutout.safeInsetRight)
+                bottom = maxOf(bottom, cutout.safeInsetBottom)
+            }
+        }
+        return intArrayOf(top, right, bottom, left)
+    }
+
     fun updateFpsOverlay(fps: Float, visible: Boolean) {
         Log.d(TAG, "updateFpsOverlay: fps=$fps visible=$visible")
         fpsValue = fps

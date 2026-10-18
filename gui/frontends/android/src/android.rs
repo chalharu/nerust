@@ -1493,7 +1493,8 @@ impl AndroidFrontend {
             .session
             .render_profile()
             .map(|profile| profile.physical_size);
-        let insets = osd::AndroidOsd::safe_insets(scale_factor, content, window_size);
+        let system = osd::AndroidOsd::query_system_insets(&self.app);
+        let insets = osd::AndroidOsd::safe_insets(scale_factor, content, window_size, system);
         let settings = self.notification_settings();
         let language = self.notification_language();
         let Some(fb) = self.session.frame_buffer() else {
