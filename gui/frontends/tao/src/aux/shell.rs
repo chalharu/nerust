@@ -167,7 +167,9 @@ impl ShellRenderer {
 /// (declaration order), since the interface borrows from the instance.
 pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     ui: Option<UserInterface<'static, P::Message, iced::Theme, Renderer>>,
-    instance: program::Instance<P>,
+    /// Boxed: the interface borrows these bytes, so the address
+    /// must survive moves of this struct (inline state would dangle).
+    instance: Box<program::Instance<P>>,
 }
 
 /// What a pumped event needs after `update`: nothing, a repaint,
@@ -194,7 +196,7 @@ pub(crate) fn pump_outcome(state: &State) -> PumpOutcome {
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     /// Borrow the instance-bound interface with a caller-local lifetime.
-    /// SAFETY: the extended `'static` never escapes; field order drops `ui` before `instance`.
+    /// SAFETY: `'static` never escapes; `Box` fixes the address, drop order kills `ui` first.
     fn build_ui(
         instance: &program::Instance<P>,
         window_id: iced::window::Id,
@@ -221,6 +223,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         bounds: Size,
         renderer: &mut Renderer,
     ) -> Self {
+        let instance = Box::new(instance);
         let ui = Self::build_ui(&instance, window_id, bounds, Cache::default(), renderer);
         Self {
             ui: Some(ui),
