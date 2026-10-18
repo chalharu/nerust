@@ -855,12 +855,9 @@ pub(crate) fn request_show_settings_dialog(
     app.run_on_java_main_thread(Box::new(move || {
         if let Err(error) = show_settings_on_java_main_thread(&callback_app, &payload) {
             log::error!("{error}");
-            with_state(|state| {
-                if state.pending_request_id == Some(request_id) {
-                    state.pending_request_id = None;
-                }
-            });
-            bridge::wake();
+            // Never shown means never dismissed: synthesize the dismiss
+            // so the frontend clears its open flag and flushes errors.
+            publish_result(request_id, SettingsDialogResult::Dismissed);
         }
     }));
     Ok(true)

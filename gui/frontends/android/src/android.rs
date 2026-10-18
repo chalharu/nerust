@@ -1094,8 +1094,8 @@ impl AndroidFrontend {
         let Some(detail) = self.osd.take_modal_batch() else {
             return;
         };
-        // Shell opens before the fire-and-forget request: a lost request
-        // relies on the queue cap, since no dismiss will release it.
+        // Shell opens before the fire-and-forget request; a failed bridge
+        // synthesizes dismiss, so the cap is a backstop, not the release.
         self.error_dialog_current = Some(detail.clone());
         error_dialog::request_show_error_dialog(&self.app, &detail);
         self.error_dialog_showing = true;
