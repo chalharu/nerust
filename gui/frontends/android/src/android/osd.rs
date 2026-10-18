@@ -43,6 +43,17 @@ pub(super) struct AndroidOsd {
     last_strip: ReservedStrip,
 }
 
+/// Per-frame sync context. Bundled so the rasterizer handoff
+/// stays narrow as new dimensions (insets, scale) arrive.
+pub(super) struct OsdSyncCtx<'a> {
+    pub session: &'a SessionHandle,
+    pub settings: &'a NotificationSettings,
+    pub language: AppLanguage,
+    pub renderer: &'a mut dyn GpuRenderer,
+    pub size: SurfaceSize,
+    pub insets: SafeInsets,
+}
+
 impl AndroidOsd {
     pub(super) fn new() -> Self {
         let mut raster = nerust_render_osd::OsdRaster::with_font_dirs(&ANDROID_FONT_DIRS);
@@ -146,15 +157,15 @@ impl AndroidOsd {
     /// Rasterize the OSD layer on change and hand it to the renderer.
     /// Also applies the reserved edge strip when settings or surface
     /// size change it.
-    pub(super) fn sync(
-        &mut self,
-        session: &SessionHandle,
-        settings: &NotificationSettings,
-        language: AppLanguage,
-        renderer: &mut dyn GpuRenderer,
-        size: SurfaceSize,
-        insets: SafeInsets,
-    ) {
+    pub(super) fn sync(&mut self, ctx: OsdSyncCtx<'_>) {
+        let OsdSyncCtx {
+            session,
+            settings,
+            language,
+            renderer,
+            size,
+            insets,
+        } = ctx;
         let strip = Self::reserved_strip(settings, size.height);
         if strip != self.last_strip {
             self.last_strip = strip;

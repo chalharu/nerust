@@ -1504,14 +1504,14 @@ impl AndroidFrontend {
             self.shell.needs_redraw = false;
             return;
         };
-        self.osd.sync(
-            &self.session,
-            &settings,
+        self.osd.sync(osd::OsdSyncCtx {
+            session: &self.session,
+            settings: &settings,
             language,
-            renderer.as_mut(),
-            window_size,
+            renderer: renderer.as_mut(),
+            size: window_size,
             insets,
-        );
+        });
         match renderer.render(fb) {
             RenderResult::Presented => {
                 self.shell
