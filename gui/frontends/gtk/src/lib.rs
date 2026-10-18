@@ -463,6 +463,20 @@ fn ensure_window(
 }
 
 pub fn run(ctx: FrontendContext, _options: RunOptions) {
+    // No dialog here: a GTK dialog needs the event loop, which died
+    // with the panic. stderr (already logged by the guard) is the UX.
+    nerust_crash_guard::run_guarded(
+        || run_inner(ctx),
+        |report| {
+            log::error!(
+                "gtk frontend crashed with no dialog available: {}",
+                report.message()
+            );
+        },
+    );
+}
+
+fn run_inner(ctx: FrontendContext) {
     let app = gtk::Application::new(
         Some("com.github.chalharu"),
         gio::ApplicationFlags::HANDLES_OPEN,

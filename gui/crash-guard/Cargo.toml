@@ -1,0 +1,10 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "nerust_crash_guard"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+log.workspace = true
