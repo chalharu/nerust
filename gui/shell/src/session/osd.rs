@@ -1423,4 +1423,135 @@ mod tests {
             OsdSync::Skip
         ));
     }
+
+    fn sync_input<'a>(
+        settings: &'a NotificationSettings,
+        now: std::time::Instant,
+        width: u32,
+        height: u32,
+        ui_scale: f32,
+        safe_insets: nerust_render_traits::renderer::SafeInsets,
+    ) -> super::OsdSyncInput<'a> {
+        super::OsdSyncInput {
+            settings,
+            language: AppLanguage::English,
+            fps: 60.0,
+            paused: false,
+            now,
+            width,
+            height,
+            ui_scale,
+            safe_insets,
+        }
+    }
+
+    #[test]
+    fn presenter_rerenders_on_chrome_change() {
+        use super::{OsdPresenter, OsdSync};
+        use nerust_render_traits::renderer::SafeInsets;
+        let mut manager = OsdManager::new();
+        let mut presenter = OsdPresenter::new();
+        let mut settings = presenter_settings();
+        settings.status_enabled = true;
+        let now = std::time::Instant::now();
+        let plain = SafeInsets::default();
+        let inset = SafeInsets {
+            top: 40,
+            right: 24,
+            bottom: 40,
+            left: 24,
+        };
+        // First frame renders the status readout.
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                sync_input(&settings, now, 960, 720, 1.0, plain)
+            ),
+            OsdSync::Render(_)
+        ));
+        // Steady inputs skip.
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                sync_input(&settings, now, 960, 720, 1.0, plain)
+            ),
+            OsdSync::Skip
+        ));
+        // Insets move the boxes: re-render without settings churn.
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                sync_input(&settings, now, 960, 720, 1.0, inset)
+            ),
+            OsdSync::Render(_)
+        ));
+        // Scale change re-renders too.
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                sync_input(&settings, now, 960, 720, 0.5, inset)
+            ),
+            OsdSync::Render(_)
+        ));
+        // Steady again skips.
+        assert!(matches!(
+            presenter.sync(
+                &mut manager,
+                sync_input(&settings, now, 960, 720, 0.5, inset)
+            ),
+            OsdSync::Skip
+        ));
+    }
+
+    #[test]
+    fn presenter_invalidate_forces_full_repush() {
+        use super::{OsdPresenter, OsdSync};
+        use nerust_render_traits::renderer::SafeInsets;
+        let mut manager = OsdManager::new();
+        let mut presenter = OsdPresenter::new();
+        let mut settings = presenter_settings();
+        settings.status_enabled = true;
+        let now = std::time::Instant::now();
+        let input = || sync_input(&settings, now, 960, 720, 1.0, SafeInsets::default());
+        assert!(matches!(
+            presenter.sync(&mut manager, input()),
+            OsdSync::Render(_)
+        ));
+        assert!(matches!(
+            presenter.sync(&mut manager, input()),
+            OsdSync::Skip
+        ));
+        presenter.invalidate();
+        assert!(matches!(
+            presenter.sync(&mut manager, input()),
+            OsdSync::Render(_)
+        ));
+    }
+
+    #[test]
+    fn take_modal_text_joins_bullets_and_drains() {
+        let mut manager = OsdManager::new();
+        assert_eq!(manager.take_modal_text(), None);
+        for slot in [1, 2] {
+            manager.push_all(
+                vec![UiNotification {
+                    level: NotificationLevel::Error,
+                    kind: NotificationKind::SlotFailed {
+                        slot: Some(slot),
+                        reason: SlotOpFailure::Storage,
+                    },
+                    count: 1,
+                    seq: 0,
+                    at: std::time::SystemTime::now(),
+                }],
+                &settings(),
+                AppLanguage::English,
+                Instant::now(),
+            );
+        }
+        let detail = manager.take_modal_text().expect("joined batch");
+        assert!(detail.lines().count() == 2);
+        assert!(detail.lines().all(|line| line.starts_with("• ")));
+        assert_eq!(manager.take_modal_text(), None);
+    }
 }

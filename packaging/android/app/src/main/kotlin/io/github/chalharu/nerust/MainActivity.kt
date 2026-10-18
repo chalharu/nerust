@@ -1014,11 +1014,7 @@ class MainActivity :
             choiceStrings = choiceStrings,
             currentIndices = currentIndices,
             sections = sections,
-            edgeLists =
-                Array(keys.size) { index ->
-                    edgeStrings.getOrNull(index)?.split('\t')?.filter(String::isNotEmpty)
-                        ?: emptyList()
-                },
+            edgeStrings = edgeStrings,
             requestId = null,
             ownedByTest = true,
         )
@@ -1059,11 +1055,11 @@ class MainActivity :
             }
         val currentIndices =
             Array(fieldDocuments.size) { fieldDocuments[it].second.getInt("value").toString() }
-        val edgeLists =
+        val edgeStrings =
             Array(fieldDocuments.size) { index ->
                 fieldDocuments[index].second.optJSONArray("edges")?.let { edges ->
-                    (0 until edges.length()).map { edges.getString(it) }
-                } ?: emptyList()
+                    (0 until edges.length()).joinToString("\t") { edges.getString(it) }
+                } ?: ""
             }
         showSettingsDialogInternal(
             keys = keys,
@@ -1071,7 +1067,7 @@ class MainActivity :
             choiceStrings = choiceStrings,
             currentIndices = currentIndices,
             sections = sections,
-            edgeLists = edgeLists,
+            edgeStrings = edgeStrings,
             requestId = requestId,
             ownedByTest = false,
         )
@@ -1094,7 +1090,7 @@ class MainActivity :
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
         sections: Array<String> = emptyArray(),
-        edgeLists: Array<List<String>> = emptyArray(),
+        edgeStrings: Array<String> = emptyArray(),
         requestId: Long?,
         ownedByTest: Boolean,
     ) {
@@ -1111,7 +1107,12 @@ class MainActivity :
                             ?.filter(String::isNotEmpty)
                             ?.ifEmpty { listOf("?") }
                             ?: listOf("?"),
-                    edges = edgeLists.getOrElse(index) { emptyList() },
+                    edges =
+                        edgeStrings
+                            .getOrNull(index)
+                            ?.split('\t')
+                            ?.filter(String::isNotEmpty)
+                            ?: emptyList(),
                 )
             }
         val initialSelections =
