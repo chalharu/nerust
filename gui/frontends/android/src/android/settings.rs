@@ -456,6 +456,11 @@ impl AndroidSettings {
                 },
             },
         ];
+        // Same edge: the notification area mode governs, so the status
+        // row would be dead. Drop it like the desktop follows-note.
+        if self.notifications_position.same_edge(self.status_position) {
+            defs.retain(|def| def.key != "status.area_mode");
+        }
         defs.extend(self.system_choices.iter().map(|choice| {
             SettingDef {
                 key: format!("system.{}.{}", choice.system_id, choice.field_id.as_str()),
@@ -476,10 +481,6 @@ impl AndroidSettings {
     }
 
     /// Stable setting keys sent to Kotlin (also used for decoding the result).
-    pub(crate) fn dialog_keys(&self) -> Vec<String> {
-        self.setting_defs().into_iter().map(|def| def.key).collect()
-    }
-
     /// Build settings from a comma-separated list of choice indices.
     /// Index N is the choice for `setting_defs()[N]`; positions must
     /// come from the same defs list. `None` on malformed input.
@@ -489,128 +490,111 @@ impl AndroidSettings {
             .map(|s| s.trim().parse::<usize>().ok())
             .collect::<Option<_>>()?;
 
-        if indices.len() != current.dialog_keys().len() {
+        // Key-driven: conditional rows (status area follows the
+        // notification edge) shift positions, so never index directly.
+        let defs = current.setting_defs();
+        if indices.len() != defs.len() {
             return None;
         }
-
-        let audio_muted = match indices[0] {
-            0 => false,
-            1 => true,
-            _ => return None,
+        let by_key = |key: &str| -> Option<usize> {
+            defs.iter()
+                .position(|def| def.key == key)
+                .and_then(|pos| indices.get(pos).copied())
         };
-        let master_volume_percent = u8::try_from(indices[1])
+        let off_on = |key: &str| -> Option<bool> {
+            match by_key(key)? {
+                0 => Some(false),
+                1 => Some(true),
+                _ => None,
+            }
+        };
+        let position = |key: &str| -> Option<NotificationPosition> {
+            match by_key(key)? {
+                0 => Some(NotificationPosition::BottomLeft),
+                1 => Some(NotificationPosition::BottomRight),
+                2 => Some(NotificationPosition::TopLeft),
+                3 => Some(NotificationPosition::TopRight),
+                _ => None,
+            }
+        };
+        let area_mode = |key: &str| -> Option<NotificationAreaMode> {
+            match by_key(key)? {
+                0 => Some(NotificationAreaMode::Overlay),
+                1 => Some(NotificationAreaMode::Strip),
+                _ => None,
+            }
+        };
+
+        let audio_muted = off_on("audio_muted")?;
+        let master_volume_percent = u8::try_from(by_key("master_volume")?)
             .ok()
             .filter(|value| *value <= VOLUME_MAX)?;
-        let latency_ms = u16::try_from(indices[2])
+        let latency_ms = u16::try_from(by_key("latency_ms")?)
             .ok()
             .filter(|value| *value <= LATENCY_MAX - LATENCY_MIN)
             .map(|value| value + LATENCY_MIN)?;
-        let sample_rate = *SAMPLE_RATE_CHOICES.get(indices[3])?;
-        let vsync = match indices[4] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let screen_orientation = match indices[5] {
+        let sample_rate = *SAMPLE_RATE_CHOICES.get(by_key("sample_rate")?)?;
+        let vsync = off_on("vsync")?;
+        let screen_orientation = match by_key("screen.orientation")? {
             0 => ScreenOrientation::Auto,
             1 => ScreenOrientation::Portrait,
             2 => ScreenOrientation::Landscape,
             _ => return None,
         };
-        let storage_policy = match indices[6] {
+        let storage_policy = match by_key("storage.policy")? {
             0 => StoragePolicy::Sidecar,
             1 => StoragePolicy::AppSharedData,
             2 => StoragePolicy::CustomDirectory,
             _ => return None,
         };
-        let overlay_visibility = match indices[7] {
+        let overlay_visibility = match by_key("controls.overlay.visibility")? {
             0 => TouchOverlayVisibility::Always,
             1 => TouchOverlayVisibility::Auto,
             2 => TouchOverlayVisibility::Hidden,
             _ => return None,
         };
-        let overlay_opacity_percent = u8::try_from(indices[8])
+        let overlay_opacity_percent = u8::try_from(by_key("controls.overlay.opacity")?)
             .ok()
             .filter(|value| *value <= 100)?;
-        let overlay_scale_percent = u8::try_from(indices[9])
+        let overlay_scale_percent = u8::try_from(by_key("controls.overlay.scale")?)
             .ok()
             .filter(|value| *value <= OVERLAY_SCALE_MAX - OVERLAY_SCALE_MIN)?
             + OVERLAY_SCALE_MIN;
-        let overlay_vertical_offset_percent = i8::try_from(indices[10])
-            .ok()
-            .filter(|value| *value <= OVERLAY_OFFSET_MAX - OVERLAY_OFFSET_MIN)?
-            + OVERLAY_OFFSET_MIN;
-        let overlay_haptics = match indices[11] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let motion_enabled = match indices[12] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let rumble_enabled = match indices[13] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let rumble_strength_percent = u8::try_from(indices[14])
+        let overlay_vertical_offset_percent =
+            i8::try_from(by_key("controls.overlay.vertical_offset")?)
+                .ok()
+                .filter(|value| *value <= OVERLAY_OFFSET_MAX - OVERLAY_OFFSET_MIN)?
+                + OVERLAY_OFFSET_MIN;
+        let overlay_haptics = off_on("controls.overlay.haptics")?;
+        let motion_enabled = off_on("controls.cartridge.motion")?;
+        let rumble_enabled = off_on("controls.cartridge.rumble")?;
+        let rumble_strength_percent = u8::try_from(by_key("controls.cartridge.rumble_strength")?)
             .ok()
             .filter(|value| *value <= 100)?;
-        let rumble_target = match indices[15] {
+        let rumble_target = match by_key("controls.cartridge.rumble_target")? {
             0 => RumbleTarget::Auto,
             1 => RumbleTarget::Handset,
             2 => RumbleTarget::Controller,
             _ => return None,
         };
-        let notifications_info_enabled = match indices[16] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let notifications_warning_enabled = match indices[17] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let notifications_error_enabled = match indices[18] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let notifications_position = match indices[19] {
-            0 => NotificationPosition::BottomLeft,
-            1 => NotificationPosition::BottomRight,
-            2 => NotificationPosition::TopLeft,
-            3 => NotificationPosition::TopRight,
-            _ => return None,
-        };
-        let notifications_area_mode = match indices[20] {
-            0 => NotificationAreaMode::Overlay,
-            1 => NotificationAreaMode::Strip,
-            _ => return None,
-        };
-        let status_enabled = match indices[21] {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let status_position = match indices[22] {
-            0 => NotificationPosition::BottomLeft,
-            1 => NotificationPosition::BottomRight,
-            2 => NotificationPosition::TopLeft,
-            3 => NotificationPosition::TopRight,
-            _ => return None,
-        };
-        let status_area_mode = match indices[23] {
-            0 => NotificationAreaMode::Overlay,
-            1 => NotificationAreaMode::Strip,
-            _ => return None,
+        let notifications_info_enabled = off_on("notifications.info")?;
+        let notifications_warning_enabled = off_on("notifications.warning")?;
+        let notifications_error_enabled = off_on("notifications.error")?;
+        let notifications_position = position("notifications.position")?;
+        let notifications_area_mode = area_mode("notifications.area_mode")?;
+        let status_enabled = off_on("status.enabled")?;
+        let status_position = position("status.position")?;
+        // Absent when same-edge (follows the notification mode):
+        // keep the current value instead of rejecting the payload.
+        let status_area_mode = match defs.iter().any(|def| def.key == "status.area_mode") {
+            true => area_mode("status.area_mode")?,
+            false => current.status_area_mode,
         };
         let mut system_choices = current.system_choices.clone();
-        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[24..]) {
-            choice.selected = choice.options.get(*selected_index)?.0.clone();
+        for choice in system_choices.iter_mut() {
+            let key = format!("system.{}.{}", choice.system_id, choice.field_id.as_str());
+            let selected_index = by_key(&key)?;
+            choice.selected = choice.options.get(selected_index)?.0.clone();
         }
 
         Some(Self {
@@ -1396,5 +1380,23 @@ mod tests {
             AndroidSettings::from_keyed_indices(&values, &current),
             Some(current)
         );
+    }
+
+    #[test]
+    fn same_edge_omits_status_area_row() {
+        let registry = registry();
+        let mut android = android_settings(&default_snapshot(), &registry);
+        android.status_position = NotificationPosition::BottomRight;
+        android.status_area_mode = NotificationAreaMode::Strip;
+        let defs = android.setting_defs();
+        assert!(defs.iter().all(|def| def.key != "status.area_mode"));
+        let raw = defs
+            .into_iter()
+            .map(|def| def.current.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let back = AndroidSettings::from_choice_indices(&raw, &android).unwrap();
+        assert_eq!(back.status_position, NotificationPosition::BottomRight);
+        assert_eq!(back.status_area_mode, NotificationAreaMode::Strip);
     }
 }
