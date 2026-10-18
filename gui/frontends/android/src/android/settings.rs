@@ -1132,7 +1132,11 @@ mod tests {
     fn dialog_payload_contains_gba_system_key() {
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
-        let keys = android.dialog_keys();
+        let keys: Vec<String> = android
+            .setting_defs()
+            .into_iter()
+            .map(|def| def.key)
+            .collect();
         assert!(keys.iter().any(|key| key.starts_with("system.gba.")));
     }
 
