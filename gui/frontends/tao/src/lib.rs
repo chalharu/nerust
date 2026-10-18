@@ -35,23 +35,19 @@ use nerust_gui_shell::context::FrontendContext;
 use nerust_run_options::RunOptions;
 
 pub fn run(ctx: FrontendContext, options: RunOptions) {
-    match nerust_crash_guard::run_guarded(
-        || run_inner(ctx, options),
-        |report| {
-            // rfd spawns an external portal process, so it can still
-            // show after the event loop died. stderr stays the log home.
-            rfd::MessageDialog::new()
-                .set_title("nerust")
-                .set_description(crash_dialog_text(report.message()))
-                .set_level(rfd::MessageLevel::Error)
-                .set_buttons(rfd::MessageButtons::Ok)
-                .show();
-        },
-    ) {
-        GuardOutcome::Completed(()) => {}
-        // A crash must never look like a clean exit; the dialog
-        // already ran in `on_crash`.
-        GuardOutcome::Crashed(_) => std::process::exit(CRASH_EXIT_CODE),
+    // A crash must never look like a clean exit; the dialog runs first.
+    if let GuardOutcome::Crashed(report) =
+        nerust_crash_guard::run_guarded(|| run_inner(ctx, options))
+    {
+        // rfd spawns an external portal process, so it can still
+        // show after the event loop died. stderr stays the log home.
+        rfd::MessageDialog::new()
+            .set_title("nerust")
+            .set_description(crash_dialog_text(report.message()))
+            .set_level(rfd::MessageLevel::Error)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+        std::process::exit(CRASH_EXIT_CODE);
     }
 }
 

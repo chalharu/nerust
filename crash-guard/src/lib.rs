@@ -51,16 +51,6 @@ impl CrashReport {
         &self.record.detail
     }
 
-    /// Thread that unwound into `run_guarded` (always the caller thread).
-    pub fn thread_name(&self) -> &str {
-        &self.record.thread
-    }
-
-    /// Captured at the catch site (approximate, not the panic site).
-    pub fn backtrace(&self) -> &str {
-        &self.record.backtrace
-    }
-
     fn from_payload(payload: &(dyn Any + Send)) -> Self {
         Self {
             record: PanicRecord::capture(payload_message(payload)),
@@ -107,19 +97,15 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
     }
 }
 
-/// Run `main` under the hook; on unwind log, offer `on_crash`, return the outcome.
-/// `on_crash` runs post-unwind on the caller thread only; it is itself catch-guarded.
-pub fn run_guarded<R>(
-    main: impl FnOnce() -> R,
-    on_crash: impl FnOnce(&CrashReport),
-) -> GuardOutcome<R> {
+/// Run `main` under the hook; on unwind log the report and return it.
+/// The outcome tells the host how to terminate; nothing is reused after a catch.
+pub fn run_guarded<R>(main: impl FnOnce() -> R) -> GuardOutcome<R> {
     install();
     match panic::catch_unwind(std::panic::AssertUnwindSafe(main)) {
         Ok(value) => GuardOutcome::Completed(value),
         Err(payload) => {
             let report = CrashReport::from_payload(payload.as_ref());
             log::error!("{report}");
-            let _ = panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_crash(&report)));
             GuardOutcome::Crashed(report)
         }
     }
@@ -142,20 +128,19 @@ mod tests {
         let text = report.to_string();
         assert!(text.contains("boom"), "{text}");
         assert!(text.contains("crashed on thread"), "{text}");
+        assert!(text.contains("backtrace:"), "{text}");
         assert_eq!(report.message(), "boom");
-        assert!(!report.thread_name().is_empty());
-        assert!(!report.backtrace().is_empty());
     }
 
     #[test]
     fn guard_returns_completed_value() {
-        let outcome = run_guarded(|| 42, |_| panic!("on_crash must not run"));
+        let outcome = run_guarded(|| 42);
         assert!(matches!(outcome, GuardOutcome::Completed(42)));
     }
 
     #[test]
     fn guard_returns_crashed_in_process() {
-        let outcome: GuardOutcome<()> = run_guarded(|| panic!("boom"), |_| {});
+        let outcome: GuardOutcome<()> = run_guarded(|| panic!("boom"));
         match outcome {
             GuardOutcome::Crashed(report) => assert_eq!(report.message(), "boom"),
             GuardOutcome::Completed(()) => panic!("crash must not complete"),

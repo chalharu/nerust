@@ -61,16 +61,12 @@ pub fn android_main(app: AndroidApp) {
         .unwrap_or_else(|| "<unavailable>".to_owned());
     log::info!("android_main: starting (internal_data_path={internal_data_path})");
 
-    match nerust_crash_guard::run_guarded(
-        || {
-            let system_registry = create_system_registry();
-            let audio_registry = create_audio_registry();
-            let gpu_factory = create_gpu_factory();
-            android::run(app, system_registry, audio_registry, gpu_factory)
-        },
-        // Logged by the guard already; nothing to show on a dead loop.
-        |_| {},
-    ) {
+    match nerust_crash_guard::run_guarded(|| {
+        let system_registry = create_system_registry();
+        let audio_registry = create_audio_registry();
+        let gpu_factory = create_gpu_factory();
+        android::run(app, system_registry, audio_registry, gpu_factory)
+    }) {
         GuardOutcome::Completed(Ok(())) => {
             log::info!("android_main: exited cleanly");
             std::process::exit(0);
