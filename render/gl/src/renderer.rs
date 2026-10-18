@@ -48,12 +48,12 @@ impl GpuRenderer for GlRenderer {
     }
 
     fn resize(&mut self, size: SurfaceSize) {
-        if let Some(ref surf) = self.gl_surface {
+        if let (Some(surf), Some(ctx)) = (self.gl_surface.as_ref(), self.context.as_ref()) {
             let (w, h) = (
-                NonZeroU32::new(size.width.max(1)).unwrap(),
-                NonZeroU32::new(size.height.max(1)).unwrap(),
+                NonZeroU32::new(size.width.max(1)).expect("clamped to at least 1"),
+                NonZeroU32::new(size.height.max(1)).expect("clamped to at least 1"),
             );
-            surf.resize(self.context.as_ref().unwrap(), w, h);
+            surf.resize(ctx, w, h);
         }
         self.size = size;
     }
@@ -89,8 +89,8 @@ impl GpuRenderer for GlRenderer {
                 .map_err(|e| RendererError::new("context", Box::new(e)))?
         };
         let (w, h) = (
-            NonZeroU32::new(size.width.max(1)).unwrap(),
-            NonZeroU32::new(size.height.max(1)).unwrap(),
+            NonZeroU32::new(size.width.max(1)).expect("clamped to at least 1"),
+            NonZeroU32::new(size.height.max(1)).expect("clamped to at least 1"),
         );
         let surf = unsafe {
             self.display
@@ -104,9 +104,9 @@ impl GpuRenderer for GlRenderer {
             .make_current(&surf)
             .map_err(|e| RendererError::new("make_current", Box::new(e)))?;
 
-        // Compile shaders.
+        // Proc names are static GL strings without interior nuls.
         GlView::load_with(|n| {
-            let c = std::ffi::CString::new(n).unwrap();
+            let c = std::ffi::CString::new(n).expect("GL proc name has no interior nul");
             self.display.get_proc_address(&c)
         });
         let mut view = GlView::new();
@@ -197,13 +197,19 @@ impl GpuRenderer for GlRenderer {
             return RenderResult::Error;
         }
 
-        view.on_resize_with_strip(
+        if let Err(e) = view.on_resize_with_strip(
             self.size.width as i32,
             self.size.height as i32,
             self.reserved,
-        );
-        if let Some(p) = frame_buffer.palette_as_rgba8() {
-            view.update_palette_texture(&p);
+        ) {
+            log::warn!("GlRenderer: resize failed: {e}");
+            return RenderResult::Error;
+        }
+        if let Some(p) = frame_buffer.palette_as_rgba8()
+            && let Err(e) = view.update_palette_texture(&p)
+        {
+            log::warn!("GlRenderer: palette upload failed: {e}");
+            return RenderResult::Error;
         }
         // Stride-padded Rgba rows (256-byte aligned) upload as-is
         // via UNPACK_ROW_LENGTH; pre-GLES3 packs into fixed staging
@@ -228,7 +234,12 @@ impl GpuRenderer for GlRenderer {
                 .checked_sub(1)
                 .map_or(0, |rows| rows * stride + row_bytes);
             match data.get(..need) {
-                Some(bytes) => view.on_update(bytes, stride_px as i32),
+                Some(bytes) => {
+                    if let Err(e) = view.on_update(bytes, stride_px as i32) {
+                        log::warn!("GlRenderer: frame upload failed: {e}");
+                        return RenderResult::Error;
+                    }
+                }
                 None => {
                     log::warn!("GlRenderer: frame buffer too small");
                     return RenderResult::Skipped;
@@ -236,7 +247,12 @@ impl GpuRenderer for GlRenderer {
             }
         } else if stride == row_bytes {
             match data.get(..self.expected_frame_len) {
-                Some(bytes) => view.on_update(bytes, fs.width as i32),
+                Some(bytes) => {
+                    if let Err(e) = view.on_update(bytes, fs.width as i32) {
+                        log::warn!("GlRenderer: frame upload failed: {e}");
+                        return RenderResult::Error;
+                    }
+                }
                 None => {
                     log::warn!("GlRenderer: frame buffer too small");
                     return RenderResult::Skipped;
@@ -258,7 +274,10 @@ impl GpuRenderer for GlRenderer {
                 return RenderResult::Skipped;
             }
             pack_rows_stripped(data, stride, fs.height, &mut self.tight, row_bytes);
-            view.on_update(&self.tight, fs.width as i32);
+            if let Err(e) = view.on_update(&self.tight, fs.width as i32) {
+                log::warn!("GlRenderer: frame upload failed: {e}");
+                return RenderResult::Error;
+            }
         };
         view.set_osd_layer(self.osd.clone());
         view.draw_osd(self.size.width as i32, self.size.height as i32);
