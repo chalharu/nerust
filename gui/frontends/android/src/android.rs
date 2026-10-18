@@ -38,14 +38,12 @@ use nerust_gui_shell::{
         SessionError, SessionHandle,
         access::{PauseControl, SessionControl, SettingsResult, SlotControl},
         commands::{SessionCommand, SessionCommandOutcome},
-        osd::{OsdManager, OsdPresenter},
     },
 };
 use nerust_input_traits::{AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent};
-use nerust_render_osd::OsdRaster;
 use nerust_render_traits::{
-    ReservedStrip, SurfaceSize,
-    renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SafeInsets},
+    SurfaceSize,
+    renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
 };
 use nerust_settings_core::model::{local::RumbleTarget, shared::StoragePolicy};
 use sha2::{Digest, Sha256};
@@ -501,11 +499,7 @@ struct AndroidFrontend {
     pending_legacy_digest: Option<[u8; 32]>,
     last_peripheral_config: Option<(bool, bool, u8, RumbleTarget)>,
     last_rumble_intensity: Option<u8>,
-    osd: OsdManager,
-    osd_raster: OsdRaster,
-    osd_presenter: OsdPresenter,
-    osd_last_strip: ReservedStrip,
-    osd_last_insets: SafeInsets,
+    osd: osd::AndroidOsd,
 }
 
 impl AndroidFrontend {
@@ -561,7 +555,7 @@ impl AndroidFrontend {
             }
         }
         let restore_pending = storage.has_restore_pending();
-        let mut frontend = Self {
+        let frontend = Self {
             app,
             session,
             storage,
@@ -586,13 +580,8 @@ impl AndroidFrontend {
             pending_legacy_digest: None,
             last_peripheral_config: None,
             last_rumble_intensity: None,
-            osd: OsdManager::new(),
-            osd_raster: OsdRaster::with_font_dirs(&osd::ANDROID_FONT_DIRS),
-            osd_presenter: OsdPresenter::new(),
-            osd_last_strip: ReservedStrip::default(),
-            osd_last_insets: SafeInsets::default(),
+            osd: osd::AndroidOsd::new(),
         };
-        frontend.osd_raster.set_ui_scale(osd::OSD_UI_SCALE);
         if frontend.lifecycle_restore_pending {
             log::info!(
                 "AndroidFrontend::new: restore_pending flag found; will attempt lifecycle state restore at foreground resume"
@@ -1215,9 +1204,7 @@ impl AndroidFrontend {
                 // Fresh renderer, empty OSD state: force re-sync of the
                 // layer, the reserved strip, and the safe area on the
                 // next frame.
-                self.osd_presenter = OsdPresenter::new();
-                self.osd_last_strip = ReservedStrip::default();
-                self.osd_last_insets = SafeInsets::default();
+                self.osd.reset();
                 self.request_redraw();
                 Some(renderer)
             }
@@ -1501,7 +1488,14 @@ impl AndroidFrontend {
         if renderer.size() != window_size {
             renderer.resize(window_size);
         }
-        self.sync_osd_layer(window_size);
+        let scale_factor = window.scale_factor() as f32;
+        let content = self
+            .session
+            .render_profile()
+            .map(|profile| profile.physical_size);
+        let insets = osd::AndroidOsd::safe_insets(scale_factor, content, window_size);
+        let settings = self.notification_settings();
+        let language = self.notification_language();
         let Some(fb) = self.session.frame_buffer() else {
             self.shell.needs_redraw = false;
             return;
@@ -1510,6 +1504,14 @@ impl AndroidFrontend {
             self.shell.needs_redraw = false;
             return;
         };
+        self.osd.sync(
+            &self.session,
+            &settings,
+            language,
+            renderer.as_mut(),
+            window_size,
+            insets,
+        );
         match renderer.render(fb) {
             RenderResult::Presented => {
                 self.shell
@@ -1524,6 +1526,14 @@ impl AndroidFrontend {
                 self.shell.needs_redraw = true;
             }
         }
+    }
+
+    fn notification_settings(&self) -> nerust_settings_core::model::local::NotificationSettings {
+        self.session.settings_snapshot().local.notifications.clone()
+    }
+
+    fn notification_language(&self) -> nerust_settings_core::model::language::AppLanguage {
+        self.session.settings_snapshot().shared.general.language
     }
 
     fn maybe_refresh_title(&mut self, now: Instant) {
@@ -1929,7 +1939,14 @@ impl ApplicationHandler for AndroidFrontend {
         }
         self.sync_cartridge_peripherals();
         self.maybe_refresh_title(now);
-        self.poll_notifications();
+        let settings = self.notification_settings();
+        let language = self.notification_language();
+        if self
+            .osd
+            .poll(&mut self.session, &settings, language, now, &self.app)
+        {
+            self.request_redraw();
+        }
 
         if let Some(window) = self.window.as_ref() {
             let frame_counter = self.session.metrics().frame_counter;
@@ -1938,7 +1955,7 @@ impl ApplicationHandler for AndroidFrontend {
             }
             // Render loop is self-sustaining via request_redraw() after each present.
             // OSD expiry still needs a wake while paused, when no frames arrive.
-            if let Some(deadline) = self.osd_wakeup() {
+            if let Some(deadline) = self.osd.wakeup() {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
             } else {
                 event_loop.set_control_flow(ControlFlow::Wait);

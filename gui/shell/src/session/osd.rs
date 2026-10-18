@@ -348,6 +348,23 @@ impl OsdManager {
         std::mem::take(&mut self.modal)
     }
 
+    /// Take pending error lines as one display batch, bulleted.
+    /// Single source for the aggregation wording: dialogs show it
+    /// as-is, Android toasts it as-is.
+    pub fn take_modal_text(&mut self) -> Option<String> {
+        let modal = self.take_modal();
+        if modal.is_empty() {
+            return None;
+        }
+        Some(
+            modal
+                .iter()
+                .map(|line| format!("• {line}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+
     /// Queue one aggregated error batch for sequential display.
     /// Capped: a stuck-open dialog plus a per-tick error flood must
     /// not grow memory without bound. Drops the oldest, like the OSD
@@ -514,6 +531,11 @@ pub struct OsdSyncInput<'a> {
     pub now: Instant,
     pub width: u32,
     pub height: u32,
+    /// Raster scale and safe insets: they move boxes without
+    /// touching settings, so the fingerprint must see them or the
+    /// gate would suppress the re-render.
+    pub ui_scale: f32,
+    pub safe_insets: nerust_render_traits::renderer::SafeInsets,
 }
 
 /// Per-frame layer decision. `Clear` is only emitted while a layer
@@ -542,12 +564,20 @@ pub struct OsdPresenter {
         NotificationAreaMode,
     )>,
     last_size: Option<(u32, u32)>,
+    last_chrome: Option<(nerust_render_traits::renderer::SafeInsets, u32)>,
     active: bool,
 }
 
 impl OsdPresenter {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Forget all sync state so the next pass re-pushes the layer
+    /// from scratch. Call after the renderer is replaced: the new
+    /// object holds no layer for the gate to skip against.
+    pub fn invalidate(&mut self) {
+        *self = Self::default();
     }
 
     /// Decide the layer action for this frame. Consumes the
@@ -565,6 +595,8 @@ impl OsdPresenter {
             now,
             width,
             height,
+            ui_scale,
+            safe_insets,
         } = input;
         if width == 0 || height == 0 {
             if self.active {
@@ -587,10 +619,13 @@ impl OsdPresenter {
             )
         });
         let status_changed = status_key != self.last_status;
-        if !dirty && !status_changed && self.last_size == Some((width, height)) {
+        let chrome = (safe_insets, ui_scale.to_bits());
+        let chrome_changed = self.last_chrome != Some(chrome);
+        if !dirty && !status_changed && !chrome_changed && self.last_size == Some((width, height)) {
             return OsdSync::Skip;
         }
         self.last_size = Some((width, height));
+        self.last_chrome = Some(chrome);
         self.last_status = status_key.clone();
         let rows = manager.rows();
         let empty = rows.is_empty() && status_key.is_none();
@@ -666,11 +701,6 @@ pub fn strip_rows(
     }
     (top[0].max(top[1]), bottom[0].max(bottom[1]))
 }
-
-/// Physical strip pixels from the client height.
-/// Re-exported from render traits: the rasterizer and reservation
-/// share one formula so the two can never drift.
-pub use nerust_render_traits::renderer::strip_pixels;
 
 #[cfg(test)]
 mod tests {
@@ -1229,14 +1259,6 @@ mod tests {
     }
 
     #[test]
-    fn strip_pixels_scale_with_client_height() {
-        assert_eq!(strip_pixels(1000, 1, 1.0), 48);
-        assert_eq!(strip_pixels(1000, 2, 1.0), 92);
-        assert_eq!(strip_pixels(0, 1, 1.0), 0);
-        assert_eq!(strip_pixels(1000, 0, 1.0), 0);
-    }
-
-    #[test]
     fn anchor_mapping_covers_all_corners() {
         use nerust_render_traits::renderer::OsdAnchor as A;
         use nerust_settings_core::model::local::NotificationPosition as P;
@@ -1268,7 +1290,9 @@ mod tests {
                     paused: false,
                     now: Instant::now(),
                     width: 960,
-                    height: 720
+                    height: 720,
+                    ui_scale: 1.0,
+                    safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
                 }
             ),
             OsdSync::Skip
@@ -1284,7 +1308,9 @@ mod tests {
                     paused: false,
                     now: Instant::now(),
                     width: 0,
-                    height: 0
+                    height: 0,
+                    ui_scale: 1.0,
+                    safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
                 }
             ),
             OsdSync::Skip
@@ -1311,6 +1337,8 @@ mod tests {
                 now,
                 width: 960,
                 height: 720,
+                ui_scale: 1.0,
+                safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
             },
         ) {
             OsdSync::Render(plan) => plan,
@@ -1332,7 +1360,9 @@ mod tests {
                     paused: false,
                     now,
                     width: 960,
-                    height: 720
+                    height: 720,
+                    ui_scale: 1.0,
+                    safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
                 }
             ),
             OsdSync::Skip
@@ -1348,7 +1378,9 @@ mod tests {
                     paused: true,
                     now,
                     width: 960,
-                    height: 720
+                    height: 720,
+                    ui_scale: 1.0,
+                    safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
                 }
             ),
             OsdSync::Render(_)
@@ -1365,7 +1397,9 @@ mod tests {
                     paused: false,
                     now,
                     width: 960,
-                    height: 720
+                    height: 720,
+                    ui_scale: 1.0,
+                    safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
                 }
             ),
             OsdSync::Clear
@@ -1381,7 +1415,9 @@ mod tests {
                     paused: false,
                     now,
                     width: 960,
-                    height: 720
+                    height: 720,
+                    ui_scale: 1.0,
+                    safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
                 }
             ),
             OsdSync::Skip

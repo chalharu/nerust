@@ -51,11 +51,10 @@ impl GtkOsd {
             log::debug!("gtk osd: showing {} notification(s)", drained.len());
             self.manager.push_all(drained, &settings, language, now);
         }
-        let modal = self.manager.take_modal();
-        // Auto-pause first, resume after the last ack.
-        // Guarded by can_pause; only what we paused resumes.
         let mut resume_after_modal = false;
-        if !modal.is_empty() {
+        if let Some(detail) = self.manager.take_modal_text() {
+            // Auto-pause first, guarded by can_pause.
+            // Only what we paused resumes, after the last ack.
             {
                 use nerust_gui_shell::session::access::PauseControl;
                 if state.can_pause() && !state.paused() {
@@ -63,11 +62,6 @@ impl GtkOsd {
                     resume_after_modal = true;
                 }
             }
-            let detail = modal
-                .iter()
-                .map(|line| format!("\u{2022} {line}"))
-                .collect::<Vec<_>>()
-                .join("\n");
             self.manager.queue_modal(detail);
         }
         // The batch take runs on the already-borrowed manager: the
@@ -90,8 +84,9 @@ impl GtkOsd {
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
     ) {
-        use nerust_gui_shell::session::osd::{strip_pixels, strip_rows};
+        use nerust_gui_shell::session::osd::strip_rows;
         use nerust_render_traits::ReservedStrip;
+        use nerust_render_traits::renderer::strip_pixels;
         let client_h = window.height().max(0) as u32 * window.scale_factor().max(1) as u32;
         let (top_rows, bottom_rows) = strip_rows(
             settings.area_mode,
@@ -136,6 +131,8 @@ impl GtkOsd {
                 now: Instant::now(),
                 width: w,
                 height: h,
+                ui_scale: 1.0,
+                safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
             },
         );
         match decision {
