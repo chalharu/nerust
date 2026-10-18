@@ -406,11 +406,51 @@ impl SoftbufferRenderer {
         }
     }
 
+    /// Tap coverage for one frame: every LUT entry the loops below
+    /// touch must exist and point inside its target. A mismatch
+    /// (stale profile, short rows) refuses the frame instead of
+    /// panicking the UI thread. Valid frames pass unchanged: no
+    /// pixel output moves.
+    fn taps_cover(
+        lut: &LutEntry,
+        dst_w: usize,
+        dst_h: usize,
+        tap_stride: usize,
+        resize_len: usize,
+        ntsc_writes: usize,
+        ntsc_len: usize,
+    ) -> bool {
+        let px = lut.lut_pixel_size();
+        if lut.x_lut.len() < dst_w.saturating_mul(px) || lut.y_lut.len() < dst_h.saturating_mul(px)
+        {
+            return false;
+        }
+        if !lut.x_lut[..dst_w.saturating_mul(px)]
+            .iter()
+            .flatten()
+            .all(|&(i, _)| (i as usize) < tap_stride)
+        {
+            return false;
+        }
+        if !lut.y_lut[..dst_h.saturating_mul(px)]
+            .iter()
+            .flatten()
+            .all(|&(i, _)| (i as usize).saturating_add(1).saturating_mul(dst_w) <= resize_len)
+        {
+            return false;
+        }
+        ntsc_writes <= ntsc_len
+    }
+
     fn palette_index(source_frame: &[u8], width: usize, x: i32, y: usize) -> u8 {
-        if x < 0 || x >= width as i32 {
+        if x < 0 || x as usize >= width {
             return BLACK_PALETTE_INDEX;
         }
-        source_frame[y * width + x as usize]
+        // Short rows render black instead of panicking the UI thread.
+        source_frame
+            .get(y.saturating_mul(width).saturating_add(x as usize))
+            .copied()
+            .unwrap_or(BLACK_PALETTE_INDEX)
     }
 
     fn clamp_impl(io: u32) -> u32 {
@@ -429,8 +469,16 @@ impl SoftbufferRenderer {
 
     fn read_entry(buf: &[u8], color: u8, row: usize) -> u32 {
         const PALETTE_WIDTH: usize = 64;
-        let offset = (row * PALETTE_WIDTH + color as usize) * 4;
-        u32::from_be_bytes(buf[offset..offset + 4].try_into().unwrap())
+        let offset = (row
+            .saturating_mul(PALETTE_WIDTH)
+            .saturating_add(color as usize))
+        .saturating_mul(4);
+        // Out-of-range palette data renders black instead of
+        // panicking the UI thread; valid entries are untouched.
+        buf.get(offset..offset.saturating_add(4))
+            .and_then(|s| s.try_into().ok())
+            .map(u32::from_be_bytes)
+            .unwrap_or(0)
     }
 
     fn simulate_gpu_ntsc_rgba(
@@ -651,6 +699,35 @@ impl GpuRenderer for SoftbufferRenderer {
                 src_stride,
                 src_h
             );
+            return RenderResult::Skipped;
+        }
+
+        // Tap coverage refuses stale-profile frames before the
+        // indexers below (warned, not fatal: same pattern as above).
+        let use_ntsc = matches!(frame.format(), PixelFormat::PaletteIndex { .. })
+            && self.render_profile.ntsc_packed_rgba8.is_some();
+        let tap_stride = if matches!(frame.format(), PixelFormat::Rgba) {
+            src_stride / 4
+        } else if use_ntsc {
+            self.render_profile.logical_size.width
+        } else {
+            src_stride
+        };
+        let ntsc_writes = if use_ntsc {
+            src_h.saturating_mul(self.render_profile.logical_size.width)
+        } else {
+            0
+        };
+        if !Self::taps_cover(
+            &self.lut,
+            dst_w,
+            avail_h,
+            tap_stride,
+            self.resize_buffer.len(),
+            ntsc_writes,
+            self.ntsc_buffer.len(),
+        ) {
+            warn!("softbuffer tap coverage mismatch: refusing frame");
             return RenderResult::Skipped;
         }
 
@@ -891,5 +968,55 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn palette_index_out_of_range_renders_black() {
+        let frame = vec![0x01u8; 4 * 4];
+        assert_eq!(SoftbufferRenderer::palette_index(&frame, 4, 1, 1), 0x01);
+        assert_eq!(
+            SoftbufferRenderer::palette_index(&frame, 4, -1, 1),
+            BLACK_PALETTE_INDEX
+        );
+        assert_eq!(
+            SoftbufferRenderer::palette_index(&frame, 4, 4, 1),
+            BLACK_PALETTE_INDEX
+        );
+        assert_eq!(
+            SoftbufferRenderer::palette_index(&frame, 4, 1, 4),
+            BLACK_PALETTE_INDEX
+        );
+    }
+
+    #[test]
+    fn read_entry_out_of_range_renders_black() {
+        let buf = vec![0xABu8; 64 * 64 * 4];
+        assert_eq!(SoftbufferRenderer::read_entry(&buf, 0, 0), 0xABAB_ABAB);
+        assert_eq!(SoftbufferRenderer::read_entry(&buf, 63, 63), 0xABAB_ABAB);
+        assert_eq!(SoftbufferRenderer::read_entry(&buf, 255, 63), 0);
+        assert_eq!(SoftbufferRenderer::read_entry(&buf, 0, 10_000), 0);
+    }
+
+    #[test]
+    fn taps_cover_accepts_well_formed_lut() {
+        let mut lut = LutEntry::new();
+        lut.resize_lut(
+            SurfaceSize {
+                width: 4,
+                height: 4,
+            },
+            1.0,
+            SurfaceSize {
+                width: 8,
+                height: 8,
+            },
+        );
+        assert!(SoftbufferRenderer::taps_cover(&lut, 8, 8, 4, 8 * 4, 0, 0));
+    }
+
+    #[test]
+    fn taps_cover_rejects_short_lut() {
+        let lut = LutEntry::new();
+        assert!(!SoftbufferRenderer::taps_cover(&lut, 8, 8, 4, 8 * 4, 0, 0));
     }
 }
