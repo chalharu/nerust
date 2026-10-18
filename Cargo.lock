@@ -3800,6 +3800,7 @@ dependencies = [
  "nerust_render_ntsc",
  "nerust_render_traits",
  "raw-window-handle",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

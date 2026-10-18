@@ -428,7 +428,13 @@ impl SoftbufferRenderer {
     /// panicking the UI thread. Valid frames pass unchanged: no
     /// pixel output moves. Only the frame-varying inputs are
     /// parameters; LUT and buffer lengths come from `self`.
-    fn taps_cover(&self, dst_w: usize, dst_h: usize, tap_stride: usize, ntsc_writes: usize) -> bool {
+    fn taps_cover(
+        &self,
+        dst_w: usize,
+        dst_h: usize,
+        tap_stride: usize,
+        ntsc_writes: usize,
+    ) -> bool {
         let px = self.lut.lut_pixel_size();
         if self.lut.x_lut.len() < dst_w.saturating_mul(px)
             || self.lut.y_lut.len() < dst_h.saturating_mul(px)
@@ -691,8 +697,7 @@ impl GpuRenderer for SoftbufferRenderer {
         // indexer below runs (warned, not fatal). Checked ahead of
         // the surface borrow: the scan only reads LUT and buffer
         // lengths, and failing fast avoids taking the buffer at all.
-        let avail_h =
-            dst_h.saturating_sub(self.reserved.height_loss(self.size.height) as usize);
+        let avail_h = dst_h.saturating_sub(self.reserved.height_loss(self.size.height) as usize);
         let src_stride = frame.stride();
         let src_h = self.render_profile.source_logical_size.height;
         let use_ntsc = matches!(frame.format(), PixelFormat::PaletteIndex { .. })

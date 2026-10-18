@@ -568,7 +568,9 @@ impl GlView {
     pub fn on_update(&self, screen: &[u8], row_length: i32) -> Result<(), ViewError> {
         let screen_ptr = screen.as_ptr().cast();
         let Some(shader) = self.shader.as_ref() else {
-            return Err(ViewError::Shader("GL view has no shader program".to_owned()));
+            return Err(ViewError::Shader(
+                "GL view has no shader program".to_owned(),
+            ));
         };
         ok_gl(shader.use_program())?;
 
@@ -663,7 +665,9 @@ impl GlView {
         };
 
         let Some(shader) = self.shader.as_ref() else {
-            return Err(ViewError::Shader("GL view has no shader program".to_owned()));
+            return Err(ViewError::Shader(
+                "GL view has no shader program".to_owned(),
+            ));
         };
         ok_gl(shader.use_program())?;
         if self.use_vao {
