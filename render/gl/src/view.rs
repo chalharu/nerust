@@ -7,6 +7,14 @@ use nerust_render_traits::{VideoFrameFormat, VideoRenderProfile, renderer::OsdLa
 
 use crate::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
 
+/// GL failures surface as view errors; init and per-frame game paths
+/// `?` into this, and render() turns it into a warned `Error` outcome.
+/// OSD helpers stay best-effort (`let ... else return`) so a dead
+/// overlay never kills the game frame.
+fn ok_gl<T, E: std::fmt::Display>(result: Result<T, E>) -> Result<T, String> {
+    result.map_err(|e| e.to_string())
+}
+
 const DIRECT_FRAGMENT_DESKTOP: &str = r#"
 uniform sampler2D frame_texture;
 in vec2 vuv;
@@ -126,11 +134,11 @@ impl GlView {
         // Stride-padded rows upload as-is via UNPACK_ROW_LENGTH
         // (desktop GL, or GLES3+); older ES repacks instead.
         self.unpack_row_length = supports_unpack_row_length(version.as_deref());
-        let shader = compile_shader_program(self.is_palette_format, is_gles);
-        shader.use_program();
-        clear_color(0.0, 0.0, 0.0, 1.0).unwrap();
+        let shader = compile_shader_program(self.is_palette_format, is_gles)?;
+        ok_gl(shader.use_program())?;
+        ok_gl(clear_color(0.0, 0.0, 0.0, 1.0))?;
 
-        pixel_storei(gl::UNPACK_ALIGNMENT, 1).unwrap();
+        ok_gl(pixel_storei(gl::UNPACK_ALIGNMENT, 1))?;
 
         // frame texture (palette 時は R8、RGBA 時は RGBA)
         let (internal_fmt, data_fmt) = if self.is_palette_format {
@@ -139,7 +147,7 @@ impl GlView {
             (gl::RGBA as GLint, gl::RGBA)
         };
         let mut tex_names = [0; 1];
-        gen_textures(1, tex_names.as_mut_ptr()).unwrap();
+        ok_gl(gen_textures(1, tex_names.as_mut_ptr()))?;
         self.frame_texture = tex_names[0];
         configure_frame_texture(
             0,
@@ -149,7 +157,7 @@ impl GlView {
             internal_fmt,
             data_fmt,
             allocate(frame_size.width * frame_size.height * bpp).as_ref(),
-        );
+        )?;
 
         // palette texture: 常に 64x1 RGBA8、ゼロ初期化。
         // 実データは render 時に FrameBuffer.palette_as_rgba8() から同期される。
@@ -159,7 +167,7 @@ impl GlView {
             let palette_data =
                 vec![0u8; self.palette_width as usize * self.palette_height as usize * 4];
             let mut pal_names = [0; 1];
-            gen_textures(1, pal_names.as_mut_ptr()).unwrap();
+            ok_gl(gen_textures(1, pal_names.as_mut_ptr()))?;
             self.palette_texture = pal_names[0];
             configure_frame_texture(
                 1,
@@ -169,15 +177,15 @@ impl GlView {
                 gl::RGBA as GLint,
                 gl::RGBA,
                 &palette_data,
-            );
-            uniform_1i(shader.get_uniform("palette_texture"), 1).unwrap();
+            )?;
+            ok_gl(uniform_1i(shader.get_uniform("palette_texture"), 1))?;
 
             // NTSC texture
             let ntsc_size = render_profile.logical_size;
             if let Some(ntsc_data) = render_profile.ntsc_packed_rgba8.as_deref() {
                 self.ntsc_enabled = true;
                 let mut ntsc_names = [0; 1];
-                gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
+                ok_gl(gen_textures(1, ntsc_names.as_mut_ptr()))?;
                 self.ntsc_texture = ntsc_names[0];
                 configure_ntsc_texture(
                     2,
@@ -185,12 +193,12 @@ impl GlView {
                     64,
                     NTSC_TEXTURE_HEIGHT as usize,
                     ntsc_data,
-                );
-                uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
+                )?;
+                ok_gl(uniform_1i(shader.get_uniform("ntsc_texture"), 2))?;
             } else {
                 // ダミー (sampler2D 未バインド防止)
                 let mut ntsc_names = [0; 1];
-                gen_textures(1, ntsc_names.as_mut_ptr()).unwrap();
+                ok_gl(gen_textures(1, ntsc_names.as_mut_ptr()))?;
                 self.ntsc_texture = ntsc_names[0];
                 let ntsc_height = NTSC_TEXTURE_HEIGHT as usize;
                 let dummy = vec![0u8; 64 * ntsc_height * 4];
@@ -202,23 +210,24 @@ impl GlView {
                     gl::RGBA as GLint,
                     gl::RGBA,
                     &dummy,
-                );
-                uniform_1i(shader.get_uniform("ntsc_texture"), 2).unwrap();
+                )?;
+                ok_gl(uniform_1i(shader.get_uniform("ntsc_texture"), 2))?;
             }
 
-            uniform_2f(
+            ok_gl(uniform_2f(
                 shader.get_uniform("source_size"),
                 render_profile.source_logical_size.width as f32,
                 render_profile.source_logical_size.height as f32,
-            )
-            .unwrap();
-            uniform_2f(
+            ))?;
+            ok_gl(uniform_2f(
                 shader.get_uniform("output_size"),
                 ntsc_size.width as f32,
                 ntsc_size.height as f32,
-            )
-            .unwrap();
-            uniform_1i(shader.get_uniform("ntsc_enabled"), self.ntsc_enabled as i32).unwrap();
+            ))?;
+            ok_gl(uniform_1i(
+                shader.get_uniform("ntsc_enabled"),
+                self.ntsc_enabled as i32,
+            ))?;
         }
 
         let vertex_data: [VertexData; 4] = [
@@ -228,66 +237,60 @@ impl GlView {
             VertexData::new(Vec2D::new(1.0, -1.0), Vec2D::new(1.0, 1.0)),
         ];
 
-        let vbo = Rc::new(VertexBuffer::from_slice(&vertex_data).unwrap());
+        let vbo = Rc::new(ok_gl(VertexBuffer::from_slice(&vertex_data))?);
         if self.use_vao {
             let vbo = vbo.clone();
-            self.vba = Some(
-                VertexArray::new(|vaic| {
-                    vaic.bind_vbo(vbo, |vac| {
-                        vac.attr_pointer(
-                            Attrib {
-                                id: shader.get_attribute("position"),
-                            },
-                            2,
-                            gl::FLOAT,
-                            16,
-                            0,
-                        )?;
-                        vac.attr_pointer(
-                            Attrib {
-                                id: shader.get_attribute("uv"),
-                            },
-                            2,
-                            gl::FLOAT,
-                            16,
-                            8,
-                        )
-                    })
+            self.vba = Some(ok_gl(VertexArray::new(|vaic| {
+                vaic.bind_vbo(vbo, |vac| {
+                    vac.attr_pointer(
+                        Attrib {
+                            id: shader.get_attribute("position"),
+                        },
+                        2,
+                        gl::FLOAT,
+                        16,
+                        0,
+                    )?;
+                    vac.attr_pointer(
+                        Attrib {
+                            id: shader.get_attribute("uv"),
+                        },
+                        2,
+                        gl::FLOAT,
+                        16,
+                        8,
+                    )
                 })
-                .unwrap(),
-            );
+            }))?);
         } else {
-            vertex_attrib_pointer(
+            ok_gl(vertex_attrib_pointer(
                 shader.get_attribute("position"),
                 2,
                 gl::FLOAT,
                 gl::FALSE,
                 16,
                 ptr::null(),
-            )
-            .unwrap();
-            enable_vertex_attrib_array(shader.get_attribute("position")).unwrap();
-            vertex_attrib_pointer(
+            ))?;
+            ok_gl(enable_vertex_attrib_array(shader.get_attribute("position")))?;
+            ok_gl(vertex_attrib_pointer(
                 shader.get_attribute("uv"),
                 2,
                 gl::FLOAT,
                 gl::FALSE,
                 16,
                 8 as *const c_void,
-            )
-            .unwrap();
-            enable_vertex_attrib_array(shader.get_attribute("uv")).unwrap();
+            ))?;
+            ok_gl(enable_vertex_attrib_array(shader.get_attribute("uv")))?;
             self.vbo = Some(vbo.clone());
         }
 
-        uniform_matrix_4fv(
+        ok_gl(uniform_matrix_4fv(
             shader.get_uniform("unif_matrix"),
             1,
             gl::FALSE,
             Mat4::identity().as_ptr(),
-        )
-        .unwrap();
-        uniform_1i(shader.get_uniform("frame_texture"), 0).unwrap();
+        ))?;
+        ok_gl(uniform_1i(shader.get_uniform("frame_texture"), 0))?;
         self.shader = Some(shader);
         self.init_osd(is_gles);
         Ok(())
@@ -301,7 +304,7 @@ impl GlView {
             return;
         }
         self.osd_texture = names[0];
-        configure_frame_texture(
+        if configure_frame_texture(
             0,
             self.osd_texture,
             1,
@@ -309,7 +312,11 @@ impl GlView {
             gl::RGBA as i32,
             gl::RGBA,
             &[0, 0, 0, 0],
-        );
+        )
+        .is_err()
+        {
+            return;
+        }
         self.osd_size = (1, 1);
         let candidates: Vec<(&str, String, String)> = if is_gles {
             vec![
@@ -363,6 +370,7 @@ impl GlView {
 
     /// Composite the staged layer over the game image, if any.
     /// Runs inside the current frame (context already current).
+    /// Best-effort: a GL failure drops the overlay, never the frame.
     pub fn draw_osd(&mut self, surface_w: i32, surface_h: i32) {
         if std::mem::replace(&mut self.osd_dirty, false) {
             self.sync_osd_texture(surface_w, surface_h);
@@ -370,31 +378,61 @@ impl GlView {
         let (Some(shader), Some(_)) = (self.osd_shader.as_ref(), self.osd_layer.as_ref()) else {
             return;
         };
-        shader.use_program();
-        uniform_matrix_4fv(
+        let Ok(()) = ok_gl(shader.use_program()) else {
+            return;
+        };
+        let Ok(()) = ok_gl(uniform_matrix_4fv(
             shader.get_uniform("unif_matrix"),
             1,
             gl::FALSE,
             Mat4::identity().as_ptr(),
-        )
-        .unwrap();
-        uniform_1i(shader.get_uniform("osd_texture"), 0).unwrap();
-        active_texture(gl::TEXTURE0).unwrap();
-        bind_texture(gl::TEXTURE_2D, self.osd_texture).unwrap();
+        )) else {
+            return;
+        };
+        let Ok(()) = ok_gl(uniform_1i(shader.get_uniform("osd_texture"), 0)) else {
+            return;
+        };
+        let Ok(()) = ok_gl(active_texture(gl::TEXTURE0)) else {
+            return;
+        };
+        let Ok(()) = ok_gl(bind_texture(gl::TEXTURE_2D, self.osd_texture)) else {
+            return;
+        };
         if self.use_vao {
-            self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();
+            let Some(vba) = self.vba.as_ref() else {
+                return;
+            };
+            if ok_gl(vba.bind_vao(|_vac| Ok(()))).is_err() {
+                return;
+            }
         } else {
-            bind_buffer(gl::ARRAY_BUFFER, self.vbo.as_ref().unwrap().id).unwrap();
+            let Some(vbo) = self.vbo.as_ref() else {
+                return;
+            };
+            if ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id)).is_err() {
+                return;
+            }
         }
-        viewport(0, 0, surface_w, surface_h).unwrap();
-        enable(gl::BLEND).unwrap();
-        blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA).unwrap();
-        draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
-        disable(gl::BLEND).unwrap();
+        let Ok(()) = ok_gl(viewport(0, 0, surface_w, surface_h)) else {
+            return;
+        };
+        let Ok(()) = ok_gl(enable(gl::BLEND)) else {
+            return;
+        };
+        let Ok(()) = ok_gl(blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA)) else {
+            return;
+        };
+        let Ok(()) = ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4)) else {
+            return;
+        };
+        let Ok(()) = ok_gl(disable(gl::BLEND)) else {
+            return;
+        };
     }
 
     /// Upload the staged layer into the full-surface texture.
     /// Runs only when the layer changed; the draw path only binds.
+    /// Best-effort: failures keep the previous texture, never panic.
     fn sync_osd_texture(&mut self, surface_w: i32, surface_h: i32) {
         let layer = self.osd_layer.clone();
         // Layer cleared: wipe the last rect so no ghost remains.
@@ -410,10 +448,13 @@ impl GlView {
         // Full-surface texture: placement rides on texture coordinates
         // instead of small viewports (driver-quirky on some backends).
         if self.osd_size != (surface_w, surface_h) {
-            active_texture(gl::TEXTURE0).unwrap();
-            bind_texture(gl::TEXTURE_2D, self.osd_texture).unwrap();
+            if ok_gl(active_texture(gl::TEXTURE0)).is_err()
+                || ok_gl(bind_texture(gl::TEXTURE_2D, self.osd_texture)).is_err()
+            {
+                return;
+            }
             let zeros = vec![0u8; surface_w.max(1) as usize * surface_h.max(1) as usize * 4];
-            tex_image_2d(
+            if ok_gl(tex_image_2d(
                 gl::TEXTURE_2D,
                 0,
                 gl::RGBA as i32,
@@ -423,8 +464,11 @@ impl GlView {
                 gl::RGBA,
                 gl::UNSIGNED_BYTE,
                 zeros.as_ptr().cast(),
-            )
-            .unwrap();
+            ))
+            .is_err()
+            {
+                return;
+            }
             self.osd_size = (surface_w, surface_h);
         }
         if layer.width == 0 || layer.height == 0 {
@@ -455,6 +499,8 @@ impl GlView {
     }
 
     /// Upload RGBA rows (or zeros) into a texture subrect.
+    /// Best-effort like the rest of the OSD path: GL failure keeps
+    /// the previous texture, never panics the frame.
     fn blit_rect(texture: u32, x: i32, y: i32, w: i32, h: i32, rgba: Option<&[u8]>) {
         let blank;
         let bytes = match rgba {
@@ -464,9 +510,12 @@ impl GlView {
                 &blank
             }
         };
-        active_texture(gl::TEXTURE0).unwrap();
-        bind_texture(gl::TEXTURE_2D, texture).unwrap();
-        tex_sub_image_2d(
+        if ok_gl(active_texture(gl::TEXTURE0)).is_err()
+            || ok_gl(bind_texture(gl::TEXTURE_2D, texture)).is_err()
+        {
+            return;
+        }
+        let _ = ok_gl(tex_sub_image_2d(
             gl::TEXTURE_2D,
             0,
             x,
@@ -476,17 +525,16 @@ impl GlView {
             gl::RGBA,
             gl::UNSIGNED_BYTE,
             bytes.as_ptr().cast(),
-        )
-        .unwrap();
+        ));
     }
 
-    pub fn update_palette_texture(&self, rgba8: &[u8; 256]) {
+    pub fn update_palette_texture(&self, rgba8: &[u8; 256]) -> Result<(), String> {
         if !self.is_palette_format {
-            return;
+            return Ok(());
         }
-        active_texture(gl::TEXTURE1).unwrap();
-        bind_texture(gl::TEXTURE_2D, self.palette_texture).unwrap();
-        tex_sub_image_2d(
+        ok_gl(active_texture(gl::TEXTURE1))?;
+        ok_gl(bind_texture(gl::TEXTURE_2D, self.palette_texture))?;
+        ok_gl(tex_sub_image_2d(
             gl::TEXTURE_2D,
             0,
             0,
@@ -496,33 +544,36 @@ impl GlView {
             gl::RGBA,
             gl::UNSIGNED_BYTE,
             rgba8.as_ptr().cast(),
-        )
-        .unwrap();
-        active_texture(gl::TEXTURE0).unwrap();
+        ))?;
+        ok_gl(active_texture(gl::TEXTURE0))?;
+        Ok(())
     }
 
-    pub fn on_update(&self, screen: &[u8], row_length: i32) {
+    pub fn on_update(&self, screen: &[u8], row_length: i32) -> Result<(), String> {
         let screen_ptr = screen.as_ptr().cast();
-        self.shader.as_ref().unwrap().use_program();
+        let Some(shader) = self.shader.as_ref() else {
+            return Err("GL view has no shader program".to_owned());
+        };
+        ok_gl(shader.use_program())?;
 
-        active_texture(gl::TEXTURE0).unwrap();
-        bind_texture(gl::TEXTURE_2D, self.frame_texture).unwrap();
+        ok_gl(active_texture(gl::TEXTURE0))?;
+        ok_gl(bind_texture(gl::TEXTURE_2D, self.frame_texture))?;
 
         // Padded rows upload as-is; row length is global pixel-store
         // state, so restore the default right after the upload.
         let padded = row_length != self.logical_width;
         if padded {
-            pixel_storei(gl::UNPACK_ROW_LENGTH, row_length).unwrap();
+            ok_gl(pixel_storei(gl::UNPACK_ROW_LENGTH, row_length))?;
         }
 
         if self.is_palette_format {
-            active_texture(gl::TEXTURE1).unwrap();
-            bind_texture(gl::TEXTURE_2D, self.palette_texture).unwrap();
-            active_texture(gl::TEXTURE2).unwrap();
-            bind_texture(gl::TEXTURE_2D, self.ntsc_texture).unwrap();
+            ok_gl(active_texture(gl::TEXTURE1))?;
+            ok_gl(bind_texture(gl::TEXTURE_2D, self.palette_texture))?;
+            ok_gl(active_texture(gl::TEXTURE2))?;
+            ok_gl(bind_texture(gl::TEXTURE_2D, self.ntsc_texture))?;
             // frame texture (palette index を R8 → GL_RED で upload)
-            active_texture(gl::TEXTURE0).unwrap();
-            tex_sub_image_2d(
+            ok_gl(active_texture(gl::TEXTURE0))?;
+            ok_gl(tex_sub_image_2d(
                 gl::TEXTURE_2D,
                 0,
                 0,
@@ -532,20 +583,25 @@ impl GlView {
                 gl::RED,
                 gl::UNSIGNED_BYTE,
                 screen_ptr,
-            )
-            .unwrap();
+            ))?;
         }
 
         if self.use_vao {
-            self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();
+            let Some(vba) = self.vba.as_ref() else {
+                return Err("GL view has no vertex array".to_owned());
+            };
+            ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
-            bind_buffer(gl::ARRAY_BUFFER, self.vbo.as_ref().unwrap().id).unwrap();
+            let Some(vbo) = self.vbo.as_ref() else {
+                return Err("GL view has no vertex buffer".to_owned());
+            };
+            ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
 
-        clear(gl::COLOR_BUFFER_BIT).unwrap();
+        ok_gl(clear(gl::COLOR_BUFFER_BIT))?;
 
         if !self.is_palette_format {
-            tex_sub_image_2d(
+            ok_gl(tex_sub_image_2d(
                 gl::TEXTURE_2D,
                 0,
                 0,
@@ -555,13 +611,13 @@ impl GlView {
                 gl::RGBA,
                 gl::UNSIGNED_BYTE,
                 screen_ptr,
-            )
-            .unwrap();
+            ))?;
         }
         if padded {
-            pixel_storei(gl::UNPACK_ROW_LENGTH, 0).unwrap();
+            ok_gl(pixel_storei(gl::UNPACK_ROW_LENGTH, 0))?;
         }
-        draw_arrays(gl::TRIANGLE_STRIP, 0, 4).unwrap();
+        ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
+        Ok(())
     }
 
     /// Whether the context accepts UNPACK_ROW_LENGTH (no CPU repack).
@@ -577,7 +633,7 @@ impl GlView {
         viewport_width: i32,
         viewport_height: i32,
         strip: nerust_render_traits::ReservedStrip,
-    ) {
+    ) -> Result<(), String> {
         let height_i = viewport_height.max(0);
         let top = strip.top.min(height_i as u32) as i32;
         let bottom = strip.bottom.min(height_i as u32 - top as u32) as i32;
@@ -593,20 +649,29 @@ impl GlView {
             (1.0, window_aspect / content_aspect)
         };
 
-        self.shader.as_ref().unwrap().use_program();
+        let Some(shader) = self.shader.as_ref() else {
+            return Err("GL view has no shader program".to_owned());
+        };
+        ok_gl(shader.use_program())?;
         if self.use_vao {
-            self.vba.as_ref().unwrap().bind_vao(|_vac| Ok(())).unwrap();
+            let Some(vba) = self.vba.as_ref() else {
+                return Err("GL view has no vertex array".to_owned());
+            };
+            ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
-            bind_buffer(gl::ARRAY_BUFFER, self.vbo.as_ref().unwrap().id).unwrap();
+            let Some(vbo) = self.vbo.as_ref() else {
+                return Err("GL view has no vertex buffer".to_owned());
+            };
+            ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
-        viewport(0, bottom, viewport_width, area_height).unwrap();
-        uniform_matrix_4fv(
-            self.shader.as_ref().unwrap().get_uniform("unif_matrix"),
+        ok_gl(viewport(0, bottom, viewport_width, area_height))?;
+        ok_gl(uniform_matrix_4fv(
+            shader.get_uniform("unif_matrix"),
             1,
             gl::FALSE,
             Mat4::scale(scale_x, scale_y, 1.0).as_ptr(),
-        )
-        .unwrap();
+        ))?;
+        Ok(())
     }
 
     pub fn on_close(&mut self) {
@@ -620,8 +685,12 @@ impl GlView {
         if self.ntsc_texture != 0 {
             ids.push(self.ntsc_texture);
         }
-        if !ids.is_empty() {
-            delete_textures(ids.len() as i32, ids.as_ptr()).unwrap();
+        // Teardown best-effort: a failed delete must not panic the
+        // profile rebuild that called here.
+        if !ids.is_empty()
+            && let Err(e) = delete_textures(ids.len() as i32, ids.as_ptr())
+        {
+            log::warn!("GL view teardown failed: {e}");
         }
     }
 }
@@ -635,7 +704,13 @@ impl Default for GlView {
 /// NTSC kernel texture (RGBA8)。packed_ntsc_rgba8 は big-endian u32 を RGBA8 に変換。
 /// 実際の kernel entry stride を data 長から計算して texture 高さとする。
 /// (固定 NTSC_TEXTURE_HEIGHT=42 では不足。ntsc_entry が phase_row+offset > 41 を読むため)
-fn configure_ntsc_texture(unit: u32, texture: u32, width: usize, height: usize, be_data: &[u8]) {
+fn configure_ntsc_texture(
+    unit: u32,
+    texture: u32,
+    width: usize,
+    height: usize,
+    be_data: &[u8],
+) -> Result<(), String> {
     // be_data は PALETTE_TEXTURE_WIDTH × entry_stride × 4 bytes
     let entry_count = be_data.len() / (width * 4);
     let actual_height = entry_count.max(height);
@@ -650,13 +725,29 @@ fn configure_ntsc_texture(unit: u32, texture: u32, width: usize, height: usize, 
             }
         }
     }
-    active_texture(gl::TEXTURE0 + unit).unwrap();
-    bind_texture(gl::TEXTURE_2D, texture).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
-    tex_image_2d(
+    ok_gl(active_texture(gl::TEXTURE0 + unit))?;
+    ok_gl(bind_texture(gl::TEXTURE_2D, texture))?;
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_WRAP_S,
+        gl::CLAMP_TO_EDGE as i32,
+    ))?;
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_WRAP_T,
+        gl::CLAMP_TO_EDGE as i32,
+    ))?;
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_MAG_FILTER,
+        gl::NEAREST as i32,
+    ))?;
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_MIN_FILTER,
+        gl::NEAREST as i32,
+    ))?;
+    ok_gl(tex_image_2d(
         gl::TEXTURE_2D,
         0,
         gl::RGBA as GLint,
@@ -666,8 +757,8 @@ fn configure_ntsc_texture(unit: u32, texture: u32, width: usize, height: usize, 
         gl::RGBA,
         gl::UNSIGNED_BYTE,
         rgba.as_ptr().cast(),
-    )
-    .unwrap();
+    ))?;
+    Ok(())
 }
 
 fn configure_frame_texture(
@@ -678,14 +769,30 @@ fn configure_frame_texture(
     internal_fmt: gl::types::GLint,
     data_fmt: gl::types::GLenum,
     data: &[u8],
-) {
-    active_texture(gl::TEXTURE0 + unit).unwrap();
-    bind_texture(gl::TEXTURE_2D, texture).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32).unwrap();
-    tex_parameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32).unwrap();
-    tex_image_2d(
+) -> Result<(), String> {
+    ok_gl(active_texture(gl::TEXTURE0 + unit))?;
+    ok_gl(bind_texture(gl::TEXTURE_2D, texture))?;
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_WRAP_S,
+        gl::CLAMP_TO_EDGE as i32,
+    ))?;
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_WRAP_T,
+        gl::CLAMP_TO_EDGE as i32,
+    ))?;
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_MAG_FILTER,
+        gl::NEAREST as i32,
+    ))?;
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_MIN_FILTER,
+        gl::NEAREST as i32,
+    ))?;
+    ok_gl(tex_image_2d(
         gl::TEXTURE_2D,
         0,
         internal_fmt,
@@ -695,8 +802,8 @@ fn configure_frame_texture(
         data_fmt,
         gl::UNSIGNED_BYTE,
         data.as_ptr().cast(),
-    )
-    .unwrap();
+    ))?;
+    Ok(())
 }
 
 fn build_glsl_source(
@@ -731,7 +838,7 @@ fn compose_glsl_source(version_line: &str, extra_preamble: &[&str], parts: &[&st
     output
 }
 
-fn compile_shader_program(is_palette: bool, is_gles: bool) -> Shader {
+fn compile_shader_program(is_palette: bool, is_gles: bool) -> Result<Shader, String> {
     let context_version = gl_string(gl::VERSION);
     let shading_version = gl_string(gl::SHADING_LANGUAGE_VERSION);
 
@@ -798,18 +905,16 @@ fn compile_shader_program(is_palette: bool, is_gles: bool) -> Shader {
         match Shader::try_new(vertex.as_str(), fragment.as_str()) {
             Ok(shader) => {
                 log::info!("selected {name} shader pipeline");
-                return shader;
+                return Ok(shader);
             }
             Err(err) => errors.push(format!("{name}: {err}")),
         }
     }
 
-    panic!(
-        "failed to compile shader pipeline for context {:?} / {:?}: {}",
-        context_version,
-        shading_version,
+    Err(format!(
+        "failed to compile shader pipeline for context {context_version:?} / {shading_version:?}: {}",
         errors.join(" | ")
-    );
+    ))
 }
 
 fn is_gles_context(version: Option<&str>) -> bool {
