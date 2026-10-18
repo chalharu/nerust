@@ -1,6 +1,7 @@
 //! Error dialog bridge: OSD error batches surface as a modal dialog,
 //! one at a time. Dismissal returns via the menu string bridge.
 
+use super::{bridge, messages::MenuAction};
 use jni::objects::{JObject, JValue};
 use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
 use winit::platform::android::activity::AndroidApp;
@@ -27,6 +28,14 @@ pub(crate) fn request_show_error_dialog(app: &AndroidApp, message: &str) {
             });
         if let Err(error) = result {
             log::error!("failed to show Android error dialog: {error:?}");
+            // No Kotlin dismiss will arrive: release it as a dismiss
+            // so gate, flag, and auto-pause do not wedge on a dead bridge.
+            bridge::with_state(|state| {
+                state
+                    .menu_actions
+                    .push_back(MenuAction::ErrorDialogDismissed)
+            });
+            bridge::wake();
         }
     }));
 }

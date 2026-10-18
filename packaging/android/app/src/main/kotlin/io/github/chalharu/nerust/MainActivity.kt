@@ -141,6 +141,7 @@ private const val MENU_ACTION_RESET = "reset"
 private const val MENU_ACTION_SAVE_STATE = "save_state"
 private const val MENU_ACTION_TOGGLE_PAUSE = "toggle_pause"
 private const val MENU_ACTION_UNLOAD = "unload"
+private const val MENU_ACTION_ERROR_DIALOG_DISMISSED = "error_dialog_dismissed"
 private const val MENU_BUTTON_TAG = "nerust-menu-button"
 private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
 private const val ERROR_DIALOG_TAG = "nerust-error-dialog"
@@ -1255,7 +1256,7 @@ class MainActivity :
             contentDescription = message,
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = false,
-            onDismiss = { dispatchMenuAction("error_dialog_dismissed") },
+            onDismiss = { dispatchMenuAction(MENU_ACTION_ERROR_DIALOG_DISMISSED) },
         ) { dismiss ->
             NerustErrorDialogCard(
                 message = message,
