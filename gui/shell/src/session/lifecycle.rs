@@ -479,6 +479,14 @@ impl SessionHandle {
         self.notifications.drain()
     }
 
+    /// Drain the queue together with the display channel the rows
+    /// were drained for. Frontends must not re-derive the channel
+    /// from `loaded()` themselves.
+    pub fn drain_routed(&mut self) -> (Vec<super::notification::UiNotification>, FrameChannel) {
+        let channel = self.frame_channel();
+        (self.drain_notifications(), channel)
+    }
+
     pub fn notification_history(
         &self,
     ) -> impl Iterator<Item = &super::notification::UiNotification> {

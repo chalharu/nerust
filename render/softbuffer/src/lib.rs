@@ -311,6 +311,10 @@ impl SoftbufferRenderer {
     }
 
     fn resize_lut(&mut self) {
+        // Taps are rebuilt below: drop the cached verdict, whose key
+        // covers lengths only and would go stale on same-size rebuilds
+        // (e.g. aspect-only profile changes).
+        self.taps_cache = None;
         self.lut.resize_lut(
             SurfaceSize {
                 width: self.render_profile.logical_size.width as u32,
@@ -1044,6 +1048,19 @@ mod tests {
         // Second call hits the cache; same verdict, no rescan.
         assert!(renderer.taps_covered(8, 8, 256, 0));
         assert!(renderer.taps_cache.is_some());
+    }
+
+    #[test]
+    fn taps_cache_invalidates_on_lut_rebuild() {
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        renderer.size = SurfaceSize::new(8, 8);
+        renderer.resize_lut();
+        assert!(renderer.taps_covered(8, 8, 256, 0));
+        assert!(renderer.taps_cache.is_some());
+        // Same-size rebuild must drop the verdict: the key covers
+        // lengths only, so reused taps would go unverified.
+        renderer.resize_lut();
+        assert!(renderer.taps_cache.is_none());
     }
 
     #[test]

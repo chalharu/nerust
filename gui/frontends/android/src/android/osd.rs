@@ -85,9 +85,8 @@ impl AndroidOsd {
         now: Instant,
         app: &AndroidApp,
     ) -> bool {
-        let drained = session.drain_notifications();
+        let (drained, channel) = session.drain_routed();
         if !drained.is_empty() {
-            let channel = session.frame_channel();
             self.manager
                 .push_all(drained, settings, language, now, channel);
         }

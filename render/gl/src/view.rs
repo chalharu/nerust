@@ -7,7 +7,9 @@ use nerust_render_traits::{VideoFrameFormat, VideoRenderProfile, renderer::OsdLa
 
 use crate::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
 
-/// View failures: GL call errors plus shader-pipeline errors.
+/// View failures: GL call errors, shader-pipeline errors, and
+/// short-frame conditions. Programmer-invariant violations are a
+/// separate variant so they stay greppable at the render boundary.
 /// Converted to a warned `RenderResult::Error` at the render boundary;
 /// OSD helpers degrade to a debug log instead.
 #[derive(Debug, thiserror::Error)]
@@ -16,6 +18,10 @@ pub(crate) enum ViewError {
     Gl(#[from] nerust_glwrap::GlError),
     #[error("{0}")]
     Shader(String),
+    #[error("internal error: {0}")]
+    Internal(&'static str),
+    #[error("{0}")]
+    Frame(&'static str),
 }
 
 /// GL failures surface as view errors; init and per-frame game paths
@@ -433,12 +439,12 @@ impl GlView {
         use_texture(0, self.osd_texture)?;
         if self.use_vao {
             let Some(vba) = self.vba.as_ref() else {
-                return Err(ViewError::Shader("GL view has no vertex array".to_owned()));
+                return Err(ViewError::Internal("GL view has no vertex array"));
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.vbo.as_ref() else {
-                return Err(ViewError::Shader("GL view has no vertex buffer".to_owned()));
+                return Err(ViewError::Internal("GL view has no vertex buffer"));
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -568,9 +574,7 @@ impl GlView {
     pub fn on_update(&self, screen: &[u8], row_length: i32) -> Result<(), ViewError> {
         let screen_ptr = screen.as_ptr().cast();
         let Some(shader) = self.shader.as_ref() else {
-            return Err(ViewError::Shader(
-                "GL view has no shader program".to_owned(),
-            ));
+            return Err(ViewError::Internal("GL view has no shader program"));
         };
         ok_gl(shader.use_program())?;
 
@@ -603,12 +607,12 @@ impl GlView {
 
         if self.use_vao {
             let Some(vba) = self.vba.as_ref() else {
-                return Err(ViewError::Shader("GL view has no vertex array".to_owned()));
+                return Err(ViewError::Internal("GL view has no vertex array"));
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.vbo.as_ref() else {
-                return Err(ViewError::Shader("GL view has no vertex buffer".to_owned()));
+                return Err(ViewError::Internal("GL view has no vertex buffer"));
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -665,19 +669,17 @@ impl GlView {
         };
 
         let Some(shader) = self.shader.as_ref() else {
-            return Err(ViewError::Shader(
-                "GL view has no shader program".to_owned(),
-            ));
+            return Err(ViewError::Internal("GL view has no shader program"));
         };
         ok_gl(shader.use_program())?;
         if self.use_vao {
             let Some(vba) = self.vba.as_ref() else {
-                return Err(ViewError::Shader("GL view has no vertex array".to_owned()));
+                return Err(ViewError::Internal("GL view has no vertex array"));
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.vbo.as_ref() else {
-                return Err(ViewError::Shader("GL view has no vertex buffer".to_owned()));
+                return Err(ViewError::Internal("GL view has no vertex buffer"));
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }

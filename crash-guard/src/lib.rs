@@ -3,8 +3,10 @@
 //! The hook only preserves the log (never touches UX, locks, or session
 //! state: it can run on any thread, possibly lock-holding). Dialogs are the
 //! frontend's job via `run_guarded`'s `on_crash`, which runs after unwind on
-//! the calling thread. State is never reused after a catch: the process
-//! exits, so `AssertUnwindSafe` cannot leak into a resumed session.
+//! the calling thread; the returned [`GuardOutcome`] lets the host
+//! terminate (a crash must never look like a clean exit). Captured state
+//! is never reused after a catch: `main` is moved into the guard, so
+//! `AssertUnwindSafe` cannot leak into a resumed session.
 
 use std::{
     any::Any,
@@ -34,10 +36,23 @@ pub fn install() {
 }
 
 /// Crash containment exit code, matching the Rust panic convention
-/// so tooling can identify crashes automatically.
+/// so tooling can identify crashes automatically. Hosts exit with
+/// this on [`GuardOutcome::Crashed`].
 pub const CRASH_EXIT_CODE: i32 = 101;
 
+/// Guard outcome: normal completion or an unwound crash. The crash
+/// path is already logged (hook plus report) and `on_crash` already
+/// ran; the host decides termination. `#[must_use]` keeps a crash
+/// from silently passing as a clean exit.
+#[must_use]
+#[derive(Debug)]
+pub enum GuardOutcome<R> {
+    Completed(R),
+    Crashed(CrashReport),
+}
+
 /// Structured crash data for dialogs: getters only, log shape via `Display`.
+#[derive(Debug)]
 pub struct CrashReport {
     record: PanicRecord,
 }
@@ -78,6 +93,7 @@ impl std::fmt::Display for CrashReport {
 /// Shared capture for hook and report: thread plus detail text plus
 /// backtrace. Both log shapes draw from these parts instead of
 /// duplicating the capture logic.
+#[derive(Debug)]
 struct PanicRecord {
     thread: String,
     detail: String,
@@ -105,22 +121,25 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
     }
 }
 
-/// Run `main` under the hook; on unwind log, offer `on_crash`,
-/// then exit with [`CRASH_EXIT_CODE`].
+/// Run `main` under the hook; on unwind log, offer `on_crash`, and
+/// return the outcome for the host to terminate on.
 ///
 /// `on_crash` runs after unwind on the caller (UI) thread only; an
 /// emu-thread panic never reaches it (typed `WorkerUnavailable` path
 /// covers that). `on_crash` itself is catch-guarded so a failing dialog
 /// cannot void the preserved log.
-pub fn run_guarded<R>(main: impl FnOnce() -> R, on_crash: impl FnOnce(&CrashReport)) -> R {
+pub fn run_guarded<R>(
+    main: impl FnOnce() -> R,
+    on_crash: impl FnOnce(&CrashReport),
+) -> GuardOutcome<R> {
     install();
     match panic::catch_unwind(std::panic::AssertUnwindSafe(main)) {
-        Ok(value) => value,
+        Ok(value) => GuardOutcome::Completed(value),
         Err(payload) => {
             let report = CrashReport::from_payload(payload.as_ref());
             log::error!("{report}");
             let _ = panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_crash(&report)));
-            std::process::exit(CRASH_EXIT_CODE);
+            GuardOutcome::Crashed(report)
         }
     }
 }
@@ -145,6 +164,21 @@ mod tests {
         assert_eq!(report.message(), "boom");
         assert!(!report.thread_name().is_empty());
         assert!(!report.backtrace().is_empty());
+    }
+
+    #[test]
+    fn guard_returns_completed_value() {
+        let outcome = run_guarded(|| 42, |_| panic!("on_crash must not run"));
+        assert!(matches!(outcome, GuardOutcome::Completed(42)));
+    }
+
+    #[test]
+    fn guard_returns_crashed_in_process() {
+        let outcome: GuardOutcome<()> = run_guarded(|| panic!("boom"), |_| {});
+        match outcome {
+            GuardOutcome::Crashed(report) => assert_eq!(report.message(), "boom"),
+            GuardOutcome::Completed(()) => panic!("crash must not complete"),
+        }
     }
 
     #[test]
