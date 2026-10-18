@@ -832,6 +832,11 @@ pub(crate) fn take_result() -> Option<SettingsDialogResult> {
     with_state(|state| state.result.take())
 }
 
+/// Whether a settings dialog is up (either show path: bridge pending id).
+pub(crate) fn is_dialog_open() -> bool {
+    with_state(|state| state.pending_request_id.is_some())
+}
+
 pub(crate) fn reset_transient() {
     with_state(|state| {
         state.result = None;
