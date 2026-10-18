@@ -1019,4 +1019,52 @@ mod tests {
         let lut = LutEntry::new();
         assert!(!SoftbufferRenderer::taps_cover(&lut, 8, 8, 4, 8 * 4, 0, 0));
     }
+
+    #[test]
+    fn taps_cover_rejects_out_of_range_taps() {
+        // x tap beyond the source stride.
+        let x_bad = LutEntry {
+            x_lut: vec![Some((999, 1)), None],
+            y_lut: vec![None, None],
+            kernel: ResizeKernel::Bilinear,
+        };
+        assert!(!SoftbufferRenderer::taps_cover(&x_bad, 1, 1, 4, 8, 0, 8));
+        // y tap beyond the resize buffer.
+        let y_bad = LutEntry {
+            x_lut: vec![Some((0, 1)), None],
+            y_lut: vec![Some((99, 1)), None],
+            kernel: ResizeKernel::Bilinear,
+        };
+        assert!(!SoftbufferRenderer::taps_cover(
+            &y_bad,
+            8,
+            1,
+            4,
+            8 * 4,
+            0,
+            8 * 4
+        ));
+        // NTSC writes beyond the NTSC buffer.
+        let mut good = LutEntry::new();
+        good.resize_lut(
+            SurfaceSize {
+                width: 4,
+                height: 4,
+            },
+            1.0,
+            SurfaceSize {
+                width: 8,
+                height: 8,
+            },
+        );
+        assert!(!SoftbufferRenderer::taps_cover(
+            &good,
+            8,
+            8,
+            4,
+            8 * 4,
+            100,
+            10
+        ));
+    }
 }

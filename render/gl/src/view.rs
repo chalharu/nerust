@@ -15,6 +15,39 @@ fn ok_gl<T, E: std::fmt::Display>(result: Result<T, E>) -> Result<T, String> {
     result.map_err(|e| e.to_string())
 }
 
+/// Bind a texture unit in one step; the active/bind pair repeats at
+/// every upload and draw site.
+fn use_texture(unit: u32, texture: u32) -> Result<(), String> {
+    ok_gl(active_texture(gl::TEXTURE0 + unit))?;
+    ok_gl(bind_texture(gl::TEXTURE_2D, texture))?;
+    Ok(())
+}
+
+/// Point-sampled clamp addressing, shared by all upload textures.
+fn set_nearest_params() -> Result<(), String> {
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_WRAP_S,
+        gl::CLAMP_TO_EDGE as i32,
+    ))?;
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_WRAP_T,
+        gl::CLAMP_TO_EDGE as i32,
+    ))?;
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_MAG_FILTER,
+        gl::NEAREST as i32,
+    ))?;
+    ok_gl(tex_parameteri(
+        gl::TEXTURE_2D,
+        gl::TEXTURE_MIN_FILTER,
+        gl::NEAREST as i32,
+    ))?;
+    Ok(())
+}
+
 const DIRECT_FRAGMENT_DESKTOP: &str = r#"
 uniform sampler2D frame_texture;
 in vec2 vuv;
@@ -392,10 +425,7 @@ impl GlView {
         let Ok(()) = ok_gl(uniform_1i(shader.get_uniform("osd_texture"), 0)) else {
             return;
         };
-        let Ok(()) = ok_gl(active_texture(gl::TEXTURE0)) else {
-            return;
-        };
-        let Ok(()) = ok_gl(bind_texture(gl::TEXTURE_2D, self.osd_texture)) else {
+        if use_texture(0, self.osd_texture).is_err() {
             return;
         };
         if self.use_vao {
@@ -448,9 +478,7 @@ impl GlView {
         // Full-surface texture: placement rides on texture coordinates
         // instead of small viewports (driver-quirky on some backends).
         if self.osd_size != (surface_w, surface_h) {
-            if ok_gl(active_texture(gl::TEXTURE0)).is_err()
-                || ok_gl(bind_texture(gl::TEXTURE_2D, self.osd_texture)).is_err()
-            {
+            if use_texture(0, self.osd_texture).is_err() {
                 return;
             }
             let zeros = vec![0u8; surface_w.max(1) as usize * surface_h.max(1) as usize * 4];
@@ -510,9 +538,7 @@ impl GlView {
                 &blank
             }
         };
-        if ok_gl(active_texture(gl::TEXTURE0)).is_err()
-            || ok_gl(bind_texture(gl::TEXTURE_2D, texture)).is_err()
-        {
+        if use_texture(0, texture).is_err() {
             return;
         }
         let _ = ok_gl(tex_sub_image_2d(
@@ -532,8 +558,7 @@ impl GlView {
         if !self.is_palette_format {
             return Ok(());
         }
-        ok_gl(active_texture(gl::TEXTURE1))?;
-        ok_gl(bind_texture(gl::TEXTURE_2D, self.palette_texture))?;
+        use_texture(1, self.palette_texture)?;
         ok_gl(tex_sub_image_2d(
             gl::TEXTURE_2D,
             0,
@@ -556,8 +581,7 @@ impl GlView {
         };
         ok_gl(shader.use_program())?;
 
-        ok_gl(active_texture(gl::TEXTURE0))?;
-        ok_gl(bind_texture(gl::TEXTURE_2D, self.frame_texture))?;
+        use_texture(0, self.frame_texture)?;
 
         // Padded rows upload as-is; row length is global pixel-store
         // state, so restore the default right after the upload.
@@ -567,12 +591,10 @@ impl GlView {
         }
 
         if self.is_palette_format {
-            ok_gl(active_texture(gl::TEXTURE1))?;
-            ok_gl(bind_texture(gl::TEXTURE_2D, self.palette_texture))?;
-            ok_gl(active_texture(gl::TEXTURE2))?;
-            ok_gl(bind_texture(gl::TEXTURE_2D, self.ntsc_texture))?;
+            use_texture(1, self.palette_texture)?;
+            use_texture(2, self.ntsc_texture)?;
             // frame texture (palette index を R8 → GL_RED で upload)
-            ok_gl(active_texture(gl::TEXTURE0))?;
+            use_texture(0, self.frame_texture)?;
             ok_gl(tex_sub_image_2d(
                 gl::TEXTURE_2D,
                 0,
@@ -725,28 +747,8 @@ fn configure_ntsc_texture(
             }
         }
     }
-    ok_gl(active_texture(gl::TEXTURE0 + unit))?;
-    ok_gl(bind_texture(gl::TEXTURE_2D, texture))?;
-    ok_gl(tex_parameteri(
-        gl::TEXTURE_2D,
-        gl::TEXTURE_WRAP_S,
-        gl::CLAMP_TO_EDGE as i32,
-    ))?;
-    ok_gl(tex_parameteri(
-        gl::TEXTURE_2D,
-        gl::TEXTURE_WRAP_T,
-        gl::CLAMP_TO_EDGE as i32,
-    ))?;
-    ok_gl(tex_parameteri(
-        gl::TEXTURE_2D,
-        gl::TEXTURE_MAG_FILTER,
-        gl::NEAREST as i32,
-    ))?;
-    ok_gl(tex_parameteri(
-        gl::TEXTURE_2D,
-        gl::TEXTURE_MIN_FILTER,
-        gl::NEAREST as i32,
-    ))?;
+    use_texture(unit, texture)?;
+    set_nearest_params()?;
     ok_gl(tex_image_2d(
         gl::TEXTURE_2D,
         0,
@@ -770,28 +772,8 @@ fn configure_frame_texture(
     data_fmt: gl::types::GLenum,
     data: &[u8],
 ) -> Result<(), String> {
-    ok_gl(active_texture(gl::TEXTURE0 + unit))?;
-    ok_gl(bind_texture(gl::TEXTURE_2D, texture))?;
-    ok_gl(tex_parameteri(
-        gl::TEXTURE_2D,
-        gl::TEXTURE_WRAP_S,
-        gl::CLAMP_TO_EDGE as i32,
-    ))?;
-    ok_gl(tex_parameteri(
-        gl::TEXTURE_2D,
-        gl::TEXTURE_WRAP_T,
-        gl::CLAMP_TO_EDGE as i32,
-    ))?;
-    ok_gl(tex_parameteri(
-        gl::TEXTURE_2D,
-        gl::TEXTURE_MAG_FILTER,
-        gl::NEAREST as i32,
-    ))?;
-    ok_gl(tex_parameteri(
-        gl::TEXTURE_2D,
-        gl::TEXTURE_MIN_FILTER,
-        gl::NEAREST as i32,
-    ))?;
+    use_texture(unit, texture)?;
+    set_nearest_params()?;
     ok_gl(tex_image_2d(
         gl::TEXTURE_2D,
         0,

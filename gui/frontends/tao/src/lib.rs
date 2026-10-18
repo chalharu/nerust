@@ -41,15 +41,30 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
             // show after the event loop died. stderr stays the log home.
             rfd::MessageDialog::new()
                 .set_title("nerust")
-                .set_description(format!(
-                    "The application crashed: {}\n\nDetails were written to the log (stderr).",
-                    report.message(),
-                ))
+                .set_description(crash_dialog_text(report.message()))
                 .set_level(rfd::MessageLevel::Error)
                 .set_buttons(rfd::MessageButtons::Ok)
                 .show();
         },
     );
+}
+
+/// Crash dialog copy: what happened plus where details live.
+/// Pinned by test; the file-free design needs the stderr pointer.
+fn crash_dialog_text(message: &str) -> String {
+    format!("The application crashed: {message}\n\nDetails were written to the log (stderr).",)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crash_dialog_points_at_stderr() {
+        let text = crash_dialog_text("boom");
+        assert!(text.contains("boom"), "{text}");
+        assert!(text.contains("stderr"), "{text}");
+    }
 }
 
 fn run_inner(ctx: FrontendContext, options: RunOptions) {
