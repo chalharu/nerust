@@ -45,7 +45,7 @@ use nerust_input_traits::{AbstractKey, AttachmentId, DigitalControlId, DigitalIn
 use nerust_render_osd::OsdRaster;
 use nerust_render_traits::{
     ReservedStrip, SurfaceSize,
-    renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
+    renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SafeInsets},
 };
 use nerust_settings_core::model::{local::RumbleTarget, shared::StoragePolicy};
 use sha2::{Digest, Sha256};
@@ -505,6 +505,7 @@ struct AndroidFrontend {
     osd_raster: OsdRaster,
     osd_presenter: OsdPresenter,
     osd_last_strip: ReservedStrip,
+    osd_last_insets: SafeInsets,
 }
 
 impl AndroidFrontend {
@@ -589,6 +590,7 @@ impl AndroidFrontend {
             osd_raster: OsdRaster::with_font_dirs(&osd::ANDROID_FONT_DIRS),
             osd_presenter: OsdPresenter::new(),
             osd_last_strip: ReservedStrip::default(),
+            osd_last_insets: SafeInsets::default(),
         };
         frontend.osd_raster.set_ui_scale(osd::OSD_UI_SCALE);
         if frontend.lifecycle_restore_pending {
@@ -1211,9 +1213,11 @@ impl AndroidFrontend {
             Ok(renderer) => {
                 log::info!("rebuild_renderer: renderer ready");
                 // Fresh renderer, empty OSD state: force re-sync of the
-                // layer and the reserved strip on the next frame.
+                // layer, the reserved strip, and the safe area on the
+                // next frame.
                 self.osd_presenter = OsdPresenter::new();
                 self.osd_last_strip = ReservedStrip::default();
+                self.osd_last_insets = SafeInsets::default();
                 self.request_redraw();
                 Some(renderer)
             }

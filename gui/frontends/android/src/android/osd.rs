@@ -6,8 +6,10 @@
 
 use std::time::Instant;
 
-use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput, strip_pixels, strip_rows};
-use nerust_render_traits::{ReservedStrip, SurfaceSize};
+use nerust_gui_shell::session::osd::{
+    OsdPresenter, OsdSync, OsdSyncInput, strip_pixels, strip_rows,
+};
+use nerust_render_traits::{ReservedStrip, SurfaceSize, renderer::SafeInsets};
 use nerust_settings_core::model::{language::AppLanguage, local::NotificationSettings};
 
 use super::AndroidFrontend;
@@ -18,6 +20,15 @@ pub(super) const OSD_UI_SCALE: f32 = 0.5;
 
 /// Platform font roots invisible to fontdb's system scan.
 pub(super) const ANDROID_FONT_DIRS: [&str; 2] = ["/system/fonts", "/product/fonts"];
+
+/// Corner-radius and edge margin, in dp. Physical rounded corners
+/// clip surface-corner pills, so every side steps inward by this.
+const EDGE_SAFE_DP: f32 = 24.0;
+
+/// Extra inset along the letterbox axis (top/bottom in portrait,
+/// left/right in landscape), in dp. That axis has dead bar space,
+/// so the shift stays readable while clearing notches and corners.
+const BAR_AXIS_EXTRA_DP: f32 = 16.0;
 
 impl AndroidFrontend {
     pub(super) fn notification_settings(&self) -> NotificationSettings {
@@ -40,6 +51,47 @@ impl AndroidFrontend {
         ReservedStrip {
             top: strip_pixels(client_h, top_rows, OSD_UI_SCALE),
             bottom: strip_pixels(client_h, bottom_rows, OSD_UI_SCALE),
+        }
+    }
+
+    /// Safe-area insets for rounded corners and the letterbox axis.
+    /// dp-based so the physical clearance is density-independent;
+    /// the bar axis (dead space) takes the extra shift.
+    pub(super) fn safe_insets(&self, size: SurfaceSize) -> SafeInsets {
+        let density = self
+            .window
+            .as_ref()
+            .map(|window| window.scale_factor() as f32)
+            .unwrap_or(1.0)
+            .max(0.5);
+        let base = (EDGE_SAFE_DP * density).round() as u32;
+        let extra = (BAR_AXIS_EXTRA_DP * density).round() as u32;
+        // Surface relatively taller than the game: bars sit top and
+        // bottom, so the vertical shift has room. Without a loaded
+        // ROM fall back to surface orientation.
+        let taller = match self.session.render_profile() {
+            Some(profile)
+                if profile.physical_size.width > 0.0 && profile.physical_size.height > 0.0 =>
+            {
+                size.height as f32 * profile.physical_size.width
+                    > size.width as f32 * profile.physical_size.height
+            }
+            _ => size.height >= size.width,
+        };
+        if taller {
+            SafeInsets {
+                top: base + extra,
+                right: base,
+                bottom: base + extra,
+                left: base,
+            }
+        } else {
+            SafeInsets {
+                top: base,
+                right: base + extra,
+                bottom: base,
+                left: base + extra,
+            }
         }
     }
 
@@ -80,6 +132,14 @@ impl AndroidFrontend {
     pub(super) fn sync_osd_layer(&mut self, size: SurfaceSize) {
         if self.renderer.is_none() {
             return;
+        }
+        let insets = self.safe_insets(size);
+        if insets != self.osd_last_insets {
+            self.osd_last_insets = insets;
+            self.osd_raster.set_safe_insets(insets);
+            // The presenter gates on size/status only, so force a
+            // re-evaluation when the safe area moves the boxes.
+            self.osd_presenter = OsdPresenter::new();
         }
         let strip = self.reserved_strip(size.height);
         if strip != self.osd_last_strip {

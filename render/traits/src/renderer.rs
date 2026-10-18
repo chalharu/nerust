@@ -109,6 +109,17 @@ pub struct OsdContent {
     pub status_position: OsdAnchor,
 }
 
+/// Extra physical-pixel padding inside the surface edges, on top of
+/// the layout margin. Outer layers set it for rounded corners,
+/// notches, or gesture bars the rasterizer cannot see.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SafeInsets {
+    pub top: u32,
+    pub right: u32,
+    pub bottom: u32,
+    pub left: u32,
+}
+
 /// Outcome reported by [`GpuRenderer::render`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RenderResult {
