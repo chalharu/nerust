@@ -42,6 +42,7 @@ pub(super) struct AndroidOsd {
     presenter: OsdPresenter,
     last_strip: ReservedStrip,
     last_system_size: SurfaceSize,
+    last_system_scale: f32,
     last_system: SafeInsets,
 }
 
@@ -66,16 +67,18 @@ impl AndroidOsd {
             presenter: OsdPresenter::new(),
             last_strip: ReservedStrip::default(),
             last_system_size: SurfaceSize::new(0, 0),
+            last_system_scale: 0.0,
             last_system: SafeInsets::default(),
         }
     }
 
     /// Forget sync state after a renderer rebuild: the new object
     /// holds no layer or strip to skip against. Fonts and scale
-    /// survive; insets re-fingerprint on the next frame.
+    /// survive; insets re-query on the next frame via cleared key.
     pub(super) fn reset(&mut self) {
         self.presenter.invalidate();
         self.last_strip = ReservedStrip::default();
+        self.last_system_size = SurfaceSize::new(0, 0);
     }
 
     /// Drain shell notifications into display state. Error batches go
@@ -162,11 +165,17 @@ impl AndroidOsd {
         }
     }
 
-    /// Java window insets, re-queried only when the surface size moves:
-    /// the JNI round-trip costs per frame, insets move only with layout.
-    pub(super) fn system_insets(&mut self, app: &AndroidApp, size: SurfaceSize) -> SafeInsets {
-        if size != self.last_system_size {
+    /// Java window insets, re-queried only on size/density change.
+    /// Per-frame JNI is the cost; IME-without-resize stays a known gap.
+    pub(super) fn system_insets(
+        &mut self,
+        app: &AndroidApp,
+        size: SurfaceSize,
+        scale: f32,
+    ) -> SafeInsets {
+        if size != self.last_system_size || scale != self.last_system_scale {
             self.last_system_size = size;
+            self.last_system_scale = scale;
             self.last_system = Self::query_system_insets(app);
         }
         self.last_system
