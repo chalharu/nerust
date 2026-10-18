@@ -163,8 +163,10 @@ impl ShellRenderer {
 /// Program UI instance plus its manual lifetime. Shared by the
 /// debugger and PPU viewer. `Option` lets resize move the interface
 /// through consuming `relayout` (panic leaves `None`, never garbage).
+/// Field order is load-bearing: `ui` must drop before `instance`
+/// (declaration order), since the interface borrows from the instance.
 pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
-    ui: Option<std::mem::ManuallyDrop<UserInterface<'static, P::Message, iced::Theme, Renderer>>>,
+    ui: Option<UserInterface<'static, P::Message, iced::Theme, Renderer>>,
     instance: program::Instance<P>,
 }
 
@@ -191,9 +193,18 @@ pub(crate) fn pump_outcome(state: &State) -> PumpOutcome {
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
-    /// Build a UserInterface from instance state, transmuting the
-    /// phantom lifetime to 'static. Safe because this shell's Drop
-    /// ensures the UI is destroyed before the Instance it references.
+    /// Borrow the instance-bound interface with a caller-local
+    /// lifetime. The single `transmute` in `build_ui` extends the
+    /// instance borrow to `'static` for storage; soundness rests on:
+    /// (1) this `'static` never escapes (`ui_mut` ties it to `&mut
+    /// self`, `ui` is private); (2) field order drops `ui` before
+    /// `instance`; (3) `take`-and-rebuild keeps no dangling UI
+    /// (panic leaves `None`, callers bail); (4) leak forgets both
+    /// together, never dangling. Lifetime-generic storage was
+    /// rejected: iced 0.14 offers no owned `UserInterface`, and
+    /// rebuilding per event would re-invoke `view` on every pump.
+    /// SAFETY: the transmuted interface must not outlive `instance`;
+    /// guaranteed by (1)-(4) above, all local to this module.
     fn build_ui(
         instance: &program::Instance<P>,
         window_id: iced::window::Id,
@@ -222,7 +233,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     ) -> Self {
         let ui = Self::build_ui(&instance, window_id, bounds, Cache::default(), renderer);
         Self {
-            ui: Some(std::mem::ManuallyDrop::new(ui)),
+            ui: Some(ui),
             instance,
         }
     }
@@ -232,7 +243,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     pub(crate) fn ui_mut(
         &mut self,
     ) -> Option<&mut UserInterface<'static, P::Message, iced::Theme, Renderer>> {
-        self.ui.as_deref_mut()
+        self.ui.as_mut()
     }
 
     /// Push one program message without a rebuild (Sync-style refresh
@@ -269,9 +280,8 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         let Some(owned) = self.ui.take() else {
             return;
         };
-        let inner = std::mem::ManuallyDrop::into_inner(owned);
-        let rebuilt = inner.relayout(bounds, renderer);
-        self.ui = Some(std::mem::ManuallyDrop::new(rebuilt));
+        let rebuilt = owned.relayout(bounds, renderer);
+        self.ui = Some(rebuilt);
     }
 
     pub(crate) fn process_messages(
@@ -287,24 +297,16 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         }
         // Single build: take the old UI out, harvest its cache, run
         // the messages, and rebuild once.
-        let old = self.ui.take().map(std::mem::ManuallyDrop::into_inner);
+        let cache = self
+            .ui
+            .take()
+            .map_or_else(Cache::default, UserInterface::into_cache);
         for msg in messages {
             let _task = self.instance.update(msg);
         }
-        let cache = old.map_or_else(Cache::default, UserInterface::into_cache);
         let rebuilt = Self::build_ui(&self.instance, window_id, bounds, cache, renderer);
-        self.ui = Some(std::mem::ManuallyDrop::new(rebuilt));
+        self.ui = Some(rebuilt);
         invalidated.store(false, Ordering::Release);
-    }
-}
-
-impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> Drop for UiShell<P> {
-    fn drop(&mut self) {
-        // Drop the interface before the Instance it references; `None`
-        // only after a panicked relayout, where there is nothing left.
-        if let Some(mut ui) = self.ui.take() {
-            unsafe { std::mem::ManuallyDrop::drop(&mut ui) };
-        }
     }
 }
 
