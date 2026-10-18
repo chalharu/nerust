@@ -43,6 +43,13 @@ impl OsdFonts {
     pub fn load() -> Self {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
+        // Android is excluded from fontdb's system scan; its fonts
+        // live in /system/fonts (+ /product/fonts on newer releases).
+        #[cfg(target_os = "android")]
+        {
+            db.load_fonts_dir("/system/fonts");
+            db.load_fonts_dir("/product/fonts");
+        }
         let has_fonts = !db.is_empty();
         let sans_name = Self::best_sans_name(&db).unwrap_or_default();
         if sans_name.is_empty() {
