@@ -489,7 +489,9 @@ impl RomLoadTarget for SessionHandle {
             .map_err(|e| RomLoaderError::Load(e.to_string()))
     }
     fn resume(&mut self) {
-        let _ = SessionHandle::run_command(self, SessionCommand::Resume);
+        if let Err(error) = SessionHandle::run_command(self, SessionCommand::Resume) {
+            log::warn!("resume failed: {error}");
+        }
     }
 
     /// Records the detected system before ROM load so the core is
