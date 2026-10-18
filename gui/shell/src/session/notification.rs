@@ -170,9 +170,11 @@ impl NotificationCenter {
         Self::default()
     }
 
-    /// Push one event. History and logs record every event; the pending
-    /// queue coalesces identical neighbours (`×N`) and drops the oldest
-    /// past [`MAX_PENDING`].
+    /// Push one event. History records every event; the pending queue
+    /// coalesces identical neighbours (`×N`) and drops the oldest
+    /// past [`MAX_PENDING`]. Logs record every event eagerly except
+    /// `SelectedSlot`: high-frequency nav echo would spam stderr, so
+    /// selection feedback is screen-only (history still keeps it).
     pub fn push(&mut self, kind: NotificationKind) {
         let level = kind.level();
         let seq = self.next_seq;
@@ -186,6 +188,7 @@ impl NotificationCenter {
             at: std::time::SystemTime::now(),
         };
         match level {
+            NotificationLevel::Info if matches!(kind, NotificationKind::SelectedSlot(_)) => {}
             NotificationLevel::Info => log::info!("notification: {}", kind_text(&event)),
             NotificationLevel::Warning => log::warn!("notification: {}", kind_text(&event)),
             NotificationLevel::Error => log::error!("notification: {}", kind_text(&event)),

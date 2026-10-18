@@ -11,7 +11,7 @@ use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationPosition, NotificationSettings,
 };
 
-use super::notification::{NotificationLevel, UiNotification};
+use super::notification::{NotificationKind, NotificationLevel, UiNotification};
 
 /// Level tag prefixing OSD labels: text (not color or shape
 /// alone) carries severity. History uses [`level_name`]
@@ -168,6 +168,8 @@ struct OsdItem {
     /// carrying the push-time remainder.
     duration: Duration,
     deadline: Instant,
+    /// Selection echo rows collapse latest-wins; at most one exists.
+    selected: bool,
 }
 
 /// Single sequential display (no stacking): one label at a time,
@@ -228,12 +230,60 @@ impl OsdManager {
         }
     }
 
+    /// Drop victim for a full queue: the oldest row of the lowest
+    /// severity present (Info, then Warning). Errors drop only when
+    /// every queued row is an Error (oldest first, FIFO bound).
+    fn evict_victim(pending: &mut std::collections::VecDeque<OsdItem>) {
+        let victim = pending
+            .iter()
+            .position(|item| item.level == NotificationLevel::Info)
+            .or_else(|| {
+                pending
+                    .iter()
+                    .position(|item| item.level == NotificationLevel::Warning)
+            });
+        match victim {
+            Some(index) => {
+                pending.remove(index);
+            }
+            None => {
+                pending.pop_front();
+            }
+        }
+    }
+
+    /// Overflow from a demote insertion: drop from the tail so the
+    /// just-demoted head survives, still never dropping an Error
+    /// while a lower severity row exists.
+    fn evict_demote_overflow(pending: &mut std::collections::VecDeque<OsdItem>) {
+        let victim = pending
+            .iter()
+            .rposition(|item| item.level == NotificationLevel::Info)
+            .or_else(|| {
+                pending
+                    .iter()
+                    .rposition(|item| item.level == NotificationLevel::Warning)
+            });
+        match victim {
+            Some(index) => {
+                pending.remove(index);
+            }
+            None => {
+                pending.pop_front();
+            }
+        }
+    }
+
     /// Fold drained shell notifications into display state.
     /// Errors go modal (aggregated) or OSD (minimum 5s) per settings.
-    /// New arrivals queue behind the showing label in arrival order.
-    /// Only strictly consecutive duplicates merge (`×N`, timer reset):
-    /// an interleaved label breaks the run, so pause/resume flaps
-    /// show each leg for its full duration instead of collapsing.
+    /// New arrivals queue behind the showing label in arrival order,
+    /// except Error rows (with `error_modal` off), which preempt a
+    /// non-Error showing label; the demoted label waits at the queue
+    /// head. Only strictly consecutive duplicates merge (`×N`, timer
+    /// reset): an interleaved label breaks the run, so pause/resume
+    /// flaps show each leg for its full duration instead of
+    /// collapsing. Selection echo is latest-wins: at most one
+    /// `SelectedSlot` row exists, updated in place.
     pub fn push_all(
         &mut self,
         notifications: Vec<UiNotification>,
@@ -261,6 +311,7 @@ impl OsdManager {
             let tag = level_tag(n.level);
             let duration = Duration::from_millis(Self::duration_ms(n.level, settings));
             let deadline = now + duration;
+            let selected = matches!(n.kind, NotificationKind::SelectedSlot(_));
             let consecutive = self
                 .last_key
                 .as_ref()
@@ -288,6 +339,51 @@ impl OsdManager {
                 back.deadline = deadline;
                 continue;
             }
+            // Error rows preempt a non-Error showing label (Warnings
+            // wait their turn). The demoted label waits at the queue
+            // head with its duration intact.
+            if n.level == NotificationLevel::Error
+                && let Some(current) = self.current.as_ref()
+                && current.level != NotificationLevel::Error
+            {
+                let demoted = self.current.take().expect("showing label checked");
+                self.current = Some(OsdItem {
+                    row: Self::counted_row(&base, n.count, rgb, tag),
+                    level: n.level,
+                    key: base,
+                    count: n.count,
+                    duration,
+                    deadline,
+                    selected,
+                });
+                self.pending.push_front(demoted);
+                while self.pending.len() > MAX_QUEUED {
+                    Self::evict_demote_overflow(&mut self.pending);
+                }
+                continue;
+            }
+            // Selection echo keeps latest-wins: replace the existing
+            // row in place instead of queuing stale echoes.
+            if selected {
+                if let Some(current) = self.current.as_mut()
+                    && current.selected
+                {
+                    current.row = Self::counted_row(&base, n.count, rgb, tag);
+                    current.key = base;
+                    current.count = n.count;
+                    current.duration = duration;
+                    current.deadline = deadline;
+                    continue;
+                }
+                if let Some(existing) = self.pending.iter_mut().find(|item| item.selected) {
+                    existing.row = Self::counted_row(&base, n.count, rgb, tag);
+                    existing.key = base;
+                    existing.count = n.count;
+                    existing.duration = duration;
+                    existing.deadline = deadline;
+                    continue;
+                }
+            }
             let row = Self::counted_row(&base, n.count, rgb, tag);
             self.pending.push_back(OsdItem {
                 row,
@@ -296,10 +392,12 @@ impl OsdManager {
                 count: n.count,
                 duration,
                 deadline,
+                selected,
             });
-            // Never preempt the showing label; drop oldest pending.
+            // Full queue drops the lowest severity first; Errors drop
+            // only when every queued row is an Error.
             while self.pending.len() > MAX_QUEUED {
-                self.pending.pop_front();
+                Self::evict_victim(&mut self.pending);
             }
         }
     }
@@ -878,6 +976,271 @@ mod tests {
         assert!(!manager.poll(now + Duration::from_millis(2_001)));
         assert_eq!(manager.rows().len(), 1);
         assert!(manager.poll(now + Duration::from_millis(5_001)));
+        assert!(manager.rows().is_empty());
+    }
+
+    #[test]
+    fn error_survives_info_flood() {
+        use super::super::notification::NotificationLevel as L;
+        let mut altered = settings();
+        altered.error_modal = false;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        let note = |kind, level| UiNotification {
+            level,
+            kind,
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        let error = || UiNotification {
+            level: L::Error,
+            kind: NotificationKind::SlotFailed {
+                slot: None,
+                reason: SlotOpFailure::Storage,
+            },
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        // Showing Info; two Infos queued (full).
+        manager.push_all(
+            vec![note(NotificationKind::Paused, L::Info)],
+            &altered,
+            AppLanguage::English,
+            now,
+        );
+        assert!(manager.poll(now));
+        manager.push_all(
+            vec![note(NotificationKind::Resumed, L::Info)],
+            &altered,
+            AppLanguage::English,
+            now,
+        );
+        manager.push_all(
+            vec![note(NotificationKind::Reset, L::Info)],
+            &altered,
+            AppLanguage::English,
+            now,
+        );
+        // An Error preempts the showing Info; the demoted label waits
+        // at the queue head while the tail sheds the newest Info.
+        manager.push_all(vec![error()], &altered, AppLanguage::English, now);
+        assert_eq!(manager.rows()[0].tag, "[ERROR]");
+        assert!(manager.poll(now + Duration::from_millis(5_001)));
+        assert!(manager.rows()[0].text.contains("Paused"));
+        assert!(manager.poll(now + Duration::from_millis(7_002)));
+        assert!(manager.rows()[0].text.contains("Resumed"));
+    }
+
+    #[test]
+    fn error_preempts_showing_info() {
+        use super::super::notification::NotificationLevel as L;
+        let mut altered = settings();
+        altered.error_modal = false;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        manager.push_all(
+            vec![UiNotification {
+                level: L::Info,
+                kind: NotificationKind::Paused,
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            }],
+            &altered,
+            AppLanguage::English,
+            now,
+        );
+        assert!(manager.poll(now));
+        assert_eq!(manager.rows()[0].tag, "[INFO]");
+        manager.push_all(
+            vec![UiNotification {
+                level: L::Error,
+                kind: NotificationKind::SlotFailed {
+                    slot: None,
+                    reason: SlotOpFailure::Storage,
+                },
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            }],
+            &altered,
+            AppLanguage::English,
+            now,
+        );
+        // The Error takes the display at once; the demoted Info waits.
+        assert_eq!(manager.rows()[0].tag, "[ERROR]");
+        assert!(manager.poll(now + Duration::from_millis(5_001)));
+        assert_eq!(manager.rows()[0].tag, "[INFO]");
+    }
+
+    #[test]
+    fn warning_waits_behind_showing_info() {
+        use super::super::notification::NotificationLevel as L;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        manager.push_all(
+            vec![UiNotification {
+                level: L::Info,
+                kind: NotificationKind::Paused,
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            }],
+            &settings(),
+            AppLanguage::English,
+            now,
+        );
+        assert!(manager.poll(now));
+        manager.push_all(
+            vec![UiNotification {
+                level: L::Warning,
+                kind: NotificationKind::SlotFailed {
+                    slot: None,
+                    reason: SlotOpFailure::Missing,
+                },
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            }],
+            &settings(),
+            AppLanguage::English,
+            now,
+        );
+        // Only Errors preempt; the Warning waits for expiry.
+        assert_eq!(manager.rows()[0].tag, "[INFO]");
+        assert!(manager.poll(now + Duration::from_millis(2_001)));
+        assert_eq!(manager.rows()[0].tag, "[WARN]");
+    }
+
+    #[test]
+    fn queue_overflow_drops_lowest_severity_first() {
+        use super::super::notification::NotificationLevel as L;
+        let mut altered = settings();
+        altered.error_modal = false;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        let error = |slot| UiNotification {
+            level: L::Error,
+            kind: NotificationKind::SlotFailed {
+                slot,
+                reason: SlotOpFailure::Storage,
+            },
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        let warning = UiNotification {
+            level: L::Warning,
+            kind: NotificationKind::SlotFailed {
+                slot: None,
+                reason: SlotOpFailure::Missing,
+            },
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        let info = |kind| UiNotification {
+            level: L::Info,
+            kind,
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        // Showing Error (no preempt against itself); queue Warning + Info.
+        manager.push_all(vec![error(Some(9))], &altered, AppLanguage::English, now);
+        assert!(manager.poll(now));
+        manager.push_all(vec![warning], &altered, AppLanguage::English, now);
+        manager.push_all(
+            vec![info(NotificationKind::Paused)],
+            &altered,
+            AppLanguage::English,
+            now,
+        );
+        // A second Info overflows: the oldest Info drops, Warning and
+        // Error survive.
+        manager.push_all(
+            vec![info(NotificationKind::Reset)],
+            &altered,
+            AppLanguage::English,
+            now,
+        );
+        assert!(manager.poll(now + Duration::from_millis(5_001)));
+        assert_eq!(manager.rows()[0].tag, "[WARN]");
+        assert!(manager.poll(now + Duration::from_millis(10_002)));
+        assert!(manager.rows()[0].text.contains("Reset"));
+        assert_eq!(manager.rows()[0].tag, "[INFO]");
+    }
+
+    #[test]
+    fn error_queue_bound_drops_oldest_error() {
+        use super::super::notification::NotificationLevel as L;
+        let mut altered = settings();
+        altered.error_modal = false;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        let error = |slot| UiNotification {
+            level: L::Error,
+            kind: NotificationKind::SlotFailed {
+                slot,
+                reason: SlotOpFailure::Storage,
+            },
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        // Three Errors, nothing showing: the oldest drops (FIFO bound).
+        manager.push_all(vec![error(Some(1))], &altered, AppLanguage::English, now);
+        manager.push_all(vec![error(Some(2))], &altered, AppLanguage::English, now);
+        manager.push_all(vec![error(Some(3))], &altered, AppLanguage::English, now);
+        assert!(manager.poll(now));
+        assert!(manager.rows()[0].text.contains("Slot 2"));
+        assert!(manager.poll(now + Duration::from_millis(5_001)));
+        assert!(manager.rows()[0].text.contains("Slot 3"));
+    }
+
+    #[test]
+    fn selected_slot_latest_wins() {
+        use super::super::notification::NotificationLevel as L;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        let note = |slot| UiNotification {
+            level: L::Info,
+            kind: NotificationKind::SelectedSlot(slot),
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now);
+        manager.push_all(vec![note(5)], &settings(), AppLanguage::English, now);
+        // One row only, showing the latest selection.
+        assert!(manager.poll(now));
+        assert!(manager.rows()[0].text.contains("slot 5"));
+        assert!(!manager.rows()[0].text.contains("slot 3"));
+        assert!(manager.poll(now + Duration::from_millis(2_001)));
+        assert!(manager.rows().is_empty());
+    }
+
+    #[test]
+    fn selected_slot_updates_showing_row() {
+        use super::super::notification::NotificationLevel as L;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        let note = |slot| UiNotification {
+            level: L::Info,
+            kind: NotificationKind::SelectedSlot(slot),
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now);
+        assert!(manager.poll(now));
+        assert!(manager.rows()[0].text.contains("slot 3"));
+        // A newer selection rewrites the showing row instead of queuing.
+        manager.push_all(vec![note(7)], &settings(), AppLanguage::English, now);
+        assert!(manager.rows()[0].text.contains("slot 7"));
+        assert!(manager.poll(now + Duration::from_millis(2_001)));
         assert!(manager.rows().is_empty());
     }
 
