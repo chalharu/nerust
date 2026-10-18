@@ -1,8 +1,5 @@
-//! Error dialog bridge: OSD error batches surface as a modal
-//! Android dialog instead of a Toast (transient, no ack). One dialog
-//! at a time; the frontend queues the rest and shows them in order.
-//! Dismissal returns via the menu string bridge, so no new JNI
-//! export is needed on the Kotlin→Rust direction.
+//! Error dialog bridge: OSD error batches surface as a modal dialog,
+//! one at a time. Dismissal returns via the menu string bridge.
 
 use jni::objects::{JObject, JValue};
 use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
