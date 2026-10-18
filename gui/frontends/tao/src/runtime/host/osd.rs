@@ -204,7 +204,7 @@ impl HostState {
         }
         self.reap_modal();
         self.present_modal();
-        if self.osd.dirty() {
+        if self.osd.take_dirty() {
             // Paint even idle: no main redraw is scheduled while
             // paused+unfocused, which is exactly when Paused lands.
             self.request_redraw();

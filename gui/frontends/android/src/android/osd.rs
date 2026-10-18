@@ -94,7 +94,7 @@ impl AndroidOsd {
         if let Some(detail) = self.manager.take_modal_text() {
             super::show_toast(app, &detail);
         }
-        self.manager.dirty()
+        self.manager.take_dirty()
     }
 
     /// OSD expiry deadline for the event-loop wait, if any labels are visible.

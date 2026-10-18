@@ -453,7 +453,7 @@ impl ModalBox {
         self.batch.push(text);
     }
 
-    fn take_modal(&mut self) -> Vec<String> {
+    fn take_batch(&mut self) -> Vec<String> {
         std::mem::take(&mut self.batch)
     }
 
@@ -461,7 +461,7 @@ impl ModalBox {
     /// Single source for the aggregation wording: dialogs show it
     /// as-is, Android toasts it as-is.
     fn take_modal_text(&mut self) -> Option<String> {
-        let modal = self.take_modal();
+        let modal = self.take_batch();
         if modal.is_empty() {
             return None;
         }
@@ -569,7 +569,7 @@ impl OsdManager {
     }
 
     pub fn take_modal(&mut self) -> Vec<String> {
-        self.modal_box.take_modal()
+        self.modal_box.take_batch()
     }
 
     pub fn take_modal_text(&mut self) -> Option<String> {
@@ -600,14 +600,10 @@ impl OsdManager {
         self.transient.next_deadline()
     }
 
+    /// Take the display-state change since the last take. No peek
+    /// accessor exists by design: peeking would repaint idle frames.
     pub fn take_dirty(&mut self) -> bool {
         std::mem::replace(&mut self.dirty, false)
-    }
-
-    /// Peek the dirty flag without consuming it. The layer sync owns
-    /// consumption; the poll loop only peeks for redraw decisions.
-    pub fn dirty(&self) -> bool {
-        self.dirty
     }
 
     /// The single showing row (empty when idle).
