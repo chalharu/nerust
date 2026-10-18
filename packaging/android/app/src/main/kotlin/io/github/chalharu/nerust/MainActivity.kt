@@ -62,6 +62,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -141,6 +143,7 @@ private const val MENU_ACTION_TOGGLE_PAUSE = "toggle_pause"
 private const val MENU_ACTION_UNLOAD = "unload"
 private const val MENU_BUTTON_TAG = "nerust-menu-button"
 private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
+private const val ERROR_DIALOG_TAG = "nerust-error-dialog"
 private const val DRAWER_TITLE = "Nerust"
 private const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
 
@@ -1237,6 +1240,30 @@ class MainActivity :
         )
     }
 
+    /**
+     * Show a modal Android error dialog.
+     *
+     * Presents an aggregated OSD error batch as scrollable text with a single
+     * dismiss button. Called from the Rust JNI bridge on the Java main thread.
+     * Dismissal (including replacement by another dialog) reports back through
+     * the menu string bridge so Rust can resume its auto-pause and show the
+     * next queued error. A long batch scrolls instead of clipping.
+     */
+    fun showErrorDialog(message: String) {
+        showComposeDialog(
+            dialogTag = ERROR_DIALOG_TAG,
+            contentDescription = message,
+            presentation = DIALOG_PRESENTATION_FULL_SCREEN,
+            ownedByTest = false,
+            onDismiss = { dispatchMenuAction("error_dialog_dismissed") },
+        ) { dismiss ->
+            NerustErrorDialogCard(
+                message = message,
+                onDismissRequest = dismiss,
+            )
+        }
+    }
+
     private fun scheduleChromeAttach() {
         if (!chromeAttachEnabled || isFinishing || isDestroyed) {
             Log.i(
@@ -1890,6 +1917,29 @@ private fun NerustDialogCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
                 content = buttons,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NerustErrorDialogCard(
+    message: String,
+    onDismissRequest: () -> Unit,
+) {
+    NerustDialogHost {
+        NerustDialogCard(
+            title = "Error",
+            buttons = {
+                TextButton(onClick = onDismissRequest) { Text("OK") }
+            },
+        ) {
+            Text(
+                text = message,
+                modifier =
+                    Modifier
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(rememberScrollState()),
             )
         }
     }

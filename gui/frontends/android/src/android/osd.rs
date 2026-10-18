@@ -1,8 +1,8 @@
 //! In-frame notification OSD sync. Session outcomes already land in
 //! the shell `NotificationCenter` via `run_command`; this module drains
 //! them into `OsdManager`, rasterizes the layer, and hands it to the
-//! renderer. Error batches surface as Toast. The loop never blocks,
-//! so unlike desktop dialogs there is no auto-pause.
+//! renderer. Error batches surface as a modal dialog (frontend-driven
+//! via `take_pending_errors`); the loop never blocks, so no auto-pause.
 
 use std::time::Instant;
 
@@ -44,6 +44,9 @@ pub(super) struct AndroidOsd {
     last_system_size: SurfaceSize,
     last_system_scale: f32,
     last_system: SafeInsets,
+    /// Aggregated error batches awaiting the modal dialog. Frontend owns
+    /// showing flag, queue order, and auto-pause; this only accumulates.
+    pending_errors: Vec<String>,
 }
 
 /// Per-frame sync context. Bundled so the rasterizer handoff
@@ -69,6 +72,7 @@ impl AndroidOsd {
             last_system_size: SurfaceSize::new(0, 0),
             last_system_scale: 0.0,
             last_system: SafeInsets::default(),
+            pending_errors: Vec::new(),
         }
     }
 
@@ -81,8 +85,8 @@ impl AndroidOsd {
         self.last_system_size = SurfaceSize::new(0, 0);
     }
 
-    /// Drain shell notifications into display state. Error batches go
-    /// to Toast. Returns whether the caller should request a redraw.
+    /// Drain shell notifications into display state. Error batches queue
+    /// for the modal dialog. Returns whether the caller should redraw.
     /// Safe to call every loop pass; cheap when idle.
     pub(super) fn poll(
         &mut self,
@@ -90,7 +94,6 @@ impl AndroidOsd {
         settings: &NotificationSettings,
         language: AppLanguage,
         now: Instant,
-        app: &AndroidApp,
     ) -> bool {
         let (drained, channel) = session.drain_routed();
         if !drained.is_empty() {
@@ -99,9 +102,14 @@ impl AndroidOsd {
         }
         self.manager.poll(now);
         if let Some(detail) = self.manager.take_modal_text() {
-            super::show_toast(app, &detail);
+            self.pending_errors.push(detail);
         }
         self.manager.dirty()
+    }
+
+    /// Take queued error batches for the modal dialog, oldest first.
+    pub(super) fn take_pending_errors(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_errors)
     }
 
     /// OSD expiry deadline for the event-loop wait, if any labels are visible.
