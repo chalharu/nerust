@@ -43,6 +43,10 @@ pub enum NotificationKind {
     DeletedSlot(u64),
     CreatedSlot,
     SelectedSlot(u64),
+    /// Persistence paths could not be resolved: the game runs, but
+    /// saves have nowhere to go. Pushed once at setup time instead of
+    /// failing every later flush.
+    PersistenceUnavailable,
     SlotFailed {
         slot: Option<u64>,
         reason: SlotOpFailure,
@@ -72,6 +76,7 @@ impl NotificationKind {
                 }
             },
             NotificationKind::CommandFailed(_) => NotificationLevel::Error,
+            NotificationKind::PersistenceUnavailable => NotificationLevel::Warning,
             _ => NotificationLevel::Info,
         }
     }
@@ -115,6 +120,9 @@ impl NotificationKind {
             }
             NotificationKind::SelectedSlot(id) => {
                 Self::slot_text(Some(*id), language, "Selected", "選択しました")
+            }
+            NotificationKind::PersistenceUnavailable => {
+                bilingual(ja, "Saves unavailable", "保存機能が利用できません")
             }
             NotificationKind::SlotFailed { slot, reason } => {
                 Self::slot_failed_text(*slot, *reason, language)
@@ -336,6 +344,10 @@ mod tests {
         assert_eq!(
             NotificationKind::CommandFailed("Reset").log_level(),
             Some(NotificationLevel::Error)
+        );
+        assert_eq!(
+            NotificationKind::PersistenceUnavailable.log_level(),
+            Some(NotificationLevel::Warning)
         );
     }
 

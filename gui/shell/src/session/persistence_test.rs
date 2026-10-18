@@ -337,3 +337,18 @@ fn flush_mapper_save_propagates_export_failure() {
     ));
     let _ = fs::remove_dir_all(temp_dir);
 }
+
+#[test]
+fn setup_failure_pushes_persistence_unavailable() {
+    use crate::session::notification::NotificationKind;
+
+    // Core active but no ROM loaded: no media identity, so setup fails.
+    let mut session = test_session();
+    assert!(!session.setup_persistence(None, false));
+    let notes = session.drain_notifications();
+    assert_eq!(notes.len(), 1);
+    assert!(matches!(
+        notes[0].kind,
+        NotificationKind::PersistenceUnavailable
+    ));
+}

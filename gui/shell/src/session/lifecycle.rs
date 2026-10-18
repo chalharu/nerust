@@ -722,7 +722,11 @@ impl SessionHandle {
             .ok()
     }
 
-    fn setup_persistence(&mut self, rom_path: Option<&Path>, load_mapper_save: bool) -> bool {
+    pub(crate) fn setup_persistence(
+        &mut self,
+        rom_path: Option<&Path>,
+        load_mapper_save: bool,
+    ) -> bool {
         let sidecars = self
             .emu_core
             .as_ref()
@@ -733,10 +737,7 @@ impl SessionHandle {
             // saves and slots have nowhere to go. Say so once here
             // instead of failing every later flush silently.
             self.notifications
-                .push(super::notification::NotificationKind::SlotFailed {
-                    slot: None,
-                    reason: SlotOpFailure::Unavailable,
-                });
+                .push(super::notification::NotificationKind::PersistenceUnavailable);
             return false;
         };
         self.persistence
