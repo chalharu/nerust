@@ -156,7 +156,7 @@ pub struct OsdRow {
     pub tag: &'static str,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct OsdItem {
     row: OsdRow,
     level: NotificationLevel,
@@ -304,43 +304,45 @@ impl OsdManager {
 
     /// Error rows preempt a non-Error showing label (Warnings wait
     /// their turn). The demoted label waits at the queue head with
-    /// its duration intact.
-    fn preempt_for_error(&mut self, item: &OsdItem) -> bool {
+    /// its duration intact. Returns the row unhandled when no
+    /// preempt applies, so the caller keeps ownership by move.
+    fn preempt_for_error(&mut self, item: OsdItem) -> Option<OsdItem> {
         if item.level != NotificationLevel::Error {
-            return false;
+            return Some(item);
         }
         let Some(current) = self.current.as_ref() else {
-            return false;
+            return Some(item);
         };
         if current.level == NotificationLevel::Error {
-            return false;
+            return Some(item);
         }
         let demoted = self.current.take().expect("showing label checked");
-        self.current = Some(item.clone());
+        self.current = Some(item);
         self.pending.push_front(demoted);
         while self.pending.len() > MAX_QUEUED {
             Self::evict_demote_overflow(&mut self.pending);
         }
-        true
+        None
     }
 
     /// Selection echo keeps latest-wins: replace the existing row in
-    /// place instead of queuing stale echoes.
-    fn replace_selected(&mut self, item: &OsdItem) -> bool {
+    /// place instead of queuing stale echoes. Returns the row
+    /// unhandled when no selection row exists yet.
+    fn replace_selected(&mut self, item: OsdItem) -> Option<OsdItem> {
         if !item.selected {
-            return false;
+            return Some(item);
         }
         if let Some(current) = self.current.as_mut()
             && current.selected
         {
-            *current = item.clone();
-            return true;
+            *current = item;
+            return None;
         }
         if let Some(existing) = self.pending.iter_mut().find(|row| row.selected) {
-            *existing = item.clone();
-            return true;
+            *existing = item;
+            return None;
         }
-        false
+        Some(item)
     }
 
     /// Fold drained shell notifications into display state.
@@ -396,12 +398,12 @@ impl OsdManager {
             if self.merge_consecutive(&item, consecutive) {
                 continue;
             }
-            if self.preempt_for_error(&item) {
+            let Some(item) = self.preempt_for_error(item) else {
                 continue;
-            }
-            if self.replace_selected(&item) {
+            };
+            let Some(item) = self.replace_selected(item) else {
                 continue;
-            }
+            };
             self.pending.push_back(item);
             // Full queue drops the lowest severity first; Errors drop
             // only when every queued row is an Error.
