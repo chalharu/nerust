@@ -42,6 +42,19 @@ impl std::fmt::Debug for GlRenderer {
     }
 }
 
+impl GlRenderer {
+    /// Fresh view with shaders compiled and the staged layer applied.
+    /// Single construction site for attach and profile rebuilds.
+    fn fresh_view(&self, profile: &VideoRenderProfile) -> Result<GlView, RendererError> {
+        let mut view = GlView::new();
+        view.use_vao(true);
+        view.on_load(profile)
+            .map_err(|e| RendererError::new("view", Box::new(OpaqueError(e.to_string()))))?;
+        view.set_osd_layer(self.osd.clone());
+        Ok(view)
+    }
+}
+
 impl GpuRenderer for GlRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
@@ -109,19 +122,12 @@ impl GpuRenderer for GlRenderer {
             let c = std::ffi::CString::new(n).expect("GL proc name has no interior nul");
             self.display.get_proc_address(&c)
         });
-        let mut view = GlView::new();
-        view.use_vao(true);
-        view.on_load(&self.render_profile)
-            .map_err(|e| RendererError::new("view", Box::new(OpaqueError(e.to_string()))))?;
         let fs = match self.render_profile.frame_format {
             VideoFrameFormat::Rgba => self.render_profile.logical_size,
             VideoFrameFormat::Palette => self.render_profile.source_logical_size,
         };
 
-        self.view = Some(view);
-        if let Some(view) = self.view.as_mut() {
-            view.set_osd_layer(self.osd.clone());
-        }
+        self.view = Some(self.fresh_view(&self.render_profile)?);
         self.context = Some(ctx);
         self.gl_surface = Some(surf);
         self.expected_frame_len =
@@ -163,19 +169,12 @@ impl GpuRenderer for GlRenderer {
         if let Some(ref mut v) = self.view {
             v.on_close();
         }
-        let mut view = GlView::new();
-        view.use_vao(true);
-        view.on_load(profile)
-            .map_err(|e| RendererError::new("view", Box::new(OpaqueError(e.to_string()))))?;
         let fs = match profile.frame_format {
             VideoFrameFormat::Rgba => profile.logical_size,
             VideoFrameFormat::Palette => profile.source_logical_size,
         };
         self.expected_frame_len = fs.width * fs.height * profile.frame_format.bytes_per_pixel();
-        self.view = Some(view);
-        if let Some(view) = self.view.as_mut() {
-            view.set_osd_layer(self.osd.clone());
-        }
+        self.view = Some(self.fresh_view(profile)?);
         Ok(())
     }
 

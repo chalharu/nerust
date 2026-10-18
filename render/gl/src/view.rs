@@ -103,6 +103,10 @@ fn allocate(size: usize) -> Box<[u8]> {
     vec![0; size].into_boxed_slice()
 }
 
+/// Upload attempts before a failing OSD layer is dropped. Transient
+/// blips survive; a dead driver stops costing per-frame work.
+const MAX_OSD_UPLOAD_RETRIES: u8 = 3;
+
 #[derive(Debug)]
 pub struct GlView {
     frame_texture: u32,
@@ -119,6 +123,9 @@ pub struct GlView {
     osd_size: (i32, i32),
     osd_prev: Option<(i32, i32, i32, i32)>,
     osd_dirty: bool,
+    /// Consecutive upload failures for the staged layer. Bounds
+    /// retries so a broken driver costs no per-frame re-upload.
+    osd_upload_fails: u8,
     osd_shader: Option<Shader>,
     osd_layer: Option<OsdLayer>,
     vba: Option<VertexArray>,
@@ -144,6 +151,7 @@ impl GlView {
             osd_size: (0, 0),
             osd_prev: None,
             osd_dirty: false,
+            osd_upload_fails: 0,
             osd_shader: None,
             osd_layer: None,
             vba: None,
@@ -408,23 +416,37 @@ impl GlView {
     }
 
     /// Stage an OSD layer for the next present. `None` clears.
-    /// Equal layers skip: the texture already holds these bytes.
+    /// Equal layers skip; new content resets the failure budget.
     pub fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
         if self.osd_layer == layer {
             return;
         }
         self.osd_layer = layer;
         self.osd_dirty = true;
+        self.osd_upload_fails = 0;
     }
 
     /// Composite the staged layer over the game image, if any (best-effort).
     /// A GL failure drops the overlay, never the frame.
     pub fn draw_osd(&mut self, surface_w: i32, surface_h: i32) -> Result<(), ViewError> {
-        // Retry on failure: clearing only on success keeps a transient
-        // GL error from permanently losing this layer update.
+        // Bounded retry: transient errors re-upload next frame, but a
+        // dead driver gives up instead of re-allocating every frame.
         if self.osd_dirty {
-            self.sync_osd_texture(surface_w, surface_h)?;
-            self.osd_dirty = false;
+            match self.sync_osd_texture(surface_w, surface_h) {
+                Ok(()) => {
+                    self.osd_dirty = false;
+                    self.osd_upload_fails = 0;
+                }
+                Err(e) => {
+                    self.osd_upload_fails = self.osd_upload_fails.saturating_add(1);
+                    if self.osd_upload_fails > MAX_OSD_UPLOAD_RETRIES {
+                        log::warn!("GlView: dropping OSD update after repeated upload failures");
+                        self.osd_dirty = false;
+                        self.osd_upload_fails = 0;
+                    }
+                    return Err(e);
+                }
+            }
         }
         let (Some(shader), Some(_)) = (self.osd_shader.as_ref(), self.osd_layer.as_ref()) else {
             return Ok(());
@@ -713,6 +735,12 @@ impl GlView {
         {
             log::warn!("GL view teardown failed: {e}");
         }
+        // Zero what was deleted: a second `on_close` without an
+        // intervening `on_load` must not double-delete names.
+        self.frame_texture = 0;
+        self.palette_texture = 0;
+        self.ntsc_texture = 0;
+        self.osd_texture = 0;
     }
 }
 

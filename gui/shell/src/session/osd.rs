@@ -553,14 +553,12 @@ impl OsdManager {
         }
     }
 
-    /// Advance the showing label. Promotes pending immediately when
-    /// idle; advances on expiry otherwise. Returns true on change.
-    pub fn poll(&mut self, now: Instant) -> bool {
+    /// Advance the showing label. Signals via `dirty()`, which also
+    /// covers `push_all` (a bool return would miss those changes).
+    pub fn poll(&mut self, now: Instant) {
         if self.transient.poll(now) {
             self.dirty = true;
-            return true;
         }
-        false
     }
 
     pub fn rows(&self) -> Vec<OsdRow> {
@@ -1034,9 +1032,13 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         assert_eq!(manager.rows().len(), 1);
-        assert!(manager.poll(now + Duration::from_millis(2_001)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(2_001));
+        assert!(manager.dirty());
         assert!(manager.rows().is_empty());
     }
 
@@ -1064,14 +1066,20 @@ mod tests {
             );
         }
         // Showing the first; the second waits its turn.
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         assert_eq!(manager.rows().len(), 1);
         assert_eq!(manager.rows()[0].text, "Paused");
         // First expires after 2s; the second takes over.
-        assert!(manager.poll(now + Duration::from_millis(2_001)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(2_001));
+        assert!(manager.dirty());
         assert_eq!(manager.rows()[0].text, "Resumed");
         // Second expires; idle afterwards.
-        assert!(manager.poll(now + Duration::from_millis(4_002)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(4_002));
+        assert!(manager.dirty());
         assert!(manager.rows().is_empty());
         assert!(!manager.has_visible());
     }
@@ -1119,7 +1127,9 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         // Oldest pending (CreatedSlot) shows first; drops removed older.
         assert!(manager.rows()[0].text.contains("Slot"));
         // Drain fully: CreatedSlot, then merged Paused ×2, then idle.
@@ -1127,7 +1137,9 @@ mod tests {
         let mut t = now;
         for _ in 0..5 {
             t += Duration::from_millis(2_001);
-            if manager.poll(t) && !manager.rows().is_empty() {
+            manager.take_dirty();
+            manager.poll(t);
+            if manager.dirty() && !manager.rows().is_empty() {
                 shown.push(manager.rows()[0].text.clone());
             }
         }
@@ -1158,12 +1170,18 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         assert_eq!(manager.rows().len(), 1);
         // Still showing past the Info duration: 5s minimum.
-        assert!(!manager.poll(now + Duration::from_millis(2_001)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(2_001));
+        assert!(!manager.dirty());
         assert_eq!(manager.rows().len(), 1);
-        assert!(manager.poll(now + Duration::from_millis(5_001)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(5_001));
+        assert!(manager.dirty());
         assert!(manager.rows().is_empty());
     }
 
@@ -1199,7 +1217,9 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         manager.push_all(
             vec![note(NotificationKind::Resumed, L::Info)],
             &altered,
@@ -1224,9 +1244,13 @@ mod tests {
             FrameChannel::Composited,
         );
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
-        assert!(manager.poll(now + Duration::from_millis(5_001)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(5_001));
+        assert!(manager.dirty());
         assert!(manager.rows()[0].text.contains("Paused"));
-        assert!(manager.poll(now + Duration::from_millis(7_002)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(7_002));
+        assert!(manager.dirty());
         assert!(manager.rows()[0].text.contains("Resumed"));
     }
 
@@ -1250,7 +1274,9 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         assert_eq!(manager.rows()[0].tag, "[INFO]");
         manager.push_all(
             vec![UiNotification {
@@ -1270,7 +1296,9 @@ mod tests {
         );
         // The Error takes the display at once; the demoted Info waits.
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
-        assert!(manager.poll(now + Duration::from_millis(5_001)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(5_001));
+        assert!(manager.dirty());
         assert_eq!(manager.rows()[0].tag, "[INFO]");
     }
 
@@ -1292,7 +1320,9 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         manager.push_all(
             vec![UiNotification {
                 level: L::Warning,
@@ -1311,7 +1341,9 @@ mod tests {
         );
         // Only Errors preempt; the Warning waits for expiry.
         assert_eq!(manager.rows()[0].tag, "[INFO]");
-        assert!(manager.poll(now + Duration::from_millis(2_001)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(2_001));
+        assert!(manager.dirty());
         assert_eq!(manager.rows()[0].tag, "[WARN]");
     }
 
@@ -1357,7 +1389,9 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         manager.push_all(
             vec![warning],
             &altered,
@@ -1381,9 +1415,13 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now + Duration::from_millis(5_001)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(5_001));
+        assert!(manager.dirty());
         assert_eq!(manager.rows()[0].tag, "[WARN]");
-        assert!(manager.poll(now + Duration::from_millis(10_002)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(10_002));
+        assert!(manager.dirty());
         assert!(manager.rows()[0].text.contains("Reset"));
         assert_eq!(manager.rows()[0].tag, "[INFO]");
     }
@@ -1427,9 +1465,13 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         assert!(manager.rows()[0].text.contains("Slot 2"));
-        assert!(manager.poll(now + Duration::from_millis(5_001)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(5_001));
+        assert!(manager.dirty());
         assert!(manager.rows()[0].text.contains("Slot 3"));
     }
 
@@ -1468,7 +1510,9 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         manager.push_all(
             vec![UiNotification {
                 level: L::Warning,
@@ -1502,11 +1546,17 @@ mod tests {
             FrameChannel::Composited,
         );
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
-        assert!(manager.poll(now + Duration::from_millis(5_000)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(5_000));
+        assert!(manager.dirty());
         assert!(manager.rows()[0].text.contains("Paused"));
-        assert!(manager.poll(now + Duration::from_millis(7_000)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(7_000));
+        assert!(manager.dirty());
         assert_eq!(manager.rows()[0].tag, "[WARN]");
-        assert!(manager.poll(now + Duration::from_millis(12_000)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(12_000));
+        assert!(manager.dirty());
         assert!(manager.rows().is_empty());
     }
 
@@ -1537,10 +1587,14 @@ mod tests {
             FrameChannel::Composited,
         );
         // One row only, showing the latest selection.
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         assert!(manager.rows()[0].text.contains("slot 5"));
         assert!(!manager.rows()[0].text.contains("slot 3"));
-        assert!(manager.poll(now + Duration::from_millis(2_001)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(2_001));
+        assert!(manager.dirty());
         assert!(manager.rows().is_empty());
     }
 
@@ -1563,7 +1617,9 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         assert!(manager.rows()[0].text.contains("slot 3"));
         // A newer selection rewrites the showing row instead of queuing.
         manager.push_all(
@@ -1574,7 +1630,9 @@ mod tests {
             FrameChannel::Composited,
         );
         assert!(manager.rows()[0].text.contains("slot 7"));
-        assert!(manager.poll(now + Duration::from_millis(2_001)));
+        manager.take_dirty();
+        manager.poll(now + Duration::from_millis(2_001));
+        assert!(manager.dirty());
         assert!(manager.rows().is_empty());
     }
 
@@ -1809,7 +1867,9 @@ mod tests {
             at(0),
             FrameChannel::Composited,
         );
-        assert!(manager.poll(at(0)));
+        manager.take_dirty();
+        manager.poll(at(0));
+        assert!(manager.dirty());
         assert_eq!(shown!().as_deref(), Some("Paused"));
         manager.push_all(
             vec![note(K::Resumed)],
@@ -1818,7 +1878,9 @@ mod tests {
             at(500),
             FrameChannel::Composited,
         );
-        assert!(!manager.poll(at(500)));
+        manager.take_dirty();
+        manager.poll(at(500));
+        assert!(!manager.dirty());
         // Interleaved: must queue behind, never merge into the showing label.
         manager.push_all(
             vec![note(K::Paused)],
@@ -1839,15 +1901,27 @@ mod tests {
         // from promotion, not from push time. The cap drops the
         // oldest pending (the first resume), so the legs read
         // pause, pause, resume with no accumulation.
-        assert!(manager.poll(at(2000)));
+        manager.take_dirty();
+        manager.poll(at(2000));
+        assert!(manager.dirty());
         assert_eq!(shown!().as_deref(), Some("Paused"));
-        assert!(!manager.poll(at(3500)));
-        assert!(manager.poll(at(4000)));
+        manager.take_dirty();
+        manager.poll(at(3500));
+        assert!(!manager.dirty());
+        manager.take_dirty();
+        manager.poll(at(4000));
+        assert!(manager.dirty());
         assert_eq!(shown!().as_deref(), Some("Resumed"));
-        assert!(!manager.poll(at(5500)));
-        assert!(manager.poll(at(6000)));
+        manager.take_dirty();
+        manager.poll(at(5500));
+        assert!(!manager.dirty());
+        manager.take_dirty();
+        manager.poll(at(6000));
+        assert!(manager.dirty());
         assert!(manager.rows().is_empty());
-        assert!(!manager.poll(at(8000)));
+        manager.take_dirty();
+        manager.poll(at(8000));
+        assert!(!manager.dirty());
     }
 
     #[test]
@@ -1876,13 +1950,19 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         assert_eq!(manager.rows().len(), 1);
         assert!(manager.rows()[0].text.ends_with(" ×2"));
         assert!(manager.has_visible());
         // Still showing before the reset deadline; gone after it.
-        assert!(!manager.poll(now + std::time::Duration::from_secs(1)));
-        assert!(manager.poll(now + std::time::Duration::from_secs(61)));
+        manager.take_dirty();
+        manager.poll(now + std::time::Duration::from_secs(1));
+        assert!(!manager.dirty());
+        manager.take_dirty();
+        manager.poll(now + std::time::Duration::from_secs(61));
+        assert!(manager.dirty());
         assert!(!manager.has_visible());
     }
 
@@ -1906,7 +1986,9 @@ mod tests {
             FrameChannel::Composited,
         );
         // Promoted on the next poll; deadline lands on the duration.
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         assert!(manager.next_deadline().is_some());
     }
 
@@ -2263,7 +2345,9 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         // Frontend two-phase: redraw poll peeks, sync takes same pass.
         assert!(manager.dirty());
         assert!(manager.dirty());
@@ -2304,7 +2388,9 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.poll(now));
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
         assert!(matches!(
             presenter.sync(
                 &mut manager,
@@ -2315,7 +2401,9 @@ mod tests {
         // Past the Info duration the row expires: same two-phase order
         // must surface Clear, not Skip, then settle.
         let later = now + Duration::from_millis(2_500);
-        assert!(manager.poll(later));
+        manager.take_dirty();
+        manager.poll(later);
+        assert!(manager.dirty());
         assert!(manager.dirty());
         assert!(manager.dirty());
         assert!(matches!(

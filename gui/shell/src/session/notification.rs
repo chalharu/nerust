@@ -91,10 +91,20 @@ impl NotificationKind {
     /// Channel policy: the log line for this kind, or `None` when the
     /// kind is screen-only (history still records every event). New
     /// kinds declare their channel here instead of editing `push`.
+    /// Exhaustive: a new kind must choose log or screen-only here.
     pub fn log_level(&self) -> Option<NotificationLevel> {
         match self {
             NotificationKind::SelectedSlot(_) => None,
-            other => Some(other.level()),
+            NotificationKind::Paused
+            | NotificationKind::Resumed
+            | NotificationKind::Reset
+            | NotificationKind::SavedSlot(_)
+            | NotificationKind::LoadedSlot(_)
+            | NotificationKind::DeletedSlot(_)
+            | NotificationKind::CreatedSlot
+            | NotificationKind::PersistenceUnavailable
+            | NotificationKind::SlotFailed { .. }
+            | NotificationKind::CommandFailed(_) => Some(self.level()),
         }
     }
 
@@ -284,13 +294,21 @@ pub fn outcome_notifications(
     active_slot: Option<u64>,
 ) -> Vec<NotificationKind> {
     if let Some(reason) = outcome.slot_failure {
+        // Exhaustive: a new slot-carrying command must declare its
+        // slot here instead of silently routing with `slot: None`.
         let slot = match command {
             SessionCommand::SaveSlot(id)
             | SessionCommand::LoadSlot(id)
             | SessionCommand::DeleteSlot(id)
             | SessionCommand::SelectActiveSlot(id) => Some(id),
             SessionCommand::SaveActiveSlotOrNew | SessionCommand::LoadActiveSlot => active_slot,
-            _ => None,
+            SessionCommand::Pause
+            | SessionCommand::Resume
+            | SessionCommand::TogglePause
+            | SessionCommand::Reset
+            | SessionCommand::CreateSlot
+            | SessionCommand::SelectNextSlot
+            | SessionCommand::SelectPreviousSlot => None,
         };
         return vec![NotificationKind::SlotFailed { slot, reason }];
     }
