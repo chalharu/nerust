@@ -232,7 +232,7 @@ impl SessionHandle {
 
     /// Display channel for notifications: without a loaded core no
     /// frame is composited, so the OSD is invisible.
-    pub fn frame_channel(&self) -> FrameChannel {
+    fn frame_channel(&self) -> FrameChannel {
         if self.loaded() {
             FrameChannel::Composited
         } else {
@@ -475,7 +475,7 @@ impl SessionHandle {
         }
     }
 
-    pub fn drain_notifications(&mut self) -> Vec<super::notification::UiNotification> {
+    pub(crate) fn drain_notifications(&mut self) -> Vec<super::notification::UiNotification> {
         self.notifications.drain()
     }
 
