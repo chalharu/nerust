@@ -1939,6 +1939,14 @@ impl ApplicationHandler for AndroidFrontend {
         bridge::reset_transient();
         picker::reset_transient();
         settings::reset_transient();
+        // Transient UI dies with the activity: release the shell gate
+        // and re-queue the unacked batch so it reshows after resume.
+        self.osd.modal_closed();
+        if let Some(detail) = self.error_dialog_current.take() {
+            self.osd.queue_modal(detail);
+        }
+        self.error_dialog_showing = false;
+        self.error_dialog_auto_paused = false;
         self.release_window_resources();
     }
 
