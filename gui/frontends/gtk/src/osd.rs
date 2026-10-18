@@ -279,10 +279,9 @@ impl GtkOsd {
                         NotificationLevel::Warning => (170u8, 110u8, 0u8),
                         NotificationLevel::Error => (190u8, 30u8, 30u8),
                     };
-                    let mut text = line.text.clone();
-                    if line.count > 1 {
-                        text = format!("{text} ×{}", line.count);
-                    }
+                    // `HistoryLine.text` already carries the `×N` suffix
+                    // when merged; use it as-is.
+                    let text = line.text.clone();
                     let datetime = gtk::Label::new(None);
                     datetime.set_markup(&format!(
                         "<span font_family=\"monospace\" size=\"smaller\">{}</span>",

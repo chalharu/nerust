@@ -224,10 +224,9 @@ impl Program for HistoryProgram {
                 NotificationLevel::Warning => iced::Color::from_rgb8(170, 110, 0),
                 NotificationLevel::Error => iced::Color::from_rgb8(190, 30, 30),
             };
-            let mut message = line.text.clone();
-            if line.count > 1 {
-                message = format!("{message} ×{}", line.count);
-            }
+            // `HistoryLine.text` already carries the `×N` suffix when
+            // merged (see `history_lines`); use it as-is.
+            let message = line.text.clone();
             // Cells wrap inside their column: overlong values wrap
             // instead of bleeding into the neighbour (HIG). No clip
             // containers: a clipped cell exactly at the scrollable
