@@ -432,11 +432,10 @@ impl SessionHandle {
                 // Single audit point for transport failures: frontends
                 // must not log these at their call sites. The push
                 // below logs the UX wording; this line keeps the cause.
-                log::warn!("run_command {} failed: {error}", command_name(command));
+                let name = command_name(command);
+                log::warn!("run_command {name} failed: {error}");
                 self.notifications
-                    .push(super::notification::NotificationKind::CommandFailed(
-                        command_name(command),
-                    ))
+                    .push(super::notification::NotificationKind::CommandFailed(name))
             }
         }
         result
@@ -730,6 +729,14 @@ impl SessionHandle {
             .and_then(|c| c.canonical_media_identity())
             .and_then(|identity| self.resolve_persistence_paths(rom_path, &identity));
         let Some(sidecars) = sidecars else {
+            // Persistence unavailable: the game still runs, but mapper
+            // saves and slots have nowhere to go. Say so once here
+            // instead of failing every later flush silently.
+            self.notifications
+                .push(super::notification::NotificationKind::SlotFailed {
+                    slot: None,
+                    reason: SlotOpFailure::Unavailable,
+                });
             return false;
         };
         self.persistence
