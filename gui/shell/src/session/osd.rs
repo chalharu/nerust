@@ -904,7 +904,11 @@ mod tests {
             NotificationLevel::Warning,
             NotificationLevel::Error,
         ] {
-            assert!(falls_back_to_modal(level, &modal, FrameChannel::Unpresented));
+            assert!(falls_back_to_modal(
+                level,
+                &modal,
+                FrameChannel::Unpresented
+            ));
             assert!(falls_back_to_modal(level, &osd, FrameChannel::Unpresented));
         }
     }
@@ -1149,7 +1153,13 @@ mod tests {
         );
         // An Error preempts the showing Info; the demoted label waits
         // at the queue head while the tail sheds the newest Info.
-        manager.push_all(vec![error()], &altered, AppLanguage::English, now, FrameChannel::Composited);
+        manager.push_all(
+            vec![error()],
+            &altered,
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
         assert!(manager.poll(now + Duration::from_millis(5_001)));
         assert!(manager.rows()[0].text.contains("Paused"));
@@ -1285,7 +1295,13 @@ mod tests {
             FrameChannel::Composited,
         );
         assert!(manager.poll(now));
-        manager.push_all(vec![warning], &altered, AppLanguage::English, now, FrameChannel::Composited);
+        manager.push_all(
+            vec![warning],
+            &altered,
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
         manager.push_all(
             vec![info(NotificationKind::Paused)],
             &altered,
@@ -1443,8 +1459,20 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
-        manager.push_all(vec![note(5)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
+        manager.push_all(
+            vec![note(3)],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        manager.push_all(
+            vec![note(5)],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
         // One row only, showing the latest selection.
         assert!(manager.poll(now));
         assert!(manager.rows()[0].text.contains("slot 5"));
@@ -1465,11 +1493,23 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
+        manager.push_all(
+            vec![note(3)],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
         assert!(manager.poll(now));
         assert!(manager.rows()[0].text.contains("slot 3"));
         // A newer selection rewrites the showing row instead of queuing.
-        manager.push_all(vec![note(7)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
+        manager.push_all(
+            vec![note(7)],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
         assert!(manager.rows()[0].text.contains("slot 7"));
         assert!(manager.poll(now + Duration::from_millis(2_001)));
         assert!(manager.rows().is_empty());
@@ -1759,8 +1799,20 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
-        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now, FrameChannel::Composited);
+        manager.push_all(
+            vec![note(1)],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        manager.push_all(
+            vec![note(1)],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
         assert!(manager.poll(now));
         assert_eq!(manager.rows().len(), 1);
         assert!(manager.rows()[0].text.ends_with(" ×2"));

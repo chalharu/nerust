@@ -24,7 +24,9 @@ pub fn install() {
             let record = PanicRecord::capture(info.to_string());
             log::error!(
                 "panic on thread '{}': {}\nbacktrace:\n{}",
-                record.thread, record.detail, record.backtrace
+                record.thread,
+                record.detail,
+                record.backtrace
             );
             previous(info);
         }));
