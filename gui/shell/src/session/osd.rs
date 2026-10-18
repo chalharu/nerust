@@ -192,9 +192,7 @@ struct TransientQueue {
     last_key: Option<(NotificationLevel, String)>,
 }
 
-/// Modal error batches: collected lines plus the sequential display
-/// queue. Independent from the transient queue except for the
-/// fallback routing in [`OsdManager::push_all`].
+/// Modal error batches with sequential display pumping.
 #[derive(Debug, Default)]
 struct ModalBox {
     batch: Vec<String>,
@@ -202,10 +200,8 @@ struct ModalBox {
     open: bool,
 }
 
-/// Notification display state: transient in-frame rows plus modal
-/// error batches. Queue discipline lives in [`TransientQueue`],
-/// batch pumping in [`ModalBox`]; this type only routes, aggregates
-/// reads, and owns the dirty flag.
+/// Notification display state: transient in-frame rows plus modal batches.
+/// Queue discipline lives in TransientQueue, pumping in ModalBox.
 #[derive(Debug, Default)]
 pub struct OsdManager {
     transient: TransientQueue,
@@ -242,9 +238,7 @@ fn falls_back_to_modal(
         || (level == NotificationLevel::Error && settings.error_modal)
 }
 
-/// Display-policy helpers shared by the router and the merger.
-/// Free functions: they use settings and row data only, never manager
-/// state, so neither sub-queue owns them.
+/// Display-policy helpers using settings and row data only, never manager state.
 fn enabled(level: NotificationLevel, settings: &NotificationSettings) -> bool {
     match level {
         NotificationLevel::Info => settings.info_enabled,
@@ -539,10 +533,7 @@ impl OsdManager {
             if n.count > 1 {
                 text = format!("{text} ×{}", n.count);
             }
-            // Without a composited frame the OSD channel is
-            // invisible, so every row falls back to modal instead of
-            // staying silent. Nothing is interrupted (no gameplay), and
-            // the modal batch cap absorbs no-core command spam.
+            // No composited frame: route everything to modal, never stay silent.
             if falls_back_to_modal(n.level, settings, channel) {
                 self.modal_box.push(text);
                 continue;

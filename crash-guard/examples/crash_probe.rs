@@ -1,6 +1,4 @@
-//! Probe child for the hook test: installs the guard and panics.
-//! Never referenced by production code; located by the test via
-//! `current_exe()/examples/crash_probe`.
+//! Subprocess hook probe. Production code never references this.
 
 /// Minimal stderr logger: the leaf emits via the `log` facade only,
 // so the probe must provide a backend (real frontends use SimpleLogger).

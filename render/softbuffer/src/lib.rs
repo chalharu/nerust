@@ -41,9 +41,7 @@ pub struct SoftbufferRenderer {
     resize_buffer: Vec<u32>,
     ntsc_buffer: Vec<u32>,
     osd: Option<nerust_render_traits::renderer::OsdLayer>,
-    /// Last tap-coverage verdict plus the inputs it was computed
-    /// from; geometry rarely changes, so the per-frame scan is
-    /// skipped on a key match.
+    /// Last tap-coverage verdict with its inputs; skips the scan on a key match.
     taps_cache: Option<(TapKey, bool)>,
 }
 
@@ -311,9 +309,7 @@ impl SoftbufferRenderer {
     }
 
     fn resize_lut(&mut self) {
-        // Taps are rebuilt below: drop the cached verdict, whose key
-        // covers lengths only and would go stale on same-size rebuilds
-        // (e.g. aspect-only profile changes).
+        // Taps are rebuilt below: drop the cached verdict (key covers lengths only).
         self.taps_cache = None;
         self.lut.resize_lut(
             SurfaceSize {
@@ -426,12 +422,8 @@ impl SoftbufferRenderer {
         }
     }
 
-    /// Tap coverage for one frame: every LUT entry the loops below
-    /// touch must exist and point inside its target. A mismatch
-    /// (stale profile, short rows) refuses the frame instead of
-    /// panicking the UI thread. Valid frames pass unchanged: no
-    /// pixel output moves. Only the frame-varying inputs are
-    /// parameters; LUT and buffer lengths come from `self`.
+    /// Tap coverage for one frame: every touched LUT entry must exist and
+    /// point inside its target; mismatch refuses the frame instead of panicking.
     fn taps_cover(
         &self,
         dst_w: usize,
@@ -697,10 +689,7 @@ impl GpuRenderer for SoftbufferRenderer {
         if dst_w == 0 || dst_h == 0 {
             return RenderResult::Skipped;
         }
-        // Tap coverage refuses stale-profile frames before any
-        // indexer below runs (warned, not fatal). Checked ahead of
-        // the surface borrow: the scan only reads LUT and buffer
-        // lengths, and failing fast avoids taking the buffer at all.
+        // Refuse stale-profile frames before any indexer runs (warned, not fatal).
         let avail_h = dst_h.saturating_sub(self.reserved.height_loss(self.size.height) as usize);
         let src_stride = frame.stride();
         let src_h = self.render_profile.source_logical_size.height;
