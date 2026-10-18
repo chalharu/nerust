@@ -453,7 +453,7 @@ impl ModalBox {
 
     /// Take pending error lines as one display batch, bulleted.
     /// Single source for the aggregation wording: dialogs show it
-    /// as-is, Android toasts it as-is.
+    /// as-is on every frontend, Android included.
     fn take_modal_text(&mut self) -> Option<String> {
         let modal = self.take_batch();
         if modal.is_empty() {

@@ -44,9 +44,6 @@ pub(super) struct AndroidOsd {
     last_system_size: SurfaceSize,
     last_system_scale: f32,
     last_system: SafeInsets,
-    /// Aggregated error batches awaiting the modal dialog. Frontend owns
-    /// showing flag, queue order, and auto-pause; this only accumulates.
-    pending_errors: Vec<String>,
 }
 
 /// Per-frame sync context. Bundled so the rasterizer handoff
@@ -72,7 +69,6 @@ impl AndroidOsd {
             last_system_size: SurfaceSize::new(0, 0),
             last_system_scale: 0.0,
             last_system: SafeInsets::default(),
-            pending_errors: Vec::new(),
         }
     }
 
@@ -85,9 +81,24 @@ impl AndroidOsd {
         self.last_system_size = SurfaceSize::new(0, 0);
     }
 
-    /// Drain shell notifications into display state. Error batches queue
-    /// for the modal dialog. Returns whether the caller should redraw.
-    /// Safe to call every loop pass; cheap when idle.
+    /// Take the next error batch for the modal dialog, if none is up.
+    /// Shell `ModalBox` gates on its open flag and caps the queue.
+    pub(super) fn take_modal_batch(&mut self) -> Option<String> {
+        self.manager.take_modal_batch()
+    }
+
+    /// Release the shell modal gate after the dialog is dismissed.
+    pub(super) fn modal_closed(&mut self) {
+        self.manager.modal_closed();
+    }
+
+    /// Queued error batches still awaiting display.
+    pub(super) fn modal_pending(&self) -> usize {
+        self.manager.modal_pending()
+    }
+
+    /// Drain shell notifications into display state. Error batches join
+    /// the shell modal queue; the dialog shows one at a time.
     pub(super) fn poll(
         &mut self,
         session: &mut SessionHandle,
@@ -102,14 +113,9 @@ impl AndroidOsd {
         }
         self.manager.poll(now);
         if let Some(detail) = self.manager.take_modal_text() {
-            self.pending_errors.push(detail);
+            self.manager.queue_modal(detail);
         }
         self.manager.dirty()
-    }
-
-    /// Take queued error batches for the modal dialog, oldest first.
-    pub(super) fn take_pending_errors(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.pending_errors)
     }
 
     /// OSD expiry deadline for the event-loop wait, if any labels are visible.
