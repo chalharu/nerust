@@ -193,18 +193,8 @@ pub(crate) fn pump_outcome(state: &State) -> PumpOutcome {
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
-    /// Borrow the instance-bound interface with a caller-local
-    /// lifetime. The single `transmute` in `build_ui` extends the
-    /// instance borrow to `'static` for storage; soundness rests on:
-    /// (1) this `'static` never escapes (`ui_mut` ties it to `&mut
-    /// self`, `ui` is private); (2) field order drops `ui` before
-    /// `instance`; (3) `take`-and-rebuild keeps no dangling UI
-    /// (panic leaves `None`, callers bail); (4) leak forgets both
-    /// together, never dangling. Lifetime-generic storage was
-    /// rejected: iced 0.14 offers no owned `UserInterface`, and
-    /// rebuilding per event would re-invoke `view` on every pump.
-    /// SAFETY: the transmuted interface must not outlive `instance`;
-    /// guaranteed by (1)-(4) above, all local to this module.
+    /// Borrow the instance-bound interface with a caller-local lifetime.
+    /// SAFETY: the extended `'static` never escapes; field order drops `ui` before `instance`.
     fn build_ui(
         instance: &program::Instance<P>,
         window_id: iced::window::Id,

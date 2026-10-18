@@ -1,12 +1,5 @@
-//! Outermost crash containment: hook install + guarded entry.
-//!
-//! The hook only preserves the log (never touches UX, locks, or session
-//! state: it can run on any thread, possibly lock-holding). Dialogs are the
-//! frontend's job via `run_guarded`'s `on_crash`, which runs after unwind on
-//! the calling thread; the returned [`GuardOutcome`] lets the host
-//! terminate (a crash must never look like a clean exit). Captured state
-//! is never reused after a catch: `main` is moved into the guard, so
-//! `AssertUnwindSafe` cannot leak into a resumed session.
+//! Outermost crash containment: hook install plus guarded entry.
+//! The hook preserves only the log; dialogs and termination are the host's job.
 
 use std::{
     any::Any,
@@ -16,8 +9,7 @@ use std::{
 };
 
 /// Install the process-wide panic hook (idempotent, chains previous).
-///
-/// Safe to call from every frontend; `log` facade only, backend untouched.
+/// Log facade only; backend untouched, safe from every frontend.
 pub fn install() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -35,15 +27,11 @@ pub fn install() {
     });
 }
 
-/// Crash containment exit code, matching the Rust panic convention
-/// so tooling can identify crashes automatically. Hosts exit with
-/// this on [`GuardOutcome::Crashed`].
+/// Crash exit code for hosts (Rust panic convention: 101).
 pub const CRASH_EXIT_CODE: i32 = 101;
 
-/// Guard outcome: normal completion or an unwound crash. The crash
-/// path is already logged (hook plus report) and `on_crash` already
-/// ran; the host decides termination. `#[must_use]` keeps a crash
-/// from silently passing as a clean exit.
+/// Guard result: normal completion or an unwound crash. `#[must_use]`
+/// keeps a crash from silently passing as a clean exit.
 #[must_use]
 #[derive(Debug)]
 pub enum GuardOutcome<R> {
@@ -90,9 +78,7 @@ impl std::fmt::Display for CrashReport {
     }
 }
 
-/// Shared capture for hook and report: thread plus detail text plus
-/// backtrace. Both log shapes draw from these parts instead of
-/// duplicating the capture logic.
+/// Thread, detail, and backtrace captured once for hook and report.
 #[derive(Debug)]
 struct PanicRecord {
     thread: String,
@@ -121,13 +107,8 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
     }
 }
 
-/// Run `main` under the hook; on unwind log, offer `on_crash`, and
-/// return the outcome for the host to terminate on.
-///
-/// `on_crash` runs after unwind on the caller (UI) thread only; an
-/// emu-thread panic never reaches it (typed `WorkerUnavailable` path
-/// covers that). `on_crash` itself is catch-guarded so a failing dialog
-/// cannot void the preserved log.
+/// Run `main` under the hook; on unwind log, offer `on_crash`, return the outcome.
+/// `on_crash` runs post-unwind on the caller thread only; it is itself catch-guarded.
 pub fn run_guarded<R>(
     main: impl FnOnce() -> R,
     on_crash: impl FnOnce(&CrashReport),

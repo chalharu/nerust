@@ -7,11 +7,8 @@ use nerust_render_traits::{VideoFrameFormat, VideoRenderProfile, renderer::OsdLa
 
 use crate::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
 
-/// View failures: GL call errors, shader-pipeline errors, and
-/// short-frame conditions. Programmer-invariant violations are a
-/// separate variant so they stay greppable at the render boundary.
-/// Converted to a warned `RenderResult::Error` at the render boundary;
-/// OSD helpers degrade to a debug log instead.
+/// View failures: GL errors, shader errors, invariant and frame faults.
+/// Translated to a warned `RenderResult::Error` at the render boundary.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ViewError {
     #[error(transparent)]
@@ -24,9 +21,7 @@ pub(crate) enum ViewError {
     Frame(&'static str),
 }
 
-/// GL failures surface as view errors; init and per-frame game paths
-/// `?` into this, and render() turns it into a warned `Error` outcome.
-/// OSD helpers degrade to a debug log instead of killing the frame.
+/// Convert a GL call result into a view error for `?` propagation.
 fn ok_gl<T>(result: Result<T, nerust_glwrap::GlError>) -> Result<T, ViewError> {
     result.map_err(ViewError::Gl)
 }
@@ -418,9 +413,8 @@ impl GlView {
         self.osd_dirty = true;
     }
 
-    /// Composite the staged layer over the game image, if any.
-    /// Runs inside the current frame (context already current).
-    /// Best-effort: a GL failure drops the overlay, never the frame.
+    /// Composite the staged layer over the game image, if any (best-effort).
+    /// A GL failure drops the overlay, never the frame.
     pub fn draw_osd(&mut self, surface_w: i32, surface_h: i32) -> Result<(), ViewError> {
         if std::mem::replace(&mut self.osd_dirty, false) {
             self.sync_osd_texture(surface_w, surface_h)?;
@@ -456,8 +450,7 @@ impl GlView {
         Ok(())
     }
 
-    /// Upload the staged layer into the full-surface texture.
-    /// Runs only when the layer changed; the draw path only binds.
+    /// Upload the staged layer into the full-surface texture (draw path only binds).
     /// Best-effort: failures keep the previous texture, never panic.
     fn sync_osd_texture(&mut self, surface_w: i32, surface_h: i32) -> Result<(), ViewError> {
         let layer = self.osd_layer.clone();
@@ -517,9 +510,8 @@ impl GlView {
         Ok(())
     }
 
-    /// Upload RGBA rows (or zeros) into a texture subrect.
-    /// Best-effort like the rest of the OSD path: the caller degrades
-    /// to a debug log instead of killing the frame.
+    /// Upload RGBA rows (or zeros) into a texture subrect (best-effort).
+    /// A GL failure degrades to a debug log instead of killing the frame.
     fn blit_rect(
         texture: u32,
         x: i32,
