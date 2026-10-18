@@ -3,7 +3,7 @@
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use cosmic_text::{CacheKey, SwashContent};
-use nerust_render_traits::renderer::{OsdAnchor, OsdContent, OsdLayer, OsdStatus};
+use nerust_render_traits::renderer::{OsdAnchor, OsdContent, OsdLayer, OsdStatus, SafeInsets};
 
 /// System font preference: the shaping database doubles as the
 /// query source, so one scan serves both. Extra scan roots are a
@@ -70,6 +70,7 @@ pub struct OsdRaster {
     sans_name: String,
     has_fonts: bool,
     ui_scale: f32,
+    safe_insets: SafeInsets,
 }
 
 impl OsdRaster {
@@ -97,6 +98,7 @@ impl OsdRaster {
             sans_name,
             has_fonts,
             ui_scale: 1.0,
+            safe_insets: SafeInsets::default(),
         }
     }
 
@@ -104,6 +106,13 @@ impl OsdRaster {
     /// the desktop-verified size). Frontends on dense screens shrink.
     pub fn set_ui_scale(&mut self, scale: f32) {
         self.ui_scale = scale.clamp(0.25, 4.0);
+    }
+
+    /// Extra edge padding for rounded corners, notches, or gesture
+    /// bars. Added to the layout margin on placement; zero by default
+    /// so desktop output is unchanged.
+    pub fn set_safe_insets(&mut self, insets: SafeInsets) {
+        self.safe_insets = insets;
     }
 
     fn scaled(&self, px: u32) -> u32 {
@@ -282,10 +291,13 @@ impl OsdRaster {
         if !from_top {
             shaped.reverse();
         }
+        let margin = self.scaled(MARGIN);
         let mut cursor = if from_top {
-            MARGIN
+            margin + self.safe_insets.top
         } else {
-            surface_h.saturating_sub(MARGIN)
+            surface_h
+                .saturating_sub(margin)
+                .saturating_sub(self.safe_insets.bottom)
         };
         while !shaped.is_empty() {
             let end = Self::pair_width(&shaped);
@@ -323,9 +335,11 @@ impl OsdRaster {
     fn anchor_x(&self, anchor: OsdAnchor, w: u32, surface_w: u32) -> u32 {
         let margin = self.scaled(MARGIN);
         if anchor.is_left() {
-            margin
+            margin + self.safe_insets.left
         } else {
-            surface_w.saturating_sub(w + margin)
+            surface_w
+                .saturating_sub(w + margin)
+                .saturating_sub(self.safe_insets.right)
         }
     }
 
@@ -603,7 +617,7 @@ fn draw_pill(rgba: &mut [u8], stride_w: u32, x: u32, y: u32, w: u32, h: u32, rad
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
+    use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus, SafeInsets};
 
     fn content() -> OsdContent {
         OsdContent {
@@ -651,6 +665,28 @@ mod tests {
         // Deterministic: the glyph cache makes the second pass identical.
         let again = raster.rasterize(&content(), 960, 720).expect("cached");
         assert_eq!(layer.rgba, again.rgba);
+    }
+
+    #[test]
+    fn safe_insets_shift_the_layer_inward() {
+        let mut raster = OsdRaster::new();
+        if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
+            return;
+        }
+        let plain = raster.rasterize(&content(), 960, 720).expect("plain");
+        raster.set_safe_insets(SafeInsets {
+            top: 60,
+            right: 40,
+            bottom: 60,
+            left: 40,
+        });
+        let inset = raster.rasterize(&content(), 960, 720).expect("inset");
+        // Bottom-left anchor: the box moves right and up.
+        assert!(inset.x > plain.x);
+        assert!(inset.y < plain.y);
+        assert_eq!(inset.width, plain.width);
+        assert_eq!(inset.height, plain.height);
     }
 
     #[test]
