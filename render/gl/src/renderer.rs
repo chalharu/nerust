@@ -136,7 +136,14 @@ impl GpuRenderer for GlRenderer {
     }
 
     fn detach(&mut self) {
-        self.view = None;
+        // Explicit teardown while the context may still be current:
+        // bare texture names have no Drop to reclaim them.
+        if let Some(mut view) = self.view.take()
+            && let Some(ref ctx) = self.context
+            && ctx.is_current()
+        {
+            view.on_close();
+        }
         self.context = None;
         drop(self.gl_surface.take());
     }
