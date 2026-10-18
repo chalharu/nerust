@@ -55,18 +55,6 @@ fn crash_dialog_text(message: &str) -> String {
     format!("The application crashed: {message}\n\nDetails were written to the log (stderr).",)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn crash_dialog_points_at_stderr() {
-        let text = crash_dialog_text("boom");
-        assert!(text.contains("boom"), "{text}");
-        assert!(text.contains("stderr"), "{text}");
-    }
-}
-
 fn run_inner(ctx: FrontendContext, options: RunOptions) {
     let mut window = match app::Window::new(ctx) {
         Ok(window) => window,
@@ -87,4 +75,16 @@ fn run_inner(ctx: FrontendContext, options: RunOptions) {
         log::info!("starting without a ROM (bad --rom path)");
     }
     window.run();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crash_dialog_points_at_stderr() {
+        let text = crash_dialog_text("boom");
+        assert!(text.contains("boom"), "{text}");
+        assert!(text.contains("stderr"), "{text}");
+    }
 }

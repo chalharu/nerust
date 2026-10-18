@@ -17,7 +17,7 @@ use nerust_render_traits::{
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::view::GlView;
+use crate::view::{GlView, ViewError};
 
 pub struct GlRenderer {
     display: Display,
@@ -227,58 +227,18 @@ impl GpuRenderer for GlRenderer {
             return RenderResult::Skipped;
         }
         let data = frame_buffer.as_ref();
-        if view.supports_unpack_row_length() {
-            let stride_px = stride / bpp;
-            let need = fs
-                .height
-                .checked_sub(1)
-                .map_or(0, |rows| rows * stride + row_bytes);
-            match data.get(..need) {
-                Some(bytes) => {
-                    if let Err(e) = view.on_update(bytes, stride_px as i32) {
-                        log::warn!("GlRenderer: frame upload failed: {e}");
-                        return RenderResult::Error;
-                    }
-                }
-                None => {
-                    log::warn!("GlRenderer: frame buffer too small");
-                    return RenderResult::Skipped;
-                }
-            }
-        } else if stride == row_bytes {
-            match data.get(..self.expected_frame_len) {
-                Some(bytes) => {
-                    if let Err(e) = view.on_update(bytes, fs.width as i32) {
-                        log::warn!("GlRenderer: frame upload failed: {e}");
-                        return RenderResult::Error;
-                    }
-                }
-                None => {
-                    log::warn!("GlRenderer: frame buffer too small");
-                    return RenderResult::Skipped;
-                }
-            }
-        } else {
-            if self.tight.len() != self.expected_frame_len {
-                self.tight.resize(self.expected_frame_len, 0);
-            }
-            let src_need = match stride.checked_mul(fs.height) {
-                Some(need) => need,
-                None => {
-                    log::warn!("GlRenderer: frame dimensions overflow");
-                    return RenderResult::Skipped;
-                }
-            };
-            if data.len() < src_need {
-                log::warn!("GlRenderer: frame buffer too small");
-                return RenderResult::Skipped;
-            }
-            pack_rows_stripped(data, stride, fs.height, &mut self.tight, row_bytes);
-            if let Err(e) = view.on_update(&self.tight, fs.width as i32) {
-                log::warn!("GlRenderer: frame upload failed: {e}");
-                return RenderResult::Error;
-            }
-        };
+        if let Err(e) = upload_frame(
+            view,
+            &mut self.tight,
+            self.expected_frame_len,
+            data,
+            stride,
+            fs,
+            bpp,
+        ) {
+            log::warn!("GlRenderer: frame upload failed: {e}");
+            return RenderResult::Error;
+        }
         view.set_osd_layer(self.osd.clone());
         if let Err(e) = view.draw_osd(self.size.width as i32, self.size.height as i32) {
             log::debug!("GlRenderer: OSD composite failed: {e}");
@@ -288,6 +248,49 @@ impl GpuRenderer for GlRenderer {
             return RenderResult::Error;
         }
         RenderResult::Presented
+    }
+}
+
+/// Upload one frame through the three stride paths (direct,
+/// exact, repacked). Length failures skip; GL failures propagate.
+fn upload_frame(
+    view: &mut GlView,
+    tight: &mut Vec<u8>,
+    expected_frame_len: usize,
+    data: &[u8],
+    stride: usize,
+    fs: nerust_render_traits::logical::LogicalSize,
+    bpp: usize,
+) -> Result<(), ViewError> {
+    let row_bytes = fs.width * bpp;
+    if view.supports_unpack_row_length() {
+        let stride_px = stride / bpp;
+        let need = fs
+            .height
+            .checked_sub(1)
+            .map_or(0, |rows| rows * stride + row_bytes);
+        match data.get(..need) {
+            Some(bytes) => view.on_update(bytes, stride_px as i32),
+            None => Err(ViewError::Shader("frame buffer too small".to_owned())),
+        }
+    } else if stride == row_bytes {
+        match data.get(..expected_frame_len) {
+            Some(bytes) => view.on_update(bytes, fs.width as i32),
+            None => Err(ViewError::Shader("frame buffer too small".to_owned())),
+        }
+    } else {
+        if tight.len() != expected_frame_len {
+            tight.resize(expected_frame_len, 0);
+        }
+        let src_need = match stride.checked_mul(fs.height) {
+            Some(need) => need,
+            None => return Err(ViewError::Shader("frame dimensions overflow".to_owned())),
+        };
+        if data.len() < src_need {
+            return Err(ViewError::Shader("frame buffer too small".to_owned()));
+        }
+        pack_rows_stripped(data, stride, fs.height, tight, row_bytes);
+        view.on_update(tight, fs.width as i32)
     }
 }
 
