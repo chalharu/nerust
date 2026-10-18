@@ -522,6 +522,11 @@ impl PersistenceManager {
         &mut self,
         emu: &impl CorePersistence,
     ) -> Result<(), PersistenceError> {
+        // No path configured means no save location exists, not a
+        // failure: `set_active_system` resets paths before every
+        // activation, so the first load and ROM-less system switches
+        // always flush here. Returning Err would break those flows.
+        // Only a configured path with a failing export is an error.
         let Some(path) = self.mapper_save_path.as_ref() else {
             return Ok(());
         };
@@ -552,7 +557,13 @@ impl PersistenceManager {
         match emu.save_mapper_raw() {
             Ok(Some(bytes)) => self.mapper_backend.write_mapper_save(path, &bytes)?,
             Ok(None) => {}
-            Err(e) => log::warn!("mapper save failed: {e}"),
+            Err(error) => {
+                // Fail loudly: callers propagate this to the UI instead
+                // of silently dropping the in-core battery save.
+                let error = PersistenceError::from(error);
+                log::warn!("{error}");
+                return Err(error);
+            }
         }
         Ok(())
     }

@@ -43,6 +43,10 @@ pub enum NotificationKind {
     DeletedSlot(u64),
     CreatedSlot,
     SelectedSlot(u64),
+    /// Persistence paths could not be resolved: the game runs, but
+    /// saves have nowhere to go. Pushed once at setup time instead of
+    /// failing every later flush.
+    PersistenceUnavailable,
     SlotFailed {
         slot: Option<u64>,
         reason: SlotOpFailure,
@@ -72,7 +76,18 @@ impl NotificationKind {
                 }
             },
             NotificationKind::CommandFailed(_) => NotificationLevel::Error,
+            NotificationKind::PersistenceUnavailable => NotificationLevel::Warning,
             _ => NotificationLevel::Info,
+        }
+    }
+
+    /// Channel policy: the log line for this kind, or `None` when the
+    /// kind is screen-only (history still records every event). New
+    /// kinds declare their channel here instead of editing `push`.
+    pub fn log_level(&self) -> Option<NotificationLevel> {
+        match self {
+            NotificationKind::SelectedSlot(_) => None,
+            other => Some(other.level()),
         }
     }
 
@@ -105,6 +120,9 @@ impl NotificationKind {
             }
             NotificationKind::SelectedSlot(id) => {
                 Self::slot_text(Some(*id), language, "Selected", "選択しました")
+            }
+            NotificationKind::PersistenceUnavailable => {
+                bilingual(ja, "Saves unavailable", "保存機能が利用できません")
             }
             NotificationKind::SlotFailed { slot, reason } => {
                 Self::slot_failed_text(*slot, *reason, language)
@@ -170,9 +188,10 @@ impl NotificationCenter {
         Self::default()
     }
 
-    /// Push one event. History and logs record every event; the pending
-    /// queue coalesces identical neighbours (`×N`) and drops the oldest
-    /// past [`MAX_PENDING`].
+    /// Push one event. History records every event; the pending queue
+    /// coalesces identical neighbours (`×N`) and drops the oldest
+    /// past [`MAX_PENDING`]. Logs record every event eagerly except
+    /// screen-only kinds (see [`NotificationKind::log_level`]).
     pub fn push(&mut self, kind: NotificationKind) {
         let level = kind.level();
         let seq = self.next_seq;
@@ -185,10 +204,14 @@ impl NotificationCenter {
             seq,
             at: std::time::SystemTime::now(),
         };
-        match level {
-            NotificationLevel::Info => log::info!("notification: {}", kind_text(&event)),
-            NotificationLevel::Warning => log::warn!("notification: {}", kind_text(&event)),
-            NotificationLevel::Error => log::error!("notification: {}", kind_text(&event)),
+        // Channel policy lives on the kind: screen-only kinds skip
+        // the eager log line (history still records every event).
+        if let Some(emit) = kind.log_level() {
+            match emit {
+                NotificationLevel::Info => log::info!("notification: {}", kind_text(&event)),
+                NotificationLevel::Warning => log::warn!("notification: {}", kind_text(&event)),
+                NotificationLevel::Error => log::error!("notification: {}", kind_text(&event)),
+            }
         }
         if self.history.len() >= MAX_HISTORY {
             self.history.pop_front();
@@ -302,6 +325,31 @@ pub fn resolve_toggle(command: SessionCommand, was_paused: bool) -> SessionComma
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_level_marks_selection_screen_only() {
+        assert_eq!(NotificationKind::SelectedSlot(3).log_level(), None);
+        assert_eq!(
+            NotificationKind::Paused.log_level(),
+            Some(NotificationLevel::Info)
+        );
+        assert_eq!(
+            NotificationKind::SlotFailed {
+                slot: None,
+                reason: SlotOpFailure::Unavailable,
+            }
+            .log_level(),
+            Some(NotificationLevel::Warning)
+        );
+        assert_eq!(
+            NotificationKind::CommandFailed("Reset").log_level(),
+            Some(NotificationLevel::Error)
+        );
+        assert_eq!(
+            NotificationKind::PersistenceUnavailable.log_level(),
+            Some(NotificationLevel::Warning)
+        );
+    }
 
     #[test]
     fn coalesces_identical_neighbours_and_caps_pending() {
