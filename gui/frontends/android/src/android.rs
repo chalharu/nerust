@@ -38,11 +38,13 @@ use nerust_gui_shell::{
         SessionError, SessionHandle,
         access::{PauseControl, SessionControl, SettingsResult, SlotControl},
         commands::{SessionCommand, SessionCommandOutcome},
+        osd::{OsdManager, OsdPresenter},
     },
 };
 use nerust_input_traits::{AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent};
+use nerust_render_osd::OsdRaster;
 use nerust_render_traits::{
-    SurfaceSize,
+    ReservedStrip, SurfaceSize,
     renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
 };
 use nerust_settings_core::model::{local::RumbleTarget, shared::StoragePolicy};
@@ -499,10 +501,10 @@ struct AndroidFrontend {
     pending_legacy_digest: Option<[u8; 32]>,
     last_peripheral_config: Option<(bool, bool, u8, RumbleTarget)>,
     last_rumble_intensity: Option<u8>,
-    osd: nerust_gui_shell::session::osd::OsdManager,
-    osd_raster: nerust_render_osd::OsdRaster,
-    osd_presenter: nerust_gui_shell::session::osd::OsdPresenter,
-    osd_last_strip: nerust_render_traits::ReservedStrip,
+    osd: OsdManager,
+    osd_raster: OsdRaster,
+    osd_presenter: OsdPresenter,
+    osd_last_strip: ReservedStrip,
 }
 
 impl AndroidFrontend {
@@ -558,7 +560,7 @@ impl AndroidFrontend {
             }
         }
         let restore_pending = storage.has_restore_pending();
-        let frontend = Self {
+        let mut frontend = Self {
             app,
             session,
             storage,
@@ -583,11 +585,12 @@ impl AndroidFrontend {
             pending_legacy_digest: None,
             last_peripheral_config: None,
             last_rumble_intensity: None,
-            osd: nerust_gui_shell::session::osd::OsdManager::new(),
-            osd_raster: nerust_render_osd::OsdRaster::new(),
-            osd_presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
-            osd_last_strip: nerust_render_traits::ReservedStrip::default(),
+            osd: OsdManager::new(),
+            osd_raster: OsdRaster::with_font_dirs(&osd::ANDROID_FONT_DIRS),
+            osd_presenter: OsdPresenter::new(),
+            osd_last_strip: ReservedStrip::default(),
         };
+        frontend.osd_raster.set_ui_scale(osd::OSD_UI_SCALE);
         if frontend.lifecycle_restore_pending {
             log::info!(
                 "AndroidFrontend::new: restore_pending flag found; will attempt lifecycle state restore at foreground resume"
@@ -1207,6 +1210,11 @@ impl AndroidFrontend {
         self.renderer = match renderer_result {
             Ok(renderer) => {
                 log::info!("rebuild_renderer: renderer ready");
+                // Fresh renderer, empty OSD state: force re-sync of the
+                // layer and the reserved strip on the next frame.
+                self.osd_presenter = OsdPresenter::new();
+                self.osd_last_strip = ReservedStrip::default();
+                self.request_redraw();
                 Some(renderer)
             }
             Err(e) => {

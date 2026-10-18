@@ -1829,6 +1829,9 @@ private fun NerustSettingsDialogCard(
                     .padding(WindowInsets.safeDrawing.asPaddingValues()),
         ) {
             val activeSection = sections.find { it.id == activeSectionId }
+            val visibleSettingCount =
+                activeSection
+                    ?.let { visibleSettingIndices(settings, it, selections).size }
             SettingsNavigationHeader(
                 title =
                     activeSettingIndex?.let { settings[it].label }
@@ -1837,7 +1840,7 @@ private fun NerustSettingsDialogCard(
                 subtitle =
                     when {
                         activeSettingIndex != null -> "Choose a value"
-                        activeSection != null -> settingsCountLabel(activeSection.settingIndices.size)
+                        activeSection != null -> settingsCountLabel(visibleSettingCount ?: 0)
                         else -> "Choose a category"
                     },
                 canNavigateBack = activeSection != null || activeSettingIndex != null,
@@ -1867,8 +1870,13 @@ private fun NerustSettingsDialogCard(
                 }
 
                 activeSection != null -> {
+                    val visibleSection =
+                        activeSection.copy(
+                            settingIndices =
+                                visibleSettingIndices(settings, activeSection, selections),
+                        )
                     SettingsSectionList(
-                        section = activeSection,
+                        section = visibleSection,
                         settings = settings,
                         selections = selections,
                         onSettingClick = { activeSettingIndex = it },
@@ -1924,17 +1932,18 @@ private fun SettingsCategoryList(
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         itemsIndexed(sections) { index, section ->
+            val visibleIndices = visibleSettingIndices(settings, section, selections)
             val summary =
-                section.settingIndices.take(2).joinToString(" · ") { settingIndex ->
+                visibleIndices.take(2).joinToString(" · ") { settingIndex ->
                     val setting = settings[settingIndex]
                     val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
                     "${setting.label}: $value"
                 }
             SettingsNavigationRow(
                 title = section.label,
-                value = settingsCountLabel(section.settingIndices.size),
+                value = settingsCountLabel(visibleIndices.size),
                 supportingText = summary,
-                semanticsLabel = "${section.label}: ${settingsCountLabel(section.settingIndices.size)}",
+                semanticsLabel = "${section.label}: ${settingsCountLabel(visibleIndices.size)}",
                 onClick = { onSectionClick(section.id) },
             )
             if (index < sections.lastIndex) HorizontalDivider()
@@ -2033,6 +2042,23 @@ private fun settingsSectionLabel(id: String): String =
     }
 
 private fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) "setting" else "settings"}"
+
+// Same-edge follow (mirrors desktop): the notification area mode
+// governs the edge, so the status row hides while both position
+// pickers share the top or bottom band. Bottom = indices 0,1.
+private fun visibleSettingIndices(
+    settings: List<AndroidSetting>,
+    section: AndroidSettingsSection,
+    selections: List<Int>,
+): List<Int> {
+    val notifPos = settings.indexOfFirst { it.key == "notifications.position" }
+    val statusPos = settings.indexOfFirst { it.key == "status.position" }
+    val statusArea = settings.indexOfFirst { it.key == "status.area_mode" }
+    if (notifPos < 0 || statusPos < 0 || statusArea < 0) return section.settingIndices
+    fun isTop(settingIndex: Int) = selections.getOrElse(settingIndex) { 0 } >= 2
+    if (isTop(notifPos) != isTop(statusPos)) return section.settingIndices
+    return section.settingIndices.filter { it != statusArea }
+}
 
 @Composable
 private fun rememberSettingsSelections(

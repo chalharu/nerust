@@ -101,8 +101,8 @@ impl GtkOsd {
             settings.status_enabled,
         );
         let strip = ReservedStrip {
-            top: strip_pixels(client_h, top_rows),
-            bottom: strip_pixels(client_h, bottom_rows),
+            top: strip_pixels(client_h, top_rows, 1.0),
+            bottom: strip_pixels(client_h, bottom_rows, 1.0),
         };
         if strip != self.last_strip {
             self.last_strip = strip;
@@ -122,7 +122,7 @@ impl GtkOsd {
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
     ) {
-        use nerust_gui_shell::session::osd::{OSD_STATUS_RGB, OsdSync, OsdSyncInput};
+        use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput};
         let scale = window.scale_factor().max(1) as u32;
         let w = window.width().max(0) as u32 * scale;
         let h = window.height().max(0) as u32 * scale;
@@ -142,28 +142,7 @@ impl GtkOsd {
             OsdSync::Skip => {}
             OsdSync::Clear => renderer.borrow_mut().set_osd_layer(None),
             OsdSync::Render(plan) => {
-                let rows = plan
-                    .rows
-                    .iter()
-                    .map(|row| nerust_render_osd::OsdRow {
-                        tag: row.tag.to_string(),
-                        text: row.text.clone(),
-                        rgb: row.rgb,
-                    })
-                    .collect();
-                let status = plan
-                    .status
-                    .map(|(label, value)| nerust_render_osd::OsdStatus {
-                        label,
-                        value,
-                        rgb: OSD_STATUS_RGB,
-                    });
-                let content = nerust_render_osd::OsdContent {
-                    rows,
-                    status,
-                    position: plan.position,
-                    status_position: plan.status_position,
-                };
+                let content = plan.content();
                 let layer = self.raster.rasterize(&content, plan.width, plan.height);
                 renderer.borrow_mut().set_osd_layer(layer);
             }

@@ -478,6 +478,32 @@ pub struct OsdPlan {
     pub height: u32,
 }
 
+impl OsdPlan {
+    /// Single construction shared by every frontend: rows plus the
+    /// status pill with identical colors and corners everywhere.
+    pub fn content(&self) -> nerust_render_traits::renderer::OsdContent {
+        use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
+        OsdContent {
+            rows: self
+                .rows
+                .iter()
+                .map(|row| OsdRow {
+                    tag: row.tag.to_string(),
+                    text: row.text.clone(),
+                    rgb: row.rgb,
+                })
+                .collect(),
+            status: self.status.as_ref().map(|(label, value)| OsdStatus {
+                label: label.clone(),
+                value: value.clone(),
+                rgb: OSD_STATUS_RGB,
+            }),
+            position: self.position,
+            status_position: self.status_position,
+        }
+    }
+}
+
 /// Per-frame inputs for [`OsdPresenter::sync`]. Bundled so the
 /// decision signature stays narrow as inputs evolve.
 pub struct OsdSyncInput<'a> {
@@ -642,14 +668,17 @@ pub fn strip_rows(
 }
 
 /// Physical strip pixels from the client height.
-/// Matches the tao/gtk overlay layout constants.
-pub fn strip_pixels(client_height: u32, rows: u32) -> u32 {
+/// Matches the tao/gtk overlay layout constants at scale 1.0;
+/// dense-display frontends pass their raster scale.
+pub fn strip_pixels(client_height: u32, rows: u32, ui_scale: f32) -> u32 {
     if rows == 0 || client_height == 0 {
         return 0;
     }
-    let font_px = (f64::from(client_height) * 0.022).ceil() as u32;
-    let row = (font_px * 16).div_ceil(10) + 4;
-    rows.saturating_mul(row) + 8 + 4 * rows.saturating_sub(1)
+    let font_px = (f64::from(client_height) * 0.022 * f64::from(ui_scale)).ceil() as u32;
+    let row = (font_px * 16).div_ceil(10) + (4.0 * ui_scale).round() as u32;
+    let margin = (8.0 * ui_scale).round() as u32;
+    let gap = (4.0 * ui_scale).round() as u32;
+    rows.saturating_mul(row) + margin + gap * rows.saturating_sub(1)
 }
 
 #[cfg(test)]
@@ -1210,10 +1239,10 @@ mod tests {
 
     #[test]
     fn strip_pixels_scale_with_client_height() {
-        assert_eq!(strip_pixels(1000, 1), 48);
-        assert_eq!(strip_pixels(1000, 2), 92);
-        assert_eq!(strip_pixels(0, 1), 0);
-        assert_eq!(strip_pixels(1000, 0), 0);
+        assert_eq!(strip_pixels(1000, 1, 1.0), 48);
+        assert_eq!(strip_pixels(1000, 2, 1.0), 92);
+        assert_eq!(strip_pixels(0, 1, 1.0), 0);
+        assert_eq!(strip_pixels(1000, 0, 1.0), 0);
     }
 
     #[test]

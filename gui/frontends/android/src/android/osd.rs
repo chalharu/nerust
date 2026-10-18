@@ -6,13 +6,18 @@
 
 use std::time::Instant;
 
-use nerust_gui_shell::session::osd::{
-    OSD_STATUS_RGB, OsdSync, OsdSyncInput, strip_pixels, strip_rows,
-};
-use nerust_render_traits::{ReservedStrip, SurfaceSize, renderer::OsdLayer};
+use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput, strip_pixels, strip_rows};
+use nerust_render_traits::{ReservedStrip, SurfaceSize};
 use nerust_settings_core::model::{language::AppLanguage, local::NotificationSettings};
 
 use super::AndroidFrontend;
+
+/// Display-density scale for the in-frame OSD (desktop verifies at
+/// 1.0; phone screens halve it). Shared with strip reservation.
+pub(super) const OSD_UI_SCALE: f32 = 0.5;
+
+/// Platform font roots invisible to fontdb's system scan.
+pub(super) const ANDROID_FONT_DIRS: [&str; 2] = ["/system/fonts", "/product/fonts"];
 
 impl AndroidFrontend {
     pub(super) fn notification_settings(&self) -> NotificationSettings {
@@ -33,8 +38,8 @@ impl AndroidFrontend {
             settings.status_enabled,
         );
         ReservedStrip {
-            top: strip_pixels(client_h, top_rows),
-            bottom: strip_pixels(client_h, bottom_rows),
+            top: strip_pixels(client_h, top_rows, OSD_UI_SCALE),
+            bottom: strip_pixels(client_h, bottom_rows, OSD_UI_SCALE),
         }
     }
 
@@ -73,6 +78,9 @@ impl AndroidFrontend {
     /// Also applies the reserved edge strip when settings or surface
     /// size change it. No-op without a renderer.
     pub(super) fn sync_osd_layer(&mut self, size: SurfaceSize) {
+        if self.renderer.is_none() {
+            return;
+        }
         let strip = self.reserved_strip(size.height);
         if strip != self.osd_last_strip {
             self.osd_last_strip = strip;
@@ -95,6 +103,8 @@ impl AndroidFrontend {
                 height: size.height,
             },
         );
+        // Re-borrow after the session reads above; it only lives
+        // for the layer handoff.
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
@@ -102,38 +112,13 @@ impl AndroidFrontend {
             OsdSync::Skip => {}
             OsdSync::Clear => renderer.set_osd_layer(None),
             OsdSync::Render(plan) => {
-                renderer.set_osd_layer(plan_layer(&plan, &mut self.osd_raster));
+                let content = plan.content();
+                renderer.set_osd_layer(self.osd_raster.rasterize(
+                    &content,
+                    plan.width,
+                    plan.height,
+                ));
             }
         }
     }
-}
-
-fn plan_layer(
-    plan: &nerust_gui_shell::session::osd::OsdPlan,
-    raster: &mut nerust_render_osd::OsdRaster,
-) -> Option<OsdLayer> {
-    let rows = plan
-        .rows
-        .iter()
-        .map(|row| nerust_render_osd::OsdRow {
-            tag: row.tag.to_string(),
-            text: row.text.clone(),
-            rgb: row.rgb,
-        })
-        .collect();
-    let status = plan
-        .status
-        .as_ref()
-        .map(|(label, value)| nerust_render_osd::OsdStatus {
-            label: label.clone(),
-            value: value.clone(),
-            rgb: OSD_STATUS_RGB,
-        });
-    let content = nerust_render_osd::OsdContent {
-        rows,
-        status,
-        position: plan.position,
-        status_position: plan.status_position,
-    };
-    raster.rasterize(&content, plan.width, plan.height)
 }
