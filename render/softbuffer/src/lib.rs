@@ -41,6 +41,21 @@ pub struct SoftbufferRenderer {
     resize_buffer: Vec<u32>,
     ntsc_buffer: Vec<u32>,
     osd: Option<nerust_render_traits::renderer::OsdLayer>,
+    /// Last tap-coverage verdict plus the inputs it was computed
+    /// from; geometry rarely changes, so the per-frame scan is
+    /// skipped on a key match.
+    taps_cache: Option<(TapKey, bool)>,
+}
+
+/// Tap-coverage inputs for one frame shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TapKey {
+    dst_w: usize,
+    dst_h: usize,
+    tap_stride: usize,
+    resize_len: usize,
+    ntsc_writes: usize,
+    ntsc_len: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,6 +301,7 @@ impl SoftbufferRenderer {
             lut: LutEntry::new(),
             resize_buffer: Vec::new(),
             ntsc_buffer: Vec::new(),
+            taps_cache: None,
         }
     }
 
@@ -410,36 +426,59 @@ impl SoftbufferRenderer {
     /// touch must exist and point inside its target. A mismatch
     /// (stale profile, short rows) refuses the frame instead of
     /// panicking the UI thread. Valid frames pass unchanged: no
-    /// pixel output moves.
-    fn taps_cover(
-        lut: &LutEntry,
-        dst_w: usize,
-        dst_h: usize,
-        tap_stride: usize,
-        resize_len: usize,
-        ntsc_writes: usize,
-        ntsc_len: usize,
-    ) -> bool {
-        let px = lut.lut_pixel_size();
-        if lut.x_lut.len() < dst_w.saturating_mul(px) || lut.y_lut.len() < dst_h.saturating_mul(px)
+    /// pixel output moves. Only the frame-varying inputs are
+    /// parameters; LUT and buffer lengths come from `self`.
+    fn taps_cover(&self, dst_w: usize, dst_h: usize, tap_stride: usize, ntsc_writes: usize) -> bool {
+        let px = self.lut.lut_pixel_size();
+        if self.lut.x_lut.len() < dst_w.saturating_mul(px)
+            || self.lut.y_lut.len() < dst_h.saturating_mul(px)
         {
             return false;
         }
-        if !lut.x_lut[..dst_w.saturating_mul(px)]
+        if !self.lut.x_lut[..dst_w.saturating_mul(px)]
             .iter()
             .flatten()
             .all(|&(i, _)| (i as usize) < tap_stride)
         {
             return false;
         }
-        if !lut.y_lut[..dst_h.saturating_mul(px)]
+        if !self.lut.y_lut[..dst_h.saturating_mul(px)]
             .iter()
             .flatten()
-            .all(|&(i, _)| (i as usize).saturating_add(1).saturating_mul(dst_w) <= resize_len)
+            .all(|&(i, _)| {
+                (i as usize).saturating_add(1).saturating_mul(dst_w) <= self.resize_buffer.len()
+            })
         {
             return false;
         }
-        ntsc_writes <= ntsc_len
+        ntsc_writes <= self.ntsc_buffer.len()
+    }
+
+    /// Cached [`Self::taps_cover`]: geometry rarely changes, so a key
+    /// match skips the per-frame LUT scan.
+    fn taps_covered(
+        &mut self,
+        dst_w: usize,
+        dst_h: usize,
+        tap_stride: usize,
+        ntsc_writes: usize,
+    ) -> bool {
+        let key = TapKey {
+            dst_w,
+            dst_h,
+            tap_stride,
+            resize_len: self.resize_buffer.len(),
+            ntsc_writes,
+            ntsc_len: self.ntsc_buffer.len(),
+        };
+        if let Some((cached_key, covered)) = &self.taps_cache
+            && *cached_key == key
+        {
+            return *covered;
+        }
+        let covered = self.taps_cover(dst_w, dst_h, tap_stride, ntsc_writes);
+        self.taps_cache = Some((key, covered));
+        covered
     }
 
     fn palette_index(source_frame: &[u8], width: usize, x: i32, y: usize) -> u8 {
@@ -643,14 +682,40 @@ impl GpuRenderer for SoftbufferRenderer {
             );
             return RenderResult::Skipped;
         }
-        let Some(surface) = self.surface.as_mut() else {
-            return RenderResult::Skipped;
-        };
         let dst_w = self.size.width as usize;
         let dst_h = self.size.height as usize;
         if dst_w == 0 || dst_h == 0 {
             return RenderResult::Skipped;
         }
+        // Tap coverage refuses stale-profile frames before any
+        // indexer below runs (warned, not fatal). Checked ahead of
+        // the surface borrow: the scan only reads LUT and buffer
+        // lengths, and failing fast avoids taking the buffer at all.
+        let avail_h =
+            dst_h.saturating_sub(self.reserved.height_loss(self.size.height) as usize);
+        let src_stride = frame.stride();
+        let src_h = self.render_profile.source_logical_size.height;
+        let use_ntsc = matches!(frame.format(), PixelFormat::PaletteIndex { .. })
+            && self.render_profile.ntsc_packed_rgba8.is_some();
+        let tap_stride = if matches!(frame.format(), PixelFormat::Rgba) {
+            src_stride / 4
+        } else if use_ntsc {
+            self.render_profile.logical_size.width
+        } else {
+            src_stride
+        };
+        let ntsc_writes = if use_ntsc {
+            src_h.saturating_mul(self.render_profile.logical_size.width)
+        } else {
+            0
+        };
+        if !self.taps_covered(dst_w, avail_h, tap_stride, ntsc_writes) {
+            warn!("softbuffer tap coverage mismatch: refusing frame");
+            return RenderResult::Skipped;
+        }
+        let Some(surface) = self.surface.as_mut() else {
+            return RenderResult::Skipped;
+        };
 
         let mut buffer = match surface.buffer_mut() {
             Ok(b) => b,
@@ -672,7 +737,6 @@ impl GpuRenderer for SoftbufferRenderer {
         }
 
         let top = (self.reserved.top as usize).min(dst_h);
-        let avail_h = dst_h.saturating_sub((self.reserved.height_loss(self.size.height)) as usize);
         // Strip rows keep the cleared black: the surface buffer is
         // reused across frames, so stale game pixels must not linger.
         for row in buffer.as_mut()[..top.saturating_mul(dst_w)].iter_mut() {
@@ -683,13 +747,11 @@ impl GpuRenderer for SoftbufferRenderer {
             *row = 0;
         }
 
-        let src_stride = frame.stride();
         let src = frame.as_ref();
         let game_rows = top.saturating_mul(dst_w);
         let game_len = avail_h.saturating_mul(dst_w);
         let dst = &mut buffer.as_mut()[game_rows..game_rows.saturating_add(game_len)];
         // let src_w = self.render_profile.source_logical_size.width;
-        let src_h = self.render_profile.source_logical_size.height;
         // Short source images would panic every indexer below (the
         // profile match above only pins dimensions, not length).
         if src.len() < src_stride.saturating_mul(src_h) {
@@ -699,35 +761,6 @@ impl GpuRenderer for SoftbufferRenderer {
                 src_stride,
                 src_h
             );
-            return RenderResult::Skipped;
-        }
-
-        // Tap coverage refuses stale-profile frames before the
-        // indexers below (warned, not fatal: same pattern as above).
-        let use_ntsc = matches!(frame.format(), PixelFormat::PaletteIndex { .. })
-            && self.render_profile.ntsc_packed_rgba8.is_some();
-        let tap_stride = if matches!(frame.format(), PixelFormat::Rgba) {
-            src_stride / 4
-        } else if use_ntsc {
-            self.render_profile.logical_size.width
-        } else {
-            src_stride
-        };
-        let ntsc_writes = if use_ntsc {
-            src_h.saturating_mul(self.render_profile.logical_size.width)
-        } else {
-            0
-        };
-        if !Self::taps_cover(
-            &self.lut,
-            dst_w,
-            avail_h,
-            tap_stride,
-            self.resize_buffer.len(),
-            ntsc_writes,
-            self.ntsc_buffer.len(),
-        ) {
-            warn!("softbuffer tap coverage mismatch: refusing frame");
             return RenderResult::Skipped;
         }
 
@@ -999,54 +1032,43 @@ mod tests {
 
     #[test]
     fn taps_cover_accepts_well_formed_lut() {
-        let mut lut = LutEntry::new();
-        lut.resize_lut(
-            SurfaceSize {
-                width: 4,
-                height: 4,
-            },
-            1.0,
-            SurfaceSize {
-                width: 8,
-                height: 8,
-            },
-        );
-        assert!(SoftbufferRenderer::taps_cover(&lut, 8, 8, 4, 8 * 4, 0, 0));
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        renderer.size = SurfaceSize::new(8, 8);
+        renderer.resize_lut();
+        assert!(renderer.taps_covered(8, 8, 256, 0));
+        // Second call hits the cache; same verdict, no rescan.
+        assert!(renderer.taps_covered(8, 8, 256, 0));
+        assert!(renderer.taps_cache.is_some());
     }
 
     #[test]
     fn taps_cover_rejects_short_lut() {
-        let lut = LutEntry::new();
-        assert!(!SoftbufferRenderer::taps_cover(&lut, 8, 8, 4, 8 * 4, 0, 0));
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        assert!(!renderer.taps_covered(8, 8, 4, 0));
     }
 
     #[test]
     fn taps_cover_rejects_out_of_range_taps() {
         // x tap beyond the source stride.
-        let x_bad = LutEntry {
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        renderer.lut = LutEntry {
             x_lut: vec![Some((999, 1)), None],
             y_lut: vec![None, None],
             kernel: ResizeKernel::Bilinear,
         };
-        assert!(!SoftbufferRenderer::taps_cover(&x_bad, 1, 1, 4, 8, 0, 8));
+        renderer.resize_buffer = vec![0; 8];
+        assert!(!renderer.taps_covered(1, 1, 4, 0));
         // y tap beyond the resize buffer.
-        let y_bad = LutEntry {
+        renderer.lut = LutEntry {
             x_lut: vec![Some((0, 1)), None],
             y_lut: vec![Some((99, 1)), None],
             kernel: ResizeKernel::Bilinear,
         };
-        assert!(!SoftbufferRenderer::taps_cover(
-            &y_bad,
-            8,
-            1,
-            4,
-            8 * 4,
-            0,
-            8 * 4
-        ));
+        renderer.resize_buffer = vec![0; 8 * 4];
+        assert!(!renderer.taps_covered(8, 1, 4, 0));
         // NTSC writes beyond the NTSC buffer.
-        let mut good = LutEntry::new();
-        good.resize_lut(
+        renderer.lut = LutEntry::new();
+        renderer.lut.resize_lut(
             SurfaceSize {
                 width: 4,
                 height: 4,
@@ -1057,14 +1079,8 @@ mod tests {
                 height: 8,
             },
         );
-        assert!(!SoftbufferRenderer::taps_cover(
-            &good,
-            8,
-            8,
-            4,
-            8 * 4,
-            100,
-            10
-        ));
+        renderer.resize_buffer = vec![0; 8 * 4];
+        renderer.ntsc_buffer = vec![0; 10];
+        assert!(!renderer.taps_covered(8, 8, 4, 100));
     }
 }
