@@ -41,6 +41,8 @@ pub(super) struct AndroidOsd {
     raster: nerust_render_osd::OsdRaster,
     presenter: OsdPresenter,
     last_strip: ReservedStrip,
+    last_system_size: SurfaceSize,
+    last_system: SafeInsets,
 }
 
 /// Per-frame sync context. Bundled so the rasterizer handoff
@@ -63,6 +65,8 @@ impl AndroidOsd {
             raster,
             presenter: OsdPresenter::new(),
             last_strip: ReservedStrip::default(),
+            last_system_size: SurfaceSize::new(0, 0),
+            last_system: SafeInsets::default(),
         }
     }
 
@@ -156,6 +160,16 @@ impl AndroidOsd {
                 left: base.max(system.left) + extra,
             }
         }
+    }
+
+    /// Java window insets, re-queried only when the surface size moves:
+    /// the JNI round-trip costs per frame, insets move only with layout.
+    pub(super) fn system_insets(&mut self, app: &AndroidApp, size: SurfaceSize) -> SafeInsets {
+        if size != self.last_system_size {
+            self.last_system_size = size;
+            self.last_system = Self::query_system_insets(app);
+        }
+        self.last_system
     }
 
     /// Root-window safe insets in physical pixels, cached on the Java

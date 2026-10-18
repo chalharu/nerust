@@ -488,9 +488,8 @@ impl GlView {
     /// Upload the staged layer into the full-surface texture (draw path only binds).
     /// Best-effort: failures keep the previous texture, never panic.
     fn sync_osd_texture(&mut self, surface_w: i32, surface_h: i32) -> Result<(), ViewError> {
-        let layer = self.osd_layer.clone();
-        // Layer cleared: wipe the last rect so no ghost remains.
-        let Some(layer) = layer else {
+        // Borrow: the upload path copies bytes out, never retains them.
+        let Some(layer) = self.osd_layer.as_ref() else {
             // Wipe the last rect so no ghost remains. Retain on failure:
             // the retry must know which rect still needs erasing.
             if let Some((px, py, pw, ph)) = self.osd_prev {
