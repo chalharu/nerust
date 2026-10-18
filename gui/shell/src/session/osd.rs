@@ -198,7 +198,7 @@ struct ModalBox {
     batch: Vec<String>,
     queue: std::collections::VecDeque<String>,
     open: bool,
-    /// Drop-loss warn fires once per full episode; cleared on drain.
+    /// Drop-loss warn fires once per full episode; cleared when taken.
     queue_warned_full: bool,
 }
 
