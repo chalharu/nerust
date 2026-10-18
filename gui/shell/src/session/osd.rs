@@ -386,6 +386,7 @@ impl OsdManager {
         settings: &NotificationSettings,
         language: AppLanguage,
         now: Instant,
+        core_active: bool,
     ) {
         if !notifications.is_empty() {
             self.dirty = true;
@@ -399,7 +400,10 @@ impl OsdManager {
             if n.count > 1 {
                 text = format!("{text} ×{}", n.count);
             }
-            if n.level == NotificationLevel::Error && settings.error_modal {
+            // Without a core no frame is composited, so the OSD
+            // channel is invisible; fall back to modal instead of
+            // staying silent. Nothing is interrupted (no gameplay).
+            if !core_active || n.level == NotificationLevel::Error && settings.error_modal {
                 self.modal.push(text);
                 continue;
             }
@@ -846,9 +850,51 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
+            true,
         );
         assert!(manager.rows().is_empty());
         assert_eq!(manager.take_modal().len(), 1);
+    }
+
+    #[test]
+    fn inactive_core_routes_all_levels_to_modal() {
+        let mut manager = OsdManager::new();
+        let mut without_modal = settings();
+        without_modal.error_modal = false;
+        let now = Instant::now();
+        for (level, kind) in [
+            (
+                NotificationLevel::Error,
+                NotificationKind::SlotFailed {
+                    slot: Some(1),
+                    reason: SlotOpFailure::Storage,
+                },
+            ),
+            (
+                NotificationLevel::Warning,
+                NotificationKind::SlotFailed {
+                    slot: None,
+                    reason: SlotOpFailure::Missing,
+                },
+            ),
+            (NotificationLevel::Info, NotificationKind::Paused),
+        ] {
+            manager.push_all(
+                vec![UiNotification {
+                    level,
+                    kind,
+                    count: 1,
+                    seq: 0,
+                    at: std::time::SystemTime::now(),
+                }],
+                &without_modal,
+                AppLanguage::English,
+                now,
+                false,
+            );
+        }
+        assert!(manager.rows().is_empty());
+        assert_eq!(manager.take_modal().len(), 3);
     }
 
     #[test]
@@ -866,6 +912,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
+            true,
         );
         assert!(manager.poll(now));
         assert_eq!(manager.rows().len(), 1);
@@ -893,6 +940,7 @@ mod tests {
                 &settings(),
                 AppLanguage::English,
                 now,
+                true,
             );
         }
         // Showing the first; the second waits its turn.
@@ -934,6 +982,7 @@ mod tests {
                 &settings(),
                 AppLanguage::English,
                 now,
+                true,
             );
         }
         // Identical repeat merges with the tail (×2) instead of queuing.
@@ -948,6 +997,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
+            true,
         );
         assert!(manager.poll(now));
         // Oldest pending (CreatedSlot) shows first; drops removed older.
@@ -986,6 +1036,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
+            true,
         );
         assert!(manager.poll(now));
         assert_eq!(manager.rows().len(), 1);
@@ -1026,6 +1077,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
+            true,
         );
         assert!(manager.poll(now));
         manager.push_all(
@@ -1033,16 +1085,18 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
+            true,
         );
         manager.push_all(
             vec![note(NotificationKind::Reset, L::Info)],
             &altered,
             AppLanguage::English,
             now,
+            true,
         );
         // An Error preempts the showing Info; the demoted label waits
         // at the queue head while the tail sheds the newest Info.
-        manager.push_all(vec![error()], &altered, AppLanguage::English, now);
+        manager.push_all(vec![error()], &altered, AppLanguage::English, now, true);
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
         assert!(manager.poll(now + Duration::from_millis(5_001)));
         assert!(manager.rows()[0].text.contains("Paused"));
@@ -1068,6 +1122,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
+            true,
         );
         assert!(manager.poll(now));
         assert_eq!(manager.rows()[0].tag, "[INFO]");
@@ -1085,6 +1140,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
+            true,
         );
         // The Error takes the display at once; the demoted Info waits.
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
@@ -1108,6 +1164,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
+            true,
         );
         assert!(manager.poll(now));
         manager.push_all(
@@ -1124,6 +1181,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
+            true,
         );
         // Only Errors preempt; the Warning waits for expiry.
         assert_eq!(manager.rows()[0].tag, "[INFO]");
@@ -1166,14 +1224,21 @@ mod tests {
             at: std::time::UNIX_EPOCH,
         };
         // Showing Error (no preempt against itself); queue Warning + Info.
-        manager.push_all(vec![error(Some(9))], &altered, AppLanguage::English, now);
+        manager.push_all(
+            vec![error(Some(9))],
+            &altered,
+            AppLanguage::English,
+            now,
+            true,
+        );
         assert!(manager.poll(now));
-        manager.push_all(vec![warning], &altered, AppLanguage::English, now);
+        manager.push_all(vec![warning], &altered, AppLanguage::English, now, true);
         manager.push_all(
             vec![info(NotificationKind::Paused)],
             &altered,
             AppLanguage::English,
             now,
+            true,
         );
         // A second Info overflows: the oldest Info drops, Warning and
         // Error survive.
@@ -1182,6 +1247,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
+            true,
         );
         assert!(manager.poll(now + Duration::from_millis(5_001)));
         assert_eq!(manager.rows()[0].tag, "[WARN]");
@@ -1208,9 +1274,27 @@ mod tests {
             at: std::time::UNIX_EPOCH,
         };
         // Three Errors, nothing showing: the oldest drops (FIFO bound).
-        manager.push_all(vec![error(Some(1))], &altered, AppLanguage::English, now);
-        manager.push_all(vec![error(Some(2))], &altered, AppLanguage::English, now);
-        manager.push_all(vec![error(Some(3))], &altered, AppLanguage::English, now);
+        manager.push_all(
+            vec![error(Some(1))],
+            &altered,
+            AppLanguage::English,
+            now,
+            true,
+        );
+        manager.push_all(
+            vec![error(Some(2))],
+            &altered,
+            AppLanguage::English,
+            now,
+            true,
+        );
+        manager.push_all(
+            vec![error(Some(3))],
+            &altered,
+            AppLanguage::English,
+            now,
+            true,
+        );
         assert!(manager.poll(now));
         assert!(manager.rows()[0].text.contains("Slot 2"));
         assert!(manager.poll(now + Duration::from_millis(5_001)));
@@ -1250,6 +1334,7 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
+            true,
         );
         assert!(manager.poll(now));
         manager.push_all(
@@ -1266,16 +1351,24 @@ mod tests {
             &altered,
             AppLanguage::English,
             now,
+            true,
         );
         manager.push_all(
             vec![info(NotificationKind::Reset)],
             &altered,
             AppLanguage::English,
             now,
+            true,
         );
         // The Error preempts; the demote insert overflows and the
         // tail Info drops so the demoted head survives.
-        manager.push_all(vec![error(Some(1))], &altered, AppLanguage::English, now);
+        manager.push_all(
+            vec![error(Some(1))],
+            &altered,
+            AppLanguage::English,
+            now,
+            true,
+        );
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
         assert!(manager.poll(now + Duration::from_millis(5_000)));
         assert!(manager.rows()[0].text.contains("Paused"));
@@ -1297,8 +1390,8 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now);
-        manager.push_all(vec![note(5)], &settings(), AppLanguage::English, now);
+        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now, true);
+        manager.push_all(vec![note(5)], &settings(), AppLanguage::English, now, true);
         // One row only, showing the latest selection.
         assert!(manager.poll(now));
         assert!(manager.rows()[0].text.contains("slot 5"));
@@ -1319,11 +1412,11 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now);
+        manager.push_all(vec![note(3)], &settings(), AppLanguage::English, now, true);
         assert!(manager.poll(now));
         assert!(manager.rows()[0].text.contains("slot 3"));
         // A newer selection rewrites the showing row instead of queuing.
-        manager.push_all(vec![note(7)], &settings(), AppLanguage::English, now);
+        manager.push_all(vec![note(7)], &settings(), AppLanguage::English, now, true);
         assert!(manager.rows()[0].text.contains("slot 7"));
         assert!(manager.poll(now + Duration::from_millis(2_001)));
         assert!(manager.rows().is_empty());
@@ -1558,6 +1651,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             at(0),
+            true,
         );
         assert!(manager.poll(at(0)));
         assert_eq!(shown!().as_deref(), Some("Paused"));
@@ -1566,6 +1660,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             at(500),
+            true,
         );
         assert!(!manager.poll(at(500)));
         // Interleaved: must queue behind, never merge into the showing label.
@@ -1574,6 +1669,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             at(1000),
+            true,
         );
         assert_eq!(shown!().as_deref(), Some("Paused"));
         manager.push_all(
@@ -1581,6 +1677,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             at(1500),
+            true,
         );
         // Full 2s slots in arrival order; promoted labels measure
         // from promotion, not from push time. The cap drops the
@@ -1609,8 +1706,8 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now);
-        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now);
+        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now, true);
+        manager.push_all(vec![note(1)], &settings(), AppLanguage::English, now, true);
         assert!(manager.poll(now));
         assert_eq!(manager.rows().len(), 1);
         assert!(manager.rows()[0].text.ends_with(" ×2"));
@@ -1638,6 +1735,7 @@ mod tests {
             &settings(),
             AppLanguage::English,
             now,
+            true,
         );
         // Promoted on the next poll; deadline lands on the duration.
         assert!(manager.poll(now));
@@ -1995,6 +2093,7 @@ mod tests {
                 &settings(),
                 AppLanguage::English,
                 Instant::now(),
+                true,
             );
         }
         let detail = manager.take_modal_text().expect("joined batch");

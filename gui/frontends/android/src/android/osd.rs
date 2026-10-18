@@ -87,7 +87,9 @@ impl AndroidOsd {
     ) -> bool {
         let drained = session.drain_notifications();
         if !drained.is_empty() {
-            self.manager.push_all(drained, settings, language, now);
+            let core_active = session.loaded();
+            self.manager
+                .push_all(drained, settings, language, now, core_active);
         }
         self.manager.poll(now);
         if let Some(detail) = self.manager.take_modal_text() {
