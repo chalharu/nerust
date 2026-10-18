@@ -60,9 +60,7 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Session(command) => {
-                if let Err(e) = self.session.run_command(command) {
-                    log::warn!("session command failed: {e}");
-                }
+                let _ = self.session.run_command(command);
                 self.sync_menu_state();
                 self.refresh_window_title();
                 HostAction::None
@@ -153,19 +151,13 @@ impl HostState {
 
 impl PauseControl for HostState {
     fn pause(&mut self) {
-        if let Err(e) = self.session.run_command(SessionCommand::Pause) {
-            log::warn!("session command failed: {e}");
-        }
+        let _ = self.session.run_command(SessionCommand::Pause);
     }
     fn resume(&mut self) {
-        if let Err(e) = self.session.run_command(SessionCommand::Resume) {
-            log::warn!("session command failed: {e}");
-        }
+        let _ = self.session.run_command(SessionCommand::Resume);
     }
     fn toggle_pause(&mut self) {
-        if let Err(e) = self.session.run_command(SessionCommand::TogglePause) {
-            log::warn!("session command failed: {e}");
-        }
+        let _ = self.session.run_command(SessionCommand::TogglePause);
     }
 }
 
@@ -183,14 +175,10 @@ impl SlotControl for HostState {
             .executed
     }
     fn select_next_slot(&mut self) {
-        if let Err(e) = self.session.run_command(SessionCommand::SelectNextSlot) {
-            log::warn!("session command failed: {e}");
-        }
+        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
     }
     fn select_previous_slot(&mut self) {
-        if let Err(e) = self.session.run_command(SessionCommand::SelectPreviousSlot) {
-            log::warn!("session command failed: {e}");
-        }
+        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
     }
     fn load_slot(&mut self, slot_id: u64) -> bool {
         self.session
@@ -199,35 +187,23 @@ impl SlotControl for HostState {
             .executed
     }
     fn save_slot(&mut self, slot_id: u64) {
-        if let Err(e) = self.session.run_command(SessionCommand::SaveSlot(slot_id)) {
-            log::warn!("session command failed: {e}");
-        }
+        let _ = self.session.run_command(SessionCommand::SaveSlot(slot_id));
     }
     fn delete_slot(&mut self, slot_id: u64) {
-        if let Err(e) = self
+        let _ = self
             .session
-            .run_command(SessionCommand::DeleteSlot(slot_id))
-        {
-            log::warn!("session command failed: {e}");
-        }
+            .run_command(SessionCommand::DeleteSlot(slot_id));
     }
     fn select_slot(&mut self, slot_id: u64) {
-        if let Err(e) = self
+        let _ = self
             .session
-            .run_command(SessionCommand::SelectActiveSlot(slot_id))
-        {
-            log::warn!("session command failed: {e}");
-        }
+            .run_command(SessionCommand::SelectActiveSlot(slot_id));
     }
     fn create_slot(&mut self) {
-        if let Err(e) = self.session.run_command(SessionCommand::CreateSlot) {
-            log::warn!("session command failed: {e}");
-        }
+        let _ = self.session.run_command(SessionCommand::CreateSlot);
     }
     fn reset(&mut self) {
-        if let Err(e) = self.session.run_command(SessionCommand::Reset) {
-            log::warn!("session command failed: {e}");
-        }
+        let _ = self.session.run_command(SessionCommand::Reset);
     }
 }
 

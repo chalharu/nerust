@@ -1701,10 +1701,7 @@ impl AndroidFrontend {
                 }
                 Some(o)
             }
-            Err(e) => {
-                log::warn!("command {cmd:?} failed: {e}");
-                None
-            }
+            Err(_) => None,
         }
     }
 }

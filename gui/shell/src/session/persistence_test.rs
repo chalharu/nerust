@@ -292,3 +292,63 @@ fn core_persistence_errors_classify_for_slot_messages() {
         SlotOpFailure::Corrupt
     );
 }
+
+/// Export failures must propagate instead of silently dropping the
+/// in-core battery save (registry #1.1b).
+struct FailingExportCore;
+
+impl crate::emu_core::CorePersistence for FailingExportCore {
+    fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError> {
+        Err(CorePersistenceError::NoReply)
+    }
+    fn load_state_raw(&self, _data: Vec<u8>) -> Result<(), CorePersistenceError> {
+        Err(CorePersistenceError::NoReply)
+    }
+    fn generate_preview(&self) -> Option<crate::state::PreviewFrame> {
+        None
+    }
+    fn canonical_media_identity(&self) -> Option<nerust_core_traits::identity::SystemIdentity> {
+        None
+    }
+    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, CorePersistenceError> {
+        Err(CorePersistenceError::NoReply)
+    }
+    fn load_mapper_raw(&self, _bytes: Vec<u8>) -> Result<(), CorePersistenceError> {
+        Err(CorePersistenceError::NoReply)
+    }
+}
+
+#[test]
+fn flush_mapper_save_propagates_export_failure() {
+    use nerust_persistence::error::PersistenceError;
+
+    use crate::session::persistence::PersistenceManager;
+
+    let temp_dir = unique_temp_dir("flush-export-failure");
+    let mut manager = PersistenceManager::with_all_backends(
+        Box::new(FailingSlotBackend),
+        Box::new(FailingSlotBackend),
+        Box::new(FailingSlotBackend),
+    );
+    manager.configure(temp_dir.clone(), temp_dir.join("test.sav"));
+    assert!(matches!(
+        manager.flush_mapper_save(&FailingExportCore),
+        Err(PersistenceError::Export(_))
+    ));
+    let _ = fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn setup_failure_pushes_persistence_unavailable() {
+    use crate::session::notification::NotificationKind;
+
+    // Core active but no ROM loaded: no media identity, so setup fails.
+    let mut session = test_session();
+    assert!(!session.setup_persistence(None, false));
+    let notes = session.drain_notifications();
+    assert_eq!(notes.len(), 1);
+    assert!(matches!(
+        notes[0].kind,
+        NotificationKind::PersistenceUnavailable
+    ));
+}

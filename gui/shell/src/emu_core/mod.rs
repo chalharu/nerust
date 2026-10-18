@@ -20,6 +20,7 @@ use nerust_core_traits::{
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput};
+use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, PixelFormat, VideoFrameFormat, VideoRenderProfile};
 
 use crate::session::commands::SlotOpFailure;
@@ -820,6 +821,15 @@ fn op_to_persistence(e: OperationError) -> CorePersistenceError {
         OperationError::WorkerUnavailable => CorePersistenceError::WorkerUnavailable,
         OperationError::NoReply => CorePersistenceError::NoReply,
         OperationError::Reply(s) => CorePersistenceError::Core(s),
+    }
+}
+
+/// Core export failures surface through `PersistenceError` so flush
+/// callers propagate them with `?`. The message carries the source
+/// detail verbatim; no information is invented here.
+impl From<CorePersistenceError> for PersistenceError {
+    fn from(error: CorePersistenceError) -> Self {
+        PersistenceError::Export(error.to_string())
     }
 }
 
