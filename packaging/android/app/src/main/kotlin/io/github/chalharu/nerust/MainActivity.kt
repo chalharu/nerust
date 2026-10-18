@@ -161,6 +161,7 @@ private data class AndroidSetting(
     val section: String,
     val label: String,
     val choices: List<String>,
+    val edges: List<String> = emptyList(),
 )
 
 private data class AndroidSettingsSection(
@@ -1005,6 +1006,7 @@ class MainActivity :
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
         sections: Array<String> = emptyArray(),
+        edgeStrings: Array<String> = emptyArray(),
     ) {
         showSettingsDialogInternal(
             keys = keys,
@@ -1012,6 +1014,11 @@ class MainActivity :
             choiceStrings = choiceStrings,
             currentIndices = currentIndices,
             sections = sections,
+            edgeLists =
+                Array(keys.size) { index ->
+                    edgeStrings.getOrNull(index)?.split('\t')?.filter(String::isNotEmpty)
+                        ?: emptyList()
+                },
             requestId = null,
             ownedByTest = true,
         )
@@ -1052,12 +1059,19 @@ class MainActivity :
             }
         val currentIndices =
             Array(fieldDocuments.size) { fieldDocuments[it].second.getInt("value").toString() }
+        val edgeLists =
+            Array(fieldDocuments.size) { index ->
+                fieldDocuments[index].second.optJSONArray("edges")?.let { edges ->
+                    (0 until edges.length()).map { edges.getString(it) }
+                } ?: emptyList()
+            }
         showSettingsDialogInternal(
             keys = keys,
             labels = labels,
             choiceStrings = choiceStrings,
             currentIndices = currentIndices,
             sections = sections,
+            edgeLists = edgeLists,
             requestId = requestId,
             ownedByTest = false,
         )
@@ -1080,6 +1094,7 @@ class MainActivity :
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
         sections: Array<String> = emptyArray(),
+        edgeLists: Array<List<String>> = emptyArray(),
         requestId: Long?,
         ownedByTest: Boolean,
     ) {
@@ -1096,6 +1111,7 @@ class MainActivity :
                             ?.filter(String::isNotEmpty)
                             ?.ifEmpty { listOf("?") }
                             ?: listOf("?"),
+                    edges = edgeLists.getOrElse(index) { emptyList() },
                 )
             }
         val initialSelections =
@@ -2045,7 +2061,9 @@ private fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) "
 
 // Same-edge follow (mirrors desktop): the notification area mode
 // governs the edge, so the status row hides while both position
-// pickers share the top or bottom band. Bottom = indices 0,1.
+// pickers share the top or bottom band. Edge classes come from the
+// Rust payload ("top"/"bottom" per choice); nothing here assumes
+// choice indices.
 private fun visibleSettingIndices(
     settings: List<AndroidSetting>,
     section: AndroidSettingsSection,
@@ -2055,8 +2073,14 @@ private fun visibleSettingIndices(
     val statusPos = settings.indexOfFirst { it.key == "status.position" }
     val statusArea = settings.indexOfFirst { it.key == "status.area_mode" }
     if (notifPos < 0 || statusPos < 0 || statusArea < 0) return section.settingIndices
-    fun isTop(settingIndex: Int) = selections.getOrElse(settingIndex) { 0 } >= 2
-    if (isTop(notifPos) != isTop(statusPos)) return section.settingIndices
+    fun edgeOf(settingIndex: Int): String {
+        val setting = settings.getOrNull(settingIndex) ?: return ""
+        return setting.edges.getOrElse(selections.getOrElse(settingIndex) { 0 }) { "" }
+    }
+    val notifEdge = edgeOf(notifPos)
+    val statusEdge = edgeOf(statusPos)
+    if (notifEdge.isEmpty() || statusEdge.isEmpty()) return section.settingIndices
+    if (notifEdge != statusEdge) return section.settingIndices
     return section.settingIndices.filter { it != statusArea }
 }
 

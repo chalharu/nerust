@@ -10,8 +10,9 @@ use tao::event::WindowEvent;
 
 use super::HostState;
 use crate::ports::WindowOpener;
-use nerust_gui_shell::session::osd::{strip_pixels, strip_rows};
+use nerust_gui_shell::session::osd::strip_rows;
 use nerust_render_traits::ReservedStrip;
+use nerust_render_traits::renderer::strip_pixels;
 
 /// In-flight error dialog: blocking `show_error` runs on a thread.
 /// `resume_after` resumes only what we paused, after the last ack.
@@ -191,19 +192,13 @@ impl HostState {
             self.osd.push_all(drained, &settings, language, now);
         }
         self.osd.poll(now);
-        let modal = self.osd.take_modal();
-        if !modal.is_empty() {
+        if let Some(detail) = self.osd.take_modal_text() {
             // Auto-pause first, guarded by can_pause.
             // Only what we paused resumes, after the last ack.
             if self.session.can_pause() && !self.session.paused() {
                 self.pause();
                 self.resume_after_modal = true;
             }
-            let detail = modal
-                .iter()
-                .map(|line| format!("• {line}"))
-                .collect::<Vec<_>>()
-                .join("\n");
             self.osd.queue_modal(detail);
         }
         self.reap_modal();
@@ -241,6 +236,8 @@ impl HostState {
                 now: Instant::now(),
                 width: size.width,
                 height: size.height,
+                ui_scale: 1.0,
+                safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
             },
         );
         match decision {

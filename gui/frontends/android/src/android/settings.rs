@@ -100,6 +100,42 @@ pub(crate) struct SettingDef {
     pub label: String,
     pub choices: Vec<String>,
     pub current: usize,
+    /// Edge class per choice ("top"/"bottom") for position pickers.
+    /// The dialog hides same-edge followers from these labels, so the
+    /// index→edge mapping lives in Rust alone. Empty for other rows.
+    pub edges: Vec<String>,
+}
+
+/// Canonical corner order shared by labels, indices, and edges.
+/// Every position picker follows this sequence; nothing else may
+/// assume an index→corner mapping.
+const CORNERS: [NotificationPosition; 4] = [
+    NotificationPosition::BottomLeft,
+    NotificationPosition::BottomRight,
+    NotificationPosition::TopLeft,
+    NotificationPosition::TopRight,
+];
+
+const CORNER_LABELS: [&str; 4] = ["Bottom Left", "Bottom Right", "Top Left", "Top Right"];
+
+fn corner_edges() -> Vec<String> {
+    CORNERS
+        .into_iter()
+        .map(|pos| {
+            if pos.is_top() {
+                "top".to_string()
+            } else {
+                "bottom".to_string()
+            }
+        })
+        .collect()
+}
+
+fn corner_index(position: NotificationPosition) -> usize {
+    CORNERS
+        .iter()
+        .position(|&corner| corner == position)
+        .unwrap_or(0)
 }
 
 impl AndroidSettings {
@@ -240,12 +276,14 @@ impl AndroidSettings {
                 label: "Mute".to_string(),
                 choices: off_on(),
                 current: usize::from(self.audio_muted),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "master_volume".to_string(),
                 label: "Volume".to_string(),
                 choices: percent(VOLUME_MIN..=VOLUME_MAX),
                 current: usize::from(self.master_volume_percent.min(VOLUME_MAX)),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "latency_ms".to_string(),
@@ -254,6 +292,7 @@ impl AndroidSettings {
                     .map(|value| format!("{value} ms"))
                     .collect(),
                 current: usize::from(self.latency_ms.clamp(LATENCY_MIN, LATENCY_MAX) - LATENCY_MIN),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "sample_rate".to_string(),
@@ -267,12 +306,14 @@ impl AndroidSettings {
                     .iter()
                     .position(|&v| v == self.sample_rate)
                     .unwrap_or(SAMPLE_RATE_CHOICES.len().saturating_sub(1)),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "vsync".to_string(),
                 label: "VSync".to_string(),
                 choices: off_on(),
                 current: usize::from(self.vsync),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "screen.orientation".to_string(),
@@ -286,6 +327,7 @@ impl AndroidSettings {
                     ScreenOrientation::Portrait => 1,
                     ScreenOrientation::Landscape => 2,
                 },
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "storage.policy".to_string(),
@@ -299,6 +341,7 @@ impl AndroidSettings {
                     StoragePolicy::AppSharedData => 1,
                     StoragePolicy::CustomDirectory => 2,
                 },
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.overlay.visibility".to_string(),
@@ -312,12 +355,14 @@ impl AndroidSettings {
                     TouchOverlayVisibility::Auto => 1,
                     TouchOverlayVisibility::Hidden => 2,
                 },
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.overlay.opacity".to_string(),
                 label: "Overlay Opacity".to_string(),
                 choices: percent(0..=100),
                 current: usize::from(self.overlay_opacity_percent.min(100)),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.overlay.scale".to_string(),
@@ -328,6 +373,7 @@ impl AndroidSettings {
                         .clamp(OVERLAY_SCALE_MIN, OVERLAY_SCALE_MAX)
                         - OVERLAY_SCALE_MIN,
                 ),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.overlay.vertical_offset".to_string(),
@@ -341,30 +387,35 @@ impl AndroidSettings {
                 )
                 .checked_sub(i16::from(OVERLAY_OFFSET_MIN))
                 .unwrap_or_default() as usize,
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.overlay.haptics".to_string(),
                 label: "Overlay Haptics".to_string(),
                 choices: off_on(),
                 current: usize::from(self.overlay_haptics),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.cartridge.motion".to_string(),
                 label: "Cartridge Motion Sensor".to_string(),
                 choices: off_on(),
                 current: usize::from(self.motion_enabled),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.cartridge.rumble".to_string(),
                 label: "Cartridge Rumble".to_string(),
                 choices: off_on(),
                 current: usize::from(self.rumble_enabled),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.cartridge.rumble_strength".to_string(),
                 label: "Rumble Strength".to_string(),
                 choices: percent(0..=100),
                 current: usize::from(self.rumble_strength_percent.min(100)),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "controls.cartridge.rumble_target".to_string(),
@@ -378,38 +429,35 @@ impl AndroidSettings {
                     RumbleTarget::Handset => 1,
                     RumbleTarget::Controller => 2,
                 },
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "notifications.info".to_string(),
                 label: "Info Notifications".to_string(),
                 choices: off_on(),
                 current: usize::from(self.notifications_info_enabled),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "notifications.warning".to_string(),
                 label: "Warning Notifications".to_string(),
                 choices: off_on(),
                 current: usize::from(self.notifications_warning_enabled),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "notifications.error".to_string(),
                 label: "Error Notifications".to_string(),
                 choices: off_on(),
                 current: usize::from(self.notifications_error_enabled),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "notifications.position".to_string(),
                 label: "Notification Position".to_string(),
-                choices: ["Bottom Left", "Bottom Right", "Top Left", "Top Right"]
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect(),
-                current: match self.notifications_position {
-                    NotificationPosition::BottomLeft => 0,
-                    NotificationPosition::BottomRight => 1,
-                    NotificationPosition::TopLeft => 2,
-                    NotificationPosition::TopRight => 3,
-                },
+                choices: CORNER_LABELS.into_iter().map(str::to_string).collect(),
+                current: corner_index(self.notifications_position),
+                edges: corner_edges(),
             },
             SettingDef {
                 key: "notifications.area_mode".to_string(),
@@ -422,26 +470,21 @@ impl AndroidSettings {
                     NotificationAreaMode::Overlay => 0,
                     NotificationAreaMode::Strip => 1,
                 },
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "status.enabled".to_string(),
                 label: "Status Display".to_string(),
                 choices: off_on(),
                 current: usize::from(self.status_enabled),
+                edges: Vec::new(),
             },
             SettingDef {
                 key: "status.position".to_string(),
                 label: "Status Position".to_string(),
-                choices: ["Bottom Left", "Bottom Right", "Top Left", "Top Right"]
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect(),
-                current: match self.status_position {
-                    NotificationPosition::BottomLeft => 0,
-                    NotificationPosition::BottomRight => 1,
-                    NotificationPosition::TopLeft => 2,
-                    NotificationPosition::TopRight => 3,
-                },
+                choices: CORNER_LABELS.into_iter().map(str::to_string).collect(),
+                current: corner_index(self.status_position),
+                edges: corner_edges(),
             },
             SettingDef {
                 key: "status.area_mode".to_string(),
@@ -454,6 +497,7 @@ impl AndroidSettings {
                     NotificationAreaMode::Overlay => 0,
                     NotificationAreaMode::Strip => 1,
                 },
+                edges: Vec::new(),
             },
         ];
         // Same-edge follow is handled live in the dialog UI (the
@@ -473,6 +517,7 @@ impl AndroidSettings {
                     .iter()
                     .position(|(id, _)| id == &choice.selected)
                     .unwrap_or_default(),
+                edges: Vec::new(),
             }
         }));
         defs
@@ -506,15 +551,8 @@ impl AndroidSettings {
                 _ => None,
             }
         };
-        let position = |key: &str| -> Option<NotificationPosition> {
-            match by_key(key)? {
-                0 => Some(NotificationPosition::BottomLeft),
-                1 => Some(NotificationPosition::BottomRight),
-                2 => Some(NotificationPosition::TopLeft),
-                3 => Some(NotificationPosition::TopRight),
-                _ => None,
-            }
-        };
+        let position =
+            |key: &str| -> Option<NotificationPosition> { CORNERS.get(by_key(key)?).copied() };
         let area_mode = |key: &str| -> Option<NotificationAreaMode> {
             match by_key(key)? {
                 0 => Some(NotificationAreaMode::Overlay),
@@ -640,7 +678,7 @@ impl AndroidSettings {
             } else {
                 "audio".to_string()
             };
-            let field = serde_json::json!({
+            let mut field = serde_json::json!({
                     "key": def.key,
                     "label": def.label,
                     "kind": "choice",
@@ -648,6 +686,9 @@ impl AndroidSettings {
                     "options": def.choices,
                     "enabled": true,
             });
+            if !def.edges.is_empty() {
+                field["edges"] = serde_json::json!(def.edges);
+            }
             if let Some((_, fields)) = sections.iter_mut().find(|(id, _)| id == &section) {
                 fields.push(field);
             } else {
@@ -1367,6 +1408,32 @@ mod tests {
                 })
         );
         assert!(keys.iter().any(|key| key.starts_with("system.gbc.")));
+    }
+
+    #[test]
+    fn dialog_payload_marks_position_edges() {
+        let registry = registry();
+        let android = android_settings(&default_snapshot(), &registry);
+        let doc: serde_json::Value = serde_json::from_str(&android.dialog_payload(1)).unwrap();
+        let fields: Vec<&serde_json::Value> = doc["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|section| section["fields"].as_array().unwrap().iter())
+            .collect();
+        let position = fields
+            .iter()
+            .find(|field| field["key"] == "notifications.position")
+            .unwrap();
+        assert_eq!(
+            position["edges"],
+            serde_json::json!(["bottom", "bottom", "top", "top"])
+        );
+        let volume = fields
+            .iter()
+            .find(|field| field["key"] == "master_volume")
+            .unwrap();
+        assert!(volume.get("edges").is_none());
     }
 
     #[test]
