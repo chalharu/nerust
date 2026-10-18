@@ -1081,7 +1081,9 @@ impl AndroidFrontend {
     /// Show the oldest queued error unless a dialog is up or settings
     /// owns the screen. Storage and cap live in the shell `ModalBox`.
     fn maybe_show_error_dialog(&mut self) {
-        if self.error_dialog_showing || settings::is_dialog_open() {
+        // No activity to host a dialog while suspended; leave everything
+        // queued for the resume path instead of failing JNI per pass.
+        if !self.is_resumed || self.error_dialog_showing || settings::is_dialog_open() {
             return;
         }
         let Some(detail) = self.osd.take_modal_batch() else {
@@ -1104,14 +1106,19 @@ impl AndroidFrontend {
         self.error_dialog_showing = false;
         self.osd.modal_closed();
         if settings::is_dialog_open() {
-            // Preempted, never acked: re-queue for the settings-close
-            // flush so the ack guarantee survives the replacement.
+            // Preempted, never acked: re-queue at the head so the ack
+            // guarantee survives the replacement in display order.
             if let Some(detail) = self.error_dialog_current.take() {
-                self.osd.queue_modal(detail);
+                self.osd.requeue_front(detail);
             }
             return;
         }
         self.error_dialog_current = None;
+        // A dismiss racing suspend must not resume or reshow: the resume
+        // path replays both from the preserved pause flag and queue.
+        if !self.is_resumed {
+            return;
+        }
         if self.error_dialog_auto_paused {
             self.error_dialog_auto_paused = false;
             self.resume();
@@ -1939,14 +1946,13 @@ impl ApplicationHandler for AndroidFrontend {
         bridge::reset_transient();
         picker::reset_transient();
         settings::reset_transient();
-        // Transient UI dies with the activity: release the shell gate
-        // and re-queue the unacked batch so it reshows after resume.
+        // Transient UI dies with the activity: release the gate and
+        // re-queue the unacked head; pause flag survives for resume.
         self.osd.modal_closed();
         if let Some(detail) = self.error_dialog_current.take() {
-            self.osd.queue_modal(detail);
+            self.osd.requeue_front(detail);
         }
         self.error_dialog_showing = false;
-        self.error_dialog_auto_paused = false;
         self.release_window_resources();
     }
 

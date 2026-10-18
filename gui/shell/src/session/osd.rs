@@ -445,6 +445,9 @@ impl TransientQueue {
 }
 
 impl ModalBox {
+    /// Cap shared by queue and requeue paths (drop-oldest discipline).
+    const MAX_QUEUED: usize = 8;
+
     fn push(&mut self, text: String) {
         self.batch.push(text);
     }
@@ -475,8 +478,7 @@ impl ModalBox {
     /// not grow memory without bound. Drops the oldest, like the OSD
     /// pending cap, and logs the loss (history keeps every event).
     fn queue_modal(&mut self, detail: String) {
-        const MAX_MODAL_QUEUED: usize = 8;
-        if self.queue.len() >= MAX_MODAL_QUEUED {
+        if self.queue.len() >= Self::MAX_QUEUED {
             if !self.queue_warned_full {
                 log::warn!("error modal queue full; dropping oldest batch");
                 self.queue_warned_full = true;
@@ -484,6 +486,15 @@ impl ModalBox {
             self.queue.pop_front();
         }
         self.queue.push_back(detail);
+    }
+
+    /// Re-queue an interrupted head batch preserving display order.
+    /// Overflow drops the oldest queued batch behind the head.
+    fn requeue_front(&mut self, detail: String) {
+        self.queue.push_front(detail);
+        while self.queue.len() > Self::MAX_QUEUED {
+            self.queue.remove(1);
+        }
     }
 
     /// Take the next batch only when no dialog is showing: frontends
@@ -577,6 +588,11 @@ impl OsdManager {
 
     pub fn queue_modal(&mut self, detail: String) {
         self.modal_box.queue_modal(detail)
+    }
+
+    /// Re-queue an interrupted head batch preserving display order.
+    pub fn requeue_front(&mut self, detail: String) {
+        self.modal_box.requeue_front(detail)
     }
 
     pub fn take_modal_batch(&mut self) -> Option<String> {
