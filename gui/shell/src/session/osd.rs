@@ -178,7 +178,7 @@ struct OsdItem {
 /// Single sequential display (no stacking): one label at a time,
 /// FIFO by push order. `pending` is capped at two so the total
 /// (current + pending) never exceeds three.
-const MAX_QUEUED: usize = 2;
+const MAX_TRANSIENT_QUEUED: usize = 2;
 
 /// Transient in-frame queue: showing row plus pending rows with the
 /// merge/preempt/latest-wins discipline. No modal state.
@@ -353,7 +353,7 @@ impl TransientQueue {
         let demoted = self.current.take().expect("showing label checked");
         self.current = Some(item);
         self.pending.push_front(demoted);
-        while self.pending.len() > MAX_QUEUED {
+        while self.pending.len() > MAX_TRANSIENT_QUEUED {
             Self::evict_overflow(&mut self.pending, VictimEdge::Newest);
         }
         None
@@ -397,7 +397,7 @@ impl TransientQueue {
         self.pending.push_back(item);
         // Full queue drops the lowest severity first; Errors drop
         // only when every queued row is an Error.
-        while self.pending.len() > MAX_QUEUED {
+        while self.pending.len() > MAX_TRANSIENT_QUEUED {
             Self::evict_overflow(&mut self.pending, VictimEdge::Oldest);
         }
     }
@@ -493,6 +493,10 @@ impl ModalBox {
     fn requeue_front(&mut self, detail: String) {
         self.queue.push_front(detail);
         while self.queue.len() > Self::MAX_QUEUED {
+            if !self.queue_warned_full {
+                log::warn!("error modal queue full; dropping queued batch for requeue");
+                self.queue_warned_full = true;
+            }
             self.queue.remove(1);
         }
     }
