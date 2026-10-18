@@ -1062,12 +1062,15 @@ class MainActivity :
         edgeStrings: Array<String> = emptyArray(),
     ) {
         showSettingsDialogInternal(
-            keys = keys,
-            labels = labels,
-            choiceStrings = choiceStrings,
-            currentIndices = currentIndices,
-            sections = sections,
-            edgeStrings = edgeStrings,
+            content =
+                SettingsDialogContent(
+                    keys = keys,
+                    labels = labels,
+                    choiceStrings = choiceStrings,
+                    currentIndices = currentIndices,
+                    sections = sections,
+                    edgeStrings = edgeStrings,
+                ),
             requestId = null,
             ownedByTest = true,
         )
@@ -1115,12 +1118,15 @@ class MainActivity :
                 } ?: ""
             }
         showSettingsDialogInternal(
-            keys = keys,
-            labels = labels,
-            choiceStrings = choiceStrings,
-            currentIndices = currentIndices,
-            sections = sections,
-            edgeStrings = edgeStrings,
+            content =
+                SettingsDialogContent(
+                    keys = keys,
+                    labels = labels,
+                    choiceStrings = choiceStrings,
+                    currentIndices = currentIndices,
+                    sections = sections,
+                    edgeStrings = edgeStrings,
+                ),
             requestId = requestId,
             ownedByTest = false,
         )
@@ -1137,16 +1143,26 @@ class MainActivity :
         }
     }
 
+    private data class SettingsDialogContent(
+        val keys: Array<String>,
+        val labels: Array<String>,
+        val choiceStrings: Array<String>,
+        val currentIndices: Array<String>,
+        val sections: Array<String>,
+        val edgeStrings: Array<String>,
+    )
+
     private fun showSettingsDialogInternal(
-        keys: Array<String>,
-        labels: Array<String>,
-        choiceStrings: Array<String>,
-        currentIndices: Array<String>,
-        sections: Array<String> = emptyArray(),
-        edgeStrings: Array<String> = emptyArray(),
+        content: SettingsDialogContent,
         requestId: Long?,
         ownedByTest: Boolean,
     ) {
+        val keys = content.keys
+        val labels = content.labels
+        val choiceStrings = content.choiceStrings
+        val currentIndices = content.currentIndices
+        val sections = content.sections
+        val edgeStrings = content.edgeStrings
         val settings =
             labels.indices.map { index ->
                 AndroidSetting(
