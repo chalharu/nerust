@@ -190,7 +190,7 @@ impl HostState {
             let settings = self.notification_settings();
             let language = self.notification_language();
             self.osd
-                .push_all(drained, &settings, language, now, self.session.loaded());
+                .push_all(drained, &settings, language, now, self.session.frame_channel());
         }
         self.osd.poll(now);
         if let Some(detail) = self.osd.take_modal_text() {

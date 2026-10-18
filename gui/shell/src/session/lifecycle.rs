@@ -13,6 +13,7 @@ use crate::{
     session::{
         SessionError, SessionHandle,
         commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
+        osd::FrameChannel,
         persistence::PersistenceManager,
         title::window_title,
     },
@@ -227,6 +228,16 @@ impl SessionHandle {
 
     pub fn loaded(&self) -> bool {
         self.metrics().loaded
+    }
+
+    /// Display channel for notifications: without a loaded core no
+    /// frame is composited, so the OSD is invisible.
+    pub fn frame_channel(&self) -> FrameChannel {
+        if self.loaded() {
+            FrameChannel::Composited
+        } else {
+            FrameChannel::Unpresented
+        }
     }
 
     pub fn paused(&self) -> bool {

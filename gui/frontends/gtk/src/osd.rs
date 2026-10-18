@@ -49,9 +49,9 @@ impl GtkOsd {
         let settings = snapshot.local.notifications.clone();
         if !drained.is_empty() {
             log::debug!("gtk osd: showing {} notification(s)", drained.len());
-            let core_active = state.loaded();
+            let channel = state.frame_channel();
             self.manager
-                .push_all(drained, &settings, language, now, core_active);
+                .push_all(drained, &settings, language, now, channel);
         }
         let mut resume_after_modal = false;
         if let Some(detail) = self.manager.take_modal_text() {
