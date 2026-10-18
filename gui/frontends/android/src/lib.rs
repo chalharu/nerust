@@ -33,6 +33,8 @@ fn init_android_logging() {
             .with_max_level(log::LevelFilter::Info),
     );
 
+    // The leaf hook only; android_main keeps its own catch_unwind
+    // so a panicking frontend logs and returns instead of exiting.
     nerust_crash_guard::install();
 }
 

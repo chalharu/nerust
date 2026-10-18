@@ -21,41 +21,44 @@ pub fn install() {
     ONCE.call_once(|| {
         let previous = panic::take_hook();
         panic::set_hook(Box::new(move |info: &PanicHookInfo<'_>| {
-            log::error!("{}", HookLines::new(info));
+            let record = PanicRecord::capture(info.to_string());
+            log::error!(
+                "panic on thread '{}': {}\nbacktrace:\n{}",
+                record.thread, record.detail, record.backtrace
+            );
             previous(info);
         }));
     });
 }
 
+/// Crash containment exit code, matching the Rust panic convention
+/// so tooling can identify crashes automatically.
+pub const CRASH_EXIT_CODE: i32 = 101;
+
 /// Structured crash data for dialogs: getters only, log shape via `Display`.
 pub struct CrashReport {
-    message: String,
-    thread: String,
-    backtrace: String,
+    record: PanicRecord,
 }
 
 impl CrashReport {
     /// What panicked (payload text or fallback).
     pub fn message(&self) -> &str {
-        &self.message
+        &self.record.detail
     }
 
     /// Thread that unwound into `run_guarded` (always the caller thread).
     pub fn thread_name(&self) -> &str {
-        &self.thread
+        &self.record.thread
     }
 
     /// Captured at the catch site (approximate, not the panic site).
     pub fn backtrace(&self) -> &str {
-        &self.backtrace
+        &self.record.backtrace
     }
 
     fn from_payload(payload: &(dyn Any + Send)) -> Self {
-        let thread = std::thread::current();
         Self {
-            message: payload_message(payload),
-            thread: thread.name().unwrap_or("unnamed").to_owned(),
-            backtrace: Backtrace::force_capture().to_string(),
+            record: PanicRecord::capture(payload_message(payload)),
         }
     }
 }
@@ -65,36 +68,28 @@ impl std::fmt::Display for CrashReport {
         write!(
             f,
             "crashed on thread '{}': {}\nbacktrace:\n{}",
-            self.thread, self.message, self.backtrace
+            self.record.thread, self.record.detail, self.record.backtrace
         )
     }
 }
 
-/// Hook log lines (kept separate so both hook and report share one shape).
-struct HookLines {
+/// Shared capture for hook and report: thread plus detail text plus
+/// backtrace. Both log shapes draw from these parts instead of
+/// duplicating the capture logic.
+struct PanicRecord {
     thread: String,
-    info: String,
+    detail: String,
     backtrace: String,
 }
 
-impl HookLines {
-    fn new(info: &PanicHookInfo<'_>) -> Self {
+impl PanicRecord {
+    fn capture(detail: String) -> Self {
         let thread = std::thread::current();
         Self {
             thread: thread.name().unwrap_or("unnamed").to_owned(),
-            info: info.to_string(),
+            detail,
             backtrace: Backtrace::force_capture().to_string(),
         }
-    }
-}
-
-impl std::fmt::Display for HookLines {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "panic on thread '{}': {}\nbacktrace:\n{}",
-            self.thread, self.info, self.backtrace
-        )
     }
 }
 
@@ -108,7 +103,8 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
     }
 }
 
-/// Run `main` under the hook; on unwind log, offer `on_crash`, exit(101).
+/// Run `main` under the hook; on unwind log, offer `on_crash`,
+/// then exit with [`CRASH_EXIT_CODE`].
 ///
 /// `on_crash` runs after unwind on the caller (UI) thread only; an
 /// emu-thread panic never reaches it (typed `WorkerUnavailable` path
@@ -122,7 +118,7 @@ pub fn run_guarded<R>(main: impl FnOnce() -> R, on_crash: impl FnOnce(&CrashRepo
             let report = CrashReport::from_payload(payload.as_ref());
             log::error!("{report}");
             let _ = panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_crash(&report)));
-            std::process::exit(101);
+            std::process::exit(CRASH_EXIT_CODE);
         }
     }
 }
@@ -150,20 +146,10 @@ mod tests {
     }
 
     #[test]
-    fn hook_lines_share_thread_shape() {
-        let text = std::panic::catch_unwind(|| {
-            install();
-            let info = std::panic::Location::caller();
-            format!(
-                "{}",
-                HookLines {
-                    thread: "probe".to_owned(),
-                    info: format!("explicit panic at {info}"),
-                    backtrace: "test-trace".to_owned(),
-                }
-            )
-        })
-        .expect("probe body must not panic");
-        assert!(text.contains("panic on thread 'probe'"), "{text}");
+    fn hook_record_shares_capture_shape() {
+        let record = PanicRecord::capture("explicit panic".to_owned());
+        assert!(!record.thread.is_empty());
+        assert_eq!(record.detail, "explicit panic");
+        assert!(!record.backtrace.is_empty());
     }
 }
