@@ -17,6 +17,7 @@ use super::notification::UiNotification;
 pub use super::osd_history::{
     HistoryLine, format_datetime, format_time, history_lines, level_label, level_name, level_tag,
 };
+
 pub use crate::session::osd_modal::{ModalSink, ModalSource};
 pub use crate::session::osd_presenter::{
     OsdChrome, OsdPlan, OsdPresenter, OsdState, OsdSync, OsdSyncInput, STATUS_FPS_MIN_INTERVAL,
@@ -46,12 +47,44 @@ pub struct OsdManager {
 }
 
 /// Bundled inputs for [`SessionHandle::pump_osd`]: the caller-owned
-/// half of the push. The channel is derived inside the pump, so an
-/// empty queue skips that derivation entirely.
+/// half of the push. The tick is fetched once per pass and shared
+/// with the sync decision, so one pass costs one metrics lock.
 pub struct PushInput {
     pub policy: TransientPolicy,
     pub language: AppLanguage,
     pub now: Instant,
+    pub tick: TickMetrics,
+}
+
+/// One metrics read per tick. `metrics()` locks and queries the emu
+/// thread; tick paths fetch once and thread this through instead of
+/// calling `loaded`/`paused`/`can_pause` separately.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TickMetrics {
+    pub fps: f32,
+    pub paused: bool,
+    pub loaded: bool,
+    pub frame_counter: u64,
+}
+
+impl TickMetrics {
+    /// Display channel for notifications: without a loaded core no
+    /// frame is composited, so the OSD is invisible.
+    pub fn frame_channel(&self) -> FrameChannel {
+        if self.loaded {
+            FrameChannel::Composited
+        } else {
+            FrameChannel::Unpresented
+        }
+    }
+
+    pub fn can_pause(&self) -> bool {
+        self.loaded && !self.paused
+    }
+
+    pub fn can_resume(&self) -> bool {
+        self.loaded && self.paused
+    }
 }
 
 /// Outcome of [`SessionHandle::pump_osd`] for frontend flow control:

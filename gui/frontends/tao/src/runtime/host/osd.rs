@@ -228,18 +228,20 @@ impl HostState {
         let now = Instant::now();
         let frame = self.frame_snapshot();
         let language = frame.language;
+        let tick = self.session.tick_metrics();
         let report = self.session.pump_osd(
             &mut self.osd.manager,
             PushInput {
                 policy: TransientPolicy::from(&frame.notifications),
                 language,
                 now,
+                tick,
             },
         );
         if report.modal_queued {
             // Auto-pause first, guarded by can_pause.
             // Only what we paused resumes, after the last ack.
-            if self.session.can_pause() && !self.session.paused() {
+            if tick.can_pause() && !tick.paused {
                 self.pause();
                 self.osd.resume_after_modal = true;
             }
@@ -296,14 +298,14 @@ impl HostState {
         ) {
             return;
         }
-        let metrics = self.session.metrics();
+        let tick = self.session.tick_metrics();
         let decision = self.osd.presenter.sync(
             &self.osd.manager,
             OsdSyncInput {
                 chrome,
                 language,
-                fps: metrics.emulation_fps,
-                paused: metrics.paused,
+                fps: tick.fps,
+                paused: tick.paused,
                 now: Instant::now(),
                 width: size.width,
                 height: size.height,

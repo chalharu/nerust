@@ -139,11 +139,6 @@ impl State {
     pub(crate) fn clear_notification_history(&mut self) {
         self.session.clear_notification_history();
     }
-
-    pub(crate) fn emulation_status(&self) -> (f32, bool) {
-        let metrics = self.session.metrics();
-        (metrics.emulation_fps, metrics.paused)
-    }
 }
 
 impl PauseControl for State {

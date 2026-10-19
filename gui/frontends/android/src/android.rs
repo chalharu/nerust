@@ -847,8 +847,15 @@ impl AndroidFrontend {
     fn handle_settings_result(&mut self, result: SettingsDialogResult) {
         // Settings closed (applied or dismissed): re-derive the open
         // flag, flush the error queue, and resume an orphaned pause.
+        // The gate reads the same bridge truth as the cache: a sync-path
+        // reopen racing this result keeps its shield instead of taking
+        // an auto-paused error dialog underneath.
         self.settings_open = settings::is_dialog_open();
-        let screen = Screen::show_gate(self.is_resumed, false, self.session.can_pause());
+        let screen = Screen::show_gate(
+            self.is_resumed,
+            self.settings_open,
+            self.session.can_pause(),
+        );
         match self.osd.settings_closed_error_dialog(screen) {
             SettingsClosedTransition::Show { auto_pause } => {
                 if auto_pause {
@@ -1616,8 +1623,9 @@ impl AndroidFrontend {
             self.shell.needs_redraw = false;
             return;
         };
+        let tick = self.session.tick_metrics();
         self.osd.sync(osd::OsdSyncCtx {
-            session: &self.session,
+            tick,
             settings: &settings,
             language,
             renderer: renderer.as_mut(),
@@ -2062,7 +2070,11 @@ impl ApplicationHandler for AndroidFrontend {
         self.maybe_refresh_title(now);
         let settings = self.notification_settings();
         let language = self.notification_language();
-        if self.osd.poll(&mut self.session, &settings, language, now) {
+        let tick = self.session.tick_metrics();
+        if self
+            .osd
+            .poll(&mut self.session, &settings, language, now, tick)
+        {
             self.request_redraw();
         }
         self.maybe_show_error_dialog();

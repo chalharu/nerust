@@ -1305,10 +1305,12 @@ fn pump_osd_empty_queue_reports_clean() {
     let mut session = test_session();
     let mut manager = OsdManager::new();
     let snapshot = session.settings_snapshot().clone();
+    let tick = session.tick_metrics();
     let input = || PushInput {
         policy: TransientPolicy::from(&snapshot.local.notifications),
         language: AppLanguage::English,
         now: Instant::now(),
+        tick,
     };
     // test_session activates a system but loads no ROM: unpresented.
     assert!(!session.loaded());
@@ -1336,6 +1338,7 @@ fn pump_osd_routes_no_core_error_to_modal() {
     let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
     let mut manager = OsdManager::new();
     let snapshot = session.settings_snapshot().clone();
+    let tick = session.tick_metrics();
     // No core at all: Pause fails and pushes CommandFailed (Error).
     let outcome = session.run_command(SessionCommand::Pause);
     assert!(outcome.is_err());
@@ -1345,6 +1348,7 @@ fn pump_osd_routes_no_core_error_to_modal() {
             policy: TransientPolicy::from(&snapshot.local.notifications),
             language: AppLanguage::English,
             now: Instant::now(),
+            tick,
         },
     );
     assert!(report.modal_queued);
@@ -1409,10 +1413,12 @@ fn pump_osd_drops_info_without_frame() {
     assert!(!session.loaded());
     let mut manager = OsdManager::new();
     let snapshot = session.settings_snapshot().clone();
+    let tick = session.tick_metrics();
     let input = || PushInput {
         policy: TransientPolicy::from(&snapshot.local.notifications),
         language: AppLanguage::English,
         now: Instant::now(),
+        tick,
     };
     session.notifications.push(NotificationKind::Paused);
     let report = session.pump_osd(&mut manager, input());
