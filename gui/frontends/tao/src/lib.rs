@@ -33,6 +33,10 @@ pub(crate) mod runtime;
 use nerust_crash_guard::{CRASH_EXIT_CODE, GuardOutcome};
 use nerust_gui_shell::context::FrontendContext;
 use nerust_run_options::RunOptions;
+use nerust_settings_core::{
+    i18n::{UiText, text as ui_text},
+    model::language::AppLanguage,
+};
 
 pub fn run(ctx: FrontendContext, options: RunOptions) {
     // A crash must never look like a clean exit; the dialog runs first.
@@ -42,9 +46,10 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
         GuardOutcome::Crashed(report) => {
             // rfd spawns an external portal process, so it can still
             // show after the event loop died. stderr stays the log home.
+            let language = AppLanguage::SystemDefault;
             rfd::MessageDialog::new()
-                .set_title("nerust")
-                .set_description(crash_dialog_text(report.message()))
+                .set_title(ui_text(language, UiText::CrashTitle))
+                .set_description(crash_dialog_text(language, report.message()))
                 .set_level(rfd::MessageLevel::Error)
                 .set_buttons(rfd::MessageButtons::Ok)
                 .show();
@@ -54,9 +59,13 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
 }
 
 /// Crash dialog copy: what happened plus where details live.
-/// Pinned by test; the file-free design needs the stderr pointer.
-fn crash_dialog_text(message: &str) -> String {
-    format!("The application crashed: {message}\n\nDetails were written to the log (stderr).",)
+/// Pinned by test in both languages (file-free stderr pointer).
+fn crash_dialog_text(language: AppLanguage, message: &str) -> String {
+    format!(
+        "{}: {message}\n\n{}",
+        ui_text(language, UiText::CrashBody),
+        ui_text(language, UiText::CrashDetails),
+    )
 }
 
 fn run_inner(ctx: FrontendContext, options: RunOptions) {
@@ -84,11 +93,26 @@ fn run_inner(ctx: FrontendContext, options: RunOptions) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_settings_core::i18n::text;
 
     #[test]
-    fn crash_dialog_points_at_stderr() {
-        let text = crash_dialog_text("boom");
-        assert!(text.contains("boom"), "{text}");
-        assert!(text.contains("stderr"), "{text}");
+    fn crash_dialog_points_at_stderr_in_english() {
+        let dialog = crash_dialog_text(AppLanguage::English, "boom");
+        assert!(dialog.contains("boom"), "{dialog}");
+        assert!(dialog.contains("The application crashed"), "{dialog}");
+        assert!(dialog.contains("stderr"), "{dialog}");
+        assert_eq!(text(AppLanguage::English, UiText::CrashTitle), "nerust");
+    }
+
+    #[test]
+    fn crash_dialog_points_at_stderr_in_japanese() {
+        let dialog = crash_dialog_text(AppLanguage::Japanese, "boom");
+        assert!(dialog.contains("boom"), "{dialog}");
+        assert!(
+            dialog.contains("アプリケーションがクラッシュしました"),
+            "{dialog}"
+        );
+        assert!(dialog.contains("stderr"), "{dialog}");
+        assert_eq!(text(AppLanguage::Japanese, UiText::CrashTitle), "nerust");
     }
 }

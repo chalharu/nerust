@@ -178,15 +178,14 @@ impl HostState {
         // unfocused loop schedules no redraws, which is exactly when
         // pause/error notices must still land and expire.
         self.poll_notifications();
-        // OSD expiry wakes the loop for relabel: plain Wait would
-        // leave a stale label up until the next input event.
-        // Redraw while labels show so expiry applies even paused.
-        if self.osd.has_visible()
-            && let Some(window) = self.window.as_ref()
-        {
-            window.request_redraw();
-        }
+        // Post-pump the deadline implies a showing label (promotion
+        // is eager), so one call drives the expiry redraw and the
+        // wait: plain Wait would leave a stale label up otherwise.
         if let Some(deadline) = self.osd_wakeup() {
+            // Redraw while labels show so expiry applies even paused.
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
+            }
             let earlier = match *control_flow {
                 ControlFlow::WaitUntil(at) => at.min(deadline),
                 _ => deadline,
@@ -232,14 +231,30 @@ impl HostState {
         }
     }
 
-    pub(crate) fn prepare_close(&mut self) -> bool {
+    /// Idempotent close teardown: the guard makes flush and window
+    /// clearing run exactly once across CloseRequested + Destroyed.
+    pub(crate) fn prepare_close(&mut self) {
+        if self.exited {
+            return;
+        }
+        self.exited = true;
         self.remember_fit_window_size();
         self.settings_open = false;
         self.resume_after_settings = false;
         self.settings_window.take();
         self.debug.close_all();
+        self.window = None;
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
+        {
+            self.content_area = None;
+        }
         self.session.flush_before_exit();
-        true
     }
     pub(super) fn startup_window_size(&self) -> TaoLogicalSize<f64> {
         match scaling_factor(self.session.settings_snapshot().local.video.window.scaling) {
@@ -300,6 +315,22 @@ mod tests {
 
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
+
+    #[test]
+    fn prepare_close_is_idempotent_and_clears_state() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.settings_open = true;
+        host.prepare_close();
+        assert!(host.close_exited());
+        assert!(!host.settings_open);
+        assert!(host.window().is_none());
+        // Second delivery (Destroyed after CloseRequested) is a
+        // no-op: re-armed state proves the flush path ran only once.
+        host.settings_open = true;
+        host.prepare_close();
+        assert!(host.settings_open);
+    }
 
     #[test]
     fn ensure_window_failure_exits_loop() {

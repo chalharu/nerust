@@ -9,6 +9,7 @@ use crate::aux::shell::AuxWindow;
 use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
+use super::host::{WindowHandler, aux_focus_step};
 
 impl WindowRuntime {
     pub(super) fn on_main_event(
@@ -18,12 +19,11 @@ impl WindowRuntime {
         control_flow: &mut ControlFlow,
     ) {
         match event {
-            WindowEvent::CloseRequested if self.host.prepare_close() => {
-                *control_flow = ControlFlow::Exit;
-            }
-            // External destroy without CloseRequested: the window is
-            // already gone, so flush and exit like the normal close.
-            WindowEvent::Destroyed if self.host.prepare_close() => {
+            // Destroyed arrives without CloseRequested on external
+            // kills; both run the same idempotent teardown and exit.
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                self.host.prepare_close();
+                self.surface_xid = None;
                 *control_flow = ControlFlow::Exit;
             }
             WindowEvent::Focused(true) => {
@@ -130,22 +130,28 @@ impl WindowRuntime {
             return;
         }
         let refocused = matches!(event, WindowEvent::Focused(true));
-        self.note_aux_focus(refocused);
+        let resume = match self.host.debug.debug_window.as_mut() {
+            Some(handle) => handle.note_focus(&mut self.host.focus, refocused),
+            None => aux_focus_step(&mut self.host.focus, refocused),
+        };
+        if resume {
+            self.host.resume_session();
+        }
         {
             let Some(handle) = self.host.debug.debug_window.as_mut() else {
                 return;
             };
-            handle.pump_window_event(event);
+            handle.on_event(event);
         }
         if refocused {
             self.host.sync_debug_chrome();
         }
         self.drain_and_maybe_open_ppu(opener);
         // Closing never resumes: resume is always explicit.
-        if let Some(handle) = self.host.debug.debug_window.as_mut() {
-            // Coalesced present (see the settings arm): every
-            // visual path above already requested a redraw.
-            handle.shell.window.request_redraw();
+        if self.host.debug.debug_window.is_some() {
+            // Coalesced redraw: the event/drain paths above already
+            // flagged what changed; one request covers the frame.
+            self.host.request_redraw();
         }
         if self.host.debug.debug_close_requested() {
             self.host.debug.drop_debug_window();
@@ -170,7 +176,14 @@ impl WindowRuntime {
         }
         // A system-paused session resumes like on main focus;
         // explicit pauses stay paused.
-        self.note_aux_focus(matches!(event, WindowEvent::Focused(true)));
+        let refocused = matches!(event, WindowEvent::Focused(true));
+        let resume = match self.host.debug.ppu_window.as_mut() {
+            Some(handle) => handle.note_focus(&mut self.host.focus, refocused),
+            None => aux_focus_step(&mut self.host.focus, refocused),
+        };
+        if resume {
+            self.host.resume_session();
+        }
         if let WindowEvent::Moved(position) = &event {
             self.host
                 .debug
@@ -180,24 +193,11 @@ impl WindowRuntime {
             let Some(handle) = self.host.debug.ppu_window.as_mut() else {
                 return;
             };
-            handle.pump_window_event(event);
+            handle.on_event(event);
         }
         if self.host.debug.ppu_close_requested() {
             self.host.debug.drop_ppu_window();
             self.host.request_redraw();
-        }
-    }
-
-    /// Aux-window focus agreement, shared by debugger and PPU:
-    /// same-app arrival cancels a pending auto-pause and resumes a
-    /// system-paused session; leaving anywhere arms it.
-    fn note_aux_focus(&mut self, focused: bool) {
-        if focused {
-            if self.host.focus.arrive_aux() {
-                self.host.resume_session();
-            }
-        } else {
-            self.host.focus.leave_aux();
         }
     }
 
@@ -247,9 +247,27 @@ mod tests {
         let (mut runtime, menu) = test_runtime();
         let opener = FakeOpener::failing("no display");
         let mut flow = ControlFlow::Wait;
+        runtime.surface_xid = Some(42);
         runtime.on_main_event(&opener, WindowEvent::Destroyed, &mut flow);
         assert_eq!(flow, ControlFlow::Exit);
+        assert!(runtime.host.close_exited());
+        assert!(runtime.surface_xid.is_none());
         assert!(menu.updates().is_empty());
+    }
+
+    #[test]
+    fn double_delivery_runs_close_once_and_exits() {
+        let (mut runtime, _) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        let mut flow = ControlFlow::Wait;
+        runtime.on_main_event(&opener, WindowEvent::CloseRequested, &mut flow);
+        assert_eq!(flow, ControlFlow::Exit);
+        assert!(runtime.host.close_exited());
+        // Destroyed after CloseRequested still exits; the guarded
+        // teardown ran exactly once (see the host-level idempotence test).
+        runtime.on_main_event(&opener, WindowEvent::Destroyed, &mut flow);
+        assert_eq!(flow, ControlFlow::Exit);
+        assert!(runtime.host.close_exited());
     }
 
     #[test]

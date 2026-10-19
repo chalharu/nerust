@@ -26,11 +26,8 @@ impl HostState {
         if self.settings_open {
             return match command {
                 MenuCommand::Quit => {
-                    if self.prepare_close() {
-                        HostAction::Exit
-                    } else {
-                        HostAction::None
-                    }
+                    self.prepare_close();
+                    HostAction::Exit
                 }
                 _ => HostAction::None,
             };
@@ -66,11 +63,8 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Quit => {
-                if self.prepare_close() {
-                    HostAction::Exit
-                } else {
-                    HostAction::None
-                }
+                self.prepare_close();
+                HostAction::Exit
             }
         }
     }

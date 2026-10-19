@@ -154,6 +154,9 @@ pub enum UiText {
     PosBottomRight,
     AreaOverlay,
     AreaStrip,
+    CrashTitle,
+    CrashBody,
+    CrashDetails,
 }
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
@@ -380,6 +383,15 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::PosBottomRight => ("Bottom right", "右下"),
         UiText::AreaOverlay => ("Overlay", "重ねる"),
         UiText::AreaStrip => ("Strip", "専用帯"),
+        UiText::CrashTitle => ("nerust", "nerust"),
+        UiText::CrashBody => (
+            "The application crashed",
+            "アプリケーションがクラッシュしました",
+        ),
+        UiText::CrashDetails => (
+            "Details were written to the log (stderr).",
+            "詳細はログ（stderr）に記録されました。",
+        ),
     }
 }
 
@@ -640,6 +652,8 @@ mod tests {
             PosBottomRight,
             AreaOverlay,
             AreaStrip,
+            CrashBody,
+            CrashDetails,
         ] {
             assert!(!text(en(), key).is_empty());
             assert!(!text(ja(), key).is_empty());

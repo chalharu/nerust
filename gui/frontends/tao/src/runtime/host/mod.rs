@@ -26,6 +26,7 @@ mod commands;
 mod focus;
 mod osd;
 use osd::ModalFlight;
+pub(crate) use osd::{WindowHandler, aux_focus_step};
 mod presentation;
 mod settings;
 mod window;
@@ -107,6 +108,9 @@ pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
     /// Window creation failure: the loop exits gracefully.
     fatal_error: Option<String>,
+    /// Close teardown already ran (CloseRequested then Destroyed
+    /// double-delivers): flush and window clearing run exactly once.
+    exited: bool,
     pub(super) session: SessionHandle,
     ctx: FrontendContext,
     app_menu: Box<dyn MenuSink>,
@@ -135,7 +139,10 @@ pub(crate) struct HostState {
     /// gate, surface size, layer liveness). The per-frame decision
     /// procedure lives in shell [`OsdPresenter`](nerust_gui_shell::session::osd::OsdPresenter);
     /// this host only rasterizes the resulting plan.
-    pub(super) osd_presenter: nerust_gui_shell::session::osd::OsdPresenter,
+    osd_presenter: nerust_gui_shell::session::osd::OsdPresenter,
+    /// Last sync left a layer on the renderer. Memo of the action
+    /// this host took: the pre-gate needs liveness without shell.
+    osd_layer_live: bool,
     /// Last applied edge strip. The reservation only changes with
     /// settings or surface size, so unchanged strips skip the
     /// renderer call (same gate pattern as the gtk frontend).
@@ -196,6 +203,7 @@ impl HostState {
         Ok(Self {
             window: None,
             fatal_error: None,
+            exited: false,
             session,
             ctx,
             app_menu,
@@ -212,6 +220,7 @@ impl HostState {
             osd: OsdManager::new(),
             osd_raster: nerust_render_osd::OsdRaster::new(),
             osd_presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
+            osd_layer_live: false,
             osd_last_strip: nerust_render_traits::ReservedStrip::default(),
             modal_flight: None,
             resume_after_modal: false,
@@ -242,6 +251,13 @@ impl HostState {
 
     pub(crate) fn window(&self) -> Option<&Arc<TaoWindow>> {
         self.window.as_ref()
+    }
+
+    /// Close teardown already ran. Test-only read of the idempotence
+    /// guard: double-delivered close events must flush exactly once.
+    #[cfg(test)]
+    pub(crate) fn close_exited(&self) -> bool {
+        self.exited
     }
 }
 
