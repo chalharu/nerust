@@ -25,8 +25,16 @@ static PICKER_STATE: Mutex<PickerState> = Mutex::new(PickerState {
     in_flight: false,
 });
 
+/// Lock order for the three JNI-bridge mutexes (bridge, settings,
+/// picker): never nest `with_state` calls, wake the looper after
+/// releasing. A panicking JNI callback must not wedge the process on
+/// the next lock, so a poisoned mutex recovers its state and logs.
 fn with_state<T>(operation: impl FnOnce(&mut PickerState) -> T) -> T {
-    operation(&mut PICKER_STATE.lock().expect("picker state mutex poisoned"))
+    let mut guard = PICKER_STATE.lock().unwrap_or_else(|poison| {
+        log::error!("picker state mutex poisoned; recovering state");
+        poison.into_inner()
+    });
+    operation(&mut guard)
 }
 
 pub(crate) fn take_result() -> Option<RomPickerResult> {

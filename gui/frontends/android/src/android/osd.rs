@@ -100,8 +100,10 @@ impl AndroidOsd {
         self.controller.poll_show(&mut self.manager, screen)
     }
 
-    pub(super) fn error_detail(&self) -> Option<String> {
-        self.controller.current_detail().map(str::to_string)
+    /// Borrow the showing batch for the JNI handoff. The dialog bridge
+    /// copies it once into a Java string; no intermediate `String`.
+    pub(super) fn current_detail(&self) -> Option<&str> {
+        self.controller.current_detail()
     }
 
     pub(super) fn dismiss_error_dialog(

@@ -54,8 +54,10 @@ pub(super) fn take_exit_request() -> bool {
 }
 
 pub(super) fn with_state<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T) -> T {
-    // A panicking JNI callback must not wedge the process on the
-    // next lock: recover the state and keep serving events.
+    // Lock order for the three bridge mutexes: never nest `with_state`
+    // calls; wake the looper after releasing. A panicking JNI callback
+    // must not wedge the process on the next lock: recover the state
+    // and keep serving events.
     let mut guard = ANDROID_BRIDGE.lock().unwrap_or_else(|poison| {
         log::error!("Android bridge mutex poisoned; recovering state");
         poison.into_inner()

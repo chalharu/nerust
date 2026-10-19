@@ -754,8 +754,10 @@ static SETTINGS_STATE: Mutex<SettingsBridgeState> = Mutex::new(SettingsBridgeSta
 });
 
 fn with_state<T>(operation: impl FnOnce(&mut SettingsBridgeState) -> T) -> T {
-    // A panicking JNI callback must not wedge the process on the
-    // next lock: recover the state and keep serving events.
+    // Lock order for the three bridge mutexes: never nest `with_state`
+    // calls; wake the looper after releasing. A panicking JNI callback
+    // must not wedge the process on the next lock: recover the state
+    // and keep serving events.
     let mut guard = SETTINGS_STATE.lock().unwrap_or_else(|poison| {
         log::error!("settings bridge mutex poisoned; recovering state");
         poison.into_inner()
