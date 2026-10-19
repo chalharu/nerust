@@ -1,7 +1,11 @@
 use jni::objects::{JObject, JString};
 use nerust_input_traits::AbstractKey;
 
-use super::{bridge, messages::MenuAction, settings};
+use super::{
+    bridge,
+    messages::{FrontendEvent, MenuAction},
+    settings,
+};
 
 /// Kotlin→Rust event IDs. Despite the name this is the general event
 /// confluence, not menu-only (dialog dismissals ride the same bridge).
@@ -16,11 +20,11 @@ const ACTION_SAVE_STATE: &str = "save_state";
 const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
 const ACTION_UNLOAD: &str = "unload";
 
-pub(crate) fn take_actions() -> Vec<MenuAction> {
-    bridge::with_state(|state| state.menu_actions.drain(..).collect())
+pub(crate) fn take_events() -> Vec<FrontendEvent> {
+    bridge::with_state(|state| state.frontend_events.drain(..).collect())
 }
 
-fn decode_action(raw: &str) -> Option<MenuAction> {
+fn decode_menu_action(raw: &str) -> Option<MenuAction> {
     if let Some(payload) = raw.strip_prefix("controller:") {
         let mut parts = payload.split(':');
         let device_id = parts.next()?.parse().ok()?;
@@ -54,7 +58,6 @@ fn decode_action(raw: &str) -> Option<MenuAction> {
         });
     }
     match raw {
-        ACTION_ERROR_DIALOG_DISMISSED => Some(MenuAction::ErrorDialogDismissed),
         ACTION_EXIT => Some(MenuAction::Exit),
         ACTION_LOAD_STATE => Some(MenuAction::LoadState),
         ACTION_OPEN_ROM => Some(MenuAction::OpenRom),
@@ -68,9 +71,18 @@ fn decode_action(raw: &str) -> Option<MenuAction> {
     }
 }
 
-fn publish_action(action: MenuAction) {
-    log::info!("Android menu: published action: {:?}", action);
-    bridge::with_state(|state| state.menu_actions.push_back(action));
+/// Decode one raw bridge string into the typed event. Dialog dismissal
+/// bypasses menu decoding; menu IDs never produce dialog events.
+fn decode_frontend_event(raw: &str) -> Option<FrontendEvent> {
+    if raw == ACTION_ERROR_DIALOG_DISMISSED {
+        return Some(FrontendEvent::ErrorDialogDismissed);
+    }
+    decode_menu_action(raw).map(FrontendEvent::Menu)
+}
+
+fn publish_event(event: FrontendEvent) {
+    log::info!("Android menu: published event: {:?}", event);
+    bridge::with_state(|state| state.frontend_events.push_back(event));
     bridge::wake();
 }
 
@@ -81,23 +93,25 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
     action: JString<'_>,
 ) {
     match env
-        .with_env(|env| -> jni::errors::Result<Option<MenuAction>> {
+        .with_env(|env| -> jni::errors::Result<Option<FrontendEvent>> {
             if action.is_null() {
                 Ok(None)
             } else {
                 let action_str = action.try_to_string(env)?;
-                let decoded = decode_action(&action_str);
+                let decoded = decode_frontend_event(&action_str);
 
                 // Dialog-showing actions are handled synchronously since we
                 // already have env/activity on the Java main thread.
-                if let Some(MenuAction::OpenSettings) = decoded {
+                if let Some(FrontendEvent::Menu(MenuAction::OpenSettings)) = decoded {
                     match settings::show_settings_dialog_sync(env, &activity) {
                         Ok(_) => {}
                         Err(error) => {
                             log::error!("sync settings dialog failed: {error}");
                         }
                     }
-                    return Ok(None);
+                    // Record the open for the frontend cache even though the
+                    // dialog is already up: the follow-up request no-ops.
+                    return Ok(Some(FrontendEvent::Menu(MenuAction::OpenSettings)));
                 }
 
                 Ok(decoded)
@@ -105,7 +119,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
         })
         .into_outcome()
     {
-        jni::Outcome::Ok(Some(action)) => publish_action(action),
+        jni::Outcome::Ok(Some(event)) => publish_event(event),
         jni::Outcome::Ok(None) => {}
         jni::Outcome::Err(error) => {
             log::error!("failed to decode Android menu action: {error:?}");
@@ -121,56 +135,71 @@ mod tests {
     use super::{
         ACTION_ERROR_DIALOG_DISMISSED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM,
         ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE,
-        ACTION_TOGGLE_PAUSE, ACTION_UNLOAD, MenuAction, decode_action,
+        ACTION_TOGGLE_PAUSE, ACTION_UNLOAD, FrontendEvent, MenuAction, decode_frontend_event,
+        decode_menu_action,
     };
 
     #[test]
-    fn decode_action_maps_known_ids() {
+    fn decode_menu_action_maps_known_ids() {
         assert_eq!(
-            decode_action(ACTION_ERROR_DIALOG_DISMISSED),
-            Some(MenuAction::ErrorDialogDismissed)
+            decode_menu_action(ACTION_OPEN_ROM),
+            Some(MenuAction::OpenRom)
         );
-        assert_eq!(decode_action(ACTION_OPEN_ROM), Some(MenuAction::OpenRom));
         assert_eq!(
-            decode_action(ACTION_OPEN_SETTINGS),
+            decode_menu_action(ACTION_OPEN_SETTINGS),
             Some(MenuAction::OpenSettings)
         );
         assert_eq!(
-            decode_action(ACTION_TOGGLE_PAUSE),
+            decode_menu_action(ACTION_TOGGLE_PAUSE),
             Some(MenuAction::TogglePause)
         );
         assert_eq!(
-            decode_action(ACTION_SAVE_STATE),
+            decode_menu_action(ACTION_SAVE_STATE),
             Some(MenuAction::SaveState)
         );
         assert_eq!(
-            decode_action(ACTION_LOAD_STATE),
+            decode_menu_action(ACTION_LOAD_STATE),
             Some(MenuAction::LoadState)
         );
-        assert_eq!(decode_action(ACTION_RESET), Some(MenuAction::Reset));
-        assert_eq!(decode_action(ACTION_EXIT), Some(MenuAction::Exit));
-        assert_eq!(decode_action(ACTION_UNLOAD), Some(MenuAction::Unload));
+        assert_eq!(decode_menu_action(ACTION_RESET), Some(MenuAction::Reset));
+        assert_eq!(decode_menu_action(ACTION_EXIT), Some(MenuAction::Exit));
+        assert_eq!(decode_menu_action(ACTION_UNLOAD), Some(MenuAction::Unload));
         assert_eq!(
-            decode_action(ACTION_ORIENTATION_CHANGED),
+            decode_menu_action(ACTION_ORIENTATION_CHANGED),
             Some(MenuAction::OrientationChanged)
         );
     }
 
     #[test]
-    fn decode_action_rejects_unknown_ids() {
-        assert_eq!(decode_action("mystery"), None);
+    fn decode_menu_action_rejects_unknown_and_dialog_ids() {
+        assert_eq!(decode_menu_action("mystery"), None);
+        // Dialog dismissal is not a menu ID.
+        assert_eq!(decode_menu_action(ACTION_ERROR_DIALOG_DISMISSED), None);
     }
 
     #[test]
-    fn decode_action_maps_controller_input() {
+    fn decode_menu_action_maps_controller_input() {
         assert_eq!(
-            decode_action("controller:7:button1:1"),
+            decode_menu_action("controller:7:button1:1"),
             Some(MenuAction::ControllerInput {
                 device_id: 7,
                 key: nerust_input_traits::AbstractKey::Button1,
                 pressed: true,
             })
         );
-        assert_eq!(decode_action("controller:7:unknown:1"), None);
+        assert_eq!(decode_menu_action("controller:7:unknown:1"), None);
+    }
+
+    #[test]
+    fn decode_frontend_event_separates_dialog_from_menu() {
+        assert_eq!(
+            decode_frontend_event(ACTION_ERROR_DIALOG_DISMISSED),
+            Some(FrontendEvent::ErrorDialogDismissed)
+        );
+        assert_eq!(
+            decode_frontend_event(ACTION_OPEN_ROM),
+            Some(FrontendEvent::Menu(MenuAction::OpenRom))
+        );
+        assert_eq!(decode_frontend_event("mystery"), None);
     }
 }

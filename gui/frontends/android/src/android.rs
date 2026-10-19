@@ -59,10 +59,11 @@ use winit::{
 };
 
 use self::{
-    messages::{MenuAction, RomPickerResult, SettingsDialogResult},
+    messages::{FrontendEvent, MenuAction, RomPickerResult, SettingsDialogResult},
     settings::AndroidSettings,
     storage::{AndroidStorage, LastMediaReference},
 };
+use crate::error_dialog_controller::{ErrorDialogController, SettingsClosedTransition};
 
 const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 const FOREGROUND_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
@@ -501,9 +502,8 @@ struct AndroidFrontend {
     last_peripheral_config: Option<(bool, bool, u8, RumbleTarget)>,
     last_rumble_intensity: Option<u8>,
     osd: osd::AndroidOsd,
-    error_dialog_showing: bool,
-    error_dialog_current: Option<String>,
-    error_dialog_auto_paused: bool,
+    error_dialog: ErrorDialogController,
+    settings_open: bool,
 }
 
 impl AndroidFrontend {
@@ -585,9 +585,8 @@ impl AndroidFrontend {
             last_peripheral_config: None,
             last_rumble_intensity: None,
             osd: osd::AndroidOsd::new(),
-            error_dialog_showing: false,
-            error_dialog_current: None,
-            error_dialog_auto_paused: false,
+            error_dialog: ErrorDialogController::new(),
+            settings_open: false,
         };
         if frontend.lifecycle_restore_pending {
             log::info!(
@@ -812,7 +811,7 @@ impl AndroidFrontend {
                 log::info!("handle_picker_result: picker returned URI {uri}");
                 if let Err(error) = self.open_rom_from_uri(event_loop, &uri) {
                     log::error!("{error}");
-                    self.osd.queue_modal(error);
+                    self.osd.manager_mut().queue_modal(error);
                 }
             }
             RomPickerResult::TreeSelected(uri) => {
@@ -829,6 +828,7 @@ impl AndroidFrontend {
                     Err(error) => {
                         log::error!("failed to apply Android storage directory: {error}");
                         self.osd
+                            .manager_mut()
                             .queue_modal("Selected directory could not be used".to_string());
                     }
                 }
@@ -841,15 +841,24 @@ impl AndroidFrontend {
     }
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult) {
-        // Preempted dialog already released the shell gate on dismiss;
-        // flush the queue now, orphan auto-pause only if none is up.
-        self.maybe_show_error_dialog();
-        if !self.error_dialog_showing
-            && self.osd.modal_pending() == 0
-            && self.error_dialog_auto_paused
-        {
-            self.error_dialog_auto_paused = false;
-            self.resume();
+        // Settings closed (applied or dismissed): drop the cached open
+        // flag, flush the error queue, and resume an orphaned pause.
+        self.settings_open = false;
+        match self.error_dialog.on_settings_closed(
+            self.osd.manager_mut(),
+            self.is_resumed,
+            self.session.can_pause(),
+        ) {
+            SettingsClosedTransition::Show { auto_pause } => {
+                if auto_pause {
+                    self.pause();
+                }
+                if let Some(detail) = self.error_dialog.current_detail() {
+                    error_dialog::request_show_error_dialog(&self.app, detail);
+                }
+            }
+            SettingsClosedTransition::Resume => self.resume(),
+            SettingsClosedTransition::Idle => {}
         }
         let SettingsDialogResult::Applied(values) = result else {
             log::info!("handle_settings_result: settings dialog dismissed");
@@ -1017,18 +1026,25 @@ impl AndroidFrontend {
         );
         current.prioritize_system(self.session.active_system_id());
         match settings::request_show_settings_dialog(&self.app, &current) {
-            Ok(true) => {}
+            Ok(true) => {
+                self.settings_open = true;
+            }
             Ok(false) => {
-                log::warn!("Android settings dialog ignored while it is already open");
+                log::debug!("Android settings dialog already open");
             }
             Err(error) => {
+                self.settings_open = false;
                 log::error!("{error}");
             }
         }
     }
 
-    fn handle_menu_action(&mut self, action: MenuAction) {
-        log::info!("AndroidFrontend::handle_menu_action: {:?}", action);
+    fn handle_menu_action(&mut self, event: FrontendEvent) {
+        log::info!("AndroidFrontend::handle_menu_action: {:?}", event);
+        let FrontendEvent::Menu(action) = event else {
+            self.handle_error_dialog_dismissed();
+            return;
+        };
         match action {
             MenuAction::ControllerInput {
                 device_id,
@@ -1080,56 +1096,48 @@ impl AndroidFrontend {
                 let _ = self.exec(SessionCommand::SaveActiveSlotOrNew);
             }
             MenuAction::TogglePause => self.toggle_pause(),
-            MenuAction::ErrorDialogDismissed => self.handle_error_dialog_dismissed(),
         }
     }
 
-    /// Show the oldest queued error unless a dialog is up or settings
-    /// owns the screen. Storage and cap live in the shell `ModalBox`.
+    /// Show the oldest queued error unless suspended, already showing,
+    /// or settings owns the screen. The cached flag avoids a bridge
+    /// lock per pass; dismissal still consults the bridge as truth.
     fn maybe_show_error_dialog(&mut self) {
-        // No activity to host a dialog while suspended; leave everything
-        // queued for the resume path instead of failing JNI per pass.
-        if !self.is_resumed || self.error_dialog_showing || settings::is_dialog_open() {
-            return;
-        }
-        let Some(detail) = self.osd.take_modal_batch() else {
+        let request = self.error_dialog.poll_show(
+            self.osd.manager_mut(),
+            self.is_resumed,
+            self.settings_open,
+            self.session.can_pause(),
+        );
+        let Some(transition) = request else {
             return;
         };
-        // Shell opens before the fire-and-forget request; a failed bridge
-        // synthesizes dismiss, so the cap is a backstop, not the release.
-        self.error_dialog_current = Some(detail.clone());
-        error_dialog::request_show_error_dialog(&self.app, &detail);
-        self.error_dialog_showing = true;
-        if self.session.can_pause() {
+        // Shell opened before the fire-and-forget request; a failed
+        // bridge synthesizes dismiss, so the cap is a backstop.
+        if transition.auto_pause {
             self.pause();
-            self.error_dialog_auto_paused = true;
+        }
+        if let Some(detail) = self.error_dialog.current_detail() {
+            error_dialog::request_show_error_dialog(&self.app, detail);
         }
     }
 
     /// Dismiss hook from the Kotlin dialog. Resumes only our own
     /// auto-pause, then shows the next queued error, if any.
     fn handle_error_dialog_dismissed(&mut self) {
-        self.error_dialog_showing = false;
-        self.osd.modal_closed();
-        if settings::is_dialog_open() {
-            // Preempted, never acked: re-queue at the head so the ack
-            // guarantee survives the replacement in display order.
-            if let Some(detail) = self.error_dialog_current.take() {
-                self.osd.requeue_front(detail);
-            }
-            return;
-        }
-        self.error_dialog_current = None;
-        // A dismiss racing suspend must not resume or reshow: the resume
-        // path replays both from the preserved pause flag and queue.
-        if !self.is_resumed {
-            return;
-        }
-        if self.error_dialog_auto_paused {
-            self.error_dialog_auto_paused = false;
+        // Bridge truth here: a settings dialog may have opened over the
+        // error between the cached flag's last event-driven update.
+        let transition = self.error_dialog.on_dismissed(
+            self.osd.manager_mut(),
+            self.is_resumed,
+            settings::is_dialog_open(),
+        );
+        if transition.resume {
             self.resume();
         }
-        self.maybe_show_error_dialog();
+        if transition.reshow {
+            self.maybe_show_error_dialog();
+        }
     }
 
     fn control_for_physical_key(
@@ -1302,11 +1310,16 @@ impl AndroidFrontend {
             log::info!("finish_rom_load: clearing hidden lifecycle state");
             self.session.clear_hidden_lifecycle_state();
         }
-        // Resume fresh loads always; restores only our own auto-pause.
-        // A manual pause predates the suspend and must survive it.
-        if crate::lifecycle_decision::should_resume_after_restore(
-            restore_hidden_state,
+        // Resume fresh loads always; restores only our own auto-pause
+        // (a manual pause predates the suspend and must survive it),
+        // never across an error auto-pause (its dismiss owns that).
+        if crate::lifecycle_decision::should_resume_on_foreground(
             self.lifecycle_auto_paused,
+            self.error_dialog.auto_paused(),
+            crate::lifecycle_decision::should_resume_after_restore(
+                restore_hidden_state,
+                self.lifecycle_auto_paused,
+            ),
         ) {
             self.lifecycle_auto_paused = false;
             self.resume();
@@ -1416,7 +1429,7 @@ impl AndroidFrontend {
                                     log::warn!(
                                         "try_resume_foreground: failed to load last document URI for lifecycle restore: {error}"
                                     );
-                                    self.osd.queue_modal(
+                                    self.osd.manager_mut().queue_modal(
                                         "Previous ROM is unavailable; open it again".to_string(),
                                     );
                                     log::info!(
@@ -1442,6 +1455,7 @@ impl AndroidFrontend {
                                             log::info!(
                                                 "try_resume_foreground: loaded last ROM id={id} for lifecycle restore"
                                             );
+                                            // Toasts mark success only; failures surface via the error dialog.
                                             show_toast(
                                                 &self.app,
                                                 "Legacy ROM restored; use Open ROM to reconnect its document",
@@ -1478,7 +1492,7 @@ impl AndroidFrontend {
                             log::warn!(
                                 "try_resume_foreground: failed to read last media reference: {error}"
                             );
-                            self.osd.queue_modal(
+                            self.osd.manager_mut().queue_modal(
                                 "Previous ROM reference is invalid; open it again".to_string(),
                             );
                             self.session.clear_hidden_lifecycle_state();
@@ -1487,7 +1501,14 @@ impl AndroidFrontend {
                         }
                     }
                 }
-                if self.lifecycle_auto_paused {
+                // Resume only our own lifecycle auto-pause, never across
+                // an error auto-pause (its dismiss path owns that resume).
+                let want_lifecycle_resume = self.lifecycle_auto_paused;
+                if crate::lifecycle_decision::should_resume_on_foreground(
+                    want_lifecycle_resume,
+                    self.error_dialog.auto_paused(),
+                    want_lifecycle_resume,
+                ) {
                     self.resume();
                     self.lifecycle_auto_paused = false;
                     log::info!("try_resume_foreground: resumed session after lifecycle pause");
@@ -1957,13 +1978,11 @@ impl ApplicationHandler for AndroidFrontend {
         bridge::reset_transient();
         picker::reset_transient();
         settings::reset_transient();
-        // Transient UI dies with the activity: release the gate and
-        // re-queue the unacked head; pause flag survives for resume.
-        self.osd.modal_closed();
-        if let Some(detail) = self.error_dialog_current.take() {
-            self.osd.requeue_front(detail);
-        }
-        self.error_dialog_showing = false;
+        // Transient UI dies with the activity: the controller releases
+        // the gate and requeues the unacked head; the settings cache
+        // dies with the dialog it tracked.
+        self.error_dialog.on_suspended(self.osd.manager_mut());
+        self.settings_open = false;
         self.release_window_resources();
     }
 
@@ -2016,8 +2035,8 @@ impl ApplicationHandler for AndroidFrontend {
         if let Some(result) = settings::take_result() {
             self.handle_settings_result(result);
         }
-        for action in menu::take_actions() {
-            self.handle_menu_action(action);
+        for event in menu::take_events() {
+            self.handle_menu_action(event);
         }
         self.sync_cartridge_peripherals();
         self.maybe_refresh_title(now);
@@ -2035,7 +2054,7 @@ impl ApplicationHandler for AndroidFrontend {
             }
             // Render loop is self-sustaining via request_redraw() after each present.
             // OSD expiry still needs a wake while paused, when no frames arrive.
-            if let Some(deadline) = self.osd.wakeup() {
+            if let Some(deadline) = self.osd.wakeup(now) {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
             } else {
                 event_loop.set_control_flow(ControlFlow::Wait);

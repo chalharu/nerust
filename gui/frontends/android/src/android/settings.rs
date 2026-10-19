@@ -6,7 +6,7 @@ use std::{collections::BTreeMap, sync::Mutex};
 /// All persistence and validation remain on the Rust side; Kotlin merely
 /// presents the choices and returns the user's selections.
 use jni::objects::{JObject, JString, JValue};
-use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
+use jni::{JavaVM, jni_sig, jni_str, sys::jobject};
 use nerust_core_traits::{
     factory::{
         FactoryError,
@@ -773,8 +773,7 @@ pub(crate) fn apply_screen_orientation(app: &AndroidApp, orientation: ScreenOrie
         let result = unsafe { JavaVM::from_raw(callback_app.vm_as_ptr() as _) }
             .attach_current_thread(|env| {
                 let activity_raw = callback_app.activity_as_ptr() as jobject;
-                let activity =
-                    unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+                let activity = unsafe { JObject::from_raw(env, activity_raw) };
                 let value = match orientation {
                     ScreenOrientation::Auto => 0,
                     ScreenOrientation::Portrait => 1,
@@ -872,7 +871,7 @@ fn show_settings_on_java_main_thread(app: &AndroidApp, payload: &str) -> Result<
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
     vm.attach_current_thread(|env| {
         let activity_raw = app.activity_as_ptr() as jobject;
-        let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+        let activity = unsafe { JObject::from_raw(env, activity_raw) };
         show_settings_with_env_inner(env, activity.as_ref(), payload)
     })
     .map_err(|error| format!("failed to show Android settings dialog: {error:?}"))
