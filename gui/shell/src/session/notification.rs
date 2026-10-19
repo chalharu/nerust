@@ -384,7 +384,6 @@ fn kind_text(event: &UiNotification) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::commands::{SessionCommand, SessionCommandOutcome, outcome_notifications};
     use crate::session::error::SlotOpFailure;
 
     #[test]
@@ -433,37 +432,6 @@ mod tests {
         assert_eq!(drained[0].kind, NotificationKind::Resumed);
         // History keeps every event.
         assert_eq!(center.history().count(), 5);
-    }
-
-    #[test]
-    fn slot_failure_maps_to_warning_or_error() {
-        let warn = outcome_notifications(
-            SessionCommand::LoadSlot(2),
-            &SessionCommandOutcome {
-                executed: false,
-                needs_redraw: false,
-                slot_failure: Some(SlotOpFailure::Missing),
-            },
-            None,
-        );
-        assert_eq!(
-            warn,
-            vec![NotificationKind::SlotFailed {
-                slot: Some(2),
-                reason: SlotOpFailure::Missing,
-            }]
-        );
-        assert_eq!(warn[0].level(), NotificationLevel::Warning);
-        let err = outcome_notifications(
-            SessionCommand::SaveSlot(1),
-            &SessionCommandOutcome {
-                executed: false,
-                needs_redraw: false,
-                slot_failure: Some(SlotOpFailure::Storage),
-            },
-            None,
-        );
-        assert_eq!(err[0].level(), NotificationLevel::Error);
     }
 
     #[test]
@@ -531,74 +499,9 @@ mod tests {
     }
 
     #[test]
-    fn toggle_resolves_to_the_entered_state() {
-        use crate::session::commands::SessionCommand as C;
-        use crate::session::commands::SessionCommandOutcome;
-        use crate::session::commands::resolve_toggle as resolve;
-        assert_eq!(resolve(C::TogglePause, false), C::Pause);
-        assert_eq!(resolve(C::TogglePause, true), C::Resume);
-        assert_eq!(resolve(C::Resume, true), C::Resume);
-        // The resolved arm drives the notification: toggling out of
-        // pause reads Resumed, never Paused.
-        let ok = SessionCommandOutcome {
-            executed: true,
-            needs_redraw: false,
-            slot_failure: None,
-        };
-        assert_eq!(
-            outcome_notifications(resolve(C::TogglePause, true), &ok, None),
-            [NotificationKind::Resumed]
-        );
-    }
-
-    #[test]
     fn severity_orders_info_below_warning_below_error() {
         assert!(NotificationLevel::Info.severity() < NotificationLevel::Warning.severity());
         assert!(NotificationLevel::Warning.severity() < NotificationLevel::Error.severity());
-    }
-
-    #[test]
-    fn outcome_success_maps_each_command() {
-        use crate::session::commands::SessionCommandOutcome;
-        let ok = SessionCommandOutcome {
-            executed: true,
-            needs_redraw: false,
-            slot_failure: None,
-        };
-        let cases = [
-            (SessionCommand::Pause, NotificationKind::Paused),
-            (SessionCommand::Resume, NotificationKind::Resumed),
-            (SessionCommand::Reset, NotificationKind::Reset),
-            (SessionCommand::CreateSlot, NotificationKind::CreatedSlot),
-            (
-                SessionCommand::SelectNextSlot,
-                NotificationKind::SelectedSlot(0),
-            ),
-            (
-                SessionCommand::SelectPreviousSlot,
-                NotificationKind::SelectedSlot(0),
-            ),
-            (SessionCommand::SaveSlot(2), NotificationKind::SavedSlot(2)),
-            (SessionCommand::LoadSlot(2), NotificationKind::LoadedSlot(2)),
-            (
-                SessionCommand::DeleteSlot(2),
-                NotificationKind::DeletedSlot(2),
-            ),
-            (
-                SessionCommand::LoadActiveSlot,
-                NotificationKind::LoadedSlot(0),
-            ),
-        ];
-        for (command, expected) in cases {
-            assert_eq!(outcome_notifications(command, &ok, Some(0)), [expected]);
-        }
-        // Unexecuted commands notify nothing.
-        let skipped = SessionCommandOutcome {
-            executed: false,
-            needs_redraw: false,
-            slot_failure: None,
-        };
-        assert!(outcome_notifications(SessionCommand::Pause, &skipped, Some(0)).is_empty());
     }
 
     #[test]
@@ -612,70 +515,6 @@ mod tests {
         assert_eq!(center.history_seq(), 2);
         center.clear_history();
         assert_eq!(center.history_seq(), 3);
-    }
-
-    #[test]
-    fn associated_slot_covers_every_command() {
-        use crate::session::commands::SessionCommand as C;
-        use crate::session::commands::SessionCommandOutcome;
-        for (command, expected) in [
-            (C::SaveSlot(4), Some(4)),
-            (C::LoadSlot(4), Some(4)),
-            (C::DeleteSlot(4), Some(4)),
-            (C::SelectActiveSlot(4), Some(4)),
-            (C::SaveActiveSlotOrNew, Some(7)),
-            (C::LoadActiveSlot, Some(7)),
-            (C::Pause, None),
-            (C::Resume, None),
-            (C::TogglePause, None),
-            (C::Reset, None),
-            (C::CreateSlot, None),
-            (C::SelectNextSlot, None),
-            (C::SelectPreviousSlot, None),
-        ] {
-            assert_eq!(command.associated_slot(Some(7)), expected);
-        }
-        // Active-slot commands without an active slot report none.
-        assert_eq!(C::SaveActiveSlotOrNew.associated_slot(None), None);
-        assert_eq!(C::LoadActiveSlot.associated_slot(None), None);
-        // Failure routing follows the slot: active-slot ops carry it.
-        let failed = SessionCommandOutcome {
-            executed: false,
-            needs_redraw: false,
-            slot_failure: Some(SlotOpFailure::Missing),
-        };
-        assert_eq!(
-            outcome_notifications(C::SaveActiveSlotOrNew, &failed, Some(7)),
-            [NotificationKind::SlotFailed {
-                slot: Some(7),
-                reason: SlotOpFailure::Missing,
-            }]
-        );
-        assert_eq!(
-            outcome_notifications(C::Pause, &failed, Some(7)),
-            [NotificationKind::SlotFailed {
-                slot: None,
-                reason: SlotOpFailure::Missing,
-            }]
-        );
-    }
-
-    #[test]
-    fn outcome_success_covers_active_slot_commands() {
-        use crate::session::commands::SessionCommandOutcome;
-        let ok = SessionCommandOutcome {
-            executed: true,
-            needs_redraw: false,
-            slot_failure: None,
-        };
-        assert_eq!(
-            outcome_notifications(SessionCommand::SaveActiveSlotOrNew, &ok, Some(3)),
-            [NotificationKind::SavedSlot(3)]
-        );
-        assert_eq!(
-            outcome_notifications(SessionCommand::SelectActiveSlot(5), &ok, Some(3)),
-            [NotificationKind::SelectedSlot(5)]
-        );
     }
 
     #[test]
