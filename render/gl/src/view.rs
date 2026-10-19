@@ -589,11 +589,18 @@ impl GlView {
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
+        // The game viewport (letterboxed by `on_resize_with_strip`) is
+        // global GL state: save it, composite fullscreen, restore it so
+        // the next game frame keeps its strips without a resize event.
+        let mut saved = [0; 4];
+        ok_gl(get_viewport(&mut saved))?;
         ok_gl(viewport(0, 0, surface_w, surface_h))?;
         ok_gl(enable(gl::BLEND))?;
         ok_gl(blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA))?;
-        ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
+        let drawn = ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4));
+        ok_gl(viewport(saved[0], saved[1], saved[2], saved[3]))?;
         ok_gl(disable(gl::BLEND))?;
+        drawn?;
         Ok(OsdOutcome::Presented)
     }
 
@@ -1471,6 +1478,20 @@ mod tests {
             // Gated resize: identical second call skips GL work.
             view.on_resize_with_strip(64, 64, nerust_render_traits::ReservedStrip::default())
                 .unwrap();
+            // OSD composite widens the viewport but must restore the
+            // letterboxed game viewport: the next game frame draws
+            // without a resize event in between. A real strip makes the
+            // game viewport differ from fullscreen, so the check bites.
+            let strip = nerust_render_traits::ReservedStrip { top: 8, bottom: 8 };
+            view.on_resize_with_strip(64, 64, strip).unwrap();
+            let mut before = [0; 4];
+            crate::test_display::TestDisplay::viewport_of(&mut before);
+            assert_eq!(before[1], 8);
+            view.set_osd_layer(Some(gl_test_layer()));
+            assert_eq!(view.draw_osd(64, 64).unwrap(), OsdOutcome::Presented);
+            let mut after = [0; 4];
+            crate::test_display::TestDisplay::viewport_of(&mut after);
+            assert_eq!(before, after);
             view.update_palette_texture(&[0x12; 256]).unwrap();
             view.set_osd_layer(None);
             assert_eq!(view.draw_osd(64, 64).unwrap(), OsdOutcome::Presented);

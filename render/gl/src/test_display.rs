@@ -65,6 +65,12 @@ impl TestDisplay {
         (self.display, self.config)
     }
 
+    /// Read back the current viewport box for assertions. Callers hold
+    /// the context current (see `make_pbuffer_current`).
+    pub(crate) fn viewport_of(out: &mut [i32; 4]) {
+        unsafe { gl::GetIntegerv(gl::VIEWPORT, out.as_mut_ptr()) };
+    }
+
     pub(crate) fn make_pbuffer_current(&self, width: u32, height: u32) -> Option<TestContext> {
         let attrs = SurfaceAttributesBuilder::<PbufferSurface>::new().build(
             NonZeroU32::new(width.max(1))?,

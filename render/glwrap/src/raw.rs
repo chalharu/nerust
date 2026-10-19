@@ -225,6 +225,14 @@ pub fn viewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei) -> Result<(
     gl_error_handle(|| unsafe { gl::Viewport(x, y, width, height) })
 }
 
+/// Read back the current viewport box `[x, y, width, height]`.
+/// Callers save this around composites that temporarily widen the
+/// viewport (e.g. the full-surface OSD blit) and restore it after.
+pub fn get_viewport(viewport: &mut [GLint; 4]) -> Result<(), Error> {
+    let out = viewport.as_mut_ptr();
+    gl_error_handle(|| unsafe { gl::GetIntegerv(gl::VIEWPORT, out) })
+}
+
 pub fn enable(cap: GLenum) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::Enable(cap) })
 }
