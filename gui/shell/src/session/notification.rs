@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 
 use nerust_settings_core::model::language::AppLanguage;
 
-use super::error::SlotOpFailure;
+use crate::session::error::SlotOpFailure;
 
 /// Maximum labels a frontend shows at once. Older entries drop off.
 pub const MAX_PENDING: usize = 3;
@@ -383,8 +383,12 @@ fn kind_text(event: &UiNotification) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::session::error::SlotOpFailure;
+    use crate::session::notification::{
+        FailureOrigin, MAX_PENDING, NotificationCenter, NotificationKind, NotificationLevel,
+        ReplaceGroup, render_text,
+    };
+    use nerust_settings_core::model::language::AppLanguage;
 
     #[test]
     fn log_level_marks_selection_screen_only() {
@@ -574,16 +578,15 @@ mod tests {
     #[test]
     fn render_text_adds_count_suffix() {
         assert_eq!(
-            super::render_text(&NotificationKind::Paused, 1, AppLanguage::English),
+            render_text(&NotificationKind::Paused, 1, AppLanguage::English),
             "Paused"
         );
         assert_eq!(
-            super::render_text(&NotificationKind::Paused, 3, AppLanguage::English),
+            render_text(&NotificationKind::Paused, 3, AppLanguage::English),
             "Paused ×3"
         );
         assert!(
-            super::render_text(&NotificationKind::SavedSlot(7), 2, AppLanguage::Japanese)
-                .contains("×2")
+            render_text(&NotificationKind::SavedSlot(7), 2, AppLanguage::Japanese).contains("×2")
         );
     }
 

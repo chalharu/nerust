@@ -1,4 +1,4 @@
-pub use super::error::SlotOpFailure;
+pub use crate::session::error::SlotOpFailure;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionCommand {
@@ -56,8 +56,8 @@ pub fn outcome_notifications(
     command: SessionCommand,
     outcome: &SessionCommandOutcome,
     active_slot: Option<u64>,
-) -> Vec<super::notification::NotificationKind> {
-    use super::notification::NotificationKind;
+) -> Vec<crate::session::notification::NotificationKind> {
+    use crate::session::notification::NotificationKind;
     if let Some(reason) = outcome.slot_failure {
         let slot = command.associated_slot(active_slot);
         return vec![NotificationKind::SlotFailed { slot, reason }];
@@ -96,9 +96,11 @@ pub fn resolve_toggle(command: SessionCommand, was_paused: bool) -> SessionComma
 
 #[cfg(test)]
 mod tests {
-    use super::super::error::SlotOpFailure;
-    use super::super::notification::{NotificationKind, NotificationLevel};
-    use super::*;
+    use crate::session::commands::{
+        SessionCommand, SessionCommandOutcome, outcome_notifications, resolve_toggle,
+    };
+    use crate::session::error::SlotOpFailure;
+    use crate::session::notification::{NotificationKind, NotificationLevel};
 
     #[test]
     fn slot_failure_maps_to_warning_or_error() {
@@ -133,7 +135,7 @@ mod tests {
 
     #[test]
     fn toggle_resolves_to_the_entered_state() {
-        use SessionCommand as C;
+        use crate::session::commands::SessionCommand as C;
         assert_eq!(resolve_toggle(C::TogglePause, false), C::Pause);
         assert_eq!(resolve_toggle(C::TogglePause, true), C::Resume);
         assert_eq!(resolve_toggle(C::Resume, true), C::Resume);
@@ -195,7 +197,7 @@ mod tests {
 
     #[test]
     fn associated_slot_covers_every_command() {
-        use SessionCommand as C;
+        use crate::session::commands::SessionCommand as C;
         for (command, expected) in [
             (C::SaveSlot(4), Some(4)),
             (C::LoadSlot(4), Some(4)),
