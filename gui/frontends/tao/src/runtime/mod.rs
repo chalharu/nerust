@@ -241,14 +241,9 @@ impl WindowRuntime {
             renderer.resize(window_size);
         }
 
-        let strip = self.host.reserved_strip();
-        if strip != self.host.osd.last_strip {
-            self.host.osd.last_strip = strip;
-            renderer.set_reserved_strip(strip);
-        }
         // No notification drain here: `update_control_flow` drains
         // every pass (also paused/unfocused ones with no redraw).
-        self.host.sync_osd_layer(renderer.as_mut(), window_size);
+        self.host.render_osd_frame(renderer.as_mut(), window_size);
 
         self.host.session_mut().swap_frame_buffer();
         if let Some(fb) = self.host.session_mut().frame_buffer() {

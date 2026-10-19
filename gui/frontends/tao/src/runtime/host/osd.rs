@@ -65,20 +65,21 @@ impl HostState {
     }
 
     pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
+        let frame = self.frame_snapshot();
         if self.osd.history_window.is_some() {
-            self.sync_history_window();
+            self.sync_history_window(&frame);
             return;
         }
-        if let Some(handle) = opener.create_history(self.frame_snapshot().language) {
+        if let Some(handle) = opener.create_history(frame.language) {
             self.osd.history_window = Some(handle);
             // Fresh window needs full content regardless of cache.
             self.osd.history_sync_key = None;
-            self.sync_history_window();
+            self.sync_history_window(&frame);
         }
     }
 
-    fn sync_history_window(&mut self) {
-        let language = self.frame_snapshot().language;
+    fn sync_history_window(&mut self, frame: &FrameSnapshot) {
+        let language = frame.language;
         let key = (self.session.notification_history_seq(), language);
         // Dirty gate: the sync runs every loop pass while open, but
         // row building is skipped unless content or language changed.
@@ -113,7 +114,8 @@ impl HostState {
             }
             if handle.take_clear_request() {
                 self.session.clear_notification_history();
-                self.sync_history_window();
+                let frame = self.frame_snapshot();
+                self.sync_history_window(&frame);
             }
         }
     }
@@ -126,8 +128,8 @@ impl HostState {
 
     /// Reserved edge strips in physical pixels. Static per settings
     /// (not per frame) so the renderer never churns surfaces.
-    pub(crate) fn reserved_strip(&self) -> ReservedStrip {
-        let settings = self.frame_snapshot().notifications;
+    fn reserved_strip_with(&self, frame: &FrameSnapshot) -> ReservedStrip {
+        let settings = &frame.notifications;
         let client_h = self
             .window
             .as_ref()
@@ -225,12 +227,11 @@ impl HostState {
         use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
         let now = Instant::now();
         let frame = self.frame_snapshot();
-        let settings = frame.notifications;
         let language = frame.language;
         let report = self.session.pump_osd(
             &mut self.osd.manager,
             PushInput {
-                policy: TransientPolicy::from(&settings),
+                policy: TransientPolicy::from(&frame.notifications),
                 language,
                 now,
             },
@@ -251,21 +252,37 @@ impl HostState {
             self.request_redraw();
         }
         if self.osd.history_window.is_some() {
-            self.sync_history_window();
+            self.sync_history_window(&frame);
         }
+    }
+
+    /// One capture per redraw: edge strips and the layer sync share
+    /// the frame instead of cloning the snapshot twice.
+    pub(crate) fn render_osd_frame(
+        &mut self,
+        renderer: &mut dyn GpuRenderer,
+        size: nerust_render_traits::SurfaceSize,
+    ) {
+        let frame = self.frame_snapshot();
+        let strip = self.reserved_strip_with(&frame);
+        if strip != self.osd.last_strip {
+            self.osd.last_strip = strip;
+            renderer.set_reserved_strip(strip);
+        }
+        self.sync_osd_layer(renderer, size, &frame);
     }
 
     /// Rasterize the OSD layer on change and hand it to the renderer.
     /// Size changes re-rasterize; empty content clears the layer.
     /// Coordinates are renderer surface pixels (the content area
     /// below the menubar), not the full window.
-    pub(crate) fn sync_osd_layer(
+    fn sync_osd_layer(
         &mut self,
         renderer: &mut dyn GpuRenderer,
         size: nerust_render_traits::SurfaceSize,
+        frame: &FrameSnapshot,
     ) {
         use nerust_gui_shell::session::osd::{OsdChrome, OsdSync, OsdSyncInput};
-        let frame = self.frame_snapshot();
         let language = frame.language;
         let chrome = OsdChrome::from(&frame.notifications);
         // Cheap pre-gate before any snapshot: no rows, no status,
@@ -385,8 +402,10 @@ mod tests {
         let mut renderer = StubRenderer::default();
         // Clean peek, nothing showing, status off, no live layer:
         // the snapshot and the renderer stay untouched.
-        host.sync_osd_layer(&mut renderer, surface());
-        host.sync_osd_layer(&mut renderer, surface());
+        let frame = host.frame_snapshot();
+        host.sync_osd_layer(&mut renderer, surface(), &frame);
+        let frame = host.frame_snapshot();
+        host.sync_osd_layer(&mut renderer, surface(), &frame);
         assert!(renderer.layers.is_empty());
         assert!(!host.osd.layer_live);
     }
@@ -399,20 +418,24 @@ mod tests {
         on.local.notifications.status_enabled = true;
         host.apply_settings(on).expect("headless settings apply");
         let mut renderer = StubRenderer::default();
-        host.sync_osd_layer(&mut renderer, surface());
+        let frame = host.frame_snapshot();
+        host.sync_osd_layer(&mut renderer, surface(), &frame);
         assert_eq!(renderer.layers, [true]);
         assert!(host.osd.layer_live);
         // Steady second frame reuses the layer: no re-push.
-        host.sync_osd_layer(&mut renderer, surface());
+        let frame = host.frame_snapshot();
+        host.sync_osd_layer(&mut renderer, surface(), &frame);
         assert_eq!(renderer.layers, [true]);
         // Toggle off: one Clear lands, then idle skips again.
         let mut off = host.session.settings_snapshot().clone();
         off.local.notifications.status_enabled = false;
         host.apply_settings(off).expect("headless settings apply");
-        host.sync_osd_layer(&mut renderer, surface());
+        let frame = host.frame_snapshot();
+        host.sync_osd_layer(&mut renderer, surface(), &frame);
         assert_eq!(renderer.layers, [true, false]);
         assert!(!host.osd.layer_live);
-        host.sync_osd_layer(&mut renderer, surface());
+        let frame = host.frame_snapshot();
+        host.sync_osd_layer(&mut renderer, surface(), &frame);
         assert_eq!(renderer.layers, [true, false]);
     }
 }
