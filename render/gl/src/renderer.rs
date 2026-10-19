@@ -459,6 +459,7 @@ mod tests {
     #[test]
     fn gl_renderer_rebuild_and_detach() {
         use glutin::context::PossiblyCurrentGlContext as _;
+        use glutin::display::GlDisplay as _;
         use nerust_render_traits::{
             SurfaceSize,
             renderer::{GpuRenderer as _, OsdLayer, RenderResult},
@@ -472,6 +473,10 @@ mod tests {
             eprintln!("SKIP GL context tests: no GL context");
             return;
         };
+        super::GlView::load_with(|name| {
+            let proc_name = std::ffi::CString::new(name).expect("GL proc name has no interior nul");
+            display.display.get_proc_address(&proc_name)
+        });
         let (display, gl_config) = display.into_parts();
         let profile = gl_test_profile();
         let mut renderer = super::GlRenderer {

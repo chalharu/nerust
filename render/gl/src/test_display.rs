@@ -16,7 +16,7 @@ use glutin::{
 use raw_window_handle::{RawDisplayHandle, XlibDisplayHandle};
 
 pub(crate) struct TestDisplay {
-    display: Display,
+    pub(crate) display: Display,
     config: Config,
 }
 
@@ -77,10 +77,6 @@ impl TestDisplay {
                 .ok()?
         };
         let context = context.make_current(&surface).ok()?;
-        crate::view::GlView::load_with(|name| {
-            let proc_name = std::ffi::CString::new(name).expect("GL proc name has no interior nul");
-            self.display.get_proc_address(&proc_name)
-        });
         Some(TestContext {
             _surface: surface,
             context,

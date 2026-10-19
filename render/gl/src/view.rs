@@ -1119,6 +1119,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn gl_view_full_drive() {
+        use glutin::display::GlDisplay as _;
+
         let Some(display) = crate::test_display::TestDisplay::connect() else {
             eprintln!("SKIP GL context tests: no GL display");
             return;
@@ -1127,6 +1129,10 @@ mod tests {
             eprintln!("SKIP GL context tests: no GL context");
             return;
         };
+        GlView::load_with(|name| {
+            let proc_name = std::ffi::CString::new(name).expect("GL proc name has no interior nul");
+            display.display.get_proc_address(&proc_name)
+        });
         // Production always drives the VAO path (`fresh_view` sets it);
         // the legacy client-array path needs no cover here.
         {
