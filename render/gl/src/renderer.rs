@@ -282,20 +282,9 @@ impl GpuRenderer for GlRenderer {
     }
 }
 
-/// Cheap OSD equality: header check before the byte memcmp.
+/// Shared OSD equality lives on [`OsdLayer`] (single source).
 fn osd_layers_equal(a: Option<&OsdLayer>, b: Option<&OsdLayer>) -> bool {
-    match (a, b) {
-        (None, None) => true,
-        (Some(x), Some(y)) => {
-            x.x == y.x
-                && x.y == y.y
-                && x.width == y.width
-                && x.height == y.height
-                && x.rgba.len() == y.rgba.len()
-                && x.rgba == y.rgba
-        }
-        (None, Some(_)) | (Some(_), None) => false,
-    }
+    OsdLayer::same_option(a, b)
 }
 
 /// Expected upload length for a profile: logical pixels for RGBA,

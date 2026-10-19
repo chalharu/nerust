@@ -52,6 +52,30 @@ pub struct OsdLayer {
     pub rgba: Vec<u8>,
 }
 
+impl OsdLayer {
+    /// Cheap content equality: header check before the byte memcmp.
+    pub fn same_content(&self, other: Option<&Self>) -> bool {
+        let Some(other) = other else {
+            return false;
+        };
+        self.x == other.x
+            && self.y == other.y
+            && self.width == other.width
+            && self.height == other.height
+            && self.rgba.len() == other.rgba.len()
+            && self.rgba == other.rgba
+    }
+
+    /// Option-level equality for layer caches on both sides.
+    pub fn same_option(a: Option<&Self>, b: Option<&Self>) -> bool {
+        match (a, b) {
+            (None, None) => true,
+            (Some(x), Some(y)) => x.same_content(Some(y)),
+            (None, Some(_)) | (Some(_), None) => false,
+        }
+    }
+}
+
 /// OSD anchor corner in render space. This is the rasterizer's own
 /// vocabulary: settings positions map to it once at the shell
 /// boundary, so the render crates never depend on settings types.
@@ -238,5 +262,28 @@ mod tests {
         // 640px surface at 0.5: font 8px, rows stay covered.
         assert_eq!(osd_font_px(640, 0.5), 8);
         assert_eq!(strip_pixels(640, 1, 0.5), 19);
+    }
+
+    #[test]
+    fn layer_equality_gates_on_header_before_bytes() {
+        let base = OsdLayer {
+            x: 1,
+            y: 2,
+            width: 2,
+            height: 1,
+            rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        };
+        assert!(OsdLayer::same_option(None, None));
+        assert!(base.same_content(Some(&base.clone())));
+        assert!(!base.same_content(None));
+        assert!(!OsdLayer::same_option(Some(&base), None));
+        let shifted = OsdLayer {
+            x: 9,
+            ..base.clone()
+        };
+        assert!(!base.same_content(Some(&shifted)));
+        let mut edited = base.clone();
+        edited.rgba[7] = 9;
+        assert!(!base.same_content(Some(&edited)));
     }
 }
