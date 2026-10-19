@@ -44,10 +44,6 @@ pub(crate) const MAX_TRANSIENT_QUEUED: usize = 2;
 pub(crate) struct TransientQueue {
     current: Option<OsdItem>,
     pending: std::collections::VecDeque<OsdItem>,
-    /// Last accepted notification identity. Merging (`×N`) applies
-    /// only to strictly consecutive duplicates; anything interleaved
-    /// queues separately so flapping states keep full slots.
-    last_key: Option<(NotificationLevel, String)>,
 }
 
 /// Push routing outcome: only a changed showing label dirties.
@@ -197,35 +193,28 @@ impl TransientQueue {
     /// Merge a consecutive duplicate into the showing label or the
     /// queue tail (`×N`, timer reset). Anything interleaved breaks the
     /// run, so pause/resume flaps keep full slots. Consecutiveness is
-    /// derived here from the last accepted identity, so callers pass
-    /// only the row. Reports where the merge landed for dirty gating.
+    /// structural, no auxiliary state: the last accepted row is the
+    /// queue tail when anything is queued, else the showing label.
+    /// Reports where the merge landed for dirty gating.
     fn merge_consecutive(&mut self, item: &OsdItem) -> Option<MergeTarget> {
-        let consecutive = self
-            .last_key
-            .as_ref()
-            .is_some_and(|(level, key)| *level == item.level && key == &item.key);
-        if !consecutive {
-            return None;
-        }
-        if let Some(current) = self.current.as_mut()
-            && current.level == item.level
-            && current.key == item.key
-        {
-            current.count += item.count;
-            current.row = counted_row(item.key.clone(), current.count, item.row.rgb, item.row.tag);
-            current.deadline = item.deadline;
-            return Some(MergeTarget::Showing);
-        }
-        if let Some(back) = self.pending.back_mut()
-            && back.level == item.level
-            && back.key == item.key
-        {
+        if let Some(back) = self.pending.back() {
+            if back.level != item.level || back.key != item.key {
+                return None;
+            }
+            let back = self.pending.back_mut().expect("tail checked");
             back.count += item.count;
             back.row = counted_row(item.key.clone(), back.count, item.row.rgb, item.row.tag);
             back.deadline = item.deadline;
             return Some(MergeTarget::Queued);
         }
-        None
+        let current = self.current.as_mut()?;
+        if current.level != item.level || current.key != item.key {
+            return None;
+        }
+        current.count += item.count;
+        current.row = counted_row(item.key.clone(), current.count, item.row.rgb, item.row.tag);
+        current.deadline = item.deadline;
+        Some(MergeTarget::Showing)
     }
 
     /// Error rows preempt a non-Error showing label (Warnings wait
@@ -277,7 +266,6 @@ impl TransientQueue {
     /// dispatcher so helpers move rows instead of cloning them.
     pub(crate) fn route_row(&mut self, item: OsdItem) -> RouteEffect {
         let merged = self.merge_consecutive(&item);
-        self.last_key = Some((item.level, item.key.clone()));
         match merged {
             Some(MergeTarget::Showing) => return RouteEffect::ShowingChanged,
             Some(MergeTarget::Queued) => return RouteEffect::QueuedBehind,

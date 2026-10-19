@@ -23,10 +23,11 @@ fn default_sink(record: &PanicRecord) {
 
 static SINK: std::sync::OnceLock<RecordSink> = std::sync::OnceLock::new();
 
-/// Override the record sink (tests, embedders). First call wins;
-/// production never calls this so the log sink stands.
-pub fn set_record_sink(sink: RecordSink) {
-    let _ = SINK.set(sink);
+/// Override the record sink (tests, embedders). Returns whether this
+/// call won: a `false` return means a previous test already claimed the
+/// process-wide slot, so the caller must not assume its sink is live.
+pub fn set_record_sink(sink: RecordSink) -> bool {
+    SINK.set(sink).is_ok()
 }
 
 fn emit(record: &PanicRecord) {
@@ -135,16 +136,6 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
         error.to_string()
     } else {
         "non-string panic payload".to_owned()
-    }
-}
-
-/// Run `main` under the hook and exit with the crash code on unwind.
-/// Hosts that map [`GuardOutcome`] themselves keep using `run_guarded`.
-pub fn run_guarded_and_exit<R>(main: impl FnOnce() -> R) -> ! {
-    match run_guarded(main) {
-        // `run_guarded` already logged any crash report.
-        GuardOutcome::Completed(_) => std::process::exit(0),
-        GuardOutcome::Crashed(_) => std::process::exit(CRASH_EXIT_CODE),
     }
 }
 
