@@ -370,15 +370,14 @@ fn kind_text(event: &UiNotification) -> String {
     event.kind.text(AppLanguage::English)
 }
 
-/// Moved to [`crate::session::commands`]: the command layer owns
-/// the command-to-notification mapping. Re-exported here for
-/// existing call sites.
-pub use super::commands::{outcome_notifications, resolve_toggle};
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::commands::{SessionCommand, SessionCommandOutcome};
+    use crate::session::commands::{
+        SessionCommand, SessionCommandOutcome, outcome_notifications,
+    };
     use crate::session::error::SlotOpFailure;
 
     #[test]
@@ -516,7 +515,7 @@ mod tests {
 
     #[test]
     fn toggle_resolves_to_the_entered_state() {
-        use super::resolve_toggle as resolve;
+        use crate::session::commands::resolve_toggle as resolve;
         use crate::session::commands::SessionCommand as C;
         use crate::session::commands::SessionCommandOutcome;
         assert_eq!(resolve(C::TogglePause, false), C::Pause);

@@ -103,7 +103,7 @@ prepare_signing_keystore
 if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
     sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
     if [[ -n "${sdk_root}" && -d "${sdk_root}/ndk" ]]; then
-        latest_ndk="$(ls -1 "${sdk_root}/ndk" 2>/dev/null | sort | tail -n 1)"
+        latest_ndk="$(find "${sdk_root}/ndk" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort | tail -n 1)"
         if [[ -n "${latest_ndk}" ]]; then
             export ANDROID_NDK_HOME="${sdk_root}/ndk/${latest_ndk}"
         fi
