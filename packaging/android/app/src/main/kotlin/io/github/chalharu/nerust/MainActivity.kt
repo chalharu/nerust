@@ -2,6 +2,7 @@ package io.github.chalharu.nerust
 
 import android.annotation.SuppressLint
 import android.app.NativeActivity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
@@ -1017,6 +1018,18 @@ private fun NerustErrorDialogCard(
         }
     }
 }
+
+private fun settingsContentDescription(
+    settings: List<AndroidSetting>,
+    selections: List<Int>,
+): String =
+    buildList {
+        add("Settings")
+        settings.forEachIndexed { index, setting ->
+            val value = setting.choices.getOrElse(selections.getOrElse(index) { 0 }) { "?" }
+            add("${setting.label}: $value")
+        }
+    }.joinToString("\n")
 
 @Composable
 private fun NerustSettingsDialogCard(
