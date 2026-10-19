@@ -163,13 +163,21 @@ impl ShellRenderer {
 /// Program UI instance plus its manual lifetime. Shared by the
 /// debugger and PPU viewer. `Option` lets resize move the interface
 /// through consuming `relayout` (panic leaves `None`, never garbage).
-/// Field order is load-bearing: `ui` must drop before `instance`
-/// (declaration order), since the interface borrows from the instance.
+/// Pre-condition: `ui` borrows the boxed `instance` (stable address).
+/// Post-condition: explicit `Drop` releases `ui` first, order-proof.
 pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     ui: Option<UserInterface<'static, P::Message, iced::Theme, Renderer>>,
     /// Boxed: the interface borrows these bytes, so the address
     /// must survive moves of this struct (inline state would dangle).
     instance: Box<program::Instance<P>>,
+}
+
+impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> Drop for UiShell<P> {
+    fn drop(&mut self) {
+        // Borrower before owner regardless of field order: `ui`
+        // borrows `instance`, so release the interface first.
+        self.ui = None;
+    }
 }
 
 /// What a pumped event needs after `update`: nothing, a repaint,
@@ -653,6 +661,17 @@ mod tests {
         shell.push_message(StubMessage::Ping);
         shell.relayout(iced::Size::new(640.0, 480.0), &mut backend);
         assert!(shell.ui_mut().is_none());
+    }
+
+    #[test]
+    fn ui_drops_before_instance_on_both_shell_shapes() {
+        // Exercises the explicit `Drop`: live and relayout-orphaned
+        // (`None`) shells both drop cleanly (Miri/ASan catch order bugs).
+        let (shell, _, _) = stub_shell();
+        drop(shell);
+        let (mut shell, _, _) = stub_shell();
+        let _ = shell.ui.take();
+        drop(shell);
     }
 
     #[test]

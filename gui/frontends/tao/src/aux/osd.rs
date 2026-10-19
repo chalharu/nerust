@@ -266,6 +266,9 @@ impl Program for HistoryProgram {
 pub(crate) struct HistoryWindowHandle {
     pub(crate) shell: crate::aux::shell::AuxShell<HistoryProgram>,
     clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// View-refresh flag, separate from the shell close flag (like
+    /// the debug/PPU twins): `sync` must never consume a close.
+    view_invalidated: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl HistoryWindowHandle {
@@ -283,6 +286,7 @@ impl HistoryWindowHandle {
             "history window",
         )?;
         let clear_requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let view_invalidated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (instance, _task) = program::Instance::new(HistoryProgram {
             language,
             clear_requested: std::sync::Arc::clone(&clear_requested),
@@ -295,6 +299,7 @@ impl HistoryWindowHandle {
         Some(Self {
             shell,
             clear_requested,
+            view_invalidated,
         })
     }
 
@@ -311,7 +316,7 @@ impl HistoryWindowHandle {
             window_id,
             bounds,
             &mut self.shell.renderer.backend,
-            &self.shell.should_close,
+            &self.view_invalidated,
         );
         self.shell.window.request_redraw();
     }
@@ -344,7 +349,7 @@ impl HistoryWindowHandle {
                 self.shell.window_id,
                 bounds,
                 &mut self.shell.renderer.backend,
-                &self.shell.should_close,
+                &self.view_invalidated,
             );
             self.shell.window.request_redraw();
         }
@@ -360,6 +365,8 @@ impl AuxWindow for HistoryWindowHandle {
         self.shell.window.request_redraw();
     }
 }
+
+impl crate::runtime::host::WindowHandler for HistoryWindowHandle {}
 
 #[cfg(test)]
 mod tests {
@@ -505,5 +512,67 @@ mod tests {
                 .clear_requested
                 .load(std::sync::atomic::Ordering::Acquire)
         );
+    }
+
+    #[test]
+    fn sync_consumes_refresh_flag_not_close_flag() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        // Regression: `sync` passed `should_close` as the refresh
+        // invalidation flag, so a pending close was consumed by a sync.
+        let (instance, _task) = iced_winit::program::Instance::new(HistoryProgram {
+            language: en(),
+            clear_requested: Arc::new(AtomicBool::new(false)),
+        });
+        let mut backend =
+            iced_tiny_skia::Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
+        let mut ui = crate::aux::shell::UiShell::new(
+            instance,
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+            &mut backend,
+        );
+        let close = AtomicBool::new(true);
+        let invalidated = AtomicBool::new(true);
+        // Exactly what `HistoryWindowHandle::sync` feeds: a Sync batch
+        // against the dedicated refresh flag, never the close flag.
+        ui.process_messages(
+            vec![HistoryMessage::Sync {
+                lines: Vec::new(),
+                language: en(),
+            }],
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+            &mut backend,
+            &invalidated,
+        );
+        assert!(!invalidated.load(Ordering::Acquire));
+        assert!(close.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn merged_history_line_carries_single_count_suffix() {
+        use nerust_gui_shell::session::{
+            notification::{NotificationKind, UiNotification},
+            osd::history_lines,
+        };
+        // Pins the shell/view contract without restructuring shell
+        // `render_text`: a merged (count 3) row carries exactly one suffix.
+        for language in [en(), ja()] {
+            let line = UiNotification {
+                level: NotificationLevel::Info,
+                kind: NotificationKind::Paused,
+                count: 3,
+                seq: 0,
+                at: std::time::SystemTime::UNIX_EPOCH,
+            };
+            let rows = history_lines(std::slice::from_ref(&line).iter(), language);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].count, 3);
+            assert!(rows[0].text.ends_with("×3"), "{}", rows[0].text);
+            assert_eq!(rows[0].text.matches('×').count(), 1, "{}", rows[0].text);
+        }
     }
 }

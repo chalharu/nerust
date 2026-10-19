@@ -98,7 +98,7 @@ impl WindowRuntime {
         self.renderer = Some(renderer);
         // Fresh view holds no layer; re-push on the next sync
         // instead of skipping on a stale fingerprint.
-        self.host.osd_presenter.invalidate();
+        self.host.note_renderer_replaced();
         Some(())
     }
 
@@ -246,7 +246,8 @@ impl WindowRuntime {
             self.host.osd_last_strip = strip;
             renderer.set_reserved_strip(strip);
         }
-        self.host.poll_notifications();
+        // No notification drain here: `update_control_flow` drains
+        // every pass (also paused/unfocused ones with no redraw).
         self.host.sync_osd_layer(renderer.as_mut(), window_size);
 
         self.host.session_mut().swap_frame_buffer();

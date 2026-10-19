@@ -406,3 +406,5 @@ impl crate::aux::shell::AuxWindow for DebugWindowHandle {
         self.shell.window.request_redraw();
     }
 }
+
+impl crate::runtime::host::WindowHandler for DebugWindowHandle {}

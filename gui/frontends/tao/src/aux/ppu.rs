@@ -299,6 +299,8 @@ impl crate::aux::shell::AuxWindow for PpuWindowHandle {
     }
 }
 
+impl crate::runtime::host::WindowHandler for PpuWindowHandle {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -9,6 +9,8 @@ use nerust_render_traits::renderer::GpuRenderer;
 use tao::event::WindowEvent;
 
 use super::HostState;
+use super::focus::FocusState;
+use crate::aux::shell::AuxWindow;
 use crate::ports::WindowOpener;
 use nerust_gui_shell::session::osd::strip_rows;
 use nerust_render_traits::ReservedStrip;
@@ -19,6 +21,38 @@ use nerust_render_traits::renderer::strip_pixels;
 pub(crate) struct ModalFlight {
     pub(super) done: std::sync::mpsc::Receiver<()>,
     pub(super) resume_after: bool,
+}
+
+/// Shared aux-focus step: same-app arrival cancels a pending pause
+/// (reporting resume); leaving anywhere arms it. Single source below.
+pub(crate) fn aux_focus_step(focus: &mut FocusState, focused: bool) -> bool {
+    if focused {
+        focus.arrive_aux()
+    } else {
+        focus.leave_aux();
+        false
+    }
+}
+
+/// Likely-Render gate from cheap state only. Pure so the Skip
+/// side stays unit-testable without a renderer.
+fn osd_sync_likely(dirty: bool, visible: bool, status_on: bool, layer_live: bool) -> bool {
+    dirty || visible || status_on || layer_live
+}
+
+/// Uniform aux-window handler: event feed plus the shared focus
+/// agreement. Debug/PPU/history implement this; arms stay one shape.
+pub(crate) trait WindowHandler: AuxWindow {
+    /// Feed one native event to the aux shell.
+    fn on_event(&mut self, event: WindowEvent) {
+        AuxWindow::pump_window_event(self, event);
+    }
+    /// Shared aux-focus agreement (see [`aux_focus_step`]).
+    /// Reports resume. Default so all twins match; override only to diverge.
+    fn note_focus(&mut self, focus: &mut FocusState, focused: bool) -> bool {
+        let _ = self;
+        aux_focus_step(focus, focused)
+    }
 }
 
 impl HostState {
@@ -70,8 +104,18 @@ impl HostState {
             self.history_sync_key = None;
             return;
         }
+        // Same aux-focus agreement as debugger/PPU: same-app moves
+        // cancel a pending auto-pause; leaving anywhere arms it.
+        let focused = matches!(event, WindowEvent::Focused(true));
+        let resume = match self.history_window.as_mut() {
+            Some(handle) => handle.note_focus(&mut self.focus, focused),
+            None => aux_focus_step(&mut self.focus, focused),
+        };
+        if resume {
+            self.resume_session();
+        }
         if let Some(handle) = self.history_window.as_mut() {
-            crate::aux::shell::AuxWindow::pump_window_event(handle, event);
+            handle.on_event(event);
             if handle
                 .shell
                 .should_close
@@ -85,6 +129,12 @@ impl HostState {
                 self.sync_history_window();
             }
         }
+    }
+
+    /// Fresh view holds no layer: re-push on the next sync instead
+    /// of skipping on a stale fingerprint. Sole presenter reset.
+    pub(crate) fn note_renderer_replaced(&mut self) {
+        self.osd_presenter.invalidate();
     }
 
     /// Reserved edge strips in physical pixels. Static per settings
@@ -184,27 +234,29 @@ impl HostState {
     /// Cheap when idle (dirty-gated sync); safe to call every loop
     /// pass, including paused+unfocused where `on_update` stalls.
     pub(crate) fn poll_notifications(&mut self) {
+        use nerust_gui_shell::session::osd::PushInput;
         let now = Instant::now();
-        let (drained, channel) = self.session.drain_routed();
-        if !drained.is_empty() {
-            let settings = self.notification_settings();
-            let language = self.notification_language();
-            self.osd
-                .push_all(drained, &settings, language, now, channel);
-        }
-        self.osd.poll(now);
-        if let Some(detail) = self.osd.take_modal_text() {
+        let settings = self.notification_settings();
+        let language = self.notification_language();
+        let report = self.session.pump_osd(
+            &mut self.osd,
+            PushInput {
+                settings: &settings,
+                language,
+                now,
+            },
+        );
+        if report.modal_queued {
             // Auto-pause first, guarded by can_pause.
             // Only what we paused resumes, after the last ack.
             if self.session.can_pause() && !self.session.paused() {
                 self.pause();
                 self.resume_after_modal = true;
             }
-            self.osd.queue_modal(detail);
         }
         self.reap_modal();
         self.present_modal();
-        if self.osd.dirty() {
+        if report.dirty {
             // Paint even idle: no main redraw is scheduled while
             // paused+unfocused, which is exactly when Paused lands.
             self.request_redraw();
@@ -224,13 +276,27 @@ impl HostState {
         size: nerust_render_traits::SurfaceSize,
     ) {
         use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput};
-        let settings = self.notification_settings();
-        let language = self.notification_language();
+        // Cheap pre-gate before any snapshot: a clean peek with no
+        // rows, no status, and no live layer can only Skip.
+        let dirty = self.osd.dirty();
+        let snapshot = self.session.settings_snapshot();
+        let language = snapshot.shared.general.language;
+        let settings = &snapshot.local.notifications;
+        if !osd_sync_likely(
+            dirty,
+            self.osd.has_visible(),
+            settings.status_enabled,
+            self.osd_layer_live,
+        ) {
+            return;
+        }
         let metrics = self.session.metrics();
+        let dirty = self.osd.take_dirty();
         let decision = self.osd_presenter.sync(
-            &mut self.osd,
+            dirty,
+            &self.osd,
             OsdSyncInput {
-                settings: &settings,
+                settings,
                 language,
                 fps: metrics.emulation_fps,
                 paused: metrics.paused,
@@ -243,8 +309,12 @@ impl HostState {
         );
         match decision {
             OsdSync::Skip => {}
-            OsdSync::Clear => renderer.set_osd_layer(None),
+            OsdSync::Clear => {
+                self.osd_layer_live = false;
+                renderer.set_osd_layer(None);
+            }
             OsdSync::Render(plan) => {
+                self.osd_layer_live = true;
                 let content = plan.content();
                 renderer.set_osd_layer(self.osd_raster.rasterize(
                     &content,
@@ -257,6 +327,107 @@ impl HostState {
 
     /// Wake the loop for OSD expiry while labels are visible.
     pub(crate) fn osd_wakeup(&self) -> Option<Instant> {
-        self.osd.next_deadline()
+        self.osd.wakeup_deadline(Instant::now())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::host::TestHost;
+    use nerust_render_traits::{
+        FrameBuffer, SurfaceSize,
+        renderer::{GpuRenderer, OsdLayer, RenderResult, RendererError},
+    };
+    use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+
+    #[derive(Debug, Default)]
+    struct StubRenderer {
+        layers: Vec<bool>,
+    }
+
+    impl GpuRenderer for StubRenderer {
+        fn size(&self) -> SurfaceSize {
+            SurfaceSize::new(960, 720)
+        }
+
+        fn attach(
+            &mut self,
+            _window_handle: RawWindowHandle,
+            _display_handle: RawDisplayHandle,
+            _size: SurfaceSize,
+        ) -> Result<(), RendererError> {
+            Ok(())
+        }
+
+        fn detach(&mut self) {}
+
+        fn resize(&mut self, _size: SurfaceSize) {}
+
+        fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
+            self.layers.push(layer.is_some());
+        }
+
+        fn update_render_profile(
+            &mut self,
+            _profile: &nerust_render_traits::VideoRenderProfile,
+        ) -> Result<(), RendererError> {
+            Ok(())
+        }
+
+        fn render(&mut self, _frame: &FrameBuffer) -> RenderResult {
+            RenderResult::Skipped
+        }
+    }
+
+    fn surface() -> SurfaceSize {
+        SurfaceSize::new(960, 720)
+    }
+
+    #[test]
+    fn sync_gate_covers_all_cheap_inputs() {
+        assert!(!osd_sync_likely(false, false, false, false));
+        assert!(osd_sync_likely(true, false, false, false));
+        assert!(osd_sync_likely(false, true, false, false));
+        assert!(osd_sync_likely(false, false, true, false));
+        assert!(osd_sync_likely(false, false, false, true));
+    }
+
+    #[test]
+    fn idle_sync_pushes_no_layer() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let mut renderer = StubRenderer::default();
+        // Clean peek, nothing showing, status off, no live layer:
+        // the snapshot and the renderer stay untouched.
+        host.sync_osd_layer(&mut renderer, surface());
+        host.sync_osd_layer(&mut renderer, surface());
+        assert!(renderer.layers.is_empty());
+        assert!(!host.osd_layer_live);
+    }
+
+    #[test]
+    fn status_toggle_renders_then_clears() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let mut on = host.session.settings_snapshot().clone();
+        on.local.notifications.status_enabled = true;
+        host.apply_settings(on).expect("headless settings apply");
+        let mut renderer = StubRenderer::default();
+        host.sync_osd_layer(&mut renderer, surface());
+        assert_eq!(renderer.layers, [true]);
+        assert!(host.osd_layer_live);
+        // Steady second frame reuses the layer: no re-push.
+        host.sync_osd_layer(&mut renderer, surface());
+        assert_eq!(renderer.layers, [true]);
+        // Toggle off: one Clear lands, then idle skips again.
+        let mut off = host.session.settings_snapshot().clone();
+        off.local.notifications.status_enabled = false;
+        host.apply_settings(off).expect("headless settings apply");
+        host.sync_osd_layer(&mut renderer, surface());
+        assert_eq!(renderer.layers, [true, false]);
+        assert!(!host.osd_layer_live);
+        host.sync_osd_layer(&mut renderer, surface());
+        assert_eq!(renderer.layers, [true, false]);
     }
 }
