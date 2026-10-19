@@ -118,6 +118,8 @@ impl PanicRecord {
 impl PanicRecord {
     // Release keeps symtab only: names resolve, file:line does not.
     fn capture(detail: String) -> Self {
+        // Symbolication runs even for caught panics: acceptable, as a
+        // panic already unwinds (no hot path captures here).
         let thread = std::thread::current();
         Self {
             thread: thread.name().unwrap_or("unnamed").to_owned(),
