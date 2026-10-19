@@ -4,6 +4,7 @@ pub mod commands;
 pub mod debug_ops;
 pub mod error;
 pub mod input;
+pub(crate) mod input_map;
 pub mod lifecycle;
 pub mod notification;
 pub mod osd;
@@ -21,7 +22,7 @@ pub(crate) mod settings_apply;
 pub mod title;
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
@@ -103,7 +104,7 @@ struct InputCluster {
     host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_keyboard::Key, usize>,
-    pressed_keys: BTreeSet<Key>,
+    pressed_keys: std::collections::HashSet<Key>,
 }
 
 impl InputCluster {
@@ -111,13 +112,13 @@ impl InputCluster {
     /// Takes only the bindings it reads; the session resolves which
     /// profile is active, so this cluster never reaches into settings
     /// or the factory registry.
-    pub(crate) fn rebuild_key_field_map<B: crate::session::input::InputBinding<Id = Key>>(
+    pub(crate) fn rebuild_key_field_map<B: crate::session::input_map::InputBinding<Id = Key>>(
         &mut self,
         bindings: Option<&[B]>,
     ) {
         self.key_field_map.clear();
         if let Some(bindings) = bindings {
-            crate::session::input::rebuild_input_map(
+            crate::session::input_map::rebuild_input_map(
                 &self.field_map,
                 bindings,
                 &mut self.key_field_map,
@@ -159,22 +160,22 @@ impl EmuCluster {
 
     /// Shared core or the single no-core error. Named honestly: all
     /// core methods take `&self`, so no caller needs `&mut`.
-    fn core(&self) -> Result<&EmuCore, SessionError> {
+    pub(crate) fn core(&self) -> Result<&EmuCore, SessionError> {
         self.core.as_ref().ok_or(SessionError::NoCore)
     }
 
     /// Exclusive core for swaps and rebuilds.
-    fn core_mut(&mut self) -> Result<&mut EmuCore, SessionError> {
+    pub(crate) fn core_mut(&mut self) -> Result<&mut EmuCore, SessionError> {
         self.core.as_mut().ok_or(SessionError::NoCore)
     }
 
     /// Borrowed core for `map`/`is_some` chains that tolerate absence.
-    fn core_opt(&self) -> Option<&EmuCore> {
+    pub(crate) fn core_opt(&self) -> Option<&EmuCore> {
         self.core.as_ref()
     }
 
     /// Exclusive borrowed core for in-place swaps.
-    fn core_opt_mut(&mut self) -> Option<&mut EmuCore> {
+    pub(crate) fn core_opt_mut(&mut self) -> Option<&mut EmuCore> {
         self.core.as_mut()
     }
 
@@ -386,7 +387,7 @@ impl SessionHandle {
                 field_map,
                 host_peripherals,
                 key_field_map: HashMap::new(),
-                pressed_keys: BTreeSet::new(),
+                pressed_keys: std::collections::HashSet::new(),
             },
             emu: EmuCluster::new(),
             registry,
@@ -503,7 +504,6 @@ impl SessionHandle {
             PersistenceManager::with_all_backends(slot_backend, autosave_backend, mapper_backend);
     }
 
-    #[cfg(test)]
     #[cfg(test)]
     pub(crate) fn set_settings(&mut self, settings: SettingsManager) {
         self.settings.manager = settings;

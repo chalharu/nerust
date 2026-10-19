@@ -1,11 +1,7 @@
-use std::{collections::HashMap, hash::Hash};
-
 use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
-use nerust_input_traits::{
-    AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent, InputValue,
-};
+use nerust_input_traits::{AbstractKey, DigitalInputEvent, InputValue};
 use nerust_keyboard::Key;
-use nerust_settings_core::model::input::{KeyboardBinding, ShortcutAction};
+use nerust_settings_core::model::input::ShortcutAction;
 
 use crate::{
     session::{KeyboardShortcut, SessionHandle},
@@ -27,38 +23,6 @@ fn touch_role_for_abstract_key(key: AbstractKey) -> Option<TouchControlRole> {
         AbstractKey::Start => Some(TouchControlRole::Start),
         AbstractKey::Select => Some(TouchControlRole::Select),
         _ => None,
-    }
-}
-
-/// Abstraction over a binding type (keyboard, gamepad, etc.) for building
-/// a source-key → field-index map from an InputAssignments field_map.
-pub(crate) trait InputBinding {
-    type Id: Copy + Eq + Hash;
-    fn matches(&self, attachment: &AttachmentId, control: &DigitalControlId) -> bool;
-    fn source_id(&self) -> Self::Id;
-}
-
-impl InputBinding for KeyboardBinding {
-    type Id = Key;
-    fn matches(&self, attachment: &AttachmentId, control: &DigitalControlId) -> bool {
-        self.attachment == *attachment && self.control == *control
-    }
-    fn source_id(&self) -> Self::Id {
-        self.key
-    }
-}
-
-/// Generic rebuild: iterate field_map, find matching bindings, populate target map.
-pub(crate) fn rebuild_input_map<B: InputBinding>(
-    field_map: &HashMap<(AttachmentId, DigitalControlId), usize>,
-    bindings: &[B],
-    target: &mut HashMap<B::Id, usize>,
-) {
-    target.clear();
-    for ((attachment, control), &field) in field_map {
-        if let Some(binding) = bindings.iter().find(|b| b.matches(attachment, control)) {
-            target.insert(binding.source_id(), field);
-        }
     }
 }
 
@@ -160,15 +124,17 @@ impl SessionHandle {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
+    use std::{collections::HashMap, rc::Rc};
 
     use nerust_input_traits::{
-        AbstractKey, AttachmentId, ControlInfo, ControlKind, ControllerProfile, PortSet, ProfileId,
-        SlotInfo,
+        AbstractKey, AttachmentId, ControlInfo, ControlKind, ControllerProfile, DigitalControlId,
+        PortSet, ProfileId, SlotInfo,
     };
+    use nerust_settings_core::model::input::KeyboardBinding;
     use nerust_settings_core::model::input::PersistedControlId;
 
     use super::*;
+    use crate::session::input_map::rebuild_input_map;
 
     /// Single-port mock: "test.standard" profile with one port.
     #[derive(Debug)]

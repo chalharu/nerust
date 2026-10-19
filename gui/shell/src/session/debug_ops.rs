@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use nerust_gui_viewmodel::debugger as debug_vm;
 
-use super::{LiveImages, SessionHandle};
+#[cfg(test)]
+use super::LiveImages;
+use super::SessionHandle;
 use crate::emu_core::EmuCore;
 
 impl SessionHandle {
@@ -115,6 +117,7 @@ impl SessionHandle {
     /// It never touches inspect or disassembly (paused-gated) and leaves
     /// the last paused sections alone. Blocking wrapper for tests only;
     /// live ticks use the flight.
+    #[cfg(test)]
     pub fn debug_live_images(&self, need_images: bool) -> LiveImages {
         let mut flight = self.debug_live_images_begin(need_images);
         loop {

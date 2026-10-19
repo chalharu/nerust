@@ -106,6 +106,21 @@ pub struct OsdChrome {
     pub status_area_mode: NotificationAreaMode,
 }
 
+impl OsdChrome {
+    /// Reserved strip rows per edge for the current chrome. Pure row
+    /// policy shared by every frontend; pixel conversion stays in the
+    /// render adapter (`strip_pixels`), so this core never names
+    /// render types.
+    pub fn reserved_rows(&self) -> (u32, u32) {
+        strip_rows(
+            self.area_mode,
+            self.position,
+            self.status_area_mode,
+            self.status_position,
+            self.status_enabled,
+        )
+    }
+}
 impl From<&NotificationSettings> for OsdChrome {
     fn from(settings: &NotificationSettings) -> Self {
         Self {

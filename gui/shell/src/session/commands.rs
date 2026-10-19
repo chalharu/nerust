@@ -49,23 +49,23 @@ pub struct SessionCommandOutcome {
     pub slot_failure: Option<SlotOpFailure>,
 }
 
-/// Map a command outcome to notifications. Success notifies Info;
-/// slot failures map to Warning/Error by reason; transport errors
-/// become a generic Error.
-pub fn outcome_notifications(
+/// Map a command outcome to its notification, if any. Success
+/// notifies Info; slot failures map to Warning/Error by reason;
+/// transport errors become a generic Error. `None` means silence.
+pub fn outcome_notification(
     command: SessionCommand,
     outcome: &SessionCommandOutcome,
     active_slot: Option<u64>,
-) -> Vec<crate::session::notification::NotificationKind> {
+) -> Option<crate::session::notification::NotificationKind> {
     use crate::session::notification::NotificationKind;
     if let Some(reason) = outcome.slot_failure {
         let slot = command.associated_slot(active_slot);
-        return vec![NotificationKind::SlotFailed { slot, reason }];
+        return Some(NotificationKind::SlotFailed { slot, reason });
     }
     if !outcome.executed {
-        return Vec::new();
+        return None;
     }
-    let kind = match command {
+    Some(match command {
         SessionCommand::Pause | SessionCommand::TogglePause => NotificationKind::Paused,
         SessionCommand::Resume => NotificationKind::Resumed,
         SessionCommand::Reset => NotificationKind::Reset,
@@ -81,8 +81,19 @@ pub fn outcome_notifications(
         SessionCommand::SaveSlot(id) => NotificationKind::SavedSlot(id),
         SessionCommand::LoadSlot(id) => NotificationKind::LoadedSlot(id),
         SessionCommand::DeleteSlot(id) => NotificationKind::DeletedSlot(id),
-    };
-    vec![kind]
+    })
+}
+
+/// Backwards-compatible batch form kept for callers migrating off
+/// the 0-or-1 `Vec`. Prefer [`outcome_notification`].
+pub fn outcome_notifications(
+    command: SessionCommand,
+    outcome: &SessionCommandOutcome,
+    active_slot: Option<u64>,
+) -> Vec<crate::session::notification::NotificationKind> {
+    outcome_notification(command, outcome, active_slot)
+        .into_iter()
+        .collect()
 }
 
 /// Resolve TogglePause to the steady arm entered from `was_paused`.

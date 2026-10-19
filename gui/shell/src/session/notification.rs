@@ -93,6 +93,17 @@ pub enum ReplaceGroup {
 }
 
 impl NotificationKind {
+    /// Single truncation point for failure details. Both command
+    /// and external paths funnel here so a pathological message
+    /// cannot wedge the count-capped modal queue.
+    pub fn command_failure(origin: FailureOrigin, id: &'static str, detail: String) -> Self {
+        Self::CommandFailure {
+            origin,
+            id,
+            detail: detail.chars().take(MAX_EXTERNAL_DETAIL).collect(),
+        }
+    }
+
     pub fn level(&self) -> NotificationLevel {
         match self {
             NotificationKind::SlotFailed { reason, .. } => match reason {
@@ -306,12 +317,29 @@ impl NotificationCenter {
             at,
         };
         // Channel policy lives on the kind: screen-only kinds skip
-        // the eager log line (history still records every event).
+        // the log line (history still records every event). Gated so
+        // steady-state pushes don't format when the level is off.
         if let Some(emit) = event.kind.log_level() {
+            let text;
             match emit {
-                NotificationLevel::Info => log::info!("notification: {}", kind_text(&event)),
-                NotificationLevel::Warning => log::warn!("notification: {}", kind_text(&event)),
-                NotificationLevel::Error => log::error!("notification: {}", kind_text(&event)),
+                NotificationLevel::Info => {
+                    if log::log_enabled!(log::Level::Info) {
+                        text = kind_text(&event);
+                        log::info!("notification: {text}");
+                    }
+                }
+                NotificationLevel::Warning => {
+                    if log::log_enabled!(log::Level::Warn) {
+                        text = kind_text(&event);
+                        log::warn!("notification: {text}");
+                    }
+                }
+                NotificationLevel::Error => {
+                    if log::log_enabled!(log::Level::Error) {
+                        text = kind_text(&event);
+                        log::error!("notification: {text}");
+                    }
+                }
             }
         }
         if self.history.len() >= MAX_HISTORY {

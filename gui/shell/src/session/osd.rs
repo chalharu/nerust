@@ -105,7 +105,7 @@ impl OsdManager {
     /// Callers adapt once at the settings boundary via `From`.
     pub fn push_all_with_policy(
         &mut self,
-        notifications: Vec<UiNotification>,
+        notifications: impl IntoIterator<Item = UiNotification>,
         policy: &TransientPolicy,
         language: AppLanguage,
         now: Instant,
