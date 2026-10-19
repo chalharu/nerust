@@ -45,7 +45,7 @@ impl SessionHandle {
         } else {
             volume
         };
-        if let Some(ref core) = self.emu_core
+        if let Some(core) = self.emu.core_opt()
             && let Err(error) = core.set_volume(volume)
         {
             log::warn!("set_volume failed: {error}");
@@ -59,7 +59,7 @@ impl SessionHandle {
         &self,
         next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
     ) -> Result<(), SessionError> {
-        let core = self.emu_core.as_ref().ok_or(SessionError::NoCore)?;
+        let core = self.emu.core()?;
         let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
         let rate = speaker.sample_rate();
         core.swap_audio_backend(speaker, rate)?;
@@ -83,7 +83,7 @@ impl SessionHandle {
         else {
             return Ok(false);
         };
-        let core = self.emu_core.as_mut().ok_or(SessionError::NoCore)?;
+        let core = self.emu.core_mut()?;
         core.apply_presentation(profile, palette)?;
         Ok(true)
     }
@@ -110,7 +110,7 @@ impl SessionHandle {
         if plan.audio_backend_changed
             && !visual_changed
             && !assignments_changed
-            && self.emu_core.is_some()
+            && self.emu.core_opt().is_some()
         {
             // Audio-only delta: the swap absorbs the rebuild entirely
             // (the replacement backend carries the new volume too).
@@ -122,7 +122,7 @@ impl SessionHandle {
             let mut swapped = false;
             if visual_changed
                 && !assignments_changed
-                && self.emu_core.is_some()
+                && self.emu.core_opt().is_some()
                 && let Some(factory) = factory
             {
                 swapped = self.swap_presentation_for_settings(factory, previous, next_settings)?;
@@ -175,7 +175,7 @@ impl SessionHandle {
             let after_view = settings_view(previous, system_id.as_ref());
             match factory.presentation_swap_assets(&before_view, &after_view) {
                 Some((profile, palette)) => {
-                    if let Some(core) = self.emu_core.as_mut()
+                    if let Some(core) = self.emu.core_opt_mut()
                         && let Err(e) = core.apply_presentation(profile, palette)
                     {
                         log::warn!("failed to rollback presentation swap: {e}");
@@ -189,7 +189,7 @@ impl SessionHandle {
         if outcome.audio_swapped {
             let speaker = crate::settings::build_speaker(&self.audio_registry, &previous.local);
             let rate = speaker.sample_rate();
-            if let Some(core) = self.emu_core.as_ref()
+            if let Some(core) = self.emu.core_opt()
                 && let Err(e) = core.swap_audio_backend(speaker, rate)
             {
                 log::warn!("failed to rollback audio swap: {e}");
@@ -198,14 +198,11 @@ impl SessionHandle {
     }
 
     pub fn metrics(&self) -> ConsoleMetrics {
-        self.emu_core
-            .as_ref()
-            .map(|c| c.metrics())
-            .unwrap_or_default()
+        self.emu.core_opt().map(|c| c.metrics()).unwrap_or_default()
     }
 
     pub fn window_size(&self) -> WindowSize {
-        let Some(core) = self.emu_core.as_ref() else {
+        let Some(core) = self.emu.core_opt() else {
             return WindowSize::default();
         };
         let profile = core.render_profile();
@@ -249,7 +246,7 @@ impl SessionHandle {
     /// transitions can kill audio streams; the re-acquire is idempotent).
     /// No-op without a loaded core.
     pub fn restart_audio(&mut self) {
-        if let Some(ref core) = self.emu_core
+        if let Some(core) = self.emu.core_opt()
             && let Err(error) = core.restart_audio()
         {
             log::warn!("restart_audio failed: {error}");
@@ -291,7 +288,7 @@ impl SessionHandle {
             .is_some_and(|a| a.to_string_pairs() != previous_assignments.to_string_pairs());
 
         if plan.persistence_changed
-            && let Some(ref core) = self.emu_core
+            && let Some(core) = self.emu.core_opt()
         {
             self.media.persistence.flush_mapper_save(core)?;
         }
@@ -367,13 +364,13 @@ impl SessionHandle {
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
         {
-            let Some(core) = self.emu_core.as_ref() else {
+            let Some(core) = self.emu.core_opt() else {
                 return Err(SessionError::NoCore);
             };
             self.media.persistence.flush_mapper_save(core)?;
         }
-        self.emu_core
-            .as_mut()
+        self.emu
+            .core_opt_mut()
             .ok_or(SessionError::NoCore)?
             .load(&media, Some(resolved.options))?;
         self.media.loaded = Some(super::LoadedMedia {
@@ -388,10 +385,10 @@ impl SessionHandle {
     }
 
     pub fn unload(&mut self) -> Result<(), SessionError> {
-        if let Some(ref core) = self.emu_core {
+        if let Some(core) = self.emu.core_opt() {
             self.media.persistence.flush_mapper_save(core)?;
         }
-        if let Some(ref mut core) = self.emu_core {
+        if let Some(core) = self.emu.core_opt_mut() {
             core.unload()?;
         }
         self.media.loaded = None;
@@ -400,7 +397,7 @@ impl SessionHandle {
     }
 
     pub fn flush_before_exit(&mut self) {
-        if let Some(ref core) = self.emu_core
+        if let Some(core) = self.emu.core_opt()
             && let Err(error) = self.media.persistence.flush_mapper_save(core)
         {
             log::warn!("mapper save flush before close failed: {error}");
@@ -567,7 +564,7 @@ impl SessionHandle {
         if self.paused() {
             return Ok(SessionCommandOutcome::default());
         }
-        self.core_mut()?.pause()?;
+        self.core()?.pause()?;
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
@@ -607,7 +604,7 @@ impl SessionHandle {
         if !self.paused() {
             return Ok(SessionCommandOutcome::default());
         }
-        self.core_mut()?.resume()?;
+        self.core()?.resume()?;
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: self.loaded(),
@@ -624,7 +621,7 @@ impl SessionHandle {
     }
 
     fn cmd_reset(&mut self) -> Result<SessionCommandOutcome, SessionError> {
-        self.core_mut()?.reset()?;
+        self.core()?.reset()?;
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
@@ -653,8 +650,8 @@ impl SessionHandle {
         }
     }
 
-    fn core_mut(&mut self) -> Result<&EmuCore, SessionError> {
-        self.emu_core.as_ref().ok_or(SessionError::NoCore)
+    fn core(&mut self) -> Result<&EmuCore, SessionError> {
+        self.emu.core_opt().ok_or(SessionError::NoCore)
     }
 
     fn slot_op(
@@ -663,7 +660,7 @@ impl SessionHandle {
     ) -> SessionCommandOutcome {
         // No core ran anything: report it like the fallible legs do
         // instead of a success toast for a no-op.
-        let Some(ref core) = self.emu_core else {
+        let Some(core) = self.emu.core_opt() else {
             return SessionCommandOutcome {
                 executed: false,
                 needs_redraw: false,
@@ -682,7 +679,7 @@ impl SessionHandle {
         &mut self,
         op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> Result<(), SlotOpFailure>,
     ) -> SessionCommandOutcome {
-        let slot_failure = if let Some(ref core) = self.emu_core {
+        let slot_failure = if let Some(core) = self.emu.core_opt() {
             op(&mut self.media.persistence, core).err()
         } else {
             Some(SlotOpFailure::Unavailable)
@@ -699,7 +696,7 @@ impl SessionHandle {
         op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> Result<(), SlotOpFailure>,
     ) -> SessionCommandOutcome {
         let was_paused = self.paused();
-        let slot_failure = if let Some(ref core) = self.emu_core {
+        let slot_failure = if let Some(core) = self.emu.core_opt() {
             op(&mut self.media.persistence, core).err()
         } else {
             Some(SlotOpFailure::Empty)
@@ -721,14 +718,14 @@ impl SessionHandle {
     }
 
     pub fn save_hidden_lifecycle_state(&mut self) -> bool {
-        self.emu_core
-            .as_ref()
+        self.emu
+            .core_opt()
             .is_some_and(|core| self.media.persistence.save_hidden(core))
     }
 
     pub fn load_hidden_lifecycle_state(&mut self) -> bool {
-        self.emu_core
-            .as_ref()
+        self.emu
+            .core_opt()
             .is_some_and(|core| self.media.persistence.load_hidden(core))
     }
 
@@ -745,8 +742,8 @@ impl SessionHandle {
         let was_paused = self.paused();
         let exported_core_bytes = if was_loaded {
             Some(
-                self.emu_core
-                    .as_ref()
+                self.emu
+                    .core_opt()
                     .ok_or(SessionError::NoCore)?
                     .save_state_raw()?,
             )
@@ -769,8 +766,7 @@ impl SessionHandle {
             }
         }
 
-        self.emu_core = Some(rebuilt_core);
-        self.gui_input = Some(rebuilt.gui_input);
+        self.emu.install(rebuilt_core, rebuilt.gui_input);
         self.input.field_map = rebuilt.field_map;
         if was_loaded {
             let rom_path = self
@@ -781,7 +777,7 @@ impl SessionHandle {
             let rom_path_deref = rom_path.as_deref();
             let setup = self.setup_persistence(rom_path_deref, !restored_runtime_state);
             self.note_persistence_setup(setup);
-            if was_paused && let Some(ref mut core) = self.emu_core {
+            if was_paused && let Some(core) = self.emu.core_opt_mut() {
                 core.pause()?;
             }
         }
@@ -831,8 +827,8 @@ impl SessionHandle {
         load_mapper_save: bool,
     ) -> PersistenceSetup {
         let sidecars = self
-            .emu_core
-            .as_ref()
+            .emu
+            .core_opt()
             .and_then(|c| c.canonical_media_identity())
             .and_then(|identity| self.resolve_persistence_paths(rom_path, &identity));
         let Some(sidecars) = sidecars else {
@@ -841,7 +837,7 @@ impl SessionHandle {
         self.media
             .persistence
             .configure(sidecars.states_dir, sidecars.mapper_save_path);
-        if let Some(ref core) = self.emu_core {
+        if let Some(core) = self.emu.core_opt() {
             self.media.persistence.refresh_slots(core);
             if load_mapper_save
                 && let Err(e) = self.media.persistence.load_mapper_save_if_needed(core)

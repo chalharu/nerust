@@ -789,9 +789,9 @@ mod tests {
     #[test]
     fn rerenders_on_position_change_with_status_off() {
         use nerust_settings_core::model::local::NotificationPosition as Pos;
-        let mut state = row_state("Paused");
+        let state = row_state("Paused");
         let mut presenter = OsdPresenter::new();
-        let mut settings = presenter_settings();
+        let settings = presenter_settings();
         assert!(!settings.status_enabled);
         let now = Instant::now();
         let input = |pos| {

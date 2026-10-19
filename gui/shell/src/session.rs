@@ -122,12 +122,61 @@ struct MediaCluster {
     persistence: PersistenceManager,
 }
 
+/// Live emulation objects: the core plus its GUI input adapter. Single
+/// owner for the core domain: everything that touches the running core
+/// goes through these typed methods instead of reaching past the
+/// session into bare `Option` fields.
+struct EmuCluster {
+    core: Option<EmuCore>,
+    input: Option<GuiInput>,
+}
+
+impl EmuCluster {
+    fn new() -> Self {
+        Self {
+            core: None,
+            input: None,
+        }
+    }
+
+    /// Shared core or the single no-core error. Named honestly: all
+    /// core methods take `&self`, so no caller needs `&mut`.
+    fn core(&self) -> Result<&EmuCore, SessionError> {
+        self.core.as_ref().ok_or(SessionError::NoCore)
+    }
+
+    /// Exclusive core for swaps and rebuilds.
+    fn core_mut(&mut self) -> Result<&mut EmuCore, SessionError> {
+        self.core.as_mut().ok_or(SessionError::NoCore)
+    }
+
+    /// Borrowed core for `map`/`is_some` chains that tolerate absence.
+    fn core_opt(&self) -> Option<&EmuCore> {
+        self.core.as_ref()
+    }
+
+    /// Exclusive borrowed core for in-place swaps.
+    fn core_opt_mut(&mut self) -> Option<&mut EmuCore> {
+        self.core.as_mut()
+    }
+
+    /// Paired install: core and input always arrive together from the
+    /// factory, so they are never half-present.
+    fn install(&mut self, core: EmuCore, input: GuiInput) {
+        self.core = Some(core);
+        self.input = Some(input);
+    }
+
+    fn input_mut(&mut self) -> Option<&mut GuiInput> {
+        self.input.as_mut()
+    }
+}
+
 pub struct SessionHandle {
     registry: Arc<SystemRegistry>,
     active_system_id: Option<Box<dyn SystemId>>,
-    emu_core: Option<EmuCore>,
-    gui_input: Option<GuiInput>,
     input: InputCluster,
+    emu: EmuCluster,
     capabilities: HostBackendCapabilities,
     settings: SettingsCluster,
     media: MediaCluster,
@@ -314,8 +363,6 @@ impl SessionHandle {
             )
         };
         let mut result = Self {
-            emu_core,
-            gui_input,
             input: InputCluster {
                 current_assignments: assignments,
                 field_map,
@@ -323,6 +370,7 @@ impl SessionHandle {
                 key_field_map: HashMap::new(),
                 pressed_keys: BTreeSet::new(),
             },
+            emu: EmuCluster::new(),
             registry,
             active_system_id,
             capabilities,
@@ -338,6 +386,9 @@ impl SessionHandle {
             debug_txn: Arc::new(Mutex::new(debug_vm::WriteTransaction::Empty)),
             notifications: notification::NotificationCenter::new(),
         };
+        if let (Some(core), Some(input)) = (emu_core, gui_input) {
+            result.emu.install(core, input);
+        }
         result.rebuild_key_field_map();
         Ok(result)
     }
@@ -382,35 +433,31 @@ impl SessionHandle {
 
     pub fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
-            metrics: self
-                .emu_core
-                .as_ref()
-                .map(|c| c.metrics())
-                .unwrap_or_default(),
+            metrics: self.emu.core_opt().map(|c| c.metrics()).unwrap_or_default(),
             slots: Arc::from(self.media.persistence.slots().to_vec()),
             active_slot_id: self.media.persistence.active_slot_id(),
         }
     }
 
     pub fn render_profile(&self) -> Option<&VideoRenderProfile> {
-        self.emu_core.as_ref().map(|c| c.render_profile())
+        self.emu.core_opt().map(|c| c.render_profile())
     }
 
     pub fn swap_frame_buffer(&mut self) {
-        if let Some(ref mut gui_input) = self.gui_input {
+        if let Some(gui_input) = self.emu.input_mut() {
             gui_input.publish();
         }
-        if let Some(ref mut core) = self.emu_core {
+        if let Some(core) = self.emu.core_opt_mut() {
             core.swap_frame_buffer();
         }
     }
 
     pub fn frame_buffer(&self) -> Option<&FrameBuffer> {
-        self.emu_core.as_ref().map(|c| c.frame_buffer())
+        self.emu.core_opt().map(|c| c.frame_buffer())
     }
 
     pub fn clear_display(&mut self) {
-        if let Some(ref mut core) = self.emu_core {
+        if let Some(core) = self.emu.core_opt_mut() {
             core.clear_display();
         }
     }
@@ -543,7 +590,7 @@ impl RomLoadTarget for SessionHandle {
         )
         .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
 
-        if let Some(ref core) = self.emu_core {
+        if let Some(core) = self.emu.core_opt() {
             self.media
                 .persistence
                 .flush_mapper_save(core)
@@ -552,8 +599,8 @@ impl RomLoadTarget for SessionHandle {
 
         self.active_system_id = Some(system_id.clone_box());
         self.input.current_assignments = created.applied_assignments;
-        self.emu_core = Some(created.runtime.emu_core);
-        self.gui_input = Some(created.runtime.gui_input);
+        self.emu
+            .install(created.runtime.emu_core, created.runtime.gui_input);
         self.input.field_map = created.runtime.field_map;
         self.input.host_peripherals = created.runtime.host_peripherals;
         self.media.loaded = None;
