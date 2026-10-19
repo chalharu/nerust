@@ -1078,4 +1078,86 @@ mod tests {
         ])));
         assert!(matches!(mapped, Err(super::ViewError::Gl(_))));
     }
+
+    #[cfg(unix)]
+    fn gl_test_profile(
+        format: nerust_render_traits::VideoFrameFormat,
+        ntsc: Option<Box<[u8]>>,
+    ) -> nerust_render_traits::VideoRenderProfile {
+        use nerust_render_traits::{logical::LogicalSize, physical::PhysicalSize};
+        nerust_render_traits::VideoRenderProfile {
+            frame_format: format,
+            source_logical_size: LogicalSize {
+                width: 64,
+                height: 64,
+            },
+            logical_size: LogicalSize {
+                width: 64,
+                height: 64,
+            },
+            physical_size: PhysicalSize {
+                width: 64.0,
+                height: 64.0,
+            },
+            ntsc_packed_rgba8: ntsc,
+        }
+    }
+
+    #[cfg(unix)]
+    fn gl_test_layer() -> OsdLayer {
+        OsdLayer {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 1,
+            rgba: vec![255; 8],
+        }
+    }
+
+    /// Full view drive on a real context (Xvfb + llvmpipe in CI).
+    /// Skips without a display so headless runs stay green.
+    #[cfg(unix)]
+    #[test]
+    fn gl_view_full_drive() {
+        let Some(display) = crate::test_display::TestDisplay::connect() else {
+            crate::test_display::TestDisplay::unavailable("no GL display");
+            return;
+        };
+        let Some(_current) = display.make_pbuffer_current(64, 64) else {
+            crate::test_display::TestDisplay::unavailable("no GL context");
+            return;
+        };
+        // Production always drives the VAO path (`fresh_view` sets it);
+        // the legacy client-array path needs no cover here.
+        {
+            let use_vao = true;
+            // RGBA drive: upload, draw, OSD stage, padded rows, wipe, teardown.
+            let profile = gl_test_profile(nerust_render_traits::VideoFrameFormat::Rgba, None);
+            let mut view = GlView::new();
+            view.use_vao(use_vao);
+            view.on_load(&profile).unwrap();
+            view.on_update(&vec![0x80; 64 * 64 * 4], 64).unwrap();
+            view.draw_osd(64, 64).unwrap();
+            view.set_osd_layer(Some(gl_test_layer()));
+            view.draw_osd(64, 64).unwrap();
+            view.on_update(&vec![0x40; 65 * 64 * 4], 65).unwrap();
+            view.on_resize_with_strip(64, 64, nerust_render_traits::ReservedStrip::default())
+                .unwrap();
+            view.update_palette_texture(&[0x12; 256]).unwrap();
+            view.set_osd_layer(None);
+            view.draw_osd(64, 64).unwrap();
+            view.on_close();
+            view.on_close();
+            drop(view);
+            // Palette drive with the NTSC kernel path enabled.
+            let ntsc = vec![0xAA; 64 * 42 * 4].into_boxed_slice();
+            let pal = gl_test_profile(nerust_render_traits::VideoFrameFormat::Palette, Some(ntsc));
+            let mut pview = GlView::new();
+            pview.use_vao(use_vao);
+            pview.on_load(&pal).unwrap();
+            pview.on_update(&vec![7; 64 * 64], 64).unwrap();
+            pview.draw_osd(64, 64).unwrap();
+            pview.on_close();
+        }
+    }
 }
