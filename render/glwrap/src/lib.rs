@@ -70,10 +70,16 @@ impl Shader {
         })
     }
 
+    /// Attribute location, if the linker kept the name. `None` instead
+    /// of ambiguous `0`: location 0 is a valid attribute.
+    pub fn attribute_opt(&self, key: &str) -> Option<GLuint> {
+        self.attributes.get(key).copied()
+    }
+
     // Optimized-out names legitimately miss; release stays silent.
     // Debug flags the typo without failing the frame.
     pub fn get_attribute(&self, key: &str) -> GLuint {
-        if let Some(&id) = self.attributes.get(key) {
+        if let Some(id) = self.attribute_opt(key) {
             id
         } else {
             #[cfg(debug_assertions)]
@@ -83,6 +89,13 @@ impl Shader {
             }
             0
         }
+    }
+
+    /// Uniform location, if the linker kept the name. `None` instead
+    /// of sentinel `-1`: callers skip the upload, which GL would ignore
+    /// anyway, instead of threading a magic value.
+    pub fn uniform_opt(&self, key: &str) -> Option<GLint> {
+        self.uniforms.get(key).copied()
     }
 
     // Optimized-out names legitimately miss; release stays silent.
