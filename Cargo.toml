@@ -101,6 +101,9 @@ debug = "line-tables-only"
 # ThinLTO improves Myst's release frame throughput in the core benchmark;
 # fat LTO was slower in the same benchmark.
 lto = "thin"
+# ThinLTO emits full DWARF despite line-tables-only (156MB APK incident);
+# strip it at link time, keeping symtab for backtrace symbol names.
+strip = "debuginfo"
 
 [profile.release.package.nerust_nes_core]
 codegen-units = 1

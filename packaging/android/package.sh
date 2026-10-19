@@ -97,6 +97,24 @@ mkdir -p "${JNI_LIBS_DIR}"
 
 prepare_signing_keystore
 
+# AGP's strip task silently skips without a resolved NDK ("Unable to
+# strip ... packaging them as they are" -> 156MB APK incident). Resolve
+# the same side-by-side NDK cargo-ndk uses and fail loudly when absent.
+if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
+    sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+    if [[ -n "${sdk_root}" && -d "${sdk_root}/ndk" ]]; then
+        latest_ndk="$(ls "${sdk_root}/ndk" 2>/dev/null | sort -V | tail -n 1)"
+        if [[ -n "${latest_ndk}" ]]; then
+            export ANDROID_NDK_HOME="${sdk_root}/ndk/${latest_ndk}"
+        fi
+    fi
+fi
+if [[ -z "${ANDROID_NDK_HOME:-}" || ! -d "${ANDROID_NDK_HOME}" ]]; then
+    echo "Android NDK not found: set ANDROID_NDK_HOME or install a side-by-side NDK" >&2
+    exit 1
+fi
+echo "Using Android NDK: ${ANDROID_NDK_HOME}"
+
 cargo ndk \
     --manifest-path "${WORKSPACE_ROOT}/Cargo.toml" \
     -t arm64-v8a \
@@ -107,6 +125,20 @@ cargo ndk \
     cd "${SCRIPT_DIR}"
     ./gradlew --no-daemon assembleRelease
 )
+
+# Loud gate against silent native bloat: DWARF must be gone and the
+# release .so must stay within budget (thin-LTO DWARF incident: 133MB).
+main_so="${JNI_LIBS_DIR}/arm64-v8a/libmain.so"
+if readelf -S "${main_so}" | grep -q '\.debug_info'; then
+    echo "libmain.so contains DWARF (.debug_info); release strip is not effective" >&2
+    exit 1
+fi
+so_size="$(stat -c%s "${main_so}")"
+if (( so_size > 41943040 )); then
+    echo "libmain.so is ${so_size} bytes, over the 40MB budget" >&2
+    exit 1
+fi
+echo "libmain.so: ${so_size} bytes, no DWARF"
 
 mkdir -p "${OUT_DIR}"
 cp "${APK_SRC}" "${OUT_DIR}/${APK_NAME}"
