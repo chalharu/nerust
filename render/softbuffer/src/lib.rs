@@ -444,8 +444,7 @@ impl SoftbufferRenderer {
         ntsc_writes: usize,
     ) -> bool {
         let px = lut.lut_pixel_size();
-        if lut.x_lut.len() < dst_w.saturating_mul(px)
-            || lut.y_lut.len() < dst_h.saturating_mul(px)
+        if lut.x_lut.len() < dst_w.saturating_mul(px) || lut.y_lut.len() < dst_h.saturating_mul(px)
         {
             return false;
         }

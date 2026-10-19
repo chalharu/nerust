@@ -92,7 +92,9 @@ impl ErrorDialogController {
         if can_pause {
             self.auto_paused = true;
         }
-        Some(ShowTransition { auto_pause: can_pause })
+        Some(ShowTransition {
+            auto_pause: can_pause,
+        })
     }
 
     /// Dismiss hook from the dialog. Resumes only our own auto-pause,
@@ -287,7 +289,8 @@ mod tests {
         controller
             .poll_show(&mut manager, Screen::show_gate(true, false, true))
             .expect("batch queued");
-        let transition = controller.on_dismissed(&mut manager, Screen::show_gate(true, true, false));
+        let transition =
+            controller.on_dismissed(&mut manager, Screen::show_gate(true, true, false));
         assert_eq!(
             transition,
             DismissTransition {

@@ -595,7 +595,6 @@ pub(crate) trait AuxWindow {
     fn pump_window_event(&mut self, event: tao::event::WindowEvent);
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

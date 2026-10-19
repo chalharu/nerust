@@ -68,7 +68,7 @@ impl HostState {
             Ok(window) => window,
             Err(detail) => {
                 log::error!("failed to create window: {detail}");
-                self.fatal_error = Some(detail);
+                self.close.fail(detail);
                 return;
             }
         };
@@ -113,7 +113,7 @@ impl HostState {
     /// below the menubar when available, else the toplevel. The xid
     /// tags the target so a target change recreates the surface.
     pub(crate) fn surface_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
-        if !self.main_window_live {
+        if !self.close.is_live() {
             return None;
         }
         let window = self.window.as_ref()?;
@@ -137,7 +137,7 @@ impl HostState {
     /// fallback). Mirrors [`HostState::surface_target`] without
     /// rebuilding handles, for the runtime's recreate check.
     pub(crate) fn surface_xid(&self) -> Option<u64> {
-        if !self.main_window_live {
+        if !self.close.is_live() {
             return None;
         }
         #[cfg(any(
@@ -173,7 +173,7 @@ impl HostState {
 
     pub(crate) fn update_control_flow(&mut self, control_flow: &mut ControlFlow) {
         // Window creation failed: exit instead of running headless.
-        if let Some(detail) = self.fatal_error.as_deref() {
+        if let Some(detail) = self.close.fatal_message() {
             log::error!("exiting after window creation failure: {detail}");
             *control_flow = ControlFlow::Exit;
             return;
@@ -259,7 +259,7 @@ impl HostState {
 
     pub(crate) fn request_redraw(&mut self) {
         self.shell.needs_redraw = true;
-        if !self.main_window_live {
+        if !self.close.is_live() {
             return;
         }
         if let Some(window) = self.window.as_ref() {
@@ -274,11 +274,9 @@ impl HostState {
     /// after loop exit already reclaims them (exit 0). Liveness is
     /// tracked separately so no dead handle is ever touched.
     pub(crate) fn prepare_close(&mut self) {
-        if self.exited {
+        if !self.close.begin_close() {
             return;
         }
-        self.exited = true;
-        self.main_window_live = false;
         self.remember_fit_window_size();
         self.settings_open = false;
         self.resume_after_settings = false;
@@ -358,7 +356,7 @@ mod tests {
         assert!(!host.settings_open);
         // Liveness gates all dead-handle use; the native handles stay
         // for natural post-loop teardown (no re-entrant destroy).
-        assert!(!host.main_window_live);
+        assert!(!host.close.is_live());
         assert!(host.surface_target().is_none());
         assert!(host.surface_xid().is_none());
         // Second delivery (Destroyed after CloseRequested) is a

@@ -390,9 +390,11 @@ impl GlView {
         let vbo = Rc::new(ok_gl(VertexBuffer::from_slice(&vertex_data))?);
         // Resolve before the GL-typed builder closure: a missing name
         // is a broken program, and 0 would alias a valid attribute.
-        let position = shader.attribute_opt("position").ok_or(ViewError::Internal {
-            what: "GL view has no position attribute",
-        })?;
+        let position = shader
+            .attribute_opt("position")
+            .ok_or(ViewError::Internal {
+                what: "GL view has no position attribute",
+            })?;
         let uv = shader.attribute_opt("uv").ok_or(ViewError::Internal {
             what: "GL view has no uv attribute",
         })?;
@@ -406,11 +408,21 @@ impl GlView {
             }))?);
         } else {
             ok_gl(vertex_attrib_pointer(
-                position, 2, gl::FLOAT, gl::FALSE, 16, ptr::null(),
+                position,
+                2,
+                gl::FLOAT,
+                gl::FALSE,
+                16,
+                ptr::null(),
             ))?;
             ok_gl(enable_vertex_attrib_array(position))?;
             ok_gl(vertex_attrib_pointer(
-                uv, 2, gl::FLOAT, gl::FALSE, 16, 8 as *const c_void,
+                uv,
+                2,
+                gl::FLOAT,
+                gl::FALSE,
+                16,
+                8 as *const c_void,
             ))?;
             ok_gl(enable_vertex_attrib_array(uv))?;
             self.vbo = Some(vbo.clone());
@@ -1402,6 +1414,7 @@ mod tests {
     fn gl_view_full_drive() {
         use glutin::display::GlDisplay as _;
 
+        let _serial = crate::test_display::lock_display();
         let Some(display) = crate::test_display::TestDisplay::connect() else {
             eprintln!("SKIP GL context tests: no GL display");
             return;

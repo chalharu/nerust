@@ -25,6 +25,13 @@ pub(crate) struct TestContext {
     pub(crate) context: PossiblyCurrentContext,
 }
 
+/// Serializes context tests: two parallel pbuffer tests share one X
+/// display, so drive them one at a time. Hold the guard for the test.
+pub(crate) fn lock_display() -> std::sync::MutexGuard<'static, ()> {
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    SERIAL.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
 impl TestDisplay {
     /// Connect to the X display, or `None` when headless so local
     /// runs stay green.
