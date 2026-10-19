@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
