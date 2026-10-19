@@ -35,53 +35,67 @@ fn osd_sync_likely(
     generation != last_seen || visible || status_on || layer_live
 }
 
-impl HostState {
-    fn notification_settings(&self) -> nerust_settings_core::model::local::NotificationSettings {
-        self.session.settings_snapshot().local.notifications.clone()
-    }
+/// One settings snapshot per frame. `poll_notifications` + `sync_osd_layer`
+/// previously cloned the snapshot twice per tick; the frame owns one copy.
+struct FrameSnapshot {
+    notifications: nerust_settings_core::model::local::NotificationSettings,
+    language: nerust_settings_core::model::language::AppLanguage,
+}
 
-    fn notification_language(&self) -> nerust_settings_core::model::language::AppLanguage {
-        self.session.settings_snapshot().shared.general.language
+impl FrameSnapshot {
+    fn capture(session: &nerust_gui_shell::session::SessionHandle) -> Self {
+        let snapshot = session.settings_snapshot();
+        Self {
+            notifications: snapshot.local.notifications.clone(),
+            language: snapshot.shared.general.language,
+        }
+    }
+}
+
+impl HostState {
+    fn frame_snapshot(&self) -> FrameSnapshot {
+        FrameSnapshot::capture(&self.session)
     }
 
     pub(crate) fn is_history_window(&self, id: tao::window::WindowId) -> bool {
-        self.history_window
+        self.osd
+            .history_window
             .as_ref()
             .is_some_and(|handle| handle.tao_window_id() == id)
     }
 
     pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
-        if self.history_window.is_some() {
+        if self.osd.history_window.is_some() {
             self.sync_history_window();
             return;
         }
-        if let Some(handle) = opener.create_history(self.notification_language()) {
-            self.history_window = Some(handle);
+        if let Some(handle) = opener.create_history(self.frame_snapshot().language) {
+            self.osd.history_window = Some(handle);
             // Fresh window needs full content regardless of cache.
-            self.history_sync_key = None;
+            self.osd.history_sync_key = None;
             self.sync_history_window();
         }
     }
 
     fn sync_history_window(&mut self) {
-        let language = self.notification_language();
+        let language = self.frame_snapshot().language;
         let key = (self.session.notification_history_seq(), language);
         // Dirty gate: the sync runs every loop pass while open, but
         // row building is skipped unless content or language changed.
-        if self.history_sync_key == Some(key) {
+        if self.osd.history_sync_key == Some(key) {
             return;
         }
-        self.history_sync_key = Some(key);
+        self.osd.history_sync_key = Some(key);
         let lines = self.session.notification_history_lines(language);
-        if let Some(handle) = self.history_window.as_mut() {
+        if let Some(handle) = self.osd.history_window.as_mut() {
             handle.sync(lines, language);
         }
     }
 
     pub(crate) fn on_history_event(&mut self, event: WindowEvent) {
         if matches!(event, WindowEvent::Destroyed) {
-            self.history_window = None;
-            self.history_sync_key = None;
+            self.osd.history_window = None;
+            self.osd.history_sync_key = None;
             return;
         }
         // Same aux-focus agreement as debugger/PPU: same-app moves
@@ -91,10 +105,10 @@ impl HostState {
         if resume {
             self.resume_session();
         }
-        if let Some(handle) = self.history_window.as_mut() {
+        if let Some(handle) = self.osd.history_window.as_mut() {
             handle.on_event(event);
             if handle.close_requested() {
-                self.history_window = None;
+                self.osd.history_window = None;
                 return;
             }
             if handle.take_clear_request() {
@@ -107,13 +121,13 @@ impl HostState {
     /// Fresh view holds no layer: re-push on the next sync instead
     /// of skipping on a stale fingerprint. Sole presenter reset.
     pub(crate) fn note_renderer_replaced(&mut self) {
-        self.osd_presenter.invalidate();
+        self.osd.presenter.invalidate();
     }
 
     /// Reserved edge strips in physical pixels. Static per settings
     /// (not per frame) so the renderer never churns surfaces.
     pub(crate) fn reserved_strip(&self) -> ReservedStrip {
-        let settings = self.notification_settings();
+        let settings = self.frame_snapshot().notifications;
         let client_h = self
             .window
             .as_ref()
@@ -135,10 +149,10 @@ impl HostState {
     /// Present one error batch without blocking the loop.
     fn spawn_modal(&mut self, detail: String) {
         let dialogs = std::sync::Arc::clone(&self.dialogs);
-        let language = self.notification_language();
-        let resume_after = self.resume_after_modal;
+        let language = self.frame_snapshot().language;
+        let resume_after = self.osd.resume_after_modal;
         let (done_tx, done_rx) = std::sync::mpsc::channel();
-        self.modal_flight = Some(ModalFlight {
+        self.osd.modal_flight = Some(ModalFlight {
             done: done_rx,
             resume_after,
         });
@@ -155,9 +169,9 @@ impl HostState {
             // wedge the game behind an unseen error (history and logs
             // keep the record).
             log::error!("error dialog thread failed to spawn");
-            self.modal_flight = None;
-            self.osd.modal_closed();
-            if std::mem::replace(&mut self.resume_after_modal, false) {
+            self.osd.modal_flight = None;
+            self.osd.manager.modal_closed();
+            if std::mem::replace(&mut self.osd.resume_after_modal, false) {
                 self.resume();
             }
         }
@@ -168,21 +182,22 @@ impl HostState {
     /// thread (disconnected sender) reaps as a failed ack: the queue
     /// must never wedge, or every later error would pile up unshown.
     fn reap_modal(&mut self) {
-        let finished = self
-            .modal_flight
-            .as_ref()
-            .and_then(|flight| match flight.done.try_recv() {
-                Err(std::sync::mpsc::TryRecvError::Empty) => None,
-                done => Some((flight.resume_after, done.is_ok())),
-            });
+        let finished =
+            self.osd
+                .modal_flight
+                .as_ref()
+                .and_then(|flight| match flight.done.try_recv() {
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                    done => Some((flight.resume_after, done.is_ok())),
+                });
         if let Some((resume_after, normal)) = finished {
             if !normal {
                 log::error!("error dialog thread died before ack");
             }
-            self.modal_flight = None;
-            self.osd.modal_closed();
-            if self.osd.modal_pending() == 0 {
-                self.resume_after_modal = false;
+            self.osd.modal_flight = None;
+            self.osd.manager.modal_closed();
+            if self.osd.manager.modal_pending() == 0 {
+                self.osd.resume_after_modal = false;
                 if resume_after {
                     self.resume();
                 }
@@ -195,8 +210,8 @@ impl HostState {
     /// (see `ModalFlight`): presenting from the loop would freeze
     /// every window and starve backends needing loop cooperation.
     fn present_modal(&mut self) {
-        if self.modal_flight.is_none()
-            && let Some(detail) = self.osd.take_modal_batch()
+        if self.osd.modal_flight.is_none()
+            && let Some(detail) = self.osd.manager.take_modal_batch()
         {
             self.spawn_modal(detail);
         }
@@ -209,10 +224,11 @@ impl HostState {
     pub(crate) fn poll_notifications(&mut self) {
         use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
         let now = Instant::now();
-        let settings = self.notification_settings();
-        let language = self.notification_language();
+        let frame = self.frame_snapshot();
+        let settings = frame.notifications;
+        let language = frame.language;
         let report = self.session.pump_osd(
-            &mut self.osd,
+            &mut self.osd.manager,
             PushInput {
                 policy: TransientPolicy::from(&settings),
                 language,
@@ -224,7 +240,7 @@ impl HostState {
             // Only what we paused resumes, after the last ack.
             if self.session.can_pause() && !self.session.paused() {
                 self.pause();
-                self.resume_after_modal = true;
+                self.osd.resume_after_modal = true;
             }
         }
         self.reap_modal();
@@ -234,7 +250,7 @@ impl HostState {
             // paused+unfocused, which is exactly when Paused lands.
             self.request_redraw();
         }
-        if self.history_window.is_some() {
+        if self.osd.history_window.is_some() {
             self.sync_history_window();
         }
     }
@@ -249,23 +265,23 @@ impl HostState {
         size: nerust_render_traits::SurfaceSize,
     ) {
         use nerust_gui_shell::session::osd::{OsdChrome, OsdSync, OsdSyncInput};
-        let snapshot = self.session.settings_snapshot();
-        let language = snapshot.shared.general.language;
-        let chrome = OsdChrome::from(&snapshot.local.notifications);
+        let frame = self.frame_snapshot();
+        let language = frame.language;
+        let chrome = OsdChrome::from(&frame.notifications);
         // Cheap pre-gate before any snapshot: no rows, no status,
         // and no live layer can only Skip.
         if !osd_sync_likely(
-            self.osd.generation(),
-            self.osd_presenter.last_seen(),
-            self.osd.has_visible(),
+            self.osd.manager.generation(),
+            self.osd.presenter.last_seen(),
+            self.osd.manager.has_visible(),
             chrome.status_enabled,
-            self.osd_layer_live,
+            self.osd.layer_live,
         ) {
             return;
         }
         let metrics = self.session.metrics();
-        let decision = self.osd_presenter.sync(
-            &self.osd,
+        let decision = self.osd.presenter.sync(
+            &self.osd.manager,
             OsdSyncInput {
                 chrome,
                 language,
@@ -281,21 +297,21 @@ impl HostState {
         match decision {
             OsdSync::Skip => {}
             OsdSync::Clear => {
-                self.osd_layer_live = false;
+                self.osd.layer_live = false;
                 renderer.set_osd_layer(None);
             }
             OsdSync::Render(plan) => {
-                self.osd_layer_live = true;
+                self.osd.layer_live = true;
                 let (width, height) = (plan.width, plan.height);
                 let content = plan.into_content();
-                renderer.set_osd_layer(self.osd_raster.rasterize(&content, width, height));
+                renderer.set_osd_layer(self.osd.raster.rasterize(&content, width, height));
             }
         }
     }
 
     /// Wake the loop for OSD expiry while labels are visible.
     pub(crate) fn osd_wakeup(&self) -> Option<Instant> {
-        self.osd.wakeup_deadline(Instant::now())
+        self.osd.manager.wakeup_deadline(Instant::now())
     }
 }
 
@@ -372,7 +388,7 @@ mod tests {
         host.sync_osd_layer(&mut renderer, surface());
         host.sync_osd_layer(&mut renderer, surface());
         assert!(renderer.layers.is_empty());
-        assert!(!host.osd_layer_live);
+        assert!(!host.osd.layer_live);
     }
 
     #[test]
@@ -385,7 +401,7 @@ mod tests {
         let mut renderer = StubRenderer::default();
         host.sync_osd_layer(&mut renderer, surface());
         assert_eq!(renderer.layers, [true]);
-        assert!(host.osd_layer_live);
+        assert!(host.osd.layer_live);
         // Steady second frame reuses the layer: no re-push.
         host.sync_osd_layer(&mut renderer, surface());
         assert_eq!(renderer.layers, [true]);
@@ -395,7 +411,7 @@ mod tests {
         host.apply_settings(off).expect("headless settings apply");
         host.sync_osd_layer(&mut renderer, surface());
         assert_eq!(renderer.layers, [true, false]);
-        assert!(!host.osd_layer_live);
+        assert!(!host.osd.layer_live);
         host.sync_osd_layer(&mut renderer, surface());
         assert_eq!(renderer.layers, [true, false]);
     }

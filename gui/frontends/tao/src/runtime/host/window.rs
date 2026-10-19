@@ -100,7 +100,8 @@ impl HostState {
     }
 
     pub(crate) fn is_settings_window(&self, window_id: WindowId) -> bool {
-        self.settings_window
+        self.settings
+            .window
             .as_ref()
             .is_some_and(|h| h.tao_window_id() == window_id)
     }
@@ -278,9 +279,8 @@ impl HostState {
             return;
         }
         self.remember_fit_window_size();
-        self.settings_open = false;
-        self.resume_after_settings = false;
-        self.settings_window.take();
+        self.settings.resume_after = false;
+        self.settings.window.take();
         self.debug.close_all();
         self.session.flush_before_exit();
     }
@@ -350,10 +350,9 @@ mod tests {
     fn prepare_close_is_idempotent_and_clears_state() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.settings_open = true;
         host.prepare_close();
         assert!(host.close_exited());
-        assert!(!host.settings_open);
+        assert!(!host.settings_open());
         // Liveness gates all dead-handle use; the native handles stay
         // for natural post-loop teardown (no re-entrant destroy).
         assert!(!host.close.is_live());
@@ -361,9 +360,8 @@ mod tests {
         assert!(host.surface_xid().is_none());
         // Second delivery (Destroyed after CloseRequested) is a
         // no-op: re-armed state proves the flush path ran only once.
-        host.settings_open = true;
         host.prepare_close();
-        assert!(host.settings_open);
+        assert!(!host.settings_open());
     }
 
     #[test]

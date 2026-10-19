@@ -104,6 +104,64 @@ fn backend_capabilities() -> HostBackendCapabilities {
     }
 }
 
+/// Settings-window cluster: handle plus its resume bookkeeping. Single
+/// owner for the settings-modal domain; the open truth is the handle.
+pub(super) struct SettingsHost {
+    pub(super) window: Option<crate::aux::settings::window::SettingsWindowHandle>,
+    resume_after: bool,
+}
+
+impl SettingsHost {
+    fn new() -> Self {
+        Self {
+            window: None,
+            resume_after: false,
+        }
+    }
+}
+
+/// OSD cluster: shell display state, raster, presenter, layer memo,
+/// modal flight, and history viewer. One owner for the overlay domain.
+pub(super) struct OsdHost {
+    pub(super) manager: OsdManager,
+    pub(super) raster: nerust_render_osd::OsdRaster,
+    /// Owns the whole OSD sync fingerprint. The per-frame decision
+    /// procedure lives in shell `OsdPresenter`; this host only
+    /// rasterizes the resulting plan.
+    presenter: nerust_gui_shell::session::osd::OsdPresenter,
+    /// Last sync left a layer on the renderer. Memo of the action
+    /// this host took: the pre-gate needs liveness without shell.
+    layer_live: bool,
+    /// Last applied edge strip. The reservation only changes with
+    /// settings or surface size, so unchanged strips skip the
+    /// renderer call (same gate pattern as the gtk frontend).
+    pub(super) last_strip: nerust_render_traits::ReservedStrip,
+    pub(super) history_window: Option<HistoryWindowHandle>,
+    /// In-flight async error dialog plus resume bookkeeping.
+    pub(super) modal_flight: Option<ModalFlight>,
+    pub(super) resume_after_modal: bool,
+    /// Last synced history content: sequence plus language. The sync
+    /// runs on every loop pass while the viewer is open; unchanged
+    /// content skips the full row rebuild (P1 perf gate).
+    pub(super) history_sync_key: Option<(u64, nerust_settings_core::model::language::AppLanguage)>,
+}
+
+impl OsdHost {
+    fn new() -> Self {
+        Self {
+            manager: OsdManager::new(),
+            raster: nerust_render_osd::OsdRaster::new(),
+            presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
+            layer_live: false,
+            last_strip: nerust_render_traits::ReservedStrip::default(),
+            history_window: None,
+            modal_flight: None,
+            resume_after_modal: false,
+            history_sync_key: None,
+        }
+    }
+}
+
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
     /// Creation failure, close idempotence, and native liveness.
@@ -113,9 +171,7 @@ pub(crate) struct HostState {
     app_menu: Box<dyn MenuSink>,
     dialogs: std::sync::Arc<dyn DialogPorts>,
     shell: NativeShellState,
-    pub(super) settings_window: Option<crate::aux::settings::window::SettingsWindowHandle>,
-    settings_open: bool,
-    resume_after_settings: bool,
+    pub(super) settings: SettingsHost,
     pending_fullscreen_sync: Option<bool>,
     /// Focus truth plus the deferred auto-pause protocol.
     pub(super) focus: FocusState,
@@ -129,29 +185,7 @@ pub(crate) struct HostState {
     /// Aux-window state (debugger + PPU viewer). Orchestration lives
     /// here; ownership lives there.
     pub(super) debug: DebugWindows,
-    /// OSD notification display state plus the history window.
-    pub(super) osd: OsdManager,
-    pub(super) osd_raster: nerust_render_osd::OsdRaster,
-    /// Owns the whole OSD sync fingerprint (dirty flag, status
-    /// gate, surface size, layer liveness). The per-frame decision
-    /// procedure lives in shell [`OsdPresenter`](nerust_gui_shell::session::osd::OsdPresenter);
-    /// this host only rasterizes the resulting plan.
-    osd_presenter: nerust_gui_shell::session::osd::OsdPresenter,
-    /// Last sync left a layer on the renderer. Memo of the action
-    /// this host took: the pre-gate needs liveness without shell.
-    osd_layer_live: bool,
-    /// Last applied edge strip. The reservation only changes with
-    /// settings or surface size, so unchanged strips skip the
-    /// renderer call (same gate pattern as the gtk frontend).
-    pub(super) osd_last_strip: nerust_render_traits::ReservedStrip,
-    pub(super) history_window: Option<HistoryWindowHandle>,
-    /// In-flight async error dialog plus resume bookkeeping.
-    pub(super) modal_flight: Option<ModalFlight>,
-    pub(super) resume_after_modal: bool,
-    /// Last synced history content: sequence plus language. The sync
-    /// runs on every loop pass while the viewer is open; unchanged
-    /// content skips the full row rebuild (P1 perf gate).
-    pub(super) history_sync_key: Option<(u64, nerust_settings_core::model::language::AppLanguage)>,
+    pub(super) osd: OsdHost,
     /// Linux render target below the muda menubar (`None` elsewhere).
     /// When it yields no native target (Wayland, pre-layout) the
     /// toplevel fallback applies and the menu stays occluded.
@@ -205,23 +239,13 @@ impl HostState {
             app_menu,
             dialogs,
             shell: NativeShellState::new(),
-            settings_window: None,
-            settings_open: false,
-            resume_after_settings: false,
+            settings: SettingsHost::new(),
             pending_fullscreen_sync: None,
             focus: FocusState::new(),
             drain_flight: None,
             live_flight: None,
             debug: DebugWindows::new(),
-            osd: OsdManager::new(),
-            osd_raster: nerust_render_osd::OsdRaster::new(),
-            osd_presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
-            osd_layer_live: false,
-            osd_last_strip: nerust_render_traits::ReservedStrip::default(),
-            modal_flight: None,
-            resume_after_modal: false,
-            history_window: None,
-            history_sync_key: None,
+            osd: OsdHost::new(),
             #[cfg(any(
                 target_os = "linux",
                 target_os = "dragonfly",
@@ -251,6 +275,12 @@ impl HostState {
 
     /// Close teardown already ran. Test-only read of the idempotence
     /// guard: double-delivered close events must flush exactly once.
+    /// Settings dialog owns the screen iff its handle lives.
+    /// Single truth: no bool shadow to drift from the handle.
+    pub(crate) fn settings_open(&self) -> bool {
+        self.settings.window.is_some()
+    }
+
     #[cfg(test)]
     pub(crate) fn close_exited(&self) -> bool {
         self.close.exited()

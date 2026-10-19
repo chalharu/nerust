@@ -72,7 +72,7 @@ impl WindowRuntime {
         // is already gone, so run the normal close path (pending
         // apply still commits).
         if matches!(event, WindowEvent::Destroyed) {
-            if let Some(handle) = self.host.settings_window.take() {
+            if let Some(handle) = self.host.settings.window.take() {
                 let plan = self.host.close_settings_window(handle);
                 if plan.is_some_and(|p| p.renderer_needs_rebuild) {
                     self.recreate_renderer();
@@ -90,7 +90,7 @@ impl WindowRuntime {
         if matches!(event, WindowEvent::Focused(false)) {
             self.host.focus.leave_aux();
         }
-        let Some(handle) = self.host.settings_window.as_mut() else {
+        let Some(handle) = self.host.settings.window.as_mut() else {
             return;
         };
         handle.on_event(event);
@@ -99,7 +99,7 @@ impl WindowRuntime {
         // serialize a full draw behind every drag/motion event
         // and unload the backlog as a hang on release.
         if handle.close_requested() {
-            let Some(handle) = self.host.settings_window.take() else {
+            let Some(handle) = self.host.settings.window.take() else {
                 return;
             };
             let plan = self.host.close_settings_window(handle);
