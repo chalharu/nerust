@@ -221,15 +221,29 @@ impl GtkOsd {
         body.append(&toolbar);
         body.append(&scrolled);
         dialog.content_area().append(&body);
+        // Same (seq, language, filter) gate as the tao twin: a refresh
+        // with unchanged inputs rebuilds nothing instead of
+        // re-allocating every row and label.
+        let last_sync = Rc::new(RefCell::new(None));
         let refresh = Rc::new({
             let state = Rc::clone(state);
             let grid = grid.clone();
             let filter = filter.clone();
             let count = count.clone();
+            let last_sync = Rc::clone(&last_sync);
             move || {
                 let language = state.borrow().settings_snapshot().shared.general.language;
-                let lines = state.borrow().notification_history_lines(language);
                 let active = filter.active_id();
+                let key = (
+                    state.borrow().notification_history_seq(),
+                    language,
+                    active.as_deref().unwrap_or("all").to_string(),
+                );
+                if last_sync.borrow().as_ref() == Some(&key) {
+                    return;
+                }
+                *last_sync.borrow_mut() = Some(key);
+                let lines = state.borrow().notification_history_lines(language);
                 while let Some(child) = grid.first_child() {
                     grid.remove(&child);
                 }

@@ -17,8 +17,16 @@ pub(crate) enum ViewError {
     Gl(#[from] nerust_glwrap::GlError),
     #[error(transparent)]
     Program(#[from] nerust_glwrap::ShaderError),
-    #[error("internal error: {what}")]
-    Internal { what: &'static str },
+    #[error("GL view misses required uniform `{name}`")]
+    MissingUniform { name: &'static str },
+    #[error("GL view misses required attribute `{name}`")]
+    MissingAttribute { name: &'static str },
+    #[error("GL view has no shader program")]
+    NoProgram,
+    #[error("GL view has no vertex array")]
+    NoVertexArray,
+    #[error("GL view has no vertex buffer")]
+    NoVertexBuffer,
     #[error("{what}: need {need}, have {have}")]
     Frame {
         what: &'static str,
@@ -234,9 +242,9 @@ pub struct GlView {
 /// Required uniform location. Optimized-out names are a broken program
 /// here (unlike optional sampler uploads): fail typed instead of `-1`.
 fn required_uniform(shader: &nerust_glwrap::Shader, key: &'static str) -> Result<i32, ViewError> {
-    shader.uniform_opt(key).ok_or(ViewError::Internal {
-        what: "GL view misses required uniform",
-    })
+    shader
+        .uniform_opt(key)
+        .ok_or(ViewError::MissingUniform { name: key })
 }
 
 fn checked_osd_rect(
@@ -283,12 +291,12 @@ impl GlView {
         gl::load_with(get_proc_address);
     }
 
-    pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), ViewError> {
-        // Reuse must not leak names: tear down while current first.
-        let _ = self.on_close();
-        debug_assert_eq!(self.frame.frame_texture, 0);
-        self.surface.last_resize = None;
-        self.frame.is_palette_format = render_profile.frame_format == VideoFrameFormat::Palette;
+    /// Frame upload target plus the placeholder palette texture.
+    /// NTSC kernels and vertex geometry load separately below.
+    fn load_frame_textures(
+        &mut self,
+        render_profile: &VideoRenderProfile,
+    ) -> Result<(), ViewError> {
         // Palette モードでは frame data は source_logical_size、RGBA では logical_size
         let frame_size = if self.frame.is_palette_format {
             render_profile.source_logical_size
@@ -297,19 +305,7 @@ impl GlView {
         };
         self.frame.logical_width = frame_size.width as i32;
         self.frame.logical_height = frame_size.height as i32;
-
         let bpp: usize = if self.frame.is_palette_format { 1 } else { 4 };
-        let version = gl_string(gl::VERSION);
-        let is_gles = is_gles_context(version.as_deref());
-        // Stride-padded rows upload as-is via UNPACK_ROW_LENGTH
-        // (desktop GL, or GLES3+); older ES repacks instead.
-        self.frame.unpack_row_length = supports_unpack_row_length(version.as_deref());
-        let shader = compile_shader_program(self.frame.is_palette_format, is_gles)?;
-        ok_gl(shader.use_program())?;
-        ok_gl(clear_color(0.0, 0.0, 0.0, 1.0))?;
-
-        ok_gl(pixel_storei(gl::UNPACK_ALIGNMENT, 1))?;
-
         // frame texture (palette 時は R8、RGBA 時は RGBA)
         let (internal_fmt, data_fmt) = if self.frame.is_palette_format {
             (gl::R8 as GLint, gl::RED)
@@ -351,59 +347,76 @@ impl GlView {
                 gl::RGBA,
                 &palette_data,
             )?;
-            ok_gl(uniform_1i(required_uniform(&shader, "palette_texture")?, 1))?;
+        }
+        Ok(())
+    }
 
-            // NTSC texture
-            let ntsc_size = render_profile.logical_size;
-            if let Some(ntsc_data) = render_profile.ntsc_packed_rgba8.as_deref() {
-                self.frame.ntsc_enabled = true;
-                let mut ntsc_names = [0; 1];
-                ok_gl(gen_textures(1, ntsc_names.as_mut_ptr()))?;
-                self.frame.ntsc_texture = ntsc_names[0];
-                configure_ntsc_texture(
-                    2,
-                    self.frame.ntsc_texture,
-                    64,
-                    NTSC_TEXTURE_HEIGHT as usize,
-                    ntsc_data,
-                    &mut self.frame.ntsc_scratch,
-                )?;
-                ok_gl(uniform_1i(required_uniform(&shader, "ntsc_texture")?, 2))?;
-            } else {
-                // ダミー (sampler2D 未バインド防止)
-                let mut ntsc_names = [0; 1];
-                ok_gl(gen_textures(1, ntsc_names.as_mut_ptr()))?;
-                self.frame.ntsc_texture = ntsc_names[0];
-                let ntsc_height = NTSC_TEXTURE_HEIGHT as usize;
-                let dummy = vec![0u8; 64 * ntsc_height * 4];
-                configure_frame_texture(
-                    2,
-                    self.frame.ntsc_texture,
-                    64,
-                    ntsc_height,
-                    gl::RGBA as GLint,
-                    gl::RGBA,
-                    &dummy,
-                )?;
-                ok_gl(uniform_1i(required_uniform(&shader, "ntsc_texture")?, 2))?;
-            }
+    /// Palette sampler binding plus the NTSC kernel texture and its
+    /// uniforms. The textures themselves come from `load_frame_textures`.
+    fn load_palette_ntsc(
+        &mut self,
+        shader: &nerust_glwrap::Shader,
+        render_profile: &VideoRenderProfile,
+    ) -> Result<(), ViewError> {
+        ok_gl(uniform_1i(required_uniform(shader, "palette_texture")?, 1))?;
 
-            ok_gl(uniform_2f(
-                required_uniform(&shader, "source_size")?,
-                render_profile.source_logical_size.width as f32,
-                render_profile.source_logical_size.height as f32,
-            ))?;
-            ok_gl(uniform_2f(
-                required_uniform(&shader, "output_size")?,
-                ntsc_size.width as f32,
-                ntsc_size.height as f32,
-            ))?;
-            ok_gl(uniform_1i(
-                required_uniform(&shader, "ntsc_enabled")?,
-                self.frame.ntsc_enabled as i32,
-            ))?;
+        // NTSC texture
+        let ntsc_size = render_profile.logical_size;
+        if let Some(ntsc_data) = render_profile.ntsc_packed_rgba8.as_deref() {
+            self.frame.ntsc_enabled = true;
+            let mut ntsc_names = [0; 1];
+            ok_gl(gen_textures(1, ntsc_names.as_mut_ptr()))?;
+            self.frame.ntsc_texture = ntsc_names[0];
+            configure_ntsc_texture(
+                2,
+                self.frame.ntsc_texture,
+                64,
+                NTSC_TEXTURE_HEIGHT as usize,
+                ntsc_data,
+                &mut self.frame.ntsc_scratch,
+            )?;
+            ok_gl(uniform_1i(required_uniform(shader, "ntsc_texture")?, 2))?;
+        } else {
+            // ダミー (sampler2D 未バインド防止)
+            let mut ntsc_names = [0; 1];
+            ok_gl(gen_textures(1, ntsc_names.as_mut_ptr()))?;
+            self.frame.ntsc_texture = ntsc_names[0];
+            let ntsc_height = NTSC_TEXTURE_HEIGHT as usize;
+            let dummy = vec![0u8; 64 * ntsc_height * 4];
+            configure_frame_texture(
+                2,
+                self.frame.ntsc_texture,
+                64,
+                ntsc_height,
+                gl::RGBA as GLint,
+                gl::RGBA,
+                &dummy,
+            )?;
+            ok_gl(uniform_1i(required_uniform(shader, "ntsc_texture")?, 2))?;
         }
 
+        ok_gl(uniform_2f(
+            required_uniform(shader, "source_size")?,
+            render_profile.source_logical_size.width as f32,
+            render_profile.source_logical_size.height as f32,
+        ))?;
+        ok_gl(uniform_2f(
+            required_uniform(shader, "output_size")?,
+            ntsc_size.width as f32,
+            ntsc_size.height as f32,
+        ))?;
+        ok_gl(uniform_1i(
+            required_uniform(shader, "ntsc_enabled")?,
+            self.frame.ntsc_enabled as i32,
+        ))?;
+        Ok(())
+    }
+
+    /// Quad geometry plus the game-pipeline uniforms.
+    /// Attribute names are resolved before the GL-typed builder:
+    /// a missing name is a broken program, and 0 would alias a valid
+    /// attribute.
+    fn init_geometry(&mut self, shader: &nerust_glwrap::Shader) -> Result<(), ViewError> {
         let vertex_data: [VertexData; 4] = [
             VertexData::new(Vec2D::new(-1.0, 1.0), Vec2D::new(0.0, 0.0)),
             VertexData::new(Vec2D::new(-1.0, -1.0), Vec2D::new(0.0, 1.0)),
@@ -416,12 +429,10 @@ impl GlView {
         // is a broken program, and 0 would alias a valid attribute.
         let position = shader
             .attribute_opt("position")
-            .ok_or(ViewError::Internal {
-                what: "GL view has no position attribute",
-            })?;
-        let uv = shader.attribute_opt("uv").ok_or(ViewError::Internal {
-            what: "GL view has no uv attribute",
-        })?;
+            .ok_or(ViewError::MissingAttribute { name: "position" })?;
+        let uv = shader
+            .attribute_opt("uv")
+            .ok_or(ViewError::MissingAttribute { name: "uv" })?;
         if self.frame.use_vao {
             let vbo = vbo.clone();
             self.frame.vba = Some(ok_gl(VertexArray::new(|vaic| {
@@ -453,12 +464,41 @@ impl GlView {
         }
 
         ok_gl(uniform_matrix_4fv(
-            required_uniform(&shader, "unif_matrix")?,
+            required_uniform(shader, "unif_matrix")?,
             1,
             gl::FALSE,
             Mat4::identity().as_ptr(),
         ))?;
-        ok_gl(uniform_1i(required_uniform(&shader, "frame_texture")?, 0))?;
+        ok_gl(uniform_1i(required_uniform(shader, "frame_texture")?, 0))?;
+        Ok(())
+    }
+
+    pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), ViewError> {
+        // Reuse must not leak names: tear down while current first.
+        let _ = self.on_close();
+        debug_assert_eq!(self.frame.frame_texture, 0);
+        self.surface.last_resize = None;
+        self.frame.is_palette_format = render_profile.frame_format == VideoFrameFormat::Palette;
+        let version = gl_string(gl::VERSION);
+        let is_gles = is_gles_context(version.as_deref());
+        // Stride-padded rows upload as-is via UNPACK_ROW_LENGTH
+        // (desktop GL, or GLES3+); older ES repacks instead.
+        self.frame.unpack_row_length = supports_unpack_row_length(version.as_deref());
+        let shader = compile_shader_program(self.frame.is_palette_format, is_gles)?;
+        ok_gl(shader.use_program())?;
+        ok_gl(clear_color(0.0, 0.0, 0.0, 1.0))?;
+
+        ok_gl(pixel_storei(gl::UNPACK_ALIGNMENT, 1))?;
+
+        self.load_frame_textures(render_profile)?;
+
+        // Palette and NTSC kernels plus their uniforms; the textures
+        // themselves come from `load_frame_textures`.
+        if self.frame.is_palette_format {
+            self.load_palette_ntsc(&shader, render_profile)?;
+        }
+
+        self.init_geometry(&shader)?;
         self.frame.shader = Some(shader);
         self.init_osd(is_gles);
         Ok(())
@@ -576,16 +616,12 @@ impl GlView {
         use_texture(0, self.osd.osd_texture)?;
         if self.frame.use_vao {
             let Some(vba) = self.frame.vba.as_ref() else {
-                return Err(ViewError::Internal {
-                    what: "GL view has no vertex array",
-                });
+                return Err(ViewError::NoVertexArray);
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.frame.vbo.as_ref() else {
-                return Err(ViewError::Internal {
-                    what: "GL view has no vertex buffer",
-                });
+                return Err(ViewError::NoVertexBuffer);
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -781,9 +817,7 @@ impl GlView {
     pub fn on_update(&self, screen: &[u8], row_length: i32) -> Result<(), ViewError> {
         let screen_ptr = screen.as_ptr().cast();
         let Some(shader) = self.frame.shader.as_ref() else {
-            return Err(ViewError::Internal {
-                what: "GL view has no shader program",
-            });
+            return Err(ViewError::NoProgram);
         };
         ok_gl(shader.use_program())?;
 
@@ -816,16 +850,12 @@ impl GlView {
 
         if self.frame.use_vao {
             let Some(vba) = self.frame.vba.as_ref() else {
-                return Err(ViewError::Internal {
-                    what: "GL view has no vertex array",
-                });
+                return Err(ViewError::NoVertexArray);
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.frame.vbo.as_ref() else {
-                return Err(ViewError::Internal {
-                    what: "GL view has no vertex buffer",
-                });
+                return Err(ViewError::NoVertexBuffer);
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -886,23 +916,17 @@ impl GlView {
         };
 
         let Some(shader) = self.frame.shader.as_ref() else {
-            return Err(ViewError::Internal {
-                what: "GL view has no shader program",
-            });
+            return Err(ViewError::NoProgram);
         };
         ok_gl(shader.use_program())?;
         if self.frame.use_vao {
             let Some(vba) = self.frame.vba.as_ref() else {
-                return Err(ViewError::Internal {
-                    what: "GL view has no vertex array",
-                });
+                return Err(ViewError::NoVertexArray);
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.frame.vbo.as_ref() else {
-                return Err(ViewError::Internal {
-                    what: "GL view has no vertex buffer",
-                });
+                return Err(ViewError::NoVertexBuffer);
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -1150,9 +1174,7 @@ fn compile_shader_program(is_palette: bool, is_gles: bool) -> Result<Shader, Vie
         }
     }
 
-    Err(ViewError::Internal {
-        what: "no GL shader pipeline compiled",
-    })
+    Err(ViewError::NoProgram)
 }
 
 fn is_gles_context(version: Option<&str>) -> bool {
@@ -1294,9 +1316,7 @@ mod tests {
             have: 4,
         };
         assert!(err.to_string().contains("10"));
-        let internal = super::ViewError::Internal {
-            what: "GL view has no shader program",
-        };
+        let internal = super::ViewError::NoProgram;
         assert!(internal.to_string().contains("shader"));
     }
 

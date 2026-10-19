@@ -136,6 +136,12 @@ impl State {
         self.session.notification_history_lines(language)
     }
 
+    /// History generation for the refresh gate: unchanged content
+    /// skips the full row rebuild (same contract as the tao twin).
+    pub(crate) fn notification_history_seq(&self) -> u64 {
+        self.session.notification_history_seq()
+    }
+
     pub(crate) fn clear_notification_history(&mut self) {
         self.session.clear_notification_history();
     }
