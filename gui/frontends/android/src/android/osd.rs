@@ -95,7 +95,7 @@ impl AndroidOsd {
     /// manager directly, so the one-dialog invariant has one owner.
     pub(super) fn poll_error_dialog(
         &mut self,
-        screen: crate::error_dialog_controller::ScreenState,
+        screen: crate::error_dialog_controller::Screen,
     ) -> Option<crate::error_dialog_controller::ShowTransition> {
         self.controller.poll_show(&mut self.manager, screen)
     }
@@ -106,7 +106,7 @@ impl AndroidOsd {
 
     pub(super) fn dismiss_error_dialog(
         &mut self,
-        screen: crate::error_dialog_controller::ScreenState,
+        screen: crate::error_dialog_controller::Screen,
     ) -> crate::error_dialog_controller::DismissTransition {
         self.controller.on_dismissed(&mut self.manager, screen)
     }
@@ -117,7 +117,7 @@ impl AndroidOsd {
 
     pub(super) fn settings_closed_error_dialog(
         &mut self,
-        screen: crate::error_dialog_controller::ScreenState,
+        screen: crate::error_dialog_controller::Screen,
     ) -> crate::error_dialog_controller::SettingsClosedTransition {
         self.controller
             .on_settings_closed(&mut self.manager, screen)

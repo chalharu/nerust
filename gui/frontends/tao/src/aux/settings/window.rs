@@ -61,7 +61,7 @@ impl SettingsWindowHandle {
             None,
             None,
             "settings window",
-        )?;
+        ).ok()?;
         // Birth geometry is a placeholder on some compositors; record
         // it to tell "born 0x0, never resized" apart from later traffic.
         log::debug!(

@@ -228,7 +228,7 @@ impl PpuWindowHandle {
             None,
             position,
             "PPU viewer window",
-        )?;
+        ).ok()?;
         let program = PpuProgram {
             bridge: Arc::clone(&bridge),
         };
