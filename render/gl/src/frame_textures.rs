@@ -4,7 +4,7 @@
 //! upload.
 
 use gl::types::{GLenum, GLint};
-use nerust_glwrap::raw::*;
+use nerust_glwrap::raw::{active_texture, bind_texture, tex_image_2d, tex_parameteri};
 
 use crate::error::ViewError;
 
