@@ -863,7 +863,7 @@ impl AndroidFrontend {
                 if auto_pause {
                     self.pause();
                 }
-                if let Some(detail) = self.osd.error_detail() {
+                if let Some(detail) = self.osd.current_detail() {
                     error_dialog::request_show_error_dialog(&self.app, &detail);
                 }
             }
@@ -1051,63 +1051,65 @@ impl AndroidFrontend {
 
     fn handle_menu_action(&mut self, event: FrontendEvent) {
         log::info!("AndroidFrontend::handle_menu_action: {:?}", event);
-        let FrontendEvent::Menu(action) = event else {
-            self.handle_error_dialog_dismissed();
-            return;
-        };
-        match action {
-            MenuAction::ControllerInput {
-                device_id,
-                key,
-                pressed,
-            } => {
-                self.apply_physical_controller_input(device_id, key, pressed);
-            }
-            MenuAction::Exit => {
-                if self.session.loaded() {
-                    self.session.clear_hidden_lifecycle_state();
-                    self.storage.clear_restore_pending();
-                    if let Err(error) = self.session.unload() {
-                        log::warn!("failed to unload session on exit: {error}");
+        // Exhaustive over the event: a new FrontendEvent variant fails
+        // to compile here instead of silently becoming a dialog dismiss.
+        match event {
+            FrontendEvent::Menu(action) => match action {
+                MenuAction::ControllerInput {
+                    device_id,
+                    key,
+                    pressed,
+                } => {
+                    self.apply_physical_controller_input(device_id, key, pressed);
+                }
+                MenuAction::Exit => {
+                    if self.session.loaded() {
+                        self.session.clear_hidden_lifecycle_state();
+                        self.storage.clear_restore_pending();
+                        if let Err(error) = self.session.unload() {
+                            log::warn!("failed to unload session on exit: {error}");
+                        }
+                    }
+                    self.session.flush_before_exit();
+                    let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+                    if let Err(error) = vm.attach_current_thread(|env| {
+                        let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
+                        let activity =
+                            unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+                        env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[])?;
+                        Ok::<(), jni::errors::Error>(())
+                    }) {
+                        log::warn!("failed to finish Android activity on exit: {error:?}");
                     }
                 }
-                self.session.flush_before_exit();
-                let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-                if let Err(error) = vm.attach_current_thread(|env| {
-                    let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
-                    let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-                    env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[])?;
-                    Ok::<(), jni::errors::Error>(())
-                }) {
-                    log::warn!("failed to finish Android activity on exit: {error:?}");
+                MenuAction::Unload => {
+                    if self.session.loaded() {
+                        self.session.clear_hidden_lifecycle_state();
+                        self.storage.clear_restore_pending();
+                        let _ = self.session.unload();
+                    }
+                    self.session.clear_display();
+                    self.request_redraw();
                 }
-            }
-            MenuAction::Unload => {
-                if self.session.loaded() {
-                    self.session.clear_hidden_lifecycle_state();
-                    self.storage.clear_restore_pending();
-                    let _ = self.session.unload();
+                MenuAction::LoadState => {
+                    let _ = self.exec(SessionCommand::LoadActiveSlot);
                 }
-                self.session.clear_display();
-                self.request_redraw();
-            }
-            MenuAction::LoadState => {
-                let _ = self.exec(SessionCommand::LoadActiveSlot);
-            }
-            MenuAction::OpenRom => self.request_open_rom(),
-            MenuAction::OpenSettings => self.request_settings_dialog(),
-            MenuAction::OrientationChanged => {
-                // Screen rotation: rebuild the touch overlay (hit zones)
-                // for the new window size even if winit did not deliver
-                // a Resized event. Idempotent with the Resized path.
-                self.rebuild_overlay();
-                self.request_redraw();
-            }
-            MenuAction::Reset => self.reset(),
-            MenuAction::SaveState => {
-                let _ = self.exec(SessionCommand::SaveActiveSlotOrNew);
-            }
-            MenuAction::TogglePause => self.toggle_pause(),
+                MenuAction::OpenRom => self.request_open_rom(),
+                MenuAction::OpenSettings => self.request_settings_dialog(),
+                MenuAction::OrientationChanged => {
+                    // Screen rotation: rebuild the touch overlay (hit zones)
+                    // for the new window size even if winit did not deliver
+                    // a Resized event. Idempotent with the Resized path.
+                    self.rebuild_overlay();
+                    self.request_redraw();
+                }
+                MenuAction::Reset => self.reset(),
+                MenuAction::SaveState => {
+                    let _ = self.exec(SessionCommand::SaveActiveSlotOrNew);
+                }
+                MenuAction::TogglePause => self.toggle_pause(),
+            },
+            FrontendEvent::ErrorDialogDismissed => self.handle_error_dialog_dismissed(),
         }
     }
 
@@ -1130,7 +1132,7 @@ impl AndroidFrontend {
         if auto_pause {
             self.pause();
         }
-        if let Some(detail) = self.osd.error_detail() {
+        if let Some(detail) = self.osd.current_detail() {
             error_dialog::request_show_error_dialog(&self.app, &detail);
         }
     }
@@ -2068,11 +2070,12 @@ impl ApplicationHandler for AndroidFrontend {
         }
         menu::take_events_into(&mut self.event_scratch);
         // Acks first: modal gate release must not wait behind an input
-        // burst. Stable: menu order is preserved within each class.
-        self.event_scratch
-            .sort_by_key(|event| matches!(event, FrontendEvent::Menu(_)));
+        // burst. Single-pass stable partition keeps menu order.
         let mut pending = std::mem::take(&mut self.event_scratch);
-        for event in pending.drain(..) {
+        let (acks, rest): (Vec<_>, Vec<_>) = pending
+            .drain(..)
+            .partition(|event| matches!(event, FrontendEvent::ErrorDialogDismissed));
+        for event in acks.into_iter().chain(rest) {
             self.handle_menu_action(event);
         }
         self.event_scratch = pending;
