@@ -21,6 +21,11 @@ impl WindowRuntime {
             WindowEvent::CloseRequested if self.host.prepare_close() => {
                 *control_flow = ControlFlow::Exit;
             }
+            // External destroy without CloseRequested: the window is
+            // already gone, so flush and exit like the normal close.
+            WindowEvent::Destroyed if self.host.prepare_close() => {
+                *control_flow = ControlFlow::Exit;
+            }
             WindowEvent::Focused(true) => {
                 // A same-burst aux focus already cancelled any
                 // pending pause; this is belt-and-braces.
@@ -233,6 +238,16 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         let mut flow = ControlFlow::Wait;
         runtime.on_main_event(&opener, WindowEvent::CloseRequested, &mut flow);
+        assert_eq!(flow, ControlFlow::Exit);
+        assert!(menu.updates().is_empty());
+    }
+
+    #[test]
+    fn main_destroyed_without_close_requests_exit() {
+        let (mut runtime, menu) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        let mut flow = ControlFlow::Wait;
+        runtime.on_main_event(&opener, WindowEvent::Destroyed, &mut flow);
         assert_eq!(flow, ControlFlow::Exit);
         assert!(menu.updates().is_empty());
     }
