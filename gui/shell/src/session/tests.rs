@@ -527,7 +527,7 @@ fn apply_settings_rolls_back_on_save_failure() {
     // Core should still be present (swap-back rollback succeeded without
     // reconstructing anything)
     assert!(
-        session.emu_core.is_some(),
+        session.emu.core_opt().is_some(),
         "core should be restored after rollback"
     );
 }

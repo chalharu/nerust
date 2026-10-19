@@ -95,7 +95,7 @@ impl SessionHandle {
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
         if let Some(&field) = self.input.field_map.get(&(event.attachment, event.control))
-            && let Some(ref mut gui_input) = self.gui_input
+            && let Some(gui_input) = self.emu.input_mut()
         {
             let _ = gui_input
                 .state
@@ -112,7 +112,7 @@ impl SessionHandle {
         };
 
         if let Some(&field) = self.input.key_field_map.get(&key)
-            && let Some(ref mut gui_input) = self.gui_input
+            && let Some(gui_input) = self.emu.input_mut()
         {
             let _ = gui_input.state.set(field, InputValue::Digital(pressed));
         }
@@ -133,7 +133,7 @@ impl SessionHandle {
 
     pub fn clear_input(&mut self) {
         self.input.pressed_keys.clear();
-        if let Some(ref mut gui_input) = self.gui_input {
+        if let Some(gui_input) = self.emu.input_mut() {
             gui_input.clear();
         }
     }
