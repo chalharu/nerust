@@ -1353,9 +1353,6 @@ fn pump_osd_routes_no_core_error_to_modal() {
     manager.modal_closed();
 }
 
-/// Info without a composited frame is dropped by the pump: no dirty,
-/// no rows, no modal. Warnings still reach the modal.
-#[test]
 #[test]
 fn report_external_error_truncates_and_labels_source() {
     use crate::session::notification::{ExternalSource, MAX_EXTERNAL_DETAIL, NotificationKind};
@@ -1378,6 +1375,8 @@ fn report_external_error_truncates_and_labels_source() {
     );
 }
 
+/// Info without a composited frame is dropped by the pump: no generation
+/// bump, no rows, no modal. Warnings still reach the modal.
 #[test]
 fn pump_osd_drops_info_without_frame() {
     use std::time::Instant;
