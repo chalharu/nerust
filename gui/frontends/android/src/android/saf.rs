@@ -57,21 +57,85 @@ impl AndroidStorageBackend {
 
     fn read(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, PersistenceError> {
         Self::validate_relative_path(relative)?;
-        let value = self.call_string("readSafFile", uri, relative, None)?;
-        value
-            .map(|value| STANDARD.decode(value).map_err(Self::io_error))
-            .transpose()
+        // Chunked path bounds every JNI crossing to 64KB (no whole-file
+        // Base64 on the bridge thread); legacy whole-file read is the
+        // fallback for APKs predating the chunked methods.
+        match self.read_chunked(uri, relative) {
+            Ok(bytes) => Ok(bytes),
+            Err(error) => {
+                log::debug!("SAF chunked read unavailable, falling back to whole-file: {error}");
+                let value = self.call_string("readSafFile", uri, relative, None)?;
+                value
+                    .map(|value| STANDARD.decode(value).map_err(Self::io_error))
+                    .transpose()
+            }
+        }
+    }
+
+    /// Streaming read: size probe then 64KB Base64 chunks appended into one
+    /// buffer. Runs on the session/persistence thread, never the UI thread;
+    /// the Kotlin side performs the I/O inline on the calling thread.
+    fn read_chunked(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, PersistenceError> {
+        let size = self.call_file_size(uri, relative)?;
+        if size < 0 {
+            return Ok(None);
+        }
+        let mut bytes = Vec::with_capacity(size.max(0) as usize);
+        let mut offset: i64 = 0;
+        while offset < size {
+            let length = (size - offset).min(SAF_CHUNK_BYTES as i64);
+            let chunk = self
+                .call_read_chunk(uri, relative, offset, length)?
+                .ok_or_else(|| Self::io_error("Android SAF chunked read returned null"))?;
+            bytes.extend_from_slice(&STANDARD.decode(chunk).map_err(Self::io_error)?);
+            offset += length;
+        }
+        Ok(Some(bytes))
     }
 
     fn write(&self, uri: &str, relative: &str, bytes: &[u8]) -> Result<(), PersistenceError> {
         Self::validate_relative_path(relative)?;
-        let encoded = STANDARD.encode(bytes);
-        let result = self.call_string("writeSafFile", uri, relative, Some(&encoded))?;
-        if result.as_deref() == Some("ok") {
-            Ok(())
-        } else {
-            Err(Self::io_error("Android SAF write failed"))
+        // Chunked path streams 64KB Base64 appends; legacy whole-file write
+        // is the fallback for APKs predating the chunked methods.
+        match self.write_chunked(uri, relative, bytes) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                log::debug!("SAF chunked write unavailable, falling back to whole-file: {error}");
+                let encoded = STANDARD.encode(bytes);
+                let result = self.call_string("writeSafFile", uri, relative, Some(&encoded))?;
+                if result.as_deref() == Some("ok") {
+                    Ok(())
+                } else {
+                    Err(Self::io_error("Android SAF write failed"))
+                }
+            }
         }
+    }
+
+    /// Streaming write: 64KB Base64 chunks, first chunk overwrites, the
+    /// rest append (`"rwt"` then `"wa"` on the Kotlin side).
+    fn write_chunked(
+        &self,
+        uri: &str,
+        relative: &str,
+        bytes: &[u8],
+    ) -> Result<(), PersistenceError> {
+        if bytes.is_empty() {
+            let result = self.call_write_chunk(uri, relative, "", false)?;
+            return if result.as_deref() == Some("ok") {
+                Ok(())
+            } else {
+                Err(Self::io_error("Android SAF write failed"))
+            };
+        }
+        for (index, chunk) in bytes.chunks(SAF_CHUNK_BYTES).enumerate() {
+            let encoded = STANDARD.encode(chunk);
+            let result = self.call_write_chunk(uri, relative, &encoded, index > 0)?;
+            if result.as_deref() != Some("ok") {
+                return Err(Self::io_error("Android SAF write failed"));
+            }
+        }
+        Ok(())
     }
 
     fn delete(&self, uri: &str, relative: &str) -> Result<(), PersistenceError> {
@@ -148,10 +212,118 @@ impl AndroidStorageBackend {
         .map_err(Self::io_error)
     }
 
+    /// Size probe for the chunked read: bytes, or a negative value when
+    /// the document does not exist. New bridge (v2); absence (old APK)
+    /// surfaces as `Err` and the caller falls back to whole-file I/O.
+    fn call_file_size(&self, uri: &str, relative: &str) -> Result<i64, PersistenceError> {
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        super::bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let uri = JString::from_str(env, uri)?;
+            let relative = JString::from_str(env, relative)?;
+            let size = env
+                .call_method(
+                    activity.as_ref(),
+                    jni_str!("getSafFileSize"),
+                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;)J"),
+                    &[
+                        JValue::Object(uri.as_ref()),
+                        JValue::Object(relative.as_ref()),
+                    ],
+                )?
+                .j()?;
+            Ok::<_, jni::errors::Error>(size)
+        })
+        .map_err(Self::io_error)
+    }
+
+    /// One 64KB Base64 chunk read at `offset`. New bridge (v2); absence
+    /// (old APK) surfaces as `Err` and the caller falls back.
+    fn call_read_chunk(
+        &self,
+        uri: &str,
+        relative: &str,
+        offset: i64,
+        length: i64,
+    ) -> Result<Option<String>, PersistenceError> {
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        super::bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let uri = JString::from_str(env, uri)?;
+            let relative = JString::from_str(env, relative)?;
+            let object = env
+                .call_method(
+                    activity.as_ref(),
+                    jni_str!("readSafFileChunk"),
+                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;JJ)Ljava/lang/String;"),
+                    &[
+                        JValue::Object(uri.as_ref()),
+                        JValue::Object(relative.as_ref()),
+                        JValue::Long(offset),
+                        JValue::Long(length),
+                    ],
+                )?
+                .l()?;
+            if object.is_null() {
+                Ok(None)
+            } else {
+                Ok(Some(JString::cast_local(env, object)?.try_to_string(env)?))
+            }
+        })
+        .map_err(Self::io_error)
+    }
+
+    /// One 64KB Base64 chunk write; `append` selects `"wa"` (append) over
+    /// `"rwt"` (overwrite). New bridge (v2); absence (old APK) surfaces
+    /// as `Err` and the caller falls back.
+    fn call_write_chunk(
+        &self,
+        uri: &str,
+        relative: &str,
+        encoded: &str,
+        append: bool,
+    ) -> Result<Option<String>, PersistenceError> {
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        super::bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let uri = JString::from_str(env, uri)?;
+            let relative = JString::from_str(env, relative)?;
+            let encoded = JString::from_str(env, encoded)?;
+            let object = env
+                .call_method(
+                    activity.as_ref(),
+                    jni_str!("writeSafFileChunk"),
+                    jni_sig!(
+                        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;"
+                    ),
+                    &[
+                        JValue::Object(uri.as_ref()),
+                        JValue::Object(relative.as_ref()),
+                        JValue::Object(encoded.as_ref()),
+                        JValue::Bool(append),
+                    ],
+                )?
+                .l()?;
+            if object.is_null() {
+                Ok(None)
+            } else {
+                Ok(Some(JString::cast_local(env, object)?.try_to_string(env)?))
+            }
+        })
+        .map_err(Self::io_error)
+    }
+
     fn state_path(dir: &Path, slot_id: u64) -> PathBuf {
         dir.join(format!("{slot_id}.state"))
     }
 }
+
+/// Per-crossing SAF chunk: 64KB of raw bytes per Base64 JNI call bounds
+/// bridge memory without changing the legacy whole-file signatures.
+const SAF_CHUNK_BYTES: usize = 64 * 1024;
 
 impl SlotBackend for AndroidStorageBackend {
     fn scan(

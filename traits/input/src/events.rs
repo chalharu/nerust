@@ -44,19 +44,23 @@ impl DigitalInputEvent {
 }
 
 /// Result of a CPU bus read — data bits and which bits are valid.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct OpenBusReadResult {
     pub data: u8,
     pub mask: u8,
 }
 
 impl OpenBusReadResult {
-    pub fn new(data: u8, mask: u8) -> Self {
+    pub const fn new(data: u8, mask: u8) -> Self {
         Self { data, mask }
     }
 }
 
-/// Values that can be written to an InputStateBuffer field.
+/// Values that can be written to an `InputStateBuffer` field.
+///
+/// `PartialEq` follows IEEE-754 float semantics: `NaN != NaN`.
+/// Buffers must not rely on `Analog` equality for state comparison;
+/// use exact bit patterns (`to_bits`) or epsilon checks instead.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputValue {
     Digital(bool),
@@ -64,7 +68,7 @@ pub enum InputValue {
     Position { x: f64, y: f64 },
 }
 
-/// Errors from InputStateBuffer operations.
+/// Errors from `InputStateBuffer` operations.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BufferError {
     #[error("field {field} not found")]
@@ -74,17 +78,31 @@ pub enum BufferError {
         field: usize,
         expected: &'static str,
     },
+    #[error("buffer type mismatch: expected {expected}")]
+    MismatchedBuffer { expected: &'static str },
 }
 
 /// GUI-side write abstraction for input state.
 /// Emu side reads via `Any::downcast_ref`.
+///
+/// Field-index contract: `field` is a dense logical index in `0..N`
+/// whose meaning is defined by the concrete buffer implementation
+/// (documented alongside each core's buffer type). Out-of-range
+/// indices must return [`BufferError::FieldNotFound`]; a value of the
+/// wrong variant must return [`BufferError::UnsupportedFieldType`].
+/// `clear` resets every field to its neutral (released) state, so a
+/// freshly constructed buffer and a cleared buffer compare equal.
 pub trait InputStateBuffer: std::fmt::Debug + Send + Downcast {
-    /// field: 0..N の logical field index。値の意味は impl 定義。
+    /// Write one logical field.
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
-    /// 全 field を neutral / released 状態にリセットする。impl 依存。
+    /// Reset all fields to the neutral (released) state.
+    /// Postcondition: the buffer equals a freshly constructed default.
     fn clear(&mut self);
     /// Copy absolute state from another buffer of the same concrete type.
-    fn copy_state(&mut self, other: &dyn InputStateBuffer);
+    /// Returns [`BufferError::MismatchedBuffer`] when `other` has a
+    /// different concrete type; implementations must not partially apply
+    /// state on mismatch.
+    fn copy_state(&mut self, other: &dyn InputStateBuffer) -> Result<(), BufferError>;
 }
 
 downcast_rs::impl_downcast!(InputStateBuffer);

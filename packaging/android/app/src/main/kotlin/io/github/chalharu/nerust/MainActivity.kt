@@ -1,9 +1,7 @@
 package io.github.chalharu.nerust
 
 import android.annotation.SuppressLint
-import android.app.Dialog
 import android.app.NativeActivity
-import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
@@ -12,35 +10,16 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
-import android.graphics.drawable.ColorDrawable
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.hardware.input.InputManager
 import android.media.AudioManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
-import android.os.SystemClock
-import android.util.Base64
 import android.util.Log
-import android.view.Gravity
-import android.view.HapticFeedbackConstants
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
-import android.view.Surface as AndroidSurface
 import android.view.View
-import android.view.ViewGroup
 import android.view.WindowInsets as AndroidWindowInsets
-import android.view.WindowManager
-import android.widget.FrameLayout
-import android.widget.PopupWindow
-import android.widget.TextView
 import android.window.OnBackInvokedDispatcher
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -65,34 +44,23 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationDrawerItem
-import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -104,49 +72,14 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import kotlinx.coroutines.launch
 import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-internal fun screenRelativeAcceleration(
-    x: Float,
-    y: Float,
-    rotation: Int,
-): FloatArray {
-    val (screenX, screenY) =
-        when (rotation) {
-            AndroidSurface.ROTATION_0 -> x to y
-            AndroidSurface.ROTATION_90 -> -y to x
-            AndroidSurface.ROTATION_180 -> -x to -y
-            AndroidSurface.ROTATION_270 -> y to -x
-            else -> x to y
-        }
-    return floatArrayOf(
-        screenX / SensorManager.GRAVITY_EARTH,
-        -screenY / SensorManager.GRAVITY_EARTH,
-    )
-}
-
-private const val CONTROLS_OVERLAY_TAG = "nerust-controls-overlay"
-private const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
-private const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
-private const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
-private const val FPS_OVERLAY_TAG = "nerust-fps-overlay"
-private const val MENU_ACTION_EXIT = "exit"
-private const val MENU_ACTION_LOAD_STATE = "load_state"
-private const val MENU_ACTION_OPEN_ROM = "open_rom"
-private const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
-private const val MENU_ACTION_RESET = "reset"
-private const val MENU_ACTION_SAVE_STATE = "save_state"
-private const val MENU_ACTION_TOGGLE_PAUSE = "toggle_pause"
-private const val MENU_ACTION_UNLOAD = "unload"
 private const val MENU_ACTION_ERROR_DIALOG_DISMISSED = "error_dialog_dismissed"
-private const val MENU_BUTTON_TAG = "nerust-menu-button"
 private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
 private const val ERROR_DIALOG_TAG = "nerust-error-dialog"
-private const val DRAWER_TITLE = "Nerust"
 private const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
 
 internal fun screenOrientationRequest(value: Int): Int? =
@@ -156,11 +89,6 @@ internal fun screenOrientationRequest(value: Int): Int? =
         2 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         else -> null
     }
-
-private data class DrawerAction(
-    val label: String,
-    val action: String,
-)
 
 private data class AndroidSetting(
     val key: String,
@@ -192,18 +120,6 @@ internal data class FloatingJoystickSpec(
     val activationBounds: RectF,
 )
 
-private val DRAWER_ACTIONS =
-    listOf(
-        DrawerAction("Open ROM", MENU_ACTION_OPEN_ROM),
-        DrawerAction("Settings", MENU_ACTION_OPEN_SETTINGS),
-        DrawerAction("Pause / Resume", MENU_ACTION_TOGGLE_PAUSE),
-        DrawerAction("Save State", MENU_ACTION_SAVE_STATE),
-        DrawerAction("Load State", MENU_ACTION_LOAD_STATE),
-        DrawerAction("Reset", MENU_ACTION_RESET),
-        DrawerAction("Unload ROM", MENU_ACTION_UNLOAD),
-        DrawerAction("Exit", MENU_ACTION_EXIT),
-    )
-
 private fun createRomPickerIntent(): Intent =
     Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
         addCategory(Intent.CATEGORY_OPENABLE)
@@ -225,64 +141,20 @@ class MainActivity :
     LifecycleOwner,
     SavedStateRegistryOwner,
     ViewModelStoreOwner,
-    InputManager.InputDeviceListener,
-    SensorEventListener {
+    InputManager.InputDeviceListener {
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
     private val controllerPressed = mutableMapOf<Int, MutableSet<String>>()
-    private val ensureChromeAttachedRunnable = Runnable { ensureChromeAttached() }
-    private val restoreControllerOverlayRunnable =
-        Runnable {
-            controllerOverlayHiddenUntil = 0L
-            scheduleChromeAttach()
-        }
-    private var chromeAttachAttempts = 0
-    private var chromeAttachEnabled = false
-    private var controlsOverlayPopup: PopupWindow? = null
-    private var controlsOverlayView: View? = null
-    private var controllerOverlayHiddenUntil = 0L
-    private var controlsVisibility = "auto"
-    private var controlsOpacityPercent = 65
-    private var controlsScalePercent = 100
-    private var controlsVerticalOffsetPercent = 0
-    private var controlsHaptics = true
-    private var controlsShouldersVisible = true
-    private lateinit var sensorManager: SensorManager
-    private var accelerometer: Sensor? = null
-    private var activityResumed = false
-    private var windowHasFocus = false
-    private var cartridgeMotionEnabled = false
-    private var sensorRegistered = false
-    private var cartridgeRumbleEnabled = false
-    private var cartridgeRumbleStrengthPercent = 100
-    private var cartridgeRumbleTarget = "auto"
-    private var cartridgeRumbleIntensity = 0
-    private var lastControllerDeviceId: Int? = null
-    private var activeRumbleVibrator: Vibrator? = null
-    private var activeRumbleAmplitude = 0
-    private var drawerChromePopup: PopupWindow? = null
-    private var drawerChromeContainer: FrameLayout? = null
-    private var drawerEdgeHandleView: View? = null
-    private var drawerShowing = false
-    private var drawerFullScreenPopup: PopupWindow? = null
-    private var drawerOverlayView: View? = null
-    private var drawerComposeView: View? = null
-    private var fpsOverlayView: TextView? = null
-    private var fpsOverlayPopup: PopupWindow? = null
-    private var fpsValue: Float = 0f
-    private var fpsVisible: Boolean = false
-    private var composeDialog: Dialog? = null
-    private var composeDialogRootView: View? = null
-    private var composeDialogComposeView: View? = null
-    private var composeDialogTag: String? = null
-    private var composeDialogDismissCallback: (() -> Unit)? = null
-    private var composeDialogOwnedByTest = false
-    private var lastDrawerStateForTest = "not requested"
-    private var lastDialogStateForTest = "not requested"
+    private val sensorController = SensorController(this)
+    private val chromeManager = ChromeManager(this)
+    private val dialogManager = DialogManager(this)
+    private val safRepository by lazy { SafRepository(this) }
+    internal var lastDialogStateForTest = "not requested"
 
     // Root-window safe insets in physical pixels, order [top, right, bottom, left].
-    // Observed only: the listener refreshes this cache, dispatch continues untouched.
+    // Observed only: the listener refreshes this cache and pushes it to Rust
+    // via onSystemInsetsChanged, so the render thread reads the cache only.
     @Volatile private var cachedSafeInsetsPx: IntArray = intArrayOf(0, 0, 0, 0)
 
     @Volatile private var lastLoadedSystemForTest: String? = null
@@ -308,11 +180,10 @@ class MainActivity :
             )
         }
         volumeControlStream = AudioManager.STREAM_MUSIC
-        sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
-        accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        sensorController.onCreate()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         installSafeInsetsListener()
-        scheduleChromeAttach()
+        chromeManager.onResume()
     }
 
     override fun onStart() {
@@ -325,26 +196,19 @@ class MainActivity :
         super.onResume()
         Log.i(TAG, "onResume")
         activeActivityForTest = this
-        activityResumed = true
-        chromeAttachEnabled = true
+        chromeManager.onResume()
+        sensorController.onResume()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
-        updateCartridgeMotionRegistration()
-        applyCartridgeRumble()
-        scheduleChromeAttach()
+        chromeManager.scheduleChromeAttach()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        windowHasFocus = hasFocus
         Log.i(TAG, "onWindowFocusChanged: hasFocus=$hasFocus")
+        sensorController.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
-            updateCartridgeMotionRegistration()
-            applyCartridgeRumble()
-            scheduleChromeAttach()
-        } else {
-            updateCartridgeMotionRegistration()
-            cancelCartridgeRumble()
+            chromeManager.scheduleChromeAttach()
         }
     }
 
@@ -360,27 +224,12 @@ class MainActivity :
         // for the new configuration. The Compose settings dialog is a
         // proper Dialog window that re-lays itself out, so it is left
         // alone; an open navigation drawer is closed (one tap reopens).
-        controlsOverlayPopup?.dismiss()
-        controlsOverlayPopup = null
-        controlsOverlayView = null
-        drawerChromePopup?.dismiss()
-        drawerChromePopup = null
-        drawerChromeContainer = null
-        drawerEdgeHandleView = null
-        drawerFullScreenPopup?.setOnDismissListener(null)
-        drawerFullScreenPopup?.dismiss()
-        drawerFullScreenPopup = null
-        clearDrawerWindowReferences()
-        fpsOverlayPopup?.dismiss()
-        fpsOverlayPopup = null
-        fpsOverlayView = null
-        removePendingChromeAttachCallbacks()
-        scheduleChromeAttach()
+        chromeManager.onConfigurationChanged()
         // Tell Rust to rebuild its touch overlay (hit zones) for the new
         // window size even if no winit Resized event arrives; the Rust
         // side also re-pushes the overlay config, which converges with
         // the re-attach above.
-        onMenuAction("orientation_changed")
+        sendMenuAction("orientation_changed")
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -439,17 +288,17 @@ class MainActivity :
         val changed = if (pressed) keys.add(key) else keys.remove(key)
         if (!changed) return
         if (pressed) {
-            lastControllerDeviceId = deviceId
-            hideControlsForControllerInput()
-            applyCartridgeRumble()
+            sensorController.lastControllerDeviceId = deviceId
+            chromeManager.noteControllerInput()
+            sensorController.noteControllerInput()
         }
-        onMenuAction("controller:$deviceId:$key:${if (pressed) 1 else 0}")
+        sendMenuAction("controller:$deviceId:$key:${if (pressed) 1 else 0}")
         if (keys.isEmpty()) controllerPressed.remove(deviceId)
     }
 
     private fun releaseController(deviceId: Int) {
         controllerPressed.remove(deviceId)?.toList()?.forEach { key ->
-            onMenuAction("controller:$deviceId:$key:0")
+            sendMenuAction("controller:$deviceId:$key:0")
         }
     }
 
@@ -463,11 +312,7 @@ class MainActivity :
 
     override fun onInputDeviceRemoved(deviceId: Int) {
         releaseController(deviceId)
-        if (lastControllerDeviceId == deviceId) {
-            cancelCartridgeRumble()
-            lastControllerDeviceId = null
-            applyCartridgeRumble()
-        }
+        sensorController.noteControllerRemoved(deviceId)
     }
 
     override fun onPause() {
@@ -475,22 +320,18 @@ class MainActivity :
             activeActivityForTest = null
         }
         Log.i(TAG, "onPause")
-        activityResumed = false
-        chromeAttachEnabled = false
-        updateCartridgeMotionRegistration()
-        cancelCartridgeRumble()
+        chromeManager.onPause()
+        sensorController.onPause()
         releaseAllControllers()
         (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
-        removePendingChromeAttachCallbacks()
-        window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         super.onPause()
     }
 
     override fun onStop() {
         Log.i(TAG, "onStop")
-        removePendingChromeAttachCallbacks()
-        dismissChromePopups()
+        dialogManager.dismissForStop()
+        chromeManager.onStop()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         super.onStop()
     }
@@ -508,22 +349,29 @@ class MainActivity :
         Log.i(
             TAG,
             "onDestroy: isFinishing=$isFinishing isDestroyed=$isDestroyed " +
-                "lastDrawerState=$lastDrawerStateForTest lastDialogState=$lastDialogStateForTest",
+                "lastDrawerState=${chromeManager.lastDrawerStateForTest} lastDialogState=$lastDialogStateForTest",
         )
-        chromeAttachEnabled = false
-        activityResumed = false
-        updateCartridgeMotionRegistration()
-        cancelCartridgeRumble()
-        removePendingChromeAttachCallbacks()
-        dismissChromePopups()
+        chromeManager.onStop()
+        dialogManager.dismissForStop()
+        sensorController.onDestroy()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
         onActivityDestroyed()
         super.onDestroy()
     }
 
+    /** JNI bridge for menu events from Rust-side handlers. */
+    internal fun sendMenuAction(action: String) {
+        onMenuAction(action)
+    }
+
+    /** Forward the cartridge acceleration sample to the native bridge. */
+    internal fun forwardCartridgeAcceleration(xG: Float, yG: Float) {
+        onCartridgeAcceleration(xG, yG)
+    }
+
     private fun handleBackNavigation() {
-        if (!removeDrawerOverlay()) {
+        if (!chromeManager.removeDrawerOverlay()) {
             finish()
         }
     }
@@ -546,6 +394,15 @@ class MainActivity :
         startActivityForResult(createDirectoryPickerIntent(), DIRECTORY_PICKER_REQUEST_CODE)
     }
 
+    /**
+     * Touch-overlay configuration pushed from Rust.
+     *
+     * Geometry (hit zones) is owned by Rust (`touch_layout.rs`): [zones]
+     * carries the resolved relative rects (`LABEL:x,y,w,h;...`) computed from
+     * the same scale/offset/visibility parameters. Kotlin draws the pushed
+     * zones and only falls back to its local `controlsLayout()` copy when
+     * the payload is absent or malformed. Keep the fractions in sync.
+     */
     fun configureControlsOverlay(
         visibility: String,
         opacityPercent: Int,
@@ -553,23 +410,21 @@ class MainActivity :
         verticalOffsetPercent: Int,
         haptics: Boolean,
         shouldersVisible: Boolean,
+        zones: String,
     ) {
-        controlsVisibility = visibility
-        controlsOpacityPercent = opacityPercent.coerceIn(0, 100)
-        controlsScalePercent = scalePercent.coerceIn(50, 150)
-        controlsVerticalOffsetPercent = verticalOffsetPercent.coerceIn(-30, 30)
-        controlsHaptics = haptics
-        controlsShouldersVisible = shouldersVisible
-        controlsOverlayPopup?.dismiss()
-        controlsOverlayPopup = null
-        controlsOverlayView = null
-        scheduleChromeAttach()
+        chromeManager.configureControlsOverlay(
+            visibility,
+            opacityPercent,
+            scalePercent,
+            verticalOffsetPercent,
+            haptics,
+            shouldersVisible,
+            zones,
+        )
     }
 
     fun performControlHaptic() {
-        if (controlsHaptics) {
-            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-        }
+        chromeManager.performControlHaptic()
     }
 
     fun configureCartridgePeripherals(
@@ -578,123 +433,11 @@ class MainActivity :
         rumbleStrengthPercent: Int,
         rumbleTarget: String,
     ) {
-        cartridgeMotionEnabled = motionEnabled
-        cartridgeRumbleEnabled = rumbleEnabled
-        cartridgeRumbleStrengthPercent = rumbleStrengthPercent.coerceIn(0, 100)
-        cartridgeRumbleTarget =
-            when (rumbleTarget) {
-                "handset", "controller" -> rumbleTarget
-                else -> "auto"
-            }
-        updateCartridgeMotionRegistration()
-        applyCartridgeRumble()
+        sensorController.configure(motionEnabled, rumbleEnabled, rumbleStrengthPercent, rumbleTarget)
     }
 
     fun setCartridgeRumble(intensity: Int) {
-        cartridgeRumbleIntensity = intensity.coerceIn(0, 255)
-        applyCartridgeRumble()
-    }
-
-    private fun updateCartridgeMotionRegistration() {
-        if (!::sensorManager.isInitialized) return
-        val shouldRegister =
-            activityResumed && windowHasFocus && cartridgeMotionEnabled && accelerometer != null
-        if (shouldRegister == sensorRegistered) return
-        if (shouldRegister) {
-            sensorRegistered =
-                sensorManager.registerListener(
-                    this,
-                    accelerometer,
-                    SensorManager.SENSOR_DELAY_GAME,
-                )
-            if (!sensorRegistered) onCartridgeAcceleration(0f, 0f)
-        } else {
-            sensorManager.unregisterListener(this)
-            sensorRegistered = false
-            onCartridgeAcceleration(0f, 0f)
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type != Sensor.TYPE_ACCELEROMETER || !sensorRegistered) return
-        val sample =
-            screenRelativeAcceleration(
-                event.values[0],
-                event.values[1],
-                windowManager.defaultDisplay.rotation,
-            )
-        onCartridgeAcceleration(sample[0], sample[1])
-    }
-
-    override fun onAccuracyChanged(
-        sensor: Sensor?,
-        accuracy: Int,
-    ) = Unit
-
-    private fun applyCartridgeRumble() {
-        val scaledIntensity =
-            cartridgeRumbleIntensity * cartridgeRumbleStrengthPercent / 100
-        val vibrator =
-            if (activityResumed && windowHasFocus && cartridgeRumbleEnabled && scaledIntensity > 0) {
-                selectCartridgeVibrator()
-            } else {
-                null
-            }
-        if (vibrator == null || !vibrator.hasVibrator()) {
-            cancelCartridgeRumble()
-            return
-        }
-        val amplitude =
-            if (vibrator.hasAmplitudeControl()) {
-                scaledIntensity.coerceIn(1, 255)
-            } else {
-                VibrationEffect.DEFAULT_AMPLITUDE
-            }
-        if (activeRumbleVibrator === vibrator && activeRumbleAmplitude == amplitude) return
-        cancelCartridgeRumble()
-        vibrator.vibrate(
-            VibrationEffect.createWaveform(
-                longArrayOf(1_000L),
-                intArrayOf(amplitude),
-                0,
-            ),
-        )
-        activeRumbleVibrator = vibrator
-        activeRumbleAmplitude = amplitude
-    }
-
-    private fun cancelCartridgeRumble() {
-        activeRumbleVibrator?.cancel()
-        activeRumbleVibrator = null
-        activeRumbleAmplitude = 0
-    }
-
-    private fun selectCartridgeVibrator(): Vibrator? =
-        when (cartridgeRumbleTarget) {
-            "handset" -> handsetVibrator()
-            "controller" -> controllerVibrator()
-            else -> controllerVibrator() ?: handsetVibrator()
-        }
-
-    @Suppress("DEPRECATION")
-    private fun handsetVibrator(): Vibrator =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            getSystemService(VibratorManager::class.java).defaultVibrator
-        } else {
-            getSystemService(VIBRATOR_SERVICE) as Vibrator
-        }
-
-    @Suppress("DEPRECATION")
-    private fun controllerVibrator(): Vibrator? {
-        val device = lastControllerDeviceId?.let(InputDevice::getDevice) ?: return null
-        val vibrator =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                device.vibratorManager.defaultVibrator
-            } else {
-                device.vibrator
-            }
-        return vibrator.takeIf(Vibrator::hasVibrator)
+        sensorController.setIntensity(intensity)
     }
 
     fun updateFloatingDpad(
@@ -704,16 +447,10 @@ class MainActivity :
         knobX: Float,
         knobY: Float,
     ) {
-        (controlsOverlayView as? ControlsOverlayView)?.updateFloatingDpad(
-            active,
-            centerX,
-            centerY,
-            knobX,
-            knobY,
-        )
+        chromeManager.updateFloatingDpad(active, centerX, centerY, knobX, knobY)
     }
 
-    fun floatingDpadStateForTest(): FloatArray? = (controlsOverlayView as? ControlsOverlayView)?.floatingDpadStateForTest()
+    fun floatingDpadStateForTest(): FloatArray? = chromeManager.floatingDpadStateForTest()
 
     /**
      * Show or refresh the small FPS label at the bottom-right corner.
@@ -728,8 +465,9 @@ class MainActivity :
      */
     /**
      * Cached root-window safe insets in physical pixels: [top, right, bottom, left].
-     * Read by Rust every frame; the cache is refreshed on the UI thread by
-     * [installSafeInsetsListener], so this call never touches the view tree.
+     * Read by Rust without JNI; the cache is refreshed on the UI thread by
+     * [installSafeInsetsListener], which also pushes to Rust natively, so
+     * the render thread never blocks on a JNI query.
      */
     fun getSafeInsetsPx(): IntArray = cachedSafeInsetsPx.clone()
 
@@ -737,6 +475,7 @@ class MainActivity :
         val decor = window?.decorView ?: return
         decor.setOnApplyWindowInsetsListener { _, insets ->
             cachedSafeInsetsPx = windowInsetsToSafePx(insets)
+            onSystemInsetsChanged(cachedSafeInsetsPx)
             insets
         }
         decor.requestApplyInsets()
@@ -774,136 +513,53 @@ class MainActivity :
     }
 
     fun updateFpsOverlay(fps: Float, visible: Boolean) {
-        Log.d(TAG, "updateFpsOverlay: fps=$fps visible=$visible")
-        fpsValue = fps
-        fpsVisible = visible
-        if (!visible) {
-            fpsOverlayPopup?.dismiss()
-            fpsOverlayPopup = null
-            return
-        }
-        popupAnchor()?.let { ensureFpsOverlayPopup(it) } ?: scheduleChromeAttach()
+        chromeManager.updateFpsOverlay(fps, visible)
     }
 
-    private fun createFpsOverlayView(): TextView =
-        TextView(this).apply {
-            tag = FPS_OVERLAY_TAG
-            textSize = 11f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.argb(128, 0, 0, 0))
-            val padding = dp(4)
-            setPadding(padding, dp(2), padding, dp(2))
-            isClickable = false
-            isFocusable = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-
-    private fun refreshFpsOverlayText() {
-        fpsOverlayView?.text = "%.1f fps".format(fpsValue)
-    }
-
-    private fun ensureFpsOverlayPopup(anchor: View): Boolean {
-        val existing = fpsOverlayPopup
-        if (existing?.isShowing == true && fpsOverlayView != null) {
-            refreshFpsOverlayText()
-            return true
-        }
-        fpsOverlayPopup?.dismiss()
-        val view = fpsOverlayView ?: createFpsOverlayView().also { fpsOverlayView = it }
-        refreshFpsOverlayText()
-        val popup =
-            PopupWindow(
-                view,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                false,
-            ).apply {
-                isTouchable = false
-                isFocusable = false
-                isClippingEnabled = false
-                inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            }
-        fpsOverlayPopup = popup
-        if (showPopupAtLocation("fps-overlay", popup, anchor, Gravity.BOTTOM or Gravity.END, dp(8), dp(8))) {
-            return true
-        }
-        fpsOverlayPopup = null
-        return false
-    }
-
+    /**
+     * SAF bridge, delegated to [SafRepository]. The whole-file methods stay
+     * for APKs predating chunked I/O; the chunked methods bound every JNI
+     * crossing to 64KB (`writeSafFileChunk` appends with `"wa"`).
+     */
     fun readSafFile(
         treeUri: String,
         relativePath: String,
-    ): String? {
-        val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return null
-        return contentResolver.openInputStream(file.uri)?.use { input ->
-            Base64.encodeToString(input.readBytes(), Base64.NO_WRAP)
-        }
-    }
+    ): String? = safRepository.readSafFile(treeUri, relativePath)
 
     fun writeSafFile(
         treeUri: String,
         relativePath: String,
         encoded: String,
-    ): String {
-        val file = resolveSafDocument(treeUri, relativePath, create = true) ?: return "error"
-        val bytes = Base64.decode(encoded, Base64.NO_WRAP)
-        contentResolver.openOutputStream(file.uri, "rwt")?.use { it.write(bytes) } ?: return "error"
-        return "ok"
-    }
+    ): String = safRepository.writeSafFile(treeUri, relativePath, encoded)
 
     fun deleteSafFile(
         treeUri: String,
         relativePath: String,
-    ): String {
-        val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return "missing"
-        return if (file.delete()) "ok" else "error"
-    }
+    ): String = safRepository.deleteSafFile(treeUri, relativePath)
 
     fun listSafFiles(
         treeUri: String,
         relativePath: String,
-    ): String {
-        val directory =
-            resolveSafDirectory(treeUri, relativePath, create = false)
-                ?: return "[]"
-        return org.json.JSONArray(directory.listFiles().mapNotNull(DocumentFile::getName)).toString()
-    }
+    ): String = safRepository.listSafFiles(treeUri, relativePath)
 
-    private fun resolveSafDocument(
+    fun getSafFileSize(
         treeUri: String,
         relativePath: String,
-        create: Boolean,
-    ): DocumentFile? {
-        val segments = relativePath.split('/').filter(String::isNotBlank)
-        val fileName = segments.lastOrNull() ?: return null
-        val directory =
-            resolveSafDirectory(treeUri, segments.dropLast(1).joinToString("/"), create)
-                ?: return null
-        return directory.findFile(fileName)
-            ?: if (create) directory.createFile("application/octet-stream", fileName) else null
-    }
+    ): Long = safRepository.getSafFileSize(treeUri, relativePath)
 
-    private fun resolveSafDirectory(
+    fun readSafFileChunk(
         treeUri: String,
         relativePath: String,
-        create: Boolean,
-    ): DocumentFile? {
-        var current = DocumentFile.fromTreeUri(this, Uri.parse(treeUri)) ?: return null
-        for (segment in relativePath.split('/').filter(String::isNotBlank)) {
-            current = resolveSafChildDirectory(current, segment, create) ?: return null
-        }
-        return current
-    }
+        offset: Long,
+        length: Long,
+    ): String? = safRepository.readSafFileChunk(treeUri, relativePath, offset, length)
 
-    private fun resolveSafChildDirectory(
-        parent: DocumentFile,
-        name: String,
-        create: Boolean,
-    ): DocumentFile? =
-        parent.findFile(name)?.takeIf(DocumentFile::isDirectory)
-            ?: if (create) parent.createDirectory(name) else null
+    fun writeSafFileChunk(
+        treeUri: String,
+        relativePath: String,
+        encoded: String,
+        append: Boolean,
+    ): String = safRepository.writeSafFileChunk(treeUri, relativePath, encoded, append)
 
     @Suppress("DEPRECATION")
     override fun onActivityResult(
@@ -946,37 +602,10 @@ class MainActivity :
     }
 
     fun isChromeViewShowingForTest(tag: String): Boolean =
-        when (tag) {
-            CONTROLS_OVERLAY_TAG -> {
-                controlsOverlayPopup?.isShowing == true &&
-                    controlsOverlayView.isShownInWindowForTest()
-            }
-
-            DRAWER_COMPOSE_TAG -> {
-                drawerShowing && drawerFullScreenPopup?.isShowing == true &&
-                    drawerComposeView.isShownInWindowForTest()
-            }
-
-            DRAWER_EDGE_HANDLE_TAG -> {
-                !drawerShowing && drawerChromePopup?.isShowing == true &&
-                    drawerEdgeHandleView.isShownInWindowForTest()
-            }
-
-            DRAWER_OVERLAY_TAG -> {
-                drawerShowing && drawerFullScreenPopup?.isShowing == true &&
-                    drawerOverlayView.isShownInWindowForTest()
-            }
-
-            FPS_OVERLAY_TAG -> {
-                fpsOverlayPopup?.isShowing == true &&
-                    fpsOverlayView.isShownInWindowForTest()
-            }
-
+        chromeManager.isViewShowingForTest(tag) ?: when (tag) {
             SETTINGS_DIALOG_TAG,
             -> {
-                composeDialogTag == tag &&
-                    composeDialog?.isShowing == true &&
-                    composeDialogRootView.isShownInWindowForTest()
+                dialogManager.isShowing(tag)
             }
 
             else -> {
@@ -985,30 +614,10 @@ class MainActivity :
         }
 
     fun findChromeViewForTest(tag: String): View? =
-        when (tag) {
-            CONTROLS_OVERLAY_TAG -> {
-                controlsOverlayView
-            }
-
-            DRAWER_COMPOSE_TAG -> {
-                drawerComposeView
-            }
-
-            DRAWER_EDGE_HANDLE_TAG -> {
-                drawerEdgeHandleView
-            }
-
-            DRAWER_OVERLAY_TAG -> {
-                drawerOverlayView
-            }
-
-            FPS_OVERLAY_TAG -> {
-                fpsOverlayView
-            }
-
+        chromeManager.findViewForTest(tag) ?: when (tag) {
             SETTINGS_DIALOG_TAG,
             -> {
-                composeDialogRootView.takeIf { composeDialogTag == tag }
+                dialogManager.rootViewForTag(tag)
             }
 
             else -> {
@@ -1017,20 +626,12 @@ class MainActivity :
         }
 
     fun chromeDebugStateForTest(tag: String): String =
-        "tag=$tag, destroyed=$isDestroyed, finishing=$isFinishing, chromeAttachEnabled=$chromeAttachEnabled, " +
-            "attachAttempts=$chromeAttachAttempts, decor=${window.decorView.debugViewState()}, " +
-            "controlsPopup=${controlsOverlayPopup.debugPopupState()}, controlsView=${controlsOverlayView.debugViewState()}, " +
-            "drawerPopup=${drawerChromePopup.debugPopupState()}, drawerHandle=${drawerEdgeHandleView.debugViewState()}, " +
-            "drawerShowing=$drawerShowing, drawerFullScreenPopup=${drawerFullScreenPopup.debugPopupState()}, " +
-            "drawerOverlay=${drawerOverlayView.debugViewState()}, " +
-            "drawerCompose=${drawerComposeView.debugViewState()}, dialogTag=$composeDialogTag, " +
-            "dialog=${composeDialog.debugDialogState()}, dialogRoot=${composeDialogRootView.debugViewState()}, " +
-            "dialogCompose=${composeDialogComposeView.debugViewState()}, lastDrawer=$lastDrawerStateForTest, " +
-            "lastDialog=$lastDialogStateForTest, fpsVisible=$fpsVisible, fpsValue=$fpsValue, " +
-            "fpsPopup=${fpsOverlayPopup.debugPopupState()}, fpsView=${fpsOverlayView.debugViewState()}"
+        "tag=$tag, destroyed=$isDestroyed, finishing=$isFinishing, decor=${window.decorView.debugViewState()}, " +
+            chromeManager.debugStateForTest() + dialogManager.debugState() +
+            ", lastDialog=$lastDialogStateForTest"
 
     fun dispatchMenuActionForTest(action: String) {
-        dispatchMenuAction(action)
+        chromeManager.dispatchMenuAction(action)
     }
 
     fun loadRomUriForTest(uri: String) {
@@ -1046,16 +647,16 @@ class MainActivity :
     }
 
     fun openDrawerForTest() {
-        showDrawerOverlay()
+        chromeManager.showDrawerOverlay()
     }
 
     fun dismissComposeDialogForTest() {
-        dismissComposeDialog(notifyDismiss = false)
+        dialogManager.dismissForTest()
     }
 
     fun resetChromeStateForTest() {
-        dismissComposeDialog(notifyDismiss = !composeDialogOwnedByTest)
-        removeDrawerOverlay()
+        dialogManager.resetForTest()
+        chromeManager.removeDrawerOverlay()
     }
 
     fun showSettingsDialogForTest(
@@ -1196,7 +797,7 @@ class MainActivity :
             }
         var resultSent = false
 
-        showComposeDialog(
+        dialogManager.show(
             dialogTag = SETTINGS_DIALOG_TAG,
             contentDescription = settingsContentDescription(settings, initialSelections),
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
@@ -1234,7 +835,7 @@ class MainActivity :
                 },
             )
         }
-        composeDialogRootView?.setTag(
+        dialogManager.rootViewForTag(SETTINGS_DIALOG_TAG)?.setTag(
             R.id.nerust_settings_hierarchy_probe,
             buildSettingsSections(settings).joinToString("\n") { section ->
                 "${section.label}: ${settingsCountLabel(section.settingIndices.size)}"
@@ -1256,17 +857,17 @@ class MainActivity :
         // but a racing show must not destroy in-progress settings input
         // either. Ack as dismissed so Rust keeps the batch queued behind
         // settings instead of losing it.
-        if (composeDialogTag == SETTINGS_DIALOG_TAG && composeDialog?.isShowing == true) {
+        if (dialogManager.isShowing(SETTINGS_DIALOG_TAG)) {
             Log.i(TAG, "showErrorDialog: suppressed while settings dialog is showing")
-            dispatchMenuAction(MENU_ACTION_ERROR_DIALOG_DISMISSED)
+            chromeManager.dispatchMenuAction(MENU_ACTION_ERROR_DIALOG_DISMISSED)
             return
         }
-        showComposeDialog(
+        dialogManager.show(
             dialogTag = ERROR_DIALOG_TAG,
             contentDescription = message,
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = false,
-            onDismiss = { dispatchMenuAction(MENU_ACTION_ERROR_DIALOG_DISMISSED) },
+            onDismiss = { chromeManager.dispatchMenuAction(MENU_ACTION_ERROR_DIALOG_DISMISSED) },
         ) { dismiss ->
             NerustErrorDialogCard(
                 message = message,
@@ -1275,430 +876,12 @@ class MainActivity :
         }
     }
 
-    private fun scheduleChromeAttach() {
-        if (!chromeAttachEnabled || isFinishing || isDestroyed) {
-            Log.i(
-                TAG,
-                "scheduleChromeAttach: skipped (enabled=$chromeAttachEnabled finishing=$isFinishing destroyed=$isDestroyed)",
-            )
-            return
-        }
-        chromeAttachAttempts = 0
-        Log.i(TAG, "scheduleChromeAttach: decor=${window.decorView.debugViewState()}")
-        ensureChromeAttached()
-        window.decorView.post(ensureChromeAttachedRunnable)
-    }
-
-    private fun ensureChromeAttached() {
-        if (!chromeAttachEnabled || isFinishing || isDestroyed) {
-            Log.i(
-                TAG,
-                "ensureChromeAttached: skipped (enabled=$chromeAttachEnabled finishing=$isFinishing destroyed=$isDestroyed)",
-            )
-            return
-        }
-        val anchor =
-            popupAnchor() ?: run {
-                Log.i(TAG, "ensureChromeAttached: anchor unavailable decor=${window.decorView.debugViewState()}")
-                retryChromeAttach()
-                return
-            }
-        installComposeOwners(anchor)
-        val controlsAttached = ensureControlsOverlayPopup(anchor)
-        val drawerAttached = ensureDrawerChromePopup(anchor)
-        val fpsAttached = !fpsVisible || ensureFpsOverlayPopup(anchor)
-        Log.i(
-            TAG,
-            "ensureChromeAttached: controlsAttached=$controlsAttached drawerAttached=$drawerAttached " +
-                "fpsAttached=$fpsAttached anchor=${anchor.debugViewState()}",
-        )
-        if (!controlsAttached || !drawerAttached || !fpsAttached) {
-            retryChromeAttach()
-        }
-    }
-
-    private fun retryChromeAttach() {
-        if (chromeAttachAttempts >= MENU_CHROME_MAX_ATTACH_ATTEMPTS) {
-            Log.w(TAG, "Chrome attach skipped because Android window token was unavailable")
-            return
-        }
-        chromeAttachAttempts += 1
-        Log.i(
-            TAG,
-            "retryChromeAttach: scheduling attempt $chromeAttachAttempts/$MENU_CHROME_MAX_ATTACH_ATTEMPTS",
-        )
-        window.decorView.postDelayed(ensureChromeAttachedRunnable, MENU_CHROME_ATTACH_RETRY_DELAY_MS)
-    }
-
-    private fun removePendingChromeAttachCallbacks() {
-        window.decorView.removeCallbacks(ensureChromeAttachedRunnable)
-    }
-
-    private fun ensureControlsOverlayPopup(anchor: View): Boolean {
-        if (
-            controlsVisibility == "hidden" ||
-            controlsVisibility == "auto" && SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
-        ) {
-            return true
-        }
-        val existing = controlsOverlayPopup
-        if (existing?.isShowing == true && controlsOverlayView != null) {
-            return true
-        }
-
-        controlsOverlayPopup?.dismiss()
-        val view = createControlsOverlay()
-        val popup =
-            PopupWindow(
-                view,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                false,
-            ).apply {
-                isTouchable = false
-                isClippingEnabled = false
-                inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            }
-
-        controlsOverlayView = view
-        controlsOverlayPopup = popup
-        if (showPopupAtLocation("controls-overlay", popup, anchor, Gravity.TOP or Gravity.START, 0, 0)) {
-            return true
-        }
-        controlsOverlayPopup = null
-        controlsOverlayView = null
-        return false
-    }
-
-    private fun hideControlsForControllerInput() {
-        if (controlsVisibility != "auto") {
-            return
-        }
-        controllerOverlayHiddenUntil = SystemClock.elapsedRealtime() + CONTROLLER_OVERLAY_HIDE_MS
-        controlsOverlayPopup?.dismiss()
-        controlsOverlayPopup = null
-        controlsOverlayView = null
-        window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
-        window.decorView.postDelayed(restoreControllerOverlayRunnable, CONTROLLER_OVERLAY_HIDE_MS)
-    }
-
-    private fun ensureDrawerChromePopup(anchor: View): Boolean {
-        val existing = drawerChromePopup
-        if (existing?.isShowing == true && (drawerEdgeHandleView != null || drawerShowing)) {
-            return true
-        }
-
-        drawerChromePopup?.dismiss()
-        val container = FrameLayout(this)
-        val edgeHandle = createDrawerEdgeHandleOverlay()
-        container.addView(edgeHandle)
-        val popup =
-            PopupWindow(
-                container,
-                dp(DRAWER_EDGE_HANDLE_WIDTH_DP),
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                false,
-            ).apply {
-                isTouchable = true
-                isClippingEnabled = false
-                inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-                elevation = dp(8).toFloat()
-                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            }
-
-        drawerChromeContainer = container
-        drawerEdgeHandleView = edgeHandle
-        drawerChromePopup = popup
-        if (showPopupAtLocation("drawer-edge-handle", popup, anchor, Gravity.TOP or Gravity.START, 0, 0)) {
-            return true
-        }
-        drawerChromePopup = null
-        drawerChromeContainer = null
-        drawerEdgeHandleView = null
-        return false
-    }
-
-    private fun installComposeOwners(root: View) {
+    internal fun installComposeOwners(root: View) {
         listOf(window.decorView, root).forEach { view ->
             view.setViewTreeLifecycleOwner(this)
             view.setViewTreeSavedStateRegistryOwner(this)
             view.setViewTreeViewModelStoreOwner(this)
         }
-    }
-
-    private fun createControlsOverlay(): View =
-        ControlsOverlayView(
-            this,
-            controlsOpacityPercent,
-            controlsScalePercent,
-            controlsVerticalOffsetPercent,
-            controlsShouldersVisible,
-        ).apply {
-            tag = CONTROLS_OVERLAY_TAG
-            layoutParams =
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                )
-            isClickable = false
-            isFocusable = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-
-    private fun createDrawerEdgeHandleOverlay(): View =
-        DrawerEdgeSwipeHandleView(this, ::showDrawerOverlay).apply {
-            tag = DRAWER_EDGE_HANDLE_TAG
-            contentDescription = "Open navigation drawer"
-            layoutParams =
-                FrameLayout.LayoutParams(
-                    dp(DRAWER_EDGE_HANDLE_WIDTH_DP),
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    Gravity.START,
-                )
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
-        }
-
-    private fun showDrawerOverlay() {
-        val anchor =
-            popupAnchor() ?: run {
-                lastDrawerStateForTest = "anchor unavailable: decor=${window.decorView.debugViewState()}"
-                Log.w(TAG, "showDrawerOverlay: anchor unavailable decor=${window.decorView.debugViewState()}")
-                return
-            }
-        if (drawerShowing) {
-            lastDrawerStateForTest = "already showing"
-            Log.i(TAG, "showDrawerOverlay: already showing")
-            return
-        }
-        lastDrawerStateForTest = "creating"
-        Log.i(TAG, "showDrawerOverlay: creating")
-
-        // Hide the edge-handle popup while the drawer is open.
-        drawerChromePopup?.dismiss()
-
-        val overlay =
-            ComposeOwnerFrameLayout(this).apply {
-                tag = DRAWER_OVERLAY_TAG
-                setTag(R.id.nerust_drawer_content_probe, drawerContentDescription())
-                layoutParams =
-                    FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-            }
-        val drawerContent =
-            ComposeView(this).apply {
-                tag = DRAWER_COMPOSE_TAG
-                layoutParams =
-                    FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setContent {
-                    MaterialTheme {
-                        NerustDrawerOverlay(
-                            onDismissRequest = { removeDrawerOverlay() },
-                            onMenuAction = ::dispatchMenuAction,
-                        )
-                    }
-                }
-            }
-        installComposeOwners(overlay)
-        installComposeOwners(drawerContent)
-        overlay.addView(drawerContent)
-
-        // Use a brand-new full-screen popup so Compose measures against the
-        // correct screen dimensions from the start (no resizing needed).
-        val fullScreenPopup =
-            PopupWindow(
-                overlay,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                true,
-            ).apply {
-                isTouchable = true
-                isClippingEnabled = false
-                inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
-                elevation = dp(8).toFloat()
-                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-                setOnDismissListener { removeDrawerOverlay() }
-            }
-
-        drawerOverlayView = overlay
-        drawerComposeView = drawerContent
-        drawerEdgeHandleView = null
-        drawerShowing = true
-
-        val shown =
-            showPopupAtLocation("drawer-fullscreen", fullScreenPopup, anchor, Gravity.TOP or Gravity.START, 0, 0)
-        if (shown) {
-            drawerFullScreenPopup = fullScreenPopup
-        } else {
-            clearDrawerWindowReferences()
-        }
-        lastDrawerStateForTest =
-            "showInDrawerPopup=$shown, popup=${fullScreenPopup.debugPopupState()}, overlay=${overlay.debugViewState()}"
-        Log.i(TAG, "showDrawerOverlay: shown=$shown state=$lastDrawerStateForTest")
-    }
-
-    private fun removeDrawerOverlay(): Boolean {
-        if (!drawerShowing) {
-            return false
-        }
-        Log.i(TAG, "removeDrawerOverlay")
-        drawerFullScreenPopup?.setOnDismissListener(null)
-        drawerFullScreenPopup?.dismiss()
-        drawerFullScreenPopup = null
-        clearDrawerWindowReferences()
-        // Re-show the narrow edge-handle popup for future swipe detection.
-        popupAnchor()?.let { ensureDrawerChromePopup(it) }
-        return true
-    }
-
-    private fun showComposeDialog(
-        dialogTag: String,
-        contentDescription: String,
-        presentation: String,
-        onDismiss: () -> Unit,
-        ownedByTest: Boolean = false,
-        content: @Composable (dismiss: () -> Unit) -> Unit,
-    ) {
-        dismissComposeDialog(notifyDismiss = true)
-
-        lateinit var dialog: Dialog
-        val root =
-            ComposeOwnerFrameLayout(this).apply {
-                tag = dialogTag
-                setTag(R.id.nerust_dialog_content_probe, contentDescription)
-                setTag(R.id.nerust_dialog_presentation_probe, presentation)
-                layoutParams =
-                    FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-            }
-        val composeView =
-            ComposeView(this).apply {
-                tag = "$dialogTag-compose"
-                layoutParams =
-                    FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-            }
-        dialog =
-            Dialog(this).apply {
-                window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-                setCancelable(true)
-                setCanceledOnTouchOutside(true)
-            }
-
-        composeView.setContent {
-            MaterialTheme {
-                content { dialog.dismiss() }
-            }
-        }
-
-        installComposeOwners(root)
-        installComposeOwners(composeView)
-        root.addView(composeView)
-        dialog.setContentView(root)
-
-        composeDialog = dialog
-        composeDialogRootView = root
-        composeDialogComposeView = composeView
-        composeDialogTag = dialogTag
-        composeDialogDismissCallback = onDismiss
-        composeDialogOwnedByTest = ownedByTest
-        dialog.setOnDismissListener {
-            val dismissCallback = composeDialogDismissCallback
-            clearComposeDialogWindowReferences()
-            dismissCallback?.invoke()
-        }
-        try {
-            Log.i(TAG, "showComposeDialog: showing $dialogTag")
-            dialog.show()
-            dialog.window?.setLayout(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-            lastDialogStateForTest = "showing $dialogTag"
-            Log.i(TAG, "showComposeDialog: showing $dialogTag succeeded")
-        } catch (error: WindowManager.BadTokenException) {
-            dialog.setOnDismissListener(null)
-            clearComposeDialogWindowReferences()
-            lastDialogStateForTest = "show failed for $dialogTag: bad token"
-            Log.w(TAG, "showComposeDialog: failed for $dialogTag with bad token", error)
-            onDismiss()
-        } catch (error: IllegalStateException) {
-            dialog.setOnDismissListener(null)
-            clearComposeDialogWindowReferences()
-            lastDialogStateForTest = "show failed for $dialogTag: illegal state"
-            Log.w(TAG, "showComposeDialog: failed for $dialogTag with illegal state", error)
-            onDismiss()
-        } catch (error: RuntimeException) {
-            // Compose content threw on the main thread: release the
-            // gate like any other show failure so Rust never wedges.
-            dialog.setOnDismissListener(null)
-            clearComposeDialogWindowReferences()
-            lastDialogStateForTest = "show failed for $dialogTag: runtime"
-            Log.w(TAG, "showComposeDialog: failed for $dialogTag with runtime error", error)
-            onDismiss()
-        }
-    }
-
-    private fun dismissComposeDialog(notifyDismiss: Boolean) {
-        val dialog = composeDialog ?: return
-        val dismissCallback = composeDialogDismissCallback
-        dialog.setOnDismissListener(null)
-        clearComposeDialogWindowReferences()
-        dialog.dismiss()
-        if (notifyDismiss) {
-            dismissCallback?.invoke()
-        }
-    }
-
-    private fun popupAnchor(): View? = window.decorView.takeIf { it.isAttachedToWindow && it.windowToken != null }
-
-    private fun showPopupAtLocation(
-        popupName: String,
-        popup: PopupWindow,
-        anchor: View,
-        gravity: Int,
-        x: Int,
-        y: Int,
-    ): Boolean =
-        try {
-            popup.showAtLocation(anchor, gravity, x, y)
-            Log.i(
-                TAG,
-                "showPopupAtLocation: $popupName shown at ($x,$y) anchor=${anchor.debugViewState()}",
-            )
-            true
-        } catch (error: WindowManager.BadTokenException) {
-            Log.w(TAG, "showPopupAtLocation: $popupName failed with bad token", error)
-            false
-        } catch (error: IllegalStateException) {
-            Log.w(TAG, "showPopupAtLocation: $popupName failed with illegal state", error)
-            false
-        }
-
-    private fun clearDrawerWindowReferences() {
-        drawerShowing = false
-        drawerOverlayView = null
-        drawerComposeView = null
-    }
-
-    private fun clearComposeDialogWindowReferences() {
-        composeDialog = null
-        composeDialogRootView = null
-        composeDialogComposeView = null
-        composeDialogTag = null
-        composeDialogDismissCallback = null
-        composeDialogOwnedByTest = false
     }
 
     private fun View?.isShownInWindowForTest(): Boolean =
@@ -1710,59 +893,6 @@ class MainActivity :
         } else {
             "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
         }
-
-    private fun Dialog?.debugDialogState(): String = if (this == null) "null" else "showing=$isShowing"
-
-    private fun PopupWindow?.debugPopupState(): String = if (this == null) "null" else "showing=$isShowing"
-
-    private fun dismissChromePopups() {
-        clearDrawerWindowReferences()
-        dismissComposeDialog(notifyDismiss = true)
-        drawerFullScreenPopup?.setOnDismissListener(null)
-        drawerFullScreenPopup?.dismiss()
-        drawerFullScreenPopup = null
-        drawerChromePopup?.dismiss()
-        drawerChromePopup = null
-        drawerChromeContainer = null
-        drawerEdgeHandleView = null
-        controlsOverlayPopup?.dismiss()
-        controlsOverlayPopup = null
-        controlsOverlayView = null
-        fpsOverlayPopup?.dismiss()
-        fpsOverlayPopup = null
-        fpsOverlayView = null
-    }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-    private fun drawerContentDescription(): String = (listOf(DRAWER_TITLE) + DRAWER_ACTIONS.map { it.label }).joinToString("\n")
-
-    private fun settingsContentDescription(
-        settings: List<AndroidSetting>,
-        selections: List<Int>,
-    ): String =
-        buildList {
-            add("Settings")
-            settings.forEachIndexed { index, setting ->
-                val value = setting.choices.getOrElse(selections.getOrElse(index) { 0 }) { "?" }
-                add("${setting.label}: $value")
-            }
-        }.joinToString("\n")
-
-    private fun dispatchMenuAction(action: String) {
-        removeDrawerOverlay()
-        onMenuAction(action)
-    }
-
-    private inner class ComposeOwnerFrameLayout(
-        context: Context,
-    ) : FrameLayout(context) {
-        override fun onAttachedToWindow() {
-            installComposeOwners(this)
-            installComposeOwners(rootView)
-            super.onAttachedToWindow()
-        }
-    }
 
     private external fun onFilePickerResult(uri: String?)
 
@@ -1779,6 +909,8 @@ class MainActivity :
         yG: Float,
     )
 
+    private external fun onSystemInsetsChanged(insets: IntArray)
+
     companion object {
         private const val TAG = "Nerust"
         private const val SETTINGS_SCHEMA_VERSION = 1
@@ -1794,10 +926,6 @@ class MainActivity :
             Log.i(TAG, "MainActivity companion: loaded native library main")
         }
 
-        private const val DRAWER_EDGE_HANDLE_WIDTH_DP = 24
-        private const val MENU_CHROME_ATTACH_RETRY_DELAY_MS = 100L
-        private const val MENU_CHROME_MAX_ATTACH_ATTEMPTS = 100
-        private const val CONTROLLER_OVERLAY_HIDE_MS = 5_000L
         private const val CONTROLLER_AXIS_THRESHOLD = 0.5f
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
@@ -1811,82 +939,6 @@ class MainActivity :
 
         fun currentActivityForTest(): MainActivity? = activeActivityForTest?.takeUnless { it.isDestroyed || it.isFinishing }
     }
-}
-
-@Composable
-private fun NerustDrawerOverlay(
-    onDismissRequest: () -> Unit,
-    onMenuAction: (String) -> Unit,
-) {
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Open)
-    val actionPending = remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    fun closeAndRun(action: String) {
-        actionPending.value = true
-        scope.launch {
-            drawerState.close()
-            onMenuAction(action)
-        }
-    }
-
-    LaunchedEffect(drawerState.currentValue, actionPending.value) {
-        if (drawerState.currentValue == DrawerValue.Closed && !actionPending.value) {
-            onDismissRequest()
-        }
-    }
-
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet(modifier = Modifier.statusBarsPadding()) {
-                Text(
-                    text = DRAWER_TITLE,
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 8.dp),
-                )
-                Text(
-                    text = "Open ROMs and control the current session.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
-                )
-                DRAWER_ACTIONS.forEachIndexed { index, action ->
-                    DrawerActionItem(
-                        label = action.label,
-                        onClick = {
-                            closeAndRun(action.action)
-                        },
-                    )
-                    if (index == 1) {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    }
-                }
-            }
-        },
-    ) {
-        Box(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(WindowInsets.safeDrawing.asPaddingValues()),
-        )
-    }
-}
-
-@Composable
-private fun DrawerActionItem(
-    label: String,
-    onClick: () -> Unit,
-) {
-    NavigationDrawerItem(
-        label = { Text(label) },
-        selected = false,
-        onClick = onClick,
-        modifier =
-            Modifier
-                .semantics { contentDescription = label }
-                .padding(NavigationDrawerItemDefaults.ItemPadding),
-    )
 }
 
 @Composable
@@ -2282,12 +1334,26 @@ private fun DialogChoiceButton(
 }
 
 @SuppressLint("ViewConstructor")
-private class ControlsOverlayView(
+/**
+ * One touch zone pushed from Rust, in relative (0.0..1.0) surface
+ * coordinates. Geometry is owned by Rust (`touch_layout.rs` TOUCH_ZONES);
+ * Kotlin only draws the pushed payload.
+ */
+internal data class PushedOverlayZone(
+    val x: Float,
+    val y: Float,
+    val width: Float,
+    val height: Float,
+    val label: String,
+)
+
+internal class ControlsOverlayView(
     context: Context,
     opacityPercent: Int,
     private val scalePercent: Int,
     private val verticalOffsetPercent: Int,
     private val shouldersVisible: Boolean,
+    private var pushedZones: List<PushedOverlayZone> = emptyList(),
 ) : View(context) {
     private val opacity = opacityPercent.coerceIn(0, 100) / 100f
     private val fillPaint =
@@ -2342,6 +1408,11 @@ private class ControlsOverlayView(
             floatingDpadKnobY,
         )
 
+    fun setPushedZones(zones: List<PushedOverlayZone>) {
+        pushedZones = zones
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val viewWidth = width.toFloat()
@@ -2352,7 +1423,22 @@ private class ControlsOverlayView(
 
         val joystick = floatingJoystickLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent)
         drawFloatingJoystick(canvas, joystick)
-        controlsLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent, shouldersVisible).forEach { zone ->
+        // Geometry is pushed from Rust via configureControlsOverlay: prefer
+        // the pushed zones so both sides render from one source of truth.
+        // The local controlsLayout() copy is the fallback when no payload
+        // arrived (or it failed to parse); keep the fractions in sync.
+        val zones =
+            pushedZones.takeIf(List<PushedOverlayZone>::isNotEmpty)?.map { zone ->
+                OverlayZoneSpec(
+                    x = zone.x * viewWidth,
+                    y = zone.y * viewHeight,
+                    width = zone.width * viewWidth,
+                    height = zone.height * viewHeight,
+                    label = zone.label,
+                )
+            }
+                ?: controlsLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent, shouldersVisible)
+        zones.forEach { zone ->
             drawZone(canvas, zone.x, zone.y, zone.width, zone.height, zone.label)
         }
     }
@@ -2394,7 +1480,7 @@ private class ControlsOverlayView(
 }
 
 @SuppressLint("ViewConstructor")
-private class DrawerEdgeSwipeHandleView(
+internal class DrawerEdgeSwipeHandleView(
     context: Context,
     private val onDrawerOpen: () -> Unit,
 ) : View(context) {
@@ -2452,6 +1538,10 @@ internal fun controlsLayout(
     verticalOffsetPercent: Int = 0,
     shouldersVisible: Boolean = true,
 ): List<OverlayZoneSpec> {
+    // Local fallback copy: geometry is owned and pushed by Rust
+    // (touch_layout.rs TOUCH_ZONES via configureControlsOverlay) and the
+    // overlay view prefers the pushed zones. This computation only draws
+    // when no payload arrived; keep the fractions in sync.
     val portrait = height >= width
     val base = min(width, height)
     val scale = scalePercent.coerceIn(50, 150) / 100f

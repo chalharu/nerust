@@ -9,7 +9,12 @@ use std::{
 };
 
 /// Record sink for the panic hook. Production logs; tests capture.
-/// `Mutex`-free swap via `OnceLock`: set once, read on every panic.
+///
+/// Process-global [`std::sync::OnceLock`] semantics: the slot can be set
+/// at most once per process. `set_record_sink` reports whether the current
+/// call won the slot; tests that need distinct sinks must run in separate
+/// processes (see `tests/hook_probe.rs`) or be serialised within one
+/// process so only the first `set` takes effect.
 type RecordSink = fn(&PanicRecord);
 
 fn default_sink(record: &PanicRecord) {
@@ -61,7 +66,7 @@ pub enum GuardOutcome<R> {
 }
 
 /// Structured crash data for dialogs: getters only, log shape via `Display`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CrashReport {
     record: PanicRecord,
 }
@@ -91,7 +96,7 @@ impl std::fmt::Display for CrashReport {
 
 /// Thread, detail, and backtrace captured once for hook and report.
 /// Public so embedders can implement `set_record_sink`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PanicRecord {
     thread: String,
     detail: String,
@@ -120,11 +125,13 @@ impl PanicRecord {
     fn capture(detail: String) -> Self {
         // Symbolication runs even for caught panics: acceptable, as a
         // panic already unwinds (no hot path captures here).
+        // `Backtrace::capture` respects `RUST_BACKTRACE`: unset/`0` yields
+        // a disabled (short placeholder) backtrace, `1`/full captures frames.
         let thread = std::thread::current();
         Self {
             thread: thread.name().unwrap_or("unnamed").to_owned(),
             detail,
-            backtrace: Backtrace::force_capture().to_string(),
+            backtrace: Backtrace::capture().to_string(),
         }
     }
 }
@@ -136,22 +143,28 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
         message.clone()
     } else if let Some(error) = payload.downcast_ref::<Box<dyn std::error::Error + Send>>() {
         error.to_string()
+    } else if let Some(error) = payload.downcast_ref::<Box<dyn std::error::Error + Send + Sync>>() {
+        error.to_string()
     } else {
         "non-string panic payload".to_owned()
     }
 }
 
-/// Run `main` under the hook; on unwind log the report and return it.
-/// The outcome tells the host how to terminate; nothing is reused after a catch.
+/// Run `main` under the hook; on unwind build the report and return it.
+///
+/// The panic hook already logged the crash, so this path stays silent and
+/// lets the host decide how to surface `CrashReport`. Nothing is reused
+/// after a catch.
+///
+/// `AssertUnwindSafe` is documented rather than assumed: `main` typically
+/// owns the whole frontend setup closure, and a panic discards that state
+/// instead of resuming it, so unwind-safety of captured references does not
+/// need to hold across the catch boundary.
 pub fn run_guarded<R>(main: impl FnOnce() -> R) -> GuardOutcome<R> {
     install();
     match panic::catch_unwind(std::panic::AssertUnwindSafe(main)) {
         Ok(value) => GuardOutcome::Completed(value),
-        Err(payload) => {
-            let report = CrashReport::from_payload(payload.as_ref());
-            log::error!("{report}");
-            GuardOutcome::Crashed(report)
-        }
+        Err(payload) => GuardOutcome::Crashed(CrashReport::from_payload(payload.as_ref())),
     }
 }
 
@@ -165,6 +178,9 @@ mod tests {
         assert_eq!(payload_message(&"owned".to_owned()), "owned");
         let boxed: Box<dyn std::error::Error + Send> = Box::new(std::io::Error::other("io boom"));
         assert_eq!(payload_message(&boxed), "io boom");
+        let boxed_sync: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(std::io::Error::other("io sync boom"));
+        assert_eq!(payload_message(&boxed_sync), "io sync boom");
         assert_eq!(payload_message(&42_u32), "non-string panic payload");
     }
 
@@ -198,6 +214,9 @@ mod tests {
         let record = PanicRecord::capture("explicit panic".to_owned());
         assert!(!record.thread.is_empty());
         assert_eq!(record.detail, "explicit panic");
+        // `Backtrace::capture` respects `RUST_BACKTRACE`: without it the
+        // backtrace is a disabled placeholder, with `1` it holds frames.
+        // Either way the field must render non-empty so reports stay shaped.
         assert!(!record.backtrace.is_empty());
     }
 }

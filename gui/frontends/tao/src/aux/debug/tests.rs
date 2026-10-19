@@ -417,7 +417,7 @@ fn uishell_headless_build_pump_relayout_draw() {
     });
     let mut backend = Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
     let bounds = iced::Size::new(1100.0, 800.0);
-    let mut shell = UiShell::new(instance, iced::window::Id::unique(), bounds, &mut backend);
+    let mut shell = UiShell::new(instance, iced::window::Id::unique(), bounds);
     let mut clipboard = iced_winit::Clipboard::unconnected();
     let (messages, _) = shell.pump(
         iced::Event::Window(iced::window::Event::RedrawRequested(
@@ -432,26 +432,24 @@ fn uishell_headless_build_pump_relayout_draw() {
     let invalidated = AtomicBool::new(true);
     shell.process_messages(
         vec![DebugMessage::FollowPcToggle],
-        iced::window::Id::unique(),
-        bounds,
         &mut backend,
-        crate::aux::shell::Dirty::view(&invalidated),
+        &invalidated,
     );
     assert!(!invalidated.load(Ordering::Acquire));
-    shell.relayout(iced::Size::new(900.0, 650.0), &mut backend);
-    let theme = iced::Theme::Light;
-    let style = <iced::Theme as iced::theme::Base>::base(&theme);
-    let Some(ui) = shell.ui_mut() else {
-        panic!("UiShell unavailable after relayout in test");
-    };
-    ui.draw(
-        &mut backend,
-        &theme,
-        &iced::advanced::renderer::Style {
-            text_color: style.text_color,
-        },
+    shell
+        .relayout(iced::Size::new(900.0, 650.0))
+        .expect("relayout records bounds");
+    // Post-relayout pump rebuilds the transient interface from the
+    // retained cache and folds back without orphans.
+    let (messages, _) = shell.pump(
+        iced::Event::Window(iced::window::Event::RedrawRequested(
+            std::time::Instant::now(),
+        )),
         iced::mouse::Cursor::default(),
+        &mut clipboard,
+        &mut backend,
     );
+    assert!(messages.is_empty());
 }
 
 #[test]

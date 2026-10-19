@@ -152,16 +152,18 @@ pub(crate) fn open_headless_system(
             .ok_or_else(|| construction(format!("slot {pad} has no control group")))?;
         let mut buttons = Vec::with_capacity(group.len());
         for info in group.iter() {
+            let nerust_input_traits::ControlId::Digital(control_id) = info.id else {
+                continue;
+            };
             let field = field_map
-                .get(&(*attachment, info.id))
+                .get(&(*attachment, control_id))
                 .copied()
                 .ok_or_else(|| {
                     construction(format!(
-                        "test input field missing: {attachment}/{}",
-                        info.id
+                        "test input field missing: {attachment}/{control_id}",
                     ))
                 })?;
-            buttons.push((info.id.as_str(), field));
+            buttons.push((control_id.as_str(), field));
         }
         pad_buttons.push(buttons);
     }
@@ -310,7 +312,6 @@ impl SystemControl<'_> {
             .map(|(_, field)| *field)
         {
             self.gui_input
-                .state
                 .set(field, InputValue::Digital(pressed))
                 .map_err(|error| RomTestError::EmuThread(format!("seed input: {error}")))?;
             self.gui_input.publish();

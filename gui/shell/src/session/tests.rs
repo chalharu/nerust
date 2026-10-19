@@ -21,7 +21,7 @@ use nerust_settings_core::model::language::AppLanguage;
 use super::test_util::*;
 use crate::test_helpers::*;
 use crate::{
-    load::{RomLoadTarget, SystemActivationError},
+    load::SystemActivationError,
     registry::SystemRegistry,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
@@ -156,8 +156,8 @@ fn session_commands_drive_pause_resume_toggle_and_reset() {
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
 
-    assert!(session.can_pause());
-    assert!(!session.can_resume());
+    assert!(session.tick_metrics().can_pause());
+    assert!(!session.tick_metrics().can_resume());
     assert_eq!(
         session.run_command(SessionCommand::Pause).unwrap(),
         SessionCommandOutcome {
@@ -176,7 +176,7 @@ fn session_commands_drive_pause_resume_toggle_and_reset() {
             .unwrap()
             .executed
     );
-    assert!(session.can_pause());
+    assert!(session.tick_metrics().can_pause());
     assert!(session.run_command(SessionCommand::Reset).unwrap().executed);
 }
 
@@ -221,14 +221,14 @@ fn session_rebuild_reuses_previously_resolved_load_request() {
     session
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
-    assert!(session.loaded());
+    assert!(session.tick_metrics().loaded);
 
     let mut next = session.settings_snapshot().clone();
     next.local.audio.latency_ms = 90;
     let plan = session.apply_settings(next).unwrap();
 
     assert!(plan.session_rebuild_required);
-    assert!(session.loaded());
+    assert!(session.tick_metrics().loaded);
 }
 
 /// `MockFactory` delegate answering the presentation query.
@@ -342,7 +342,7 @@ fn live_swap_session() -> SessionHandle {
     session
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
-    assert!(session.loaded());
+    assert!(session.tick_metrics().loaded);
     session
 }
 
@@ -376,7 +376,7 @@ fn apply_settings_swaps_presentation_without_rebuild_on_visual_delta() {
         creations,
         "presentation swap must not reconstruct the core"
     );
-    assert!(session.loaded(), "swap keeps the loaded ROM");
+    assert!(session.tick_metrics().loaded, "swap keeps the loaded ROM");
     assert_eq!(
         session
             .render_profile()
@@ -432,7 +432,10 @@ fn apply_settings_rolls_back_presentation_swap_on_save_failure() {
             .contains_key(&DummySystemId as &dyn SystemId),
         "snapshot keeps the previous (absent) settings"
     );
-    assert!(session.loaded(), "rollback keeps the loaded ROM");
+    assert!(
+        session.tick_metrics().loaded,
+        "rollback keeps the loaded ROM"
+    );
 }
 
 #[test]
@@ -460,7 +463,7 @@ fn apply_settings_swaps_audio_without_rebuild_when_latency_changes() {
     session
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
-    assert!(session.loaded());
+    assert!(session.tick_metrics().loaded);
 
     let mut next = session.settings_snapshot().clone();
     next.local.audio.latency_ms = 90;
@@ -476,7 +479,7 @@ fn apply_settings_swaps_audio_without_rebuild_when_latency_changes() {
         creations,
         "live swap must not reconstruct the core"
     );
-    assert!(session.loaded(), "swap keeps the loaded ROM");
+    assert!(session.tick_metrics().loaded, "swap keeps the loaded ROM");
     assert_eq!(session.settings_snapshot().local.audio.latency_ms, 90);
 }
 
@@ -526,7 +529,7 @@ fn apply_settings_rolls_back_on_save_failure() {
     // Core should still be present (swap-back rollback succeeded without
     // reconstructing anything)
     assert!(
-        session.emu.core_opt().is_some(),
+        session.emu.core().is_ok(),
         "core should be restored after rollback"
     );
 }
@@ -624,7 +627,8 @@ fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
         ],
     );
     session.set_settings_snapshot(snapshot);
-    RomLoadTarget::set_active_system(&mut session, system_id.as_ref())
+    session
+        .set_active_system(system_id.as_ref())
         .expect("fallback core creation should succeed");
     assert_eq!(session.input.current_assignments, expected_assignments);
 }
@@ -637,7 +641,8 @@ fn session_factory_uses_primary_initially() {
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
     let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
     assert!(session.factory().is_none());
-    RomLoadTarget::set_active_system(&mut session, id.as_ref())
+    session
+        .set_active_system(id.as_ref())
         .expect("test setup should succeed for known system");
     assert_eq!(session.factory().expect("no active system").system_id(), id);
 }
@@ -649,7 +654,7 @@ fn set_active_system_rejects_unknown_id() {
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
     let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
 
-    let err = RomLoadTarget::set_active_system(&mut session, &DummyOtherSystemId).unwrap_err();
+    let err = session.set_active_system(&DummyOtherSystemId).unwrap_err();
     assert!(matches!(err, SystemActivationError::NotRegistered(_)));
     assert!(session.active_system_id().is_none());
     assert!(session.factory().is_none());
@@ -664,7 +669,9 @@ fn switching_system_discards_previous_loaded_runtime_state() {
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
     let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
 
-    RomLoadTarget::set_active_system(&mut session, first.system_id().as_ref()).unwrap();
+    session
+        .set_active_system(first.system_id().as_ref())
+        .unwrap();
     let resolved = session
         .factory()
         .unwrap()
@@ -673,12 +680,12 @@ fn switching_system_discards_previous_loaded_runtime_state() {
     session
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
-    assert!(session.loaded());
+    assert!(session.tick_metrics().loaded);
 
-    RomLoadTarget::set_active_system(&mut session, second_id.as_ref()).unwrap();
+    session.set_active_system(second_id.as_ref()).unwrap();
 
     assert_eq!(session.active_system_id(), Some(second_id.as_ref()));
-    assert!(!session.loaded());
+    assert!(!session.tick_metrics().loaded);
     assert!(session.loaded_media_ref().is_none());
     assert!(session.slots().is_empty());
 }
@@ -1297,7 +1304,7 @@ fn live_images_flight_refetches_while_running() {
 fn pump_osd_empty_queue_reports_clean() {
     use std::time::Instant;
 
-    use crate::session::osd::{ModalSource, OsdManager, PushInput, TransientPolicy};
+    use crate::session::osd::{OsdManager, PushInput, TransientPolicy};
 
     let mut session = test_session();
     let mut manager = OsdManager::new();
@@ -1310,7 +1317,7 @@ fn pump_osd_empty_queue_reports_clean() {
         tick,
     };
     // test_session activates a system but loads no ROM: unpresented.
-    assert!(!session.loaded());
+    assert!(!session.tick_metrics().loaded);
     let report = session.pump_osd(&mut manager, input());
     assert!(!report.changed);
     assert!(!report.modal_queued);
@@ -1328,7 +1335,7 @@ fn pump_osd_empty_queue_reports_clean() {
 fn pump_osd_routes_no_core_error_to_modal() {
     use std::time::Instant;
 
-    use crate::session::osd::{ModalSource, OsdManager, PushInput, TransientPolicy};
+    use crate::session::osd::{ModalSource as _, OsdManager, PushInput, TransientPolicy};
 
     let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
@@ -1401,13 +1408,13 @@ fn pump_osd_drops_info_without_frame() {
 
     use crate::session::{
         notification::NotificationKind,
-        osd::{ModalSource, OsdManager, PushInput, TransientPolicy},
+        osd::{OsdManager, PushInput, TransientPolicy},
     };
 
     let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
     let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
-    assert!(!session.loaded());
+    assert!(!session.tick_metrics().loaded);
     let mut manager = OsdManager::new();
     let snapshot = session.settings_snapshot().clone();
     let tick = session.tick_metrics();

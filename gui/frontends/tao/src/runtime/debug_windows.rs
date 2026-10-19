@@ -75,7 +75,7 @@ impl DebugWindows {
         self.debug_window.is_some()
     }
 
-    /// Whether the PPU viewer is currently open.
+    /// Same guard for the PPU viewer.
     pub(super) fn is_ppu_open(&self) -> bool {
         self.ppu_window.is_some()
     }
@@ -195,7 +195,6 @@ impl DebugWindows {
             .is_some_and(|h| h.close_requested())
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

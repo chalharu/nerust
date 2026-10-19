@@ -94,17 +94,11 @@ impl GtkOsd {
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
     ) {
-        use nerust_gui_shell::session::osd::strip_rows;
+        use nerust_gui_shell::session::osd::OsdChrome;
         use nerust_render_traits::ReservedStrip;
         use nerust_render_traits::renderer::strip_pixels;
         let client_h = window.height().max(0) as u32 * window.scale_factor().max(1) as u32;
-        let (top_rows, bottom_rows) = strip_rows(
-            settings.area_mode,
-            settings.position,
-            settings.status_area_mode,
-            settings.status_position,
-            settings.status_enabled,
-        );
+        let (top_rows, bottom_rows) = OsdChrome::from(settings).reserved_rows();
         let strip = ReservedStrip {
             top: strip_pixels(client_h, top_rows, 1.0),
             bottom: strip_pixels(client_h, bottom_rows, 1.0),
@@ -135,10 +129,13 @@ impl GtkOsd {
         let decision = self.presenter.sync(
             &self.manager,
             OsdSyncInput {
+                tick: nerust_gui_shell::session::osd::TickMetrics {
+                    fps,
+                    paused,
+                    ..nerust_gui_shell::session::osd::TickMetrics::default()
+                },
                 chrome,
                 language,
-                fps,
-                paused,
                 now: Instant::now(),
                 width: w,
                 height: h,

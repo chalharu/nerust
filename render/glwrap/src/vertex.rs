@@ -44,12 +44,19 @@ impl VertexArray {
         unsafe {
             gl::GenVertexArrays(1, &mut vao);
         }
+        // Gen itself failed: no name to delete.
         gl_get_error()?;
+        // Scope guard: a failing bind or `cb` must not orphan the VAO.
         unsafe {
             gl::BindVertexArray(vao);
         }
-        gl_get_error()?;
-
+        if let Err(e) = gl_get_error() {
+            unsafe {
+                gl::DeleteVertexArrays(1, &vao);
+            }
+            let _ = gl_get_error();
+            return Err(e);
+        }
         let mut va = VertexArray {
             vao: VertexArrayVAO {
                 id: vao,
@@ -61,7 +68,13 @@ impl VertexArray {
 
         {
             let mut ctx = VertexArrayInitContext { va: &mut va };
-            cb(&mut ctx)?;
+            if let Err(e) = cb(&mut ctx) {
+                unsafe {
+                    gl::DeleteVertexArrays(1, &vao);
+                }
+                let _ = gl_get_error();
+                return Err(e);
+            }
         }
 
         Ok(va)
@@ -69,15 +82,22 @@ impl VertexArray {
 
     /// Delete the VAO and held buffers when the context is current.
     /// No GL call without a current context; Drop reports the leak.
-    pub fn destroy_if_current(&mut self, current: CurrentContext) -> bool {
+    pub fn destroy_if_current(&mut self, current: Option<CurrentContext>) -> bool {
+        let Some(_current) = current else {
+            log::debug!("orphan GL VAO {} skipped: no current context", self.vao.id);
+            self.vao.deleted = true;
+            self.vbo_refs.clear();
+            self.ibo_ref = None;
+            return true;
+        };
         let mut failed = false;
         for vbo in self.vbo_refs.iter() {
-            if vbo.destroy_if_current(current) {
+            if vbo.destroy_if_current(Some(_current)) {
                 failed = true;
             }
         }
         if let Some(ibo) = self.ibo_ref.as_ref()
-            && ibo.destroy_if_current(current)
+            && ibo.destroy_if_current(Some(_current))
         {
             failed = true;
         }
@@ -206,8 +226,15 @@ impl VertexBuffer {
         let mut vbo = 0;
         unsafe { gl::GenBuffers(1, &mut vbo) };
         gl_get_error()?;
+        // Scope guard: a failing bind or upload must not orphan `vbo`.
         unsafe { gl::BindBuffer(gl::ARRAY_BUFFER, vbo) };
-        gl_get_error()?;
+        if let Err(e) = gl_get_error() {
+            unsafe {
+                gl::DeleteBuffers(1, &vbo);
+            }
+            let _ = gl_get_error();
+            return Err(e);
+        }
         unsafe {
             gl::BufferData(
                 gl::ARRAY_BUFFER,
@@ -216,7 +243,13 @@ impl VertexBuffer {
                 gl::STATIC_DRAW,
             );
         }
-        gl_get_error()?;
+        if let Err(e) = gl_get_error() {
+            unsafe {
+                gl::DeleteBuffers(1, &vbo);
+            }
+            let _ = gl_get_error();
+            return Err(e);
+        }
 
         Ok(VertexBuffer {
             id: vbo,
@@ -225,11 +258,16 @@ impl VertexBuffer {
     }
 
     /// Delete the buffer when the context is current.
-    /// No GL call without a current context; Drop reports the leak.
-    pub fn destroy_if_current(&self, _current: CurrentContext) -> bool {
+    /// `None` skips the GL call and reports failure; Drop logs the leak.
+    pub fn destroy_if_current(&self, current: Option<CurrentContext>) -> bool {
         if self.deleted.get() {
             return false;
         }
+        let Some(_current) = current else {
+            log::debug!("orphan GL VBO {} skipped: no current context", self.id);
+            self.deleted.set(true);
+            return true;
+        };
         let failed = super::raw::delete_buffers(1, &self.id).is_err();
         self.deleted.set(true);
         failed
@@ -263,7 +301,13 @@ impl IndexBuffer {
         unsafe {
             gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, vbo);
         }
-        gl_get_error()?;
+        if let Err(e) = gl_get_error() {
+            unsafe {
+                gl::DeleteBuffers(1, &vbo);
+            }
+            let _ = gl_get_error();
+            return Err(e);
+        }
         unsafe {
             gl::BufferData(
                 gl::ELEMENT_ARRAY_BUFFER,
@@ -272,7 +316,13 @@ impl IndexBuffer {
                 gl::STATIC_DRAW,
             );
         }
-        gl_get_error()?;
+        if let Err(e) = gl_get_error() {
+            unsafe {
+                gl::DeleteBuffers(1, &vbo);
+            }
+            let _ = gl_get_error();
+            return Err(e);
+        }
 
         Ok(IndexBuffer {
             id: vbo,
@@ -282,11 +332,16 @@ impl IndexBuffer {
     }
 
     /// Delete the buffer when the context is current.
-    /// No GL call without a current context; Drop reports the leak.
-    pub fn destroy_if_current(&self, _current: CurrentContext) -> bool {
+    /// `None` skips the GL call and reports failure; Drop logs the leak.
+    pub fn destroy_if_current(&self, current: Option<CurrentContext>) -> bool {
         if self.deleted.get() {
             return false;
         }
+        let Some(_current) = current else {
+            log::debug!("orphan GL IBO {} skipped: no current context", self.id);
+            self.deleted.set(true);
+            return true;
+        };
         let failed = super::raw::delete_buffers(1, &self.id).is_err();
         self.deleted.set(true);
         failed

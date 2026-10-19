@@ -22,26 +22,32 @@ pub(crate) struct ModalFlight {
     pub(super) resume_after: bool,
 }
 
-/// Likely-Render gate from cheap state only. Pure so the Skip
-/// side stays unit-testable without a renderer. Passes on every
-/// signal the presenter reads: generation, visibility, status (its
-/// 2Hz digits tick without a generation bump), and geometry (size
-/// or chrome moves boxes without touching settings). The live-layer
-/// memo is deliberately not an input: a live but steady layer must
-/// Skip without running the presenter.
-fn osd_sync_likely(
-    generation: u64,
-    last_seen: u64,
-    visible: bool,
-    status_on: bool,
+/// Shell-side OSD sync gate, calling only public presenter/manager
+/// APIs. The generation comparison replaces the old peek-then-take
+/// flag; visibility, the 2Hz status digits, and geometry (size/chrome
+/// moves boxes without a generation bump) are the other pass
+/// signals. The live-layer memo is deliberately not an input: a live
+/// but steady layer must Skip without running the presenter.
+/// (Ideal home is `OsdPresenter::should_sync` in the shell crate;
+/// shell is out of scope here, so this free fn keeps the signal list
+/// in one place instead of spreading raw scalars at the call site.)
+fn osd_should_sync(
+    presenter: &nerust_gui_shell::session::osd::OsdPresenter,
+    manager: &nerust_gui_shell::session::osd::OsdManager,
+    status_enabled: bool,
     geometry_changed: bool,
 ) -> bool {
-    generation != last_seen || visible || status_on || geometry_changed
+    manager.generation() != presenter.last_seen()
+        || manager.has_visible()
+        || status_enabled
+        || geometry_changed
 }
 
-/// One settings snapshot per frame. `poll_notifications` + `sync_osd_layer`
-/// previously cloned the snapshot twice per tick; the frame owns one copy.
-struct FrameSnapshot {
+/// One settings snapshot per frame. Captured once per loop entry and
+/// threaded by reference: `poll_notifications` and `render_osd_frame`
+/// must share the frame instead of cloning the snapshot twice per
+/// tick.
+pub(crate) struct FrameSnapshot {
     notifications: nerust_settings_core::model::local::NotificationSettings,
     language: nerust_settings_core::model::language::AppLanguage,
 }
@@ -57,7 +63,7 @@ impl FrameSnapshot {
 }
 
 impl HostState {
-    fn frame_snapshot(&self) -> FrameSnapshot {
+    pub(crate) fn frame_snapshot(&self) -> FrameSnapshot {
         FrameSnapshot::capture(&self.session)
     }
 
@@ -85,7 +91,7 @@ impl HostState {
     fn sync_history_window(&mut self, frame: &FrameSnapshot) {
         let language = frame.language;
         let key = (self.session.notification_history_seq(), language);
-        // Dirty gate: the sync runs every loop pass while open, but
+        // dirty gate: the sync runs every loop pass while open, but
         // row building is skipped unless content or language changed.
         if self.osd.history_sync_key == Some(key) {
             return;
@@ -98,6 +104,9 @@ impl HostState {
     }
 
     pub(crate) fn on_history_event(&mut self, event: WindowEvent) {
+        // One capture for the whole event: sync and post-clear
+        // re-sync share it.
+        let frame = self.frame_snapshot();
         if matches!(event, WindowEvent::Destroyed) {
             self.osd.history_window = None;
             self.osd.history_sync_key = None;
@@ -107,7 +116,7 @@ impl HostState {
         // pending pause and never resumes. A protocol-paused session
         // stays paused while browsing history.
         if let WindowEvent::Focused(focused) = event {
-            self.note_aux_focus_quiet(focused);
+            self.on_aux_focus(crate::aux::focus::AuxKind::History, focused);
         }
         if let Some(handle) = self.osd.history_window.as_mut() {
             handle.on_event(event);
@@ -117,7 +126,6 @@ impl HostState {
             }
             if handle.take_clear_request() {
                 self.session.clear_notification_history();
-                let frame = self.frame_snapshot();
                 self.sync_history_window(&frame);
             }
         }
@@ -149,9 +157,12 @@ impl HostState {
     }
 
     /// Present one error batch without blocking the loop.
-    fn spawn_modal(&mut self, detail: String) {
+    fn spawn_modal(
+        &mut self,
+        detail: String,
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) {
         let dialogs = std::sync::Arc::clone(&self.dialogs);
-        let language = self.frame_snapshot().language;
         let resume_after = self.osd.resume_after_modal;
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         self.osd.modal_flight = Some(ModalFlight {
@@ -211,11 +222,11 @@ impl HostState {
     /// The blocking `show_error` runs on a short-lived thread
     /// (see `ModalFlight`): presenting from the loop would freeze
     /// every window and starve backends needing loop cooperation.
-    fn present_modal(&mut self) {
+    fn present_modal(&mut self, language: nerust_settings_core::model::language::AppLanguage) {
         if self.osd.modal_flight.is_none()
             && let Some(detail) = self.osd.manager.take_modal_batch()
         {
-            self.spawn_modal(detail);
+            self.spawn_modal(detail, language);
         }
     }
 
@@ -223,10 +234,11 @@ impl HostState {
     /// error modals (auto-pausing first), and refresh the overlay.
     /// Cheap when idle (dirty-gated sync); safe to call every loop
     /// pass, including paused+unfocused where `on_update` stalls.
-    pub(crate) fn poll_notifications(&mut self) {
+    /// The frame is captured once by the caller and threaded through,
+    /// so this pass clones the snapshot at most once.
+    pub(crate) fn poll_notifications(&mut self, frame: &FrameSnapshot) {
         use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
         let now = Instant::now();
-        let frame = self.frame_snapshot();
         let language = frame.language;
         let tick = self.session.tick_metrics();
         let report = self.session.pump_osd(
@@ -247,14 +259,14 @@ impl HostState {
             }
         }
         self.reap_modal();
-        self.present_modal();
+        self.present_modal(language);
         if report.changed {
             // Paint even idle: no main redraw is scheduled while
             // paused+unfocused, which is exactly when Paused lands.
             self.request_redraw();
         }
         if self.osd.history_window.is_some() {
-            self.sync_history_window(&frame);
+            self.sync_history_window(frame);
         }
     }
 
@@ -264,14 +276,14 @@ impl HostState {
         &mut self,
         renderer: &mut dyn GpuRenderer,
         size: nerust_render_traits::SurfaceSize,
+        frame: &FrameSnapshot,
     ) {
-        let frame = self.frame_snapshot();
-        let strip = self.reserved_strip_with(&frame);
+        let strip = self.reserved_strip_with(frame);
         if strip != self.osd.last_strip {
             self.osd.last_strip = strip;
             renderer.set_reserved_strip(strip);
         }
-        self.sync_osd_layer(renderer, size, &frame);
+        self.sync_osd_layer(renderer, size, frame);
     }
 
     /// Rasterize the OSD layer on change and hand it to the renderer.
@@ -287,15 +299,15 @@ impl HostState {
         use nerust_gui_shell::session::osd::{OsdChrome, OsdSync, OsdSyncInput};
         let language = frame.language;
         let chrome = OsdChrome::from(&frame.notifications);
-        // Cheap pre-gate before any snapshot: generation, visibility,
-        // status liveness, and geometry (size/chrome) mirror exactly
-        // the signals the presenter reads.
+        // Cheap shell-side pre-gate before running the presenter:
+        // generation, visibility, status liveness, and geometry
+        // (size/chrome) mirror exactly the signals the presenter
+        // reads (see `osd_should_sync`).
         let geometry = (size.width, size.height, chrome);
         let geometry_changed = self.osd.last_sync_geometry != Some(geometry);
-        if !osd_sync_likely(
-            self.osd.manager.generation(),
-            self.osd.presenter.last_seen(),
-            self.osd.manager.has_visible(),
+        if !osd_should_sync(
+            &self.osd.presenter,
+            &self.osd.manager,
             chrome.status_enabled,
             geometry_changed,
         ) {
@@ -305,10 +317,9 @@ impl HostState {
         let decision = self.osd.presenter.sync(
             &self.osd.manager,
             OsdSyncInput {
+                tick,
                 chrome,
                 language,
-                fps: tick.fps,
-                paused: tick.paused,
                 now: Instant::now(),
                 width: geometry.0,
                 height: geometry.1,
@@ -393,13 +404,34 @@ mod tests {
 
     #[test]
     fn sync_gate_covers_all_cheap_inputs() {
-        // Same generation as last sync: only other signals pass.
-        // Geometry covers resizes and corner flips without a bump.
-        assert!(!osd_sync_likely(7, 7, false, false, false));
-        assert!(osd_sync_likely(8, 7, false, false, false));
-        assert!(osd_sync_likely(7, 7, true, false, false));
-        assert!(osd_sync_likely(7, 7, false, true, false));
-        assert!(osd_sync_likely(7, 7, false, false, true));
+        use nerust_gui_shell::session::osd::OsdChrome;
+        let support = TestHost::new();
+        let host = support.host;
+        let chrome = OsdChrome::from(&host.frame_snapshot().notifications);
+        assert!(!chrome.status_enabled);
+        // Idle: same generation, nothing visible, status off, no
+        // geometry move -- the presenter stays untouched.
+        assert!(!osd_should_sync(
+            &host.osd.presenter,
+            &host.osd.manager,
+            false,
+            false
+        ));
+        // Status liveness and geometry moves each pass alone (the
+        // generation/visibility arms ride the same OR and are pinned
+        // by the render tests below).
+        assert!(osd_should_sync(
+            &host.osd.presenter,
+            &host.osd.manager,
+            true,
+            false
+        ));
+        assert!(osd_should_sync(
+            &host.osd.presenter,
+            &host.osd.manager,
+            false,
+            true
+        ));
     }
 
     #[test]

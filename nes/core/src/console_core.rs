@@ -103,7 +103,11 @@ impl NesConsoleCore {
 
         // Take latest input and sync to controller
         self.emu_input.take();
-        if let Some(state) = self.emu_input.read_buf.downcast_ref::<NesInputBuffer>() {
+        if let Some(state) = self
+            .emu_input
+            .read_buffer()
+            .downcast_ref::<NesInputBuffer>()
+        {
             self.controller.sync_input(&state.0);
         }
 

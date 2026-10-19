@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, ControlInfo, ControlKind, Controller, ControllerProfile,
+    AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, Controller, ControllerProfile,
     DigitalControlId, OpenBusReadResult, Port, PortSet, ProfileId,
 };
 
@@ -53,9 +53,9 @@ impl Controller for StandardPad {
 
     fn write(&mut self, _port: &dyn Port, _value: u8) {}
 
-    fn field_map(&self, port: &dyn Port) -> Vec<(AttachmentId, DigitalControlId, usize)> {
-        let attachment = port.as_attachment_id();
-        vec![
+    fn field_map(&self, port: &dyn Port, out: &mut Vec<(AttachmentId, DigitalControlId, usize)>) {
+        let attachment = AttachmentId::new(port.id());
+        out.extend([
             (attachment, DigitalControlId::new("gbc.control.a"), FIELD_A),
             (attachment, DigitalControlId::new("gbc.control.b"), FIELD_B),
             (
@@ -88,7 +88,7 @@ impl Controller for StandardPad {
                 DigitalControlId::new("gbc.control.down"),
                 FIELD_DOWN,
             ),
-        ]
+        ]);
     }
 }
 
@@ -114,49 +114,49 @@ impl ControllerProfile for StandardPadProfile {
         use ControlKind::Digital;
         const C: &[ControlInfo] = &[
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.a"),
+                id: ControlId::Digital(DigitalControlId::new("gbc.control.a")),
                 label: "A",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button1),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.b"),
+                id: ControlId::Digital(DigitalControlId::new("gbc.control.b")),
                 label: "B",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button2),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.select"),
+                id: ControlId::Digital(DigitalControlId::new("gbc.control.select")),
                 label: "Select",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Select),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.start"),
+                id: ControlId::Digital(DigitalControlId::new("gbc.control.start")),
                 label: "Start",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Start),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.up"),
+                id: ControlId::Digital(DigitalControlId::new("gbc.control.up")),
                 label: "Up",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadUp),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.down"),
+                id: ControlId::Digital(DigitalControlId::new("gbc.control.down")),
                 label: "Down",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadDown),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.left"),
+                id: ControlId::Digital(DigitalControlId::new("gbc.control.left")),
                 label: "Left",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadLeft),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.right"),
+                id: ControlId::Digital(DigitalControlId::new("gbc.control.right")),
                 label: "Right",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadRight),
@@ -194,14 +194,16 @@ mod tests {
     #[test]
     fn field_map_has_eight_entries() {
         let pad = StandardPad::default();
-        let map = pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"));
+        let mut map = Vec::new();
+        pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"), &mut map);
         assert_eq!(map.len(), 8);
     }
 
     #[test]
     fn field_map_indices_are_unique_and_in_range() {
         let pad = StandardPad::default();
-        let map = pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"));
+        let mut map = Vec::new();
+        pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"), &mut map);
         let indices: Vec<usize> = map.iter().map(|(_, _, idx)| *idx).collect();
         let mut sorted = indices.clone();
         sorted.sort();

@@ -21,9 +21,14 @@ impl InputStateBuffer for TestInputBuffer {
     fn clear(&mut self) {
         self.0 = [0; 2];
     }
-    fn copy_state(&mut self, other: &dyn InputStateBuffer) {
+    fn copy_state(&mut self, other: &dyn InputStateBuffer) -> Result<(), BufferError> {
         if let Some(src) = other.downcast_ref::<TestInputBuffer>() {
             self.0 = src.0;
+            Ok(())
+        } else {
+            Err(BufferError::MismatchedBuffer {
+                expected: "TestInputBuffer",
+            })
         }
     }
 }

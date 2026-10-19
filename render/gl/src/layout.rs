@@ -44,12 +44,18 @@ impl FrameLayout {
         data_len: usize,
         unpack_row_length: bool,
     ) -> Result<Self, FrameError> {
+        if bpp == 0 {
+            return Err(FrameError::DimensionsOverflow { have: data_len });
+        }
         let row_bytes = fs
             .width
             .checked_mul(bpp)
             .ok_or(FrameError::DimensionsOverflow { have: data_len })?;
+        if !stride.is_multiple_of(bpp) {
+            return Err(FrameError::StrideOverflow { have: data_len });
+        }
         let stride_px = stride
-            .checked_div(bpp.max(1))
+            .checked_div(bpp)
             .ok_or(FrameError::StrideOverflow { have: data_len })?;
         let need = if unpack_row_length {
             fs.height.checked_sub(1).map_or(Ok(0), |rows| {

@@ -1,5 +1,9 @@
 //! Read-only session queries for frontends: metrics, titles, slots,
 //! and history views. No mutation, no orchestration.
+//!
+//! Tick discipline: [`SessionHandle::tick_metrics`] is the single
+//! metrics lock per pass. Callers fetch one [`TickMetrics`] and thread
+//! it through these queries instead of combining per-call predicates.
 
 use nerust_emu_thread::ConsoleMetrics;
 
@@ -14,7 +18,11 @@ pub struct WindowSize {
 
 impl SessionHandle {
     pub fn metrics(&self) -> ConsoleMetrics {
-        self.emu.core_opt().map(|c| c.metrics()).unwrap_or_default()
+        self.emu
+            .core()
+            .ok()
+            .map(|c| c.metrics())
+            .unwrap_or_default()
     }
 
     pub fn tick_metrics(&self) -> TickMetrics {
@@ -28,7 +36,7 @@ impl SessionHandle {
     }
 
     pub fn window_size(&self) -> WindowSize {
-        let Some(core) = self.emu.core_opt() else {
+        let Some(core) = self.emu.core().ok() else {
             return WindowSize::default();
         };
         let profile = core.render_profile();
@@ -38,41 +46,17 @@ impl SessionHandle {
         }
     }
 
-    pub fn window_title(&self) -> String {
-        let metrics = self.metrics();
+    /// Window title from one already-fetched tick: no metrics lock
+    /// here, so per-frame title refreshes share the pass tick.
+    pub fn window_title(&self, tick: &TickMetrics) -> String {
         let name = self.active_factory().map(|f| f.display_name());
         window_title(
-            metrics.paused,
-            metrics,
+            tick.paused,
+            tick.loaded,
             name,
             self.active_slot_id(),
             self.slots().len(),
         )
-    }
-
-    /// Single-use convenience: one metrics lock per call. Tick
-    /// paths must fetch `tick_metrics()` once and thread the value
-    /// instead of combining these predicates.
-    pub fn loaded(&self) -> bool {
-        self.tick_metrics().loaded
-    }
-
-    /// Single-use convenience: one metrics lock per call. See
-    /// [`SessionHandle::loaded`].
-    pub fn paused(&self) -> bool {
-        self.tick_metrics().paused
-    }
-
-    /// Single-use convenience: one metrics lock per call. See
-    /// [`SessionHandle::loaded`].
-    pub fn can_pause(&self) -> bool {
-        self.tick_metrics().can_pause()
-    }
-
-    /// Single-use convenience: one metrics lock per call. See
-    /// [`SessionHandle::loaded`].
-    pub fn can_resume(&self) -> bool {
-        self.tick_metrics().can_resume()
     }
 
     pub fn notification_history(
@@ -92,31 +76,11 @@ impl SessionHandle {
         self.notifications.history_seq()
     }
 
-    pub fn clear_notification_history(&mut self) {
-        self.notifications.clear_history();
-    }
-
     pub fn slots(&self) -> &[nerust_persistence::model::StateSlotSummary] {
         self.media.persistence.slots()
     }
 
     pub fn active_slot_id(&self) -> Option<u64> {
         self.media.persistence.active_slot_id()
-    }
-
-    pub fn save_hidden_lifecycle_state(&mut self) -> bool {
-        self.emu
-            .core_opt()
-            .is_some_and(|core| self.media.persistence.save_hidden(core))
-    }
-
-    pub fn load_hidden_lifecycle_state(&mut self) -> bool {
-        self.emu
-            .core_opt()
-            .is_some_and(|core| self.media.persistence.load_hidden(core))
-    }
-
-    pub fn clear_hidden_lifecycle_state(&mut self) {
-        self.media.persistence.clear_hidden();
     }
 }

@@ -623,7 +623,7 @@ mod tests {
     fn content() -> OsdContent {
         OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]".to_string(),
+                tag: "[INFO]",
                 text: "Paused".to_string(),
                 rgb: (255, 255, 255),
             }],
@@ -700,7 +700,7 @@ mod tests {
         // 720p: font 16px, row 16*16/10+4 = 29.
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]".to_string(),
+                tag: "[INFO]",
                 text: "Paused".to_string(),
                 rgb: (255, 255, 255),
             }],
@@ -757,7 +757,7 @@ mod tests {
         }
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]".to_string(),
+                tag: "[INFO]",
                 text: "一時停止しました".to_string(),
                 rgb: (255, 255, 255),
             }],
@@ -777,7 +777,7 @@ mod tests {
         // Body-only: the tag alone must not satisfy the assert above.
         let body = OsdContent {
             rows: vec![OsdRow {
-                tag: String::new(),
+                tag: "",
                 text: "一時停止しました".to_string(),
                 rgb: (255, 255, 255),
             }],
@@ -912,7 +912,7 @@ mod tests {
         // under it, spanning margin to margin.
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]".to_string(),
+                tag: "[INFO]",
                 text: "Paused".to_string(),
                 rgb: (255, 255, 255),
             }],

@@ -50,11 +50,13 @@ impl InputSystemFactory for crate::NesFactory {
         use nerust_nes_core::controller::NES_PORTS;
 
         let mut field_map = std::collections::HashMap::new();
-        for (idx, dev) in controllers.devices.iter().enumerate() {
-            if idx >= NES_PORTS.len() {
-                break;
-            }
-            for (s, ctrl, bit) in dev.field_map(&NES_PORTS[idx]) {
+        for (idx, port) in NES_PORTS.iter().enumerate() {
+            let Some(dev) = controllers.get(idx) else {
+                continue;
+            };
+            let mut entries = Vec::new();
+            dev.field_map(port, &mut entries);
+            for (s, ctrl, bit) in entries {
                 field_map.insert((s, ctrl), bit);
             }
         }

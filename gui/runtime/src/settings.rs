@@ -213,7 +213,7 @@ fn value_at_path_mut<'a>(
 }
 
 /// Re-exported from the settings domain model for call-site stability.
-pub use nerust_settings_core::model::snapshot::SettingsApplyPlan;
+pub use nerust_settings_core::model::snapshot::{LiveStrategy, SettingsApplyPlan};
 
 #[cfg(test)]
 pub(crate) fn tao_caps() -> HostBackendCapabilities {

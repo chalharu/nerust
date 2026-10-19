@@ -6,6 +6,8 @@ pub mod error;
 pub mod input;
 pub(crate) mod input_map;
 pub mod lifecycle;
+pub mod lifecycle_persist;
+pub mod load_adapter;
 pub mod notification;
 pub mod osd;
 pub mod osd_history;
@@ -30,7 +32,7 @@ use nerust_core_traits::{
     audio::AudioBackendRegistry,
     factory::{
         CoreFactory, FactoryError,
-        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+        load::{DynSystemLoadOptions, MediaObject},
     },
     identity::SystemId,
 };
@@ -52,10 +54,10 @@ use crate::{
     emu_core::EmuCore, registry::SystemRegistry, session::persistence::PersistenceManager, settings,
 };
 
-/// Live PPU image batch: generation plus one `(label, width, height,
-/// rgba)` tuple per image. Aliased so the fetch signature stays
-/// readable (clippy `type_complexity`).
-pub type LiveImages = Option<(u64, Vec<(String, u32, u32, Vec<u8>)>)>;
+/// Live PPU image batch. Canonical home is
+/// [`emu_core::images`](crate::emu_core::images); re-exported here so
+/// session-adjacent code keeps one import path.
+pub use crate::emu_core::images::LiveImages;
 
 struct CoreRuntime {
     emu_core: EmuCore,
@@ -167,16 +169,6 @@ impl EmuCluster {
     /// Exclusive core for swaps and rebuilds.
     pub(crate) fn core_mut(&mut self) -> Result<&mut EmuCore, SessionError> {
         self.core.as_mut().ok_or(SessionError::NoCore)
-    }
-
-    /// Borrowed core for `map`/`is_some` chains that tolerate absence.
-    pub(crate) fn core_opt(&self) -> Option<&EmuCore> {
-        self.core.as_ref()
-    }
-
-    /// Exclusive borrowed core for in-place swaps.
-    pub(crate) fn core_opt_mut(&mut self) -> Option<&mut EmuCore> {
-        self.core.as_mut()
     }
 
     /// Paired install: core and input always arrive together from the
@@ -451,24 +443,24 @@ impl SessionHandle {
     }
 
     pub fn render_profile(&self) -> Option<&VideoRenderProfile> {
-        self.emu.core_opt().map(|c| c.render_profile())
+        self.emu.core().ok().map(|c| c.render_profile())
     }
 
     pub fn swap_frame_buffer(&mut self) {
         if let Some(gui_input) = self.emu.input_mut() {
             gui_input.publish();
         }
-        if let Some(core) = self.emu.core_opt_mut() {
+        if let Ok(core) = self.emu.core_mut() {
             core.swap_frame_buffer();
         }
     }
 
     pub fn frame_buffer(&self) -> Option<&FrameBuffer> {
-        self.emu.core_opt().map(|c| c.frame_buffer())
+        self.emu.core().ok().map(|c| c.frame_buffer())
     }
 
     pub fn clear_display(&mut self) {
-        if let Some(core) = self.emu.core_opt_mut() {
+        if let Ok(core) = self.emu.core_mut() {
             core.clear_display();
         }
     }
@@ -542,8 +534,10 @@ impl SessionHandle {
             .iter()
             .map(|(slot, controller)| {
                 (
-                    slot.to_string(),
-                    controller.as_ref().map(|p| p.profile_id().to_string()),
+                    slot.as_str().to_owned(),
+                    controller
+                        .as_ref()
+                        .map(|p| p.profile_id().as_str().to_owned()),
                 )
             })
             .collect()
@@ -568,33 +562,17 @@ pub enum SessionError {
     NoCore,
 }
 
-use crate::{
-    load::{RomLoadTarget, RomLoaderError, SystemActivationError},
-    session::commands::SessionCommand,
-};
+use crate::load::SystemActivationError;
 
-impl RomLoadTarget for SessionHandle {
-    fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
-        SessionHandle::default_load_options(self)
-    }
-    fn settings_snapshot(&self) -> &SettingsSnapshot {
-        SessionHandle::settings_snapshot(self)
-    }
-    fn load_resolved(
-        &mut self,
-        media: MediaObject,
-        resolved: ResolvedLoadRequest,
-    ) -> Result<(), RomLoaderError> {
-        SessionHandle::load_resolved(self, media, resolved)
-            .map_err(|e| RomLoaderError::Load(e.to_string()))
-    }
-    fn resume(&mut self) {
-        let _ = SessionHandle::run_command(self, SessionCommand::Resume);
-    }
-
+impl SessionHandle {
     /// Records the detected system before ROM load so the core is
     /// rebuilt with the right factory. Entry point for lazy activation.
-    fn set_active_system(&mut self, system_id: &dyn SystemId) -> Result<(), SystemActivationError> {
+    /// Inherent (not only via [`RomLoadTarget`]) because frontends
+    /// drive activation directly; the load adapter delegates here.
+    pub fn set_active_system(
+        &mut self,
+        system_id: &dyn SystemId,
+    ) -> Result<(), SystemActivationError> {
         if self.active_system_id.as_ref().map(|x| x.as_ref()) == Some(system_id) {
             return Ok(());
         }
@@ -613,7 +591,7 @@ impl RomLoadTarget for SessionHandle {
         )
         .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
 
-        if let Some(core) = self.emu.core_opt() {
+        if let Ok(core) = self.emu.core() {
             self.media
                 .persistence
                 .flush_mapper_save(core)
@@ -645,7 +623,7 @@ pub(crate) mod test_util {
     use nerust_gui_runtime::settings::{HostBackendCapabilities, HostWindowCapabilities};
 
     use crate::test_helpers::MockFactory;
-    use crate::{load::RomLoadTarget, registry::SystemRegistry, session::SessionHandle};
+    use crate::{registry::SystemRegistry, session::SessionHandle};
 
     pub(crate) fn test_session() -> SessionHandle {
         let capabilities = HostBackendCapabilities {

@@ -138,10 +138,12 @@ impl OsdAnchor {
 }
 
 /// One raster pill row: tag plus body in a single color. Plain data;
-/// shaping lives in the rasterizer crate.
+/// shaping lives in the rasterizer crate. The tag is a static level
+/// marker (`"[I]"`, `"[W]"`, `"[E]"`): no per-frame allocation at the
+/// shell boundary.
 #[derive(Debug, Clone)]
 pub struct OsdRow {
-    pub tag: String,
+    pub tag: &'static str,
     pub text: String,
     pub rgb: (u8, u8, u8),
 }
@@ -164,16 +166,20 @@ pub struct OsdContent {
     pub status_position: OsdAnchor,
 }
 
-/// Extra physical-pixel padding inside the surface edges, on top of
-/// the layout margin. Outer layers set it for rounded corners,
-/// notches, or gesture bars the rasterizer cannot see.
+/// Viewport edge padding in physical pixels, on top of the layout
+/// margin. Canonical insets vocabulary for render code: outer layers
+/// set it for rounded corners, notches, or gesture bars the
+/// rasterizer cannot see. [`SafeInsets`] is the historical alias.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct SafeInsets {
+pub struct ViewInsets {
     pub top: u32,
     pub right: u32,
     pub bottom: u32,
     pub left: u32,
 }
+
+/// Historical alias for [`ViewInsets`].
+pub type SafeInsets = ViewInsets;
 
 /// Base OSD font size from the client height. Single source for
 /// the rasterizer and strip reservation; the 6px floor keeps tiny

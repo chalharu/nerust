@@ -1,31 +1,23 @@
 mod bridge;
+mod dialog_coordinator;
+mod dialog_ownership;
 mod error_dialog;
+mod input_router;
+mod lifecycle;
 mod menu;
 mod messages;
 mod osd;
 mod picker;
+mod render_sync;
 mod saf;
 mod settings;
 mod storage;
+mod touch_layout;
 
-use std::{
-    collections::{HashMap, HashSet},
-    ffi::c_void,
-    path::PathBuf,
-    rc::Rc,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{ffi::c_void, path::PathBuf, rc::Rc, sync::Arc, time::Instant};
 
 use jni::{jni_sig, jni_str};
-use nerust_core_traits::{
-    audio::AudioBackendRegistry,
-    factory::load::MediaObject,
-    touch::{
-        TouchControl, TouchControlRole, TouchOverlayAction, TouchPoint, TouchRect,
-        clamp_floating_dpad_knob, floating_dpad_roles,
-    },
-};
+use nerust_core_traits::{audio::AudioBackendRegistry, factory::load::MediaObject};
 use nerust_gui_runtime::{
     settings::{
         BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
@@ -39,36 +31,32 @@ use nerust_gui_shell::{
         SessionError, SessionHandle,
         access::{PauseControl, SessionControl, SettingsResult, SlotControl},
         commands::{SessionCommand, SessionCommandOutcome},
+        notification::FailureOrigin,
         osd::TickMetrics,
     },
 };
-use nerust_input_traits::{AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent};
-use nerust_render_traits::{
-    SurfaceSize,
-    renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
-};
+use nerust_render_traits::{SurfaceSize, renderer::GpuFactory};
 use nerust_settings_core::model::{local::RumbleTarget, shared::StoragePolicy};
 use sha2::{Digest, Sha256};
 use winit::{
     application::ApplicationHandler,
-    dpi::LogicalSize,
-    event::{Touch, TouchPhase, WindowEvent},
+    event::WindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     platform::android::{EventLoopBuilderExtAndroid, activity::AndroidApp},
-    raw_window_handle::{HasDisplayHandle, HasWindowHandle},
-    window::{Window, WindowId},
+    window::WindowId,
 };
 
 use self::{
+    dialog_coordinator::DialogCoordinator,
+    dialog_ownership::DialogOwnership,
+    input_router::InputRouter,
+    lifecycle::Lifecycle,
     messages::{FrontendEvent, MenuAction, RomPickerResult, SettingsDialogResult},
-    settings::AndroidSettings,
+    render_sync::RenderSync,
+    settings::{AndroidSettings, SettingsApplier, SettingsPlan},
     storage::{AndroidStorage, LastMediaReference},
 };
-use crate::error_dialog_controller::{Screen, SettingsClosedTransition};
-
-const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
-const FOREGROUND_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
-const FOREGROUND_RETRY_MAX_ATTEMPTS: u32 = 20;
+use crate::error_dialog_controller::{DismissTransition, SettingsClosedTransition, ShowTransition};
 
 pub(crate) fn register_main_activity_natives(
     env: &mut jni::Env<'_>,
@@ -109,6 +97,12 @@ pub(crate) fn register_main_activity_natives(
                 jni_str!("onCartridgeAcceleration"),
                 jni_str!("(FF)V"),
                 bridge::Java_io_github_chalharu_nerust_MainActivity_onCartridgeAcceleration
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("onSystemInsetsChanged"),
+                jni_str!("([I)V"),
+                bridge::Java_io_github_chalharu_nerust_MainActivity_onSystemInsetsChanged
                     as *mut c_void,
             ),
         ]
@@ -166,79 +160,24 @@ fn show_toast(app: &AndroidApp, message: &str) {
     // Toast must be created/shown on the Java main thread; this function
     // is called from the winit event-loop thread where it would otherwise
     // fail silently (no Looper) and hide save/load failures from the user.
-    let callback_app = app.clone();
     let message = message.to_string();
-    app.run_on_java_main_thread(Box::new(move || {
-        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        if let Err(error) = bridge::with_java_env(&vm, |env| {
-            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-
-            let toast_class = env.find_class(jni_str!("android/widget/Toast"))?;
-            let text = env.new_string(&message)?;
-            let toast = env.call_static_method(
-                &toast_class,
-                jni_str!("makeText"),
-                jni_sig!(
-                    "(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;"
-                ),
-                &[
-                    jni::objects::JValue::Object(&activity),
-                    jni::objects::JValue::Object(text.as_ref()),
-                    jni::objects::JValue::Int(0),
-                ],
-            )?;
-            let toast_obj = toast.l()?;
-            env.call_method(&toast_obj, jni_str!("show"), jni_sig!("()V"), &[])?;
-            Ok::<(), jni::errors::Error>(())
-        }) {
-            log::warn!("failed to show Android toast: {error:?}");
-        }
-    }));
-}
-
-fn configure_controls_overlay(
-    app: &AndroidApp,
-    settings: &nerust_settings_core::model::local::TouchOverlaySettings,
-    shoulders_visible: bool,
-) {
-    let visibility = match settings.visibility {
-        nerust_settings_core::model::local::TouchOverlayVisibility::Always => "always",
-        nerust_settings_core::model::local::TouchOverlayVisibility::Auto => "auto",
-        nerust_settings_core::model::local::TouchOverlayVisibility::Hidden => "hidden",
-    }
-    .to_string();
-    let opacity = i32::from(settings.opacity_percent);
-    let scale = i32::from(settings.scale_percent);
-    let offset = i32::from(settings.vertical_offset_percent);
-    let haptics = settings.haptics;
-    let app = app.clone();
-    let callback_app = app.clone();
-    app.run_on_java_main_thread(Box::new(move || {
-        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        let result: Result<(), jni::errors::Error> = bridge::with_java_env(&vm, |env| {
-            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-            let visibility = env.new_string(&visibility)?;
-            env.call_method(
-                &activity,
-                jni_str!("configureControlsOverlay"),
-                jni_sig!("(Ljava/lang/String;IIIZZ)V"),
-                &[
-                    jni::objects::JValue::Object(visibility.as_ref()),
-                    jni::objects::JValue::Int(opacity),
-                    jni::objects::JValue::Int(scale),
-                    jni::objects::JValue::Int(offset),
-                    jni::objects::JValue::Bool(haptics),
-                    jni::objects::JValue::Bool(shoulders_visible),
-                ],
-            )?;
-            Ok(())
-        });
-        if let Err(error) = result {
-            log::warn!("failed to configure Android controls overlay: {error:?}");
-        }
-    }));
+    bridge::call_on_activity(app, "show Android toast", move |env, activity| {
+        let toast_class = env.find_class(jni_str!("android/widget/Toast"))?;
+        let text = env.new_string(&message)?;
+        let toast = env.call_static_method(
+            &toast_class,
+            jni_str!("makeText"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;"),
+            &[
+                jni::objects::JValue::Object(&activity),
+                jni::objects::JValue::Object(text.as_ref()),
+                jni::objects::JValue::Int(0),
+            ],
+        )?;
+        let toast_obj = toast.l()?;
+        env.call_method(&toast_obj, jni_str!("show"), jni_sig!("()V"), &[])?;
+        Ok(())
+    });
 }
 
 fn configure_cartridge_peripherals(
@@ -254,13 +193,10 @@ fn configure_cartridge_peripherals(
         RumbleTarget::Controller => "controller",
     }
     .to_string();
-    let app = app.clone();
-    let callback_app = app.clone();
-    app.run_on_java_main_thread(Box::new(move || {
-        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        let result: Result<(), jni::errors::Error> = bridge::with_java_env(&vm, |env| {
-            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+    bridge::call_on_activity(
+        app,
+        "configure Android cartridge peripherals",
+        move |env, activity| {
             let target = env.new_string(&target)?;
             env.call_method(
                 &activity,
@@ -274,21 +210,15 @@ fn configure_cartridge_peripherals(
                 ],
             )?;
             Ok(())
-        });
-        if let Err(error) = result {
-            log::warn!("failed to configure Android cartridge peripherals: {error:?}");
-        }
-    }));
+        },
+    );
 }
 
 fn set_cartridge_rumble(app: &AndroidApp, intensity: u8) {
-    let app = app.clone();
-    let callback_app = app.clone();
-    app.run_on_java_main_thread(Box::new(move || {
-        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        let result: Result<(), jni::errors::Error> = bridge::with_java_env(&vm, |env| {
-            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+    bridge::call_on_activity(
+        app,
+        "update Android cartridge rumble",
+        move |env, activity| {
             env.call_method(
                 &activity,
                 jni_str!("setCartridgeRumble"),
@@ -296,187 +226,8 @@ fn set_cartridge_rumble(app: &AndroidApp, intensity: u8) {
                 &[jni::objects::JValue::Int(i32::from(intensity))],
             )?;
             Ok(())
-        });
-        if let Err(error) = result {
-            log::warn!("failed to update Android cartridge rumble: {error:?}");
-        }
-    }));
-}
-
-#[derive(Debug)]
-struct TouchZone {
-    control: TouchControl,
-    bounds: TouchRect,
-}
-
-#[derive(Debug)]
-struct ProfileTouchOverlay {
-    zones: Vec<TouchZone>,
-    dpad_controls: Vec<TouchControl>,
-    dpad_activation: TouchRect,
-    dpad_radius: f32,
-}
-
-#[derive(Debug)]
-struct FloatingDpadState {
-    touch_id: u64,
-    center: TouchPoint,
-    targets: Vec<(AttachmentId, DigitalControlId)>,
-}
-
-impl ProfileTouchOverlay {
-    fn new(
-        width: f32,
-        height: f32,
-        controls: Vec<TouchControl>,
-        scale_percent: u8,
-        vertical_offset_percent: i8,
-    ) -> Self {
-        let portrait = height >= width;
-        let base = width.min(height);
-        let scale = f32::from(scale_percent.clamp(50, 150)) / 100.0;
-        let vertical_offset = height * f32::from(vertical_offset_percent.clamp(-30, 30)) / 100.0;
-        let control_top = if portrait { height * 0.54 } else { 0.0 };
-        let control_height = height - control_top;
-        let dpad_size = base * 0.28 * scale;
-        let dpad_center_y = if portrait {
-            control_top + control_height * 0.58
-        } else {
-            height * 0.65
-        } + vertical_offset;
-        let dpad_radius = dpad_size * 0.42;
-        let action_size = base * 0.14 * scale;
-        let action_gap = base * 0.04;
-        let action_left = if portrait {
-            width * 0.64
-        } else {
-            width - base * 0.08 - action_size * 2.0 - action_gap
-        };
-        let action_top = dpad_center_y - action_size * 0.50;
-        let center_width = base * 0.10 * scale;
-        let center_height = base * 0.068 * scale;
-        // Shoulder strip above the D-Pad activation area and the center row.
-        // Must stay clear of both: dpad_activation starts at
-        // activation_top + dpad_radius, and the select/start row sits at
-        // center_top. Keep in sync with controlsLayout() in MainActivity.kt.
-        let shoulder_width = base * 0.20 * scale;
-        let shoulder_height = base * 0.08 * scale;
-        let shoulder_margin_x = width * 0.02;
-        let shoulder_top = control_top + base * 0.015 + vertical_offset;
-        let shoulder_left_x = shoulder_margin_x;
-        let shoulder_right_x = width - shoulder_margin_x - shoulder_width;
-        let center_gap = base * 0.03;
-        let center_row_width = center_width * 2.0 + center_gap;
-        let center_left = (width - center_row_width) * 0.5;
-        let center_top = if portrait {
-            control_top + control_height * 0.16
-        } else {
-            height * 0.82
-        } + vertical_offset;
-
-        let bounds_for = |role| match role {
-            TouchControlRole::FaceButton2 => TouchRect {
-                x: action_left,
-                y: action_top,
-                width: action_size,
-                height: action_size,
-            },
-            TouchControlRole::FaceButton1 => TouchRect {
-                x: action_left + action_size + action_gap,
-                y: action_top,
-                width: action_size,
-                height: action_size,
-            },
-            TouchControlRole::Select => TouchRect {
-                x: center_left,
-                y: center_top,
-                width: center_width,
-                height: center_height,
-            },
-            TouchControlRole::LeftShoulder => TouchRect {
-                x: shoulder_left_x,
-                y: shoulder_top,
-                width: shoulder_width,
-                height: shoulder_height,
-            },
-            TouchControlRole::RightShoulder => TouchRect {
-                x: shoulder_right_x,
-                y: shoulder_top,
-                width: shoulder_width,
-                height: shoulder_height,
-            },
-            TouchControlRole::Start => TouchRect {
-                x: center_left + center_width + center_gap,
-                y: center_top,
-                width: center_width,
-                height: center_height,
-            },
-            _ => unreachable!("D-Pad controls use the floating joystick"),
-        };
-        let (dpad_controls, button_controls): (Vec<_>, Vec<_>) = controls
-            .into_iter()
-            .partition(|control| Self::is_dpad_role(control.role));
-        let activation_right = if portrait { width * 0.52 } else { width * 0.45 };
-        let activation_top = if portrait { control_top } else { height * 0.25 };
-        Self {
-            zones: button_controls
-                .into_iter()
-                .map(|control| TouchZone {
-                    bounds: bounds_for(control.role),
-                    control,
-                })
-                .collect(),
-            dpad_controls,
-            dpad_activation: TouchRect {
-                x: dpad_radius,
-                y: activation_top + dpad_radius,
-                width: (activation_right - dpad_radius * 2.0).max(0.0),
-                height: (height - activation_top - dpad_radius * 2.0).max(0.0),
-            },
-            dpad_radius,
-        }
-    }
-
-    fn is_dpad_role(role: TouchControlRole) -> bool {
-        matches!(
-            role,
-            TouchControlRole::DpadUp
-                | TouchControlRole::DpadDown
-                | TouchControlRole::DpadLeft
-                | TouchControlRole::DpadRight
-        )
-    }
-
-    fn accepts_floating_dpad(&self, point: TouchPoint) -> bool {
-        !self.dpad_controls.is_empty() && self.dpad_activation.contains(point)
-    }
-
-    fn floating_dpad_targets(
-        &self,
-        center: TouchPoint,
-        point: TouchPoint,
-    ) -> Vec<(AttachmentId, DigitalControlId)> {
-        floating_dpad_roles(center, point, self.dpad_radius)
-            .into_iter()
-            .filter_map(|role| {
-                self.dpad_controls
-                    .iter()
-                    .find(|control| control.role == role)
-                    .map(|control| (control.attachment_id, control.control_id))
-            })
-            .collect()
-    }
-
-    fn floating_knob(&self, center: TouchPoint, point: TouchPoint) -> TouchPoint {
-        clamp_floating_dpad_knob(center, point, self.dpad_radius)
-    }
-
-    fn hit_test(&self, point: TouchPoint) -> Option<(AttachmentId, DigitalControlId)> {
-        self.zones
-            .iter()
-            .find(|zone| zone.bounds.contains(point))
-            .map(|zone| (zone.control.attachment_id, zone.control.control_id))
-    }
+        },
+    );
 }
 
 struct AndroidFrontend {
@@ -484,28 +235,17 @@ struct AndroidFrontend {
     session: SessionHandle,
     storage: AndroidStorage,
     shell: NativeShellState,
-    window: Option<Arc<Window>>,
-    window_id: Option<WindowId>,
-    renderer: Option<Box<dyn GpuRenderer>>,
     gpu_factory: Rc<dyn GpuFactory>,
-    overlay: Option<ProfileTouchOverlay>,
-    active_touches: HashMap<u64, (AttachmentId, DigitalControlId)>,
-    floating_dpad: Option<FloatingDpadState>,
-    overlay_revision: u64,
-    physical_pressed: HashSet<(i32, AbstractKey)>,
+    input: InputRouter,
+    lifecycle: Lifecycle,
+    dialogs: DialogCoordinator,
+    render_sync: RenderSync,
     is_resumed: bool,
-    foreground_resume_pending: bool,
-    foreground_retry_attempts: u32,
-    foreground_retry_at: Option<Instant>,
-    last_foreground_error: Option<String>,
-    lifecycle_auto_paused: bool,
-    lifecycle_restore_pending: bool,
     pending_storage_settings: Option<SettingsSnapshot>,
     pending_legacy_digest: Option<[u8; 32]>,
     last_peripheral_config: Option<(bool, bool, u8, RumbleTarget)>,
     last_rumble_intensity: Option<u8>,
     osd: osd::AndroidOsd,
-    settings_open: bool,
     event_scratch: Vec<crate::android::messages::FrontendEvent>,
 }
 
@@ -567,31 +307,20 @@ impl AndroidFrontend {
             session,
             storage,
             shell: NativeShellState::new(),
-            window: None,
-            window_id: None,
-            renderer: None,
             gpu_factory,
-            overlay: None,
-            active_touches: HashMap::new(),
-            floating_dpad: None,
-            overlay_revision: 0,
-            physical_pressed: HashSet::new(),
+            input: InputRouter::new(),
+            lifecycle: Lifecycle::new(restore_pending),
+            dialogs: DialogCoordinator::new(DialogOwnership::new()),
+            render_sync: RenderSync::new(),
             is_resumed: false,
-            foreground_resume_pending: false,
-            foreground_retry_attempts: 0,
-            foreground_retry_at: None,
-            last_foreground_error: None,
-            lifecycle_auto_paused: false,
-            lifecycle_restore_pending: restore_pending,
             pending_storage_settings: None,
             pending_legacy_digest: None,
             last_peripheral_config: None,
             last_rumble_intensity: None,
             osd: osd::AndroidOsd::new(),
-            settings_open: false,
             event_scratch: Vec::new(),
         };
-        if frontend.lifecycle_restore_pending {
+        if frontend.lifecycle.restore_pending() {
             log::info!(
                 "AndroidFrontend::new: restore_pending flag found; will attempt lifecycle state restore at foreground resume"
             );
@@ -739,13 +468,12 @@ impl AndroidFrontend {
         }
 
         self.session.clear_input();
-        self.reset_touch_tracking();
-        self.physical_pressed.clear();
-        nerust_gui_shell::load::RomLoadTarget::set_active_system(
-            &mut self.session,
-            system_id.as_ref(),
-        )
-        .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
+        self.input
+            .reset_touch_tracking(&mut self.session, &self.app);
+        self.input.forget_physical_pressed();
+        self.session
+            .set_active_system(system_id.as_ref())
+            .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
 
         let options = self
             .session
@@ -774,9 +502,34 @@ impl AndroidFrontend {
         if restore_document_on_restart {
             self.storage.touch_restore_pending();
         }
-        notify_rom_loaded(&self.app, &system_id.to_string());
+        self.notify_rom_loaded(&system_id.to_string());
         log::info!("load_media: session ready for system={system_id}");
         Ok(())
+    }
+
+    /// Tell Kotlin a ROM loaded. JNI failures route to the error dialog
+    /// queue (Bridge origin) instead of staying log-only.
+    fn notify_rom_loaded(&mut self, system_id: &str) {
+        let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        let result = bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
+            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+            let system_id = env.new_string(system_id)?;
+            env.call_method(
+                &activity,
+                jni_str!("notifyRomLoaded"),
+                jni_sig!("(Ljava/lang/String;)V"),
+                &[jni::objects::JValue::Object(system_id.as_ref())],
+            )?;
+            Ok::<(), jni::errors::Error>(())
+        });
+        if let Err(error) = result {
+            log::warn!("failed to notify Android ROM load: {error:?}");
+            self.session.report_external_error(
+                FailureOrigin::Bridge,
+                format!("failed to notify Android ROM load: {error:?}"),
+            );
+        }
     }
 
     fn open_rom_from_uri(&mut self, event_loop: &ActiveEventLoop, uri: &str) -> Result<(), String> {
@@ -829,7 +582,7 @@ impl AndroidFrontend {
                 match self.apply_settings(next) {
                     Ok(_) => {
                         self.refresh_dialog_caches();
-                        self.request_redraw();
+                        self.render_sync.request_redraw(&mut self.shell);
                     }
                     Err(error) => {
                         log::error!("failed to apply Android storage directory: {error}");
@@ -851,11 +604,11 @@ impl AndroidFrontend {
     }
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult, tick: TickMetrics) {
-        // Settings closed (applied or dismissed): re-derive the open
-        // flag, flush the error queue, and resume an orphaned pause.
-        self.settings_open = settings::is_dialog_open();
+        // Settings closed (applied or dismissed): flush the error queue
+        // and resume an orphaned pause. The gate reads DialogOwnership
+        // (bridge truth); no cached flag exists to go stale.
         let is_applied = matches!(result, SettingsDialogResult::Applied(_));
-        if self.settings_open && !is_applied {
+        if self.dialogs.is_settings_open() && !is_applied {
             // Stale synthesized dismiss racing a suspend-then-rerequest:
             // the dialog is visually up, so this result belongs to a
             // dead flight. Ignore it; the live flight's result arrives
@@ -863,7 +616,7 @@ impl AndroidFrontend {
             log::debug!("handle_settings_result: stale result while dialog open; ignoring");
             return;
         }
-        if self.settings_open {
+        if self.dialogs.is_settings_open() {
             // Applied racing a live re-request (suspend cleared the
             // old pending, the rerequest minted a new one before this
             // ran): the values are real user input, so apply them even
@@ -871,14 +624,16 @@ impl AndroidFrontend {
             // flush stays shielded below; the user re-saves if needed.
             log::warn!("handle_settings_result: applying settings while a newer dialog is open");
         } else {
-            let screen = Screen::show_gate(self.is_resumed, self.settings_open, tick.can_pause());
-            match self.osd.settings_closed_error_dialog(screen) {
+            match self
+                .dialogs
+                .on_settings_closed(self.osd.manager_mut(), self.is_resumed, tick)
+            {
                 SettingsClosedTransition::Show { auto_pause } => {
                     if auto_pause {
                         self.pause();
                     }
-                    if let Some(detail) = self.osd.current_detail() {
-                        error_dialog::request_show_error_dialog(&self.app, &detail);
+                    if let Some(detail) = self.dialogs.current_detail() {
+                        error_dialog::request_show_error_dialog(&self.app, detail);
                     }
                 }
                 SettingsClosedTransition::Resume => self.resume(),
@@ -895,132 +650,107 @@ impl AndroidFrontend {
             self.session.registry(),
         );
         current.prioritize_system(self.session.active_system_id());
-        let previous_storage_policy = current.storage_policy;
-        let Some(android_settings) = AndroidSettings::from_keyed_indices(&values, &current) else {
-            log::error!("Android settings dialog returned invalid keyed values");
-            return;
-        };
-        let mut next = self.session.settings_snapshot().clone();
-        if let Err(error) = android_settings.apply_to_snapshot(&mut next, self.session.registry()) {
-            log::error!("failed to update Android system settings: {error}");
-            return;
-        }
-        if android_settings.storage_policy != StoragePolicy::AppSharedData
-            && (android_settings.storage_policy != previous_storage_policy
-                || next.shared.persistence.storage_document_tree_uri.is_none())
-        {
-            self.pending_storage_settings = Some(next);
-            match picker::request_open_document_tree(&self.app) {
-                Ok(true) => {}
-                Ok(false) => {
-                    self.pending_storage_settings = None;
-                    log::warn!("Android directory picker is already open");
-                }
-                Err(error) => {
-                    self.pending_storage_settings = None;
-                    log::error!("{error}");
+        // Pure plan step; the frontend only executes the outcome.
+        let plan = SettingsApplier::plan(
+            &values,
+            &current,
+            self.session.settings_snapshot(),
+            self.session.registry(),
+        );
+        match plan {
+            SettingsPlan::Invalid { reason } => {
+                log::error!("{reason}");
+                self.session
+                    .report_external_error(FailureOrigin::Bridge, reason);
+            }
+            SettingsPlan::NeedDocumentTree { next } => {
+                self.pending_storage_settings = Some(next);
+                match picker::request_open_document_tree(&self.app) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        self.pending_storage_settings = None;
+                        log::warn!("Android directory picker is already open");
+                    }
+                    Err(error) => {
+                        self.pending_storage_settings = None;
+                        log::error!("{error}");
+                        self.session
+                            .report_external_error(FailureOrigin::Bridge, error);
+                    }
                 }
             }
-            return;
+            SettingsPlan::Apply { next } => self.execute_settings_apply(next),
         }
-        if android_settings.storage_policy == StoragePolicy::AppSharedData {
-            next.shared.persistence.storage_document_tree_uri = None;
-        }
+    }
+
+    /// Execute an `Apply` plan: apply, rebuild renderer/overlay, refresh
+    /// caches. JNI and session failures route to the error queue.
+    fn execute_settings_apply(&mut self, next: SettingsSnapshot) {
         match self.apply_settings(next) {
             Ok(result) => {
                 if result.renderer_needs_rebuild {
                     // If Android has already dropped the surface, keep the renderer absent here;
                     // `ensure_window` will rebuild it on the next resume with the updated settings.
-                    if let Some(window) = self.window.as_ref().cloned() {
-                        self.rebuild_renderer(window);
+                    if let Some(window) = self.render_sync.cloned_window() {
+                        self.render_sync.rebuild_renderer(
+                            window,
+                            &self.session,
+                            &self.gpu_factory,
+                            &mut self.osd,
+                            &mut self.shell,
+                        );
                     }
                 }
                 // Push touch-overlay (and FPS-label) settings to the live
                 // chrome: without this the saved snapshot and the visible
                 // overlay diverge, so a changed opacity/scale/visibility
                 // looks "ignored" until the next ROM load or resize.
-                self.rebuild_overlay();
-                self.request_redraw();
+                self.input.rebuild_overlay(
+                    &self.session,
+                    &self.app,
+                    self.render_sync.window_size(),
+                );
+                self.render_sync.request_redraw(&mut self.shell);
                 // Settings changed – refresh cached settings for sync dialogs.
-                settings::update_cached_settings(&android_settings);
-                settings::apply_screen_orientation(&self.app, android_settings.screen_orientation);
+                self.refresh_dialog_caches();
             }
             Err(error) => {
-                log::error!("failed to apply Android settings: {error}");
+                let detail = format!("failed to apply Android settings: {error}");
+                log::error!("{detail}");
+                self.session
+                    .report_external_error(FailureOrigin::Bridge, detail);
             }
         }
     }
 
     fn save_lifecycle_state(&mut self) {
-        log::info!(
-            "save_lifecycle_state: paused={} lifecycle_auto_paused={} restore_pending={}",
-            self.session.paused(),
-            self.lifecycle_auto_paused,
-            self.lifecycle_restore_pending
-        );
         // Auto-pause only with a pausable session; the predicate
         // pins the contract (host-tested in `lifecycle_decision`).
-        if crate::lifecycle_decision::should_lifecycle_pause(
-            self.lifecycle_auto_paused,
-            self.session.can_pause(),
-        ) {
+        if self.lifecycle.should_auto_pause(&self.session) {
             self.pause();
-            self.lifecycle_auto_paused = true;
+            self.lifecycle.set_auto_paused(true);
             log::info!("save_lifecycle_state: auto-paused session");
         }
         self.session.clear_input();
-        self.reset_touch_tracking();
-        self.physical_pressed.clear();
-        self.lifecycle_restore_pending = self.session.save_hidden_lifecycle_state();
-        if !self.lifecycle_restore_pending {
-            self.session.clear_hidden_lifecycle_state();
-            self.storage.clear_restore_pending();
-            log::info!("save_lifecycle_state: no hidden lifecycle state was produced");
-        } else {
-            self.storage.touch_restore_pending();
-            log::info!("save_lifecycle_state: hidden lifecycle state saved");
-        }
-        self.session.flush_before_exit();
-        log::info!("save_lifecycle_state: flushed session state");
+        self.input
+            .reset_touch_tracking(&mut self.session, &self.app);
+        self.input.forget_physical_pressed();
+        self.lifecycle
+            .save_for_suspend(&mut self.session, &self.storage);
     }
 
     fn release_window_resources(&mut self) {
         self.release_surface_resources();
-        self.window = None;
-        self.window_id = None;
+        self.render_sync.release_window_resources();
     }
 
     fn release_surface_resources(&mut self) {
-        self.renderer = None;
-        self.overlay = None;
-        self.reset_touch_tracking();
-        self.release_physical_tracking();
+        self.render_sync.release_renderer();
+        self.input.rebuild_overlay(&self.session, &self.app, None);
+        self.input
+            .reset_touch_tracking(&mut self.session, &self.app);
+        self.input.release_physical_tracking(&mut self.session);
         self.shell.needs_redraw = true;
-    }
-
-    fn reset_touch_tracking(&mut self) {
-        // Surface loss must not strand pressed buttons inside the
-        // emulator: release everything still tracked before forgetting
-        // it. A stranded extra bit breaks exact-equality key checks
-        // such as Pokemon Emerald's evolution cancel
-        // (heldKeys == B_BUTTON).
-        for (attachment, control) in self.active_touches.values() {
-            self.session
-                .apply_input_event(DigitalInputEvent::released(*attachment, *control));
-        }
-        self.active_touches.clear();
-        if let Some(state) = self.floating_dpad.take() {
-            for (attachment, control) in state.targets {
-                self.session
-                    .apply_input_event(DigitalInputEvent::released(attachment, control));
-            }
-        }
-        update_floating_dpad_visual(
-            &self.app,
-            false,
-            TouchPoint { x: 0.0, y: 0.0 },
-            TouchPoint { x: 0.0, y: 0.0 },
-        );
     }
 
     fn handle_surface_close(&mut self) {
@@ -1028,7 +758,7 @@ impl AndroidFrontend {
         self.save_lifecycle_state();
         self.release_window_resources();
         if self.is_resumed {
-            self.begin_foreground_resume();
+            self.lifecycle.begin_foreground_resume();
         }
     }
 
@@ -1040,6 +770,10 @@ impl AndroidFrontend {
             }
             Err(error) => {
                 log::error!("{error}");
+                // JNI picker failures surface in the error dialog queue,
+                // not just logcat: mobile has no stderr to inspect.
+                self.session
+                    .report_external_error(FailureOrigin::Bridge, error);
             }
         }
     }
@@ -1061,13 +795,15 @@ impl AndroidFrontend {
         }
         // Bridge truth, not the request outcome: the sync show path
         // leaves this dialog up while the request reports "already".
-        self.settings_open = settings::is_dialog_open();
+        // No cached flag: every gate queries DialogOwnership instead.
     }
 
-    fn handle_menu_action(&mut self, event: FrontendEvent) {
+    fn handle_menu_action(&mut self, event: FrontendEvent, tick: TickMetrics) {
         log::info!("AndroidFrontend::handle_menu_action: {:?}", event);
         // Exhaustive over the event: a new FrontendEvent variant fails
         // to compile here instead of silently becoming a dialog dismiss.
+        // `tick` is threaded through from the single per-pass metrics
+        // lock; handlers must not re-lock for their own gates.
         match event {
             FrontendEvent::Menu(action) => match action {
                 MenuAction::ControllerInput {
@@ -1075,10 +811,15 @@ impl AndroidFrontend {
                     key,
                     pressed,
                 } => {
-                    self.apply_physical_controller_input(device_id, key, pressed);
+                    self.input.apply_physical_controller_input(
+                        &mut self.session,
+                        device_id,
+                        key,
+                        pressed,
+                    );
                 }
                 MenuAction::Exit => {
-                    if self.session.loaded() {
+                    if self.session.tick_metrics().loaded {
                         self.session.clear_hidden_lifecycle_state();
                         self.storage.clear_restore_pending();
                         if let Err(error) = self.session.unload() {
@@ -1095,16 +836,20 @@ impl AndroidFrontend {
                         Ok::<(), jni::errors::Error>(())
                     }) {
                         log::warn!("failed to finish Android activity on exit: {error:?}");
+                        self.session.report_external_error(
+                            FailureOrigin::Bridge,
+                            format!("failed to finish Android activity on exit: {error:?}"),
+                        );
                     }
                 }
                 MenuAction::Unload => {
-                    if self.session.loaded() {
+                    if self.session.tick_metrics().loaded {
                         self.session.clear_hidden_lifecycle_state();
                         self.storage.clear_restore_pending();
                         let _ = self.session.unload();
                     }
                     self.session.clear_display();
-                    self.request_redraw();
+                    self.render_sync.request_redraw(&mut self.shell);
                 }
                 MenuAction::LoadState => {
                     let _ = self.exec(SessionCommand::LoadActiveSlot);
@@ -1115,8 +860,12 @@ impl AndroidFrontend {
                     // Screen rotation: rebuild the touch overlay (hit zones)
                     // for the new window size even if winit did not deliver
                     // a Resized event. Idempotent with the Resized path.
-                    self.rebuild_overlay();
-                    self.request_redraw();
+                    self.input.rebuild_overlay(
+                        &self.session,
+                        &self.app,
+                        self.render_sync.window_size(),
+                    );
+                    self.render_sync.request_redraw(&mut self.shell);
                 }
                 MenuAction::Reset => self.reset(),
                 MenuAction::SaveState => {
@@ -1124,219 +873,55 @@ impl AndroidFrontend {
                 }
                 MenuAction::TogglePause => self.toggle_pause(),
             },
-            FrontendEvent::ErrorDialogDismissed => self.handle_error_dialog_dismissed(),
+            FrontendEvent::ErrorDialogDismissed => self.handle_error_dialog_dismissed(tick),
         }
     }
 
     /// Show the oldest queued error unless suspended, already showing,
-    /// or settings owns the screen. Bridge truth, not the cached flag:
+    /// or settings owns the screen. Bridge truth via DialogOwnership:
     /// the sync JNI path shows the settings dialog before the event
-    /// loop drains the open event, so the cache can read stale `false`
-    /// in that window and evict just-opened settings (Kotlin now also
-    /// refuses the eviction; both layers guard the same race).
+    /// loop drains the open event, and Kotlin also refuses the eviction;
+    /// both layers guard the same race.
     /// Takes the pass tick so the caller pays one metrics lock, not
     /// one per dialog gate.
     fn maybe_show_error_dialog(&mut self, tick: TickMetrics) {
-        let screen = Screen::show_gate(
-            self.is_resumed,
-            settings::is_dialog_open(),
-            tick.can_pause(),
-        );
-        let request = self.osd.poll_error_dialog(screen);
+        let request = self
+            .dialogs
+            .poll_error_dialog(self.osd.manager_mut(), self.is_resumed, tick);
         let Some(transition) = request else {
             return;
         };
         // Shell opened before the fire-and-forget request; a failed
         // bridge synthesizes dismiss, so the cap is a backstop.
-        let crate::error_dialog_controller::ShowTransition::Present { auto_pause } = transition;
+        let ShowTransition::Present { auto_pause } = transition;
         if auto_pause {
             self.pause();
         }
-        if let Some(detail) = self.osd.current_detail() {
-            error_dialog::request_show_error_dialog(&self.app, &detail);
+        if let Some(detail) = self.dialogs.current_detail() {
+            error_dialog::request_show_error_dialog(&self.app, detail);
         }
     }
 
     /// Dismiss hook from the Kotlin dialog. Resumes only our own
     /// auto-pause, then shows the next queued error, if any.
-    fn handle_error_dialog_dismissed(&mut self) {
+    /// `tick` is the pass tick: this handler must not take a second
+    /// metrics lock (the old re-lock broke the single-lock-per-pass
+    /// contract in `about_to_wait`).
+    fn handle_error_dialog_dismissed(&mut self, tick: TickMetrics) {
         // Bridge truth here: a settings dialog may have opened over the
-        // error between the cached flag's last event-driven update.
-        let tick = self.session.tick_metrics();
-        let screen = Screen::show_gate(self.is_resumed, settings::is_dialog_open(), false);
-        let transition = self.osd.dismiss_error_dialog(screen);
+        // error since the last event.
+        let transition = self
+            .dialogs
+            .on_dismissed(self.osd.manager_mut(), self.is_resumed);
         match transition {
-            crate::error_dialog_controller::DismissTransition::Idle => {}
-            crate::error_dialog_controller::DismissTransition::Reshow => {
+            DismissTransition::Idle => {}
+            DismissTransition::Reshow => {
                 self.maybe_show_error_dialog(tick);
             }
-            crate::error_dialog_controller::DismissTransition::ResumeAndReshow => {
+            DismissTransition::ResumeAndReshow => {
                 self.resume();
                 self.maybe_show_error_dialog(tick);
             }
-        }
-    }
-
-    fn control_for_physical_key(
-        &self,
-        key: AbstractKey,
-    ) -> Option<(AttachmentId, DigitalControlId)> {
-        let role = match key {
-            AbstractKey::Button1 => TouchControlRole::FaceButton1,
-            AbstractKey::Button2 => TouchControlRole::FaceButton2,
-            AbstractKey::Button5 => TouchControlRole::LeftShoulder,
-            AbstractKey::Button6 => TouchControlRole::RightShoulder,
-            AbstractKey::Start => TouchControlRole::Start,
-            AbstractKey::Select => TouchControlRole::Select,
-            AbstractKey::DpadUp => TouchControlRole::DpadUp,
-            AbstractKey::DpadDown => TouchControlRole::DpadDown,
-            AbstractKey::DpadLeft => TouchControlRole::DpadLeft,
-            AbstractKey::DpadRight => TouchControlRole::DpadRight,
-            _ => return None,
-        };
-        let model = self.session.touch_overlay_model(self.overlay_revision);
-        model
-            .controls
-            .into_iter()
-            .find(|control| control.role == role)
-            .map(|control| (control.attachment_id, control.control_id))
-    }
-
-    fn apply_physical_controller_input(&mut self, device_id: i32, key: AbstractKey, pressed: bool) {
-        let changed = if pressed {
-            self.physical_pressed.insert((device_id, key))
-        } else {
-            self.physical_pressed.remove(&(device_id, key))
-        };
-        if !changed {
-            return;
-        }
-        let effective_pressed = self
-            .physical_pressed
-            .iter()
-            .any(|(_, pressed_key)| *pressed_key == key);
-        let Some((attachment, control)) = self.control_for_physical_key(key) else {
-            return;
-        };
-        let event = if effective_pressed {
-            DigitalInputEvent::pressed(attachment, control)
-        } else {
-            DigitalInputEvent::released(attachment, control)
-        };
-        self.session.apply_input_event(event);
-    }
-
-    /// Release every physically held button before forgetting it, so a
-    /// surface reset cannot strand pressed bits inside the emulator.
-    fn release_physical_tracking(&mut self) {
-        for (_, key) in std::mem::take(&mut self.physical_pressed) {
-            if let Some((attachment, control)) = self.control_for_physical_key(key) {
-                self.session
-                    .apply_input_event(DigitalInputEvent::released(attachment, control));
-            }
-        }
-    }
-
-    fn ensure_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-        if let Some(window) = self.window.as_ref().cloned() {
-            if self.renderer.is_none() {
-                let size = window.inner_size();
-                log::info!(
-                    "ensure_window: reusing existing window {}x{} and rebuilding renderer",
-                    size.width,
-                    size.height
-                );
-                self.rebuild_renderer(window);
-                self.rebuild_overlay();
-            }
-            return Ok(());
-        }
-
-        log::info!("ensure_window: creating Android window");
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_title(self.session.window_title())
-                        .with_resizable(false)
-                        .with_inner_size(LogicalSize::new(360.0, 640.0)),
-                )
-                .map_err(|error| format!("failed to create Android window: {error}"))?,
-        );
-        self.window_id = Some(window.id());
-        let size = window.inner_size();
-        log::info!(
-            "ensure_window: created Android window {}x{}",
-            size.width,
-            size.height
-        );
-        self.rebuild_renderer(window.clone());
-        self.window = Some(window);
-        self.rebuild_overlay();
-        Ok(())
-    }
-
-    fn rebuild_renderer(&mut self, window: Arc<Window>) {
-        let size = window.inner_size();
-        log::info!(
-            "rebuild_renderer: initializing renderer for {}x{}",
-            size.width,
-            size.height
-        );
-        drop(self.renderer.take());
-        let vsync = self
-            .session
-            .settings_snapshot()
-            .local
-            .video
-            .presentation
-            .vsync;
-        let raw_window_handle = window
-            .window_handle()
-            .expect("failed to get window handle")
-            .as_raw();
-        let raw_display_handle = window
-            .display_handle()
-            .expect("failed to get display handle")
-            .as_raw();
-        let Some(render_profile) = self.session.render_profile().cloned() else {
-            log::warn!("rebuild_renderer: no emulation core active");
-            return;
-        };
-        let config = RendererConfig {
-            render_profile,
-            vsync,
-            max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
-        };
-        let renderer_result = self
-            .gpu_factory
-            .create_renderer(&config, raw_display_handle)
-            .and_then(|mut r| {
-                let ws = SurfaceSize::new(size.width, size.height);
-                r.attach(raw_window_handle, raw_display_handle, ws)
-                    .map(|_| r)
-            });
-        self.renderer = match renderer_result {
-            Ok(renderer) => {
-                log::info!("rebuild_renderer: renderer ready");
-                // Fresh renderer, empty OSD state: force re-sync of the
-                // layer, the reserved strip, and the safe area on the
-                // next frame.
-                self.osd.reset();
-                self.request_redraw();
-                Some(renderer)
-            }
-            Err(e) => {
-                log::error!("failed to initialize Android renderer: {e}");
-                None
-            }
-        };
-    }
-
-    fn request_redraw(&mut self) {
-        self.shell.needs_redraw = true;
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
         }
     }
 
@@ -1352,114 +937,90 @@ impl AndroidFrontend {
         // head so the previous ROM's error never describes the new one.
         // The pause flag survives, so the gate below holds the resume
         // until the requeued dialog is dismissed.
-        self.osd.suspend_error_dialog();
+        self.dialogs.on_suspended(self.osd.manager_mut());
         // Resume fresh loads and own auto-pauses, never across an error
         // auto-pause (its dismiss owns that); a manual pause predates
         // the suspend and must survive it.
-        let want = crate::lifecycle_decision::should_resume_after_restore(
-            restore_hidden_state,
-            self.lifecycle_auto_paused,
-        );
-        let want = want.then_some(crate::lifecycle_decision::ResumeWant::FreshLoad);
-        if crate::lifecycle_decision::should_resume_on_foreground(
-            crate::lifecycle_decision::ForegroundResume {
-                error_paused: self.osd.error_auto_paused(),
-                want,
-            },
-        ) {
-            self.lifecycle_auto_paused = false;
+        if self
+            .lifecycle
+            .resume_want_after_restore(restore_hidden_state, self.dialogs.auto_paused())
+        {
+            self.lifecycle.set_auto_paused(false);
             self.resume();
         }
-        self.lifecycle_restore_pending = false;
+        self.lifecycle.clear_restore_pending();
         self.storage.clear_restore_pending();
 
         // Ensure a window and renderer exist immediately when resuming so that
         // request_redraw() takes effect without requiring a user tap.
-        if self.window.is_none() && self.is_resumed {
-            match self.ensure_window(event_loop) {
+        if !self.render_sync.has_window() && self.is_resumed {
+            match self.render_sync.ensure_window(
+                event_loop,
+                &self.session,
+                &self.gpu_factory,
+                &mut self.osd,
+                &mut self.shell,
+            ) {
                 Ok(()) => {
                     log::info!("finish_rom_load: ensured window/renderer after ROM load");
+                    self.input.rebuild_overlay(
+                        &self.session,
+                        &self.app,
+                        self.render_sync.window_size(),
+                    );
                 }
                 Err(error) => {
                     log::warn!(
                         "finish_rom_load: ensure_window failed: {error}; scheduling foreground resume"
                     );
-                    self.begin_foreground_resume();
+                    self.lifecycle.begin_foreground_resume();
                 }
             }
-        } else if let Some(window) = self.window.as_ref().cloned() {
+        } else if let Some(window) = self.render_sync.cloned_window() {
             // Rebuild renderer to ensure the underlying surface is fresh; dialogs or
             // system UI may have invalidated the previous surface.
             log::info!("finish_rom_load: rebuilding renderer to ensure visible surface");
-            self.rebuild_renderer(window);
-            self.rebuild_overlay();
+            self.render_sync.rebuild_renderer(
+                window,
+                &self.session,
+                &self.gpu_factory,
+                &mut self.osd,
+                &mut self.shell,
+            );
+            self.input
+                .rebuild_overlay(&self.session, &self.app, self.render_sync.window_size());
         }
 
         self.refresh_dialog_caches();
-        self.request_redraw();
-    }
-
-    fn begin_foreground_resume(&mut self) {
-        log::info!(
-            "begin_foreground_resume: is_resumed={} window_present={} renderer_present={} restore_pending={} auto_paused={}",
-            self.is_resumed,
-            self.window.is_some(),
-            self.renderer.is_some(),
-            self.lifecycle_restore_pending,
-            self.lifecycle_auto_paused
-        );
-        self.foreground_resume_pending = true;
-        self.foreground_retry_attempts = 0;
-        self.foreground_retry_at = None;
-        self.last_foreground_error = None;
-    }
-
-    fn schedule_foreground_retry(&mut self) -> bool {
-        if !self.is_resumed || !self.foreground_resume_pending {
-            return false;
-        }
-        if self.foreground_retry_attempts >= FOREGROUND_RETRY_MAX_ATTEMPTS {
-            self.foreground_resume_pending = false;
-            log::error!(
-                "giving up after {} Android window initialization attempts",
-                FOREGROUND_RETRY_MAX_ATTEMPTS
-            );
-            return false;
-        }
-
-        let delay = FOREGROUND_RETRY_BASE_DELAY
-            .saturating_mul(1_u32 << self.foreground_retry_attempts.min(3))
-            .min(FOREGROUND_RETRY_MAX_DELAY);
-        self.foreground_retry_attempts += 1;
-        self.foreground_retry_at = Some(Instant::now() + delay);
-        log::info!(
-            "schedule_foreground_retry: scheduled attempt {} in {:?}",
-            self.foreground_retry_attempts,
-            delay
-        );
-        true
+        self.render_sync.request_redraw(&mut self.shell);
     }
 
     fn try_resume_foreground(&mut self, event_loop: &ActiveEventLoop) {
-        if !self.is_resumed || !self.foreground_resume_pending {
+        if !self.is_resumed || !self.lifecycle.resume_pending() {
             return;
         }
-        let attempt = self.foreground_retry_attempts + 1;
-        if let Some(retry_at) = self.foreground_retry_at {
+        if let Some(retry_at) = self.lifecycle.retry_deadline() {
             if Instant::now() < retry_at {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(retry_at));
                 return;
             }
-            self.foreground_retry_at = None;
+            self.lifecycle.clear_retry_deadline();
         }
-        log::info!("try_resume_foreground: attempt {attempt}");
-        match self.ensure_window(event_loop) {
+        log::info!(
+            "try_resume_foreground: attempt {}",
+            self.lifecycle.attempt_index()
+        );
+        match self.render_sync.ensure_window(
+            event_loop,
+            &self.session,
+            &self.gpu_factory,
+            &mut self.osd,
+            &mut self.shell,
+        ) {
             Ok(()) => {
-                self.last_foreground_error = None;
-                self.foreground_resume_pending = false;
-                self.foreground_retry_attempts = 0;
-                self.foreground_retry_at = None;
-                if self.lifecycle_restore_pending {
+                let attempt = self.lifecycle.attempt_index();
+                self.lifecycle.record_success();
+                if self.lifecycle.restore_pending() {
                     log::info!(
                         "try_resume_foreground: lifecycle_restore_pending=true; attempting to load last ROM and restore hidden lifecycle state"
                     );
@@ -1493,7 +1054,7 @@ impl AndroidFrontend {
                                     );
                                     self.session.clear_hidden_lifecycle_state();
                                     self.storage.clear_restore_pending();
-                                    self.lifecycle_restore_pending = false;
+                                    self.lifecycle.clear_restore_pending();
                                 } else {
                                     match self
                                         .load_from_library_with_autosave(event_loop, &id, true)
@@ -1515,7 +1076,7 @@ impl AndroidFrontend {
                                             );
                                             self.session.clear_hidden_lifecycle_state();
                                             self.storage.clear_restore_pending();
-                                            self.lifecycle_restore_pending = false;
+                                            self.lifecycle.clear_restore_pending();
                                         }
                                     }
                                 }
@@ -1524,7 +1085,7 @@ impl AndroidFrontend {
                                 log::info!("try_resume_foreground: no last ROM recorded");
                                 self.session.clear_hidden_lifecycle_state();
                                 self.storage.clear_restore_pending();
-                                self.lifecycle_restore_pending = false;
+                                self.lifecycle.clear_restore_pending();
                             }
                             Err(error) => {
                                 log::warn!(
@@ -1532,7 +1093,7 @@ impl AndroidFrontend {
                                 );
                                 self.session.clear_hidden_lifecycle_state();
                                 self.storage.clear_restore_pending();
-                                self.lifecycle_restore_pending = false;
+                                self.lifecycle.clear_restore_pending();
                             }
                         },
                         Err(error) => {
@@ -1545,23 +1106,18 @@ impl AndroidFrontend {
                             );
                             self.session.clear_hidden_lifecycle_state();
                             self.storage.clear_restore_pending();
-                            self.lifecycle_restore_pending = false;
+                            self.lifecycle.clear_restore_pending();
                         }
                     }
                 }
                 // Resume only our own lifecycle auto-pause, never across
                 // an error auto-pause (its dismiss path owns that resume).
-                let want = self
-                    .lifecycle_auto_paused
-                    .then_some(crate::lifecycle_decision::ResumeWant::LifecycleRetry);
-                if crate::lifecycle_decision::should_resume_on_foreground(
-                    crate::lifecycle_decision::ForegroundResume {
-                        error_paused: self.osd.error_auto_paused(),
-                        want,
-                    },
-                ) {
+                if self
+                    .lifecycle
+                    .resume_want_foreground_retry(self.dialogs.auto_paused())
+                {
                     self.resume();
-                    self.lifecycle_auto_paused = false;
+                    self.lifecycle.set_auto_paused(false);
                     log::info!("try_resume_foreground: resumed session after lifecycle pause");
                 }
                 // The OS may have killed the audio stream while
@@ -1569,111 +1125,16 @@ impl AndroidFrontend {
                 // (idempotent, silent when already playing).
                 self.session.restart_audio();
                 log::info!("try_resume_foreground: attempt {attempt} succeeded");
-                self.request_redraw();
+                self.render_sync.request_redraw(&mut self.shell);
             }
             Err(error) => {
+                let attempt = self.lifecycle.attempt_index();
                 log::warn!("try_resume_foreground: attempt {attempt} failed: {error}");
-                self.last_foreground_error = Some(error);
-                if self.schedule_foreground_retry()
-                    && let Some(retry_at) = self.foreground_retry_at
+                if self.lifecycle.schedule_retry(self.is_resumed)
+                    && let Some(retry_at) = self.lifecycle.retry_deadline()
                 {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(retry_at));
                 }
-            }
-        }
-    }
-
-    fn rebuild_overlay(&mut self) {
-        let Some(window) = self.window.as_ref() else {
-            self.overlay = None;
-            return;
-        };
-        let size = window.inner_size();
-        let overlay_settings = &self.session.settings_snapshot().local.touch_overlay;
-        self.overlay_revision = self.overlay_revision.wrapping_add(1);
-        let model = self.session.touch_overlay_model(self.overlay_revision);
-        // Shoulder zones are drawn only for systems that have them
-        // (GBA); GBC/NES profiles expose no shoulder controls.
-        let shoulders_visible = model.controls.iter().any(|control| {
-            matches!(
-                control.role,
-                TouchControlRole::LeftShoulder | TouchControlRole::RightShoulder
-            )
-        });
-        self.overlay = if overlay_settings.visibility
-            == nerust_settings_core::model::local::TouchOverlayVisibility::Hidden
-        {
-            None
-        } else {
-            Some(ProfileTouchOverlay::new(
-                size.width as f32,
-                size.height as f32,
-                model.controls,
-                overlay_settings.scale_percent,
-                overlay_settings.vertical_offset_percent,
-            ))
-        };
-        configure_controls_overlay(&self.app, overlay_settings, shoulders_visible);
-    }
-
-    fn render(&mut self) {
-        let Some(window) = self.window.as_ref() else {
-            self.shell.needs_redraw = false;
-            return;
-        };
-        let Some(renderer) = self.renderer.as_mut() else {
-            self.shell.needs_redraw = false;
-            return;
-        };
-        // If the session has no loaded ROM, clear the display just before
-        // rendering to guard against a stale frame that the emuthread may
-        // have written into shared_fb between the last clear_display() call
-        // and now (race between Unload processing and render_frame completion).
-        if !self.session.loaded() {
-            self.session.clear_display();
-        }
-        self.session.swap_frame_buffer();
-        let window_size = SurfaceSize::new(window.inner_size().width, window.inner_size().height);
-        if renderer.size() != window_size {
-            renderer.resize(window_size);
-        }
-        let scale_factor = window.scale_factor() as f32;
-        let content = self
-            .session
-            .render_profile()
-            .map(|profile| profile.physical_size);
-        let system = self.osd.system_insets(&self.app, window_size, scale_factor);
-        let insets = osd::AndroidOsd::safe_insets(scale_factor, content, window_size, system);
-        let settings = self.notification_settings();
-        let language = self.notification_language();
-        let Some(fb) = self.session.frame_buffer() else {
-            self.shell.needs_redraw = false;
-            return;
-        };
-        let Some(renderer) = self.renderer.as_mut() else {
-            self.shell.needs_redraw = false;
-            return;
-        };
-        let tick = self.session.tick_metrics();
-        self.osd.sync(osd::OsdSyncCtx {
-            tick,
-            settings: &settings,
-            language,
-            renderer: renderer.as_mut(),
-            size: window_size,
-            insets,
-        });
-        match renderer.render(fb) {
-            RenderResult::Presented => {
-                self.shell.on_frame_presented(tick.frame_counter);
-                self.request_redraw();
-            }
-            RenderResult::Skipped => {
-                self.shell.needs_redraw = true;
-            }
-            RenderResult::Error => {
-                log::warn!("render: renderer reported an error");
-                self.shell.needs_redraw = true;
             }
         }
     }
@@ -1688,157 +1149,9 @@ impl AndroidFrontend {
 
     fn maybe_refresh_title(&mut self, now: Instant) {
         if self.shell.should_refresh_title(now)
-            && let Some(window) = self.window.as_ref()
+            && let Some(window) = self.render_sync.cloned_window()
         {
-            window.set_title(&self.session.window_title());
-        }
-    }
-
-    fn apply_touch_actions(&mut self, actions: Vec<TouchOverlayAction>) {
-        for action in actions {
-            match action {
-                TouchOverlayAction::Input(event) => {
-                    self.session.apply_input_event(event);
-                    self.request_redraw();
-                }
-            }
-        }
-    }
-
-    fn sync_touch_target(
-        &mut self,
-        touch_id: u64,
-        next_target: Option<(AttachmentId, DigitalControlId)>,
-    ) {
-        let previous = self.active_touches.get(&touch_id).copied();
-        if previous == next_target {
-            return;
-        }
-        if let Some(previous) = previous {
-            self.apply_touch_actions(vec![TouchOverlayAction::Input(
-                DigitalInputEvent::released(previous.0, previous.1),
-            )]);
-            self.active_touches.remove(&touch_id);
-        }
-        if let Some(next) = next_target {
-            self.apply_touch_actions(vec![TouchOverlayAction::Input(DigitalInputEvent::pressed(
-                next.0, next.1,
-            ))]);
-            self.active_touches.insert(touch_id, next);
-        }
-    }
-
-    fn sync_floating_dpad_targets(&mut self, next_targets: Vec<(AttachmentId, DigitalControlId)>) {
-        let previous_targets = self
-            .floating_dpad
-            .as_ref()
-            .map(|state| state.targets.clone())
-            .unwrap_or_default();
-        for previous in previous_targets
-            .iter()
-            .filter(|target| !next_targets.contains(target))
-        {
-            self.session
-                .apply_input_event(DigitalInputEvent::released(previous.0, previous.1));
-        }
-        for next in next_targets
-            .iter()
-            .filter(|target| !previous_targets.contains(target))
-        {
-            self.session
-                .apply_input_event(DigitalInputEvent::pressed(next.0, next.1));
-        }
-        if let Some(state) = self.floating_dpad.as_mut() {
-            state.targets = next_targets;
-        }
-        self.request_redraw();
-    }
-
-    fn begin_floating_dpad(&mut self, touch_id: u64, point: TouchPoint) -> bool {
-        let Some(overlay) = self.overlay.as_ref() else {
-            return false;
-        };
-        if self.floating_dpad.is_some() || !overlay.accepts_floating_dpad(point) {
-            return false;
-        }
-        self.floating_dpad = Some(FloatingDpadState {
-            touch_id,
-            center: point,
-            targets: Vec::new(),
-        });
-        log::info!(
-            "floating D-Pad started: touch_id={touch_id} x={:.1} y={:.1}",
-            point.x,
-            point.y
-        );
-        update_floating_dpad_visual(&self.app, true, point, point);
-        if self.session.settings_snapshot().local.touch_overlay.haptics {
-            perform_control_haptic(&self.app);
-        }
-        true
-    }
-
-    fn update_floating_dpad(&mut self, point: TouchPoint) {
-        let Some(center) = self.floating_dpad.as_ref().map(|state| state.center) else {
-            return;
-        };
-        let Some(overlay) = self.overlay.as_ref() else {
-            return;
-        };
-        let targets = overlay.floating_dpad_targets(center, point);
-        let knob = overlay.floating_knob(center, point);
-        self.sync_floating_dpad_targets(targets);
-        update_floating_dpad_visual(&self.app, true, center, knob);
-    }
-
-    fn end_floating_dpad(&mut self) {
-        self.sync_floating_dpad_targets(Vec::new());
-        self.floating_dpad = None;
-        log::info!("floating D-Pad ended");
-        update_floating_dpad_visual(
-            &self.app,
-            false,
-            TouchPoint { x: 0.0, y: 0.0 },
-            TouchPoint { x: 0.0, y: 0.0 },
-        );
-    }
-
-    fn handle_touch(&mut self, touch: Touch) {
-        let point = TouchPoint {
-            x: touch.location.x as f32,
-            y: touch.location.y as f32,
-        };
-        if self
-            .floating_dpad
-            .as_ref()
-            .is_some_and(|state| state.touch_id == touch.id)
-        {
-            match touch.phase {
-                TouchPhase::Started | TouchPhase::Moved => self.update_floating_dpad(point),
-                TouchPhase::Ended | TouchPhase::Cancelled => self.end_floating_dpad(),
-            }
-            return;
-        }
-        if touch.phase == TouchPhase::Started && self.begin_floating_dpad(touch.id, point) {
-            return;
-        }
-        let next_target = self
-            .overlay
-            .as_ref()
-            .and_then(|overlay| overlay.hit_test(point));
-        match touch.phase {
-            TouchPhase::Started | TouchPhase::Moved => {
-                if touch.phase == TouchPhase::Started
-                    && next_target.is_some()
-                    && self.session.settings_snapshot().local.touch_overlay.haptics
-                {
-                    perform_control_haptic(&self.app);
-                }
-                self.sync_touch_target(touch.id, next_target);
-            }
-            TouchPhase::Ended | TouchPhase::Cancelled => {
-                self.sync_touch_target(touch.id, None);
-            }
+            window.set_title(&self.session.window_title(&self.session.tick_metrics()));
         }
     }
 
@@ -1846,7 +1159,7 @@ impl AndroidFrontend {
         match self.session.run_command(cmd) {
             Ok(o) => {
                 if o.needs_redraw {
-                    self.request_redraw();
+                    self.render_sync.request_redraw(&mut self.shell);
                 }
                 Some(o)
             }
@@ -1859,77 +1172,6 @@ impl AndroidFrontend {
             }
         }
     }
-}
-
-fn notify_rom_loaded(app: &AndroidApp, system_id: &str) {
-    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
-    if let Err(error) = bridge::with_java_env(&vm, |env| {
-        let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
-        let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-        let system_id = env.new_string(system_id)?;
-        env.call_method(
-            &activity,
-            jni_str!("notifyRomLoaded"),
-            jni_sig!("(Ljava/lang/String;)V"),
-            &[jni::objects::JValue::Object(system_id.as_ref())],
-        )?;
-        Ok::<(), jni::errors::Error>(())
-    }) {
-        log::warn!("failed to notify Android ROM load: {error:?}");
-    }
-}
-
-fn perform_control_haptic(app: &AndroidApp) {
-    let app = app.clone();
-    let callback_app = app.clone();
-    app.run_on_java_main_thread(Box::new(move || {
-        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        if let Err(error) = bridge::with_java_env(&vm, |env| {
-            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-            env.call_method(
-                &activity,
-                jni_str!("performControlHaptic"),
-                jni_sig!("()V"),
-                &[],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        }) {
-            log::warn!("failed to play Android control haptic: {error:?}");
-        }
-    }));
-}
-
-fn update_floating_dpad_visual(
-    app: &AndroidApp,
-    active: bool,
-    center: TouchPoint,
-    knob: TouchPoint,
-) {
-    let app = app.clone();
-    let callback_app = app.clone();
-    app.run_on_java_main_thread(Box::new(move || {
-        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        if let Err(error) = bridge::with_java_env(&vm, |env| {
-            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-            env.call_method(
-                &activity,
-                jni_str!("updateFloatingDpad"),
-                jni_sig!("(ZFFFF)V"),
-                &[
-                    jni::objects::JValue::Bool(active),
-                    jni::objects::JValue::Float(center.x),
-                    jni::objects::JValue::Float(center.y),
-                    jni::objects::JValue::Float(knob.x),
-                    jni::objects::JValue::Float(knob.y),
-                ],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        }) {
-            log::warn!("failed to update Android dpad visual: {error:?}");
-        }
-    }));
 }
 
 impl PauseControl for AndroidFrontend {
@@ -2025,27 +1267,23 @@ impl ApplicationHandler for AndroidFrontend {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         log::info!("ApplicationHandler::resumed");
         self.is_resumed = true;
-        self.begin_foreground_resume();
+        self.lifecycle.begin_foreground_resume();
         self.try_resume_foreground(event_loop);
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         log::info!("ApplicationHandler::suspended");
         self.is_resumed = false;
-        self.foreground_resume_pending = false;
-        self.foreground_retry_attempts = 0;
-        self.foreground_retry_at = None;
-        self.last_foreground_error = None;
+        self.lifecycle.cancel_foreground_resume();
         self.stop_cartridge_peripherals();
         self.save_lifecycle_state();
         bridge::reset_transient();
         picker::reset_transient();
         settings::reset_transient();
-        // Transient UI dies with the activity: the controller releases
-        // the gate and requeues the unacked head; the settings cache
-        // dies with the dialog it tracked.
-        self.osd.suspend_error_dialog();
-        self.settings_open = false;
+        // Transient UI dies with the activity: the coordinator releases
+        // the gate and requeues the unacked head; the settings bridge
+        // pending id dies with the dialog it tracked.
+        self.dialogs.on_suspended(self.osd.manager_mut());
         self.release_window_resources();
     }
 
@@ -2055,7 +1293,7 @@ impl ApplicationHandler for AndroidFrontend {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        if self.window_id != Some(window_id) {
+        if !self.render_sync.window_id_matches(window_id) {
             return;
         }
 
@@ -2067,18 +1305,33 @@ impl ApplicationHandler for AndroidFrontend {
             WindowEvent::Focused(false) => {
                 log::info!("window_event: focus lost");
                 self.session.clear_input();
-                self.physical_pressed.clear();
+                self.input.forget_physical_pressed();
             }
             WindowEvent::Resized(size) => {
                 log::info!("window_event: resized to {}x{}", size.width, size.height);
-                if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.resize(SurfaceSize::new(size.width, size.height));
-                }
-                self.rebuild_overlay();
-                self.request_redraw();
+                self.render_sync
+                    .resize_renderer(SurfaceSize::new(size.width, size.height));
+                self.input.rebuild_overlay(
+                    &self.session,
+                    &self.app,
+                    self.render_sync.window_size(),
+                );
+                self.render_sync.request_redraw(&mut self.shell);
             }
-            WindowEvent::Touch(touch) => self.handle_touch(touch),
-            WindowEvent::RedrawRequested => self.render(),
+            WindowEvent::Touch(touch) => {
+                self.input.handle_touch(&mut self.session, &self.app, touch);
+            }
+            WindowEvent::RedrawRequested => {
+                let tick = self.session.tick_metrics();
+                self.render_sync.render(
+                    &self.app,
+                    &mut self.session,
+                    &mut self.osd,
+                    &mut self.shell,
+                    tick,
+                    Instant::now(),
+                );
+            }
             _ => {}
         }
     }
@@ -2104,13 +1357,11 @@ impl ApplicationHandler for AndroidFrontend {
             self.osd.invalidate_system_insets();
         }
         menu::take_events_into(&mut self.event_scratch);
-        // Acks first: modal gate release must not wait behind an input
-        // burst. Stable in-place sort keeps menu order without
-        // allocating two Vecs per burst tick.
+        // Two-lane queue, no sort: priority acks (dialog dismissals)
+        // drain first in arrival order, then the menu lane.
         let mut pending = std::mem::take(&mut self.event_scratch);
-        pending.sort_by_key(|event| !matches!(event, FrontendEvent::ErrorDialogDismissed));
         for event in pending.drain(..) {
-            self.handle_menu_action(event);
+            self.handle_menu_action(event, tick);
         }
         self.event_scratch = pending;
         self.sync_cartridge_peripherals();
@@ -2121,12 +1372,14 @@ impl ApplicationHandler for AndroidFrontend {
             .osd
             .poll(&mut self.session, &settings, language, now, tick)
         {
-            self.request_redraw();
+            self.render_sync.request_redraw(&mut self.shell);
         }
         self.maybe_show_error_dialog(tick);
 
-        if let Some(window) = self.window.as_ref() {
-            if self.shell.wants_redraw(tick.frame_counter) {
+        if self.render_sync.has_window() {
+            if self.shell.wants_redraw(tick.frame_counter)
+                && let Some(window) = self.render_sync.cloned_window()
+            {
                 window.request_redraw();
             }
             // Render loop is self-sustaining via request_redraw() after each present.
@@ -2137,7 +1390,7 @@ impl ApplicationHandler for AndroidFrontend {
                 event_loop.set_control_flow(ControlFlow::Wait);
             }
         } else {
-            if self.is_resumed || self.foreground_resume_pending {
+            if self.is_resumed || self.lifecycle.resume_pending() {
                 event_loop.set_control_flow(ControlFlow::Poll);
             } else {
                 event_loop.set_control_flow(ControlFlow::Wait);

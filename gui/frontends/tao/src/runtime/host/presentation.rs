@@ -2,7 +2,7 @@
 //! Window sizing helpers live in `window`; the settings dialog in
 //! `settings`.
 use super::HostState;
-use super::{derive_native_fullscreen_sync, set_window_fullscreen, window_is_fullscreen};
+use super::{MenuSig, derive_native_fullscreen_sync, set_window_fullscreen, window_is_fullscreen};
 use nerust_gui_shell::session::{SessionError, access::SettingsResult};
 use std::time::Instant;
 
@@ -38,23 +38,45 @@ impl HostState {
     }
 
     pub(crate) fn sync_menu_state(&mut self) {
+        let settings_open = self.settings_open();
         let snapshot = self.session.settings_snapshot();
-        let slots = self.session.slots().to_vec();
+        let language = snapshot.shared.general.language;
+        let active_slot = self.session.active_slot_id();
         let tick = self.session.tick_metrics();
-        let sig = super::ChromeSig {
-            loaded: tick.loaded,
-            paused: tick.paused,
-            settings_open: self.settings_open(),
-            language: snapshot.shared.general.language,
-            active_slot: self.session.active_slot_id(),
-            slots,
-            shortcuts: snapshot.shared.input.shortcuts.keyboard.clone(),
-            title: self.session.window_title(),
-        };
-        if self.last_chrome_sig.as_ref() == Some(&sig) {
+        let title = self.session.window_title(&tick);
+        let slots = self.session.slots();
+        let shortcuts = &snapshot.shared.input.shortcuts.keyboard;
+        // Cheap gate first: scalars plus lengths, no Vec clones. A
+        // mismatch here proves change; a match falls through to the
+        // exact reference comparison below (same-len content edits
+        // must still reach the menu).
+        let cheap_same = self.last_menu_sig.as_ref().is_some_and(|sig| {
+            sig.loaded == tick.loaded
+                && sig.paused == tick.paused
+                && sig.settings_open == settings_open
+                && sig.language == language
+                && sig.active_slot == active_slot
+                && sig.slots.len() == slots.len()
+                && sig.shortcuts.len() == shortcuts.len()
+        }) && self.last_title.as_deref() == Some(&title);
+        if cheap_same
+            && let Some(sig) = self.last_menu_sig.as_ref()
+            && slots == sig.slots.as_slice()
+            && shortcuts.as_slice() == sig.shortcuts.as_slice()
+        {
             return;
         }
-        let title = sig.title.clone();
+        // Changed: clone the full vecs once and push both halves
+        // through their own gates.
+        let sig = MenuSig {
+            loaded: tick.loaded,
+            paused: tick.paused,
+            settings_open,
+            language,
+            active_slot,
+            slots: slots.to_vec(),
+            shortcuts: shortcuts.clone(),
+        };
         self.app_menu.update(crate::menu::MenuSync {
             loaded: sig.loaded,
             paused: sig.paused,
@@ -64,8 +86,11 @@ impl HostState {
             language: sig.language,
             shortcuts: &sig.shortcuts,
         });
-        self.last_chrome_sig = Some(sig);
-        self.push_title(&title);
+        self.last_menu_sig = Some(sig);
+        if self.last_title.as_deref() != Some(&title) {
+            self.last_title = Some(title.clone());
+            self.push_title(&title);
+        }
     }
 
     fn push_title(&mut self, title: &str) {
@@ -75,18 +100,12 @@ impl HostState {
     }
 
     pub(crate) fn refresh_window_title(&mut self) {
-        let title = self.session.window_title();
-        let changed = self
-            .last_chrome_sig
-            .as_ref()
-            .is_none_or(|sig| sig.title != title);
-        if changed {
-            // Keep the signature truthful when the title moves alone
-            // (500ms throttle path); the menu half refreshes on its
-            // own next change.
-            if let Some(sig) = self.last_chrome_sig.as_mut() {
-                sig.title = title.clone();
-            }
+        // Title-only gate: never touches the menu signature, so the
+        // 500ms throttle path cannot mark menu state it did not push.
+        let tick = self.session.tick_metrics();
+        let title = self.session.window_title(&tick);
+        if self.last_title.as_deref() != Some(&title) {
+            self.last_title = Some(title.clone());
             self.push_title(&title);
         }
     }

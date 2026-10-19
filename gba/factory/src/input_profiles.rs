@@ -46,11 +46,20 @@ impl InputSystemFactory for crate::GbaFactory {
             });
         }
 
-        let field_map = controllers.devices[0]
-            .field_map(&GBA_PORT)
-            .into_iter()
-            .map(|(attachment, control, field)| ((attachment, control), field))
-            .collect();
+        let field_map = {
+            let Some(dev) = controllers.get(0) else {
+                return Err(CreateSplitError::IncompatibleController {
+                    controller: "missing controller".to_string(),
+                    slot: GBA_ATTACHMENT.to_string(),
+                });
+            };
+            let mut entries = Vec::new();
+            dev.field_map(&GBA_PORT, &mut entries);
+            entries
+                .into_iter()
+                .map(|(attachment, control, field)| ((attachment, control), field))
+                .collect()
+        };
         let shared: std::sync::Arc<std::sync::Mutex<Box<dyn InputStateBuffer>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Box::<GbaInputBuffer>::default()));
         let split = InputSplit {

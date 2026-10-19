@@ -8,18 +8,90 @@ use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationPosition, NotificationSettings,
 };
 
-use crate::session::osd_transient::OsdRow;
+use crate::session::{
+    notification::{NotificationKind, NotificationLevel},
+    osd_transient::{FrameChannel, OsdRow, TransientPolicy, falls_back_to_modal},
+};
 
-/// Pause label without the fps value: cheap key for the gate
-/// pre-check, so steady frames skip float formatting.
-pub(crate) fn status_label(paused: bool, language: AppLanguage) -> &'static str {
-    if paused {
-        match language {
-            AppLanguage::Japanese => "一時停止中",
-            _ => "Paused",
+/// One metrics read per tick. `metrics()` locks and queries the emu
+/// thread; tick paths fetch once and thread this through instead of
+/// calling `loaded`/`paused`/`can_pause` separately.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TickMetrics {
+    pub fps: f32,
+    pub paused: bool,
+    pub loaded: bool,
+    pub frame_counter: u64,
+}
+
+impl TickMetrics {
+    /// Display channel for notifications: without a loaded core no
+    /// frame is composited, so the OSD is invisible.
+    pub fn frame_channel(&self) -> FrameChannel {
+        if self.loaded {
+            FrameChannel::Composited
+        } else {
+            FrameChannel::Unpresented
         }
-    } else {
-        ""
+    }
+
+    pub fn can_pause(&self) -> bool {
+        self.loaded && !self.paused
+    }
+
+    pub fn can_resume(&self) -> bool {
+        self.loaded && self.paused
+    }
+}
+
+/// Stable status key for the readout. The presenter translates the
+/// key to display text at the language boundary below, so the sync
+/// fingerprint keys on `"paused"`/`""` instead of localized text.
+pub(crate) fn status_key(paused: bool) -> &'static str {
+    if paused { "paused" } else { "" }
+}
+
+/// Display text for a status key. Single translation point: every
+/// frontend shows the same wording for the same key and language.
+pub(crate) fn status_text(key: &str, language: AppLanguage) -> &'static str {
+    match (key, language) {
+        ("paused", AppLanguage::Japanese) => "一時停止中",
+        ("paused", _) => "Paused",
+        _ => "",
+    }
+}
+
+/// Push-side routing: transient row, modal batch, or drop. The
+/// channel-to-modal policy lives here (not in the queue), so the
+/// push site renders only what the router selects.
+pub(crate) enum ModalRoute {
+    Transient,
+    Modal,
+    Drop,
+}
+
+/// Narrow routing view: policy plus display channel. Decision code
+/// takes this instead of the full settings surface.
+pub(crate) struct ModalRouter<'a> {
+    pub policy: &'a TransientPolicy,
+    pub channel: FrameChannel,
+}
+
+impl ModalRouter<'_> {
+    pub(crate) fn route(&self, kind: &NotificationKind) -> ModalRoute {
+        let level: NotificationLevel = kind.level();
+        if !self.policy.enabled(level) {
+            return ModalRoute::Drop;
+        }
+        // No composited frame and not modal-worthy: drop the row.
+        if self.channel == FrameChannel::Unpresented && !kind.wants_modal() {
+            return ModalRoute::Drop;
+        }
+        if falls_back_to_modal(kind, self.policy, self.channel) {
+            ModalRoute::Modal
+        } else {
+            ModalRoute::Transient
+        }
     }
 }
 
@@ -46,12 +118,13 @@ impl StatusGate {
 
     /// Gated value, computing `fresh` only on a label flip, throttle
     /// expiry, or empty cache. Steady frames skip float formatting.
+    /// Borrows the cached pair: callers clone out only on change.
     pub fn gate_or_cached(
         &mut self,
         now: Instant,
         label: &str,
         fresh: impl FnOnce() -> String,
-    ) -> (String, String) {
+    ) -> (&str, &str) {
         let label_changed = self.last_label.as_deref() != Some(label);
         let tick_due = self
             .last_tick
@@ -59,13 +132,13 @@ impl StatusGate {
         if label_changed || tick_due || self.last_value.is_none() {
             let value = fresh();
             self.last_label = Some(label.to_string());
-            self.last_value = Some(value.clone());
+            self.last_value = Some(value);
             self.last_tick = Some(now);
-            (label.to_string(), value)
-        } else {
-            let cached = self.last_value.clone().unwrap_or_else(fresh);
-            (label.to_string(), cached)
         }
+        (
+            self.last_label.as_deref().unwrap_or(""),
+            self.last_value.as_deref().unwrap_or(""),
+        )
     }
 }
 
@@ -111,14 +184,46 @@ impl OsdChrome {
     /// policy shared by every frontend; pixel conversion stays in the
     /// render adapter (`strip_pixels`), so this core never names
     /// render types.
+    ///
+    /// Same edge, different sides share one strip; same corner stacks
+    /// two. Each readout reserves only under its own area mode. When
+    /// both readouts share one horizontal band (both top or both
+    /// bottom), the transient area mode governs the edge: the status
+    /// picker follows it in the UI, so an overlay status never dangles
+    /// half inside a strip the transient reserved.
     pub fn reserved_rows(&self) -> (u32, u32) {
-        strip_rows(
-            self.area_mode,
-            self.position,
-            self.status_area_mode,
-            self.status_position,
-            self.status_enabled,
-        )
+        let status_mode = if self.status_enabled && self.position.same_edge(self.status_position) {
+            self.area_mode
+        } else {
+            self.status_area_mode
+        };
+        fn edge(position: NotificationPosition) -> bool {
+            matches!(
+                position,
+                NotificationPosition::TopLeft | NotificationPosition::TopRight
+            )
+        }
+        let mut top = [0u32, 0u32];
+        let mut bottom = [0u32, 0u32];
+        let sides = [
+            (self.area_mode, self.position, true),
+            (status_mode, self.status_position, self.status_enabled),
+        ];
+        for (mode, position, on) in sides {
+            if !on || !matches!(mode, NotificationAreaMode::Strip) {
+                continue;
+            }
+            let side = usize::from(matches!(
+                position,
+                NotificationPosition::TopRight | NotificationPosition::BottomRight
+            ));
+            if edge(position) {
+                top[side] += 1;
+            } else {
+                bottom[side] += 1;
+            }
+        }
+        (top[0].max(top[1]), bottom[0].max(bottom[1]))
     }
 }
 impl From<&NotificationSettings> for OsdChrome {
@@ -134,12 +239,13 @@ impl From<&NotificationSettings> for OsdChrome {
 }
 
 /// Per-frame inputs for [`OsdPresenter::sync`]. Bundled so the
-/// decision signature stays narrow as inputs evolve.
+/// decision signature stays narrow as inputs evolve. The tick is the
+/// single metrics read for the pass: fps and pause ride it instead of
+/// separate scalars.
 pub struct OsdSyncInput {
+    pub tick: TickMetrics,
     pub chrome: OsdChrome,
     pub language: AppLanguage,
-    pub fps: f32,
-    pub paused: bool,
     pub now: Instant,
     pub width: u32,
     pub height: u32,
@@ -165,7 +271,20 @@ pub enum OsdSync {
 pub trait OsdState {
     fn generation(&self) -> u64;
     fn visible_row(&self) -> Option<&OsdRow>;
-    fn rows(&self) -> Vec<OsdRow>;
+    fn rows(&self) -> &[OsdRow];
+}
+
+/// Status half of the sync fingerprint. One struct instead of a
+/// positional tuple, so adding a field cannot silently misalign the
+/// comparison.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StatusFingerprint {
+    label: String,
+    value: String,
+    position: NotificationPosition,
+    status_position: NotificationPosition,
+    area_mode: NotificationAreaMode,
+    status_area_mode: NotificationAreaMode,
 }
 
 /// Owns the whole sync fingerprint (transient dirty flag, status
@@ -177,14 +296,7 @@ pub trait OsdState {
 pub struct OsdPresenter {
     last_seen: u64,
     gate: StatusGate,
-    last_status: Option<(
-        String,
-        String,
-        NotificationPosition,
-        NotificationPosition,
-        NotificationAreaMode,
-        NotificationAreaMode,
-    )>,
+    last_status: Option<StatusFingerprint>,
     last_size: Option<(u32, u32)>,
     /// Last layer geometry (position, area mode, status corner). The
     /// status tuple only exists while enabled, so a position flip with
@@ -222,18 +334,21 @@ impl OsdPresenter {
     /// and the stale gate passes the first fresh value on re-enable.
     pub fn sync(&mut self, state: &impl OsdState, input: OsdSyncInput) -> OsdSync {
         let OsdSyncInput {
+            tick,
             chrome,
             language,
-            fps,
-            paused,
             now,
             width,
             height,
             ui_scale,
             safe_insets,
         } = input;
+        // Generation check replaces the old peek-then-take flag:
+        // inequality against the last synced generation means
+        // re-render. Recorded only after the size decision below: a
+        // generation bump on a zero-size frame must not be swallowed,
+        // or the next sized frame would wrongly skip.
         let changed = state.generation() != self.last_seen;
-        self.last_seen = state.generation();
         if width == 0 || height == 0 {
             if self.active {
                 self.active = false;
@@ -241,20 +356,24 @@ impl OsdPresenter {
             }
             return OsdSync::Skip;
         }
+        self.last_seen = state.generation();
+        // Non-finite scales never reach the fingerprint: NaN payloads
+        // would defeat `to_bits` equality and re-render every frame.
+        // Debug-loud, release-total (identity scale keeps layout sane).
+        debug_assert!(ui_scale.is_finite(), "non-finite OSD scale");
+        let ui_scale = if ui_scale.is_finite() { ui_scale } else { 1.0 };
         let status_key = chrome.status_enabled.then(|| {
-            let (label, value) =
-                self.gate
-                    .gate_or_cached(now, status_label(paused, language), || {
-                        format!("{fps:.1} fps")
-                    });
-            (
-                label,
-                value,
-                chrome.position,
-                chrome.status_position,
-                chrome.area_mode,
-                chrome.status_area_mode,
-            )
+            let (label, value) = self.gate.gate_or_cached(now, status_key(tick.paused), || {
+                format!("{:.1} fps", tick.fps)
+            });
+            StatusFingerprint {
+                label: status_text(label, language).to_string(),
+                value: value.to_string(),
+                position: chrome.position,
+                status_position: chrome.status_position,
+                area_mode: chrome.area_mode,
+                status_area_mode: chrome.status_area_mode,
+            }
         });
         if status_key.is_none() {
             // Forget the throttle: re-enable must pass fresh digits.
@@ -281,13 +400,15 @@ impl OsdPresenter {
         }
         self.active = true;
         let (label_value, position, status_position) = match status_key {
-            Some((label, value, position, status_position, _, _)) => {
-                (Some((label, value)), position, status_position)
-            }
+            Some(fingerprint) => (
+                Some((fingerprint.label, fingerprint.value)),
+                fingerprint.position,
+                fingerprint.status_position,
+            ),
             None => (None, chrome.position, chrome.status_position),
         };
         OsdSync::Render(OsdPlan {
-            rows: state.rows(),
+            rows: state.rows().to_vec(),
             status: label_value,
             position,
             status_position,
@@ -297,60 +418,13 @@ impl OsdPresenter {
     }
 }
 
-/// Strip rows per edge from transient + status corners.
-/// Same edge, different sides share one strip; same corner stacks two.
-/// Each readout reserves only under its own area mode.
-/// When both readouts share one horizontal band (both top or both
-/// bottom), the transient area mode governs the edge: the status
-/// picker follows it in the UI, so an overlay status never dangles
-/// half inside a strip the transient reserved.
-pub fn strip_rows(
-    transient_mode: NotificationAreaMode,
-    transient: NotificationPosition,
-    status_mode: NotificationAreaMode,
-    status: NotificationPosition,
-    status_on: bool,
-) -> (u32, u32) {
-    let status_mode = if status_on && transient.same_edge(status) {
-        transient_mode
-    } else {
-        status_mode
-    };
-    fn edge(position: NotificationPosition) -> bool {
-        matches!(
-            position,
-            NotificationPosition::TopLeft | NotificationPosition::TopRight
-        )
-    }
-    let mut top = [0u32, 0u32];
-    let mut bottom = [0u32, 0u32];
-    let sides = [
-        (transient_mode, transient, true),
-        (status_mode, status, status_on),
-    ];
-    for (mode, position, on) in sides {
-        if !on || !matches!(mode, NotificationAreaMode::Strip) {
-            continue;
-        }
-        let side = usize::from(matches!(
-            position,
-            NotificationPosition::TopRight | NotificationPosition::BottomRight
-        ));
-        if edge(position) {
-            top[side] += 1;
-        } else {
-            bottom[side] += 1;
-        }
-    }
-    (top[0].max(top[1]), bottom[0].max(bottom[1]))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         OsdChrome, OsdPresenter, OsdRow, OsdState, OsdSync, OsdSyncInput, STATUS_FPS_MIN_INTERVAL,
-        StatusGate, UiInsets, strip_rows,
+        StatusGate, UiInsets,
     };
+    use crate::session::osd_presenter::TickMetrics;
     use nerust_settings_core::model::language::AppLanguage;
     use nerust_settings_core::model::local::{
         NotificationAreaMode as M, NotificationPosition as P, NotificationSettings,
@@ -373,8 +447,8 @@ mod tests {
             self.row.as_ref()
         }
 
-        fn rows(&self) -> Vec<OsdRow> {
-            self.row.clone().into_iter().collect()
+        fn rows(&self) -> &[OsdRow] {
+            self.row.as_slice()
         }
     }
 
@@ -413,10 +487,12 @@ mod tests {
         safe_insets: UiInsets,
     ) -> OsdSyncInput {
         OsdSyncInput {
+            tick: TickMetrics {
+                fps: 60.0,
+                ..TickMetrics::default()
+            },
             chrome,
             language: AppLanguage::English,
-            fps: 60.0,
-            paused: false,
             now,
             width,
             height,
@@ -432,26 +508,26 @@ mod tests {
         // First sample passes.
         assert_eq!(
             gate.gate_or_cached(now, "", || "60.1 fps".to_string()),
-            (String::new(), "60.1 fps".to_string())
+            ("", "60.1 fps")
         );
         // Jitter within the interval holds the old digits.
         assert_eq!(
             gate.gate_or_cached(now, "", || "60.2 fps".to_string()),
-            (String::new(), "60.1 fps".to_string())
+            ("", "60.1 fps")
         );
         // After the interval the fresh digits pass.
         assert_eq!(
             gate.gate_or_cached(now + STATUS_FPS_MIN_INTERVAL, "", || {
                 "60.2 fps".to_string()
             }),
-            (String::new(), "60.2 fps".to_string())
+            ("", "60.2 fps")
         );
         // A pause flip passes immediately even inside the interval.
         assert_eq!(
             gate.gate_or_cached(now + STATUS_FPS_MIN_INTERVAL, "Paused", || {
                 "60.3 fps".to_string()
             }),
-            ("Paused".to_string(), "60.3 fps".to_string())
+            ("Paused", "60.3 fps")
         );
     }
 
@@ -465,7 +541,7 @@ mod tests {
             fresh_calls += 1;
             "60.0 fps".to_string()
         });
-        assert_eq!((label.as_str(), value.as_str()), ("Paused", "60.0 fps"));
+        assert_eq!((label, value), ("Paused", "60.0 fps"));
         assert_eq!(fresh_calls, 1);
         // Steady: fresh never runs again.
         let (_, steady) = gate.gate_or_cached(now, "Paused", || {
@@ -476,105 +552,120 @@ mod tests {
         assert_eq!(fresh_calls, 1);
     }
 
+    fn chrome(transient: (M, P), status: (M, P), status_on: bool) -> OsdChrome {
+        OsdChrome {
+            status_enabled: status_on,
+            position: transient.1,
+            status_position: status.1,
+            area_mode: transient.0,
+            status_area_mode: status.0,
+        }
+    }
+
     #[test]
-    fn strip_rows_share_edges() {
+    fn reserved_rows_share_edges() {
         use nerust_settings_core::model::local::{
             NotificationAreaMode as Mode, NotificationPosition as Pos,
         };
         assert_eq!(
-            strip_rows(
-                Mode::Strip,
-                Pos::BottomLeft,
-                Mode::Strip,
-                Pos::BottomRight,
+            chrome(
+                (Mode::Strip, Pos::BottomLeft),
+                (Mode::Strip, Pos::BottomRight),
                 true
-            ),
+            )
+            .reserved_rows(),
             (0, 1)
         );
         assert_eq!(
-            strip_rows(
-                Mode::Strip,
-                Pos::BottomLeft,
-                Mode::Strip,
-                Pos::BottomLeft,
+            chrome(
+                (Mode::Strip, Pos::BottomLeft),
+                (Mode::Strip, Pos::BottomLeft),
                 true
-            ),
+            )
+            .reserved_rows(),
             (0, 2)
         );
         assert_eq!(
-            strip_rows(
-                Mode::Overlay,
-                Pos::BottomLeft,
-                Mode::Overlay,
-                Pos::TopLeft,
+            chrome(
+                (Mode::Overlay, Pos::BottomLeft),
+                (Mode::Overlay, Pos::TopLeft),
                 true
-            ),
+            )
+            .reserved_rows(),
             (0, 0)
         );
         // Independent modes: overlay status reserves nothing.
         assert_eq!(
-            strip_rows(
-                Mode::Strip,
-                Pos::BottomLeft,
-                Mode::Overlay,
-                Pos::TopLeft,
+            chrome(
+                (Mode::Strip, Pos::BottomLeft),
+                (Mode::Overlay, Pos::TopLeft),
                 true
-            ),
+            )
+            .reserved_rows(),
             (0, 1)
         );
         // ... and an overlay transient leaves a strip status alone.
         assert_eq!(
-            strip_rows(
-                Mode::Overlay,
-                Pos::BottomLeft,
-                Mode::Strip,
-                Pos::TopLeft,
+            chrome(
+                (Mode::Overlay, Pos::BottomLeft),
+                (Mode::Strip, Pos::TopLeft),
                 true
-            ),
+            )
+            .reserved_rows(),
             (1, 0)
         );
     }
 
     #[test]
-    fn strip_rows_counts_edges_and_sides() {
+    fn reserved_rows_count_edges_and_sides() {
         assert_eq!(
-            strip_rows(M::Overlay, P::TopLeft, M::Overlay, P::BottomLeft, true),
+            chrome((M::Overlay, P::TopLeft), (M::Overlay, P::BottomLeft), true).reserved_rows(),
             (0, 0)
         );
         assert_eq!(
-            strip_rows(M::Strip, P::TopLeft, M::Strip, P::BottomLeft, true),
+            chrome((M::Strip, P::TopLeft), (M::Strip, P::BottomLeft), true).reserved_rows(),
             (1, 1)
         );
         assert_eq!(
-            strip_rows(M::Strip, P::TopRight, M::Strip, P::BottomRight, true),
+            chrome((M::Strip, P::TopRight), (M::Strip, P::BottomRight), true).reserved_rows(),
             (1, 1)
         );
         // Same corner stacks two rows on one side.
         assert_eq!(
-            strip_rows(M::Strip, P::TopLeft, M::Strip, P::TopLeft, true),
+            chrome((M::Strip, P::TopLeft), (M::Strip, P::TopLeft), true).reserved_rows(),
             (2, 0)
         );
         // Status off: transient row only.
         assert_eq!(
-            strip_rows(M::Strip, P::BottomLeft, M::Strip, P::TopLeft, false),
+            chrome((M::Strip, P::BottomLeft), (M::Strip, P::TopLeft), false).reserved_rows(),
             (0, 1)
         );
         // Same band: the transient area mode governs the edge, so the
         // status picker cannot dangle an overlay inside a strip.
         assert_eq!(
-            strip_rows(M::Strip, P::BottomLeft, M::Overlay, P::BottomLeft, true),
+            chrome((M::Strip, P::BottomLeft), (M::Overlay, P::BottomLeft), true).reserved_rows(),
             (0, 2)
         );
         assert_eq!(
-            strip_rows(M::Overlay, P::BottomLeft, M::Strip, P::BottomLeft, true),
+            chrome((M::Overlay, P::BottomLeft), (M::Strip, P::BottomLeft), true).reserved_rows(),
             (0, 0)
         );
         assert_eq!(
-            strip_rows(M::Strip, P::BottomLeft, M::Overlay, P::BottomRight, true),
+            chrome(
+                (M::Strip, P::BottomLeft),
+                (M::Overlay, P::BottomRight),
+                true
+            )
+            .reserved_rows(),
             (0, 1)
         );
         assert_eq!(
-            strip_rows(M::Overlay, P::BottomLeft, M::Strip, P::BottomRight, true),
+            chrome(
+                (M::Overlay, P::BottomLeft),
+                (M::Strip, P::BottomRight),
+                true
+            )
+            .reserved_rows(),
             (0, 0)
         );
     }
@@ -666,7 +757,10 @@ mod tests {
             presenter.sync(
                 &state,
                 OsdSyncInput {
-                    fps: 60.2,
+                    tick: TickMetrics {
+                        fps: 60.2,
+                        ..TickMetrics::default()
+                    },
                     ..sync_input(chrome_of(&settings), now, 960, 720, 1.0, Default::default())
                 }
             ),
@@ -677,8 +771,11 @@ mod tests {
             presenter.sync(
                 &state,
                 OsdSyncInput {
-                    paused: true,
-                    fps: 60.2,
+                    tick: TickMetrics {
+                        fps: 60.2,
+                        paused: true,
+                        ..TickMetrics::default()
+                    },
                     ..sync_input(chrome_of(&settings), now, 960, 720, 1.0, Default::default())
                 }
             ),
@@ -880,7 +977,10 @@ mod tests {
             presenter.sync(
                 &state,
                 OsdSyncInput {
-                    fps: 60.0,
+                    tick: TickMetrics {
+                        fps: 60.0,
+                        ..TickMetrics::default()
+                    },
                     ..sync_input(chrome_of(&settings), now, 960, 720, 1.0, Default::default())
                 }
             ),
@@ -893,7 +993,10 @@ mod tests {
             presenter.sync(
                 &state,
                 OsdSyncInput {
-                    fps: 61.0,
+                    tick: TickMetrics {
+                        fps: 61.0,
+                        ..TickMetrics::default()
+                    },
                     now: off,
                     ..sync_input(chrome_of(&settings), now, 960, 720, 1.0, Default::default())
                 }
@@ -905,7 +1008,10 @@ mod tests {
         let plan = match presenter.sync(
             &state,
             OsdSyncInput {
-                fps: 61.0,
+                tick: TickMetrics {
+                    fps: 61.0,
+                    ..TickMetrics::default()
+                },
                 now: off,
                 ..sync_input(chrome_of(&settings), now, 960, 720, 1.0, Default::default())
             },

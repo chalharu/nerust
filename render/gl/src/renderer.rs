@@ -47,6 +47,9 @@ impl std::fmt::Debug for GlRenderer {
     }
 }
 
+// ---------------------------------------------------------------------------
+// GlContext owner: view construction plus explicit teardown.
+// ---------------------------------------------------------------------------
 impl GlRenderer {
     /// Fresh view with shaders compiled and the staged layer applied.
     /// Single construction site for attach and profile rebuilds.
@@ -64,53 +67,52 @@ impl GlRenderer {
     /// a failed delete must not fail the rebuild that triggered it.
     fn close_live_view(&mut self) {
         if let Some(ref mut v) = self.view {
-            let report = v.on_close();
-            if !report.is_ok() {
-                log::warn!(
-                    "GlRenderer: view teardown failed ({} names)",
-                    report.failed_names
-                );
-            }
+            let current = self
+                .context
+                .as_ref()
+                .map(|ctx| ctx.is_current())
+                .unwrap_or(false);
+            let report = v.on_close(nerust_glwrap::CurrentContext::assert_current(current));
+            Self::log_close_report(&report);
         }
     }
-}
 
-impl GpuRenderer for GlRenderer {
-    fn size(&self) -> SurfaceSize {
-        self.size
-    }
-
-    fn resize(&mut self, size: SurfaceSize) {
-        if let (Some(surf), Some(ctx)) = (self.gl_surface.as_ref(), self.context.as_ref()) {
-            let (w, h) = (
-                NonZeroU32::new(size.width.max(1)).expect("clamped to at least 1"),
-                NonZeroU32::new(size.height.max(1)).expect("clamped to at least 1"),
+    fn log_close_report(report: &crate::view::CloseReport) {
+        if !report.is_ok() {
+            log::warn!(
+                "GlRenderer: view teardown failed ({} names: textures={}, programs={}, arrays={}, buffers={})",
+                report.failed_names(),
+                report.failed_textures,
+                report.failed_programs,
+                report.failed_arrays,
+                report.failed_buffers,
             );
-            surf.resize(ctx, w, h);
         }
-        self.size = size;
     }
 
-    /// GL surface is never invalidated on resize — just update viewport size.
-    fn reattach(
-        &mut self,
-        _wh: RawWindowHandle,
-        _dh: RawDisplayHandle,
-        size: SurfaceSize,
-    ) -> Result<(), RendererError> {
-        self.size = size;
-        Ok(())
+    /// Validated surface size as `i32` for the GL viewport path.
+    /// `u32 -> i32` via `try_from`: values above `i32::MAX` skip the
+    /// frame instead of truncating negative.
+    fn validated_surface_size(&self) -> Option<(i32, i32)> {
+        let w = i32::try_from(self.size.width).ok()?;
+        let h = i32::try_from(self.size.height).ok()?;
+        (w > 0 && h > 0).then_some((w, h))
     }
 
-    fn attach(
+    /// Non-zero extent for surface creation: saturating, no `expect`.
+    fn nonzero_extent(size: SurfaceSize) -> (NonZeroU32, NonZeroU32) {
+        let w = NonZeroU32::new(size.width).unwrap_or(NonZeroU32::MIN);
+        let h = NonZeroU32::new(size.height).unwrap_or(NonZeroU32::MIN);
+        (w, h)
+    }
+
+    /// Context attach: create context + window surface + fresh view.
+    fn context_attach(
         &mut self,
         wh: RawWindowHandle,
-        _dh: RawDisplayHandle,
         size: SurfaceSize,
     ) -> Result<(), RendererError> {
         self.size = size;
-
-        // Create GL context and surface.
         let nc = unsafe {
             self.display
                 .create_context(
@@ -121,10 +123,7 @@ impl GpuRenderer for GlRenderer {
                 )
                 .map_err(|e| RendererError::new("context", Box::new(e)))?
         };
-        let (w, h) = (
-            NonZeroU32::new(size.width.max(1)).expect("clamped to at least 1"),
-            NonZeroU32::new(size.height.max(1)).expect("clamped to at least 1"),
-        );
+        let (w, h) = Self::nonzero_extent(size);
         let surf = unsafe {
             self.display
                 .create_window_surface(
@@ -137,10 +136,13 @@ impl GpuRenderer for GlRenderer {
             .make_current(&surf)
             .map_err(|e| RendererError::new("make_current", Box::new(e)))?;
 
-        // Proc names are static GL strings without interior nuls.
+        // Proc names are static GL strings; a (never) interior nul maps
+        // to a null pointer instead of panicking the attach path.
         GlView::load_with(|n| {
-            let c = std::ffi::CString::new(n).expect("GL proc name has no interior nul");
-            self.display.get_proc_address(&c)
+            std::ffi::CString::new(n)
+                .ok()
+                .map(|c| self.display.get_proc_address(&c))
+                .unwrap_or(std::ptr::null())
         });
         self.view = Some(self.fresh_view(&self.render_profile)?);
         self.context = Some(ctx);
@@ -148,22 +150,20 @@ impl GpuRenderer for GlRenderer {
         Ok(())
     }
 
-    fn detach(&mut self) {
-        // Explicit teardown while the context may still be current:
-        // bare texture names have no Drop to reclaim them.
+    /// Context detach: explicit teardown while current, then drop.
+    fn context_detach(&mut self) {
         let view = self.view.take();
         match (view, self.context.as_ref()) {
-            (Some(mut v), Some(ctx)) if ctx.is_current() => {
-                let report = v.on_close();
-                if !report.is_ok() {
-                    log::warn!(
-                        "GlRenderer: view teardown failed ({} names)",
-                        report.failed_names
-                    );
+            (Some(mut v), Some(ctx)) => {
+                let current = nerust_glwrap::CurrentContext::assert_current(ctx.is_current());
+                if current.is_none() {
+                    log::debug!("GlRenderer: detach without current context");
                 }
+                let report = v.on_close(current);
+                Self::log_close_report(&report);
                 drop(v);
             }
-            (Some(v), _) => {
+            (Some(v), None) => {
                 log::debug!("GlRenderer: detach without current context");
                 drop(v);
             }
@@ -171,6 +171,120 @@ impl GpuRenderer for GlRenderer {
         }
         self.context = None;
         drop(self.gl_surface.take());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RenderOrchestration: resize, profile rebuild, per-frame drive.
+// ---------------------------------------------------------------------------
+impl GlRenderer {
+    /// Per-frame orchestration: viewport, palette, upload, OSD, swap.
+    fn orchestrate_render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
+        let Some((surf_w, surf_h)) = self.validated_surface_size() else {
+            log::warn!("GlRenderer: invalid surface size, skipping frame");
+            return RenderResult::Skipped;
+        };
+        let reserved = self.reserved;
+        let render_profile = self.render_profile.clone();
+        let Some(ref ctx) = self.context else {
+            return RenderResult::Skipped;
+        };
+        let Some(ref surf) = self.gl_surface else {
+            return RenderResult::Skipped;
+        };
+        let Some(ref mut view) = self.view else {
+            return RenderResult::Skipped;
+        };
+
+        if !ctx.is_current()
+            && let Err(e) = ctx.make_current(surf)
+        {
+            log::warn!("GlRenderer: make_current failed: {e}");
+            return RenderResult::Error;
+        }
+
+        if let Err(e) = view.on_resize_with_strip(surf_w, surf_h, reserved) {
+            log::warn!("GlRenderer: resize failed: {e}");
+            return RenderResult::Error;
+        }
+        if let Some(p) = frame_buffer.palette_as_rgba8()
+            && let Err(e) = view.update_palette_texture(&p)
+        {
+            log::warn!("GlRenderer: palette upload failed: {e}");
+            return RenderResult::Error;
+        }
+        let fs = match render_profile.frame_format {
+            VideoFrameFormat::Rgba => render_profile.logical_size,
+            VideoFrameFormat::Palette => render_profile.source_logical_size,
+        };
+        let bpp = render_profile.frame_format.bytes_per_pixel();
+        let stride = frame_buffer.stride();
+        if fs.width == 0 || fs.height == 0 || stride == 0 {
+            log::warn!("GlRenderer: empty frame");
+            return RenderResult::Skipped;
+        }
+        let data = frame_buffer.as_ref();
+        let layout = match FrameLayout::checked(
+            fs,
+            bpp,
+            stride,
+            data.len(),
+            view.supports_unpack_row_length(),
+        ) {
+            Ok(layout) => layout,
+            Err(e) => {
+                log::warn!("GlRenderer: frame upload failed: {e}");
+                return RenderResult::Error;
+            }
+        };
+        if let Err(e) = upload_frame(view, &mut self.tight, &layout, data) {
+            log::warn!("GlRenderer: frame upload failed: {e}");
+            return RenderResult::Error;
+        }
+        match view.draw_osd(surf_w, surf_h) {
+            Ok(OsdOutcome::Dropped) => {
+                if !self.osd_drop_warned {
+                    self.osd_drop_warned = true;
+                    log::warn!("GlRenderer: dropping OSD layer after repeated upload failures");
+                }
+            }
+            Ok(OsdOutcome::Presented) | Ok(OsdOutcome::Skipped) => {}
+            Err(e) => {
+                log::debug!("GlRenderer: OSD composite failed: {e}");
+            }
+        }
+        if let Err(e) = surf.swap_buffers(ctx) {
+            log::warn!("GlRenderer: swap_buffers failed: {e}");
+            return RenderResult::Error;
+        }
+        RenderResult::Presented
+    }
+}
+
+impl GpuRenderer for GlRenderer {
+    fn size(&self) -> SurfaceSize {
+        self.size
+    }
+
+    fn resize(&mut self, size: SurfaceSize) {
+        if let (Some(surf), Some(ctx)) = (self.gl_surface.as_ref(), self.context.as_ref()) {
+            let (w, h) = Self::nonzero_extent(size);
+            surf.resize(ctx, w, h);
+        }
+        self.size = size;
+    }
+
+    fn attach(
+        &mut self,
+        wh: RawWindowHandle,
+        _dh: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError> {
+        self.context_attach(wh, size)
+    }
+
+    fn detach(&mut self) {
+        self.context_detach();
     }
 
     fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
@@ -208,99 +322,22 @@ impl GpuRenderer for GlRenderer {
     }
 
     fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
-        let Some(ref ctx) = self.context else {
-            return RenderResult::Skipped;
-        };
-        let Some(ref surf) = self.gl_surface else {
-            return RenderResult::Skipped;
-        };
-        let Some(ref mut view) = self.view else {
-            return RenderResult::Skipped;
-        };
-
-        if !ctx.is_current()
-            && let Err(e) = ctx.make_current(surf)
-        {
-            log::warn!("GlRenderer: make_current failed: {e}");
-            return RenderResult::Error;
-        }
-
-        if let Err(e) = view.on_resize_with_strip(
-            self.size.width as i32,
-            self.size.height as i32,
-            self.reserved,
-        ) {
-            log::warn!("GlRenderer: resize failed: {e}");
-            return RenderResult::Error;
-        }
-        if let Some(p) = frame_buffer.palette_as_rgba8()
-            && let Err(e) = view.update_palette_texture(&p)
-        {
-            log::warn!("GlRenderer: palette upload failed: {e}");
-            return RenderResult::Error;
-        }
-        // Stride-padded Rgba rows (256-byte aligned) upload as-is
-        // via UNPACK_ROW_LENGTH; pre-GLES3 packs into fixed staging
-        // like wgpu's pitch-mismatch path. Short data refuses instead
-        // of panicking the UI thread.
-        let fs = match self.render_profile.frame_format {
-            VideoFrameFormat::Rgba => self.render_profile.logical_size,
-            VideoFrameFormat::Palette => self.render_profile.source_logical_size,
-        };
-        let bpp = self.render_profile.frame_format.bytes_per_pixel();
-        let stride = frame_buffer.stride();
-        if fs.width == 0 || fs.height == 0 || stride == 0 {
-            log::warn!("GlRenderer: empty frame");
-            return RenderResult::Skipped;
-        }
-        let data = frame_buffer.as_ref();
-        let layout = match FrameLayout::checked(
-            fs,
-            bpp,
-            stride,
-            data.len(),
-            view.supports_unpack_row_length(),
-        ) {
-            Ok(layout) => layout,
-            Err(e) => {
-                log::warn!("GlRenderer: frame upload failed: {e}");
-                return RenderResult::Error;
-            }
-        };
-        if let Err(e) = upload_frame(view, &mut self.tight, &layout, data) {
-            log::warn!("GlRenderer: frame upload failed: {e}");
-            return RenderResult::Error;
-        }
-        match view.draw_osd(self.size.width as i32, self.size.height as i32) {
-            Ok(OsdOutcome::Dropped) => {
-                if !self.osd_drop_warned {
-                    self.osd_drop_warned = true;
-                    log::warn!("GlRenderer: dropping OSD layer after repeated upload failures");
-                }
-            }
-            Ok(OsdOutcome::Presented) | Ok(OsdOutcome::Skipped) => {}
-            Err(e) => {
-                log::debug!("GlRenderer: OSD composite failed: {e}");
-            }
-        }
-        if let Err(e) = surf.swap_buffers(ctx) {
-            log::warn!("GlRenderer: swap_buffers failed: {e}");
-            return RenderResult::Error;
-        }
-        RenderResult::Presented
+        self.orchestrate_render(frame_buffer)
     }
 }
 
 /// Upload one frame through the three stride paths (direct,
 /// exact, repacked). Length failures refuse as Frame errors.
+/// `layout.width` is validated `usize`; the `i32` upload width goes
+/// through `try_from` so absurd widths error instead of truncating.
 fn upload_frame(
     view: &mut GlView,
     tight: &mut Vec<u8>,
     layout: &FrameLayout,
     data: &[u8],
 ) -> Result<(), ViewError> {
-    // Geometry is validated on entry (`FrameLayout::checked`); slicing
-    // below cannot fail, so `get(..)` guards stay total by construction.
+    let width_i32 = i32::try_from(layout.width)
+        .map_err(|_| ViewError::from(FrameError::StrideTooWide { have: layout.width }))?;
     if view.supports_unpack_row_length() {
         match data.get(..layout.need) {
             Some(bytes) => view.on_update(bytes, layout.stride_px),
@@ -311,20 +348,18 @@ fn upload_frame(
         }
     } else if layout.stride == layout.row_bytes {
         match data.get(..layout.need) {
-            Some(bytes) => view.on_update(bytes, layout.width as i32),
+            Some(bytes) => view.on_update(bytes, width_i32),
             None => Err(ViewError::from(FrameError::TooShort {
                 need: layout.need,
                 have: data.len(),
             })),
         }
     } else {
-        // Grow-only like the OSD scratches: a smaller profile must
-        // not shrink + memset the buffer on the frame path.
         if tight.len() < layout.need {
             tight.resize(layout.need, 0);
         }
         pack_rows_stripped(data, layout.stride, layout.height, tight, layout.row_bytes);
-        view.on_update(tight, layout.width as i32)
+        view.on_update(tight, width_i32)
     }
 }
 
@@ -337,53 +372,37 @@ pub struct GlFactory;
 
 impl GlFactory {
     fn create_display(dh: RawDisplayHandle) -> Result<Display, glutin::error::Error> {
-        use DisplayApiPreference::*;
-        #[cfg(all(target_os = "macos", not(target_family = "wasm")))]
-        let _preference = Cgl;
-
-        #[cfg(all(
-            windows,
-            not(target_os = "ios"),
-            not(target_os = "macos"),
-            not(target_family = "wasm")
-        ))]
-        let _preference = Wgl(None);
-
+        // Single cfg-selected expression: exactly one arm compiles per
+        // platform, so no dead Glx/Wgl/Egl shadow survives.
+        #[cfg(target_os = "macos")]
+        let preference = DisplayApiPreference::Cgl;
+        #[cfg(all(target_os = "windows", not(target_family = "wasm")))]
+        let preference = DisplayApiPreference::EglThenWgl(None);
+        #[cfg(target_os = "android")]
+        let preference = DisplayApiPreference::Egl;
         #[cfg(all(
             unix,
-            not(target_os = "ios"),
             not(target_os = "macos"),
             not(target_os = "android"),
-            not(target_family = "wasm")
+            not(target_family = "wasm"),
+            not(target_os = "ios")
         ))]
-        let _preference = Glx(Box::new(|_reg| {}));
+        let preference = DisplayApiPreference::EglThenGlx(Box::new(|_reg| {}));
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "android",
+            all(
+                unix,
+                not(target_os = "macos"),
+                not(target_os = "android"),
+                not(target_family = "wasm"),
+                not(target_os = "ios")
+            )
+        )))]
+        let preference = DisplayApiPreference::Egl;
 
-        #[cfg(all(
-            any(windows, unix),
-            not(target_os = "ios"),
-            not(target_os = "macos"),
-            not(target_family = "wasm")
-        ))]
-        let _preference = Egl;
-
-        #[cfg(all(
-            unix,
-            not(target_os = "ios"),
-            not(target_os = "macos"),
-            not(target_os = "android"),
-            not(target_family = "wasm")
-        ))]
-        let _preference = EglThenGlx(Box::new(|_reg| {}));
-
-        #[cfg(all(
-            windows,
-            not(target_os = "ios"),
-            not(target_os = "macos"),
-            not(target_family = "wasm")
-        ))]
-        let _preference = EglThenWgl(None);
-
-        unsafe { glutin::display::Display::new(dh, _preference) }
+        unsafe { glutin::display::Display::new(dh, preference) }
     }
 }
 
@@ -467,15 +486,16 @@ mod tests {
             width: 64,
             height: 64,
         };
-        // Tight rows: consumes exactly the frame.
         let tight = FrameLayout::checked(fs, 4, 256, 64 * 64 * 4, false).unwrap();
         assert_eq!((tight.row_bytes, tight.need), (256, 64 * 64 * 4));
-        // Padded rows via UNPACK_ROW_LENGTH.
         let padded = FrameLayout::checked(fs, 4, 260, 63 * 260 + 256, true).unwrap();
         assert_eq!(padded.need, 63 * 260 + 256);
         assert_eq!(padded.stride_px, 65);
-        // Short data refuses with sizes, overflow without a fake size.
         assert!(FrameLayout::checked(fs, 4, 256, 10, false).is_err());
+        // bpp == 0 refuses instead of masking through `max(1)`.
+        assert!(FrameLayout::checked(fs, 0, 256, 64 * 64 * 4, false).is_err());
+        // stride not divisible by bpp refuses.
+        assert!(FrameLayout::checked(fs, 4, 257, 64 * 64 * 4, false).is_err());
         let overflow = FrameLayout::checked(
             LogicalSize {
                 width: usize::MAX,
@@ -490,6 +510,23 @@ mod tests {
             overflow,
             Err(crate::layout::FrameError::DimensionsOverflow { .. })
         ));
+    }
+
+    #[test]
+    fn surface_size_validation_rejects_i32_overflow() {
+        // `validated_surface_size` is `i32::try_from` on both axes:
+        // values above `i32::MAX` refuse instead of truncating.
+        assert!(i32::try_from(u32::MAX).is_err());
+        assert_eq!(i32::try_from(64u32).unwrap(), 64);
+    }
+
+    #[test]
+    fn nonzero_extent_saturates_without_expect() {
+        use nerust_render_traits::SurfaceSize;
+        let (w, h) = super::GlRenderer::nonzero_extent(SurfaceSize::new(0, 0));
+        assert_eq!((w.get(), h.get()), (1, 1));
+        let (w, h) = super::GlRenderer::nonzero_extent(SurfaceSize::new(64, 32));
+        assert_eq!((w.get(), h.get()), (64, 32));
     }
 
     #[test]
@@ -563,8 +600,10 @@ mod tests {
             return;
         };
         super::GlView::load_with(|name| {
-            let proc_name = std::ffi::CString::new(name).expect("GL proc name has no interior nul");
-            display.display.get_proc_address(&proc_name)
+            std::ffi::CString::new(name)
+                .ok()
+                .map(|proc_name| display.display.get_proc_address(&proc_name))
+                .unwrap_or(std::ptr::null())
         });
         let (display, gl_config) = display.into_parts();
         let profile = gl_test_profile();
@@ -587,7 +626,6 @@ mod tests {
             64,
             nerust_render_traits::PixelFormat::Rgba,
         );
-        // Detached states refuse gracefully instead of touching GL.
         assert!(matches!(renderer.render(&empty), RenderResult::Skipped));
         assert!(renderer.update_render_profile(&profile).is_err());
         renderer.set_osd_layer(Some(OsdLayer {
@@ -597,7 +635,6 @@ mod tests {
             height: 1,
             rgba: vec![255; 8],
         }));
-        // Equality gate: identical re-stage is a no-op for the stored copy.
         renderer.set_osd_layer(Some(OsdLayer {
             x: 0,
             y: 0,
@@ -605,13 +642,15 @@ mod tests {
             height: 1,
             rgba: vec![255; 8],
         }));
-        // Fresh view build, then an atomic profile rebuild over it.
         let view = renderer.fresh_view(&profile).unwrap();
         renderer.view = Some(view);
         renderer.context = Some(current.context);
         renderer.update_render_profile(&profile).unwrap();
         renderer.resize(SurfaceSize::new(64, 64));
-        // Losing currency refuses the rebuild; detach then unwinds.
+        // Invalid surface skips instead of truncating.
+        renderer.resize(SurfaceSize::new(u32::MAX, u32::MAX));
+        assert!(matches!(renderer.render(&empty), RenderResult::Skipped));
+        renderer.resize(SurfaceSize::new(64, 64));
         let _not_current = renderer.context.take().unwrap().make_not_current();
         assert!(renderer.update_render_profile(&profile).is_err());
         renderer.detach();

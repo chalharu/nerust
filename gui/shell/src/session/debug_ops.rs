@@ -14,7 +14,8 @@ use crate::emu_core::EmuCore;
 impl SessionHandle {
     pub fn debug_spaces(&self) -> Vec<nerust_core_traits::debugger::SpaceInfo> {
         self.emu
-            .core_opt()
+            .core()
+            .ok()
             .and_then(|core| core.memory_spaces().ok())
             .unwrap_or_default()
     }
@@ -26,14 +27,17 @@ impl SessionHandle {
     /// this reports read safety (`true` with no core).
     /// [`paused`]: SessionHandle::paused
     pub fn debug_snapshot_ready(&self) -> bool {
-        self.emu.core_opt().is_none_or(|core| core.metrics().paused)
+        self.emu
+            .core()
+            .ok()
+            .is_none_or(|core| core.metrics().paused)
     }
 
     /// Owned context for one async drain flight: a cloned core plus
     /// the shared write transaction. See [`DrainCtx`].
     pub(crate) fn drain_ctx(&self) -> crate::debug::DrainCtx {
         crate::debug::DrainCtx::new(
-            self.emu.core_opt().map(EmuCore::drain_core),
+            self.emu.core().ok().map(EmuCore::drain_core),
             Arc::clone(&self.debug_txn),
         )
     }
@@ -53,7 +57,7 @@ impl SessionHandle {
             DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, InspectRequest, SnapshotRequest,
         };
         let mut snapshot = debug_vm::DebugSnapshot::default();
-        let core = match self.emu.core_opt() {
+        let core = match self.emu.core().ok() {
             Some(core) => core,
             None => return snapshot,
         };
@@ -136,7 +140,7 @@ impl SessionHandle {
         space: nerust_core_traits::debugger::SpaceId,
         addr: u32,
     ) -> Option<u8> {
-        let core = self.emu.core_opt()?;
+        let core = self.emu.core().ok()?;
         let result = core
             .inspect(nerust_core_traits::debugger::InspectRequest {
                 space: Some(space),
@@ -158,7 +162,7 @@ impl SessionHandle {
         value: u8,
     ) -> bool {
         use nerust_core_traits::debugger::MemoryWrite;
-        let core = match self.emu.core_opt() {
+        let core = match self.emu.core().ok() {
             Some(core) => core,
             None => return false,
         };
@@ -175,7 +179,7 @@ impl SessionHandle {
 
     /// Single-register write for the register viewer.
     pub fn debug_write_register(&self, name: &'static str, value: u64) -> debug_vm::StatusMessage {
-        let core = match self.emu.core_opt() {
+        let core = match self.emu.core().ok() {
             Some(core) => core,
             None => return debug_vm::StatusMessage::NoCore,
         };
@@ -217,7 +221,7 @@ impl SessionHandle {
             Some(staged) => staged,
             None => return debug_vm::StatusMessage::NothingToWrite,
         };
-        let core = match self.emu.core_opt() {
+        let core = match self.emu.core().ok() {
             Some(core) => core,
             None => return debug_vm::StatusMessage::NoCore,
         };
@@ -251,7 +255,7 @@ impl SessionHandle {
 
     /// Pause for debugger control.
     pub fn debug_pause(&self) -> debug_vm::StatusMessage {
-        match self.emu.core_opt() {
+        match self.emu.core().ok() {
             Some(core) => match core.pause() {
                 Ok(()) => debug_vm::StatusMessage::Paused,
                 Err(error) => debug_vm::StatusMessage::PauseFailed(format!("{error:?}")),
@@ -262,7 +266,7 @@ impl SessionHandle {
 
     /// Resume for debugger control.
     pub fn debug_resume(&self) -> debug_vm::StatusMessage {
-        match self.emu.core_opt() {
+        match self.emu.core().ok() {
             Some(core) => match core.resume() {
                 Ok(()) => debug_vm::StatusMessage::Resume,
                 Err(error) => debug_vm::StatusMessage::ResumeFailed(format!("{error:?}")),
@@ -277,7 +281,7 @@ impl SessionHandle {
         &self,
         unit: nerust_core_traits::debugger::StepUnit,
     ) -> debug_vm::StatusMessage {
-        let core = match self.emu.core_opt() {
+        let core = match self.emu.core().ok() {
             Some(core) => core,
             None => return debug_vm::StatusMessage::NoCore,
         };

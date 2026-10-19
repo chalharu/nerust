@@ -1,13 +1,13 @@
 use std::{collections::HashSet, rc::Rc};
 
 use nerust_input_traits::{
-    AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, ControllerProfile, DeviceDescriptor,
-    DeviceKindId, DigitalControlDescriptor, InputTopologyDescriptor, PortDescriptor, PortId,
-    ProfileId, SlotInfo,
+    AnalogControlDescriptor, AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, ControlId,
+    ControllerProfile, DeviceDescriptor, DeviceKindId, DigitalControlDescriptor,
+    InputTopologyDescriptor, PortDescriptor, PortId, ProfileId, SlotInfo,
 };
 
-/// Map a controller profile + port group index to a device kind string.
-pub fn device_kind(profile: &dyn ControllerProfile, group_index: usize) -> &'static str {
+/// Map a controller profile + port group index to its device kind.
+pub fn device_kind(profile: &dyn ControllerProfile, group_index: usize) -> DeviceKindId {
     profile.device_kind_for_group(group_index)
 }
 
@@ -47,16 +47,23 @@ impl TopologyContext {
         let dk = device_kind(profile, gi);
         let controls = profile.port_groups()[gi];
         self.devices.push(DeviceDescriptor {
-            kind: DeviceKindId::new(dk),
+            kind: dk,
             label: profile.label(),
             controls: controls
                 .iter()
-                .map(|ci| {
-                    ControlDescriptor::Digital(DigitalControlDescriptor {
-                        id: ci.id,
+                .map(|ci| match ci.id {
+                    ControlId::Digital(id) => {
+                        ControlDescriptor::Digital(DigitalControlDescriptor {
+                            id,
+                            label: ci.label,
+                            description: ci.label,
+                        })
+                    }
+                    ControlId::Analog(id) => ControlDescriptor::Analog(AnalogControlDescriptor {
+                        id,
                         label: ci.label,
                         description: ci.label,
-                    })
+                    }),
                 })
                 .collect(),
         });
@@ -70,7 +77,11 @@ impl TopologyContext {
         slot_label: &impl Fn(AttachmentId) -> &'static str,
     ) {
         let dk = device_kind(profile, gi);
-        if self.ports.iter().any(|p: &PortDescriptor| p.id == port) {
+        if self
+            .ports
+            .iter()
+            .any(|p: &PortDescriptor| p.id.as_str() == port.as_str())
+        {
             return;
         }
         let label = slot_label(port);
@@ -80,8 +91,8 @@ impl TopologyContext {
             attachments: vec![AttachmentSlotDescriptor {
                 id: port,
                 label,
-                device: DeviceKindId::new(dk),
-                supported_devices: vec![DeviceKindId::new(dk)],
+                device: dk,
+                supported_devices: vec![dk],
             }],
         });
     }
@@ -227,8 +238,8 @@ mod tests {
 
     #[test]
     fn device_kind_delegates_to_profile_method() {
-        assert_eq!(device_kind(&SinglePortProfile, 0), "test.single");
-        assert_eq!(device_kind(&MultiPortProfile, 0), "test.multi");
+        assert_eq!(device_kind(&SinglePortProfile, 0).as_str(), "test.single");
+        assert_eq!(device_kind(&MultiPortProfile, 0).as_str(), "test.multi");
     }
 
     #[test]

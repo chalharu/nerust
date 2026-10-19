@@ -160,7 +160,7 @@ impl GbcConsoleCore {
         self.emu_input.take();
         let input = self
             .emu_input
-            .read_buf
+            .read_buffer()
             .downcast_ref::<GbcInputBuffer>()
             .ok_or_else(|| CoreError::Core(Box::new(GbcCoreError::InvalidInputBuffer)))?
             .0;
@@ -471,7 +471,11 @@ mod tests {
 
         fn clear(&mut self) {}
 
-        fn copy_state(&mut self, _other: &dyn InputStateBuffer) {}
+        fn copy_state(&mut self, _other: &dyn InputStateBuffer) -> Result<(), BufferError> {
+            Err(BufferError::MismatchedBuffer {
+                expected: "OtherInput",
+            })
+        }
     }
 
     fn input() -> EmuInput {

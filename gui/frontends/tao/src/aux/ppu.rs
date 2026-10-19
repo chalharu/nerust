@@ -47,18 +47,38 @@ pub(crate) enum PpuMessage {
 
 pub(crate) struct PpuState {
     bridge: Arc<DebugBridge>,
+    /// Single snapshot behind one mutex: scaled pictures (Sync-derived,
+    /// handles are cheap Arc clones), panels text, hover line, and the
+    /// source generation. Readers take one lock and hold the `Arc`;
+    /// hover updates replace the whole snapshot instead of locking
+    /// three mutexes and cloning vecs per rebuild.
+    snapshot: Mutex<Arc<PpuSnapshot>>,
+}
+
+struct PpuSnapshot {
     /// Scaled display pictures `(label, w, h, handle)`, Sync-derived.
-    /// Handles (cheap Arc clones) ride here instead of raw bytes so
-    /// hover-driven rebuilds never re-copy megabytes per mouse move:
-    /// the 2x scale runs once per drain, never per view.
+    /// Handles ride here instead of raw bytes so hover-driven rebuilds
+    /// never re-copy megabytes per mouse move: the 2x scale runs once
+    /// per drain, never per view.
     #[allow(clippy::type_complexity)]
-    scaled: Mutex<Vec<(String, u32, u32, iced::widget::image::Handle)>>,
-    panels_cache: Mutex<String>,
-    hover_cache: Mutex<String>,
+    scaled: Vec<(String, u32, u32, iced::widget::image::Handle)>,
+    panels: String,
+    hover: String,
     /// Generation of the source images behind `scaled`. Starts
     /// impossibly high so the first Sync always derives (generation
     /// zero is a valid first fetch).
-    source_gen: Mutex<u64>,
+    source_gen: u64,
+}
+
+impl PpuSnapshot {
+    fn empty() -> Arc<Self> {
+        Arc::new(Self {
+            scaled: Vec::new(),
+            panels: String::new(),
+            hover: String::new(),
+            source_gen: u64::MAX,
+        })
+    }
 }
 
 pub(crate) struct PpuProgram {
@@ -92,10 +112,7 @@ impl Program for PpuProgram {
         (
             PpuState {
                 bridge: Arc::clone(&self.bridge),
-                scaled: Mutex::new(Vec::new()),
-                panels_cache: Mutex::new(String::new()),
-                hover_cache: Mutex::new(String::new()),
-                source_gen: Mutex::new(u64::MAX),
+                snapshot: Mutex::new(PpuSnapshot::empty()),
             },
             Task::none(),
         )
@@ -106,14 +123,19 @@ impl Program for PpuProgram {
         match message {
             PpuMessage::Hovered(line) => {
                 *lock_recovered(&bridge.ppu_hover) = line.clone();
-                *lock_recovered(&state.hover_cache) = line;
+                let current = Arc::clone(&lock_recovered(&state.snapshot));
+                *lock_recovered(&state.snapshot) = Arc::new(PpuSnapshot {
+                    scaled: current.scaled.clone(),
+                    panels: current.panels.clone(),
+                    hover: line,
+                    source_gen: current.source_gen,
+                });
                 bridge.ppu_invalidated.store(true, Ordering::Release);
             }
             PpuMessage::Sync => {
                 let display = lock_recovered(&bridge.display);
-                let generation = display.images_gen;
-                let mut source_gen = lock_recovered(&state.source_gen);
-                if *source_gen != generation {
+                let current = Arc::clone(&lock_recovered(&state.snapshot));
+                let scaled = if current.source_gen != display.images_gen {
                     let mut scaled = Vec::with_capacity(display.images.len());
                     for (label, width, height, rgba) in &display.images {
                         let bytes = scale2x_nearest(rgba, *width, *height);
@@ -124,11 +146,19 @@ impl Program for PpuProgram {
                             iced::widget::image::Handle::from_rgba(width * 2, height * 2, bytes),
                         ));
                     }
-                    *lock_recovered(&state.scaled) = scaled;
-                    *source_gen = generation;
-                }
-                *lock_recovered(&state.panels_cache) =
-                    nerust_gui_viewmodel::debugger::format_panels(&display.panels);
+                    scaled
+                } else {
+                    current.scaled.clone()
+                };
+                let generation = display.images_gen;
+                let panels = nerust_gui_viewmodel::debugger::format_panels(&display.panels);
+                drop(display);
+                *lock_recovered(&state.snapshot) = Arc::new(PpuSnapshot {
+                    scaled,
+                    panels,
+                    hover: current.hover.clone(),
+                    source_gen: generation,
+                });
             }
         }
         Task::none()
@@ -141,12 +171,15 @@ impl Program for PpuProgram {
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::widget::{column, image, mouse_area, scrollable, text};
         use nerust_settings_core::i18n::{UiText, text as ui_text};
-        // Single coherent capture; scaled bytes come from the Sync
-        // cache, never re-derived here.
+        // Single coherent capture: one lock, one `Arc`; scaled bytes
+        // come from the Sync cache, never re-derived here.
         let language = state.bridge.language;
-        let scaled = lock_recovered(&state.scaled).clone();
-        let panels = lock_recovered(&state.panels_cache).clone();
-        let hover = lock_recovered(&state.hover_cache).clone();
+        let snapshot = Arc::clone(&lock_recovered(&state.snapshot));
+        // Borrow the scaled vec (handles clone per row, cheap Arc);
+        // small strings clone once instead of holding the lock.
+        let scaled = &snapshot.scaled;
+        let panels = snapshot.panels.clone();
+        let hover = snapshot.hover.clone();
         let mut content = column![
             text(ui_text(language, UiText::PpuViewer)).size(18),
             text(if hover.is_empty() {
@@ -163,7 +196,7 @@ impl Program for PpuProgram {
         if scaled.is_empty() {
             content = content.push(text(ui_text(language, UiText::NoImages)).size(14));
         }
-        for (label, width, height, handle) in &scaled {
+        for (label, width, height, handle) in scaled {
             content = content.push(text(label.clone()).size(14));
             // Arc clone only: the bytes were scaled once at Sync time.
             let shown = image(handle.clone());
@@ -243,10 +276,8 @@ impl PpuWindowHandle {
         // rebuild the view from cache. The Sync message rides the
         // process pass so `instance` mutates only under take→rebuild.
         self.bridge.ppu_invalidated.store(true, Ordering::Release);
-        self.shell.process(
-            vec![PpuMessage::Sync],
-            crate::aux::shell::Dirty::ppu(&self.bridge.ppu_invalidated),
-        );
+        self.shell
+            .process(vec![PpuMessage::Sync], &self.bridge.ppu_invalidated);
         // Deterministic pixels per drain: render synchronously
         // instead of depending on the next window event, so the
         // viewer never sits on a stale or blank frame.
@@ -276,10 +307,7 @@ impl super::focus::WindowHandler for PpuWindowHandle {
         }
         let rebuilt =
             if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-                self.shell.process(
-                    messages,
-                    crate::aux::shell::Dirty::ppu(&self.bridge.ppu_invalidated),
-                )
+                self.shell.process(messages, &self.bridge.ppu_invalidated)
             } else {
                 false
             };
@@ -336,10 +364,7 @@ mod tests {
     fn ppu_state(bridge: &Arc<DebugBridge>) -> PpuState {
         PpuState {
             bridge: Arc::clone(bridge),
-            scaled: Mutex::new(Vec::new()),
-            panels_cache: Mutex::new(String::new()),
-            hover_cache: Mutex::new(String::new()),
-            source_gen: Mutex::new(u64::MAX),
+            snapshot: Mutex::new(PpuSnapshot::empty()),
         }
     }
 
@@ -352,20 +377,20 @@ mod tests {
         let mut state = ppu_state(&bridge);
         let _ = program.update(&mut state, PpuMessage::Sync);
         // First sync derives: one 2x image plus the generation.
-        assert_eq!(lock_recovered(&state.scaled).len(), 1);
-        assert_eq!(*lock_recovered(&state.source_gen), 5);
-        assert_eq!(lock_recovered(&state.scaled)[0].1, 4);
-        assert_eq!(lock_recovered(&state.scaled)[0].2, 2);
+        assert_eq!(lock_recovered(&state.snapshot).scaled.len(), 1);
+        assert_eq!(lock_recovered(&state.snapshot).source_gen, 5);
+        assert_eq!(lock_recovered(&state.snapshot).scaled[0].1, 4);
+        assert_eq!(lock_recovered(&state.snapshot).scaled[0].2, 2);
         // Identical generation re-runs Sync without re-deriving.
         let _ = program.update(&mut state, PpuMessage::Sync);
-        assert_eq!(*lock_recovered(&state.source_gen), 5);
+        assert_eq!(lock_recovered(&state.snapshot).source_gen, 5);
         // Hover only records the line, never re-derives.
         let _ = program.update(
             &mut state,
             PpuMessage::Hovered("Tiles tile #0 (px 0,0, +0000)".to_string()),
         );
         assert_eq!(
-            *lock_recovered(&state.hover_cache),
+            lock_recovered(&state.snapshot).hover,
             "Tiles tile #0 (px 0,0, +0000)"
         );
         assert!(bridge.ppu_invalidated.load(Ordering::Acquire));

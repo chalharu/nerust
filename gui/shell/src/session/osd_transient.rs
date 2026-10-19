@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 
 use nerust_settings_core::model::local::NotificationSettings;
 
-use crate::session::notification::{
-    NotificationKind, NotificationLevel, ReplaceGroup, append_count,
+use crate::session::{
+    notification::{NotificationKind, NotificationLevel, ReplaceGroup, append_count},
+    osd_modal::OsdLimits,
 };
 
 #[derive(Debug, Clone)]
@@ -34,10 +35,8 @@ pub(crate) struct OsdItem {
 }
 
 /// Single sequential display (no stacking): one label at a time,
-/// FIFO by push order. `pending` is capped at two so the total
-/// (current + pending) never exceeds three.
-pub(crate) const MAX_TRANSIENT_QUEUED: usize = 2;
-
+/// FIFO by push order. `pending` is capped ([`OsdLimits`]) so the
+/// total (current + pending) never exceeds three.
 /// Transient in-frame queue: showing row plus pending rows with the
 /// merge/preempt/latest-wins discipline. No modal state.
 #[derive(Debug, Default)]
@@ -126,22 +125,34 @@ impl From<&NotificationSettings> for TransientPolicy {
     }
 }
 
-/// Display-policy helpers using a narrow policy and row data only.
-pub(crate) fn enabled(level: NotificationLevel, policy: &TransientPolicy) -> bool {
-    match level {
-        NotificationLevel::Info => policy.info_enabled,
-        NotificationLevel::Warning => policy.warning_enabled,
-        NotificationLevel::Error => policy.error_enabled,
+impl TransientPolicy {
+    /// Whether `level` rows display at all.
+    pub(crate) fn enabled(&self, level: NotificationLevel) -> bool {
+        match level {
+            NotificationLevel::Info => self.info_enabled,
+            NotificationLevel::Warning => self.warning_enabled,
+            NotificationLevel::Error => self.error_enabled,
+        }
     }
-}
 
-pub(crate) fn duration_ms(level: NotificationLevel, policy: &TransientPolicy) -> u64 {
-    let raw = match level {
-        NotificationLevel::Info => policy.info_duration_ms,
-        NotificationLevel::Warning => policy.warning_duration_ms,
-        NotificationLevel::Error => 5_000,
-    };
-    u64::from(raw.clamp(500, 60_000))
+    /// Display duration for `level` rows.
+    pub(crate) fn duration(&self, level: NotificationLevel) -> Duration {
+        let raw = match level {
+            NotificationLevel::Info => self.info_duration_ms,
+            NotificationLevel::Warning => self.warning_duration_ms,
+            NotificationLevel::Error => 5_000,
+        };
+        Duration::from_millis(u64::from(raw.clamp(500, 60_000)))
+    }
+
+    /// Display color for `level` rows.
+    pub(crate) fn color(&self, level: NotificationLevel) -> (u8, u8, u8) {
+        match level {
+            NotificationLevel::Info => self.info_rgb,
+            NotificationLevel::Warning => self.warning_rgb,
+            NotificationLevel::Error => self.error_rgb,
+        }
+    }
 }
 
 pub(crate) fn counted_row(
@@ -157,24 +168,33 @@ pub(crate) fn counted_row(
     }
 }
 
-pub(crate) fn color(level: NotificationLevel, policy: &TransientPolicy) -> (u8, u8, u8) {
-    match level {
-        NotificationLevel::Info => policy.info_rgb,
-        NotificationLevel::Warning => policy.warning_rgb,
-        NotificationLevel::Error => policy.error_rgb,
-    }
-}
-
 impl TransientQueue {
+    /// Lowest-severity index to drop on overflow, never an Error
+    /// while a lower severity row exists. Single scan: severity rank
+    /// primary, queue position secondary (`Oldest` takes the head of
+    /// the lowest severity present; `Newest` takes its tail, so a
+    /// just-demoted head survives preemption).
     fn victim_index(
         pending: &std::collections::VecDeque<OsdItem>,
         edge: VictimEdge,
     ) -> Option<usize> {
-        let scan = |level| match edge {
-            VictimEdge::Oldest => pending.iter().position(|item| item.level == level),
-            VictimEdge::Newest => pending.iter().rposition(|item| item.level == level),
+        fn rank(level: NotificationLevel) -> u8 {
+            match level {
+                NotificationLevel::Info => 0,
+                NotificationLevel::Warning => 1,
+                NotificationLevel::Error => 2,
+            }
+        }
+        let position = |index: usize| match edge {
+            VictimEdge::Oldest => index,
+            VictimEdge::Newest => usize::MAX - index,
         };
-        scan(NotificationLevel::Info).or_else(|| scan(NotificationLevel::Warning))
+        pending
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.level != NotificationLevel::Error)
+            .min_by_key(|(index, item)| (rank(item.level), position(*index)))
+            .map(|(index, _)| index)
     }
 
     /// Drop the overflow victim, never dropping an Error while a
@@ -234,7 +254,7 @@ impl TransientQueue {
         let demoted = self.current.take().expect("showing label checked");
         self.current = Some(item);
         self.pending.push_front(demoted);
-        while self.pending.len() > MAX_TRANSIENT_QUEUED {
+        while self.pending.len() > OsdLimits::MAX_TRANSIENT_QUEUED {
             Self::evict_overflow(&mut self.pending, VictimEdge::Newest);
         }
         None
@@ -281,7 +301,7 @@ impl TransientQueue {
         self.pending.push_back(item);
         // Full queue drops the lowest severity first; Errors drop
         // only when every queued row is an Error.
-        while self.pending.len() > MAX_TRANSIENT_QUEUED {
+        while self.pending.len() > OsdLimits::MAX_TRANSIENT_QUEUED {
             Self::evict_overflow(&mut self.pending, VictimEdge::Oldest);
         }
         RouteEffect::QueuedBehind
@@ -308,11 +328,13 @@ impl TransientQueue {
     }
 
     /// True when display state changed since the last sync.
-    pub(crate) fn rows(&self) -> Vec<OsdRow> {
+    /// Borrowed showing row: the sync emptiness check clones nothing;
+    /// only `Render` builds the owned plan.
+    pub(crate) fn rows(&self) -> &[OsdRow] {
         self.current
             .as_ref()
-            .map(|current| vec![current.row.clone()])
-            .unwrap_or_default()
+            .map(|current| std::slice::from_ref(&current.row))
+            .unwrap_or(&[])
     }
 
     pub(crate) fn visible_row(&self) -> Option<&OsdRow> {
