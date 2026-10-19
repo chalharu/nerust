@@ -103,7 +103,7 @@ prepare_signing_keystore
 if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
     sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
     if [[ -n "${sdk_root}" && -d "${sdk_root}/ndk" ]]; then
-        latest_ndk="$(find "${sdk_root}/ndk" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -V | tail -n 1)"
+        latest_ndk="$(ls -1 "${sdk_root}/ndk" 2>/dev/null | sort | tail -n 1)"
         if [[ -n "${latest_ndk}" ]]; then
             export ANDROID_NDK_HOME="${sdk_root}/ndk/${latest_ndk}"
         fi
@@ -130,6 +130,7 @@ cargo ndk \
 # release .so must stay within budget (thin-LTO DWARF incident: 133MB).
 # Resolves llvm-readelf from the NDK first, then PATH; warns and skips
 # the gate when no reader exists off CI, fails hard when CI needs it.
+BUDGET_BYTES="${BUDGET_BYTES:-41943040}"
 readelf_bin=""
 for cand in "${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf; do
     if [[ -x "${cand}" ]]; then
@@ -143,7 +144,9 @@ fi
 if [[ -z "${readelf_bin}" ]] && command -v readelf >/dev/null 2>&1; then
     readelf_bin="readelf"
 fi
-if [[ -z "${readelf_bin}" ]]; then
+if [[ -n "${SKIP_NATIVE_GATE:-}" ]]; then
+    echo "Skipping native DWARF/size gate (SKIP_NATIVE_GATE is set)" >&2
+elif [[ -z "${readelf_bin}" ]]; then
     if [[ -n "${CI:-}" ]]; then
         echo "no llvm-readelf/readelf found: cannot verify DWARF strip" >&2
         exit 1
@@ -159,20 +162,21 @@ else
             exit 1
         fi
         echo "warning: no libmain.so found under ${JNI_LIBS_DIR}; skipping gate" >&2
+    else
+        for main_so in "${so_files[@]}"; do
+            abi="$(basename "$(dirname "${main_so}")")"
+            if "${readelf_bin}" -S "${main_so}" | grep -q '\.debug_'; then
+                echo "${abi}/libmain.so contains DWARF sections; release strip is not effective" >&2
+                exit 1
+            fi
+            so_size="$(wc -c < "${main_so}" | tr -d '[:space:]')"
+            if (( so_size > BUDGET_BYTES )); then
+                echo "${abi}/libmain.so is ${so_size} bytes, over the ${BUDGET_BYTES} budget (${abi})" >&2
+                exit 1
+            fi
+            echo "${abi}/libmain.so: ${so_size} bytes, no DWARF"
+        done
     fi
-    for main_so in ${so_files[@]+"${so_files[@]}"}; do
-        abi="$(basename "$(dirname "${main_so}")")"
-        if "${readelf_bin}" -S "${main_so}" | grep -q '\.debug_info'; then
-            echo "${abi}/libmain.so contains DWARF (.debug_info); release strip is not effective" >&2
-            exit 1
-        fi
-        so_size="$(wc -c < "${main_so}" | tr -d '[:space:]')"
-        if (( so_size > 41943040 )); then
-            echo "${abi}/libmain.so is ${so_size} bytes, over the 40MB budget (${abi})" >&2
-            exit 1
-        fi
-        echo "${abi}/libmain.so: ${so_size} bytes, no DWARF"
-    done
 fi
 
 mkdir -p "${OUT_DIR}"

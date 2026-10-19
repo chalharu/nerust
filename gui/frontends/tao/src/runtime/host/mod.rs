@@ -22,6 +22,7 @@ use crate::menu::MenuSink;
 
 use super::debug_windows::DebugWindows;
 
+pub(crate) mod close;
 mod commands;
 mod focus;
 mod osd;
@@ -105,15 +106,8 @@ fn backend_capabilities() -> HostBackendCapabilities {
 
 pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
-    /// Window creation failure: the loop exits gracefully.
-    fatal_error: Option<String>,
-    /// Close teardown already ran (CloseRequested then Destroyed
-    /// double-delivers): flush runs exactly once.
-    exited: bool,
-    /// Main window still usable. Cleared on close instead of dropping
-    /// the handles: dropping tao/GTK objects inside a destroy handler
-    /// re-enters the dying native window (BadWindow, exit 1).
-    main_window_live: bool,
+    /// Creation failure, close idempotence, and native liveness.
+    close: close::CloseGuard,
     pub(super) session: SessionHandle,
     ctx: FrontendContext,
     app_menu: Box<dyn MenuSink>,
@@ -205,9 +199,7 @@ impl HostState {
         })?;
         Ok(Self {
             window: None,
-            fatal_error: None,
-            exited: false,
-            main_window_live: true,
+            close: close::CloseGuard::new(),
             session,
             ctx,
             app_menu,
@@ -261,7 +253,7 @@ impl HostState {
     /// guard: double-delivered close events must flush exactly once.
     #[cfg(test)]
     pub(crate) fn close_exited(&self) -> bool {
-        self.exited
+        self.close.exited()
     }
 }
 

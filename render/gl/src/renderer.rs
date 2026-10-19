@@ -668,6 +668,7 @@ mod tests {
             renderer::{GpuRenderer as _, OsdLayer, RenderResult},
         };
 
+        let _serial = crate::test_display::lock_display();
         let Some(display) = crate::test_display::TestDisplay::connect() else {
             eprintln!("SKIP GL context tests: no GL display");
             return;

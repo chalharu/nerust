@@ -294,7 +294,8 @@ impl HistoryWindowHandle {
             None,
             None,
             "history window",
-        ).ok()?;
+        )
+        .ok()?;
         let clear_requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let view_invalidated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (instance, _task) = program::Instance::new(HistoryProgram {

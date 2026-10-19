@@ -93,8 +93,20 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
         (*message).to_owned()
     } else if let Some(message) = payload.downcast_ref::<String>() {
         message.clone()
+    } else if let Some(error) = payload.downcast_ref::<Box<dyn std::error::Error + Send>>() {
+        error.to_string()
     } else {
         "non-string panic payload".to_owned()
+    }
+}
+
+/// Run `main` under the hook and exit with the crash code on unwind.
+/// Hosts that map [`GuardOutcome`] themselves keep using `run_guarded`.
+pub fn run_guarded_and_exit<R>(main: impl FnOnce() -> R) -> ! {
+    match run_guarded(main) {
+        // `run_guarded` already logged any crash report.
+        GuardOutcome::Completed(_) => std::process::exit(0),
+        GuardOutcome::Crashed(_) => std::process::exit(CRASH_EXIT_CODE),
     }
 }
 
@@ -120,6 +132,9 @@ mod tests {
     fn payload_message_covers_string_forms() {
         assert_eq!(payload_message(&"static"), "static");
         assert_eq!(payload_message(&"owned".to_owned()), "owned");
+        let boxed: Box<dyn std::error::Error + Send> =
+            Box::new(std::io::Error::new(std::io::ErrorKind::Other, "io boom"));
+        assert_eq!(payload_message(&boxed), "io boom");
         assert_eq!(payload_message(&42_u32), "non-string panic payload");
     }
 
