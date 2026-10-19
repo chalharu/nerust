@@ -12,7 +12,8 @@ use crate::{
     emu_core::EmuCore,
     session::{
         SessionError, SessionHandle,
-        commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
+        commands::{SessionCommand, SessionCommandOutcome},
+        error::SlotOpFailure,
         osd::{FrameChannel, OsdManager, PumpReport, PushInput},
         persistence::PersistenceManager,
         title::window_title,
@@ -325,7 +326,8 @@ impl SessionHandle {
                 .loaded_media
                 .as_ref()
                 .and_then(|media| media.media.native_path().map(Path::to_path_buf));
-            self.setup_persistence(rom_path.as_deref(), false);
+            let setup = self.setup_persistence(rom_path.as_deref(), false);
+            self.note_persistence_setup(setup);
         }
         self.pressed_keys.clear();
         self.clear_input();
@@ -377,7 +379,8 @@ impl SessionHandle {
             media: media.clone(),
         });
 
-        self.setup_persistence(media.native_path(), true);
+        let setup = self.setup_persistence(media.native_path(), true);
+        self.note_persistence_setup(setup);
 
         self.remember_last_successful_rom_directory(media.native_path());
         Ok(())
@@ -424,7 +427,7 @@ impl SessionHandle {
         // Resolve TogglePause to its steady arm so notifications name
         // the state actually entered.
         let was_paused = self.paused();
-        let effective = super::notification::resolve_toggle(command, was_paused);
+        let effective = super::commands::resolve_toggle(command, was_paused);
         let result = self.run_command_inner(effective);
         match &result {
             Ok(outcome) => {
@@ -435,7 +438,7 @@ impl SessionHandle {
                     SessionCommand::TogglePause => effective,
                     other => other,
                 };
-                for kind in super::notification::outcome_notifications(notified, outcome, active) {
+                for kind in super::commands::outcome_notifications(notified, outcome, active) {
                     self.notifications.push(kind);
                 }
             }
@@ -530,6 +533,13 @@ impl SessionHandle {
         self.notifications.clear_history();
     }
 
+    /// Out-of-band frontend failures (picker, restore, bridge) join
+    /// history, counting, and modal routing like any other error.
+    pub fn report_external_error(&mut self, detail: String) {
+        self.notifications
+            .push(super::notification::NotificationKind::ExternalError(detail));
+    }
+
     fn cmd_pause(&mut self) -> Result<SessionCommandOutcome, SessionError> {
         if self.paused() {
             return Ok(SessionCommandOutcome::default());
@@ -559,6 +569,14 @@ fn command_name(command: SessionCommand) -> &'static str {
         SessionCommand::SelectNextSlot => "SelectNextSlot",
         SessionCommand::SelectPreviousSlot => "SelectPreviousSlot",
     }
+}
+
+/// Persistence setup outcome. Callers map `Unavailable` to one
+/// `PersistenceUnavailable` notice; the game still runs without it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PersistenceSetup {
+    Ready,
+    Unavailable,
 }
 
 impl SessionHandle {
@@ -726,7 +744,8 @@ impl SessionHandle {
                 .as_ref()
                 .and_then(|m| m.media.native_path().map(Path::to_path_buf));
             let rom_path_deref = rom_path.as_deref();
-            self.setup_persistence(rom_path_deref, !restored_runtime_state);
+            let setup = self.setup_persistence(rom_path_deref, !restored_runtime_state);
+            self.note_persistence_setup(setup);
             if was_paused && let Some(ref mut core) = self.emu_core {
                 core.pause()?;
             }
@@ -762,23 +781,26 @@ impl SessionHandle {
             .ok()
     }
 
+    /// Report an unavailable persistence setup once per load path.
+    pub(crate) fn note_persistence_setup(&mut self, setup: PersistenceSetup) {
+        if setup == PersistenceSetup::Unavailable {
+            self.notifications
+                .push(super::notification::NotificationKind::PersistenceUnavailable);
+        }
+    }
+
     pub(crate) fn setup_persistence(
         &mut self,
         rom_path: Option<&Path>,
         load_mapper_save: bool,
-    ) -> bool {
+    ) -> PersistenceSetup {
         let sidecars = self
             .emu_core
             .as_ref()
             .and_then(|c| c.canonical_media_identity())
             .and_then(|identity| self.resolve_persistence_paths(rom_path, &identity));
         let Some(sidecars) = sidecars else {
-            // Persistence unavailable: the game still runs, but mapper
-            // saves and slots have nowhere to go. Say so once here
-            // instead of failing every later flush silently.
-            self.notifications
-                .push(super::notification::NotificationKind::PersistenceUnavailable);
-            return false;
+            return PersistenceSetup::Unavailable;
         };
         self.persistence
             .configure(sidecars.states_dir, sidecars.mapper_save_path);
@@ -788,7 +810,7 @@ impl SessionHandle {
                 log::warn!("load_mapper_save_if_needed failed: {e}");
             }
         }
-        true
+        PersistenceSetup::Ready
     }
 
     fn remember_last_successful_rom_directory(&mut self, path: Option<&Path>) {

@@ -4,7 +4,8 @@ use nerust_core_traits::factory::load::MediaObject;
 use nerust_persistence::slots::autosave_state_slot_path;
 
 use crate::emu_core::CorePersistenceError;
-use crate::session::commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure};
+use crate::session::commands::{SessionCommand, SessionCommandOutcome};
+use crate::session::error::SlotOpFailure;
 use crate::session::persistence::FailingSlotBackend;
 use crate::session::test_util::*;
 use crate::test_helpers::*;
@@ -344,7 +345,11 @@ fn setup_failure_pushes_persistence_unavailable() {
 
     // Core active but no ROM loaded: no media identity, so setup fails.
     let mut session = test_session();
-    assert!(!session.setup_persistence(None, false));
+    assert_eq!(
+        session.setup_persistence(None, false),
+        crate::session::lifecycle::PersistenceSetup::Unavailable
+    );
+    session.note_persistence_setup(crate::session::lifecycle::PersistenceSetup::Unavailable);
     let notes = session.drain_notifications();
     assert_eq!(notes.len(), 1);
     assert!(matches!(

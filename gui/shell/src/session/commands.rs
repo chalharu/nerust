@@ -1,3 +1,5 @@
+pub use super::error::SlotOpFailure;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionCommand {
     Pause,
@@ -47,21 +49,47 @@ pub struct SessionCommandOutcome {
     pub slot_failure: Option<SlotOpFailure>,
 }
 
-/// Machine-readable reason a state-slot save/load failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SlotOpFailure {
-    /// No active slot (nothing saved yet, or no core loaded).
-    Empty,
-    /// The slot file does not exist.
-    Missing,
-    /// Storage/backend I/O failure (filesystem, Android SAF, ...).
-    Storage,
-    /// The slot archive or its payload does not decode.
-    Corrupt,
-    /// The core rejected the payload (foreign ROM, options or schema
-    /// mismatch, invalid state).
-    Incompatible,
-    /// Cannot operate (no states dir, no media identity, core export
-    /// or thread failure).
-    Unavailable,
+/// Map a command outcome to notifications. Success notifies Info;
+/// slot failures map to Warning/Error by reason; transport errors
+/// become a generic Error.
+pub fn outcome_notifications(
+    command: SessionCommand,
+    outcome: &SessionCommandOutcome,
+    active_slot: Option<u64>,
+) -> Vec<super::notification::NotificationKind> {
+    use super::notification::NotificationKind;
+    if let Some(reason) = outcome.slot_failure {
+        let slot = command.associated_slot(active_slot);
+        return vec![NotificationKind::SlotFailed { slot, reason }];
+    }
+    if !outcome.executed {
+        return Vec::new();
+    }
+    let kind = match command {
+        SessionCommand::Pause | SessionCommand::TogglePause => NotificationKind::Paused,
+        SessionCommand::Resume => NotificationKind::Resumed,
+        SessionCommand::Reset => NotificationKind::Reset,
+        SessionCommand::CreateSlot => NotificationKind::CreatedSlot,
+        SessionCommand::SaveActiveSlotOrNew => {
+            NotificationKind::SavedSlot(active_slot.unwrap_or(0))
+        }
+        SessionCommand::LoadActiveSlot => NotificationKind::LoadedSlot(active_slot.unwrap_or(0)),
+        SessionCommand::SelectActiveSlot(id) => NotificationKind::SelectedSlot(id),
+        SessionCommand::SelectNextSlot | SessionCommand::SelectPreviousSlot => {
+            NotificationKind::SelectedSlot(active_slot.unwrap_or(0))
+        }
+        SessionCommand::SaveSlot(id) => NotificationKind::SavedSlot(id),
+        SessionCommand::LoadSlot(id) => NotificationKind::LoadedSlot(id),
+        SessionCommand::DeleteSlot(id) => NotificationKind::DeletedSlot(id),
+    };
+    vec![kind]
+}
+
+/// Resolve TogglePause to the steady arm entered from `was_paused`.
+pub fn resolve_toggle(command: SessionCommand, was_paused: bool) -> SessionCommand {
+    match (command, was_paused) {
+        (SessionCommand::TogglePause, false) => SessionCommand::Pause,
+        (SessionCommand::TogglePause, true) => SessionCommand::Resume,
+        (other, _) => other,
+    }
 }

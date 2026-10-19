@@ -1,6 +1,7 @@
 pub mod access;
 pub mod commands;
 pub mod debug_ops;
+pub mod error;
 pub mod input;
 pub mod lifecycle;
 pub mod notification;

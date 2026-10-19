@@ -11,27 +11,45 @@ use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationPosition, NotificationSettings,
 };
 
-use super::notification::{NotificationKind, NotificationLevel, UiNotification, append_count};
+use super::notification::{
+    NotificationKind, NotificationLevel, ReplaceGroup, UiNotification, append_count,
+};
 
 /// Level tag prefixing OSD labels: text (not color or shape
 /// alone) carries severity. History uses [`level_name`]
 /// instead: the grid Level column and the OSD tag are managed
 /// separately by design (review feedback).
-pub fn level_tag(level: NotificationLevel) -> &'static str {
+/// Single source for level text: tag and grid name side by
+/// side so a new level cannot update one and forget the other.
+struct LevelText {
+    tag: &'static str,
+    name: &'static str,
+}
+
+fn level_text(level: NotificationLevel) -> LevelText {
     match level {
-        NotificationLevel::Info => "[INFO]",
-        NotificationLevel::Warning => "[WARN]",
-        NotificationLevel::Error => "[ERROR]",
+        NotificationLevel::Info => LevelText {
+            tag: "[INFO]",
+            name: "Info",
+        },
+        NotificationLevel::Warning => LevelText {
+            tag: "[WARN]",
+            name: "Warning",
+        },
+        NotificationLevel::Error => LevelText {
+            tag: "[ERROR]",
+            name: "Error",
+        },
     }
+}
+
+pub fn level_tag(level: NotificationLevel) -> &'static str {
+    level_text(level).tag
 }
 
 /// Full level name for the history grid Level column.
 pub fn level_name(level: NotificationLevel) -> &'static str {
-    match level {
-        NotificationLevel::Info => "Info",
-        NotificationLevel::Warning => "Warning",
-        NotificationLevel::Error => "Error",
-    }
+    level_text(level).name
 }
 
 /// Localized level name for history grid and filter options.
@@ -165,9 +183,9 @@ struct OsdItem {
     /// carrying the push-time remainder.
     duration: Duration,
     deadline: Instant,
-    /// Latest-wins replace group ([`NotificationKind::replace_group`]):
-    /// at most one row per group exists. `None` rows always queue.
-    group: Option<u8>,
+    /// Latest-wins replace group ([`ReplaceGroup`]): at most one
+    /// row per group exists. `None` rows always queue.
+    group: Option<ReplaceGroup>,
 }
 
 /// Single sequential display (no stacking): one label at a time,
@@ -204,6 +222,24 @@ pub struct OsdManager {
     transient: TransientQueue,
     modal_box: ModalBox,
     dirty: bool,
+    /// Monotonic change count. `dirty`/`take_dirty` stay for the
+    /// peek-then-take protocol; new code can poll `generation`.
+    generation: u64,
+}
+
+/// Write side of the modal queue. Only the shell pump and the
+/// owning frontend adapter implement this; renderers never see it.
+pub trait ModalSink {
+    fn queue_modal(&mut self, detail: String);
+    fn requeue_front(&mut self, detail: String);
+}
+
+/// Read side of the modal queue. Dialog hosts take batches and
+/// ack them; they cannot inject or reorder.
+pub trait ModalSource {
+    fn take_modal_batch(&mut self) -> Option<String>;
+    fn modal_closed(&mut self);
+    fn modal_pending(&self) -> usize;
 }
 
 /// Push routing outcome: only a changed showing label dirties.
@@ -245,30 +281,60 @@ pub enum FrameChannel {
 /// a new channel must pick its route here.
 fn falls_back_to_modal(
     kind: &NotificationKind,
-    settings: &NotificationSettings,
+    policy: &TransientPolicy,
     channel: FrameChannel,
 ) -> bool {
     match channel {
         FrameChannel::Unpresented => kind.wants_modal(),
-        FrameChannel::Composited => {
-            kind.level() == NotificationLevel::Error && settings.error_modal
+        FrameChannel::Composited => kind.level() == NotificationLevel::Error && policy.error_modal,
+    }
+}
+
+/// Narrow display policy for transient rows. Decision code takes
+/// this instead of the full settings surface: a new settings field
+/// cannot ripple into OSD routing.
+#[derive(Debug, Clone, Copy)]
+pub struct TransientPolicy {
+    pub info_enabled: bool,
+    pub warning_enabled: bool,
+    pub error_enabled: bool,
+    pub info_duration_ms: u32,
+    pub warning_duration_ms: u32,
+    pub info_rgb: (u8, u8, u8),
+    pub warning_rgb: (u8, u8, u8),
+    pub error_rgb: (u8, u8, u8),
+    pub error_modal: bool,
+}
+
+impl From<&NotificationSettings> for TransientPolicy {
+    fn from(settings: &NotificationSettings) -> Self {
+        Self {
+            info_enabled: settings.info_enabled,
+            warning_enabled: settings.warning_enabled,
+            error_enabled: settings.error_enabled,
+            info_duration_ms: settings.info_duration_ms,
+            warning_duration_ms: settings.warning_duration_ms,
+            info_rgb: settings.info_color.rgb(),
+            warning_rgb: settings.warning_color.rgb(),
+            error_rgb: settings.error_color.rgb(),
+            error_modal: settings.error_modal,
         }
     }
 }
 
-/// Display-policy helpers using settings and row data only, never manager state.
-fn enabled(level: NotificationLevel, settings: &NotificationSettings) -> bool {
+/// Display-policy helpers using a narrow policy and row data only.
+fn enabled(level: NotificationLevel, policy: &TransientPolicy) -> bool {
     match level {
-        NotificationLevel::Info => settings.info_enabled,
-        NotificationLevel::Warning => settings.warning_enabled,
-        NotificationLevel::Error => settings.error_enabled,
+        NotificationLevel::Info => policy.info_enabled,
+        NotificationLevel::Warning => policy.warning_enabled,
+        NotificationLevel::Error => policy.error_enabled,
     }
 }
 
-fn duration_ms(level: NotificationLevel, settings: &NotificationSettings) -> u64 {
+fn duration_ms(level: NotificationLevel, policy: &TransientPolicy) -> u64 {
     let raw = match level {
-        NotificationLevel::Info => settings.info_duration_ms,
-        NotificationLevel::Warning => settings.warning_duration_ms,
+        NotificationLevel::Info => policy.info_duration_ms,
+        NotificationLevel::Warning => policy.warning_duration_ms,
         NotificationLevel::Error => 5_000,
     };
     u64::from(raw.clamp(500, 60_000))
@@ -282,11 +348,11 @@ fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: &'static str) -> 
     }
 }
 
-fn color(level: NotificationLevel, settings: &NotificationSettings) -> (u8, u8, u8) {
+fn color(level: NotificationLevel, policy: &TransientPolicy) -> (u8, u8, u8) {
     match level {
-        NotificationLevel::Info => settings.info_color.rgb(),
-        NotificationLevel::Warning => settings.warning_color.rgb(),
-        NotificationLevel::Error => settings.error_color.rgb(),
+        NotificationLevel::Info => policy.info_rgb,
+        NotificationLevel::Warning => policy.warning_rgb,
+        NotificationLevel::Error => policy.error_rgb,
     }
 }
 
@@ -583,27 +649,41 @@ impl OsdManager {
         now: Instant,
         channel: FrameChannel,
     ) {
+        let policy = TransientPolicy::from(settings);
+        self.push_all_with_policy(notifications, &policy, language, now, channel);
+    }
+
+    /// Core push taking the narrow policy. Decision code here never
+    /// sees the full settings surface (see [`TransientPolicy`]).
+    pub fn push_all_with_policy(
+        &mut self,
+        notifications: Vec<UiNotification>,
+        policy: &TransientPolicy,
+        language: AppLanguage,
+        now: Instant,
+        channel: FrameChannel,
+    ) {
         // Dirty only on a real change: filtered rows, dropped info,
         // and queued-behind rows must not schedule a redraw.
         let mut changed = false;
         for n in notifications {
-            if !enabled(n.level, settings) {
+            if !enabled(n.level, policy) {
                 continue;
             }
             // No composited frame and not modal-worthy: drop the row.
             if channel == FrameChannel::Unpresented && !n.kind.wants_modal() {
                 continue;
             }
-            if falls_back_to_modal(&n.kind, settings, channel) {
+            if falls_back_to_modal(&n.kind, policy, channel) {
                 self.modal_box
                     .push(super::notification::render_text(&n.kind, n.count, language));
                 changed = true;
                 continue;
             }
             let base = n.kind.text(language);
-            let rgb = color(n.level, settings);
+            let rgb = color(n.level, policy);
             let tag = level_tag(n.level);
-            let duration = Duration::from_millis(duration_ms(n.level, settings));
+            let duration = Duration::from_millis(duration_ms(n.level, policy));
             let item = OsdItem {
                 row: counted_row(&base, n.count, rgb, tag),
                 level: n.level,
@@ -618,7 +698,7 @@ impl OsdManager {
             }
         }
         if changed {
-            self.dirty = true;
+            self.mark_changed();
         }
     }
 
@@ -626,7 +706,7 @@ impl OsdManager {
     /// covers `push_all` (a bool return would miss those changes).
     pub fn poll(&mut self, now: Instant) {
         if self.transient.poll(now) {
-            self.dirty = true;
+            self.mark_changed();
         }
     }
 
@@ -650,13 +730,51 @@ impl OsdManager {
         self.modal_box.take_modal_text()
     }
 
-    pub fn queue_modal(&mut self, detail: String) {
-        self.modal_box.queue_modal(detail)
+    /// Monotonic change count. `dirty`/`take_dirty` stay for the
+    /// peek-then-take protocol; new code can poll `generation`.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
-    /// Re-queue an interrupted head batch preserving display order.
+    fn mark_changed(&mut self) {
+        self.dirty = true;
+        self.generation = self.generation.wrapping_add(1);
+    }
+}
+
+impl ModalSink for OsdManager {
+    fn queue_modal(&mut self, detail: String) {
+        self.modal_box.queue_modal(detail);
+    }
+
+    fn requeue_front(&mut self, detail: String) {
+        self.modal_box.requeue_front(detail);
+    }
+}
+
+impl ModalSource for OsdManager {
+    fn take_modal_batch(&mut self) -> Option<String> {
+        self.modal_box.take_modal_batch()
+    }
+
+    fn modal_closed(&mut self) {
+        self.modal_box.modal_closed()
+    }
+
+    fn modal_pending(&self) -> usize {
+        self.modal_box.modal_pending()
+    }
+}
+
+impl OsdManager {
+    /// Boundary adapters (shell pump, owning frontend adapter) use
+    /// these. New code should bound on [`ModalSink`] or [`ModalSource`].
+    pub fn queue_modal(&mut self, detail: String) {
+        self.modal_box.queue_modal(detail);
+    }
+
     pub fn requeue_front(&mut self, detail: String) {
-        self.modal_box.requeue_front(detail)
+        self.modal_box.requeue_front(detail);
     }
 
     pub fn take_modal_batch(&mut self) -> Option<String> {
@@ -702,20 +820,23 @@ impl OsdManager {
     /// pill, so the digits never shift when the label appears,
     /// disappears, or changes language.
     pub fn status_parts(fps: f32, paused: bool, language: AppLanguage) -> (String, String) {
-        (status_label(paused, language), format!("{fps:.1} fps"))
+        (
+            status_label(paused, language).to_string(),
+            format!("{fps:.1} fps"),
+        )
     }
 }
 
 /// Pause label without the fps value: cheap key for the gate
 /// pre-check, so steady frames skip float formatting.
-fn status_label(paused: bool, language: AppLanguage) -> String {
+fn status_label(paused: bool, language: AppLanguage) -> &'static str {
     if paused {
         match language {
-            AppLanguage::Japanese => "一時停止中".to_string(),
-            _ => "Paused".to_string(),
+            AppLanguage::Japanese => "一時停止中",
+            _ => "Paused",
         }
     } else {
-        String::new()
+        ""
     }
 }
 
@@ -765,8 +886,8 @@ impl StatusGate {
     }
 
     /// Last gated value for the steady path (no fresh format needed).
-    fn cached_value(&self) -> Option<String> {
-        self.last_value.clone()
+    fn cached_value(&self) -> Option<&str> {
+        self.last_value.as_deref()
     }
 }
 
@@ -817,6 +938,29 @@ impl OsdPlan {
             status: self.status.as_ref().map(|(label, value)| OsdStatus {
                 label: label.clone(),
                 value: value.clone(),
+                rgb: OSD_STATUS_RGB,
+            }),
+            position: self.position,
+            status_position: self.status_position,
+        }
+    }
+
+    /// Moving variant: no second clone at the renderer boundary.
+    pub fn into_content(self) -> nerust_render_traits::renderer::OsdContent {
+        use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
+        OsdContent {
+            rows: self
+                .rows
+                .into_iter()
+                .map(|row| OsdRow {
+                    tag: row.tag.to_string(),
+                    text: row.text,
+                    rgb: row.rgb,
+                })
+                .collect(),
+            status: self.status.map(|(label, value)| OsdStatus {
+                label,
+                value,
                 rgb: OSD_STATUS_RGB,
             }),
             position: self.position,
@@ -912,14 +1056,16 @@ impl OsdPresenter {
         }
         let status_key = settings.status_enabled.then(|| {
             let label = status_label(paused, language);
-            let (label, value) = if self.gate.wants_refresh(now, &label) {
-                self.gate.gate(now, label, format!("{fps:.1} fps"))
+            let (label, value) = if self.gate.wants_refresh(now, label) {
+                self.gate
+                    .gate(now, label.to_string(), format!("{fps:.1} fps"))
             } else {
                 let cached = self
                     .gate
                     .cached_value()
+                    .map(str::to_string)
                     .unwrap_or_else(|| format!("{fps:.1} fps"));
-                (label, cached)
+                (label.to_string(), cached)
             };
             (
                 label,
@@ -1022,11 +1168,131 @@ pub fn strip_rows(
 mod tests {
     use super::super::notification::NotificationKind;
     use super::*;
-    use crate::session::commands::SlotOpFailure;
+    use crate::session::error::SlotOpFailure;
     use nerust_settings_core::model::language::AppLanguage;
 
     fn settings() -> NotificationSettings {
         NotificationSettings::default()
+    }
+
+    #[test]
+    fn transient_policy_mirrors_settings_surface() {
+        let settings = settings();
+        let policy = TransientPolicy::from(&settings);
+        assert_eq!(policy.info_enabled, settings.info_enabled);
+        assert_eq!(policy.warning_enabled, settings.warning_enabled);
+        assert_eq!(policy.error_enabled, settings.error_enabled);
+        assert_eq!(policy.error_modal, settings.error_modal);
+        assert_eq!(policy.info_rgb, settings.info_color.rgb());
+        assert_eq!(policy.error_rgb, settings.error_color.rgb());
+    }
+
+    #[test]
+    fn generation_advances_only_on_visible_change() {
+        use super::super::notification::NotificationKind as K;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        let base = manager.generation();
+        manager.push_all(
+            vec![UiNotification {
+                level: NotificationLevel::Info,
+                kind: K::Paused,
+                count: 1,
+                seq: 0,
+                at: std::time::SystemTime::now(),
+            }],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Unpresented,
+        );
+        // Unpresented info drops: no visible change, no generation bump.
+        assert_eq!(manager.generation(), base);
+        manager.push_all(
+            vec![UiNotification {
+                level: NotificationLevel::Error,
+                kind: K::ExternalError("boom".to_string()),
+                count: 1,
+                seq: 1,
+                at: std::time::SystemTime::now(),
+            }],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Unpresented,
+        );
+        assert_eq!(manager.generation(), base.wrapping_add(1));
+    }
+
+    #[test]
+    fn external_error_routes_modal_without_frame() {
+        use super::super::notification::NotificationKind as K;
+        let kind = K::ExternalError("picker failed".to_string());
+        assert_eq!(kind.level(), NotificationLevel::Error);
+        assert!(kind.wants_modal());
+        assert_eq!(kind.text(AppLanguage::English), "picker failed");
+        let mut manager = OsdManager::new();
+        manager.push_all(
+            vec![UiNotification {
+                level: kind.level(),
+                kind,
+                count: 1,
+                seq: 0,
+                at: std::time::SystemTime::now(),
+            }],
+            &settings(),
+            AppLanguage::English,
+            Instant::now(),
+            FrameChannel::Unpresented,
+        );
+        assert!(manager.rows().is_empty());
+        assert!(manager.take_modal_text().is_some());
+    }
+
+    #[test]
+    fn into_content_moves_rows_without_second_clone() {
+        use super::super::notification::NotificationKind as K;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        manager.push_all(
+            vec![UiNotification {
+                level: NotificationLevel::Info,
+                kind: K::Paused,
+                count: 1,
+                seq: 0,
+                at: std::time::SystemTime::now(),
+            }],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        manager.poll(now);
+        let mut presenter = super::OsdPresenter::new();
+        let dirty = manager.take_dirty();
+        let plan = match presenter.sync(
+            dirty,
+            &manager,
+            super::OsdSyncInput {
+                settings: &settings(),
+                language: AppLanguage::English,
+                fps: 60.0,
+                paused: false,
+                now,
+                width: 320,
+                height: 240,
+                ui_scale: 1.0,
+                safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
+            },
+        ) {
+            super::OsdSync::Render(plan) => plan,
+            other => panic!("expected render, got {other:?}"),
+        };
+        let rows = plan.rows.len();
+        assert_eq!(rows, 1);
+        let content = plan.into_content();
+        assert_eq!(content.rows.len(), 1);
+        assert_eq!(content.rows[0].text, "Paused");
     }
 
     #[test]
@@ -1071,46 +1337,54 @@ mod tests {
         // Composited: only Error with modal enabled.
         assert!(falls_back_to_modal(
             &error,
-            &modal,
+            &TransientPolicy::from(&modal),
             FrameChannel::Composited
         ));
-        assert!(!falls_back_to_modal(&error, &osd, FrameChannel::Composited));
+        assert!(!falls_back_to_modal(
+            &error,
+            &TransientPolicy::from(&osd),
+            FrameChannel::Composited
+        ));
         assert!(!falls_back_to_modal(
             &warning,
-            &modal,
+            &TransientPolicy::from(&modal),
             FrameChannel::Composited
         ));
         assert!(!falls_back_to_modal(
             &K::Paused,
-            &modal,
+            &TransientPolicy::from(&modal),
             FrameChannel::Composited
         ));
         // Unpresented: Error and Warning go modal even with it off.
         assert!(falls_back_to_modal(
             &error,
-            &modal,
+            &TransientPolicy::from(&modal),
             FrameChannel::Unpresented
         ));
         assert!(falls_back_to_modal(
             &warning,
-            &modal,
+            &TransientPolicy::from(&modal),
             FrameChannel::Unpresented
         ));
-        assert!(falls_back_to_modal(&error, &osd, FrameChannel::Unpresented));
+        assert!(falls_back_to_modal(
+            &error,
+            &TransientPolicy::from(&osd),
+            FrameChannel::Unpresented
+        ));
         assert!(falls_back_to_modal(
             &warning,
-            &osd,
+            &TransientPolicy::from(&osd),
             FrameChannel::Unpresented
         ));
         // Unpresented: Info is dropped, never modal.
         assert!(!falls_back_to_modal(
             &K::Paused,
-            &modal,
+            &TransientPolicy::from(&modal),
             FrameChannel::Unpresented
         ));
         assert!(!falls_back_to_modal(
             &K::Paused,
-            &osd,
+            &TransientPolicy::from(&osd),
             FrameChannel::Unpresented
         ));
     }
@@ -2283,7 +2557,7 @@ mod tests {
         assert!(gate.wants_refresh(now, "Paused"));
         assert_eq!(gate.cached_value(), None);
         gate.gate(now, "Paused".to_string(), "60.0 fps".to_string());
-        assert_eq!(gate.cached_value().as_deref(), Some("60.0 fps"));
+        assert_eq!(gate.cached_value(), Some("60.0 fps"));
         // Steady: no refresh, cached value stands in.
         assert!(!gate.wants_refresh(now, "Paused"));
         // Label flip or throttle expiry: refresh wanted.

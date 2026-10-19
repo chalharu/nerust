@@ -22,7 +22,7 @@ use nerust_persistence::{
 
 use crate::emu_core::CorePersistence;
 
-use super::commands::SlotOpFailure;
+use super::error::SlotOpFailure;
 
 /// Classify a persistence-layer failure for user-facing messages:
 /// transport problems are `Storage`, undecodable payloads `Corrupt`.
