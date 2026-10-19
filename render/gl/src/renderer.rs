@@ -30,6 +30,9 @@ pub struct GlRenderer {
     size: SurfaceSize,
     reserved: nerust_render_traits::ReservedStrip,
     osd: Option<OsdLayer>,
+    /// Warn-once for OSD give-up. Reset when a new layer stages so a
+    /// later dead driver warns again without spamming per frame.
+    osd_drop_warned: bool,
     /// Fixed-size staging for the pre-GLES3 pack path (see `render`).
     tight: Vec<u8>,
 }
@@ -174,6 +177,8 @@ impl GpuRenderer for GlRenderer {
             view.set_osd_layer(layer.clone());
         }
         self.osd = layer;
+        // A fresh stage re-arms the give-up warning.
+        self.osd_drop_warned = false;
     }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
@@ -265,7 +270,10 @@ impl GpuRenderer for GlRenderer {
         }
         match view.draw_osd(self.size.width as i32, self.size.height as i32) {
             Ok(OsdOutcome::Dropped) => {
-                log::warn!("GlRenderer: dropping OSD layer after repeated upload failures");
+                if !self.osd_drop_warned {
+                    self.osd_drop_warned = true;
+                    log::warn!("GlRenderer: dropping OSD layer after repeated upload failures");
+                }
             }
             Ok(OsdOutcome::Presented) => {}
             Err(e) => {
@@ -497,6 +505,7 @@ impl GpuFactory for GlFactory {
             size: SurfaceSize::new(0, 0),
             reserved: nerust_render_traits::ReservedStrip::default(),
             osd: None,
+            osd_drop_warned: false,
             tight: Vec::new(),
         }))
     }
@@ -694,6 +703,7 @@ mod tests {
             size: SurfaceSize::new(64, 64),
             reserved: nerust_render_traits::ReservedStrip::default(),
             osd: None,
+            osd_drop_warned: false,
             tight: Vec::new(),
         };
         let empty = nerust_render_traits::FrameBuffer::with_capacity(
