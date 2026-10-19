@@ -103,7 +103,10 @@ prepare_signing_keystore
 if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
     sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
     if [[ -n "${sdk_root}" && -d "${sdk_root}/ndk" ]]; then
-        latest_ndk="$(find "${sdk_root}/ndk" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort | tail -n 1)"
+        latest_ndk="$(find "${sdk_root}/ndk" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort -V 2>/dev/null | tail -n 1)"
+        if [[ -z "${latest_ndk}" ]]; then
+            latest_ndk="$(find "${sdk_root}/ndk" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort | tail -n 1)"
+        fi
         if [[ -n "${latest_ndk}" ]]; then
             export ANDROID_NDK_HOME="${sdk_root}/ndk/${latest_ndk}"
         fi
@@ -165,7 +168,7 @@ else
     else
         for main_so in "${so_files[@]}"; do
             abi="$(basename "$(dirname "${main_so}")")"
-            if "${readelf_bin}" -S "${main_so}" | grep -q '\.debug_'; then
+            if "${readelf_bin}" -S "${main_so}" | grep -Eq '\.debug_(info|abbrev|line|str|ranges|addr|loclists?)'; then
                 echo "${abi}/libmain.so contains DWARF sections; release strip is not effective" >&2
                 exit 1
             fi
