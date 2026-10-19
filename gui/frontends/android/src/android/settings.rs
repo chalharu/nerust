@@ -922,6 +922,22 @@ fn publish_result(request_id: u64, result: SettingsDialogResult) {
     bridge::wake();
 }
 
+/// Unusable result: the dialog closed but the payload cannot be
+/// trusted (bad schema, unparseable, undecodable). Resolve the single
+/// flight as dismissed so the open flag, the error-queue flush, and an
+/// orphaned auto-pause all release through the normal dismiss path
+/// instead of wedging on a stale pending id. Single-flight makes a
+/// newer request impossible while one is pending; a stale callback
+/// racing a suspend-then-rerequest can still drop that newer flight,
+/// exactly like the pre-existing decode-failure clears below.
+fn resolve_pending_as_dismissed() {
+    with_state(|state| {
+        state.result = Some(SettingsDialogResult::Dismissed);
+        state.pending_request_id = None;
+    });
+    bridge::wake();
+}
+
 // JNI callback for the settings dialog result.
 // Null means dismissed; otherwise versioned JSON with ID and values.
 
@@ -950,20 +966,26 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
                 };
                 publish_result(payload.request_id, result);
             }
-            Ok(payload) => log::error!(
-                "unsupported Android settings result schema {}",
-                payload.schema_version
-            ),
-            Err(error) => log::error!("failed to parse Android settings result: {error}"),
+            Ok(payload) => {
+                log::error!(
+                    "unsupported Android settings result schema {}",
+                    payload.schema_version
+                );
+                resolve_pending_as_dismissed();
+            }
+            Err(error) => {
+                log::error!("failed to parse Android settings result: {error}");
+                resolve_pending_as_dismissed();
+            }
         },
         jni::Outcome::Ok(None) => log::warn!("ignoring settings result without request ID"),
         jni::Outcome::Err(error) => {
             log::error!("failed to decode Android settings dialog result: {error:?}");
-            with_state(|state| state.pending_request_id = None);
+            resolve_pending_as_dismissed();
         }
         jni::Outcome::Panic(_) => {
             log::error!("Android settings dialog callback panicked");
-            with_state(|state| state.pending_request_id = None);
+            resolve_pending_as_dismissed();
         }
     }
 }
@@ -1474,5 +1496,18 @@ mod tests {
         let back = AndroidSettings::from_choice_indices(&raw, &android).unwrap();
         assert_eq!(back.status_position, NotificationPosition::BottomRight);
         assert_eq!(back.status_area_mode, NotificationAreaMode::Strip);
+    }
+
+    #[test]
+    fn malformed_result_resolves_pending_as_dismissed() {
+        // A dialog that closed with garbage must not wedge the open
+        // flag: the single flight resolves as dismissed, the next
+        // take delivers it, and the bridge reports closed.
+        with_state(|state| state.pending_request_id = Some(7));
+        assert!(is_dialog_open());
+        resolve_pending_as_dismissed();
+        assert!(!is_dialog_open());
+        assert_eq!(take_result(), Some(SettingsDialogResult::Dismissed));
+        assert_eq!(take_result(), None);
     }
 }
