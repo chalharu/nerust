@@ -94,6 +94,26 @@ pub fn resolve_toggle(command: SessionCommand, was_paused: bool) -> SessionComma
     }
 }
 
+/// Stable command name for logs and failure messages. Single source
+/// so the transport audit and the UI wording cannot drift apart.
+pub(crate) fn command_name(command: SessionCommand) -> &'static str {
+    match command {
+        SessionCommand::Pause => "Pause",
+        SessionCommand::Resume => "Resume",
+        SessionCommand::TogglePause => "TogglePause",
+        SessionCommand::Reset => "Reset",
+        SessionCommand::CreateSlot => "CreateSlot",
+        SessionCommand::SaveActiveSlotOrNew => "SaveActiveSlotOrNew",
+        SessionCommand::LoadActiveSlot => "LoadActiveSlot",
+        SessionCommand::SelectActiveSlot(_) => "SelectActiveSlot",
+        SessionCommand::SaveSlot(_) => "SaveSlot",
+        SessionCommand::LoadSlot(_) => "LoadSlot",
+        SessionCommand::DeleteSlot(_) => "DeleteSlot",
+        SessionCommand::SelectNextSlot => "SelectNextSlot",
+        SessionCommand::SelectPreviousSlot => "SelectPreviousSlot",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::session::commands::{
