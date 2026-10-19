@@ -669,15 +669,16 @@ impl SoftbufferRenderer {
                     break;
                 }
                 let s = (row * src_w + col) * 4;
-                let alpha = f32::from(layer.rgba[s + 3]) / 255.0;
-                if alpha == 0.0 {
+                let alpha = u32::from(layer.rgba[s + 3]);
+                if alpha == 0 {
                     continue;
                 }
                 // Buffer words are 0xAARRGGBB: big-endian bytes
-                // are [A, R, G, B], not RGBA.
+                // are [A, R, G, B], not RGBA. Integer fixed-point
+                // keeps the per-pixel cost off the FPU.
                 let dst_pixel = buffer[dst_y * dst_w + dst_x].to_be_bytes();
                 let blend = |src: u8, dst: u8| {
-                    (f32::from(src) * alpha + f32::from(dst) * (1.0 - alpha)).round() as u8
+                    ((u32::from(src) * alpha + u32::from(dst) * (255 - alpha) + 127) / 255) as u8
                 };
                 buffer[dst_y * dst_w + dst_x] = u32::from_be_bytes([
                     255,
@@ -742,6 +743,10 @@ impl GpuRenderer for SoftbufferRenderer {
     }
 
     fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
+        use nerust_render_traits::renderer::OsdLayer;
+        if OsdLayer::same_option(self.osd.as_ref(), layer.as_ref()) {
+            return;
+        }
         self.osd = layer;
     }
 
@@ -917,6 +922,22 @@ mod tests {
         SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &layer);
         assert_eq!(buffer[0], 0xFFFF_0000);
         assert_eq!(buffer[1], 0xFF00_0000);
+    }
+
+    #[test]
+    fn blend_osd_partial_alpha_uses_integer_math() {
+        // Half red over black: (255*128 + 0*127 + 127) / 255 = 128.
+        // Integer fixed-point with round-half-up, no FPU per pixel.
+        let mut buffer = vec![0xFF00_0000u32; 1];
+        let layer = nerust_render_traits::renderer::OsdLayer {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            rgba: vec![255, 0, 0, 128],
+        };
+        SoftbufferRenderer::blend_osd(&mut buffer, 1, 1, &layer);
+        assert_eq!(buffer[0], 0xFF80_0000);
     }
 
     fn test_profile() -> VideoRenderProfile {
