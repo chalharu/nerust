@@ -489,7 +489,7 @@ fn apply_settings_rolls_back_on_save_failure() {
 
     let mut session = test_session();
     let original = session.settings_snapshot().clone();
-    let original_assignments = session.current_assignments().clone();
+    let original_assignments = session.input.current_assignments.clone();
     let mut modified = original.clone();
     modified.local.audio.latency_ms = 90;
 
@@ -519,7 +519,7 @@ fn apply_settings_rolls_back_on_save_failure() {
 
     // Assignments should be rolled back
     assert_eq!(
-        session.current_assignments().to_string_pairs(),
+        session.input.current_assignments.to_string_pairs(),
         original_assignments.to_string_pairs(),
         "assignments should be rolled back on save failure"
     );
@@ -536,7 +536,7 @@ fn apply_settings_rolls_back_on_save_failure() {
 fn apply_settings_rebuilds_when_assignments_change() {
     use crate::test_helpers::{TEST_SLOT_P1, mock_core_creations};
     let mut session = test_session();
-    let prev_pairs = session.current_assignments().to_string_pairs();
+    let prev_pairs = session.input.current_assignments.to_string_pairs();
 
     let sid = session.factory().unwrap().system_id();
     let mut next = session.settings_snapshot().clone();
@@ -556,7 +556,7 @@ fn apply_settings_rebuilds_when_assignments_change() {
         "reassignment still reconstructs the core"
     );
 
-    let new_pairs = session.current_assignments().to_string_pairs();
+    let new_pairs = session.input.current_assignments.to_string_pairs();
     assert_ne!(
         new_pairs, prev_pairs,
         "assignments should be updated after apply"
@@ -627,7 +627,7 @@ fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
     RomLoadTarget::set_active_system(&mut session, system_id.as_ref())
         .expect("fallback core creation should succeed");
     assert_eq!(
-        session.current_assignments().to_string_pairs(),
+        session.input.current_assignments.to_string_pairs(),
         expected_assignments.to_string_pairs()
     );
 }
@@ -1355,16 +1355,20 @@ fn pump_osd_routes_no_core_error_to_modal() {
 
 #[test]
 fn report_external_error_truncates_and_labels_source() {
-    use crate::session::notification::{ExternalSource, MAX_EXTERNAL_DETAIL, NotificationKind};
+    use crate::session::notification::{FailureOrigin, MAX_EXTERNAL_DETAIL, NotificationKind};
 
     let mut session = test_session();
     let long = "x".repeat(MAX_EXTERNAL_DETAIL + 100);
-    session.report_external_error(ExternalSource::Bridge, long);
+    session.report_external_error(FailureOrigin::Bridge, long);
     let notes = session.drain_notifications();
     assert_eq!(notes.len(), 1);
     match &notes[0].kind {
-        NotificationKind::ExternalError { source, detail } => {
-            assert_eq!(*source, ExternalSource::Bridge);
+        NotificationKind::CommandFailure {
+            origin: source,
+            detail,
+            ..
+        } => {
+            assert_eq!(*source, FailureOrigin::Bridge);
             assert_eq!(detail.len(), MAX_EXTERNAL_DETAIL);
         }
         other => panic!("unexpected kind: {other:?}"),

@@ -51,20 +51,21 @@ pub enum NotificationKind {
         slot: Option<u64>,
         reason: SlotOpFailure,
     },
-    CommandFailed(&'static str),
-    /// Out-of-band frontend failures (picker, restore, bridge).
-    /// Carries its source for filtering and a bounded detail: the
-    /// modal queue is capped in count but not in bytes.
-    ExternalError {
-        source: ExternalSource,
+    /// Command and out-of-band frontend failures share one shape: a
+    /// stable id plus an optional bounded detail. The modal queue is
+    /// capped in count but not in bytes, so detail stays truncated.
+    CommandFailure {
+        origin: FailureOrigin,
+        id: &'static str,
         detail: String,
     },
 }
 
-/// Origin of an out-of-band frontend failure. Filter key for the
-/// history grid; also selects the localized prefix (see `text`).
+/// Where a failure surfaced. Filter key for the history grid; also
+/// selects the localized origin prefix (see `text`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExternalSource {
+pub enum FailureOrigin {
+    Command,
     Picker,
     Restore,
     Bridge,
@@ -102,9 +103,7 @@ impl NotificationKind {
                     NotificationLevel::Warning
                 }
             },
-            NotificationKind::CommandFailed(_) | NotificationKind::ExternalError { .. } => {
-                NotificationLevel::Error
-            }
+            NotificationKind::CommandFailure { .. } => NotificationLevel::Error,
             NotificationKind::PersistenceUnavailable => NotificationLevel::Warning,
             NotificationKind::Paused
             | NotificationKind::Resumed
@@ -148,8 +147,7 @@ impl NotificationKind {
             | NotificationKind::CreatedSlot
             | NotificationKind::PersistenceUnavailable
             | NotificationKind::SlotFailed { .. }
-            | NotificationKind::CommandFailed(_)
-            | NotificationKind::ExternalError { .. } => Some(self.level()),
+            | NotificationKind::CommandFailure { .. } => Some(self.level()),
         }
     }
 
@@ -189,23 +187,34 @@ impl NotificationKind {
             NotificationKind::SlotFailed { slot, reason } => {
                 Self::slot_failed_text(*slot, *reason, language)
             }
-            NotificationKind::CommandFailed(command) => {
-                if ja {
-                    format!("{command} に失敗しました")
-                } else {
-                    format!("{command} failed")
-                }
-            }
-            NotificationKind::ExternalError { source, detail } => {
-                let prefix = match (source, ja) {
-                    (ExternalSource::Picker, true) => "選択",
-                    (ExternalSource::Picker, false) => "Picker",
-                    (ExternalSource::Restore, true) => "復元",
-                    (ExternalSource::Restore, false) => "Restore",
-                    (ExternalSource::Bridge, true) => "通知",
-                    (ExternalSource::Bridge, false) => "Bridge",
+            NotificationKind::CommandFailure { origin, id, detail } => {
+                let prefix = match (origin, ja) {
+                    (FailureOrigin::Command, true) => {
+                        return if detail.is_empty() {
+                            format!("{id} に失敗しました")
+                        } else {
+                            format!("{id} に失敗しました: {detail}")
+                        };
+                    }
+                    (FailureOrigin::Command, false) => {
+                        return if detail.is_empty() {
+                            format!("{id} failed")
+                        } else {
+                            format!("{id} failed: {detail}")
+                        };
+                    }
+                    (FailureOrigin::Picker, true) => "選択",
+                    (FailureOrigin::Picker, false) => "Picker",
+                    (FailureOrigin::Restore, true) => "復元",
+                    (FailureOrigin::Restore, false) => "Restore",
+                    (FailureOrigin::Bridge, true) => "通知",
+                    (FailureOrigin::Bridge, false) => "Bridge",
                 };
-                format!("{prefix}: {detail}")
+                if detail.is_empty() {
+                    prefix.to_string()
+                } else {
+                    format!("{prefix}: {detail}")
+                }
             }
         }
     }
@@ -363,7 +372,9 @@ pub fn append_count(base: String, count: u32) -> String {
 
 /// Log module emitting `notification:` lines; history rows map 1:1
 /// to those records so the module column greps the logs.
-pub const LOG_MODULE: &str = module_path!();
+/// Stable history module column. A literal, not `module_path!`: refactors
+/// must not ripple into persisted history views or grep filters.
+pub const LOG_MODULE: &str = "notifications";
 
 fn kind_text(event: &UiNotification) -> String {
     // Logs stay English for grep stability; UI text is localized at render.
@@ -392,7 +403,12 @@ mod tests {
             Some(NotificationLevel::Warning)
         );
         assert_eq!(
-            NotificationKind::CommandFailed("Reset").log_level(),
+            NotificationKind::CommandFailure {
+                origin: FailureOrigin::Command,
+                id: "Reset",
+                detail: String::new()
+            }
+            .log_level(),
             Some(NotificationLevel::Error)
         );
         assert_eq!(
@@ -468,9 +484,14 @@ mod tests {
             NotificationKind::DeletedSlot(3),
             NotificationKind::CreatedSlot,
             NotificationKind::SelectedSlot(4),
-            NotificationKind::CommandFailed("Reset"),
-            NotificationKind::ExternalError {
-                source: ExternalSource::Picker,
+            NotificationKind::CommandFailure {
+                origin: FailureOrigin::Command,
+                id: "Reset",
+                detail: String::new(),
+            },
+            NotificationKind::CommandFailure {
+                origin: FailureOrigin::Picker,
+                id: "",
                 detail: "boom".to_string(),
             },
             NotificationKind::PersistenceUnavailable,
@@ -667,9 +688,14 @@ mod tests {
             NotificationKind::Paused,
             NotificationKind::SavedSlot(1),
             NotificationKind::PersistenceUnavailable,
-            NotificationKind::CommandFailed("Reset"),
-            NotificationKind::ExternalError {
-                source: ExternalSource::Bridge,
+            NotificationKind::CommandFailure {
+                origin: FailureOrigin::Command,
+                id: "Reset",
+                detail: String::new(),
+            },
+            NotificationKind::CommandFailure {
+                origin: FailureOrigin::Bridge,
+                id: "",
                 detail: "x".to_string(),
             },
         ] {
@@ -679,7 +705,14 @@ mod tests {
 
     #[test]
     fn wants_modal_keeps_errors_and_warnings() {
-        assert!(NotificationKind::CommandFailed("Reset").wants_modal());
+        assert!(
+            NotificationKind::CommandFailure {
+                origin: FailureOrigin::Command,
+                id: "Reset",
+                detail: String::new()
+            }
+            .wants_modal()
+        );
         assert!(NotificationKind::PersistenceUnavailable.wants_modal());
         assert!(
             NotificationKind::SlotFailed {

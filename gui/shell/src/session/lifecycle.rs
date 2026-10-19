@@ -270,8 +270,8 @@ impl SessionHandle {
         &mut self,
         next_settings: nerust_gui_runtime::settings::SettingsSnapshot,
     ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
-        let previous = self.settings_snapshot.clone();
-        let previous_assignments = self.current_assignments.clone();
+        let previous = self.settings.snapshot.clone();
+        let previous_assignments = self.input.current_assignments.clone();
         let factory = self.active_factory().cloned();
 
         let next_assignments = factory.as_ref().map(|f| {
@@ -293,7 +293,7 @@ impl SessionHandle {
         if plan.persistence_changed
             && let Some(ref core) = self.emu_core
         {
-            self.persistence.flush_mapper_save(core)?;
+            self.media.persistence.flush_mapper_save(core)?;
         }
 
         let outcome = self.apply_live_runtime(
@@ -305,7 +305,7 @@ impl SessionHandle {
             assignments_changed,
         )?;
 
-        if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
+        if let Err(error) = self.settings.manager.save_snapshot(next_settings.clone()) {
             self.rollback_runtime_apply(
                 &factory,
                 &previous,
@@ -317,19 +317,20 @@ impl SessionHandle {
         }
 
         if assignments_changed && let Some(a) = next_assignments {
-            self.current_assignments = a;
+            self.input.current_assignments = a;
         }
 
-        self.settings_snapshot = next_settings;
+        self.settings.snapshot = next_settings;
         if plan.persistence_changed && self.loaded() {
             let rom_path = self
-                .loaded_media
+                .media
+                .loaded
                 .as_ref()
                 .and_then(|media| media.media.native_path().map(Path::to_path_buf));
             let setup = self.setup_persistence(rom_path.as_deref(), false);
             self.note_persistence_setup(setup);
         }
-        self.pressed_keys.clear();
+        self.input.pressed_keys.clear();
         self.clear_input();
         self.rebuild_key_field_map();
         Ok(plan)
@@ -339,24 +340,24 @@ impl SessionHandle {
         &mut self,
         fullscreen: bool,
     ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
-        if self.settings_snapshot.local.video.window.fullscreen_default == fullscreen {
+        if self.settings.snapshot.local.video.window.fullscreen_default == fullscreen {
             return Ok(nerust_gui_runtime::settings::SettingsApplyPlan::default());
         }
 
-        let mut next_settings = self.settings_snapshot.clone();
+        let mut next_settings = self.settings.snapshot.clone();
         next_settings.local.video.window.fullscreen_default = fullscreen;
         let plan = nerust_gui_runtime::settings::apply::derive_apply_plan(
             &self.capabilities,
-            &self.settings_snapshot,
+            &self.settings.snapshot,
             &next_settings,
             self.active_system_id(),
         );
 
-        if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
+        if let Err(error) = self.settings.manager.save_snapshot(next_settings.clone()) {
             return Err(SessionError::Settings(error));
         }
 
-        self.settings_snapshot = next_settings;
+        self.settings.snapshot = next_settings;
         Ok(plan)
     }
 
@@ -369,13 +370,13 @@ impl SessionHandle {
             let Some(core) = self.emu_core.as_ref() else {
                 return Err(SessionError::NoCore);
             };
-            self.persistence.flush_mapper_save(core)?;
+            self.media.persistence.flush_mapper_save(core)?;
         }
         self.emu_core
             .as_mut()
             .ok_or(SessionError::NoCore)?
             .load(&media, Some(resolved.options))?;
-        self.loaded_media = Some(super::LoadedMedia {
+        self.media.loaded = Some(super::LoadedMedia {
             media: media.clone(),
         });
 
@@ -388,34 +389,38 @@ impl SessionHandle {
 
     pub fn unload(&mut self) -> Result<(), SessionError> {
         if let Some(ref core) = self.emu_core {
-            self.persistence.flush_mapper_save(core)?;
+            self.media.persistence.flush_mapper_save(core)?;
         }
         if let Some(ref mut core) = self.emu_core {
             core.unload()?;
         }
-        self.loaded_media = None;
-        self.persistence.reset();
+        self.media.loaded = None;
+        self.media.persistence.reset();
         Ok(())
     }
 
     pub fn flush_before_exit(&mut self) {
         if let Some(ref core) = self.emu_core
-            && let Err(error) = self.persistence.flush_mapper_save(core)
+            && let Err(error) = self.media.persistence.flush_mapper_save(core)
         {
             log::warn!("mapper save flush before close failed: {error}");
         }
         // Persist the latest settings to disk.  Reload from the manager first
         // so that any pending changes (e.g. window size from
         // remember_fit_window_size) are not overwritten by a stale snapshot.
-        match self.settings.reload() {
+        match self.settings.manager.reload() {
             Ok(snapshot) => {
-                self.settings_snapshot = snapshot;
+                self.settings.snapshot = snapshot;
             }
             Err(error) => {
                 log::warn!("settings reload before exit failed: {error}");
             }
         }
-        if let Err(error) = self.settings.save_snapshot(self.settings_snapshot.clone()) {
+        if let Err(error) = self
+            .settings
+            .manager
+            .save_snapshot(self.settings.snapshot.clone())
+        {
             log::warn!("settings save on exit failed: {error}");
         }
     }
@@ -449,7 +454,11 @@ impl SessionHandle {
                 let name = command_name(command);
                 log::warn!("run_command {name} failed: {error}");
                 self.notifications
-                    .push(super::notification::NotificationKind::CommandFailed(name))
+                    .push(super::notification::NotificationKind::CommandFailure {
+                        origin: super::notification::FailureOrigin::Command,
+                        id: name,
+                        detail: error.to_string(),
+                    })
             }
         }
         result
@@ -540,13 +549,18 @@ impl SessionHandle {
     /// queue is count-capped, not byte-capped.
     pub fn report_external_error(
         &mut self,
-        source: super::notification::ExternalSource,
+        origin: super::notification::FailureOrigin,
         detail: String,
     ) {
         use super::notification::MAX_EXTERNAL_DETAIL;
+        debug_assert!(origin != super::notification::FailureOrigin::Command);
         let detail: String = detail.chars().take(MAX_EXTERNAL_DETAIL).collect();
         self.notifications
-            .push(super::notification::NotificationKind::ExternalError { source, detail });
+            .push(super::notification::NotificationKind::CommandFailure {
+                origin,
+                id: "",
+                detail,
+            });
     }
 
     fn cmd_pause(&mut self) -> Result<SessionCommandOutcome, SessionError> {
@@ -619,7 +633,7 @@ impl SessionHandle {
     }
 
     fn cmd_select_active_slot(&mut self, slot_id: u64) -> SessionCommandOutcome {
-        self.persistence.select_active_slot(slot_id);
+        self.media.persistence.select_active_slot(slot_id);
         SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
@@ -629,7 +643,11 @@ impl SessionHandle {
 
     fn cmd_adjacent_slot(&mut self, forward: bool) -> SessionCommandOutcome {
         SessionCommandOutcome {
-            executed: self.persistence.select_adjacent_slot(forward).is_some(),
+            executed: self
+                .media
+                .persistence
+                .select_adjacent_slot(forward)
+                .is_some(),
             needs_redraw: false,
             slot_failure: None,
         }
@@ -644,7 +662,7 @@ impl SessionHandle {
         op: impl FnOnce(&mut PersistenceManager, &EmuCore),
     ) -> SessionCommandOutcome {
         if let Some(ref core) = self.emu_core {
-            op(&mut self.persistence, core);
+            op(&mut self.media.persistence, core);
         }
         SessionCommandOutcome {
             executed: true,
@@ -658,7 +676,7 @@ impl SessionHandle {
         op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> Result<(), SlotOpFailure>,
     ) -> SessionCommandOutcome {
         let slot_failure = if let Some(ref core) = self.emu_core {
-            op(&mut self.persistence, core).err()
+            op(&mut self.media.persistence, core).err()
         } else {
             Some(SlotOpFailure::Unavailable)
         };
@@ -675,7 +693,7 @@ impl SessionHandle {
     ) -> SessionCommandOutcome {
         let was_paused = self.paused();
         let slot_failure = if let Some(ref core) = self.emu_core {
-            op(&mut self.persistence, core).err()
+            op(&mut self.media.persistence, core).err()
         } else {
             Some(SlotOpFailure::Empty)
         };
@@ -688,27 +706,27 @@ impl SessionHandle {
     }
 
     pub fn slots(&self) -> &[nerust_persistence::model::StateSlotSummary] {
-        self.persistence.slots()
+        self.media.persistence.slots()
     }
 
     pub fn active_slot_id(&self) -> Option<u64> {
-        self.persistence.active_slot_id()
+        self.media.persistence.active_slot_id()
     }
 
     pub fn save_hidden_lifecycle_state(&mut self) -> bool {
         self.emu_core
             .as_ref()
-            .is_some_and(|core| self.persistence.save_hidden(core))
+            .is_some_and(|core| self.media.persistence.save_hidden(core))
     }
 
     pub fn load_hidden_lifecycle_state(&mut self) -> bool {
         self.emu_core
             .as_ref()
-            .is_some_and(|core| self.persistence.load_hidden(core))
+            .is_some_and(|core| self.media.persistence.load_hidden(core))
     }
 
     pub fn clear_hidden_lifecycle_state(&mut self) {
-        self.persistence.clear_hidden();
+        self.media.persistence.clear_hidden();
     }
 
     pub(super) fn rebuild_for_settings(
@@ -734,7 +752,7 @@ impl SessionHandle {
         let rebuilt = self.build_core_for_settings(next_settings, &factory, assignments)?;
         let rebuilt_core = rebuilt.emu_core;
 
-        if let Some(loaded_media) = self.loaded_media.clone() {
+        if let Some(loaded_media) = self.media.loaded.clone() {
             rebuilt_core.load(&loaded_media.media, None)?;
             if let Some(core_bytes) = exported_core_bytes.as_ref() {
                 rebuilt_core.load_state_raw(core_bytes.clone())?;
@@ -746,10 +764,11 @@ impl SessionHandle {
 
         self.emu_core = Some(rebuilt_core);
         self.gui_input = Some(rebuilt.gui_input);
-        self.field_map = rebuilt.field_map;
+        self.input.field_map = rebuilt.field_map;
         if was_loaded {
             let rom_path = self
-                .loaded_media
+                .media
+                .loaded
                 .as_ref()
                 .and_then(|m| m.media.native_path().map(Path::to_path_buf));
             let rom_path_deref = rom_path.as_deref();
@@ -782,6 +801,7 @@ impl SessionHandle {
         identity: &nerust_core_traits::identity::SystemIdentity,
     ) -> Option<nerust_persistence::sidecar::SidecarPaths> {
         self.settings
+            .manager
             .resolve_persistence_paths_with_import(identity.system_id.as_ref(), rom_path, identity)
             .map_err(|error| {
                 log::warn!("failed to resolve persistence paths: {error}");
@@ -811,11 +831,14 @@ impl SessionHandle {
         let Some(sidecars) = sidecars else {
             return PersistenceSetup::Unavailable;
         };
-        self.persistence
+        self.media
+            .persistence
             .configure(sidecars.states_dir, sidecars.mapper_save_path);
         if let Some(ref core) = self.emu_core {
-            self.persistence.refresh_slots(core);
-            if load_mapper_save && let Err(e) = self.persistence.load_mapper_save_if_needed(core) {
+            self.media.persistence.refresh_slots(core);
+            if load_mapper_save
+                && let Err(e) = self.media.persistence.load_mapper_save_if_needed(core)
+            {
                 log::warn!("load_mapper_save_if_needed failed: {e}");
             }
         }
@@ -824,12 +847,15 @@ impl SessionHandle {
 
     fn remember_last_successful_rom_directory(&mut self, path: Option<&Path>) {
         if let Some(path) = path
-            && let Err(error) = self.settings.update_last_successful_rom_directory(path)
+            && let Err(error) = self
+                .settings
+                .manager
+                .update_last_successful_rom_directory(path)
         {
             log::warn!("failed to update app state: {error}");
         }
-        if let Ok(snapshot) = self.settings.snapshot() {
-            self.settings_snapshot = snapshot;
+        if let Ok(snapshot) = self.settings.manager.snapshot() {
+            self.settings.snapshot = snapshot;
         }
     }
 }
