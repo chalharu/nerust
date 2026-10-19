@@ -379,6 +379,8 @@ impl GtkOsd {
         let window = window.clone();
         dialog.connect_response(move |dialog, _| {
             dialog.close();
+            // Bounded recursion: the modal queue caps at MAX_QUEUED,
+            // so nesting depth is capped too, not an unbounded chain.
             let next = {
                 let surface = surface.borrow_mut();
                 let mut osd = surface.osd.borrow_mut();

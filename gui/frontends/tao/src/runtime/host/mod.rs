@@ -104,6 +104,21 @@ fn backend_capabilities() -> HostBackendCapabilities {
     }
 }
 
+/// Menu/title signature for the chrome dirty gate. Owned clones so
+/// the comparison is exact (slots, shortcuts, title); small enough
+/// that the clone is cheaper than the menu IPC it skips.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct ChromeSig {
+    pub(super) loaded: bool,
+    pub(super) paused: bool,
+    pub(super) settings_open: bool,
+    pub(super) language: nerust_settings_core::model::language::AppLanguage,
+    pub(super) active_slot: Option<u64>,
+    pub(super) slots: Vec<nerust_persistence::model::StateSlotSummary>,
+    pub(super) shortcuts: Vec<nerust_settings_core::model::input::ShortcutBinding>,
+    pub(super) title: String,
+}
+
 /// Settings-window cluster: handle plus its resume bookkeeping. Single
 /// owner for the settings-modal domain; the open truth is the handle.
 pub(super) struct SettingsHost {
@@ -143,7 +158,9 @@ pub(super) struct OsdHost {
     /// rasterizes the resulting plan.
     presenter: nerust_gui_shell::session::osd::OsdPresenter,
     /// Last sync left a layer on the renderer. Memo of the action
-    /// this host took: the pre-gate needs liveness without shell.
+    /// this host took: `Clear` needs it to know a layer exists.
+    /// Deliberately not a pre-gate input (a live but steady layer
+    /// must Skip without running the presenter).
     layer_live: bool,
     /// Last applied edge strip. The reservation only changes with
     /// settings or surface size, so unchanged strips skip the
@@ -157,6 +174,10 @@ pub(super) struct OsdHost {
     /// runs on every loop pass while the viewer is open; unchanged
     /// content skips the full row rebuild (P1 perf gate).
     history_sync_key: Option<(u64, nerust_settings_core::model::language::AppLanguage)>,
+    /// Last geometry the presenter ran with: surface size plus chrome.
+    /// The pre-gate passes on change so resizes and corner flips
+    /// re-rasterize without a generation bump.
+    last_sync_geometry: Option<(u32, u32, nerust_gui_shell::session::osd::OsdChrome)>,
 }
 
 impl OsdHost {
@@ -178,6 +199,7 @@ impl OsdHost {
             modal_flight: None,
             resume_after_modal: false,
             history_sync_key: None,
+            last_sync_geometry: None,
         }
     }
 }
@@ -208,6 +230,9 @@ pub(crate) struct HostState {
     /// here; ownership lives there.
     pub(super) debug: DebugWindows,
     pub(super) osd: OsdHost,
+    /// Last pushed menu/title signature. Menu IPC and `set_title`
+    /// run only on change; focus bursts and drains re-hit this path.
+    last_chrome_sig: Option<ChromeSig>,
     /// Linux render target below the muda menubar (`None` elsewhere).
     /// When it yields no native target (Wayland, pre-layout) the
     /// toplevel fallback applies and the menu stays occluded.
@@ -268,6 +293,7 @@ impl HostState {
             live_flight: None,
             debug: DebugWindows::new(),
             osd: OsdHost::new(),
+            last_chrome_sig: None,
             #[cfg(any(
                 target_os = "linux",
                 target_os = "dragonfly",

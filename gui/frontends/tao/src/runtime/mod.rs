@@ -71,6 +71,7 @@ impl WindowRuntime {
         let config = RendererConfig {
             render_profile,
             vsync,
+            max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
         };
         // Drop the old renderer before the new attach makes its own
         // context current: GL object names die with their context, and

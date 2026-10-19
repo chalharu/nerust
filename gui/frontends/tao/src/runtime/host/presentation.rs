@@ -39,21 +39,55 @@ impl HostState {
 
     pub(crate) fn sync_menu_state(&mut self) {
         let snapshot = self.session.settings_snapshot();
-        let slots = self.session.slots();
-        self.app_menu.update(crate::menu::MenuSync {
-            loaded: self.session.loaded(),
-            paused: self.session.paused(),
-            slots,
-            active_slot: self.session.active_slot_id(),
+        let slots = self.session.slots().to_vec();
+        let tick = self.session.tick_metrics();
+        let sig = super::ChromeSig {
+            loaded: tick.loaded,
+            paused: tick.paused,
             settings_open: self.settings_open(),
             language: snapshot.shared.general.language,
-            shortcuts: &snapshot.shared.input.shortcuts.keyboard,
+            active_slot: self.session.active_slot_id(),
+            slots,
+            shortcuts: snapshot.shared.input.shortcuts.keyboard.clone(),
+            title: self.session.window_title(),
+        };
+        if self.last_chrome_sig.as_ref() == Some(&sig) {
+            return;
+        }
+        let title = sig.title.clone();
+        self.app_menu.update(crate::menu::MenuSync {
+            loaded: sig.loaded,
+            paused: sig.paused,
+            slots: &sig.slots,
+            active_slot: sig.active_slot,
+            settings_open: sig.settings_open,
+            language: sig.language,
+            shortcuts: &sig.shortcuts,
         });
+        self.last_chrome_sig = Some(sig);
+        self.push_title(&title);
+    }
+
+    fn push_title(&mut self, title: &str) {
+        if let Some(window) = self.window.as_ref() {
+            window.set_title(title);
+        }
     }
 
     pub(crate) fn refresh_window_title(&mut self) {
-        if let Some(window) = self.window.as_ref() {
-            window.set_title(&self.session.window_title());
+        let title = self.session.window_title();
+        let changed = self
+            .last_chrome_sig
+            .as_ref()
+            .is_none_or(|sig| sig.title != title);
+        if changed {
+            // Keep the signature truthful when the title moves alone
+            // (500ms throttle path); the menu half refreshes on its
+            // own next change.
+            if let Some(sig) = self.last_chrome_sig.as_mut() {
+                sig.title = title.clone();
+            }
+            self.push_title(&title);
         }
     }
 

@@ -33,10 +33,7 @@ pub(crate) mod runtime;
 use nerust_crash_guard::{CRASH_EXIT_CODE, GuardOutcome};
 use nerust_gui_shell::context::FrontendContext;
 use nerust_run_options::RunOptions;
-use nerust_settings_core::{
-    i18n::{UiText, text as ui_text},
-    model::language::AppLanguage,
-};
+use nerust_settings_core::model::language::AppLanguage;
 
 pub fn run(ctx: FrontendContext, options: RunOptions) {
     // A crash must never look like a clean exit; the dialog runs first.
@@ -46,9 +43,11 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
         GuardOutcome::Crashed(report) => {
             // rfd spawns an external portal process, so it can still
             // show after the event loop died. stderr stays the log home.
+            // Inline literals, never the i18n catalog: the crash itself
+            // may be a settings/i18n corruption.
             let language = AppLanguage::SystemDefault;
             rfd::MessageDialog::new()
-                .set_title(ui_text(language, UiText::CrashTitle))
+                .set_title(crash_title())
                 .set_description(crash_dialog_text(language, report.message()))
                 .set_level(rfd::MessageLevel::Error)
                 .set_buttons(rfd::MessageButtons::Ok)
@@ -59,13 +58,28 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
 }
 
 /// Crash dialog copy: what happened plus where details live.
-/// Pinned by test in both languages (file-free stderr pointer).
+/// Inline literals, never the catalog (see above). Pinned by test in
+/// both languages (file-free stderr pointer).
+fn crash_title() -> &'static str {
+    "nerust"
+}
+
 fn crash_dialog_text(language: AppLanguage, message: &str) -> String {
-    format!(
-        "{}: {message}\n\n{}",
-        ui_text(language, UiText::CrashBody),
-        ui_text(language, UiText::CrashDetails),
-    )
+    // English default (including SystemDefault): resolving the system
+    // locale would touch the same settings/i18n stack that may have
+    // crashed. Japanese only when explicitly selected.
+    let (body, details) = if matches!(language, AppLanguage::Japanese) {
+        (
+            "アプリケーションがクラッシュしました",
+            "詳細はログ（stderr）に記録されました。",
+        )
+    } else {
+        (
+            "The application crashed",
+            "Details were written to the log (stderr).",
+        )
+    };
+    format!("{body}: {message}\n\n{details}")
 }
 
 fn run_inner(ctx: FrontendContext, options: RunOptions) {
@@ -93,7 +107,7 @@ fn run_inner(ctx: FrontendContext, options: RunOptions) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_settings_core::i18n::text;
+    use nerust_settings_core::i18n::{UiText, text};
 
     #[test]
     fn crash_dialog_points_at_stderr_in_english() {
@@ -101,7 +115,11 @@ mod tests {
         assert!(dialog.contains("boom"), "{dialog}");
         assert!(dialog.contains("The application crashed"), "{dialog}");
         assert!(dialog.contains("stderr"), "{dialog}");
-        assert_eq!(text(AppLanguage::English, UiText::CrashTitle), "nerust");
+        assert_eq!(crash_title(), "nerust");
+        assert_eq!(
+            text(AppLanguage::English, UiText::CrashTitle),
+            crash_title()
+        );
     }
 
     #[test]
@@ -113,6 +131,9 @@ mod tests {
             "{dialog}"
         );
         assert!(dialog.contains("stderr"), "{dialog}");
-        assert_eq!(text(AppLanguage::Japanese, UiText::CrashTitle), "nerust");
+        assert_eq!(
+            text(AppLanguage::Japanese, UiText::CrashTitle),
+            crash_title()
+        );
     }
 }

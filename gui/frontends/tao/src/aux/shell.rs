@@ -191,6 +191,10 @@ pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> 
     /// Boxed: the interface borrows these bytes, so the address
     /// must survive moves of this struct (inline state would dangle).
     instance: Box<program::Instance<P>>,
+    /// Queued program messages. Drained by `process_messages` under
+    /// the take→update→rebuild sequence, so `instance` is never
+    /// mutated while `ui` borrows it.
+    pending: Vec<P::Message>,
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> Drop for UiShell<P> {
@@ -257,6 +261,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         Self {
             ui: Some(ui),
             instance,
+            pending: Vec::new(),
         }
     }
 
@@ -268,11 +273,15 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         self.ui.as_mut()
     }
 
-    /// Push one program message without a rebuild (Sync-style refresh
-    /// entry point shared by both viewers). The task is intentionally
-    /// dropped: every aux program returns `Task::none` (sync-only).
+    /// Queue one program message for the next `process_messages`
+    /// pass (Sync-style refresh entry point shared by both viewers).
+    /// Queued, never applied inline: `ui` borrows `instance`, so only
+    /// the take→update→rebuild sequence in `process_messages` may
+    /// mutate it. Test-only seam: production passes messages through
+    /// `process_messages` directly.
+    #[cfg(test)]
     pub(crate) fn push_message(&mut self, message: P::Message) {
-        let _task = self.instance.update(message);
+        self.pending.push(message);
     }
 
     /// What a pumped event needs after `update`: nothing, a repaint
@@ -314,9 +323,13 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         window_id: iced::window::Id,
         bounds: Size,
         renderer: &mut Renderer,
-        invalidated: &AtomicBool,
+        invalidated: Dirty<'_>,
     ) -> bool {
-        if messages.is_empty() && !invalidated.load(Ordering::Acquire) {
+        // Queued `push_message` items join this pass so the single
+        // build below applies every pending program message at once.
+        let mut all = std::mem::take(&mut self.pending);
+        all.extend(messages);
+        if all.is_empty() && !invalidated.is_set() {
             return false;
         }
         // Single build: take the old UI out, harvest its cache, run
@@ -325,13 +338,48 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
             .ui
             .take()
             .map_or_else(Cache::default, UserInterface::into_cache);
-        for msg in messages {
+        for msg in all {
             let _task = self.instance.update(msg);
         }
         let rebuilt = Self::build_ui(&self.instance, window_id, bounds, cache, renderer);
         self.ui = Some(rebuilt);
-        invalidated.store(false, Ordering::Release);
+        invalidated.clear();
         true
+    }
+}
+
+/// Cross-thread invalidation as a typed token. Call sites name the
+/// domain flag once (`Dirty::view(&bridge.view_invalidated)`); the
+/// shell only reads and clears it. A bare `&AtomicBool` let any flag
+/// reach any window (the history close-flag bug); this makes the
+/// choice grep-able and reviewable at construction.
+pub(crate) struct Dirty<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl<'a> Dirty<'a> {
+    pub(crate) fn view(flag: &'a AtomicBool) -> Self {
+        Self { flag }
+    }
+
+    pub(crate) fn ppu(flag: &'a AtomicBool) -> Self {
+        Self { flag }
+    }
+
+    pub(crate) fn settings(flag: &'a AtomicBool) -> Self {
+        Self { flag }
+    }
+
+    pub(crate) fn history(flag: &'a AtomicBool) -> Self {
+        Self { flag }
+    }
+
+    fn is_set(&self) -> bool {
+        self.flag.load(Ordering::Acquire)
+    }
+
+    fn clear(&self) {
+        self.flag.store(false, Ordering::Release);
     }
 }
 
@@ -375,11 +423,6 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         self.window.set_focus();
     }
 
-    /// Queue one program message for the next process pass.
-    pub(crate) fn push_message(&mut self, message: P::Message) {
-        self.ui_state.push_message(message);
-    }
-
     /// Pump one converted event through the retained tree. Repaints
     /// redraw immediately; rebuilds report for the caller, which owns
     /// its invalidation flag.
@@ -403,7 +446,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     /// Run pending messages; returns whether this pass requested a
     /// redraw (rebuild), so the event pump can skip its trailing
     /// request instead of queueing a duplicate present.
-    pub(crate) fn process(&mut self, messages: Vec<P::Message>, invalidated: &AtomicBool) -> bool {
+    pub(crate) fn process(&mut self, messages: Vec<P::Message>, invalidated: Dirty<'_>) -> bool {
         let bounds = self.logical_bounds();
         let rebuilt = self.ui_state.process_messages(
             messages,
@@ -760,7 +803,7 @@ mod tests {
             iced::window::Id::unique(),
             iced::Size::new(800.0, 600.0),
             &mut backend,
-            &still,
+            crate::aux::shell::Dirty::view(&still),
         );
         assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), built);
         // Either a message or the flag rebuilds exactly once.
@@ -769,7 +812,7 @@ mod tests {
             iced::window::Id::unique(),
             iced::Size::new(800.0, 600.0),
             &mut backend,
-            &still,
+            crate::aux::shell::Dirty::view(&still),
         );
         assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), built + 1);
         let flagged = AtomicBool::new(true);
@@ -778,7 +821,7 @@ mod tests {
             iced::window::Id::unique(),
             iced::Size::new(800.0, 600.0),
             &mut backend,
-            &flagged,
+            crate::aux::shell::Dirty::view(&flagged),
         );
         assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), built + 2);
         assert!(!flagged.load(Ordering::Acquire));

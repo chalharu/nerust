@@ -112,14 +112,15 @@ mod tests {
         assert_eq!(opener.calls(), [OpenerCall::Settings]);
         assert!(host.settings.window.is_none());
         assert!(!host.settings_open());
-        // Failure syncs closed around the attempt (pre + rollback).
+        // Failure leaves the guard closed; the dirty gate collapses
+        // the pre + rollback syncs into one push.
         let open_flags: Vec<bool> = support
             .menu
             .updates()
             .iter()
             .map(|sync| sync.settings_open)
             .collect();
-        assert_eq!(open_flags, [false, false]);
+        assert_eq!(open_flags, [false]);
     }
 
     #[test]

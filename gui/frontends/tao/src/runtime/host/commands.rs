@@ -393,8 +393,9 @@ mod tests {
                 HostAction::None
             );
         }
-        // Every command syncs the menu, none opens a window.
-        assert_eq!(support.menu.updates().len(), before + 13);
+        // Dirty gate: identical chrome skips the IPC. Only the
+        // first sync and the active-slot selection change the sig.
+        assert_eq!(support.menu.updates().len(), before + 2);
         assert!(opener.calls().is_empty());
     }
 
@@ -489,7 +490,9 @@ mod tests {
         assert!(support.menu.updates().is_empty());
         host.apply_keyboard_shortcut(KeyboardShortcut::Session(ShortcutAction::TogglePause));
         host.apply_keyboard_shortcut(KeyboardShortcut::ToggleFullscreen);
-        assert_eq!(support.menu.updates().len(), 2);
+        // Dirty gate: the pause sync pushes once (headless toggle
+        // without a window adds no second change).
+        assert_eq!(support.menu.updates().len(), 1);
     }
 
     #[test]

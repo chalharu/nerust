@@ -117,8 +117,10 @@ impl WindowRuntime {
             self.host.request_redraw();
             return;
         }
-        let refocused = matches!(event, WindowEvent::Focused(true));
-        if self.host.note_aux_focus(refocused) {
+        // Focus-only drive: Moved/Resized/key events must not arm
+        // the deferred pause. Only Focused(true/false) touches it.
+        let focused = matches!(event, WindowEvent::Focused(true));
+        if matches!(event, WindowEvent::Focused(_)) && self.host.note_aux_focus(focused) {
             self.host.resume_session();
         }
         {
@@ -127,7 +129,7 @@ impl WindowRuntime {
             };
             handle.on_event(event);
         }
-        if refocused {
+        if focused {
             self.host.sync_debug_chrome();
         }
         self.drain_and_maybe_open_ppu(opener);
@@ -160,8 +162,10 @@ impl WindowRuntime {
         }
         // A system-paused session resumes like on main focus;
         // explicit pauses stay paused.
-        let refocused = matches!(event, WindowEvent::Focused(true));
-        if self.host.note_aux_focus(refocused) {
+        // Focus-only drive: Moved/Resized/key events must not arm
+        // the deferred pause. Only Focused(true/false) touches it.
+        let focused = matches!(event, WindowEvent::Focused(true));
+        if matches!(event, WindowEvent::Focused(_)) && self.host.note_aux_focus(focused) {
             self.host.resume_session();
         }
         if let WindowEvent::Moved(position) = &event {
@@ -259,7 +263,9 @@ mod tests {
         assert!(!runtime.host.main_active());
         runtime.on_main_event(&opener, WindowEvent::Focused(true), &mut flow);
         assert!(runtime.host.main_active());
-        assert_eq!(menu.updates().len(), 2);
+        // Dirty gate: departure pushes once, arrival with identical
+        // chrome skips the duplicate IPC.
+        assert_eq!(menu.updates().len(), 1);
     }
 
     #[test]
