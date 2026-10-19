@@ -30,6 +30,7 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
         .unwrap();
 
     let mapper_save_path = session
+        .media
         .persistence
         .mapper_save_path()
         .expect("load should configure mapper_save_path")
@@ -67,6 +68,7 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
     assert!(session.save_hidden_lifecycle_state());
     let autosave_path = autosave_state_slot_path(
         session
+            .media
             .persistence
             .states_dir()
             .expect("load should configure states_dir"),
@@ -108,6 +110,7 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
     assert!(session.save_hidden_lifecycle_state());
     let autosave_path = autosave_state_slot_path(
         session
+            .media
             .persistence
             .states_dir()
             .expect("load should configure states_dir"),
@@ -145,6 +148,7 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
 
     let autosave_path = autosave_state_slot_path(
         session
+            .media
             .persistence
             .states_dir()
             .expect("load should configure states_dir"),
