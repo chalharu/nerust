@@ -297,9 +297,10 @@ impl AndroidOsd {
             OsdSync::Skip => {}
             OsdSync::Clear => renderer.set_osd_layer(None),
             OsdSync::Render(plan) => {
+                let (width, height) = (plan.width, plan.height);
                 let content = plan.into_content();
                 self.raster.set_safe_insets(insets);
-                renderer.set_osd_layer(self.raster.rasterize(&content, plan.width, plan.height));
+                renderer.set_osd_layer(self.raster.rasterize(&content, width, height));
             }
         }
     }

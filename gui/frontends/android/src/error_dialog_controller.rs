@@ -3,7 +3,7 @@
 //! The shell `ModalBox` stays the only queue gate; this controller owns
 //! the frontend side (`showing`/`current`/`auto_paused`) so every JNI
 //! call site is a thin adapter around it.
-use nerust_gui_shell::session::osd::{ModalSink, ModalSource, OsdManager};
+use nerust_gui_shell::session::osd::{ModalSink, ModalSource};
 
 /// JNI handoff for a dialog that should be presented now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +170,7 @@ impl ErrorDialogController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_gui_shell::session::osd::OsdManager;
 
     fn queued(detail: &str) -> OsdManager {
         let mut manager = OsdManager::new();

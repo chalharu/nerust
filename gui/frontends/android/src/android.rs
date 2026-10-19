@@ -2030,9 +2030,11 @@ impl ApplicationHandler for AndroidFrontend {
             self.handle_settings_result(result);
         }
         menu::take_events_into(&mut self.event_scratch);
-        for event in self.event_scratch.drain(..) {
+        let mut pending = std::mem::take(&mut self.event_scratch);
+        for event in pending.drain(..) {
             self.handle_menu_action(event);
         }
+        self.event_scratch = pending;
         self.sync_cartridge_peripherals();
         self.maybe_refresh_title(now);
         let settings = self.notification_settings();
