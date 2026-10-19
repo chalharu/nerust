@@ -1115,7 +1115,8 @@ impl AndroidFrontend {
         };
         // Shell opened before the fire-and-forget request; a failed
         // bridge synthesizes dismiss, so the cap is a backstop.
-        if transition.auto_pause {
+        let crate::error_dialog_controller::ShowTransition::Present { auto_pause } = transition;
+        if auto_pause {
             self.pause();
         }
         if let Some(detail) = self.osd.error_detail() {
@@ -1130,11 +1131,15 @@ impl AndroidFrontend {
         // error between the cached flag's last event-driven update.
         let screen = Screen::show_gate(self.is_resumed, settings::is_dialog_open(), false);
         let transition = self.osd.dismiss_error_dialog(screen);
-        if transition.resume {
-            self.resume();
-        }
-        if transition.reshow {
-            self.maybe_show_error_dialog();
+        match transition {
+            crate::error_dialog_controller::DismissTransition::Idle => {}
+            crate::error_dialog_controller::DismissTransition::Reshow => {
+                self.maybe_show_error_dialog();
+            }
+            crate::error_dialog_controller::DismissTransition::ResumeAndReshow => {
+                self.resume();
+                self.maybe_show_error_dialog();
+            }
         }
     }
 
