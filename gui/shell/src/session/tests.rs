@@ -1354,6 +1354,19 @@ fn pump_osd_routes_no_core_error_to_modal() {
 }
 
 #[test]
+fn delete_slot_without_core_reports_not_executed() {
+    // No core ran anything: the outcome must not claim a deletion.
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    let outcome = session
+        .run_command(SessionCommand::DeleteSlot(1))
+        .expect("delete reports an outcome");
+    assert!(!outcome.executed);
+    assert_eq!(outcome.slot_failure, Some(SlotOpFailure::Empty));
+}
+
+#[test]
 fn report_external_error_truncates_and_labels_source() {
     use crate::session::notification::{FailureOrigin, MAX_EXTERNAL_DETAIL, NotificationKind};
 

@@ -579,10 +579,21 @@ impl SoftbufferRenderer {
     }
 }
 
+/// Validated frame geometry shared by the blit path. Computed once:
+/// dimensions, tap coverage, and strides feed both the guards and
+/// the indexer setup without a second scan.
+struct ValidatedFrame {
+    dst_w: usize,
+    dst_h: usize,
+    avail_h: usize,
+    src_stride: usize,
+    src_h: usize,
+}
+
 impl SoftbufferRenderer {
     /// Validate dimensions and tap coverage without touching the surface.
     /// Pure read phase: mismatches skip before any indexer runs.
-    fn validate_frame(&mut self, frame: &FrameBuffer) -> Option<(usize, usize, usize, usize)> {
+    fn validate_frame(&mut self, frame: &FrameBuffer) -> Option<ValidatedFrame> {
         if frame.width() != self.render_profile.source_logical_size.width
             || frame.height() != self.render_profile.source_logical_size.height
         {
@@ -626,7 +637,13 @@ impl SoftbufferRenderer {
             warn!("softbuffer tap coverage mismatch: refusing frame");
             return None;
         }
-        Some((dst_w, dst_h, avail_h, src_stride))
+        Some(ValidatedFrame {
+            dst_w,
+            dst_h,
+            avail_h,
+            src_stride,
+            src_h,
+        })
     }
 
     /// Straight-alpha blend of the OSD layer, clipped to the buffer.
@@ -735,34 +752,16 @@ impl GpuRenderer for SoftbufferRenderer {
     }
 
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
-        let Some((dst_w, dst_h, _avail_h, _src_stride)) = self.validate_frame(frame) else {
+        let Some(valid) = self.validate_frame(frame) else {
             return RenderResult::Skipped;
         };
-        if self.surface.is_none() {
-            return RenderResult::Skipped;
-        }
-        // Refuse stale-profile frames before any indexer runs (warned, not fatal).
-        let avail_h = dst_h.saturating_sub(self.reserved.height_loss(self.size.height) as usize);
-        let src_stride = frame.stride();
-        let src_h = self.render_profile.source_logical_size.height;
-        let use_ntsc = matches!(frame.format(), PixelFormat::PaletteIndex { .. })
-            && self.render_profile.ntsc_packed_rgba8.is_some();
-        let tap_stride = if matches!(frame.format(), PixelFormat::Rgba) {
-            src_stride / 4
-        } else if use_ntsc {
-            self.render_profile.logical_size.width
-        } else {
-            src_stride
-        };
-        let ntsc_writes = if use_ntsc {
-            src_h.saturating_mul(self.render_profile.logical_size.width)
-        } else {
-            0
-        };
-        if !self.taps_covered(dst_w, avail_h, tap_stride, ntsc_writes) {
-            warn!("softbuffer tap coverage mismatch: refusing frame");
-            return RenderResult::Skipped;
-        }
+        let ValidatedFrame {
+            dst_w,
+            dst_h,
+            avail_h,
+            src_stride,
+            src_h,
+        } = valid;
         let Some(surface) = self.surface.as_mut() else {
             return RenderResult::Skipped;
         };

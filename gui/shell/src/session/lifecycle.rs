@@ -661,9 +661,16 @@ impl SessionHandle {
         &mut self,
         op: impl FnOnce(&mut PersistenceManager, &EmuCore),
     ) -> SessionCommandOutcome {
-        if let Some(ref core) = self.emu_core {
-            op(&mut self.media.persistence, core);
-        }
+        // No core ran anything: report it like the fallible legs do
+        // instead of a success toast for a no-op.
+        let Some(ref core) = self.emu_core else {
+            return SessionCommandOutcome {
+                executed: false,
+                needs_redraw: false,
+                slot_failure: Some(SlotOpFailure::Empty),
+            };
+        };
+        op(&mut self.media.persistence, core);
         SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
