@@ -12,17 +12,20 @@ use glutin::{
 use nerust_render_traits::{
     FrameBuffer, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
     renderer::{
-        GpuFactory, GpuRenderer, OpaqueError, OsdLayer, RenderResult, RendererConfig, RendererError,
+        GpuFactory, GpuRenderer, OsdLayer, RenderResult, RendererConfig, RendererError,
+        RendererErrorKind,
     },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
+use crate::layout::{FrameError, FrameLayout};
 use crate::view::{GlView, OsdOutcome, ViewError};
 
 pub struct GlRenderer {
     display: Display,
     gl_config: glutin::config::Config,
     render_profile: VideoRenderProfile,
+    max_osd_upload_retries: u8,
     view: Option<GlView>,
     context: Option<glutin::context::PossiblyCurrentContext>,
     gl_surface: Option<glutin::surface::Surface<WindowSurface>>,
@@ -49,6 +52,7 @@ impl GlRenderer {
     /// Single construction site for attach and profile rebuilds.
     fn fresh_view(&self, profile: &VideoRenderProfile) -> Result<GlView, RendererError> {
         let mut view = GlView::new();
+        view.set_osd_retry_max(self.max_osd_upload_retries);
         view.use_vao(true);
         view.on_load(profile)
             .map_err(|e| RendererError::new("view", Box::new(e)))?;
@@ -59,10 +63,14 @@ impl GlRenderer {
     /// Tear down the live view, warning once on failure. Best-effort:
     /// a failed delete must not fail the rebuild that triggered it.
     fn close_live_view(&mut self) {
-        if let Some(ref mut v) = self.view
-            && v.on_close()
-        {
-            log::warn!("GlRenderer: view teardown failed");
+        if let Some(ref mut v) = self.view {
+            let report = v.on_close();
+            if !report.is_ok() {
+                log::warn!(
+                    "GlRenderer: view teardown failed ({} names)",
+                    report.failed_names
+                );
+            }
         }
     }
 }
@@ -146,8 +154,12 @@ impl GpuRenderer for GlRenderer {
         let view = self.view.take();
         match (view, self.context.as_ref()) {
             (Some(mut v), Some(ctx)) if ctx.is_current() => {
-                if v.on_close() {
-                    log::warn!("GlRenderer: view teardown failed");
+                let report = v.on_close();
+                if !report.is_ok() {
+                    log::warn!(
+                        "GlRenderer: view teardown failed ({} names)",
+                        report.failed_names
+                    );
                 }
                 drop(v);
             }
@@ -168,7 +180,7 @@ impl GpuRenderer for GlRenderer {
     /// Stage an OSD layer; header gate skips the clone on equality.
     /// Keeps the stored copy needed for profile rebuilds.
     fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
-        if osd_layers_equal(self.osd.as_ref(), layer.as_ref()) {
+        if OsdLayer::same_option(self.osd.as_ref(), layer.as_ref()) {
             return;
         }
         if let Some(view) = self.view.as_mut() {
@@ -182,16 +194,10 @@ impl GpuRenderer for GlRenderer {
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
         self.render_profile = profile.clone();
         let Some(ref ctx) = self.context else {
-            return Err(RendererError::new(
-                "update: not attached",
-                Box::new(OpaqueError("".to_string())),
-            ));
+            return Err(RendererError::not_attached("update"));
         };
         if !ctx.is_current() {
-            return Err(RendererError::new(
-                "update: not current",
-                Box::new(OpaqueError("".to_string())),
-            ));
+            return Err(RendererError::not_current("update"));
         }
         // Build before tearing down: a failed compile keeps the old
         // view live instead of leaving a half-closed one behind.
@@ -272,7 +278,7 @@ impl GpuRenderer for GlRenderer {
                     log::warn!("GlRenderer: dropping OSD layer after repeated upload failures");
                 }
             }
-            Ok(OsdOutcome::Presented) => {}
+            Ok(OsdOutcome::Presented) | Ok(OsdOutcome::Skipped) => {}
             Err(e) => {
                 log::debug!("GlRenderer: OSD composite failed: {e}");
             }
@@ -282,92 +288,6 @@ impl GpuRenderer for GlRenderer {
             return RenderResult::Error;
         }
         RenderResult::Presented
-    }
-}
-
-/// Shared OSD equality lives on [`OsdLayer`] (single source).
-fn osd_layers_equal(a: Option<&OsdLayer>, b: Option<&OsdLayer>) -> bool {
-    OsdLayer::same_option(a, b)
-}
-
-/// Checked frame geometry shared by the attach guard and the three
-/// upload paths: one validated computation, no `usize::MAX` sentinel.
-struct FrameLayout {
-    width: usize,
-    height: usize,
-    /// Tight row bytes (`width * bpp`).
-    row_bytes: usize,
-    /// Source stride in bytes.
-    stride: usize,
-    /// Source bytes the chosen path consumes.
-    need: usize,
-    /// Stride in pixels for the `UNPACK_ROW_LENGTH` path.
-    stride_px: i32,
-}
-
-impl FrameLayout {
-    fn checked(
-        fs: nerust_render_traits::logical::LogicalSize,
-        bpp: usize,
-        stride: usize,
-        data_len: usize,
-        unpack_row_length: bool,
-    ) -> Result<Self, ViewError> {
-        let row_bytes = fs.width.checked_mul(bpp).ok_or(ViewError::Frame {
-            what: "frame dimensions overflow",
-            need: 0,
-            have: data_len,
-        })?;
-        let stride_px = stride.checked_div(bpp.max(1)).ok_or(ViewError::Frame {
-            what: "frame dimensions overflow",
-            need: 0,
-            have: data_len,
-        })?;
-        let need = if unpack_row_length {
-            fs.height.checked_sub(1).map_or(Ok(0), |rows| {
-                rows.checked_mul(stride)
-                    .and_then(|tail| tail.checked_add(row_bytes))
-                    .ok_or(ViewError::Frame {
-                        what: "frame dimensions overflow",
-                        need: 0,
-                        have: data_len,
-                    })
-            })?
-        } else if stride == row_bytes {
-            fs.width
-                .checked_mul(fs.height)
-                .and_then(|px| px.checked_mul(bpp))
-                .ok_or(ViewError::Frame {
-                    what: "frame dimensions overflow",
-                    need: 0,
-                    have: data_len,
-                })?
-        } else {
-            stride.checked_mul(fs.height).ok_or(ViewError::Frame {
-                what: "frame dimensions overflow",
-                need: 0,
-                have: data_len,
-            })?
-        };
-        if data_len < need {
-            return Err(ViewError::Frame {
-                what: "frame buffer too small",
-                need,
-                have: data_len,
-            });
-        }
-        Ok(Self {
-            width: fs.width,
-            height: fs.height,
-            row_bytes,
-            stride,
-            need,
-            stride_px: i32::try_from(stride_px).map_err(|_| ViewError::Frame {
-                what: "frame stride overflows i32",
-                need: 0,
-                have: data_len,
-            })?,
-        })
     }
 }
 
@@ -384,20 +304,18 @@ fn upload_frame(
     if view.supports_unpack_row_length() {
         match data.get(..layout.need) {
             Some(bytes) => view.on_update(bytes, layout.stride_px),
-            None => Err(ViewError::Frame {
-                what: "frame buffer too small",
+            None => Err(ViewError::from(FrameError::TooShort {
                 need: layout.need,
                 have: data.len(),
-            }),
+            })),
         }
     } else if layout.stride == layout.row_bytes {
         match data.get(..layout.need) {
             Some(bytes) => view.on_update(bytes, layout.width as i32),
-            None => Err(ViewError::Frame {
-                what: "frame buffer too small",
+            None => Err(ViewError::from(FrameError::TooShort {
                 need: layout.need,
                 have: data.len(),
-            }),
+            })),
         }
     } else {
         // Grow-only like the OSD scratches: a smaller profile must
@@ -484,13 +402,14 @@ impl GpuFactory for GlFactory {
                 .map_err(|e| RendererError::new("configs", Box::new(e)))?
                 .next()
                 .ok_or_else(|| {
-                    RendererError::new("no config", Box::new(OpaqueError("".to_string())))
+                    RendererError::new("no config", Box::new(RendererErrorKind::NoConfig))
                 })?
         };
         Ok(Box::new(GlRenderer {
             display,
             gl_config,
             render_profile: config.render_profile.clone(),
+            max_osd_upload_retries: config.max_osd_upload_retries.max(1),
             view: None,
             context: None,
             gl_surface: None,
@@ -525,7 +444,7 @@ fn pack_rows_stripped(
 
 #[cfg(test)]
 mod tests {
-    use super::{osd_layers_equal, pack_rows_stripped};
+    use super::pack_rows_stripped;
 
     #[test]
     fn pack_rows_stripped_removes_source_padding() {
@@ -542,7 +461,7 @@ mod tests {
 
     #[test]
     fn frame_layout_validates_all_three_paths() {
-        use super::FrameLayout;
+        use crate::layout::FrameLayout;
         use nerust_render_traits::logical::LogicalSize;
         let fs = LogicalSize {
             width: 64,
@@ -569,7 +488,7 @@ mod tests {
         );
         assert!(matches!(
             overflow,
-            Err(crate::view::ViewError::Frame { need: 0, .. })
+            Err(crate::layout::FrameError::DimensionsOverflow { .. })
         ));
     }
 
@@ -583,25 +502,21 @@ mod tests {
             height: 1,
             rgba: vec![1; 8],
         };
-        assert!(osd_layers_equal(Some(&layer), Some(&layer.clone())));
-        assert!(!osd_layers_equal(
+        assert!(OsdLayer::same_option(Some(&layer), Some(&layer.clone())));
+        assert!(!OsdLayer::same_option(
             Some(&layer),
             Some(&OsdLayer {
                 x: 1,
                 ..layer.clone()
             })
         ));
-        assert!(osd_layers_equal(None, None));
-        assert!(!osd_layers_equal(Some(&layer), None));
+        assert!(OsdLayer::same_option(None, None));
+        assert!(!OsdLayer::same_option(Some(&layer), None));
     }
 
     #[test]
     fn frame_error_reports_sizes() {
-        let err = super::ViewError::Frame {
-            what: "frame buffer too small",
-            need: 8,
-            have: 2,
-        };
+        let err = super::ViewError::from(crate::layout::FrameError::TooShort { need: 8, have: 2 });
         assert!(err.to_string().contains('8'));
     }
 
@@ -657,6 +572,7 @@ mod tests {
             display,
             gl_config,
             render_profile: profile.clone(),
+            max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
             view: None,
             context: None,
             gl_surface: None,

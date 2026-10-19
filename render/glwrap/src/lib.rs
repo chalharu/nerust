@@ -4,6 +4,21 @@ pub mod vertex;
 
 pub use error::Error as GlError;
 
+/// Proof that the GL context is current on this thread. Destroy
+/// entry points take this instead of a bare `bool` so the provenance
+/// (`ctx.is_current()` at the call site) cannot be erased or
+/// transposed at a later call.
+#[derive(Debug, Clone, Copy)]
+pub struct CurrentContext(());
+
+impl CurrentContext {
+    /// Assert currentness once, then thread the token to every
+    /// destroy call in the teardown sequence.
+    pub fn current() -> Self {
+        Self(())
+    }
+}
+
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},
@@ -46,13 +61,29 @@ pub fn use_program(program: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::UseProgram(program) })
 }
 
+/// Which introspection query failed. Structural match target so
+/// callers never parse the detail string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryStage {
+    ActiveAttribs,
+    ActiveAttrib,
+    AttribName,
+    AttribLocation,
+    ActiveUniforms,
+    ActiveUniform,
+    UniformName,
+    UniformLocation,
+    LinkStatus,
+    InfoLog,
+}
+
 /// Why a program failed to link. Typed so callers match on stage
 /// instead of parsing a string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShaderError {
     Compile { stage: &'static str, log: String },
     Link { log: String },
-    Query { what: String },
+    Query { stage: QueryStage, detail: String },
 }
 
 impl core::fmt::Display for ShaderError {
@@ -60,7 +91,9 @@ impl core::fmt::Display for ShaderError {
         match self {
             ShaderError::Compile { stage, log } => write!(f, "{stage} compile failed: {log}"),
             ShaderError::Link { log } => write!(f, "link failed: {log}"),
-            ShaderError::Query { what } => write!(f, "query failed: {what}"),
+            ShaderError::Query { stage, detail } => {
+                write!(f, "query failed ({stage:?}): {detail}")
+            }
         }
     }
 }
@@ -111,12 +144,8 @@ impl Shader {
 
     /// Delete the program when the context is current.
     /// No GL call without a current context; Drop reports the leak.
-    pub fn destroy_if_current(&mut self, is_current: bool) -> bool {
+    pub fn destroy_if_current(&mut self, _current: CurrentContext) -> bool {
         if self.deleted {
-            return false;
-        }
-        if !is_current {
-            log::debug!("orphan GL program {} without current context", self.program);
             return false;
         }
         let failed = delete_program(self.program).is_err();
@@ -138,7 +167,8 @@ fn get_attributes(program_id: GLuint) -> Result<HashMap<String, GLuint>, ShaderE
     let mut count: GLint = 0;
     get_programiv(program_id, gl::ACTIVE_ATTRIBUTES, &mut count).map_err(|e| {
         ShaderError::Query {
-            what: e.to_string(),
+            stage: QueryStage::ActiveAttribs,
+            detail: e.to_string(),
         }
     })?;
 
@@ -161,23 +191,27 @@ fn get_attributes(program_id: GLuint) -> Result<HashMap<String, GLuint>, ShaderE
             name_buf.as_mut_ptr(),
         )
         .map_err(|e| ShaderError::Query {
-            what: e.to_string(),
+            stage: QueryStage::ActiveAttrib,
+            detail: e.to_string(),
         })?;
         let name = String::from(
             unsafe { CStr::from_ptr(name_buf.as_ptr()) }
                 .to_str()
                 .map_err(|e| ShaderError::Query {
-                    what: e.to_string(),
+                    stage: QueryStage::AttribName,
+                    detail: e.to_string(),
                 })?,
         );
         let location =
             get_attrib_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) }).map_err(
                 |e| ShaderError::Query {
-                    what: e.to_string(),
+                    stage: QueryStage::AttribLocation,
+                    detail: e.to_string(),
                 },
             )?;
         let location = u32::try_from(location).map_err(|e| ShaderError::Query {
-            what: format!("attribute {name} has no location: {e}"),
+            stage: QueryStage::AttribLocation,
+            detail: format!("attribute {name} has no location: {e}"),
         })?;
         let _ = result.insert(name, location);
     }
@@ -187,7 +221,8 @@ fn get_attributes(program_id: GLuint) -> Result<HashMap<String, GLuint>, ShaderE
 fn get_uniforms(program_id: GLuint) -> Result<HashMap<String, GLint>, ShaderError> {
     let mut count: GLint = 0;
     get_programiv(program_id, gl::ACTIVE_UNIFORMS, &mut count).map_err(|e| ShaderError::Query {
-        what: e.to_string(),
+        stage: QueryStage::ActiveUniforms,
+        detail: e.to_string(),
     })?;
 
     let mut size: GLint = 0;
@@ -209,19 +244,22 @@ fn get_uniforms(program_id: GLuint) -> Result<HashMap<String, GLint>, ShaderErro
             name_buf.as_mut_ptr(),
         )
         .map_err(|e| ShaderError::Query {
-            what: e.to_string(),
+            stage: QueryStage::ActiveUniform,
+            detail: e.to_string(),
         })?;
         let name = String::from(
             unsafe { CStr::from_ptr(name_buf.as_ptr()) }
                 .to_str()
                 .map_err(|e| ShaderError::Query {
-                    what: e.to_string(),
+                    stage: QueryStage::UniformName,
+                    detail: e.to_string(),
                 })?,
         );
         let location =
             get_uniform_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) })
                 .map_err(|e| ShaderError::Query {
-                    what: e.to_string(),
+                    stage: QueryStage::UniformLocation,
+                    detail: e.to_string(),
                 })?;
         let _ = result.insert(name, location);
     }
@@ -288,14 +326,16 @@ fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, ShaderError> {
 
         let mut status = GLint::from(gl::FALSE);
         get_programiv(program, gl::LINK_STATUS, &mut status).map_err(|e| ShaderError::Query {
-            what: e.to_string(),
+            stage: QueryStage::LinkStatus,
+            detail: e.to_string(),
         })?;
 
         if status != GLint::from(gl::TRUE) {
             let mut len: GLint = 0;
             get_programiv(program, gl::INFO_LOG_LENGTH, &mut len).map_err(|e| {
                 ShaderError::Query {
-                    what: e.to_string(),
+                    stage: QueryStage::InfoLog,
+                    detail: e.to_string(),
                 }
             })?;
             let mut written = 0;

@@ -1,3 +1,4 @@
+mod layout;
 mod mat4;
 mod vec2d;
 mod vertex_data;
