@@ -7,15 +7,17 @@ use nerust_gui_shell::session::osd::{ModalSink, ModalSource};
 
 /// JNI handoff for a dialog that should be presented now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ShowTransition {
-    pub auto_pause: bool,
+pub(crate) enum ShowTransition {
+    Present { auto_pause: bool },
 }
 
-/// Follow-up after a dialog dismiss.
+/// Follow-up after a dialog dismiss. New arms extend the enum;
+/// bool structs cannot grow arms without transposing call sites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DismissTransition {
-    pub resume: bool,
-    pub reshow: bool,
+pub(crate) enum DismissTransition {
+    Idle,
+    Reshow,
+    ResumeAndReshow,
 }
 
 /// Follow-up after the settings dialog closes.
@@ -92,7 +94,7 @@ impl ErrorDialogController {
         if can_pause {
             self.auto_paused = true;
         }
-        Some(ShowTransition {
+        Some(ShowTransition::Present {
             auto_pause: can_pause,
         })
     }
@@ -106,10 +108,7 @@ impl ErrorDialogController {
         queue: &mut (impl ModalSink + ModalSource),
         screen: Screen,
     ) -> DismissTransition {
-        const IDLE: DismissTransition = DismissTransition {
-            resume: false,
-            reshow: false,
-        };
+        const IDLE: DismissTransition = DismissTransition::Idle;
         if !self.showing && self.current.is_none() {
             queue.modal_closed();
             return IDLE;
@@ -133,15 +132,9 @@ impl ErrorDialogController {
         }
         if self.auto_paused {
             self.auto_paused = false;
-            return DismissTransition {
-                resume: true,
-                reshow: true,
-            };
+            return DismissTransition::ResumeAndReshow;
         }
-        DismissTransition {
-            resume: false,
-            reshow: true,
-        }
+        DismissTransition::Reshow
     }
 
     /// Activity suspend kills transient UI: release the gate and requeue
@@ -168,10 +161,8 @@ impl ErrorDialogController {
             Screen::SettingsOpen => Screen::Foreground { can_pause: false },
             Screen::Foreground { can_pause } => Screen::Foreground { can_pause },
         };
-        if let Some(transition) = self.poll_show(queue, unshielded) {
-            return SettingsClosedTransition::Show {
-                auto_pause: transition.auto_pause,
-            };
+        if let Some(ShowTransition::Present { auto_pause }) = self.poll_show(queue, unshielded) {
+            return SettingsClosedTransition::Show { auto_pause };
         }
         if !self.showing && queue.modal_pending() == 0 && self.auto_paused {
             self.auto_paused = false;
@@ -206,7 +197,7 @@ mod tests {
         );
         assert_eq!(
             controller.poll_show(&mut manager, Screen::show_gate(true, false, true)),
-            Some(ShowTransition { auto_pause: true })
+            Some(ShowTransition::Present { auto_pause: true })
         );
         assert_eq!(controller.current_detail(), Some("boom"));
         // Gate is open: a second poll (or a dismiss race) shows nothing.
@@ -231,7 +222,10 @@ mod tests {
         let transition = controller
             .poll_show(&mut manager, Screen::show_gate(true, false, false))
             .expect("batch queued");
-        assert!(!transition.auto_pause);
+        assert!(matches!(
+            transition,
+            ShowTransition::Present { auto_pause: false }
+        ));
         assert!(!controller.auto_paused());
         // Moved, not cloned: the queue no longer holds the batch.
         assert_eq!(manager.modal_pending(), 0);
@@ -248,19 +242,13 @@ mod tests {
             .expect("batch queued");
         let transition =
             controller.on_dismissed(&mut manager, Screen::show_gate(true, false, false));
-        assert_eq!(
-            transition,
-            DismissTransition {
-                resume: true,
-                reshow: true,
-            }
-        );
+        assert_eq!(transition, DismissTransition::ResumeAndReshow);
         assert!(!controller.auto_paused());
         // Next batch is still queued behind the released gate.
         let next = controller
             .poll_show(&mut manager, Screen::show_gate(true, false, true))
             .expect("second batch queued");
-        assert!(next.auto_pause);
+        assert!(matches!(next, ShowTransition::Present { auto_pause: true }));
         assert_eq!(controller.current_detail(), Some("second"));
     }
 
@@ -273,13 +261,7 @@ mod tests {
             .expect("batch queued");
         let transition =
             controller.on_dismissed(&mut manager, Screen::show_gate(true, false, false));
-        assert_eq!(
-            transition,
-            DismissTransition {
-                resume: false,
-                reshow: true,
-            }
-        );
+        assert_eq!(transition, DismissTransition::Reshow);
     }
 
     #[test]
@@ -291,13 +273,7 @@ mod tests {
             .expect("batch queued");
         let transition =
             controller.on_dismissed(&mut manager, Screen::show_gate(true, true, false));
-        assert_eq!(
-            transition,
-            DismissTransition {
-                resume: false,
-                reshow: false,
-            }
-        );
+        assert_eq!(transition, DismissTransition::Idle);
         assert!(controller.auto_paused());
         assert_eq!(manager.modal_pending(), 1);
         // Settings close replays the same head in display order.
@@ -324,18 +300,15 @@ mod tests {
         // Late dismiss after the suspend requeue: no double requeue.
         let transition =
             controller.on_dismissed(&mut manager, Screen::show_gate(false, false, false));
-        assert_eq!(
-            transition,
-            DismissTransition {
-                resume: false,
-                reshow: false,
-            }
-        );
+        assert_eq!(transition, DismissTransition::Idle);
         assert_eq!(manager.modal_pending(), 2);
         let replayed = controller
             .poll_show(&mut manager, Screen::show_gate(true, false, false))
             .expect("head requeued");
-        assert!(!replayed.auto_pause);
+        assert!(matches!(
+            replayed,
+            ShowTransition::Present { auto_pause: false }
+        ));
         assert_eq!(controller.current_detail(), Some("head"));
     }
 
@@ -351,13 +324,7 @@ mod tests {
             .expect("batch queued");
         let transition =
             controller.on_dismissed(&mut manager, Screen::show_gate(false, false, false));
-        assert_eq!(
-            transition,
-            DismissTransition {
-                resume: false,
-                reshow: false,
-            }
-        );
+        assert_eq!(transition, DismissTransition::Idle);
         assert!(controller.auto_paused());
         // Dismiss consumed the unacked head; suspend finds nothing to
         // requeue but the pause flag still drives the resume path.
@@ -375,13 +342,7 @@ mod tests {
             .expect("batch queued");
         controller.on_dismissed(&mut manager, Screen::show_gate(true, false, false));
         let again = controller.on_dismissed(&mut manager, Screen::show_gate(true, false, false));
-        assert_eq!(
-            again,
-            DismissTransition {
-                resume: false,
-                reshow: false,
-            }
-        );
+        assert_eq!(again, DismissTransition::Idle);
         assert_eq!(manager.modal_pending(), 0);
     }
 
