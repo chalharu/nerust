@@ -536,9 +536,17 @@ impl SessionHandle {
 
     /// Out-of-band frontend failures (picker, restore, bridge) join
     /// history, counting, and modal routing like any other error.
-    pub fn report_external_error(&mut self, detail: String) {
+    /// Detail is truncated to [`MAX_EXTERNAL_DETAIL`]: the modal
+    /// queue is count-capped, not byte-capped.
+    pub fn report_external_error(
+        &mut self,
+        source: super::notification::ExternalSource,
+        detail: String,
+    ) {
+        use super::notification::MAX_EXTERNAL_DETAIL;
+        let detail: String = detail.chars().take(MAX_EXTERNAL_DETAIL).collect();
         self.notifications
-            .push(super::notification::NotificationKind::ExternalError(detail));
+            .push(super::notification::NotificationKind::ExternalError { source, detail });
     }
 
     fn cmd_pause(&mut self) -> Result<SessionCommandOutcome, SessionError> {

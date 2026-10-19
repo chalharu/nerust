@@ -1356,6 +1356,29 @@ fn pump_osd_routes_no_core_error_to_modal() {
 /// Info without a composited frame is dropped by the pump: no dirty,
 /// no rows, no modal. Warnings still reach the modal.
 #[test]
+#[test]
+fn report_external_error_truncates_and_labels_source() {
+    use crate::session::notification::{ExternalSource, MAX_EXTERNAL_DETAIL, NotificationKind};
+
+    let mut session = test_session();
+    let long = "x".repeat(MAX_EXTERNAL_DETAIL + 100);
+    session.report_external_error(ExternalSource::Bridge, long);
+    let notes = session.drain_notifications();
+    assert_eq!(notes.len(), 1);
+    match &notes[0].kind {
+        NotificationKind::ExternalError { source, detail } => {
+            assert_eq!(*source, ExternalSource::Bridge);
+            assert_eq!(detail.len(), MAX_EXTERNAL_DETAIL);
+        }
+        other => panic!("unexpected kind: {other:?}"),
+    }
+    assert_eq!(
+        notes[0].level,
+        crate::session::notification::NotificationLevel::Error
+    );
+}
+
+#[test]
 fn pump_osd_drops_info_without_frame() {
     use std::time::Instant;
 

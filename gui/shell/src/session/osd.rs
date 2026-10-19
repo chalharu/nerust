@@ -1173,7 +1173,10 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Error,
-                kind: K::ExternalError("boom".to_string()),
+                kind: K::ExternalError {
+                    source: super::super::notification::ExternalSource::Bridge,
+                    detail: "boom".to_string(),
+                },
                 count: 1,
                 seq: 1,
                 at: std::time::SystemTime::now(),
@@ -1188,11 +1191,15 @@ mod tests {
 
     #[test]
     fn external_error_routes_modal_without_frame() {
-        use super::super::notification::NotificationKind as K;
-        let kind = K::ExternalError("picker failed".to_string());
+        use super::super::notification::{ExternalSource, NotificationKind as K};
+        let kind = K::ExternalError {
+            source: ExternalSource::Picker,
+            detail: "picker failed".to_string(),
+        };
         assert_eq!(kind.level(), NotificationLevel::Error);
         assert!(kind.wants_modal());
-        assert_eq!(kind.text(AppLanguage::English), "picker failed");
+        assert_eq!(kind.text(AppLanguage::English), "Picker: picker failed");
+        assert_eq!(kind.text(AppLanguage::Japanese), "選択: picker failed");
         let mut manager = OsdManager::new();
         manager.push_all_with_policy(
             vec![UiNotification {
