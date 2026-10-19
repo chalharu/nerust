@@ -30,17 +30,17 @@ pub(crate) enum ResumeWant {
 
 /// Foreground/license resume gate shared by the restore path and the
 /// window-ready retry. An error auto-pause owns the paused state until
-/// its dialog is dismissed, so a concurrent lifecycle resume stays
-/// suppressed. Named fields: positional bools transposed silently.
+/// its dialog is dismissed, so any concurrent resume (fresh load or
+/// lifecycle retry) stays suppressed while it holds. Named fields:
+/// positional bools transposed silently.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ForegroundResume {
-    pub lifecycle_paused: bool,
     pub error_paused: bool,
     pub want: Option<ResumeWant>,
 }
 
 pub(crate) fn should_resume_on_foreground(ctx: ForegroundResume) -> bool {
-    ctx.want.is_some() && !(ctx.lifecycle_paused && ctx.error_paused)
+    ctx.want.is_some() && !ctx.error_paused
 }
 
 #[cfg(test)]
@@ -66,25 +66,18 @@ mod tests {
     #[test]
     fn foreground_resume_needs_want_without_error_conflict() {
         use super::{ForegroundResume, ResumeWant};
-        let gate = |lifecycle_paused: bool, error_paused: bool, want: Option<ResumeWant>| {
-            should_resume_on_foreground(ForegroundResume {
-                lifecycle_paused,
-                error_paused,
-                want,
-            })
+        let gate = |error_paused: bool, want: Option<ResumeWant>| {
+            should_resume_on_foreground(ForegroundResume { error_paused, want })
         };
         // No want, no resume (manual pause survives; idle stays idle).
-        assert!(!gate(false, false, None));
-        assert!(!gate(true, false, None));
-        assert!(!gate(false, true, None));
-        assert!(!gate(true, true, None));
-        // Fresh-load want resumes over a pure error pause (preserved
-        // fresh behavior); the dismiss path still owns that resume.
-        assert!(gate(false, false, Some(ResumeWant::FreshLoad)));
-        assert!(gate(false, true, Some(ResumeWant::FreshLoad)));
-        // Lifecycle want resumes alone ...
-        assert!(gate(true, false, Some(ResumeWant::LifecycleRetry)));
-        // ... but an error auto-pause vetoes the concurrent resume.
-        assert!(!gate(true, true, Some(ResumeWant::LifecycleRetry)));
+        assert!(!gate(false, None));
+        assert!(!gate(true, None));
+        // Any want resumes alone, fresh or lifecycle ...
+        assert!(gate(false, Some(ResumeWant::FreshLoad)));
+        assert!(gate(false, Some(ResumeWant::LifecycleRetry)));
+        // ... but an error auto-pause owns the state until dismissed,
+        // so stale batches never run a new ROM underneath the dialog.
+        assert!(!gate(true, Some(ResumeWant::FreshLoad)));
+        assert!(!gate(true, Some(ResumeWant::LifecycleRetry)));
     }
 }

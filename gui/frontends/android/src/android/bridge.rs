@@ -72,6 +72,24 @@ pub(super) fn wake() {
     }
 }
 
+/// Run a JNI closure, clearing a pending Java exception on failure.
+/// Without this, a `NoSuchMethodError` (e.g. after a Kotlin rename)
+/// stays pending on the thread and poisons every later JNI call; the
+/// Rust `Err` alone never clears it.
+pub(super) fn with_java_env<T>(
+    vm: &jni::JavaVM,
+    operation: impl FnOnce(&mut jni::Env<'_>) -> jni::errors::Result<T>,
+) -> Result<T, jni::errors::Error> {
+    vm.attach_current_thread(|env| {
+        let result = operation(env);
+        if result.is_err() && env.exception_check() {
+            env.exception_clear();
+            log::debug!("cleared pending Java exception after JNI failure");
+        }
+        result
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onActivityDestroyed(
     _env: jni::EnvUnowned<'_>,

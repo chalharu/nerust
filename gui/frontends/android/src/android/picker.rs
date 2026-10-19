@@ -90,7 +90,7 @@ pub(crate) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, Strin
 
 pub(crate) fn read_uri_bytes(app: &AndroidApp, uri: &str) -> Result<Vec<u8>, String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    vm.attach_current_thread(|env| {
+    bridge::with_java_env(&vm, |env| {
         env.with_local_frame(16, |env| {
             let activity_raw = app.activity_as_ptr() as jobject;
             let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
@@ -167,7 +167,7 @@ pub(crate) fn infer_import_metadata(app: &AndroidApp, uri: &str) -> (String, Str
 
 fn read_display_name(app: &AndroidApp, uri: &str) -> Result<Option<String>, String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    vm.attach_current_thread(|env| -> jni::errors::Result<Option<String>> {
+    bridge::with_java_env(&vm, |env| -> jni::errors::Result<Option<String>> {
         env.with_local_frame(32, |env| -> jni::errors::Result<Option<String>> {
             let activity_raw = app.activity_as_ptr() as jobject;
             let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
@@ -265,7 +265,7 @@ fn read_display_name(app: &AndroidApp, uri: &str) -> Result<Option<String>, Stri
 
 fn start_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    vm.attach_current_thread(|env| {
+    bridge::with_java_env(&vm, |env| {
         env.with_local_frame(4, |env| {
             let activity_raw = app.activity_as_ptr() as jobject;
             let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
@@ -283,7 +283,7 @@ fn start_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String> {
 
 fn start_tree_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    vm.attach_current_thread(|env| {
+    bridge::with_java_env(&vm, |env| {
         let activity_raw = app.activity_as_ptr() as jobject;
         let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
         env.call_method(

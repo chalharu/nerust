@@ -233,22 +233,26 @@ impl AndroidOsd {
     /// side and refreshed on every layout pass. Falls back to zeros
     /// (corner dp base still applies) when the bridge is unavailable.
     pub(super) fn query_system_insets(app: &AndroidApp) -> SafeInsets {
-        let insets: Option<[i32; 4]> = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) }
-            .attach_current_thread(|env| {
-                let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
-                let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-                let values = env.call_method(
-                    &activity,
-                    jni::jni_str!("getSafeInsetsPx"),
-                    jni::jni_sig!("()[I"),
-                    &[],
-                )?;
-                let array = env.cast_local::<jni::objects::JIntArray>(values.l()?)?;
-                let mut out = [0i32; 4];
-                array.get_region(env, 0, &mut out)?;
-                Ok::<_, jni::errors::Error>(out)
-            })
-            .ok();
+        let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
+        let insets: Option<[i32; 4]> = super::bridge::with_java_env(&vm, |env| {
+            let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
+            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+            let values = env.call_method(
+                &activity,
+                jni::jni_str!("getSafeInsetsPx"),
+                jni::jni_sig!("()[I"),
+                &[],
+            )?;
+            let array = env.cast_local::<jni::objects::JIntArray>(values.l()?)?;
+            let mut out = [0i32; 4];
+            array.get_region(env, 0, &mut out)?;
+            Ok::<_, jni::errors::Error>(out)
+        })
+        .map_err(|error| {
+            log::warn!("system insets query failed: {error:?}");
+            error
+        })
+        .ok();
         match insets {
             Some([top, right, bottom, left]) => SafeInsets {
                 top: top.max(0) as u32,
