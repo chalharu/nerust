@@ -151,8 +151,9 @@ impl GtkOsd {
             OsdSync::Skip => {}
             OsdSync::Clear => renderer.borrow_mut().set_osd_layer(None),
             OsdSync::Render(plan) => {
-                let content = plan.content();
-                let layer = self.raster.rasterize(&content, plan.width, plan.height);
+                let (width, height) = (plan.width, plan.height);
+                let content = plan.into_content();
+                let layer = self.raster.rasterize(&content, width, height);
                 renderer.borrow_mut().set_osd_layer(layer);
             }
         }

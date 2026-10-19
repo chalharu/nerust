@@ -21,7 +21,15 @@ const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
 const ACTION_UNLOAD: &str = "unload";
 
 pub(crate) fn take_events() -> Vec<FrontendEvent> {
-    bridge::with_state(|state| state.frontend_events.drain(..).collect())
+    let mut drained = Vec::new();
+    take_events_into(&mut drained);
+    drained
+}
+
+/// Drain into a caller-owned buffer: idle ticks reuse capacity
+/// instead of allocating a fresh vector per pass.
+pub(crate) fn take_events_into(out: &mut Vec<FrontendEvent>) {
+    bridge::with_state(|state| out.extend(state.frontend_events.drain(..)));
 }
 
 fn decode_menu_action(raw: &str) -> Option<MenuAction> {

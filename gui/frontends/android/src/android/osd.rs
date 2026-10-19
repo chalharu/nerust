@@ -38,6 +38,7 @@ const BAR_AXIS_EXTRA_DP: f32 = 16.0;
 /// frontend; everything OSD lives here.
 pub(super) struct AndroidOsd {
     manager: OsdManager,
+    controller: crate::error_dialog_controller::ErrorDialogController,
     raster: nerust_render_osd::OsdRaster,
     presenter: OsdPresenter,
     last_strip: ReservedStrip,
@@ -63,6 +64,7 @@ impl AndroidOsd {
         raster.set_ui_scale(OSD_UI_SCALE);
         Self {
             manager: OsdManager::new(),
+            controller: crate::error_dialog_controller::ErrorDialogController::new(),
             raster,
             presenter: OsdPresenter::new(),
             last_strip: ReservedStrip::default(),
@@ -88,10 +90,41 @@ impl AndroidOsd {
         self.last_system_scale_key = u32::MAX;
     }
 
-    /// Sole shell-queue access: the error controller drives the modal
-    /// gate through this; out-of-band errors queue through this too.
-    pub(super) fn manager_mut(&mut self) -> &mut OsdManager {
-        &mut self.manager
+    /// Frontend-owned modal flow: the only `&mut` path to the
+    /// shell queue besides the shell pump. Callers never touch the
+    /// manager directly, so the one-dialog invariant has one owner.
+    pub(super) fn poll_error_dialog(
+        &mut self,
+        screen: crate::error_dialog_controller::ScreenState,
+    ) -> Option<crate::error_dialog_controller::ShowTransition> {
+        self.controller.poll_show(&mut self.manager, screen)
+    }
+
+    pub(super) fn error_detail(&self) -> Option<String> {
+        self.controller.current_detail().map(str::to_string)
+    }
+
+    pub(super) fn dismiss_error_dialog(
+        &mut self,
+        screen: crate::error_dialog_controller::ScreenState,
+    ) -> crate::error_dialog_controller::DismissTransition {
+        self.controller.on_dismissed(&mut self.manager, screen)
+    }
+
+    pub(super) fn suspend_error_dialog(&mut self) {
+        self.controller.on_suspended(&mut self.manager);
+    }
+
+    pub(super) fn settings_closed_error_dialog(
+        &mut self,
+        screen: crate::error_dialog_controller::ScreenState,
+    ) -> crate::error_dialog_controller::SettingsClosedTransition {
+        self.controller
+            .on_settings_closed(&mut self.manager, screen)
+    }
+
+    pub(super) fn error_auto_paused(&self) -> bool {
+        self.controller.auto_paused()
     }
 
     /// Drain shell notifications into display state. Error batches join
@@ -264,7 +297,7 @@ impl AndroidOsd {
             OsdSync::Skip => {}
             OsdSync::Clear => renderer.set_osd_layer(None),
             OsdSync::Render(plan) => {
-                let content = plan.content();
+                let content = plan.into_content();
                 self.raster.set_safe_insets(insets);
                 renderer.set_osd_layer(self.raster.rasterize(&content, plan.width, plan.height));
             }
