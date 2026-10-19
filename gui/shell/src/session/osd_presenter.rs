@@ -129,7 +129,7 @@ impl OsdPlan {
 /// Narrow chrome view for [`OsdPresenter::sync`]. Only the fields
 /// the layer decision reads; a new settings field cannot ripple in.
 /// Adapted once per frame at the settings boundary via `From`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OsdChrome {
     pub status_enabled: bool,
     pub position: NotificationPosition,
@@ -203,7 +203,11 @@ pub struct OsdPresenter {
         NotificationAreaMode,
     )>,
     last_size: Option<(u32, u32)>,
-    last_chrome: Option<(nerust_render_traits::renderer::SafeInsets, u32)>,
+    /// Last layer geometry (position, area mode, status corner). The
+    /// status tuple only exists while enabled, so a position flip with
+    /// status off needs its own fingerprint or the Skip gate sticks.
+    last_chrome: Option<OsdChrome>,
+    last_raster: Option<(nerust_render_traits::renderer::SafeInsets, u32)>,
     active: bool,
 }
 
@@ -275,13 +279,14 @@ impl OsdPresenter {
         }
         let status_changed = status_key != self.last_status;
         let raster = (safe_insets, ui_scale.to_bits());
-        let chrome_changed = self.last_chrome != Some(raster);
+        let chrome_changed = self.last_chrome != Some(chrome) || self.last_raster != Some(raster);
         if !changed && !status_changed && !chrome_changed && self.last_size == Some((width, height))
         {
             return OsdSync::Skip;
         }
         self.last_size = Some((width, height));
-        self.last_chrome = Some(raster);
+        self.last_chrome = Some(chrome);
+        self.last_raster = Some(raster);
         self.last_status = status_key.clone();
         let empty = state.visible_row().is_none() && status_key.is_none();
         if empty {
@@ -777,6 +782,40 @@ mod tests {
                 &state,
                 sync_input(chrome_of(&settings), now, 960, 720, 0.5, inset)
             ),
+            OsdSync::Skip
+        ));
+    }
+
+    #[test]
+    fn rerenders_on_position_change_with_status_off() {
+        use nerust_settings_core::model::local::NotificationPosition as Pos;
+        let mut state = row_state("Paused");
+        let mut presenter = OsdPresenter::new();
+        let mut settings = presenter_settings();
+        assert!(!settings.status_enabled);
+        let now = Instant::now();
+        let input = |pos| {
+            let mut chrome = chrome_of(&settings);
+            chrome.position = pos;
+            sync_input(chrome, now, 960, 720, 1.0, SafeInsets::default())
+        };
+        // Rows showing, status off: first frame renders.
+        assert!(matches!(
+            presenter.sync(&state, input(Pos::TopLeft)),
+            OsdSync::Render(_)
+        ));
+        assert!(matches!(
+            presenter.sync(&state, input(Pos::TopLeft)),
+            OsdSync::Skip
+        ));
+        // Corner flip moves the layer: must re-render with identical
+        // rows and no generation bump.
+        assert!(matches!(
+            presenter.sync(&state, input(Pos::BottomRight)),
+            OsdSync::Render(_)
+        ));
+        assert!(matches!(
+            presenter.sync(&state, input(Pos::BottomRight)),
             OsdSync::Skip
         ));
     }
