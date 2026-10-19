@@ -217,10 +217,6 @@ pub fn delete_vertex_arrays(n: GLsizei, arrays: *mut GLuint) -> Result<(), Error
     gl_error_handle(|| unsafe { gl::DeleteVertexArrays(n, arrays) })
 }
 
-pub fn generate_mipmap(target: GLenum) -> Result<(), Error> {
-    gl_error_handle(|| unsafe { gl::GenerateMipmap(target) })
-}
-
 pub fn viewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::Viewport(x, y, width, height) })
 }

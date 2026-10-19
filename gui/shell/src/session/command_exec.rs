@@ -11,7 +11,7 @@ use crate::{
             resolve_toggle,
         },
         error::SlotOpFailure,
-        persistence::PersistenceManager,
+        persistence::{PersistenceManager, SlotDirection},
     },
 };
 
@@ -23,15 +23,14 @@ impl SessionHandle {
         // Resolve TogglePause to its steady arm so notifications name
         // the state actually entered.
         let was_paused = self.paused();
-        let effective = resolve_toggle(command, was_paused);
-        let result = self.run_command_inner(effective);
+        let result = self.run_command_inner(command);
         match &result {
             Ok(outcome) => {
                 let active = self.active_slot_id();
                 // Notify the entered state: TogglePause from paused
                 // must read Resumed, not the invoked command name.
                 let notified = match command {
-                    SessionCommand::TogglePause => effective,
+                    SessionCommand::TogglePause => resolve_toggle(command, was_paused),
                     other => other,
                 };
                 for kind in outcome_notifications(notified, outcome, active) {
@@ -74,8 +73,10 @@ impl SessionHandle {
             SessionCommand::SaveSlot(id) => Ok(self.slot_op_ok(|p, c| p.save_slot(id, c, false))),
             SessionCommand::LoadSlot(id) => Ok(self.load_slot_op(|p, c| p.load_slot(id, c))),
             SessionCommand::DeleteSlot(id) => Ok(self.slot_op(|p, c| p.delete_slot(id, c))),
-            SessionCommand::SelectNextSlot => Ok(self.cmd_adjacent_slot(true)),
-            SessionCommand::SelectPreviousSlot => Ok(self.cmd_adjacent_slot(false)),
+            SessionCommand::SelectNextSlot => Ok(self.cmd_adjacent_slot(SlotDirection::Next)),
+            SessionCommand::SelectPreviousSlot => {
+                Ok(self.cmd_adjacent_slot(SlotDirection::Previous))
+            }
         }
     }
 
@@ -129,12 +130,12 @@ impl SessionHandle {
         }
     }
 
-    fn cmd_adjacent_slot(&mut self, forward: bool) -> SessionCommandOutcome {
+    fn cmd_adjacent_slot(&mut self, direction: SlotDirection) -> SessionCommandOutcome {
         SessionCommandOutcome {
             executed: self
                 .media
                 .persistence
-                .select_adjacent_slot(forward)
+                .select_adjacent_slot(direction)
                 .is_some(),
             needs_redraw: false,
             slot_failure: None,

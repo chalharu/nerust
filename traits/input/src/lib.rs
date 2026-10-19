@@ -514,6 +514,20 @@ impl InputAssignments {
             })
             .collect()
     }
+
+    /// Structural equality without allocating string pairs: compares
+    /// slot ids and controller profile ids in order.
+    pub fn assignments_equal(&self, other: &Self) -> bool {
+        self.slots.len() == other.slots.len()
+            && self.slots.iter().zip(other.slots.iter()).all(|(a, b)| {
+                a.0 == b.0
+                    && match (&a.1, &b.1) {
+                        (None, None) => true,
+                        (Some(x), Some(y)) => x.profile_id() == y.profile_id(),
+                        _ => false,
+                    }
+            })
+    }
 }
 
 /// Errors from create_split.

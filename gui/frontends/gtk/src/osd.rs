@@ -143,7 +143,7 @@ impl GtkOsd {
                 width: w,
                 height: h,
                 ui_scale: 1.0,
-                safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
+                safe_insets: nerust_gui_shell::session::osd::UiInsets::default(),
             },
         );
         match decision {

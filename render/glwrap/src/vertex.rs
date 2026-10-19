@@ -6,9 +6,10 @@ use super::{Error, gl_error_handle, gl_get_error};
 
 /// GL vertex array plus the buffers it references. Single-threaded by
 /// construction: `Rc`/`Cell` internals are `!Send`, so all names live
-/// and die on the GL context thread. Teardown order matters (VAO
-/// before VBOs; see the view teardown) because the VAO holds the
-/// attribute state pointing at them.
+/// and die on the GL context thread. Teardown deletes held buffers
+/// first, then the VAO that references them (see
+/// [`VertexArray::destroy_if_current`]); the view teardown follows the
+/// same leaf-first order.
 #[derive(Debug)]
 pub struct VertexArray {
     vao: VertexArrayVAO,

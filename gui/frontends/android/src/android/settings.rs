@@ -980,7 +980,12 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
                 resolve_pending_as_dismissed();
             }
         },
-        jni::Outcome::Ok(None) => log::warn!("ignoring settings result without request ID"),
+        jni::Outcome::Ok(None) => {
+            // Null is the documented dismissed encoding: resolve the
+            // single flight instead of wedging `pending_request_id`.
+            log::debug!("Android settings dialog dismissed without result");
+            resolve_pending_as_dismissed();
+        }
         jni::Outcome::Err(error) => {
             log::error!("failed to decode Android settings dialog result: {error:?}");
             resolve_pending_as_dismissed();

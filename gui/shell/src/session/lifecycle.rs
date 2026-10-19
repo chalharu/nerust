@@ -8,6 +8,7 @@ use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest};
 use crate::session::{
     SessionError, SessionHandle,
     osd::{OsdManager, PumpReport, PushInput},
+    persistence_setup::MapperRestore,
 };
 
 impl SessionHandle {
@@ -38,7 +39,7 @@ impl SessionHandle {
             media: media.clone(),
         });
 
-        let setup = self.setup_persistence(media.native_path(), true);
+        let setup = self.setup_persistence(media.native_path(), MapperRestore::Load);
         self.note_persistence_setup(setup);
 
         self.remember_last_successful_rom_directory(media.native_path());

@@ -58,8 +58,7 @@ impl HostState {
             }
             MenuCommand::Session(command) => {
                 let _ = self.session.run_command(command);
-                self.sync_menu_state();
-                self.refresh_window_title();
+                self.sync_chrome(false);
                 HostAction::None
             }
             MenuCommand::Quit => {
@@ -119,9 +118,7 @@ impl HostState {
 
     fn close_rom(&mut self) {
         SessionControl::unload(self);
-        self.sync_menu_state();
-        self.request_redraw();
-        self.refresh_window_title();
+        self.sync_chrome(true);
     }
 
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
@@ -138,8 +135,7 @@ impl HostState {
             KeyboardShortcut::Session(action) => dispatch_session_action(self, action),
             KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
         }
-        self.sync_menu_state();
-        self.refresh_window_title();
+        self.sync_chrome(false);
     }
 }
 

@@ -466,8 +466,8 @@ impl PersistenceManager {
         self.active_slot_id = Some(slot_id);
     }
 
-    pub fn select_adjacent_slot(&mut self, forward: bool) -> Option<u64> {
-        let next_slot_id = adjacent_slot_id(&self.slots, self.active_slot_id, forward)?;
+    pub fn select_adjacent_slot(&mut self, direction: SlotDirection) -> Option<u64> {
+        let next_slot_id = adjacent_slot_id(&self.slots, self.active_slot_id, direction)?;
         self.active_slot_id = Some(next_slot_id);
         Some(next_slot_id)
     }
@@ -671,11 +671,26 @@ impl PersistenceManager {
     }
 }
 
+/// Slot navigation direction. Replaces the `forward: bool` pair so
+/// call sites read as `Next`/`Previous` instead of `true`/`false`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlotDirection {
+    Next,
+    Previous,
+}
+
+impl SlotDirection {
+    fn is_next(self) -> bool {
+        matches!(self, SlotDirection::Next)
+    }
+}
+
 pub fn adjacent_slot_id(
     slots: &[StateSlotSummary],
     active_slot_id: Option<u64>,
-    forward: bool,
+    direction: SlotDirection,
 ) -> Option<u64> {
+    let forward = direction.is_next();
     if slots.is_empty() {
         return None;
     }

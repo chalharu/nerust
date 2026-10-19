@@ -7,7 +7,7 @@ use std::{path::Path, sync::Arc};
 use nerust_core_traits::factory::CoreFactory;
 use nerust_input_traits::InputAssignments;
 
-use crate::session::{SessionError, SessionHandle};
+use crate::session::{SessionError, SessionHandle, persistence_setup::MapperRestore};
 use nerust_settings_core::factory::settings_view;
 
 /// What `apply_live_runtime` did, so a failed settings save can undo
@@ -185,7 +185,7 @@ impl SessionHandle {
 
         let assignments_changed = next_assignments
             .as_ref()
-            .is_some_and(|a| a.to_string_pairs() != previous_assignments.to_string_pairs());
+            .is_some_and(|a| !a.assignments_equal(&previous_assignments));
 
         if plan.persistence_changed
             && let Some(core) = self.emu.core_opt()
@@ -224,7 +224,7 @@ impl SessionHandle {
                 .loaded
                 .as_ref()
                 .and_then(|media| media.media.native_path().map(Path::to_path_buf));
-            let setup = self.setup_persistence(rom_path.as_deref(), false);
+            let setup = self.setup_persistence(rom_path.as_deref(), MapperRestore::Skip);
             self.note_persistence_setup(setup);
         }
         self.input.pressed_keys.clear();
@@ -300,7 +300,12 @@ impl SessionHandle {
                 .as_ref()
                 .and_then(|m| m.media.native_path().map(Path::to_path_buf));
             let rom_path_deref = rom_path.as_deref();
-            let setup = self.setup_persistence(rom_path_deref, !restored_runtime_state);
+            let restore = if restored_runtime_state {
+                MapperRestore::Skip
+            } else {
+                MapperRestore::Load
+            };
+            let setup = self.setup_persistence(rom_path_deref, restore);
             self.note_persistence_setup(setup);
             if was_paused && let Some(core) = self.emu.core_opt_mut() {
                 core.pause()?;

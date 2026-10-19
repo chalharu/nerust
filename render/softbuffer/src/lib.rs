@@ -59,6 +59,9 @@ struct TapKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResizeKernel {
+    // No selection knob yet: Bilinear is hardcoded in `LutEntry::new`.
+    // Kept (not deleted) so the nearest path stays compilable beside
+    // the bilinear one; arms dispatch on `self.kernel` as usual.
     #[expect(unused)]
     NearestNeighbor,
     Bilinear,

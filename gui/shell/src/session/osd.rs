@@ -21,8 +21,9 @@ pub use super::osd_history::{
 pub use crate::session::osd_modal::{ModalSink, ModalSource};
 pub use crate::session::osd_presenter::{
     OsdChrome, OsdPlan, OsdPresenter, OsdState, OsdSync, OsdSyncInput, STATUS_FPS_MIN_INTERVAL,
-    StatusGate, osd_anchor, strip_rows,
+    StatusGate, UiInsets, strip_rows,
 };
+pub use crate::session::osd_render::{OSD_STATUS_RGB, osd_anchor};
 pub use crate::session::osd_transient::{FrameChannel, OsdRow, TransientPolicy};
 
 use crate::session::osd_modal::ModalBox;

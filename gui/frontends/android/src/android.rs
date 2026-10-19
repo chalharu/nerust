@@ -39,6 +39,7 @@ use nerust_gui_shell::{
         SessionError, SessionHandle,
         access::{PauseControl, SessionControl, SettingsResult, SlotControl},
         commands::{SessionCommand, SessionCommandOutcome},
+        osd::TickMetrics,
     },
 };
 use nerust_input_traits::{AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent};
@@ -853,6 +854,14 @@ impl AndroidFrontend {
         // reopen racing this result keeps its shield instead of taking
         // an auto-paused error dialog underneath.
         self.settings_open = settings::is_dialog_open();
+        if self.settings_open {
+            // Stale synthesized dismiss racing a suspend-then-rerequest:
+            // the dialog is visually up, so this result belongs to a
+            // dead flight. Ignore it; the live flight's result arrives
+            // with its own request id.
+            log::debug!("handle_settings_result: stale result while dialog open; ignoring");
+            return;
+        }
         let screen = Screen::show_gate(
             self.is_resumed,
             self.settings_open,
@@ -1116,12 +1125,10 @@ impl AndroidFrontend {
     /// Show the oldest queued error unless suspended, already showing,
     /// or settings owns the screen. The cached flag avoids a bridge
     /// lock per pass; dismissal still consults the bridge as truth.
-    fn maybe_show_error_dialog(&mut self) {
-        let screen = Screen::show_gate(
-            self.is_resumed,
-            self.settings_open,
-            self.session.can_pause(),
-        );
+    /// Takes the pass tick so the caller pays one metrics lock, not
+    /// one per dialog gate.
+    fn maybe_show_error_dialog(&mut self, tick: TickMetrics) {
+        let screen = Screen::show_gate(self.is_resumed, self.settings_open, tick.can_pause());
         let request = self.osd.poll_error_dialog(screen);
         let Some(transition) = request else {
             return;
@@ -1142,16 +1149,17 @@ impl AndroidFrontend {
     fn handle_error_dialog_dismissed(&mut self) {
         // Bridge truth here: a settings dialog may have opened over the
         // error between the cached flag's last event-driven update.
+        let tick = self.session.tick_metrics();
         let screen = Screen::show_gate(self.is_resumed, settings::is_dialog_open(), false);
         let transition = self.osd.dismiss_error_dialog(screen);
         match transition {
             crate::error_dialog_controller::DismissTransition::Idle => {}
             crate::error_dialog_controller::DismissTransition::Reshow => {
-                self.maybe_show_error_dialog();
+                self.maybe_show_error_dialog(tick);
             }
             crate::error_dialog_controller::DismissTransition::ResumeAndReshow => {
                 self.resume();
-                self.maybe_show_error_dialog();
+                self.maybe_show_error_dialog(tick);
             }
         }
     }
@@ -1640,8 +1648,7 @@ impl AndroidFrontend {
         });
         match renderer.render(fb) {
             RenderResult::Presented => {
-                self.shell
-                    .on_frame_presented(self.session.metrics().frame_counter);
+                self.shell.on_frame_presented(tick.frame_counter);
                 self.request_redraw();
             }
             RenderResult::Skipped => {
@@ -1826,7 +1833,13 @@ impl AndroidFrontend {
                 }
                 Some(o)
             }
-            Err(_) => None,
+            Err(error) => {
+                // Mobile has no stderr: a silent None looks like
+                // success. The shell already pushed a modal batch;
+                // the warn keeps the transport cause in logcat.
+                log::warn!("Android exec {cmd:?} failed: {error}");
+                None
+            }
         }
     }
 }
@@ -2090,11 +2103,10 @@ impl ApplicationHandler for AndroidFrontend {
         {
             self.request_redraw();
         }
-        self.maybe_show_error_dialog();
+        self.maybe_show_error_dialog(tick);
 
         if let Some(window) = self.window.as_ref() {
-            let frame_counter = self.session.metrics().frame_counter;
-            if self.shell.wants_redraw(frame_counter) {
+            if self.shell.wants_redraw(tick.frame_counter) {
                 window.request_redraw();
             }
             // Render loop is self-sustaining via request_redraw() after each present.

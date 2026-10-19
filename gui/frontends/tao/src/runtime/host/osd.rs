@@ -99,12 +99,11 @@ impl HostState {
             self.osd.history_sync_key = None;
             return;
         }
-        // Same aux-focus agreement as debugger/PPU: same-app moves
-        // cancel a pending auto-pause; leaving anywhere arms it.
-        let focused = matches!(event, WindowEvent::Focused(true));
-        let resume = self.note_aux_focus(focused);
-        if resume {
-            self.resume_session();
+        // Read-only viewer like settings: arrival only cancels a
+        // pending pause and never resumes. A protocol-paused session
+        // stays paused while browsing history.
+        if let WindowEvent::Focused(focused) = event {
+            self.note_aux_focus_quiet(focused);
         }
         if let Some(handle) = self.osd.history_window.as_mut() {
             handle.on_event(event);
@@ -310,7 +309,7 @@ impl HostState {
                 width: size.width,
                 height: size.height,
                 ui_scale: 1.0,
-                safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
+                safe_insets: nerust_gui_shell::session::osd::UiInsets::default(),
             },
         );
         match decision {

@@ -14,6 +14,10 @@ if [[ -z "${TAG_NAME:-}" ]]; then
         TAG_NAME="v0.1.0"
     fi
 fi
+if [[ -z "${TARGET_DIR}" ]]; then
+    echo "cannot resolve target directory: cargo metadata failed and CARGO_TARGET_DIR is unset" >&2
+    exit 1
+fi
 OUT_DIR="${OUT_DIR:-${TARGET_DIR}/dist}"
 JNI_LIBS_DIR="${SCRIPT_DIR}/app/src/main/jniLibs"
 APK_SRC="${SCRIPT_DIR}/app/build/outputs/apk/release/app-release.apk"
@@ -147,11 +151,10 @@ cargo ndk \
 # warns and skips the gate when no reader exists off CI, fails hard when
 # CI needs it. Gates the *staged* tree; the in-tree jniLibs update only
 # after every .so passes.
-budget_for_abi() {
-    case "$1" in
-        arm64-v8a) printf '%s' "${BUDGET_BYTES:-41943040}" ;;
-        *) printf '%s' "${BUDGET_BYTES:-41943040}" ;;
-    esac
+# Per-ABI native library budget in bytes. Only arm64-v8a ships today;
+# extend the table (not the gate logic) when new ABIs land.
+native_budget_bytes() {
+    printf '%s' "${BUDGET_BYTES:-41943040}"
 }
 readelf_bin=""
 for cand in "${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf; do
@@ -184,7 +187,7 @@ else
     fi
     for main_so in "${so_files[@]}"; do
         abi="$(basename "$(dirname "${main_so}")")"
-        budget="$(budget_for_abi "${abi}")"
+        budget="$(native_budget_bytes)"
         if "${readelf_bin}" -S "${main_so}" | grep -Eq '\.debug_(info|abbrev|line|str|ranges|addr|loclists?)|\.zdebug_'; then
             echo "${abi}/libmain.so contains DWARF sections; release strip is not effective" >&2
             exit 1

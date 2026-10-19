@@ -299,6 +299,13 @@ impl DebugWindowHandle {
             position,
             "debugger window",
         )
+        .map_err(|error| {
+            // Typed scaffold failures carry the window tag plus the
+            // native detail; surface them here since the opener seam
+            // is Option-based.
+            log::error!("{error}");
+            error
+        })
         .ok()?;
         let program = DebugProgram {
             bridge: Arc::clone(&bridge),

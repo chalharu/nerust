@@ -362,7 +362,11 @@ impl FrameLayout {
             row_bytes,
             stride,
             need,
-            stride_px: stride_px as i32,
+            stride_px: i32::try_from(stride_px).map_err(|_| ViewError::Frame {
+                what: "frame stride overflows i32",
+                need: 0,
+                have: data_len,
+            })?,
         })
     }
 }
@@ -396,7 +400,9 @@ fn upload_frame(
             }),
         }
     } else {
-        if tight.len() != layout.need {
+        // Grow-only like the OSD scratches: a smaller profile must
+        // not shrink + memset the buffer on the frame path.
+        if tight.len() < layout.need {
             tight.resize(layout.need, 0);
         }
         pack_rows_stripped(data, layout.stride, layout.height, tight, layout.row_bytes);

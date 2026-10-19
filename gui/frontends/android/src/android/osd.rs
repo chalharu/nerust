@@ -291,7 +291,7 @@ impl AndroidOsd {
                 width: size.width,
                 height: size.height,
                 ui_scale: OSD_UI_SCALE,
-                safe_insets: insets,
+                safe_insets: insets.into(),
             },
         );
         match decision {

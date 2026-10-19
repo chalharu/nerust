@@ -10,6 +10,7 @@ pub mod osd;
 pub mod osd_history;
 pub(crate) mod osd_modal;
 pub(crate) mod osd_presenter;
+pub(crate) mod osd_render;
 pub(crate) mod osd_transient;
 pub mod persistence;
 pub(crate) mod persistence_setup;
@@ -103,6 +104,26 @@ struct InputCluster {
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_keyboard::Key, usize>,
     pressed_keys: BTreeSet<Key>,
+}
+
+impl InputCluster {
+    /// Rebuild the keyboard reverse map from the implicit profile.
+    /// Takes only the bindings it reads; the session resolves which
+    /// profile is active, so this cluster never reaches into settings
+    /// or the factory registry.
+    pub(crate) fn rebuild_key_field_map<B: crate::session::input::InputBinding<Id = Key>>(
+        &mut self,
+        bindings: Option<&[B]>,
+    ) {
+        self.key_field_map.clear();
+        if let Some(bindings) = bindings {
+            crate::session::input::rebuild_input_map(
+                &self.field_map,
+                bindings,
+                &mut self.key_field_map,
+            );
+        }
+    }
 }
 
 /// Settings cluster: manager plus its snapshot. Single owner for the
