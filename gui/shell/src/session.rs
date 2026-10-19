@@ -7,6 +7,9 @@ pub mod lifecycle;
 pub mod notification;
 pub mod osd;
 pub mod osd_history;
+pub(crate) mod osd_modal;
+pub(crate) mod osd_presenter;
+pub(crate) mod osd_transient;
 pub mod persistence;
 #[cfg(test)]
 mod persistence_test;
