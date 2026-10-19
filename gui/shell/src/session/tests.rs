@@ -519,8 +519,8 @@ fn apply_settings_rolls_back_on_save_failure() {
 
     // Assignments should be rolled back
     assert_eq!(
-        session.input.current_assignments.to_string_pairs(),
-        original_assignments.to_string_pairs(),
+        Vec::<(String, Option<String>)>::from(&session.input.current_assignments),
+        Vec::<(String, Option<String>)>::from(&original_assignments),
         "assignments should be rolled back on save failure"
     );
 
@@ -536,7 +536,7 @@ fn apply_settings_rolls_back_on_save_failure() {
 fn apply_settings_rebuilds_when_assignments_change() {
     use crate::test_helpers::{TEST_SLOT_P1, mock_core_creations};
     let mut session = test_session();
-    let prev_pairs = session.input.current_assignments.to_string_pairs();
+    let prev_pairs = Vec::<(String, Option<String>)>::from(&session.input.current_assignments);
 
     let sid = session.factory().unwrap().system_id();
     let mut next = session.settings_snapshot().clone();
@@ -556,7 +556,7 @@ fn apply_settings_rebuilds_when_assignments_change() {
         "reassignment still reconstructs the core"
     );
 
-    let new_pairs = session.input.current_assignments.to_string_pairs();
+    let new_pairs = Vec::<(String, Option<String>)>::from(&session.input.current_assignments);
     assert_ne!(
         new_pairs, prev_pairs,
         "assignments should be updated after apply"
@@ -627,8 +627,8 @@ fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
     RomLoadTarget::set_active_system(&mut session, system_id.as_ref())
         .expect("fallback core creation should succeed");
     assert_eq!(
-        session.input.current_assignments.to_string_pairs(),
-        expected_assignments.to_string_pairs()
+        Vec::<(String, Option<String>)>::from(&session.input.current_assignments),
+        Vec::<(String, Option<String>)>::from(&expected_assignments)
     );
 }
 

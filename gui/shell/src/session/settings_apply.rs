@@ -185,7 +185,7 @@ impl SessionHandle {
 
         let assignments_changed = next_assignments
             .as_ref()
-            .is_some_and(|a| !a.assignments_equal(&previous_assignments));
+            .is_some_and(|a| a != &previous_assignments);
 
         if plan.persistence_changed
             && let Some(core) = self.emu.core_opt()

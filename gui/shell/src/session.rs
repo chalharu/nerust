@@ -533,7 +533,7 @@ impl SessionHandle {
     }
 
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
-        self.input.current_assignments.to_string_pairs()
+        Vec::from(&self.input.current_assignments)
     }
 
     pub fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
