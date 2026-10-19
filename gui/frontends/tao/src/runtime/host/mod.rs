@@ -109,8 +109,12 @@ pub(crate) struct HostState {
     /// Window creation failure: the loop exits gracefully.
     fatal_error: Option<String>,
     /// Close teardown already ran (CloseRequested then Destroyed
-    /// double-delivers): flush and window clearing run exactly once.
+    /// double-delivers): flush runs exactly once.
     exited: bool,
+    /// Main window still usable. Cleared on close instead of dropping
+    /// the handles: dropping tao/GTK objects inside a destroy handler
+    /// re-enters the dying native window (BadWindow, exit 1).
+    main_window_live: bool,
     pub(super) session: SessionHandle,
     ctx: FrontendContext,
     app_menu: Box<dyn MenuSink>,
@@ -204,6 +208,7 @@ impl HostState {
             window: None,
             fatal_error: None,
             exited: false,
+            main_window_live: true,
             session,
             ctx,
             app_menu,
