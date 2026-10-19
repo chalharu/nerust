@@ -315,19 +315,75 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
 /// (twins by design): native window, viewport, input state, renderer,
 /// and UI shell. Program-specific halves stay in the handles.
 pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
-    pub(crate) window: Arc<TaoWindow>,
-    pub(crate) window_id: iced::window::Id,
-    pub(crate) ui_state: UiShell<P>,
-    pub(crate) renderer: ShellRenderer,
-    pub(crate) viewport_physical: (u32, u32),
+    window: Arc<TaoWindow>,
+    window_id: iced::window::Id,
+    ui_state: UiShell<P>,
+    renderer: ShellRenderer,
+    viewport_physical: (u32, u32),
     /// Last surface-configured size. Resize storms only relayout;
     /// the realloc happens in `render`, once per presented frame.
     surface_size: (u32, u32),
-    pub(crate) scale_factor: f32,
-    pub(crate) modifiers: iced::keyboard::Modifiers,
-    pub(crate) should_close: Arc<AtomicBool>,
-    pub(crate) cursor: mouse::Cursor,
-    pub(crate) clipboard: Clipboard,
+    scale_factor: f32,
+    modifiers: iced::keyboard::Modifiers,
+    should_close: Arc<AtomicBool>,
+    cursor: mouse::Cursor,
+    clipboard: Clipboard,
+}
+
+impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
+    /// Native window identity for event routing.
+    pub(crate) fn tao_window_id(&self) -> tao::window::WindowId {
+        self.window.id()
+    }
+
+    /// Close was requested through the shared flag.
+    pub(crate) fn close_requested(&self) -> bool {
+        self.should_close.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Native redraw request without reaching into the window.
+    pub(crate) fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
+    /// Bring this window to the front.
+    pub(crate) fn focus_window(&self) {
+        self.window.set_focus();
+    }
+
+    /// Queue one program message for the next process pass.
+    pub(crate) fn push_message(&mut self, message: P::Message) {
+        self.ui_state.push_message(message);
+    }
+
+    /// Pump one converted event through the retained tree. Repaints
+    /// redraw immediately; rebuilds report for the caller, which owns
+    /// its invalidation flag.
+    pub(crate) fn pump_frame(&mut self, mapped: iced::Event) -> (Vec<P::Message>, PumpOutcome) {
+        let (messages, outcome) = self.ui_state.pump(
+            mapped,
+            self.cursor,
+            &mut self.clipboard,
+            &mut self.renderer.backend,
+        );
+        if matches!(outcome, PumpOutcome::Repaint) {
+            self.window.request_redraw();
+        }
+        (messages, outcome)
+    }
+
+    /// Run pending messages against the retained tree, then redraw.
+    pub(crate) fn process(&mut self, messages: Vec<P::Message>, invalidated: &AtomicBool) {
+        let bounds = self.logical_bounds();
+        self.ui_state.process_messages(
+            messages,
+            self.window_id,
+            bounds,
+            &mut self.renderer.backend,
+            invalidated,
+        );
+        self.window.request_redraw();
+    }
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {

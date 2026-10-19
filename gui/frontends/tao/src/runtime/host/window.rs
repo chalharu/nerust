@@ -16,6 +16,37 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use crate::ports::WindowOpener;
 
+/// Pure wake policy: earliest deadline among live tick, flight
+/// poll, and OSD expiry wins. No side effects; the host supplies
+/// the inputs, so the min-fold stays unit-testable.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WakeInputs {
+    pub live_tick: Option<Instant>,
+    pub flight_pending: bool,
+    pub osd_deadline: Option<Instant>,
+}
+
+pub(crate) fn next_control_flow(now: Instant, inputs: &WakeInputs) -> ControlFlow {
+    let mut flow = ControlFlow::Wait;
+    if let Some(next) = inputs.live_tick {
+        flow = ControlFlow::WaitUntil(next);
+    }
+    if inputs.flight_pending {
+        let soon = now + std::time::Duration::from_millis(30);
+        flow = match flow {
+            ControlFlow::WaitUntil(at) => ControlFlow::WaitUntil(at.min(soon)),
+            _ => ControlFlow::WaitUntil(soon),
+        };
+    }
+    if let Some(deadline) = inputs.osd_deadline {
+        flow = match flow {
+            ControlFlow::WaitUntil(at) => ControlFlow::WaitUntil(at.min(deadline)),
+            _ => ControlFlow::WaitUntil(deadline),
+        };
+    }
+    flow
+}
+
 impl HostState {
     pub(crate) fn ensure_window(&mut self, opener: &dyn WindowOpener) {
         if self.window.is_some() {
@@ -71,7 +102,7 @@ impl HostState {
     pub(crate) fn is_settings_window(&self, window_id: WindowId) -> bool {
         self.settings_window
             .as_ref()
-            .is_some_and(|h| h.shell.window.id() == window_id)
+            .is_some_and(|h| h.shell.tao_window_id() == window_id)
     }
 
     pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
@@ -158,27 +189,19 @@ impl HostState {
         // case, and the backstop below bounds the latency when the
         // loop would otherwise sleep.
         let drain_pending = self.poll_debug_flight();
-        *control_flow = ControlFlow::Wait;
         // While the PPU follows a running core, wake for the next
         // tick: plain Wait sleeps until the next input event, which
         // would collapse the live cadence to zero whenever the aux
         // windows (not the main one) hold focus.
-        if self.live_follow_active()
-            && let Some(next) = self.debug.next_live_tick()
-        {
-            *control_flow = ControlFlow::WaitUntil(next);
-        }
+        let live_tick = if self.live_follow_active() {
+            self.debug.next_live_tick()
+        } else {
+            None
+        };
         // While a drain or live flight is pending, wake soon to poll
         // it: the reply applies within ~30ms instead of waiting for
         // the next input event.
-        if drain_pending || self.live_flight.is_some() {
-            let soon = Instant::now() + std::time::Duration::from_millis(30);
-            let earlier = match *control_flow {
-                ControlFlow::WaitUntil(at) => at.min(soon),
-                _ => soon,
-            };
-            *control_flow = ControlFlow::WaitUntil(earlier);
-        }
+        let flight_pending = drain_pending || self.live_flight.is_some();
 
         // Drain notifications here, not only in on_update: a paused
         // unfocused loop schedules no redraws, which is exactly when
@@ -187,17 +210,21 @@ impl HostState {
         // Post-pump the deadline implies a showing label (promotion
         // is eager), so one call drives the expiry redraw and the
         // wait: plain Wait would leave a stale label up otherwise.
-        if let Some(deadline) = self.osd_wakeup() {
+        let osd_deadline = self.osd_wakeup();
+        if osd_deadline.is_some() {
             // Redraw while labels show so expiry applies even paused.
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
-            let earlier = match *control_flow {
-                ControlFlow::WaitUntil(at) => at.min(deadline),
-                _ => deadline,
-            };
-            *control_flow = ControlFlow::WaitUntil(earlier);
         }
+        *control_flow = next_control_flow(
+            Instant::now(),
+            &WakeInputs {
+                live_tick,
+                flight_pending,
+                osd_deadline,
+            },
+        );
 
         // Inactive loop sleeps; redraw while focused, while the PPU
         // follows a running core, or while the session runs (a bare
@@ -314,6 +341,8 @@ impl HostState {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use tao::event_loop::ControlFlow;
 
     use crate::runtime::host::TestHost;
@@ -368,6 +397,51 @@ mod tests {
         assert_eq!(flow, ControlFlow::Wait);
         // No window, no flights, no follows: nothing to present.
         assert!(support.menu.updates().is_empty());
+    }
+
+    #[test]
+    fn wake_policy_folds_to_earliest_deadline() {
+        use super::{WakeInputs, next_control_flow};
+        let now = Instant::now();
+        let idle = WakeInputs {
+            live_tick: None,
+            flight_pending: false,
+            osd_deadline: None,
+        };
+        assert_eq!(next_control_flow(now, &idle), ControlFlow::Wait);
+        // Flight poll alone wakes soon (30ms backstop).
+        let flight = WakeInputs {
+            live_tick: None,
+            flight_pending: true,
+            osd_deadline: None,
+        };
+        assert_eq!(
+            next_control_flow(now, &flight),
+            ControlFlow::WaitUntil(now + std::time::Duration::from_millis(30))
+        );
+        // Earliest wins across all three sources.
+        let tick = now + std::time::Duration::from_millis(250);
+        let soon_deadline = now + std::time::Duration::from_millis(10);
+        let raced = WakeInputs {
+            live_tick: Some(tick),
+            flight_pending: true,
+            osd_deadline: Some(soon_deadline),
+        };
+        assert_eq!(
+            next_control_flow(now, &raced),
+            ControlFlow::WaitUntil(soon_deadline)
+        );
+        // Live tick earlier than the flight backstop survives.
+        let early_tick = now + std::time::Duration::from_millis(5);
+        let tick_wins = WakeInputs {
+            live_tick: Some(early_tick),
+            flight_pending: true,
+            osd_deadline: None,
+        };
+        assert_eq!(
+            next_control_flow(now, &tick_wins),
+            ControlFlow::WaitUntil(early_tick)
+        );
     }
 
     #[test]

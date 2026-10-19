@@ -225,38 +225,19 @@ impl PpuWindowHandle {
         );
         // The viewer opens on demand from the debugger toolbar: take
         // focus so keyboard and wheel go straight to the tiles.
-        shell.window.set_focus();
+        shell.focus_window();
         Some(Self { shell, bridge })
     }
 
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
-        let (messages, outcome) = self.shell.ui_state.pump(
-            mapped,
-            self.shell.cursor,
-            &mut self.shell.clipboard,
-            &mut self.shell.renderer.backend,
-        );
-        match outcome {
-            crate::aux::shell::PumpOutcome::Rebuild => {
-                self.bridge
-                    .ppu_invalidated
-                    .store(true, std::sync::atomic::Ordering::Release);
-            }
-            crate::aux::shell::PumpOutcome::Repaint => {
-                self.shell.window.request_redraw();
-            }
-            crate::aux::shell::PumpOutcome::Idle => {}
+        let (messages, outcome) = self.shell.pump_frame(mapped);
+        if matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
+            self.bridge
+                .ppu_invalidated
+                .store(true, std::sync::atomic::Ordering::Release);
         }
         if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-            let bounds = self.shell.logical_bounds();
-            self.shell.ui_state.process_messages(
-                messages,
-                self.shell.window_id,
-                bounds,
-                &mut self.shell.renderer.backend,
-                &self.bridge.ppu_invalidated,
-            );
-            self.shell.window.request_redraw();
+            self.shell.process(messages, &self.bridge.ppu_invalidated);
         }
     }
 
@@ -271,19 +252,11 @@ impl PpuWindowHandle {
     }
 
     pub(crate) fn sync_from_bridge(&mut self) {
-        let bounds = self.shell.logical_bounds();
         // Derive cached bytes first (one scale per drain), then
         // rebuild the view from cache.
-        self.shell.ui_state.push_message(PpuMessage::Sync);
+        self.shell.push_message(PpuMessage::Sync);
         self.bridge.ppu_invalidated.store(true, Ordering::Release);
-        self.shell.ui_state.process_messages(
-            Vec::new(),
-            self.shell.window_id,
-            bounds,
-            &mut self.shell.renderer.backend,
-            &self.bridge.ppu_invalidated,
-        );
-        self.shell.window.request_redraw();
+        self.shell.process(Vec::new(), &self.bridge.ppu_invalidated);
         // Deterministic pixels per drain: render synchronously
         // instead of depending on the next window event, so the
         // viewer never sits on a stale or blank frame.
@@ -295,7 +268,7 @@ impl crate::aux::shell::AuxWindow for PpuWindowHandle {
     fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
         self.shell.handle_common_event(&event);
         self.handle_tao_event(event);
-        self.shell.window.request_redraw();
+        self.shell.request_redraw();
     }
 }
 

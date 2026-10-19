@@ -99,11 +99,7 @@ impl WindowRuntime {
         // requested a redraw; presenting here per event would
         // serialize a full draw behind every drag/motion event
         // and unload the backlog as a hang on release.
-        if handle
-            .shell
-            .should_close
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
+        if handle.shell.close_requested() {
             let Some(handle) = self.host.settings_window.take() else {
                 return;
             };

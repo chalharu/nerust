@@ -40,7 +40,7 @@ impl HostState {
     pub(crate) fn is_history_window(&self, id: tao::window::WindowId) -> bool {
         self.history_window
             .as_ref()
-            .is_some_and(|handle| handle.shell.window.id() == id)
+            .is_some_and(|handle| handle.shell.tao_window_id() == id)
     }
 
     pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
@@ -89,11 +89,7 @@ impl HostState {
         }
         if let Some(handle) = self.history_window.as_mut() {
             handle.on_event(event);
-            if handle
-                .shell
-                .should_close
-                .load(std::sync::atomic::Ordering::Acquire)
-            {
+            if handle.shell.close_requested() {
                 self.history_window = None;
                 return;
             }
@@ -288,12 +284,9 @@ impl HostState {
             }
             OsdSync::Render(plan) => {
                 self.osd_layer_live = true;
-                let content = plan.content();
-                renderer.set_osd_layer(self.osd_raster.rasterize(
-                    &content,
-                    plan.width,
-                    plan.height,
-                ));
+                let (width, height) = (plan.width, plan.height);
+                let content = plan.into_content();
+                renderer.set_osd_layer(self.osd_raster.rasterize(&content, width, height));
             }
         }
     }
