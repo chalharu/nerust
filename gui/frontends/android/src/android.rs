@@ -1295,14 +1295,20 @@ impl AndroidFrontend {
         if restore_hidden_state {
             log::info!("finish_rom_load: restoring hidden lifecycle state");
             self.session.load_hidden_lifecycle_state();
+            // Resume only our own auto-pause: a manual pause predates
+            // the suspend and must survive the round-trip (never steal).
+            if self.lifecycle_auto_paused {
+                self.lifecycle_auto_paused = false;
+                self.resume();
+            }
         } else {
             log::info!("finish_rom_load: clearing hidden lifecycle state");
             self.session.clear_hidden_lifecycle_state();
+            self.lifecycle_auto_paused = false;
+            self.resume();
         }
-        self.lifecycle_auto_paused = false;
         self.lifecycle_restore_pending = false;
         self.storage.clear_restore_pending();
-        self.resume();
 
         // Ensure a window and renderer exist immediately when resuming so that
         // request_redraw() takes effect without requiring a user tap.
