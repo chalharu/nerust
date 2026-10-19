@@ -465,11 +465,11 @@ mod tests {
         };
 
         let Some(display) = crate::test_display::TestDisplay::connect() else {
-            crate::test_display::TestDisplay::unavailable("no GL display");
+            eprintln!("SKIP GL context tests: no GL display");
             return;
         };
         let Some(current) = display.make_pbuffer_current(64, 64) else {
-            crate::test_display::TestDisplay::unavailable("no GL context");
+            eprintln!("SKIP GL context tests: no GL context");
             return;
         };
         let (display, gl_config) = display.into_parts();
