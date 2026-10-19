@@ -17,7 +17,7 @@ use nerust_render_traits::{
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::view::{GlView, ViewError};
+use crate::view::{GlView, OsdOutcome, ViewError};
 
 pub struct GlRenderer {
     display: Display,
@@ -132,16 +132,10 @@ impl GpuRenderer for GlRenderer {
             let c = std::ffi::CString::new(n).expect("GL proc name has no interior nul");
             self.display.get_proc_address(&c)
         });
-        let fs = match self.render_profile.frame_format {
-            VideoFrameFormat::Rgba => self.render_profile.logical_size,
-            VideoFrameFormat::Palette => self.render_profile.source_logical_size,
-        };
-
         self.view = Some(self.fresh_view(&self.render_profile)?);
         self.context = Some(ctx);
         self.gl_surface = Some(surf);
-        self.expected_frame_len =
-            fs.width * fs.height * self.render_profile.frame_format.bytes_per_pixel();
+        self.expected_frame_len = frame_byte_len(&self.render_profile);
         Ok(())
     }
 
@@ -246,30 +240,34 @@ impl GpuRenderer for GlRenderer {
             VideoFrameFormat::Palette => self.render_profile.source_logical_size,
         };
         let bpp = self.render_profile.frame_format.bytes_per_pixel();
-        let row_bytes = fs.width * bpp;
         let stride = frame_buffer.stride();
-        if row_bytes == 0 || fs.height == 0 || stride == 0 {
+        if fs.width == 0 || fs.height == 0 || stride == 0 {
             log::warn!("GlRenderer: empty frame");
             return RenderResult::Skipped;
         }
         let data = frame_buffer.as_ref();
-        if let Err(e) = upload_frame(
-            view,
-            &mut self.tight,
-            self.expected_frame_len,
-            data,
-            stride,
+        let layout = match FrameLayout::checked(
             fs,
             bpp,
+            stride,
+            data.len(),
+            view.supports_unpack_row_length(),
         ) {
+            Ok(layout) => layout,
+            Err(e) => {
+                log::warn!("GlRenderer: frame upload failed: {e}");
+                return RenderResult::Error;
+            }
+        };
+        if let Err(e) = upload_frame(view, &mut self.tight, &layout, data) {
             log::warn!("GlRenderer: frame upload failed: {e}");
             return RenderResult::Error;
         }
         match view.draw_osd(self.size.width as i32, self.size.height as i32) {
-            Ok(Some(_)) => {
+            Ok(OsdOutcome::Dropped) => {
                 log::warn!("GlRenderer: dropping OSD layer after repeated upload failures");
             }
-            Ok(None) => {}
+            Ok(OsdOutcome::Presented) => {}
             Err(e) => {
                 log::debug!("GlRenderer: OSD composite failed: {e}");
             }
@@ -297,64 +295,117 @@ fn frame_byte_len(profile: &VideoRenderProfile) -> usize {
     fs.width * fs.height * profile.frame_format.bytes_per_pixel()
 }
 
+/// Checked frame geometry shared by the attach guard and the three
+/// upload paths: one validated computation, no `usize::MAX` sentinel.
+struct FrameLayout {
+    width: usize,
+    height: usize,
+    /// Tight row bytes (`width * bpp`).
+    row_bytes: usize,
+    /// Source stride in bytes.
+    stride: usize,
+    /// Source bytes the chosen path consumes.
+    need: usize,
+    /// Stride in pixels for the `UNPACK_ROW_LENGTH` path.
+    stride_px: i32,
+}
+
+impl FrameLayout {
+    fn checked(
+        fs: nerust_render_traits::logical::LogicalSize,
+        bpp: usize,
+        stride: usize,
+        data_len: usize,
+        unpack_row_length: bool,
+    ) -> Result<Self, ViewError> {
+        let row_bytes = fs.width.checked_mul(bpp).ok_or(ViewError::Frame {
+            what: "frame dimensions overflow",
+            need: 0,
+            have: data_len,
+        })?;
+        let stride_px = stride.checked_div(bpp.max(1)).ok_or(ViewError::Frame {
+            what: "frame dimensions overflow",
+            need: 0,
+            have: data_len,
+        })?;
+        let need = if unpack_row_length {
+            fs.height.checked_sub(1).map_or(Ok(0), |rows| {
+                rows.checked_mul(stride)
+                    .and_then(|tail| tail.checked_add(row_bytes))
+                    .ok_or(ViewError::Frame {
+                        what: "frame dimensions overflow",
+                        need: 0,
+                        have: data_len,
+                    })
+            })?
+        } else if stride == row_bytes {
+            fs.width
+                .checked_mul(fs.height)
+                .and_then(|px| px.checked_mul(bpp))
+                .ok_or(ViewError::Frame {
+                    what: "frame dimensions overflow",
+                    need: 0,
+                    have: data_len,
+                })?
+        } else {
+            stride.checked_mul(fs.height).ok_or(ViewError::Frame {
+                what: "frame dimensions overflow",
+                need: 0,
+                have: data_len,
+            })?
+        };
+        if data_len < need {
+            return Err(ViewError::Frame {
+                what: "frame buffer too small",
+                need,
+                have: data_len,
+            });
+        }
+        Ok(Self {
+            width: fs.width,
+            height: fs.height,
+            row_bytes,
+            stride,
+            need,
+            stride_px: stride_px as i32,
+        })
+    }
+}
+
 /// Upload one frame through the three stride paths (direct,
 /// exact, repacked). Length failures refuse as Frame errors.
 fn upload_frame(
     view: &mut GlView,
     tight: &mut Vec<u8>,
-    expected_frame_len: usize,
+    layout: &FrameLayout,
     data: &[u8],
-    stride: usize,
-    fs: nerust_render_traits::logical::LogicalSize,
-    bpp: usize,
 ) -> Result<(), ViewError> {
-    let row_bytes = fs.width * bpp;
+    // Geometry is validated on entry (`FrameLayout::checked`); slicing
+    // below cannot fail, so `get(..)` guards stay total by construction.
     if view.supports_unpack_row_length() {
-        let stride_px = stride / bpp;
-        let need = fs
-            .height
-            .checked_sub(1)
-            .map_or(0, |rows| rows * stride + row_bytes);
-        match data.get(..need) {
-            Some(bytes) => view.on_update(bytes, stride_px as i32),
+        match data.get(..layout.need) {
+            Some(bytes) => view.on_update(bytes, layout.stride_px),
             None => Err(ViewError::Frame {
                 what: "frame buffer too small",
-                need,
+                need: layout.need,
                 have: data.len(),
             }),
         }
-    } else if stride == row_bytes {
-        match data.get(..expected_frame_len) {
-            Some(bytes) => view.on_update(bytes, fs.width as i32),
+    } else if layout.stride == layout.row_bytes {
+        match data.get(..layout.need) {
+            Some(bytes) => view.on_update(bytes, layout.width as i32),
             None => Err(ViewError::Frame {
                 what: "frame buffer too small",
-                need: expected_frame_len,
+                need: layout.need,
                 have: data.len(),
             }),
         }
     } else {
-        if tight.len() != expected_frame_len {
-            tight.resize(expected_frame_len, 0);
+        if tight.len() != layout.need {
+            tight.resize(layout.need, 0);
         }
-        let src_need = match stride.checked_mul(fs.height) {
-            Some(need) => need,
-            None => {
-                return Err(ViewError::Frame {
-                    what: "frame dimensions overflow",
-                    need: usize::MAX,
-                    have: data.len(),
-                });
-            }
-        };
-        if data.len() < src_need {
-            return Err(ViewError::Frame {
-                what: "frame buffer too small",
-                need: src_need,
-                have: data.len(),
-            });
-        }
-        pack_rows_stripped(data, stride, fs.height, tight, row_bytes);
-        view.on_update(tight, fs.width as i32)
+        pack_rows_stripped(data, layout.stride, layout.height, tight, layout.row_bytes);
+        view.on_update(tight, layout.width as i32)
     }
 }
 
@@ -486,6 +537,39 @@ mod tests {
         pack_rows_stripped(&source, 6, 2, &mut destination, 4);
 
         assert_eq!(destination, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn frame_layout_validates_all_three_paths() {
+        use super::FrameLayout;
+        use nerust_render_traits::logical::LogicalSize;
+        let fs = LogicalSize {
+            width: 64,
+            height: 64,
+        };
+        // Tight rows: consumes exactly the frame.
+        let tight = FrameLayout::checked(fs, 4, 256, 64 * 64 * 4, false).unwrap();
+        assert_eq!((tight.row_bytes, tight.need), (256, 64 * 64 * 4));
+        // Padded rows via UNPACK_ROW_LENGTH.
+        let padded = FrameLayout::checked(fs, 4, 260, 63 * 260 + 256, true).unwrap();
+        assert_eq!(padded.need, 63 * 260 + 256);
+        assert_eq!(padded.stride_px, 65);
+        // Short data refuses with sizes, overflow without a fake size.
+        assert!(FrameLayout::checked(fs, 4, 256, 10, false).is_err());
+        let overflow = FrameLayout::checked(
+            LogicalSize {
+                width: usize::MAX,
+                height: 2,
+            },
+            4,
+            usize::MAX,
+            usize::MAX,
+            false,
+        );
+        assert!(matches!(
+            overflow,
+            Err(crate::view::ViewError::Frame { need: 0, .. })
+        ));
     }
 
     #[test]
