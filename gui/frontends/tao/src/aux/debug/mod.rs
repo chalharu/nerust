@@ -330,7 +330,7 @@ impl DebugWindowHandle {
 
 impl super::focus::WindowHandler for DebugWindowHandle {
     type Program = DebugProgram;
-    const LOG_TAG: &'static str = "debugger";
+    const LOG_TAG: &str = "debugger";
 
     fn shell(&self) -> &crate::aux::shell::AuxShell<Self::Program> {
         &self.shell

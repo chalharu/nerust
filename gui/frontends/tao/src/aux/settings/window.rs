@@ -77,7 +77,7 @@ impl SettingsWindowHandle {
 
 impl crate::aux::focus::WindowHandler for SettingsWindowHandle {
     type Program = SettingsAppProgram;
-    const LOG_TAG: &'static str = "settings";
+    const LOG_TAG: &str = "settings";
 
     fn shell(&self) -> &AuxShell<Self::Program> {
         &self.shell

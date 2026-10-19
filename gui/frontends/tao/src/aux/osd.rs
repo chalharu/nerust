@@ -319,7 +319,7 @@ impl HistoryWindowHandle {
 
 impl super::focus::WindowHandler for HistoryWindowHandle {
     type Program = HistoryProgram;
-    const LOG_TAG: &'static str = "history window";
+    const LOG_TAG: &str = "history window";
 
     fn shell(&self) -> &crate::aux::shell::AuxShell<Self::Program> {
         &self.shell

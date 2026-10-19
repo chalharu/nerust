@@ -118,7 +118,7 @@ pub(crate) fn aux_focus_step_quiet(focus: &mut FocusState, focused: bool) {
 pub(crate) trait WindowHandler: AuxWindow {
     type Program: Program<Theme = iced::Theme, Renderer = Renderer>;
     /// Log tag for the shared render path (per-window identity).
-    const LOG_TAG: &'static str;
+    const LOG_TAG: &str;
     fn shell(&self) -> &AuxShell<Self::Program>;
     fn shell_mut(&mut self) -> &mut AuxShell<Self::Program>;
     /// Handle one converted event. Returns whether this pass already
