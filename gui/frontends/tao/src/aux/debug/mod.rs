@@ -407,4 +407,4 @@ impl crate::aux::shell::AuxWindow for DebugWindowHandle {
     }
 }
 
-impl crate::runtime::host::WindowHandler for DebugWindowHandle {}
+impl super::focus::WindowHandler for DebugWindowHandle {}

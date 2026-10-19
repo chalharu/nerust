@@ -366,7 +366,7 @@ impl AuxWindow for HistoryWindowHandle {
     }
 }
 
-impl crate::runtime::host::WindowHandler for HistoryWindowHandle {}
+impl super::focus::WindowHandler for HistoryWindowHandle {}
 
 #[cfg(test)]
 mod tests {

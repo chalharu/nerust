@@ -299,7 +299,7 @@ impl crate::aux::shell::AuxWindow for PpuWindowHandle {
     }
 }
 
-impl crate::runtime::host::WindowHandler for PpuWindowHandle {}
+impl super::focus::WindowHandler for PpuWindowHandle {}
 
 #[cfg(test)]
 mod tests {
