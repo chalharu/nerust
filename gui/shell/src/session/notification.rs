@@ -53,8 +53,27 @@ pub enum NotificationKind {
     },
     CommandFailed(&'static str),
     /// Out-of-band frontend failures (picker, restore, bridge).
-    ExternalError(String),
+    /// Carries its source for filtering and a bounded detail: the
+    /// modal queue is capped in count but not in bytes.
+    ExternalError {
+        source: ExternalSource,
+        detail: String,
+    },
 }
+
+/// Origin of an out-of-band frontend failure. Filter key for the
+/// history grid; also selects the localized prefix (see `text`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalSource {
+    Picker,
+    Restore,
+    Bridge,
+}
+
+/// Longest kept detail suffix. A pathological multi-megabyte message
+/// must not wedge the capped modal queue; history still records the
+/// head of the message for grep.
+pub const MAX_EXTERNAL_DETAIL: usize = 512;
 
 /// Pick the language side. Splitting this out (instead of inline
 /// `if ja` per arm) keeps `text()` under the complexity budget.
@@ -83,7 +102,7 @@ impl NotificationKind {
                     NotificationLevel::Warning
                 }
             },
-            NotificationKind::CommandFailed(_) | NotificationKind::ExternalError(_) => {
+            NotificationKind::CommandFailed(_) | NotificationKind::ExternalError { .. } => {
                 NotificationLevel::Error
             }
             NotificationKind::PersistenceUnavailable => NotificationLevel::Warning,
@@ -130,7 +149,7 @@ impl NotificationKind {
             | NotificationKind::PersistenceUnavailable
             | NotificationKind::SlotFailed { .. }
             | NotificationKind::CommandFailed(_)
-            | NotificationKind::ExternalError(_) => Some(self.level()),
+            | NotificationKind::ExternalError { .. } => Some(self.level()),
         }
     }
 
@@ -177,7 +196,17 @@ impl NotificationKind {
                     format!("{command} failed")
                 }
             }
-            NotificationKind::ExternalError(detail) => detail.clone(),
+            NotificationKind::ExternalError { source, detail } => {
+                let prefix = match (source, ja) {
+                    (ExternalSource::Picker, true) => "選択",
+                    (ExternalSource::Picker, false) => "Picker",
+                    (ExternalSource::Restore, true) => "復元",
+                    (ExternalSource::Restore, false) => "Restore",
+                    (ExternalSource::Bridge, true) => "通知",
+                    (ExternalSource::Bridge, false) => "Bridge",
+                };
+                format!("{prefix}: {detail}")
+            }
         }
     }
 
@@ -205,20 +234,16 @@ impl NotificationKind {
     }
 }
 
-/// Clock port for deterministic tests. Production reads the
-/// real clocks; tests inject a fixed instant.
+/// Clock port for deterministic tests. Production reads the real
+/// system clock; tests inject a fixed timestamp via `push_at`.
 pub trait Clock {
-    fn now_instant() -> std::time::Instant;
     fn now_system() -> std::time::SystemTime;
 }
 
-/// Production clock: the real system clocks.
+/// Production clock: the real system clock.
 pub struct SystemClock;
 
 impl Clock for SystemClock {
-    fn now_instant() -> std::time::Instant {
-        std::time::Instant::now()
-    }
     fn now_system() -> std::time::SystemTime {
         std::time::SystemTime::now()
     }
@@ -449,7 +474,10 @@ mod tests {
             NotificationKind::CreatedSlot,
             NotificationKind::SelectedSlot(4),
             NotificationKind::CommandFailed("Reset"),
-            NotificationKind::ExternalError("boom".to_string()),
+            NotificationKind::ExternalError {
+                source: ExternalSource::Picker,
+                detail: "boom".to_string(),
+            },
             NotificationKind::PersistenceUnavailable,
         ];
         for kind in &variants {
@@ -645,7 +673,10 @@ mod tests {
             NotificationKind::SavedSlot(1),
             NotificationKind::PersistenceUnavailable,
             NotificationKind::CommandFailed("Reset"),
-            NotificationKind::ExternalError("x".to_string()),
+            NotificationKind::ExternalError {
+                source: ExternalSource::Bridge,
+                detail: "x".to_string(),
+            },
         ] {
             assert_eq!(kind.replace_group(), None);
         }
