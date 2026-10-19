@@ -47,18 +47,24 @@ impl GtkOsd {
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
     ) {
+        use nerust_gui_shell::session::osd::PushInput;
         let now = Instant::now();
-        let (drained, channel) = state.drain_routed();
         let language = state.settings_snapshot().shared.general.language;
         let metrics = state.emulation_status();
         let settings = state.settings_snapshot().local.notifications.clone();
-        if !drained.is_empty() {
-            log::debug!("gtk osd: showing {} notification(s)", drained.len());
-            self.manager
-                .push_all(drained, &settings, language, now, channel);
+        let report = state.session.pump_osd(
+            &mut self.manager,
+            PushInput {
+                settings: &settings,
+                language,
+                now,
+            },
+        );
+        if report.dirty {
+            log::debug!("gtk osd: display state changed");
         }
         let mut resume_after_modal = false;
-        if let Some(detail) = self.manager.take_modal_text() {
+        if report.modal_queued {
             // Auto-pause first, guarded by can_pause.
             // Only what we paused resumes, after the last ack.
             {
@@ -68,7 +74,6 @@ impl GtkOsd {
                     resume_after_modal = true;
                 }
             }
-            self.manager.queue_modal(detail);
         }
         // The batch take runs on the already-borrowed manager: the
         // Surface Rc is only touched inside the ack closure, which
@@ -77,7 +82,6 @@ impl GtkOsd {
             Self::present_modal(surface, window, detail, resume_after_modal);
         }
         let (fps, paused) = metrics;
-        self.manager.poll(now);
         self.apply_strip(&settings, renderer, window);
         self.sync_layer(&settings, language, paused, fps, renderer, window);
     }
@@ -127,8 +131,10 @@ impl GtkOsd {
         let scale = window.scale_factor().max(1) as u32;
         let w = window.width().max(0) as u32 * scale;
         let h = window.height().max(0) as u32 * scale;
+        let dirty = self.manager.take_dirty();
         let decision = self.presenter.sync(
-            &mut self.manager,
+            dirty,
+            &self.manager,
             OsdSyncInput {
                 settings,
                 language,
