@@ -132,8 +132,7 @@ mod tests {
     fn payload_message_covers_string_forms() {
         assert_eq!(payload_message(&"static"), "static");
         assert_eq!(payload_message(&"owned".to_owned()), "owned");
-        let boxed: Box<dyn std::error::Error + Send> =
-            Box::new(std::io::Error::new(std::io::ErrorKind::Other, "io boom"));
+        let boxed: Box<dyn std::error::Error + Send> = Box::new(std::io::Error::other("io boom"));
         assert_eq!(payload_message(&boxed), "io boom");
         assert_eq!(payload_message(&42_u32), "non-string panic payload");
     }
