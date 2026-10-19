@@ -1,26 +1,44 @@
-#![cfg(target_os = "android")]
-
+// Root stays ungated so pure modules compile and test on host;
+// Android-bound items below stay target-gated. `import_metadata` is
+// used only by the gated picker, so it loads for tests too.
+#[cfg(any(target_os = "android", test))]
 mod import_metadata;
 
+#[cfg(any(target_os = "android", test))]
+mod lifecycle_decision;
+
+#[cfg(target_os = "android")]
 mod android;
 
+#[cfg(target_os = "android")]
 use std::{ffi::c_void, rc::Rc, sync::Arc};
 
+#[cfg(target_os = "android")]
 use jni::{
     JavaVM,
     sys::{JNI_VERSION_1_6, jint},
 };
+#[cfg(target_os = "android")]
 use nerust_core_traits::audio::AudioBackendRegistry;
+#[cfg(target_os = "android")]
 use nerust_crash_guard::GuardOutcome;
+#[cfg(target_os = "android")]
 use nerust_gba_factory::GbaFactory;
+#[cfg(target_os = "android")]
 use nerust_gbc_factory::GbcFactory;
+#[cfg(target_os = "android")]
 use nerust_gui_shell::registry::SystemRegistry;
+#[cfg(target_os = "android")]
 use nerust_nes_factory::NesFactory;
+#[cfg(target_os = "android")]
 use nerust_render_traits::renderer::GpuFactory;
+#[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
+#[cfg(target_os = "android")]
 const ANDROID_LOG_TAG: &str = "Nerust";
 
+#[cfg(target_os = "android")]
 fn init_android_logging() {
     android_logger::init_once(
         android_logger::Config::default()
@@ -33,6 +51,7 @@ fn init_android_logging() {
     nerust_crash_guard::install();
 }
 
+#[cfg(target_os = "android")]
 fn create_system_registry() -> Arc<SystemRegistry> {
     Arc::new(SystemRegistry::new(vec![
         Arc::new(NesFactory),
@@ -41,16 +60,19 @@ fn create_system_registry() -> Arc<SystemRegistry> {
     ]))
 }
 
+#[cfg(target_os = "android")]
 fn create_audio_registry() -> Arc<AudioBackendRegistry> {
     let mut reg = AudioBackendRegistry::new();
     reg.register(0, Box::new(nerust_sound_cpal::CpalFactory));
     Arc::new(reg)
 }
 
+#[cfg(target_os = "android")]
 fn create_gpu_factory() -> Rc<dyn GpuFactory> {
     Rc::new(nerust_render_wgpu::WgpuFactory)
 }
 
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub fn android_main(app: AndroidApp) {
     init_android_logging();
@@ -80,6 +102,7 @@ pub fn android_main(app: AndroidApp) {
     }
 }
 
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 /// # Safety
 ///
@@ -103,7 +126,7 @@ pub unsafe extern "system" fn JNI_OnLoad(
     JNI_VERSION_1_6
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "android"))]
 mod tests {
     use nerust_core_traits::factory::load::MediaObject;
 
