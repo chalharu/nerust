@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use nerust_input_traits::AbstractKey;
 
+/// Menu button presses from the Kotlin overflow menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuAction {
     ControllerInput {
@@ -9,7 +10,6 @@ pub(crate) enum MenuAction {
         key: AbstractKey,
         pressed: bool,
     },
-    ErrorDialogDismissed,
     Exit,
     LoadState,
     OpenRom,
@@ -19,6 +19,14 @@ pub(crate) enum MenuAction {
     SaveState,
     TogglePause,
     Unload,
+}
+
+/// Single Kotlin→Rust event channel. Menu presses and the error-dialog
+/// dismiss ride the same bridge but decode separately.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrontendEvent {
+    Menu(MenuAction),
+    ErrorDialogDismissed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

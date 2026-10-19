@@ -42,7 +42,7 @@ pub(super) struct AndroidOsd {
     presenter: OsdPresenter,
     last_strip: ReservedStrip,
     last_system_size: SurfaceSize,
-    last_system_scale: f32,
+    last_system_scale_key: u32,
     last_system: SafeInsets,
 }
 
@@ -67,7 +67,7 @@ impl AndroidOsd {
             presenter: OsdPresenter::new(),
             last_strip: ReservedStrip::default(),
             last_system_size: SurfaceSize::new(0, 0),
-            last_system_scale: 0.0,
+            last_system_scale_key: u32::MAX,
             last_system: SafeInsets::default(),
         }
     }
@@ -78,34 +78,20 @@ impl AndroidOsd {
     pub(super) fn reset(&mut self) {
         self.presenter.invalidate();
         self.last_strip = ReservedStrip::default();
+        self.invalidate_system_insets();
+    }
+
+    /// Force a fresh platform inset query on the next frame. Called
+    /// from the renderer rebuild/reset paths via `reset`.
+    pub(super) fn invalidate_system_insets(&mut self) {
         self.last_system_size = SurfaceSize::new(0, 0);
+        self.last_system_scale_key = u32::MAX;
     }
 
-    /// Take the next error batch for the modal dialog, if none is up.
-    /// Shell `ModalBox` gates on its open flag and caps the queue.
-    pub(super) fn take_modal_batch(&mut self) -> Option<String> {
-        self.manager.take_modal_batch()
-    }
-
-    /// Release the shell modal gate after the dialog is dismissed.
-    pub(super) fn modal_closed(&mut self) {
-        self.manager.modal_closed();
-    }
-
-    /// Re-queue an interrupted head batch preserving display order.
-    pub(super) fn requeue_front(&mut self, detail: String) {
-        self.manager.requeue_front(detail);
-    }
-
-    /// Queue an out-of-band error (picker/load failures bypass the
-    /// notification center). Same cap and drop-oldest as the rest.
-    pub(super) fn queue_modal(&mut self, detail: String) {
-        self.manager.queue_modal(detail);
-    }
-
-    /// Queued error batches still awaiting display.
-    pub(super) fn modal_pending(&self) -> usize {
-        self.manager.modal_pending()
+    /// Sole shell-queue access: the error controller drives the modal
+    /// gate through this; out-of-band errors queue through this too.
+    pub(super) fn manager_mut(&mut self) -> &mut OsdManager {
+        &mut self.manager
     }
 
     /// Drain shell notifications into display state. Error batches join
@@ -117,21 +103,20 @@ impl AndroidOsd {
         language: AppLanguage,
         now: Instant,
     ) -> bool {
-        let (drained, channel) = session.drain_routed();
-        if !drained.is_empty() {
-            self.manager
-                .push_all(drained, settings, language, now, channel);
-        }
-        self.manager.poll(now);
-        if let Some(detail) = self.manager.take_modal_text() {
-            self.manager.queue_modal(detail);
-        }
-        self.manager.dirty()
+        let report = session.pump_osd(
+            &mut self.manager,
+            nerust_gui_shell::session::osd::PushInput {
+                settings,
+                language,
+                now,
+            },
+        );
+        report.dirty
     }
 
     /// OSD expiry deadline for the event-loop wait, if any labels are visible.
-    pub(super) fn wakeup(&self) -> Option<Instant> {
-        self.manager.next_deadline()
+    pub(super) fn wakeup(&self, now: Instant) -> Option<Instant> {
+        self.manager.wakeup_deadline(now)
     }
 
     /// Reserved edge strips in physical pixels. Static per settings
@@ -198,9 +183,10 @@ impl AndroidOsd {
         size: SurfaceSize,
         scale: f32,
     ) -> SafeInsets {
-        if size != self.last_system_size || scale != self.last_system_scale {
+        let scale_key = crate::density::density_key(scale);
+        if size != self.last_system_size || scale_key != self.last_system_scale_key {
             self.last_system_size = size;
-            self.last_system_scale = scale;
+            self.last_system_scale_key = scale_key;
             self.last_system = Self::query_system_insets(app);
         }
         self.last_system
@@ -258,8 +244,10 @@ impl AndroidOsd {
             renderer.set_reserved_strip(strip);
         }
         let metrics = session.metrics();
+        let dirty = self.manager.take_dirty();
         let decision = self.presenter.sync(
-            &mut self.manager,
+            dirty,
+            &self.manager,
             OsdSyncInput {
                 settings,
                 language,

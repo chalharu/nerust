@@ -3,11 +3,11 @@ use std::{collections::VecDeque, sync::Mutex};
 use nerust_core_traits::peripheral::{AccelerationSample, AccelerometerInputHandle};
 use winit::event_loop::EventLoopProxy;
 
-use super::messages::MenuAction;
+use super::messages::FrontendEvent;
 
 pub(super) struct AndroidBridgeState {
     pub(super) event_loop_proxy: Option<EventLoopProxy<()>>,
-    pub(super) menu_actions: VecDeque<MenuAction>,
+    pub(super) frontend_events: VecDeque<FrontendEvent>,
     accelerometer: Option<AccelerometerInputHandle>,
     exit_requested: bool,
 }
@@ -16,7 +16,7 @@ impl AndroidBridgeState {
     const fn empty() -> Self {
         Self {
             event_loop_proxy: None,
-            menu_actions: VecDeque::new(),
+            frontend_events: VecDeque::new(),
             accelerometer: None,
             exit_requested: false,
         }
@@ -28,14 +28,14 @@ static ANDROID_BRIDGE: Mutex<AndroidBridgeState> = Mutex::new(AndroidBridgeState
 pub(super) fn bind_event_loop(event_loop_proxy: EventLoopProxy<()>) {
     with_state(|state| {
         state.event_loop_proxy = Some(event_loop_proxy);
-        state.menu_actions.clear();
+        state.frontend_events.clear();
         state.exit_requested = false;
     });
 }
 
 pub(super) fn reset_transient() {
     with_state(|state| {
-        state.menu_actions.clear();
+        state.frontend_events.clear();
         state.accelerometer = None;
     });
 }

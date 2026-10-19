@@ -2,6 +2,12 @@
 // Android-bound items below stay target-gated. `import_metadata` is
 // used only by the gated picker, so it loads for tests too.
 #[cfg(any(target_os = "android", test))]
+mod density;
+
+#[cfg(any(target_os = "android", test))]
+mod error_dialog_controller;
+
+#[cfg(any(target_os = "android", test))]
 mod import_metadata;
 
 #[cfg(any(target_os = "android", test))]
@@ -10,8 +16,11 @@ mod lifecycle_decision;
 #[cfg(target_os = "android")]
 mod android;
 
+#[cfg(any(target_os = "android", test))]
+use std::sync::Arc;
+
 #[cfg(target_os = "android")]
-use std::{ffi::c_void, rc::Rc, sync::Arc};
+use std::{ffi::c_void, rc::Rc};
 
 #[cfg(target_os = "android")]
 use jni::{
@@ -22,13 +31,13 @@ use jni::{
 use nerust_core_traits::audio::AudioBackendRegistry;
 #[cfg(target_os = "android")]
 use nerust_crash_guard::GuardOutcome;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 use nerust_gba_factory::GbaFactory;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 use nerust_gbc_factory::GbcFactory;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 use nerust_gui_shell::registry::SystemRegistry;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 use nerust_nes_factory::NesFactory;
 #[cfg(target_os = "android")]
 use nerust_render_traits::renderer::GpuFactory;
@@ -51,7 +60,7 @@ fn init_android_logging() {
     nerust_crash_guard::install();
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 fn create_system_registry() -> Arc<SystemRegistry> {
     Arc::new(SystemRegistry::new(vec![
         Arc::new(NesFactory),
@@ -126,7 +135,7 @@ pub unsafe extern "system" fn JNI_OnLoad(
     JNI_VERSION_1_6
 }
 
-#[cfg(all(test, target_os = "android"))]
+#[cfg(test)]
 mod tests {
     use nerust_core_traits::factory::load::MediaObject;
 

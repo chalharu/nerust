@@ -20,6 +20,20 @@ pub(crate) fn should_resume_after_restore(
     !restore_hidden_state || lifecycle_auto_paused
 }
 
+/// Foreground/license resume gate shared by the restore path and the
+/// window-ready retry. An error auto-pause owns the paused state until
+/// its dialog is dismissed, so a concurrent lifecycle resume stays
+/// suppressed; the site's own want arrives via `can_resume` (fresh
+/// loads pass unconditional want, the foreground retry passes its
+/// lifecycle flag).
+pub(crate) fn should_resume_on_foreground(
+    lifecycle_auto_paused: bool,
+    error_auto_paused: bool,
+    can_resume: bool,
+) -> bool {
+    can_resume && !(lifecycle_auto_paused && error_auto_paused)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -38,5 +52,22 @@ mod tests {
         assert!(should_resume_after_restore(false, true));
         assert!(should_resume_after_restore(true, true));
         assert!(!should_resume_after_restore(true, false));
+    }
+
+    #[test]
+    fn foreground_resume_needs_want_without_error_conflict() {
+        // No want, no resume (manual pause survives; idle stays idle).
+        assert!(!should_resume_on_foreground(false, false, false));
+        assert!(!should_resume_on_foreground(true, false, false));
+        assert!(!should_resume_on_foreground(false, true, false));
+        assert!(!should_resume_on_foreground(true, true, false));
+        // Fresh-load want resumes over a pure error pause (preserved
+        // fresh behavior); the dismiss path still owns that resume.
+        assert!(should_resume_on_foreground(false, false, true));
+        assert!(should_resume_on_foreground(false, true, true));
+        // Lifecycle want resumes alone ...
+        assert!(should_resume_on_foreground(true, false, true));
+        // ... but an error auto-pause vetoes the concurrent resume.
+        assert!(!should_resume_on_foreground(true, true, true));
     }
 }
