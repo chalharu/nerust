@@ -13,7 +13,9 @@ TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --manifest-path "${WORKSPACE_RO
 if [[ -z "${TAG_NAME:-}" ]]; then
     TAG_NAME="$(git -C "${WORKSPACE_ROOT}" describe --tags --abbrev=0 2>/dev/null || true)"
     if [[ -z "${TAG_NAME}" ]]; then
-        if [[ -n "${CI:-}" ]]; then
+        # Only real releases need a reproducible version: tag builds
+        # export TAG_NAME explicitly, PR/CI snapshots use the fallback.
+        if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
             echo "release builds must export TAG_NAME (no git tag found)" >&2
             exit 1
         fi
