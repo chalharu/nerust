@@ -23,7 +23,7 @@ use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput};
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, PixelFormat, VideoFrameFormat, VideoRenderProfile};
 
-use crate::session::commands::SlotOpFailure;
+use crate::session::error::SlotOpFailure;
 
 pub(crate) mod images;
 

@@ -25,7 +25,8 @@ use crate::{
     registry::SystemRegistry,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
-        commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
+        commands::{SessionCommand, SessionCommandOutcome},
+        error::SlotOpFailure,
     },
 };
 

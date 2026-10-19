@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 
 use nerust_settings_core::model::language::AppLanguage;
 
-use super::commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure};
+use super::error::SlotOpFailure;
 
 /// Maximum labels a frontend shows at once. Older entries drop off.
 pub const MAX_PENDING: usize = 3;
@@ -52,6 +52,8 @@ pub enum NotificationKind {
         reason: SlotOpFailure,
     },
     CommandFailed(&'static str),
+    /// Out-of-band frontend failures (picker, restore, bridge).
+    ExternalError(String),
 }
 
 /// Pick the language side. Splitting this out (instead of inline
@@ -64,9 +66,11 @@ fn bilingual_str<'a>(ja: bool, en: &'a str, ja_text: &'a str) -> &'a str {
     if ja { ja_text } else { en }
 }
 
-/// Latest-wins replace group for selection echoes. One group
-/// today; add constants (not bools) for future latest-wins kinds.
-pub const SELECTED_SLOT_GROUP: u8 = 0;
+/// Latest-wins replace group for selection echoes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplaceGroup {
+    SelectedSlot,
+}
 
 impl NotificationKind {
     pub fn level(&self) -> NotificationLevel {
@@ -79,7 +83,9 @@ impl NotificationKind {
                     NotificationLevel::Warning
                 }
             },
-            NotificationKind::CommandFailed(_) => NotificationLevel::Error,
+            NotificationKind::CommandFailed(_) | NotificationKind::ExternalError(_) => {
+                NotificationLevel::Error
+            }
             NotificationKind::PersistenceUnavailable => NotificationLevel::Warning,
             NotificationKind::Paused
             | NotificationKind::Resumed
@@ -94,9 +100,9 @@ impl NotificationKind {
 
     /// Latest-wins group for OSD replacement, if any. Only
     /// selection echoes collapse; everything else queues.
-    pub fn replace_group(&self) -> Option<u8> {
+    pub fn replace_group(&self) -> Option<ReplaceGroup> {
         match self {
-            NotificationKind::SelectedSlot(_) => Some(SELECTED_SLOT_GROUP),
+            NotificationKind::SelectedSlot(_) => Some(ReplaceGroup::SelectedSlot),
             _ => None,
         }
     }
@@ -123,7 +129,8 @@ impl NotificationKind {
             | NotificationKind::CreatedSlot
             | NotificationKind::PersistenceUnavailable
             | NotificationKind::SlotFailed { .. }
-            | NotificationKind::CommandFailed(_) => Some(self.level()),
+            | NotificationKind::CommandFailed(_)
+            | NotificationKind::ExternalError(_) => Some(self.level()),
         }
     }
 
@@ -170,6 +177,7 @@ impl NotificationKind {
                     format!("{command} failed")
                 }
             }
+            NotificationKind::ExternalError(detail) => detail.clone(),
         }
     }
 
@@ -197,6 +205,24 @@ impl NotificationKind {
     }
 }
 
+/// Clock port for deterministic tests. Production reads the
+/// real clocks; tests inject a fixed instant.
+pub trait Clock {
+    fn now_instant() -> std::time::Instant;
+    fn now_system() -> std::time::SystemTime;
+}
+
+/// Production clock: the real system clocks.
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now_instant() -> std::time::Instant {
+        std::time::Instant::now()
+    }
+    fn now_system() -> std::time::SystemTime {
+        std::time::SystemTime::now()
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiNotification {
     pub level: NotificationLevel,
@@ -229,17 +255,21 @@ impl NotificationCenter {
     /// past [`MAX_PENDING`]. Logs record every event eagerly except
     /// screen-only kinds (see [`NotificationKind::log_level`]).
     pub fn push(&mut self, kind: NotificationKind) {
+        self.push_at(kind, SystemClock::now_system());
+    }
+
+    /// Push with an explicit timestamp. Tests inject fixed times.
+    pub fn push_at(&mut self, kind: NotificationKind, at: std::time::SystemTime) {
         let level = kind.level();
         let seq = self.next_seq;
         self.next_seq += 1;
         self.history_seq += 1;
-        // One event (one clock): cloned for history, moved pending.
         let event = UiNotification {
             level,
             kind,
             count: 1,
             seq,
-            at: std::time::SystemTime::now(),
+            at,
         };
         // Channel policy lives on the kind: screen-only kinds skip
         // the eager log line (history still records every event).
@@ -315,56 +345,16 @@ fn kind_text(event: &UiNotification) -> String {
     event.kind.text(AppLanguage::English)
 }
 
-/// Map a command outcome to notifications. Success notifies Info;
-/// slot failures map to Warning/Error by reason; transport errors
-/// become a generic Error.
-pub fn outcome_notifications(
-    command: SessionCommand,
-    outcome: &SessionCommandOutcome,
-    active_slot: Option<u64>,
-) -> Vec<NotificationKind> {
-    if let Some(reason) = outcome.slot_failure {
-        let slot = command.associated_slot(active_slot);
-        return vec![NotificationKind::SlotFailed { slot, reason }];
-    }
-    if !outcome.executed {
-        return Vec::new();
-    }
-    let kind = match command {
-        SessionCommand::Pause | SessionCommand::TogglePause => NotificationKind::Paused,
-        SessionCommand::Resume => NotificationKind::Resumed,
-        SessionCommand::Reset => NotificationKind::Reset,
-        SessionCommand::CreateSlot => NotificationKind::CreatedSlot,
-        SessionCommand::SaveActiveSlotOrNew => {
-            NotificationKind::SavedSlot(active_slot.unwrap_or(0))
-        }
-        SessionCommand::LoadActiveSlot => NotificationKind::LoadedSlot(active_slot.unwrap_or(0)),
-        SessionCommand::SelectActiveSlot(id) => NotificationKind::SelectedSlot(id),
-        SessionCommand::SelectNextSlot | SessionCommand::SelectPreviousSlot => {
-            NotificationKind::SelectedSlot(active_slot.unwrap_or(0))
-        }
-        SessionCommand::SaveSlot(id) => NotificationKind::SavedSlot(id),
-        SessionCommand::LoadSlot(id) => NotificationKind::LoadedSlot(id),
-        SessionCommand::DeleteSlot(id) => NotificationKind::DeletedSlot(id),
-    };
-    // TogglePause resolving is state-dependent; Pause/Resume arms above
-    // already cover the steady states, so no extra handling is needed.
-    vec![kind]
-}
-
-/// Resolve TogglePause to the steady arm entered from `was_paused`.
-/// Notifications name the entered state, not the invoked command.
-pub fn resolve_toggle(command: SessionCommand, was_paused: bool) -> SessionCommand {
-    match (command, was_paused) {
-        (SessionCommand::TogglePause, false) => SessionCommand::Pause,
-        (SessionCommand::TogglePause, true) => SessionCommand::Resume,
-        (other, _) => other,
-    }
-}
+/// Moved to [`crate::session::commands`]: the command layer owns
+/// the command-to-notification mapping. Re-exported here for
+/// existing call sites.
+pub use super::commands::{outcome_notifications, resolve_toggle};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::commands::{SessionCommand, SessionCommandOutcome};
+    use crate::session::error::SlotOpFailure;
 
     #[test]
     fn log_level_marks_selection_screen_only() {
@@ -449,7 +439,6 @@ mod tests {
 
     #[test]
     fn texts_cover_every_variant_in_both_languages() {
-        use crate::session::commands::SlotOpFailure;
         let variants = vec![
             NotificationKind::Paused,
             NotificationKind::Resumed,
@@ -460,6 +449,8 @@ mod tests {
             NotificationKind::CreatedSlot,
             NotificationKind::SelectedSlot(4),
             NotificationKind::CommandFailed("Reset"),
+            NotificationKind::ExternalError("boom".to_string()),
+            NotificationKind::PersistenceUnavailable,
         ];
         for kind in &variants {
             assert!(!kind.text(AppLanguage::English).is_empty());
@@ -498,7 +489,8 @@ mod tests {
     #[test]
     fn toggle_resolves_to_the_entered_state() {
         use super::resolve_toggle as resolve;
-        use SessionCommand as C;
+        use crate::session::commands::SessionCommand as C;
+        use crate::session::commands::SessionCommandOutcome;
         assert_eq!(resolve(C::TogglePause, false), C::Pause);
         assert_eq!(resolve(C::TogglePause, true), C::Resume);
         assert_eq!(resolve(C::Resume, true), C::Resume);
@@ -523,6 +515,7 @@ mod tests {
 
     #[test]
     fn outcome_success_maps_each_command() {
+        use crate::session::commands::SessionCommandOutcome;
         let ok = SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
@@ -579,7 +572,8 @@ mod tests {
 
     #[test]
     fn associated_slot_covers_every_command() {
-        use SessionCommand as C;
+        use crate::session::commands::SessionCommand as C;
+        use crate::session::commands::SessionCommandOutcome;
         for (command, expected) in [
             (C::SaveSlot(4), Some(4)),
             (C::LoadSlot(4), Some(4)),
@@ -624,6 +618,7 @@ mod tests {
 
     #[test]
     fn outcome_success_covers_active_slot_commands() {
+        use crate::session::commands::SessionCommandOutcome;
         let ok = SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
@@ -643,13 +638,14 @@ mod tests {
     fn replace_group_flags_only_selection() {
         assert_eq!(
             NotificationKind::SelectedSlot(2).replace_group(),
-            Some(super::SELECTED_SLOT_GROUP)
+            Some(ReplaceGroup::SelectedSlot)
         );
         for kind in [
             NotificationKind::Paused,
             NotificationKind::SavedSlot(1),
             NotificationKind::PersistenceUnavailable,
             NotificationKind::CommandFailed("Reset"),
+            NotificationKind::ExternalError("x".to_string()),
         ] {
             assert_eq!(kind.replace_group(), None);
         }
