@@ -83,8 +83,21 @@ fn decode_frontend_event(raw: &str) -> Option<FrontendEvent> {
 }
 
 fn publish_event(event: FrontendEvent) {
-    log::debug!("Android menu: published event: {:?}", event);
-    bridge::with_state(|state| state.frontend_events.push_back(event));
+    publish_all(core::slice::from_ref(&event));
+}
+
+/// Batch publish: one wake per JNI batch, not per event. Bursts from
+/// rapid menu taps share the wakeup instead of spamming the looper.
+fn publish_all(events: &[FrontendEvent]) {
+    if events.is_empty() {
+        return;
+    }
+    if log::log_enabled!(log::Level::Debug) {
+        for event in events {
+            log::debug!("Android menu: published event: {:?}", event);
+        }
+    }
+    bridge::with_state(|state| state.frontend_events.extend(events.iter().cloned()));
     bridge::wake();
 }
 

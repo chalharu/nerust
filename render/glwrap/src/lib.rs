@@ -46,6 +46,27 @@ pub fn use_program(program: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::UseProgram(program) })
 }
 
+/// Why a program failed to link. Typed so callers match on stage
+/// instead of parsing a string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShaderError {
+    Compile { stage: &'static str, log: String },
+    Link { log: String },
+    Query { what: String },
+}
+
+impl core::fmt::Display for ShaderError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ShaderError::Compile { stage, log } => write!(f, "{stage} compile failed: {log}"),
+            ShaderError::Link { log } => write!(f, "link failed: {log}"),
+            ShaderError::Query { what } => write!(f, "query failed: {what}"),
+        }
+    }
+}
+
+impl std::error::Error for ShaderError {}
+
 #[derive(Debug)]
 pub struct Shader {
     program: GLuint,
@@ -57,7 +78,7 @@ pub struct Shader {
 /// Programs die with the view: rebuilds and detach must not orphan names.
 /// Explicit `destroy_if_current` does the delete; Drop only reports leaks.
 impl Shader {
-    pub fn try_new(vert_src: &str, flag_src: &str) -> Result<Self, String> {
+    pub fn try_new(vert_src: &str, flag_src: &str) -> Result<Self, ShaderError> {
         let vtx_shader_id = compile_shader(vert_src, gl::VERTEX_SHADER)?;
         let flag_shader_id = compile_shader(flag_src, gl::FRAGMENT_SHADER)?;
         let program_id = link_program(vtx_shader_id, flag_shader_id)?;
@@ -71,24 +92,10 @@ impl Shader {
     }
 
     /// Attribute location, if the linker kept the name. `None` instead
-    /// of ambiguous `0`: location 0 is a valid attribute.
+    /// of ambiguous `0`: location 0 is a valid attribute. Optimized-out
+    /// names legitimately miss; callers skip or fail typed (no sentinel).
     pub fn attribute_opt(&self, key: &str) -> Option<GLuint> {
         self.attributes.get(key).copied()
-    }
-
-    // Optimized-out names legitimately miss; release stays silent.
-    // Debug flags the typo without failing the frame.
-    pub fn get_attribute(&self, key: &str) -> GLuint {
-        if let Some(id) = self.attribute_opt(key) {
-            id
-        } else {
-            #[cfg(debug_assertions)]
-            {
-                debug_assert!(false, "missing GL attribute: {key}");
-                log::error!("missing GL attribute: {key}");
-            }
-            0
-        }
     }
 
     /// Uniform location, if the linker kept the name. `None` instead
@@ -96,21 +103,6 @@ impl Shader {
     /// anyway, instead of threading a magic value.
     pub fn uniform_opt(&self, key: &str) -> Option<GLint> {
         self.uniforms.get(key).copied()
-    }
-
-    // Optimized-out names legitimately miss; release stays silent.
-    // Debug flags the typo without failing the frame.
-    pub fn get_uniform(&self, key: &str) -> GLint {
-        if let Some(&id) = self.uniforms.get(key) {
-            id
-        } else {
-            #[cfg(debug_assertions)]
-            {
-                debug_assert!(false, "missing GL uniform: {key}");
-                log::error!("missing GL uniform: {key}");
-            }
-            -1
-        }
     }
 
     pub fn use_program(&self) -> Result<(), Error> {
@@ -142,9 +134,13 @@ impl Drop for Shader {
     }
 }
 
-fn get_attributes(program_id: GLuint) -> Result<HashMap<String, GLuint>, String> {
+fn get_attributes(program_id: GLuint) -> Result<HashMap<String, GLuint>, ShaderError> {
     let mut count: GLint = 0;
-    get_programiv(program_id, gl::ACTIVE_ATTRIBUTES, &mut count).map_err(|e| e.to_string())?;
+    get_programiv(program_id, gl::ACTIVE_ATTRIBUTES, &mut count).map_err(|e| {
+        ShaderError::Query {
+            what: e.to_string(),
+        }
+    })?;
 
     let mut size: GLint = 0;
     let mut ty: GLenum = 0;
@@ -164,25 +160,35 @@ fn get_attributes(program_id: GLuint) -> Result<HashMap<String, GLuint>, String>
             &mut ty,
             name_buf.as_mut_ptr(),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| ShaderError::Query {
+            what: e.to_string(),
+        })?;
         let name = String::from(
             unsafe { CStr::from_ptr(name_buf.as_ptr()) }
                 .to_str()
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| ShaderError::Query {
+                    what: e.to_string(),
+                })?,
         );
         let location =
-            get_attrib_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) })
-                .map_err(|e| e.to_string())?;
-        let location =
-            u32::try_from(location).map_err(|_| format!("attribute {name} has no location"))?;
+            get_attrib_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) }).map_err(
+                |e| ShaderError::Query {
+                    what: e.to_string(),
+                },
+            )?;
+        let location = u32::try_from(location).map_err(|e| ShaderError::Query {
+            what: format!("attribute {name} has no location: {e}"),
+        })?;
         let _ = result.insert(name, location);
     }
     Ok(result)
 }
 
-fn get_uniforms(program_id: GLuint) -> Result<HashMap<String, GLint>, String> {
+fn get_uniforms(program_id: GLuint) -> Result<HashMap<String, GLint>, ShaderError> {
     let mut count: GLint = 0;
-    get_programiv(program_id, gl::ACTIVE_UNIFORMS, &mut count).map_err(|e| e.to_string())?;
+    get_programiv(program_id, gl::ACTIVE_UNIFORMS, &mut count).map_err(|e| ShaderError::Query {
+        what: e.to_string(),
+    })?;
 
     let mut size: GLint = 0;
     let mut ty: GLenum = 0;
@@ -202,15 +208,21 @@ fn get_uniforms(program_id: GLuint) -> Result<HashMap<String, GLint>, String> {
             &mut ty,
             name_buf.as_mut_ptr(),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| ShaderError::Query {
+            what: e.to_string(),
+        })?;
         let name = String::from(
             unsafe { CStr::from_ptr(name_buf.as_ptr()) }
                 .to_str()
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| ShaderError::Query {
+                    what: e.to_string(),
+                })?,
         );
         let location =
             get_uniform_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) })
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| ShaderError::Query {
+                    what: e.to_string(),
+                })?;
         let _ = result.insert(name, location);
     }
 
@@ -230,9 +242,16 @@ fn trim_info_log(buf: &mut Vec<u8>, written: GLsizei) -> String {
     String::from_utf8_lossy(buf.as_slice()).into_owned()
 }
 
-fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, String> {
+fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, ShaderError> {
     let shader = unsafe { gl::CreateShader(ty) };
-    let c_str = CString::new(src.as_bytes()).map_err(|e| e.to_string())?;
+    let c_str = CString::new(src.as_bytes()).map_err(|e| ShaderError::Compile {
+        stage: if ty == gl::VERTEX_SHADER {
+            "vertex"
+        } else {
+            "fragment"
+        },
+        log: e.to_string(),
+    })?;
     unsafe {
         gl::ShaderSource(shader, 1, &c_str.as_ptr(), ptr::null());
         gl::CompileShader(shader);
@@ -247,13 +266,20 @@ fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, String> {
             let mut buf = info_log_buffer(len);
             gl::GetShaderInfoLog(shader, len, &mut written, buf.as_mut_ptr().cast());
             gl::DeleteShader(shader);
-            return Err(trim_info_log(&mut buf, written));
+            return Err(ShaderError::Compile {
+                stage: if ty == gl::VERTEX_SHADER {
+                    "vertex"
+                } else {
+                    "fragment"
+                },
+                log: trim_info_log(&mut buf, written),
+            });
         }
     }
     Ok(shader)
 }
 
-fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, String> {
+fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, ShaderError> {
     unsafe {
         let program = gl::CreateProgram();
         gl::AttachShader(program, vs);
@@ -261,16 +287,24 @@ fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, String> {
         gl::LinkProgram(program);
 
         let mut status = GLint::from(gl::FALSE);
-        get_programiv(program, gl::LINK_STATUS, &mut status).map_err(|e| e.to_string())?;
+        get_programiv(program, gl::LINK_STATUS, &mut status).map_err(|e| ShaderError::Query {
+            what: e.to_string(),
+        })?;
 
         if status != GLint::from(gl::TRUE) {
             let mut len: GLint = 0;
-            get_programiv(program, gl::INFO_LOG_LENGTH, &mut len).map_err(|e| e.to_string())?;
+            get_programiv(program, gl::INFO_LOG_LENGTH, &mut len).map_err(|e| {
+                ShaderError::Query {
+                    what: e.to_string(),
+                }
+            })?;
             let mut written = 0;
             let mut buf = info_log_buffer(len);
             gl::GetProgramInfoLog(program, len, &mut written, buf.as_mut_ptr().cast());
             gl::DeleteProgram(program);
-            return Err(trim_info_log(&mut buf, written));
+            return Err(ShaderError::Link {
+                log: trim_info_log(&mut buf, written),
+            });
         }
         Ok(program)
     }
