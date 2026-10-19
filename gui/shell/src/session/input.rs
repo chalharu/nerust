@@ -65,7 +65,7 @@ fn rebuild_input_map<B: InputBinding>(
 impl SessionHandle {
     pub fn touch_overlay_model(&self, revision: u64) -> TouchOverlayModel {
         let mut controls = Vec::new();
-        for (attachment_id, profile) in &self.current_assignments.slots {
+        for (attachment_id, profile) in &self.input.current_assignments.slots {
             let Some(profile) = profile else {
                 continue;
             };
@@ -94,7 +94,7 @@ impl SessionHandle {
 
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
-        if let Some(&field) = self.field_map.get(&(event.attachment, event.control))
+        if let Some(&field) = self.input.field_map.get(&(event.attachment, event.control))
             && let Some(ref mut gui_input) = self.gui_input
         {
             let _ = gui_input
@@ -105,20 +105,20 @@ impl SessionHandle {
 
     pub fn handle_keyboard_key(&mut self, key: Key, pressed: bool) -> Option<KeyboardShortcut> {
         let first_press = if pressed {
-            self.pressed_keys.insert(key)
+            self.input.pressed_keys.insert(key)
         } else {
-            self.pressed_keys.remove(&key);
+            self.input.pressed_keys.remove(&key);
             false
         };
 
-        if let Some(&field) = self.key_field_map.get(&key)
+        if let Some(&field) = self.input.key_field_map.get(&key)
             && let Some(ref mut gui_input) = self.gui_input
         {
             let _ = gui_input.state.set(field, InputValue::Digital(pressed));
         }
 
         if first_press {
-            return shortcut_action_for_key(&self.settings_snapshot.shared, key).map(|action| {
+            return shortcut_action_for_key(&self.settings.snapshot.shared, key).map(|action| {
                 if matches!(action, ShortcutAction::ToggleFullscreen) {
                     KeyboardShortcut::ToggleFullscreen
                 } else if matches!(action, ShortcutAction::OpenDebugger) {
@@ -132,20 +132,21 @@ impl SessionHandle {
     }
 
     pub fn clear_input(&mut self) {
-        self.pressed_keys.clear();
+        self.input.pressed_keys.clear();
         if let Some(ref mut gui_input) = self.gui_input {
             gui_input.clear();
         }
     }
 
     pub fn rebuild_key_field_map(&mut self) {
-        self.key_field_map.clear();
+        self.input.key_field_map.clear();
         let Some(factory) = self.active_factory() else {
             return;
         };
         let system_id = factory.system_id();
         let Some(profile) = self
-            .settings_snapshot
+            .settings
+            .snapshot
             .shared
             .input
             .systems
@@ -154,7 +155,11 @@ impl SessionHandle {
         else {
             return;
         };
-        rebuild_input_map(&self.field_map, &profile.bindings, &mut self.key_field_map);
+        rebuild_input_map(
+            &self.input.field_map,
+            &profile.bindings,
+            &mut self.input.key_field_map,
+        );
     }
 }
 
@@ -334,7 +339,7 @@ mod tests {
     fn touch_overlay_uses_assigned_profile_controls() {
         let mut session = crate::session::test_util::test_session();
         let slot = AttachmentId::new("test.topology.slot");
-        session.current_assignments.slots = vec![(slot, Some(Rc::new(MockTopologyProfile)))];
+        session.input.current_assignments.slots = vec![(slot, Some(Rc::new(MockTopologyProfile)))];
 
         let overlay = session.touch_overlay_model(42);
 

@@ -6,6 +6,7 @@ pub mod input;
 pub mod lifecycle;
 pub mod notification;
 pub mod osd;
+pub mod osd_history;
 pub mod persistence;
 #[cfg(test)]
 mod persistence_test;
@@ -93,22 +94,41 @@ pub enum KeyboardShortcut {
     OpenDebugger,
 }
 
-pub struct SessionHandle {
-    registry: Arc<SystemRegistry>,
-    active_system_id: Option<Box<dyn SystemId>>,
-    emu_core: Option<EmuCore>,
-    gui_input: Option<GuiInput>,
+/// Input cluster: assignments, key maps, live runtime. One owner for
+/// the input domain so `SessionHandle` stays a facade.
+struct InputCluster {
     current_assignments: InputAssignments,
     field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_keyboard::Key, usize>,
-    capabilities: HostBackendCapabilities,
-    settings: SettingsManager,
-    settings_snapshot: SettingsSnapshot,
     pressed_keys: BTreeSet<Key>,
-    loaded_media: Option<LoadedMedia>,
+    runtime: Option<CoreRuntime>,
+}
+
+/// Settings cluster: manager plus its snapshot. Single owner for the
+/// settings domain.
+struct SettingsCluster {
+    manager: SettingsManager,
+    snapshot: SettingsSnapshot,
+}
+
+/// Media cluster: loaded media plus persistence. Single owner for the
+/// save/load domain.
+struct MediaCluster {
+    loaded: Option<LoadedMedia>,
     persistence: PersistenceManager,
+}
+
+pub struct SessionHandle {
+    registry: Arc<SystemRegistry>,
+    active_system_id: Option<Box<dyn SystemId>>,
+    emu_core: Option<EmuCore>,
+    gui_input: Option<GuiInput>,
+    input: InputCluster,
+    capabilities: HostBackendCapabilities,
+    settings: SettingsCluster,
+    media: MediaCluster,
     audio_registry: Arc<AudioBackendRegistry>,
     /// Shell-owned two-phase memory write transaction (Phase B).
     /// `Arc`: async debug-drain flights share it across UI ticks.
@@ -294,18 +314,25 @@ impl SessionHandle {
         let mut result = Self {
             emu_core,
             gui_input,
-            current_assignments: assignments,
-            field_map,
-            host_peripherals,
-            key_field_map: HashMap::new(),
+            input: InputCluster {
+                current_assignments: assignments,
+                field_map,
+                host_peripherals,
+                key_field_map: HashMap::new(),
+                pressed_keys: BTreeSet::new(),
+                runtime: None,
+            },
             registry,
             active_system_id,
             capabilities,
-            settings,
-            settings_snapshot,
-            pressed_keys: BTreeSet::new(),
-            loaded_media: None,
-            persistence: PersistenceManager::new(),
+            settings: SettingsCluster {
+                manager: settings,
+                snapshot: settings_snapshot,
+            },
+            media: MediaCluster {
+                loaded: None,
+                persistence: PersistenceManager::new(),
+            },
             audio_registry,
             debug_txn: Arc::new(Mutex::new(debug_vm::WriteTransaction::Empty)),
             notifications: notification::NotificationCenter::new(),
@@ -359,8 +386,8 @@ impl SessionHandle {
                 .as_ref()
                 .map(|c| c.metrics())
                 .unwrap_or_default(),
-            slots: Arc::from(self.persistence.slots().to_vec()),
-            active_slot_id: self.persistence.active_slot_id(),
+            slots: Arc::from(self.media.persistence.slots().to_vec()),
+            active_slot_id: self.media.persistence.active_slot_id(),
         }
     }
 
@@ -388,24 +415,24 @@ impl SessionHandle {
     }
 
     pub fn settings_snapshot(&self) -> &SettingsSnapshot {
-        &self.settings_snapshot
+        &self.settings.snapshot
     }
 
     pub fn host_peripherals(&self) -> &nerust_core_traits::peripheral::HostPeripheralHandles {
-        &self.host_peripherals
+        &self.input.host_peripherals
     }
 
     pub fn current_assignments(&self) -> &InputAssignments {
-        &self.current_assignments
+        &self.input.current_assignments
     }
 
     #[cfg(test)]
     pub(crate) fn loaded_media_ref(&self) -> &Option<LoadedMedia> {
-        &self.loaded_media
+        &self.media.loaded
     }
 
     pub fn settings_manager(&self) -> &SettingsManager {
-        &self.settings
+        &self.settings.manager
     }
 
     pub fn set_persistence_backends(
@@ -414,18 +441,19 @@ impl SessionHandle {
         autosave_backend: Box<dyn persistence::AutoSaveBackend>,
         mapper_backend: Box<dyn persistence::MapperSaveBackend>,
     ) {
-        self.persistence =
+        self.media.persistence =
             PersistenceManager::with_all_backends(slot_backend, autosave_backend, mapper_backend);
     }
 
     #[cfg(test)]
+    #[cfg(test)]
     pub(crate) fn set_settings(&mut self, settings: SettingsManager) {
-        self.settings = settings;
+        self.settings.manager = settings;
     }
 
     #[cfg(test)]
     pub(crate) fn set_settings_snapshot(&mut self, snapshot: SettingsSnapshot) {
-        self.settings_snapshot = snapshot;
+        self.settings.snapshot = snapshot;
     }
 
     pub fn active_factory(&self) -> Option<&Arc<dyn CoreFactory>> {
@@ -447,7 +475,7 @@ impl SessionHandle {
     }
 
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
-        self.current_assignments.to_string_pairs()
+        self.input.current_assignments.to_string_pairs()
     }
 
     pub fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
@@ -505,30 +533,31 @@ impl RomLoadTarget for SessionHandle {
             .cloned()
             .ok_or(SystemActivationError::NotRegistered(system_id.clone_box()))?;
         let requested_assignments =
-            Self::load_assignments(&factory, &self.settings_snapshot, system_id);
+            Self::load_assignments(&factory, &self.settings.snapshot, system_id);
         let created = Self::create_core_with_assignments(
             &factory,
             &self.audio_registry,
-            &self.settings_snapshot,
+            &self.settings.snapshot,
             &requested_assignments,
         )
         .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
 
         if let Some(ref core) = self.emu_core {
-            self.persistence
+            self.media
+                .persistence
                 .flush_mapper_save(core)
                 .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
         }
 
         self.active_system_id = Some(system_id.clone_box());
-        self.current_assignments = created.applied_assignments;
+        self.input.current_assignments = created.applied_assignments;
         self.emu_core = Some(created.runtime.emu_core);
         self.gui_input = Some(created.runtime.gui_input);
-        self.field_map = created.runtime.field_map;
-        self.host_peripherals = created.runtime.host_peripherals;
-        self.loaded_media = None;
-        self.persistence.reset();
-        self.pressed_keys.clear();
+        self.input.field_map = created.runtime.field_map;
+        self.input.host_peripherals = created.runtime.host_peripherals;
+        self.media.loaded = None;
+        self.media.persistence.reset();
+        self.input.pressed_keys.clear();
         self.rebuild_key_field_map();
         Ok(())
     }
