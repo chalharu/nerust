@@ -15,155 +15,9 @@ use super::notification::{
     NotificationKind, NotificationLevel, ReplaceGroup, UiNotification, append_count,
 };
 
-/// Level tag prefixing OSD labels: text (not color or shape
-/// alone) carries severity. History uses [`level_name`]
-/// instead: the grid Level column and the OSD tag are managed
-/// separately by design (review feedback).
-/// Single source for level text: tag and grid name side by
-/// side so a new level cannot update one and forget the other.
-struct LevelText {
-    tag: &'static str,
-    name: &'static str,
-}
-
-fn level_text(level: NotificationLevel) -> LevelText {
-    match level {
-        NotificationLevel::Info => LevelText {
-            tag: "[INFO]",
-            name: "Info",
-        },
-        NotificationLevel::Warning => LevelText {
-            tag: "[WARN]",
-            name: "Warning",
-        },
-        NotificationLevel::Error => LevelText {
-            tag: "[ERROR]",
-            name: "Error",
-        },
-    }
-}
-
-pub fn level_tag(level: NotificationLevel) -> &'static str {
-    level_text(level).tag
-}
-
-/// Full level name for the history grid Level column.
-pub fn level_name(level: NotificationLevel) -> &'static str {
-    level_text(level).name
-}
-
-/// Localized level name for history grid and filter options.
-/// `Error` maps to `UiText::Error` for column width.
-pub fn level_label(
-    level: NotificationLevel,
-    language: nerust_settings_core::model::language::AppLanguage,
-) -> &'static str {
-    use nerust_settings_core::i18n::{UiText, text as ui_text};
-    match level {
-        NotificationLevel::Info => ui_text(language, UiText::NotificationInfo),
-        NotificationLevel::Warning => ui_text(language, UiText::NotificationWarning),
-        NotificationLevel::Error => ui_text(language, UiText::Error),
-    }
-}
-
-/// One rendered history line: datetime plus grid columns.
-/// `module` is the log module so rows grep the `notification:` records.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HistoryLine {
-    /// YYYY-MM-DD HH:MM:SS (local wall-clock) of the push.
-    pub datetime: String,
-    pub level: NotificationLevel,
-    pub module: &'static str,
-    pub text: String,
-    pub count: u32,
-}
-
-/// Local wall-clock datetime from a `SystemTime`.
-/// Falls back to UTC when the zone is indeterminate.
-pub fn format_datetime(time: std::time::SystemTime) -> String {
-    format_datetime_in(time, local_utc_offset_secs())
-}
-
-/// `SystemTime` as local epoch seconds for [`format_datetime`]:
-/// the UTC instant plus the platform zone offset. Mirrors the
-/// persistence slot-time precedent (`persistence::time`).
-fn local_epoch_secs(time: std::time::SystemTime) -> i64 {
-    let utc = time
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    (utc as i64).saturating_add(local_utc_offset_secs())
-}
-
-/// Platform zone offset in seconds, resolved once per sync — not per
-/// row. Falls back to UTC when the zone is indeterminate.
-fn local_utc_offset_secs() -> i64 {
-    time::UtcOffset::current_local_offset()
-        .map(|o| i64::from(o.whole_seconds()))
-        .unwrap_or(0)
-}
-
-/// Datetime with a pre-resolved offset (see
-/// [`local_utc_offset_secs`]).
-fn format_datetime_in(time: std::time::SystemTime, offset_secs: i64) -> String {
-    let utc = time
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // Floor-divide so pre-1970 instants keep a non-negative clock.
-    let secs = (utc as i64).saturating_add(offset_secs);
-    let days = secs.div_euclid(86_400);
-    let clock = secs.rem_euclid(86_400);
-    // Howard Hinnant's civil-from-days; 719468 = days to 1970-01-01.
-    let era = (days + 719_468) / 146_097;
-    let doe = (days + 719_468) - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let month = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
-    let full_year = (year + i64::from(month <= 2)) as u32;
-    format!(
-        "{full_year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}",
-        clock / 3600,
-        clock / 60 % 60,
-        clock % 60
-    )
-}
-
-/// Build render-ready history lines in one pass, resolving the zone
-/// offset once for all rows. Lifecycle delegates here so every
-/// frontend shares identical rows without duplicating the mapping.
-pub fn history_lines<'a>(
-    history: impl Iterator<Item = &'a UiNotification>,
-    language: AppLanguage,
-) -> Vec<HistoryLine> {
-    let offset_secs = local_utc_offset_secs();
-    history
-        .map(|n| {
-            let text = super::notification::render_text(&n.kind, n.count, language);
-            HistoryLine {
-                datetime: format_datetime_in(n.at, offset_secs),
-                level: n.level,
-                module: super::notification::LOG_MODULE,
-                text,
-                count: n.count,
-            }
-        })
-        .collect()
-}
-
-pub fn format_time(time: std::time::SystemTime) -> String {
-    let clock = local_epoch_secs(time).rem_euclid(86_400);
-    format!(
-        "{:02}:{:02}:{:02}",
-        clock / 3600,
-        clock / 60 % 60,
-        clock % 60
-    )
-}
-
+pub use super::osd_history::{
+    HistoryLine, format_datetime, format_time, history_lines, level_label, level_name, level_tag,
+};
 #[derive(Debug, Clone)]
 pub struct OsdRow {
     pub text: String,
@@ -517,6 +371,10 @@ impl TransientQueue {
             .unwrap_or_default()
     }
 
+    fn visible_row(&self) -> Option<&OsdRow> {
+        self.current.as_ref().map(|current| &current.row)
+    }
+
     fn has_visible(&self) -> bool {
         self.current.is_some()
     }
@@ -694,6 +552,12 @@ impl OsdManager {
         self.transient.rows()
     }
 
+    /// Borrowed showing row. The sync emptiness check uses this so the
+    /// clear path clones nothing; only `Render` builds the owned plan.
+    pub fn visible_row(&self) -> Option<&OsdRow> {
+        self.transient.visible_row()
+    }
+
     /// Drain the aggregated modal batch into the sequential queue.
     /// Internal pump step for [`SessionHandle::pump_osd`]: frontends
     /// present via the modal source, never this. Overflow warns once
@@ -823,22 +687,22 @@ impl StatusGate {
     pub fn gate_or_cached(
         &mut self,
         now: Instant,
-        label: String,
+        label: &str,
         fresh: impl FnOnce() -> String,
     ) -> (String, String) {
-        let label_changed = self.last_label.as_deref() != Some(label.as_str());
+        let label_changed = self.last_label.as_deref() != Some(label);
         let tick_due = self
             .last_tick
             .is_none_or(|t| now.duration_since(t) >= STATUS_FPS_MIN_INTERVAL);
         if label_changed || tick_due || self.last_value.is_none() {
             let value = fresh();
-            self.last_label = Some(label.clone());
+            self.last_label = Some(label.to_string());
             self.last_value = Some(value.clone());
             self.last_tick = Some(now);
-            (label, value)
+            (label.to_string(), value)
         } else {
             let cached = self.last_value.clone().unwrap_or_else(fresh);
-            (label, cached)
+            (label.to_string(), cached)
         }
     }
 }
@@ -1021,7 +885,7 @@ impl OsdPresenter {
         let status_key = chrome.status_enabled.then(|| {
             let (label, value) =
                 self.gate
-                    .gate_or_cached(now, status_label(paused, language).to_string(), || {
+                    .gate_or_cached(now, status_label(paused, language), || {
                         format!("{fps:.1} fps")
                     });
             (
@@ -1047,8 +911,7 @@ impl OsdPresenter {
         self.last_size = Some((width, height));
         self.last_chrome = Some(raster);
         self.last_status = status_key.clone();
-        let rows = manager.rows();
-        let empty = rows.is_empty() && status_key.is_none();
+        let empty = manager.visible_row().is_none() && status_key.is_none();
         if empty {
             if self.active {
                 self.active = false;
@@ -1064,7 +927,7 @@ impl OsdPresenter {
             None => (None, chrome.position, chrome.status_position),
         };
         OsdSync::Render(OsdPlan {
-            rows,
+            rows: manager.rows(),
             status: label_value,
             position: osd_anchor(position),
             status_position: osd_anchor(status_position),
@@ -1173,8 +1036,9 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Error,
-                kind: K::ExternalError {
-                    source: super::super::notification::ExternalSource::Bridge,
+                kind: K::CommandFailure {
+                    origin: super::super::notification::FailureOrigin::Bridge,
+                    id: "",
                     detail: "boom".to_string(),
                 },
                 count: 1,
@@ -1191,9 +1055,10 @@ mod tests {
 
     #[test]
     fn external_error_routes_modal_without_frame() {
-        use super::super::notification::{ExternalSource, NotificationKind as K};
-        let kind = K::ExternalError {
-            source: ExternalSource::Picker,
+        use super::super::notification::{FailureOrigin, NotificationKind as K};
+        let kind = K::CommandFailure {
+            origin: FailureOrigin::Picker,
+            id: "",
             detail: "picker failed".to_string(),
         };
         assert_eq!(kind.level(), NotificationLevel::Error);
@@ -2152,7 +2017,11 @@ mod tests {
             },
             UiNotification {
                 level: super::super::notification::NotificationLevel::Error,
-                kind: NotificationKind::CommandFailed("Save"),
+                kind: NotificationKind::CommandFailure {
+                    origin: crate::session::notification::FailureOrigin::Command,
+                    id: "Save",
+                    detail: String::new(),
+                },
                 count: 3,
                 seq: 1,
                 at: std::time::UNIX_EPOCH,
@@ -2221,24 +2090,24 @@ mod tests {
         let now = Instant::now();
         // First sample passes.
         assert_eq!(
-            gate.gate_or_cached(now, String::new(), || "60.1 fps".to_string()),
+            gate.gate_or_cached(now, "", || "60.1 fps".to_string()),
             (String::new(), "60.1 fps".to_string())
         );
         // Jitter within the interval holds the old digits.
         assert_eq!(
-            gate.gate_or_cached(now, String::new(), || "60.2 fps".to_string()),
+            gate.gate_or_cached(now, "", || "60.2 fps".to_string()),
             (String::new(), "60.1 fps".to_string())
         );
         // After the interval the fresh digits pass.
         assert_eq!(
-            gate.gate_or_cached(now + STATUS_FPS_MIN_INTERVAL, String::new(), || {
+            gate.gate_or_cached(now + STATUS_FPS_MIN_INTERVAL, "", || {
                 "60.2 fps".to_string()
             }),
             (String::new(), "60.2 fps".to_string())
         );
         // A pause flip passes immediately even inside the interval.
         assert_eq!(
-            gate.gate_or_cached(now + STATUS_FPS_MIN_INTERVAL, "Paused".to_string(), || {
+            gate.gate_or_cached(now + STATUS_FPS_MIN_INTERVAL, "Paused", || {
                 "60.3 fps".to_string()
             }),
             ("Paused".to_string(), "60.3 fps".to_string())
@@ -2520,14 +2389,14 @@ mod tests {
         let now = Instant::now();
         // Fresh gate: fresh computed once.
         let mut fresh_calls = 0;
-        let (label, value) = gate.gate_or_cached(now, "Paused".to_string(), || {
+        let (label, value) = gate.gate_or_cached(now, "Paused", || {
             fresh_calls += 1;
             "60.0 fps".to_string()
         });
         assert_eq!((label.as_str(), value.as_str()), ("Paused", "60.0 fps"));
         assert_eq!(fresh_calls, 1);
         // Steady: fresh never runs again.
-        let (_, steady) = gate.gate_or_cached(now, "Paused".to_string(), || {
+        let (_, steady) = gate.gate_or_cached(now, "Paused", || {
             fresh_calls += 1;
             "60.1 fps".to_string()
         });

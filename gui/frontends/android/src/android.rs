@@ -812,7 +812,7 @@ impl AndroidFrontend {
                 if let Err(error) = self.open_rom_from_uri(event_loop, &uri) {
                     log::error!("{error}");
                     self.session.report_external_error(
-                        nerust_gui_shell::session::notification::ExternalSource::Picker,
+                        nerust_gui_shell::session::notification::FailureOrigin::Picker,
                         error,
                     );
                 }
@@ -831,7 +831,7 @@ impl AndroidFrontend {
                     Err(error) => {
                         log::error!("failed to apply Android storage directory: {error}");
                         self.session.report_external_error(
-                            nerust_gui_shell::session::notification::ExternalSource::Picker,
+                            nerust_gui_shell::session::notification::FailureOrigin::Picker,
                             "Selected directory could not be used".to_string(),
                         );
                     }
@@ -1432,7 +1432,7 @@ impl AndroidFrontend {
                                         "try_resume_foreground: failed to load last document URI for lifecycle restore: {error}"
                                     );
                                     self.session.report_external_error(
-                                        nerust_gui_shell::session::notification::ExternalSource::Restore,
+                                        nerust_gui_shell::session::notification::FailureOrigin::Restore,
                                         "Previous ROM is unavailable; open it again".to_string(),
                                     );
                                     log::info!(
@@ -1496,7 +1496,7 @@ impl AndroidFrontend {
                                 "try_resume_foreground: failed to read last media reference: {error}"
                             );
                             self.session.report_external_error(
-                                nerust_gui_shell::session::notification::ExternalSource::Restore,
+                                nerust_gui_shell::session::notification::FailureOrigin::Restore,
                                 "Previous ROM reference is invalid; open it again".to_string(),
                             );
                             self.session.clear_hidden_lifecycle_state();
