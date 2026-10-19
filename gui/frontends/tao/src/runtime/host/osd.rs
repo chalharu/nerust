@@ -9,7 +9,7 @@ use nerust_render_traits::renderer::GpuRenderer;
 use tao::event::WindowEvent;
 
 use super::HostState;
-use crate::aux::focus::{WindowHandler, aux_focus_step};
+use crate::aux::focus::WindowHandler;
 use crate::ports::WindowOpener;
 use nerust_gui_shell::session::osd::ModalSource;
 use nerust_gui_shell::session::osd::strip_rows;
@@ -102,7 +102,7 @@ impl HostState {
         // Same aux-focus agreement as debugger/PPU: same-app moves
         // cancel a pending auto-pause; leaving anywhere arms it.
         let focused = matches!(event, WindowEvent::Focused(true));
-        let resume = aux_focus_step(&mut self.focus, focused);
+        let resume = self.note_aux_focus(focused);
         if resume {
             self.resume_session();
         }

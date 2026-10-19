@@ -281,16 +281,6 @@ fn cursor_page(physical: &iced::keyboard::key::Physical) -> Option<DebugMessage>
 }
 
 impl DebugWindowHandle {
-    /// Native window identity for event routing.
-    pub(crate) fn tao_window_id(&self) -> tao::window::WindowId {
-        self.shell.tao_window_id()
-    }
-
-    /// Close was requested through the shared flag.
-    pub(crate) fn close_requested(&self) -> bool {
-        self.shell.close_requested()
-    }
-
     pub(crate) fn new(
         display: DisplayCache,
         spaces: Vec<(SpaceId, String, u32)>,
@@ -331,11 +321,26 @@ impl DebugWindowHandle {
         self.bridge.take_requests()
     }
 
-    pub(crate) fn render(&mut self) {
-        self.shell.render("debugger");
+    pub(crate) fn sync_from_bridge(&mut self) {
+        self.bridge.view_invalidated.store(true, Ordering::Release);
+        self.shell
+            .process(Vec::new(), &self.bridge.view_invalidated);
+    }
+}
+
+impl super::focus::WindowHandler for DebugWindowHandle {
+    type Program = DebugProgram;
+    const LOG_TAG: &'static str = "debugger";
+
+    fn shell(&self) -> &crate::aux::shell::AuxShell<Self::Program> {
+        &self.shell
     }
 
-    pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
+    fn shell_mut(&mut self) -> &mut crate::aux::shell::AuxShell<Self::Program> {
+        &mut self.shell
+    }
+
+    fn handle_event(&mut self, mapped: iced::Event) -> bool {
         // Window-scoped shortcuts on physical codes (F6/F7/F9).
         // Dereference `physical_key` before matching (binds by ref).
         if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -362,34 +367,17 @@ impl DebugWindowHandle {
             None
         };
         let (mut messages, outcome) = self.shell.pump_frame(mapped);
+        let repainted = matches!(outcome, crate::aux::shell::PumpOutcome::Repaint);
         messages.extend(page);
         if matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
             self.bridge.view_invalidated.store(true, Ordering::Release);
         }
-        if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-            self.shell.process(messages, &self.bridge.view_invalidated);
-        }
-    }
-
-    fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
-        if let Some(iced_event) = self.shell.feed_tao_event(event) {
-            self.handle_event(iced_event);
-        }
-    }
-
-    pub(crate) fn sync_from_bridge(&mut self) {
-        self.bridge.view_invalidated.store(true, Ordering::Release);
-        self.shell
-            .process(Vec::new(), &self.bridge.view_invalidated);
+        let rebuilt =
+            if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
+                self.shell.process(messages, &self.bridge.view_invalidated)
+            } else {
+                false
+            };
+        repainted || rebuilt
     }
 }
-
-impl crate::aux::shell::AuxWindow for DebugWindowHandle {
-    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
-        self.shell.handle_common_event(&event);
-        self.handle_tao_event(event);
-        self.shell.request_redraw();
-    }
-}
-
-impl super::focus::WindowHandler for DebugWindowHandle {}

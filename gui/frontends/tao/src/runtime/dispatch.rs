@@ -8,7 +8,7 @@ use tao::{event::WindowEvent, event_loop::ControlFlow};
 use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
-use crate::aux::focus::{WindowHandler, aux_focus_step};
+use crate::aux::focus::WindowHandler;
 
 impl WindowRuntime {
     pub(super) fn on_main_event(
@@ -28,7 +28,7 @@ impl WindowRuntime {
             WindowEvent::Focused(true) => {
                 // A same-burst aux focus already cancelled any
                 // pending pause; this is belt-and-braces.
-                if self.host.focus.arrive_main() {
+                if self.host.note_main_arrival() {
                     self.host.resume_session();
                 }
                 self.host.request_redraw();
@@ -40,7 +40,7 @@ impl WindowRuntime {
                 // Deferred: an aux window may take focus in the same
                 // burst, so the pause lands at MainEventsCleared only
                 // if focus truly left us.
-                self.host.focus.leave_main();
+                self.host.note_main_departure();
                 self.host.clear_keys();
                 // Same agreement in the other direction, still
                 // without redundant round-trips.
@@ -72,25 +72,20 @@ impl WindowRuntime {
         // is already gone, so run the normal close path (pending
         // apply still commits).
         if matches!(event, WindowEvent::Destroyed) {
-            if let Some(handle) = self.host.settings.window.take() {
-                let plan = self.host.close_settings_window(handle);
-                if plan.is_some_and(|p| p.renderer_needs_rebuild) {
+            if let Some(handle) = self.host.take_settings_window() {
+                if self.host.close_settings_and_maybe_rebuild(handle) {
                     self.recreate_renderer();
                 }
-                self.host.request_redraw();
+                return;
             }
-            return;
         }
         // Same-app focus moves cancel a pending auto-pause;
         // leaving anywhere arms it (see the main arms). Runs
         // before borrowing the handle below.
-        if matches!(event, WindowEvent::Focused(true)) {
-            self.host.focus.cancel_pending();
+        if let WindowEvent::Focused(focused) = event {
+            self.host.note_aux_focus_quiet(focused);
         }
-        if matches!(event, WindowEvent::Focused(false)) {
-            self.host.focus.leave_aux();
-        }
-        let Some(handle) = self.host.settings.window.as_mut() else {
+        let Some(handle) = self.host.settings_window_mut() else {
             return;
         };
         handle.on_event(event);
@@ -99,14 +94,12 @@ impl WindowRuntime {
         // serialize a full draw behind every drag/motion event
         // and unload the backlog as a hang on release.
         if handle.close_requested() {
-            let Some(handle) = self.host.settings.window.take() else {
+            let Some(handle) = self.host.take_settings_window() else {
                 return;
             };
-            let plan = self.host.close_settings_window(handle);
-            if plan.is_some_and(|p| p.renderer_needs_rebuild) {
+            if self.host.close_settings_and_maybe_rebuild(handle) {
                 self.recreate_renderer();
             }
-            self.host.request_redraw();
         }
     }
 
@@ -125,12 +118,11 @@ impl WindowRuntime {
             return;
         }
         let refocused = matches!(event, WindowEvent::Focused(true));
-        let resume = aux_focus_step(&mut self.host.focus, refocused);
-        if resume {
+        if self.host.note_aux_focus(refocused) {
             self.host.resume_session();
         }
         {
-            let Some(handle) = self.host.debug.debug_window.as_mut() else {
+            let Some(handle) = self.host.debug.debug_window_mut() else {
                 return;
             };
             handle.on_event(event);
@@ -140,7 +132,7 @@ impl WindowRuntime {
         }
         self.drain_and_maybe_open_ppu(opener);
         // Closing never resumes: resume is always explicit.
-        if self.host.debug.debug_window.is_some() {
+        if self.host.debug.is_debug_open() {
             // Coalesced redraw: the event/drain paths above already
             // flagged what changed; one request covers the frame.
             self.host.request_redraw();
@@ -153,7 +145,7 @@ impl WindowRuntime {
 
     pub(super) fn on_debug_redrawn(&mut self, opener: &dyn WindowOpener) {
         self.drain_and_maybe_open_ppu(opener);
-        if let Some(handle) = self.host.debug.debug_window.as_mut() {
+        if let Some(handle) = self.host.debug.debug_window_mut() {
             handle.render();
         }
     }
@@ -169,8 +161,7 @@ impl WindowRuntime {
         // A system-paused session resumes like on main focus;
         // explicit pauses stay paused.
         let refocused = matches!(event, WindowEvent::Focused(true));
-        let resume = aux_focus_step(&mut self.host.focus, refocused);
-        if resume {
+        if self.host.note_aux_focus(refocused) {
             self.host.resume_session();
         }
         if let WindowEvent::Moved(position) = &event {
@@ -179,7 +170,7 @@ impl WindowRuntime {
                 .remember_ppu_window_pos(position.x, position.y);
         }
         {
-            let Some(handle) = self.host.debug.ppu_window.as_mut() else {
+            let Some(handle) = self.host.debug.ppu_window_mut() else {
                 return;
             };
             handle.on_event(event);
@@ -265,9 +256,9 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         let mut flow = ControlFlow::Wait;
         runtime.on_main_event(&opener, WindowEvent::Focused(false), &mut flow);
-        assert!(!runtime.host.focus.main_active());
+        assert!(!runtime.host.main_active());
         runtime.on_main_event(&opener, WindowEvent::Focused(true), &mut flow);
-        assert!(runtime.host.focus.main_active());
+        assert!(runtime.host.main_active());
         assert_eq!(menu.updates().len(), 2);
     }
 
@@ -304,9 +295,9 @@ mod tests {
         let (mut runtime, menu) = test_runtime();
         runtime.on_settings_event(WindowEvent::Focused(true));
         runtime.on_settings_event(WindowEvent::Focused(false));
-        assert!(runtime.host.focus.main_active());
+        assert!(runtime.host.main_active());
         assert!(menu.updates().is_empty());
-        runtime.host.focus.cancel_pending();
+        runtime.host.note_aux_focus_quiet(true);
     }
 
     #[test]
@@ -339,7 +330,7 @@ mod tests {
         // returns before chrome sync or drain.
         let (mut runtime, menu) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        runtime.host.focus.leave_main();
+        runtime.host.note_main_departure();
         runtime.on_debug_event(&opener, WindowEvent::Focused(true));
         assert!(menu.updates().is_empty());
         assert!(opener.calls().is_empty());
@@ -395,7 +386,7 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         runtime.host.open_debug_windows(&opener, true);
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
-        assert!(runtime.host.debug.debug_window.is_none());
-        assert!(runtime.host.debug.ppu_window.is_none());
+        assert!(!runtime.host.debug.is_debug_open());
+        assert!(!runtime.host.debug.is_ppu_open());
     }
 }

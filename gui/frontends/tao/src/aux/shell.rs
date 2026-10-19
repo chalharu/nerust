@@ -58,17 +58,20 @@ pub(crate) struct WindowScaffold {
     pub(crate) surface: Surface,
 }
 
-/// Why an aux window failed to open. Carried to the log with the
-/// window tag so headless/CI failures name the lost window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why an aux window failed to open. Carries which window and the
+/// native error so headless/CI failures name the lost window instead
+/// of collapsing to a unit variant.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ScaffoldError {
-    BuildWindow,
+    BuildWindow { tag: &'static str, detail: String },
 }
 
 impl core::fmt::Display for ScaffoldError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ScaffoldError::BuildWindow => write!(f, "native window build failed"),
+            ScaffoldError::BuildWindow { tag, detail } => {
+                write!(f, "native window build failed for {tag}: {detail}")
+            }
         }
     }
 }
@@ -99,7 +102,10 @@ impl WindowScaffold {
             Ok(window) => window,
             Err(error) => {
                 log::error!("failed to create {log_tag}: {error}");
-                return Err(ScaffoldError::BuildWindow);
+                return Err(ScaffoldError::BuildWindow {
+                    tag: log_tag,
+                    detail: error.to_string(),
+                });
             }
         });
         let window_id = iced::window::Id::unique();
@@ -394,7 +400,10 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     /// on a real rebuild. Quiet batches (no messages, no flag) skip
     /// the frame: the trailing redraw in `pump_window_event` stays the
     /// safety net for paths that bypass `process`.
-    pub(crate) fn process(&mut self, messages: Vec<P::Message>, invalidated: &AtomicBool) {
+    /// Run pending messages; returns whether this pass requested a
+    /// redraw (rebuild), so the event pump can skip its trailing
+    /// request instead of queueing a duplicate present.
+    pub(crate) fn process(&mut self, messages: Vec<P::Message>, invalidated: &AtomicBool) -> bool {
         let bounds = self.logical_bounds();
         let rebuilt = self.ui_state.process_messages(
             messages,
@@ -406,6 +415,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         if rebuilt {
             self.window.request_redraw();
         }
+        rebuilt
     }
 }
 

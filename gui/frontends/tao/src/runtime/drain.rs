@@ -11,6 +11,7 @@ use nerust_gui_viewmodel::debugger as debug_vm;
 
 use super::host::HostState;
 use crate::aux::bridge::lock_recovered;
+use crate::aux::focus::WindowHandler;
 use crate::ports::WindowOpener;
 
 impl HostState {
@@ -26,8 +27,8 @@ impl HostState {
     /// loaded core. Single predicate for the tick, the wake backstop,
     /// and the redraw pump below.
     pub(crate) fn live_follow_active(&self) -> bool {
-        self.debug.debug_window.is_some()
-            && self.debug.ppu_window.is_some()
+        self.debug.is_debug_open()
+            && self.debug.is_ppu_open()
             && self.session.loaded()
             && !self.session.paused()
     }
@@ -79,7 +80,7 @@ impl HostState {
             return;
         };
         let running = !self.session.paused();
-        let Some(handle) = self.debug.debug_window.as_mut() else {
+        let Some(handle) = self.debug.debug_window_mut() else {
             return;
         };
         {
@@ -97,7 +98,7 @@ impl HostState {
         // Rebuild, not just repaint: the patch lands in bridge state,
         // and only a rebuild re-reads it into the widget tree.
         handle.sync_from_bridge();
-        if let Some(ppu) = self.debug.ppu_window.as_mut() {
+        if let Some(ppu) = self.debug.ppu_window_mut() {
             ppu.sync_from_bridge();
         }
     }
@@ -108,7 +109,7 @@ impl HostState {
     /// `focus_ppu` opens-or-focuses the viewer for the toolbar only.
     pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         use nerust_gui_shell::debug::DebugAction;
-        if self.debug.debug_window.is_none() {
+        if !self.debug.is_debug_open() {
             let spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> = self
                 .session
                 .debug_spaces()
@@ -129,24 +130,24 @@ impl HostState {
                 position,
             ) {
                 Some(handle) => {
-                    self.debug.debug_window = Some(handle);
+                    self.debug.set_debug_window(handle);
                     self.run_debug_drain(&[DebugAction::Pause, DebugAction::Refresh]);
                 }
                 None => log::error!("failed to open debugger window"),
             }
         }
         if focus_ppu
-            && self.debug.ppu_window.is_none()
-            && let Some(main) = self.debug.debug_window.as_ref()
+            && !self.debug.is_ppu_open()
+            && let Some(main) = self.debug.debug_window()
         {
             let position = self.debug.ppu_window_pos();
             match opener.create_ppu(&main.bridge, position) {
                 Some(handle) => {
-                    self.debug.ppu_window = Some(handle);
+                    self.debug.set_ppu_window(handle);
                     // Populate the image cache immediately: the bridge
                     // already carries images, but the viewer derives
                     // its scaled cache only on Sync.
-                    if let Some(ppu) = self.debug.ppu_window.as_mut() {
+                    if let Some(ppu) = self.debug.ppu_window_mut() {
                         ppu.sync_from_bridge();
                     }
                     // The viewer is open now, so re-read with images:
@@ -155,7 +156,7 @@ impl HostState {
                 }
                 None => log::error!("failed to open PPU viewer window"),
             }
-        } else if focus_ppu && let Some(ppu) = self.debug.ppu_window.as_ref() {
+        } else if focus_ppu && let Some(ppu) = self.debug.ppu_window() {
             // Second and later presses: the viewer exists, so take
             // focus instead of no-op.
             ppu.focus_window();
@@ -185,7 +186,7 @@ impl HostState {
     pub(crate) fn run_debug_drain(&mut self, requests: &[nerust_gui_shell::debug::DebugAction]) {
         use nerust_gui_shell::debug::DebugDrainInput;
         let (space, mem_addr, dis_addr, watch, freeze, reg_target, prev_rows, need_images) =
-            match self.debug.debug_window.as_ref() {
+            match self.debug.debug_window() {
                 Some(handle) => {
                     let nav = lock_recovered(&handle.bridge.nav);
                     let mem_addr = nav.mem_addr();
@@ -200,7 +201,7 @@ impl HostState {
                         *lock_recovered(&handle.bridge.freeze),
                         *lock_recovered(&handle.bridge.reg_target),
                         prev,
-                        self.debug.ppu_window.is_some(),
+                        self.debug.is_ppu_open(),
                     )
                 }
                 None => {
@@ -256,7 +257,7 @@ impl HostState {
     /// follow, and the pause-truth agreement point (menu, title, and
     /// the focus gate below all follow the drained state).
     fn apply_drain_output(&mut self, output: DebugDrainOutput) {
-        if let Some(handle) = self.debug.debug_window.as_mut() {
+        if let Some(handle) = self.debug.debug_window_mut() {
             if let Some(selected) = output.reselected {
                 *lock_recovered(&handle.bridge.selected) = Some(selected);
             }
@@ -274,7 +275,7 @@ impl HostState {
             handle.set_display(display);
         }
         // PPU viewer follows the same drain (one scale per drain).
-        if let Some(ppu) = self.debug.ppu_window.as_mut() {
+        if let Some(ppu) = self.debug.ppu_window_mut() {
             ppu.sync_from_bridge();
         }
         // The drain is the single pause-truth agreement point: the
@@ -296,7 +297,7 @@ impl HostState {
         self.sync_menu_state();
         self.refresh_window_title();
         if chrome_drain_due(
-            self.debug.debug_window.is_some(),
+            self.debug.is_debug_open(),
             self.debug.last_drain_paused(),
             self.session.paused(),
         ) {
