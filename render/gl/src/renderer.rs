@@ -431,4 +431,87 @@ mod tests {
 
         assert_eq!(destination, [1, 2, 3, 4, 5, 6, 7, 8]);
     }
+
+    #[cfg(unix)]
+    fn gl_test_profile() -> nerust_render_traits::VideoRenderProfile {
+        use nerust_render_traits::{logical::LogicalSize, physical::PhysicalSize};
+        nerust_render_traits::VideoRenderProfile {
+            frame_format: nerust_render_traits::VideoFrameFormat::Rgba,
+            source_logical_size: LogicalSize {
+                width: 64,
+                height: 64,
+            },
+            logical_size: LogicalSize {
+                width: 64,
+                height: 64,
+            },
+            physical_size: PhysicalSize {
+                width: 64.0,
+                height: 64.0,
+            },
+            ntsc_packed_rgba8: None,
+        }
+    }
+
+    /// Renderer rebuild on a real context (Xvfb + llvmpipe in CI).
+    /// Skips without a display so headless runs stay green.
+    #[cfg(unix)]
+    #[test]
+    fn gl_renderer_rebuild_and_detach() {
+        use glutin::context::PossiblyCurrentGlContext as _;
+        use nerust_render_traits::{
+            SurfaceSize,
+            renderer::{GpuRenderer as _, OsdLayer, RenderResult},
+        };
+
+        let Some(display) = crate::test_display::TestDisplay::connect() else {
+            crate::test_display::TestDisplay::unavailable("no GL display");
+            return;
+        };
+        let Some(current) = display.make_pbuffer_current(64, 64) else {
+            crate::test_display::TestDisplay::unavailable("no GL context");
+            return;
+        };
+        let (display, gl_config) = display.into_parts();
+        let profile = gl_test_profile();
+        let mut renderer = super::GlRenderer {
+            display,
+            gl_config,
+            render_profile: profile.clone(),
+            view: None,
+            context: None,
+            gl_surface: None,
+            expected_frame_len: 0,
+            size: SurfaceSize::new(64, 64),
+            reserved: nerust_render_traits::ReservedStrip::default(),
+            osd: None,
+            tight: Vec::new(),
+        };
+        let empty = nerust_render_traits::FrameBuffer::with_capacity(
+            64,
+            64,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
+        // Detached states refuse gracefully instead of touching GL.
+        assert!(matches!(renderer.render(&empty), RenderResult::Skipped));
+        assert!(renderer.update_render_profile(&profile).is_err());
+        renderer.set_osd_layer(Some(OsdLayer {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 1,
+            rgba: vec![255; 8],
+        }));
+        // Fresh view build, then an atomic profile rebuild over it.
+        let view = renderer.fresh_view(&profile).unwrap();
+        renderer.view = Some(view);
+        renderer.context = Some(current.context);
+        renderer.update_render_profile(&profile).unwrap();
+        renderer.resize(SurfaceSize::new(64, 64));
+        // Losing currency refuses the rebuild; detach then unwinds.
+        let _not_current = renderer.context.take().unwrap().make_not_current();
+        assert!(renderer.update_render_profile(&profile).is_err());
+        renderer.detach();
+        renderer.detach();
+    }
 }
