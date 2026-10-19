@@ -9,7 +9,7 @@ use std::{
 };
 
 /// Install the process-wide panic hook (idempotent, chains previous).
-/// Bare use covers pre-guard windows only; guarded entry is `run_guarded`.
+/// Best-effort log for pre-guard windows; `run_guarded` is authoritative.
 pub fn install() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -77,6 +77,7 @@ struct PanicRecord {
 }
 
 impl PanicRecord {
+    // Release keeps symtab only: names resolve, file:line does not.
     fn capture(detail: String) -> Self {
         let thread = std::thread::current();
         Self {

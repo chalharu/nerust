@@ -103,6 +103,7 @@ debug = "line-tables-only"
 lto = "thin"
 # ThinLTO emits full DWARF despite line-tables-only (156MB APK incident);
 # strip it at link time, keeping symtab for backtrace symbol names.
+# Release backtraces are name-only: file:line needs DWARF, absent here.
 strip = "debuginfo"
 
 [profile.release.package.nerust_nes_core]

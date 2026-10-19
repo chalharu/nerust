@@ -49,7 +49,7 @@ impl GlRenderer {
         let mut view = GlView::new();
         view.use_vao(true);
         view.on_load(profile)
-            .map_err(|e| RendererError::new("view", Box::new(OpaqueError(e.to_string()))))?;
+            .map_err(|e| RendererError::new("view", Box::new(e)))?;
         view.set_osd_layer(self.osd.clone());
         Ok(view)
     }
@@ -140,8 +140,16 @@ impl GpuRenderer for GlRenderer {
         // bare texture names have no Drop to reclaim them.
         let view = self.view.take();
         match (view, self.context.as_ref()) {
-            (Some(mut v), Some(ctx)) if ctx.is_current() => v.on_close(),
-            (Some(_), _) => log::debug!("GlRenderer: detach without current context"),
+            (Some(mut v), Some(ctx)) if ctx.is_current() => {
+                if v.on_close() {
+                    log::warn!("GlRenderer: view teardown failed");
+                }
+                drop(v);
+            }
+            (Some(v), _) => {
+                log::debug!("GlRenderer: detach without current context");
+                drop(v);
+            }
             (None, _) => {}
         }
         self.context = None;
@@ -152,11 +160,16 @@ impl GpuRenderer for GlRenderer {
         self.reserved = strip;
     }
 
+    /// Stage an OSD layer; header gate skips the clone on equality.
+    /// Keeps the stored copy needed for profile rebuilds.
     fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
-        self.osd = layer;
-        if let Some(view) = self.view.as_mut() {
-            view.set_osd_layer(self.osd.clone());
+        if osd_layers_equal(self.osd.as_ref(), layer.as_ref()) {
+            return;
         }
+        if let Some(view) = self.view.as_mut() {
+            view.set_osd_layer(layer.clone());
+        }
+        self.osd = layer;
     }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
@@ -181,8 +194,10 @@ impl GpuRenderer for GlRenderer {
             VideoFrameFormat::Palette => profile.source_logical_size,
         };
         self.expected_frame_len = fs.width * fs.height * profile.frame_format.bytes_per_pixel();
-        if let Some(ref mut v) = self.view {
-            v.on_close();
+        if let Some(ref mut v) = self.view
+            && v.on_close()
+        {
+            log::warn!("GlRenderer: view teardown failed");
         }
         self.view = Some(fresh);
         Ok(())
@@ -248,14 +263,36 @@ impl GpuRenderer for GlRenderer {
             log::warn!("GlRenderer: frame upload failed: {e}");
             return RenderResult::Error;
         }
-        if let Err(e) = view.draw_osd(self.size.width as i32, self.size.height as i32) {
-            log::debug!("GlRenderer: OSD composite failed: {e}");
+        match view.draw_osd(self.size.width as i32, self.size.height as i32) {
+            Ok(Some(_)) => {
+                log::warn!("GlRenderer: dropping OSD layer after repeated upload failures");
+            }
+            Ok(None) => {}
+            Err(e) => {
+                log::debug!("GlRenderer: OSD composite failed: {e}");
+            }
         }
         if let Err(e) = surf.swap_buffers(ctx) {
             log::warn!("GlRenderer: swap_buffers failed: {e}");
             return RenderResult::Error;
         }
         RenderResult::Presented
+    }
+}
+
+/// Cheap OSD equality: header check before the byte memcmp.
+fn osd_layers_equal(a: Option<&OsdLayer>, b: Option<&OsdLayer>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => {
+            x.x == y.x
+                && x.y == y.y
+                && x.width == y.width
+                && x.height == y.height
+                && x.rgba.len() == y.rgba.len()
+                && x.rgba == y.rgba
+        }
+        (None, Some(_)) | (Some(_), None) => false,
     }
 }
 
@@ -279,12 +316,20 @@ fn upload_frame(
             .map_or(0, |rows| rows * stride + row_bytes);
         match data.get(..need) {
             Some(bytes) => view.on_update(bytes, stride_px as i32),
-            None => Err(ViewError::Frame("frame buffer too small")),
+            None => Err(ViewError::Frame {
+                what: "frame buffer too small",
+                need,
+                have: data.len(),
+            }),
         }
     } else if stride == row_bytes {
         match data.get(..expected_frame_len) {
             Some(bytes) => view.on_update(bytes, fs.width as i32),
-            None => Err(ViewError::Frame("frame buffer too small")),
+            None => Err(ViewError::Frame {
+                what: "frame buffer too small",
+                need: expected_frame_len,
+                have: data.len(),
+            }),
         }
     } else {
         if tight.len() != expected_frame_len {
@@ -292,10 +337,20 @@ fn upload_frame(
         }
         let src_need = match stride.checked_mul(fs.height) {
             Some(need) => need,
-            None => return Err(ViewError::Frame("frame dimensions overflow")),
+            None => {
+                return Err(ViewError::Frame {
+                    what: "frame dimensions overflow",
+                    need: usize::MAX,
+                    have: data.len(),
+                });
+            }
         };
         if data.len() < src_need {
-            return Err(ViewError::Frame("frame buffer too small"));
+            return Err(ViewError::Frame {
+                what: "frame buffer too small",
+                need: src_need,
+                have: data.len(),
+            });
         }
         pack_rows_stripped(data, stride, fs.height, tight, row_bytes);
         view.on_update(tight, fs.width as i32)
@@ -417,7 +472,7 @@ fn pack_rows_stripped(
 
 #[cfg(test)]
 mod tests {
-    use super::pack_rows_stripped;
+    use super::{osd_layers_equal, pack_rows_stripped};
 
     #[test]
     fn pack_rows_stripped_removes_source_padding() {
@@ -430,6 +485,38 @@ mod tests {
         pack_rows_stripped(&source, 6, 2, &mut destination, 4);
 
         assert_eq!(destination, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn osd_gate_skips_identical_layers() {
+        use nerust_render_traits::renderer::OsdLayer;
+        let layer = OsdLayer {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 1,
+            rgba: vec![1; 8],
+        };
+        assert!(osd_layers_equal(Some(&layer), Some(&layer.clone())));
+        assert!(!osd_layers_equal(
+            Some(&layer),
+            Some(&OsdLayer {
+                x: 1,
+                ..layer.clone()
+            })
+        ));
+        assert!(osd_layers_equal(None, None));
+        assert!(!osd_layers_equal(Some(&layer), None));
+    }
+
+    #[test]
+    fn frame_error_reports_sizes() {
+        let err = super::ViewError::Frame {
+            what: "frame buffer too small",
+            need: 8,
+            have: 2,
+        };
+        assert!(err.to_string().contains('8'));
     }
 
     #[cfg(unix)]
@@ -500,6 +587,14 @@ mod tests {
         // Detached states refuse gracefully instead of touching GL.
         assert!(matches!(renderer.render(&empty), RenderResult::Skipped));
         assert!(renderer.update_render_profile(&profile).is_err());
+        renderer.set_osd_layer(Some(OsdLayer {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 1,
+            rgba: vec![255; 8],
+        }));
+        // Equality gate: identical re-stage is a no-op for the stored copy.
         renderer.set_osd_layer(Some(OsdLayer {
             x: 0,
             y: 0,

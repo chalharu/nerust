@@ -3,7 +3,9 @@ use std::{os::raw::c_void, ptr, rc::Rc};
 use gl::types::GLint;
 use nerust_glwrap::{Shader, raw::*, vertex::*};
 use nerust_render_ntsc::NTSC_TEXTURE_HEIGHT;
-use nerust_render_traits::{VideoFrameFormat, VideoRenderProfile, renderer::OsdLayer};
+use nerust_render_traits::{
+    ReservedStrip, VideoFrameFormat, VideoRenderProfile, renderer::OsdLayer,
+};
 
 use crate::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
 
@@ -15,10 +17,73 @@ pub(crate) enum ViewError {
     Gl(#[from] nerust_glwrap::GlError),
     #[error("{0}")]
     Shader(String),
-    #[error("internal error: {0}")]
-    Internal(&'static str),
-    #[error("{0}")]
-    Frame(&'static str),
+    #[error("internal error: {what}")]
+    Internal { what: &'static str },
+    #[error("{what}: need {need}, have {have}")]
+    Frame {
+        what: &'static str,
+        need: usize,
+        have: usize,
+    },
+}
+
+/// OSD layer dropped after bounded retries (fact for the renderer log).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OsdDropped;
+
+/// Bounded OSD retry: transient blips survive, dead drivers drop.
+/// Warn-once flag lets the renderer log the demotion a single time.
+#[derive(Debug)]
+struct RetryBudget {
+    max: u8,
+    fails: u8,
+    warned: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetryDecision {
+    Retry,
+    DropLayer,
+}
+
+impl RetryBudget {
+    fn new(max: u8) -> Self {
+        Self {
+            max,
+            fails: 0,
+            warned: false,
+        }
+    }
+
+    fn record_failure(&mut self) -> RetryDecision {
+        self.fails = self.fails.saturating_add(1);
+        if self.fails >= self.max {
+            RetryDecision::DropLayer
+        } else {
+            RetryDecision::Retry
+        }
+    }
+
+    fn reset(&mut self) {
+        self.fails = 0;
+        self.warned = false;
+    }
+}
+
+/// Cheap OSD equality: header check before the byte memcmp.
+fn osd_layers_equal(a: Option<&OsdLayer>, b: Option<&OsdLayer>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => {
+            x.x == y.x
+                && x.y == y.y
+                && x.width == y.width
+                && x.height == y.height
+                && x.rgba.len() == y.rgba.len()
+                && x.rgba == y.rgba
+        }
+        (None, Some(_)) | (Some(_), None) => false,
+    }
 }
 
 /// Convert a GL call result into a view error for `?` propagation.
@@ -123,15 +188,20 @@ pub struct GlView {
     osd_size: (i32, i32),
     osd_prev: Option<(i32, i32, i32, i32)>,
     osd_dirty: bool,
-    /// Consecutive upload failures for the staged layer. Bounds
-    /// retries so a broken driver costs no per-frame re-upload.
-    osd_upload_fails: u8,
+    /// Bounded retry for the staged layer (see `RetryBudget`).
+    osd_retry: RetryBudget,
     osd_shader: Option<Shader>,
     osd_layer: Option<OsdLayer>,
     vba: Option<VertexArray>,
     vbo: Option<Rc<VertexBuffer>>,
     logical_width: i32,
     logical_height: i32,
+    /// Grow-only staging reused across OSD uploads (no steady allocs).
+    osd_upload_scratch: Vec<u8>,
+    /// Grow-only zeros reused for OSD clears (no steady allocs).
+    osd_clear_scratch: Vec<u8>,
+    /// Last viewport applied; skips redundant GL state writes.
+    last_resize: Option<(i32, i32, ReservedStrip)>,
 }
 
 impl GlView {
@@ -151,13 +221,16 @@ impl GlView {
             osd_size: (0, 0),
             osd_prev: None,
             osd_dirty: false,
-            osd_upload_fails: 0,
+            osd_retry: RetryBudget::new(MAX_OSD_UPLOAD_RETRIES),
             osd_shader: None,
             osd_layer: None,
             vba: None,
             vbo: None,
             logical_width: 0,
             logical_height: 0,
+            osd_upload_scratch: Vec::new(),
+            osd_clear_scratch: Vec::new(),
+            last_resize: None,
         }
     }
 
@@ -170,6 +243,10 @@ impl GlView {
     }
 
     pub fn on_load(&mut self, render_profile: &VideoRenderProfile) -> Result<(), ViewError> {
+        // Reuse must not leak names: tear down while current first.
+        let _ = self.on_close();
+        debug_assert_eq!(self.frame_texture, 0);
+        self.last_resize = None;
         self.is_palette_format = render_profile.frame_format == VideoFrameFormat::Palette;
         // Palette モードでは frame data は source_logical_size、RGBA では logical_size
         let frame_size = if self.is_palette_format {
@@ -245,6 +322,7 @@ impl GlView {
                     64,
                     NTSC_TEXTURE_HEIGHT as usize,
                     ntsc_data,
+                    &mut self.osd_upload_scratch,
                 )?;
                 ok_gl(uniform_1i(shader.get_uniform("ntsc_texture"), 2))?;
             } else {
@@ -418,33 +496,39 @@ impl GlView {
     /// Stage an OSD layer for the next present. `None` clears.
     /// Equal layers skip; new content resets the failure budget.
     pub fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
-        if self.osd_layer == layer {
+        if osd_layers_equal(self.osd_layer.as_ref(), layer.as_ref()) {
             return;
         }
         self.osd_layer = layer;
         self.osd_dirty = true;
-        self.osd_upload_fails = 0;
+        self.osd_retry.reset();
     }
 
     /// Composite the staged layer over the game image, if any (best-effort).
     /// A GL failure drops the overlay, never the frame.
-    pub fn draw_osd(&mut self, surface_w: i32, surface_h: i32) -> Result<(), ViewError> {
+    pub fn draw_osd(
+        &mut self,
+        surface_w: i32,
+        surface_h: i32,
+    ) -> Result<Option<OsdDropped>, ViewError> {
         // Bounded retry: transient errors re-upload next frame, but a
         // dead driver gives up instead of re-allocating every frame.
         if self.osd_dirty {
             match self.sync_osd_texture(surface_w, surface_h) {
                 Ok(()) => {
                     self.osd_dirty = false;
-                    self.osd_upload_fails = 0;
+                    self.osd_retry.reset();
                 }
                 Err(e) => {
-                    self.note_osd_upload_failure();
+                    if let Some(dropped) = self.note_osd_upload_failure() {
+                        return Ok(Some(dropped));
+                    }
                     return Err(e);
                 }
             }
         }
         let (Some(shader), Some(_)) = (self.osd_shader.as_ref(), self.osd_layer.as_ref()) else {
-            return Ok(());
+            return Ok(None);
         };
         ok_gl(shader.use_program())?;
         ok_gl(uniform_matrix_4fv(
@@ -457,12 +541,16 @@ impl GlView {
         use_texture(0, self.osd_texture)?;
         if self.use_vao {
             let Some(vba) = self.vba.as_ref() else {
-                return Err(ViewError::Internal("GL view has no vertex array"));
+                return Err(ViewError::Internal {
+                    what: "GL view has no vertex array",
+                });
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.vbo.as_ref() else {
-                return Err(ViewError::Internal("GL view has no vertex buffer"));
+                return Err(ViewError::Internal {
+                    what: "GL view has no vertex buffer",
+                });
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -471,39 +559,42 @@ impl GlView {
         ok_gl(blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA))?;
         ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
         ok_gl(disable(gl::BLEND))?;
-        Ok(())
+        Ok(None)
     }
 
-    /// Record one failed OSD upload: bounded retry with a sticky
-    /// warn-once, then drop the stale layer (pure state; GL stays out).
-    fn note_osd_upload_failure(&mut self) {
-        // Sticky counter: warns once per staged content, not per
-        // frame on a dead driver with a live ticker.
-        self.osd_upload_fails = self.osd_upload_fails.saturating_add(1);
-        if self.osd_upload_fails == MAX_OSD_UPLOAD_RETRIES {
-            log::warn!("GlView: dropping OSD layer after repeated upload failures");
-        }
-        if self.osd_upload_fails >= MAX_OSD_UPLOAD_RETRIES {
-            // No ghost composite, and the next identical push
-            // re-stages via the equality gate.
-            self.osd_layer = None;
-            self.osd_dirty = false;
+    /// Record one failed OSD upload (pure state; GL stays out).
+    /// Returns `Some` on the transition that drops the stale layer.
+    fn note_osd_upload_failure(&mut self) -> Option<OsdDropped> {
+        match self.osd_retry.record_failure() {
+            RetryDecision::Retry => None,
+            RetryDecision::DropLayer => {
+                // No ghost composite, and the next identical push
+                // re-stages via the equality gate.
+                self.osd_layer = None;
+                self.osd_dirty = false;
+                if self.osd_retry.warned {
+                    None
+                } else {
+                    self.osd_retry.warned = true;
+                    Some(OsdDropped)
+                }
+            }
         }
     }
 
     /// Upload the staged layer into the full-surface texture (draw path only binds).
     /// Best-effort: failures keep the previous texture, never panic.
     fn sync_osd_texture(&mut self, surface_w: i32, surface_h: i32) -> Result<(), ViewError> {
-        // Borrow: the upload path copies bytes out, never retains them.
-        let Some(layer) = self.osd_layer.as_ref() else {
+        if self.osd_layer.is_none() {
             // Wipe the last rect so no ghost remains. Retain on failure:
             // the retry must know which rect still needs erasing.
             if let Some((px, py, pw, ph)) = self.osd_prev {
-                Self::blit_rect(self.osd_texture, px, py, pw, ph, None)?;
+                let texture = self.osd_texture;
+                self.clear_rect(texture, px, py, pw, ph)?;
                 self.osd_prev = None;
             }
             return Ok(());
-        };
+        }
         if self.osd_texture == 0 {
             return Ok(());
         }
@@ -511,7 +602,6 @@ impl GlView {
         // instead of small viewports (driver-quirky on some backends).
         if self.osd_size != (surface_w, surface_h) {
             use_texture(0, self.osd_texture)?;
-            let zeros = vec![0u8; surface_w.max(1) as usize * surface_h.max(1) as usize * 4];
             ok_gl(tex_image_2d(
                 gl::TEXTURE_2D,
                 0,
@@ -521,56 +611,97 @@ impl GlView {
                 0,
                 gl::RGBA,
                 gl::UNSIGNED_BYTE,
-                zeros.as_ptr().cast(),
+                ptr::null(),
             ))?;
             self.osd_size = (surface_w, surface_h);
         }
-        if layer.width == 0 || layer.height == 0 {
+        let (lx, ly, lw, lh, stride, need) = match self.osd_layer.as_ref() {
+            Some(layer) => {
+                let (w, h) = (layer.width as i32, layer.height as i32);
+                (
+                    layer.x as i32,
+                    layer.y as i32,
+                    w,
+                    h,
+                    w as usize * 4,
+                    w as usize * 4 * h as usize,
+                )
+            }
+            None => return Ok(()),
+        };
+        if lw == 0 || lh == 0 {
             return Ok(());
         }
-        let (w, h) = (layer.width as i32, layer.height as i32);
         // Clear the previous rect so moved/shrunk layers leave no ghosts.
-        let rect = (layer.x as i32, layer.y as i32, w, h);
+        let rect = (lx, ly, lw, lh);
         if self.osd_prev != Some(rect) {
             if let Some((px, py, pw, ph)) = self.osd_prev {
-                Self::blit_rect(self.osd_texture, px, py, pw, ph, None)?;
+                let texture = self.osd_texture;
+                self.clear_rect(texture, px, py, pw, ph)?;
             }
             self.osd_prev = Some(rect);
         }
-        let stride = w as usize * 4;
-        let mut padded = vec![0u8; stride * h as usize];
-        for (index, row) in layer.rgba.chunks_exact(stride).take(h as usize).enumerate() {
-            padded[index * stride..index * stride + stride].copy_from_slice(row);
+        if self.osd_upload_scratch.len() < need {
+            self.osd_upload_scratch.resize(need, 0);
         }
-        Self::blit_rect(
-            self.osd_texture,
-            layer.x as i32,
-            layer.y as i32,
-            w,
-            h,
-            Some(&padded),
-        )?;
+        {
+            let scratch = &mut self.osd_upload_scratch[..need];
+            scratch.fill(0);
+            let layer = self.osd_layer.as_ref().unwrap_or_else(|| unreachable!());
+            for (index, row) in layer
+                .rgba
+                .chunks_exact(stride)
+                .take(lh as usize)
+                .enumerate()
+            {
+                scratch[index * stride..index * stride + stride].copy_from_slice(row);
+            }
+        }
+        let texture = self.osd_texture;
+        Self::blit_bytes(texture, lx, ly, lw, lh, &self.osd_upload_scratch[..need])?;
         Ok(())
     }
 
-    /// Upload RGBA rows (or zeros) into a texture subrect (best-effort).
-    /// A GL failure degrades to a debug log instead of killing the frame.
-    fn blit_rect(
+    /// Clear a subrect to transparent using the reusable zero scratch.
+    fn clear_rect(
+        &mut self,
         texture: u32,
         x: i32,
         y: i32,
         w: i32,
         h: i32,
-        rgba: Option<&[u8]>,
     ) -> Result<(), ViewError> {
-        let blank;
-        let bytes = match rgba {
-            Some(bytes) => bytes,
-            None => {
-                blank = vec![0u8; w.max(1) as usize * h.max(1) as usize * 4];
-                &blank
-            }
-        };
+        let need = w.max(1) as usize * h.max(1) as usize * 4;
+        if self.osd_clear_scratch.len() < need {
+            self.osd_clear_scratch.resize(need, 0);
+        } else {
+            self.osd_clear_scratch[..need].fill(0);
+        }
+        use_texture(0, texture)?;
+        ok_gl(tex_sub_image_2d(
+            gl::TEXTURE_2D,
+            0,
+            x,
+            y,
+            w,
+            h,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            self.osd_clear_scratch.as_ptr().cast(),
+        ))?;
+        Ok(())
+    }
+
+    /// Upload RGBA rows into a texture subrect (best-effort).
+    /// A GL failure degrades to a debug log instead of killing the frame.
+    fn blit_bytes(
+        texture: u32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        bytes: &[u8],
+    ) -> Result<(), ViewError> {
         use_texture(0, texture)?;
         ok_gl(tex_sub_image_2d(
             gl::TEXTURE_2D,
@@ -609,7 +740,9 @@ impl GlView {
     pub fn on_update(&self, screen: &[u8], row_length: i32) -> Result<(), ViewError> {
         let screen_ptr = screen.as_ptr().cast();
         let Some(shader) = self.shader.as_ref() else {
-            return Err(ViewError::Internal("GL view has no shader program"));
+            return Err(ViewError::Internal {
+                what: "GL view has no shader program",
+            });
         };
         ok_gl(shader.use_program())?;
 
@@ -642,12 +775,16 @@ impl GlView {
 
         if self.use_vao {
             let Some(vba) = self.vba.as_ref() else {
-                return Err(ViewError::Internal("GL view has no vertex array"));
+                return Err(ViewError::Internal {
+                    what: "GL view has no vertex array",
+                });
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.vbo.as_ref() else {
-                return Err(ViewError::Internal("GL view has no vertex buffer"));
+                return Err(ViewError::Internal {
+                    what: "GL view has no vertex buffer",
+                });
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -688,6 +825,10 @@ impl GlView {
         viewport_height: i32,
         strip: nerust_render_traits::ReservedStrip,
     ) -> Result<(), ViewError> {
+        // Skip redundant GL state writes; no program/VAO caching here.
+        if self.last_resize == Some((viewport_width, viewport_height, strip)) {
+            return Ok(());
+        }
         let height_i = viewport_height.max(0);
         let top = strip.top.min(height_i as u32) as i32;
         let bottom = strip.bottom.min(height_i as u32 - top as u32) as i32;
@@ -704,17 +845,23 @@ impl GlView {
         };
 
         let Some(shader) = self.shader.as_ref() else {
-            return Err(ViewError::Internal("GL view has no shader program"));
+            return Err(ViewError::Internal {
+                what: "GL view has no shader program",
+            });
         };
         ok_gl(shader.use_program())?;
         if self.use_vao {
             let Some(vba) = self.vba.as_ref() else {
-                return Err(ViewError::Internal("GL view has no vertex array"));
+                return Err(ViewError::Internal {
+                    what: "GL view has no vertex array",
+                });
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.vbo.as_ref() else {
-                return Err(ViewError::Internal("GL view has no vertex buffer"));
+                return Err(ViewError::Internal {
+                    what: "GL view has no vertex buffer",
+                });
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -725,10 +872,14 @@ impl GlView {
             gl::FALSE,
             Mat4::scale(scale_x, scale_y, 1.0).as_ptr(),
         ))?;
+        self.last_resize = Some((viewport_width, viewport_height, strip));
         Ok(())
     }
 
-    pub fn on_close(&mut self) {
+    /// Explicit teardown while the context is current (fact, no warn).
+    /// Returns true when a GL delete failed; the renderer logs it.
+    pub fn on_close(&mut self) -> bool {
+        let mut failed = false;
         let mut ids = Vec::new();
         if self.frame_texture != 0 {
             ids.push(self.frame_texture);
@@ -747,7 +898,8 @@ impl GlView {
         if !ids.is_empty()
             && let Err(e) = delete_textures(ids.len() as i32, ids.as_ptr())
         {
-            log::warn!("GL view teardown failed: {e}");
+            log::debug!("GL view teardown failed: {e}");
+            failed = true;
         }
         // Zero what was deleted: a second `on_close` without an
         // intervening `on_load` must not double-delete names.
@@ -755,6 +907,30 @@ impl GlView {
         self.palette_texture = 0;
         self.ntsc_texture = 0;
         self.osd_texture = 0;
+        self.osd_size = (0, 0);
+        self.osd_prev = None;
+        self.last_resize = None;
+        if let Some(mut shader) = self.shader.take()
+            && shader.destroy_if_current(true)
+        {
+            failed = true;
+        }
+        if let Some(mut shader) = self.osd_shader.take()
+            && shader.destroy_if_current(true)
+        {
+            failed = true;
+        }
+        if let Some(mut vba) = self.vba.take()
+            && vba.destroy_if_current(true)
+        {
+            failed = true;
+        }
+        if let Some(vbo) = self.vbo.take()
+            && vbo.destroy_if_current(true)
+        {
+            failed = true;
+        }
+        failed
     }
 }
 
@@ -766,25 +942,30 @@ impl Default for GlView {
 
 /// NTSC kernel texture (RGBA8)。packed_ntsc_rgba8 は big-endian u32 を RGBA8 に変換。
 /// 実際の kernel entry stride を data 長から計算して texture 高さとする。
-/// (固定 NTSC_TEXTURE_HEIGHT=42 では不足。ntsc_entry が phase_row+offset > 41 を読むため)
 fn configure_ntsc_texture(
     unit: u32,
     texture: u32,
     width: usize,
     height: usize,
     be_data: &[u8],
+    scratch: &mut Vec<u8>,
 ) -> Result<(), ViewError> {
     // be_data は PALETTE_TEXTURE_WIDTH × entry_stride × 4 bytes
     let entry_count = be_data.len() / (width * 4);
     let actual_height = entry_count.max(height);
-    let mut rgba = Vec::with_capacity(width * actual_height * 4);
+    let need = width * actual_height * 4;
+    if scratch.len() < need {
+        scratch.resize(need, 0);
+    }
+    let rgba = &mut scratch[..need];
     for row in 0..actual_height {
         for col in 0..width {
             let base = (row * width + col) * 4;
+            let dst = (row * width + col) * 4;
             if base + 4 <= be_data.len() {
-                rgba.extend_from_slice(&be_data[base..base + 4]);
+                rgba[dst..dst + 4].copy_from_slice(&be_data[base..base + 4]);
             } else {
-                rgba.extend_from_slice(&[0, 0, 0, 0]);
+                rgba[dst..dst + 4].copy_from_slice(&[0, 0, 0, 0]);
             }
         }
     }
@@ -959,8 +1140,8 @@ fn supports_unpack_row_length(version: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        GlView, build_glsl_source, compose_glsl_source, is_gles_context, ok_gl,
-        supports_unpack_row_length,
+        GlView, OsdDropped, RetryBudget, RetryDecision, build_glsl_source, compose_glsl_source,
+        is_gles_context, ok_gl, osd_layers_equal, supports_unpack_row_length,
     };
     use nerust_render_traits::renderer::OsdLayer;
 
@@ -984,6 +1165,68 @@ mod tests {
         // Clearing is a change: the wipe must run.
         view.set_osd_layer(None);
         assert!(view.osd_dirty);
+    }
+
+    #[test]
+    fn osd_equality_gate_checks_header_before_bytes() {
+        let base = OsdLayer {
+            x: 1,
+            y: 2,
+            width: 2,
+            height: 1,
+            rgba: vec![9; 8],
+        };
+        assert!(osd_layers_equal(Some(&base), Some(&base.clone())));
+        assert!(!osd_layers_equal(
+            Some(&base),
+            Some(&OsdLayer {
+                x: 7,
+                ..base.clone()
+            })
+        ));
+        assert!(!osd_layers_equal(
+            Some(&base),
+            Some(&OsdLayer {
+                rgba: vec![8; 8],
+                ..base.clone()
+            })
+        ));
+        assert!(!osd_layers_equal(
+            Some(&base),
+            Some(&OsdLayer {
+                rgba: vec![9; 4],
+                width: 1,
+                ..base.clone()
+            })
+        ));
+        assert!(osd_layers_equal(None, None));
+        assert!(!osd_layers_equal(Some(&base), None));
+        assert!(!osd_layers_equal(None, Some(&base)));
+    }
+
+    #[test]
+    fn retry_budget_pins_boundaries() {
+        let mut budget = RetryBudget::new(3);
+        assert_eq!(budget.record_failure(), RetryDecision::Retry);
+        assert_eq!(budget.record_failure(), RetryDecision::Retry);
+        assert_eq!(budget.record_failure(), RetryDecision::DropLayer);
+        assert_eq!(budget.record_failure(), RetryDecision::DropLayer);
+        budget.reset();
+        assert_eq!(budget.record_failure(), RetryDecision::Retry);
+    }
+
+    #[test]
+    fn frame_error_carries_sizes() {
+        let err = super::ViewError::Frame {
+            what: "frame buffer too small",
+            need: 10,
+            have: 4,
+        };
+        assert!(err.to_string().contains("10"));
+        let internal = super::ViewError::Internal {
+            what: "GL view has no shader program",
+        };
+        assert!(internal.to_string().contains("shader"));
     }
 
     #[test]
@@ -1046,17 +1289,17 @@ mod tests {
     #[test]
     fn upload_failures_retry_then_drop_layer() {
         let mut view = staged_view();
-        view.note_osd_upload_failure();
+        assert!(view.note_osd_upload_failure().is_none());
         assert!(view.osd_layer.is_some());
         assert!(view.osd_dirty);
-        view.note_osd_upload_failure();
+        assert!(view.note_osd_upload_failure().is_none());
         assert!(view.osd_layer.is_some());
         // Third strike: the stale layer drops, no ghost composite.
-        view.note_osd_upload_failure();
+        assert!(view.note_osd_upload_failure().is_some());
         assert!(view.osd_layer.is_none());
         assert!(!view.osd_dirty);
         // Saturated: further failures stay dropped without re-arming.
-        view.note_osd_upload_failure();
+        assert!(view.note_osd_upload_failure().is_none());
         assert!(view.osd_layer.is_none());
         assert!(!view.osd_dirty);
     }
@@ -1064,10 +1307,16 @@ mod tests {
     #[test]
     fn upload_failure_counter_saturates() {
         let mut view = staged_view();
-        view.osd_upload_fails = u8::MAX;
-        view.note_osd_upload_failure();
-        assert_eq!(view.osd_upload_fails, u8::MAX);
+        view.osd_retry.fails = u8::MAX;
+        assert!(view.note_osd_upload_failure().is_some());
+        assert_eq!(view.osd_retry.fails, u8::MAX);
         assert!(view.osd_layer.is_none());
+    }
+
+    #[test]
+    fn dropped_outcome_is_copyable_fact() {
+        let dropped = OsdDropped;
+        let _ = dropped;
     }
 
     #[test]
@@ -1142,18 +1391,26 @@ mod tests {
             let mut view = GlView::new();
             view.use_vao(use_vao);
             view.on_load(&profile).unwrap();
+            // Reuse after load must not leak: on_load tears down first.
+            view.on_load(&profile).unwrap();
             view.on_update(&vec![0x80; 64 * 64 * 4], 64).unwrap();
-            view.draw_osd(64, 64).unwrap();
+            assert!(view.draw_osd(64, 64).unwrap().is_none());
             view.set_osd_layer(Some(gl_test_layer()));
-            view.draw_osd(64, 64).unwrap();
+            assert!(view.draw_osd(64, 64).unwrap().is_none());
+            // Steady OSD upload reuses staging: identical second draw matches.
+            assert!(view.draw_osd(64, 64).unwrap().is_none());
             view.on_update(&vec![0x40; 65 * 64 * 4], 65).unwrap();
+            view.on_resize_with_strip(64, 64, nerust_render_traits::ReservedStrip::default())
+                .unwrap();
+            // Gated resize: identical second call skips GL work.
             view.on_resize_with_strip(64, 64, nerust_render_traits::ReservedStrip::default())
                 .unwrap();
             view.update_palette_texture(&[0x12; 256]).unwrap();
             view.set_osd_layer(None);
-            view.draw_osd(64, 64).unwrap();
-            view.on_close();
-            view.on_close();
+            assert!(view.draw_osd(64, 64).unwrap().is_none());
+            assert!(!view.on_close());
+            // Double close is safe: second call finds no names.
+            assert!(!view.on_close());
             drop(view);
             // Palette drive with the NTSC kernel path enabled.
             let ntsc = vec![0xAA; 64 * 42 * 4].into_boxed_slice();
@@ -1162,8 +1419,9 @@ mod tests {
             pview.use_vao(use_vao);
             pview.on_load(&pal).unwrap();
             pview.on_update(&vec![7; 64 * 64], 64).unwrap();
-            pview.draw_osd(64, 64).unwrap();
-            pview.on_close();
+            assert!(pview.draw_osd(64, 64).unwrap().is_none());
+            assert!(!pview.on_close());
+            assert!(!pview.on_close());
         }
     }
 }

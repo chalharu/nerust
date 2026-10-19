@@ -126,19 +126,54 @@ cargo ndk \
     ./gradlew --no-daemon assembleRelease
 )
 
-# Loud gate against silent native bloat: DWARF must be gone and the
+# Loud gate against silent native bloat: DWARF must be gone and each
 # release .so must stay within budget (thin-LTO DWARF incident: 133MB).
-main_so="${JNI_LIBS_DIR}/arm64-v8a/libmain.so"
-if readelf -S "${main_so}" | grep -q '\.debug_info'; then
-    echo "libmain.so contains DWARF (.debug_info); release strip is not effective" >&2
-    exit 1
+# Resolves llvm-readelf from the NDK first, then PATH; warns and skips
+# the gate when no reader exists off CI, fails hard when CI needs it.
+readelf_bin=""
+for cand in "${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf; do
+    if [[ -x "${cand}" ]]; then
+        readelf_bin="${cand}"
+        break
+    fi
+done
+if [[ -z "${readelf_bin}" ]] && command -v llvm-readelf >/dev/null 2>&1; then
+    readelf_bin="llvm-readelf"
 fi
-so_size="$(stat -c%s "${main_so}")"
-if (( so_size > 41943040 )); then
-    echo "libmain.so is ${so_size} bytes, over the 40MB budget" >&2
-    exit 1
+if [[ -z "${readelf_bin}" ]] && command -v readelf >/dev/null 2>&1; then
+    readelf_bin="readelf"
 fi
-echo "libmain.so: ${so_size} bytes, no DWARF"
+if [[ -z "${readelf_bin}" ]]; then
+    if [[ -n "${CI:-}" ]]; then
+        echo "no llvm-readelf/readelf found: cannot verify DWARF strip" >&2
+        exit 1
+    fi
+    echo "warning: no llvm-readelf/readelf found; skipping DWARF/size gate" >&2
+else
+    shopt -s nullglob
+    so_files=("${JNI_LIBS_DIR}"/*/libmain.so)
+    shopt -u nullglob
+    if (( ${#so_files[@]} == 0 )); then
+        if [[ -n "${CI:-}" ]]; then
+            echo "no libmain.so found under ${JNI_LIBS_DIR}" >&2
+            exit 1
+        fi
+        echo "warning: no libmain.so found under ${JNI_LIBS_DIR}; skipping gate" >&2
+    fi
+    for main_so in ${so_files[@]+"${so_files[@]}"}; do
+        abi="$(basename "$(dirname "${main_so}")")"
+        if "${readelf_bin}" -S "${main_so}" | grep -q '\.debug_info'; then
+            echo "${abi}/libmain.so contains DWARF (.debug_info); release strip is not effective" >&2
+            exit 1
+        fi
+        so_size="$(wc -c < "${main_so}" | tr -d '[:space:]')"
+        if (( so_size > 41943040 )); then
+            echo "${abi}/libmain.so is ${so_size} bytes, over the 40MB budget (${abi})" >&2
+            exit 1
+        fi
+        echo "${abi}/libmain.so: ${so_size} bytes, no DWARF"
+    done
+fi
 
 mkdir -p "${OUT_DIR}"
 cp "${APK_SRC}" "${OUT_DIR}/${APK_NAME}"
