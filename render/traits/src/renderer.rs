@@ -25,7 +25,38 @@ impl RendererError {
     pub fn new(context: &'static str, source: Box<dyn std::error::Error + Send + Sync>) -> Self {
         Self { context, source }
     }
+
+    /// Renderer exists but no surface is attached yet.
+    pub fn not_attached(op: &'static str) -> Self {
+        Self::new(op, Box::new(RendererErrorKind::NotAttached))
+    }
+
+    /// Surface exists but its context is not current on this thread.
+    pub fn not_current(op: &'static str) -> Self {
+        Self::new(op, Box::new(RendererErrorKind::NotCurrent))
+    }
 }
+
+/// Typed renderer faults. Replaces `OpaqueError("")` sentinels with
+/// diagnosable variants; free-form messages stay on `OpaqueError`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RendererErrorKind {
+    NotAttached,
+    NotCurrent,
+    NoConfig,
+}
+
+impl std::fmt::Display for RendererErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAttached => write!(f, "renderer not attached"),
+            Self::NotCurrent => write!(f, "GL context not current"),
+            Self::NoConfig => write!(f, "no GL config"),
+        }
+    }
+}
+
+impl std::error::Error for RendererErrorKind {}
 
 impl std::fmt::Display for RendererError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -230,7 +261,13 @@ pub trait GpuRenderer: std::fmt::Debug {
 pub struct RendererConfig {
     pub render_profile: VideoRenderProfile,
     pub vsync: bool,
+    /// OSD upload attempts before the layer drops. Per-config knob so
+    /// dead-driver tolerance varies without recompiling the renderer.
+    pub max_osd_upload_retries: u8,
 }
+
+/// Default OSD upload attempts. Single source for call-site literals.
+pub const DEFAULT_OSD_UPLOAD_RETRIES: u8 = 3;
 
 /// Abstract factory: creates a [`GpuRenderer`].
 ///

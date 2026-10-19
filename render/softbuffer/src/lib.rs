@@ -45,7 +45,10 @@ pub struct SoftbufferRenderer {
     taps_cache: Option<(TapKey, bool)>,
 }
 
-/// Tap-coverage inputs for one frame shape.
+/// Tap-coverage inputs for one frame shape. Caches negative verdicts
+/// too: the key carries buffer lengths plus `lut_rev`, so transient
+/// LUT/buffer growth during `resize_lut` changes the key and the stale
+/// `false` never survives the resize that fixes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TapKey {
     dst_w: usize,
@@ -591,12 +594,15 @@ struct ValidatedFrame {
     avail_h: usize,
     src_stride: usize,
     src_h: usize,
+    tap_stride: usize,
+    ntsc_writes: usize,
 }
 
 impl SoftbufferRenderer {
-    /// Validate dimensions and tap coverage without touching the surface.
-    /// Pure read phase: mismatches skip before any indexer runs.
-    fn validate_frame(&mut self, frame: &FrameBuffer) -> Option<ValidatedFrame> {
+    /// Validate dimensions without touching the surface or the tap
+    /// cache. Pure read: tap coverage (which memoizes) runs separately
+    /// at the call site, so this half stays `&self`.
+    fn validate_frame(&self, frame: &FrameBuffer) -> Option<ValidatedFrame> {
         if frame.width() != self.render_profile.source_logical_size.width
             || frame.height() != self.render_profile.source_logical_size.height
         {
@@ -636,16 +642,14 @@ impl SoftbufferRenderer {
         } else {
             0
         };
-        if !self.taps_covered(dst_w, avail_h, tap_stride, ntsc_writes) {
-            warn!("softbuffer tap coverage mismatch: refusing frame");
-            return None;
-        }
         Some(ValidatedFrame {
             dst_w,
             dst_h,
             avail_h,
             src_stride,
             src_h,
+            tap_stride,
+            ntsc_writes,
         })
     }
 
@@ -658,7 +662,9 @@ impl SoftbufferRenderer {
     ) {
         let src_w = layer.width as usize;
         let src_h = layer.height as usize;
-        if src_w == 0 || src_h == 0 || layer.rgba.len() < src_w * src_h * 4 {
+        let need = src_w.checked_mul(src_h).and_then(|px| px.checked_mul(4));
+        let Some(need) = need else { return };
+        if src_w == 0 || src_h == 0 || layer.rgba.len() < need {
             return;
         }
         for row in 0..src_h {
@@ -676,19 +682,21 @@ impl SoftbufferRenderer {
                 if alpha == 0 {
                     continue;
                 }
-                // Buffer words are 0xAARRGGBB: big-endian bytes
-                // are [A, R, G, B], not RGBA. Integer fixed-point
-                // keeps the per-pixel cost off the FPU.
-                let dst_pixel = buffer[dst_y * dst_w + dst_x].to_be_bytes();
+                // Buffer words are 0xAARRGGBB. Shift out channels
+                // directly instead of `to_be_bytes` round-trips.
+                let dst_word = buffer[dst_y * dst_w + dst_x];
+                let (dr, dg, db) = (
+                    ((dst_word >> 16) & 0xff) as u8,
+                    ((dst_word >> 8) & 0xff) as u8,
+                    (dst_word & 0xff) as u8,
+                );
                 let blend = |src: u8, dst: u8| {
                     ((u32::from(src) * alpha + u32::from(dst) * (255 - alpha) + 127) / 255) as u8
                 };
-                buffer[dst_y * dst_w + dst_x] = u32::from_be_bytes([
-                    255,
-                    blend(layer.rgba[s], dst_pixel[1]),
-                    blend(layer.rgba[s + 1], dst_pixel[2]),
-                    blend(layer.rgba[s + 2], dst_pixel[3]),
-                ]);
+                buffer[dst_y * dst_w + dst_x] = 0xff00_0000
+                    | (u32::from(blend(layer.rgba[s], dr)) << 16)
+                    | (u32::from(blend(layer.rgba[s + 1], dg)) << 8)
+                    | u32::from(blend(layer.rgba[s + 2], db));
             }
         }
     }
@@ -769,7 +777,15 @@ impl GpuRenderer for SoftbufferRenderer {
             avail_h,
             src_stride,
             src_h,
+            tap_stride,
+            ntsc_writes,
         } = valid;
+        // Tap coverage admits here (memoizing `&mut`), not inside the
+        // pure geometry check above. Refuse before any indexer runs.
+        if !self.taps_covered(dst_w, avail_h, tap_stride, ntsc_writes) {
+            warn!("softbuffer tap coverage mismatch: refusing frame");
+            return RenderResult::Skipped;
+        }
         let Some(surface) = self.surface.as_mut() else {
             return RenderResult::Skipped;
         };

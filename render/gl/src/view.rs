@@ -17,6 +17,8 @@ pub(crate) enum ViewError {
     Gl(#[from] nerust_glwrap::GlError),
     #[error(transparent)]
     Program(#[from] nerust_glwrap::ShaderError),
+    #[error(transparent)]
+    Frame(#[from] crate::layout::FrameError),
     #[error("GL view misses required uniform `{name}`")]
     MissingUniform { name: &'static str },
     #[error("GL view misses required attribute `{name}`")]
@@ -27,20 +29,16 @@ pub(crate) enum ViewError {
     NoVertexArray,
     #[error("GL view has no vertex buffer")]
     NoVertexBuffer,
-    #[error("{what}: need {need}, have {have}")]
-    Frame {
-        what: &'static str,
-        need: usize,
-        have: usize,
-    },
 }
 
 /// Outcome of one OSD draw. Transient upload failures propagate as
 /// `Err` (retried next frame); only the give-up transition reports
 /// `Dropped`, so the renderer logs the demotion exactly once.
+/// `Skipped` means no layer was staged: nothing drew, nothing failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OsdOutcome {
     Presented,
+    Skipped,
     Dropped,
 }
 
@@ -77,14 +75,83 @@ impl RetryBudget {
     }
 }
 
-/// Shared OSD equality lives on [`OsdLayer`] (single source).
-fn osd_layers_equal(a: Option<&OsdLayer>, b: Option<&OsdLayer>) -> bool {
-    OsdLayer::same_option(a, b)
-}
-
 /// Convert a GL call result into a view error for `?` propagation.
 fn ok_gl<T>(result: Result<T, nerust_glwrap::GlError>) -> Result<T, ViewError> {
     result.map_err(ViewError::Gl)
+}
+
+/// RAII reset for `UNPACK_ROW_LENGTH`: the padded upload sets
+/// global pixel-store state, and every `?` below would otherwise leak
+/// it into the next frame's stride interpretation. Drop restores
+/// best-effort; construction failure leaves state untouched.
+struct UnpackRowLengthGuard {
+    active: bool,
+}
+
+impl UnpackRowLengthGuard {
+    fn set(row_length: i32) -> Result<Self, ViewError> {
+        ok_gl(pixel_storei(gl::UNPACK_ROW_LENGTH, row_length))?;
+        Ok(Self { active: true })
+    }
+
+    fn none() -> Self {
+        Self { active: false }
+    }
+}
+
+impl Drop for UnpackRowLengthGuard {
+    fn drop(&mut self) {
+        if self.active && pixel_storei(gl::UNPACK_ROW_LENGTH, 0).is_err() {
+            log::debug!("GlView: UNPACK_ROW_LENGTH reset failed");
+        }
+    }
+}
+
+/// RAII viewport + blend guard for the OSD composite: the game
+/// viewport is global GL state, and the composite runs fullscreen
+/// with blending. Drop restores both best-effort so a failed draw
+/// never leaks them into the next game frame.
+struct CompositeGuard {
+    viewport: [i32; 4],
+}
+
+impl CompositeGuard {
+    fn fullscreen(
+        surface_w: i32,
+        surface_h: i32,
+        game_viewport: Option<[i32; 4]>,
+    ) -> Result<Self, ViewError> {
+        // Memoized game viewport skips the synchronous readback; a
+        // cold cache reads once and the caller stores what we saved.
+        let saved = match game_viewport {
+            Some(viewport) => viewport,
+            None => {
+                let mut read = [0; 4];
+                ok_gl(get_viewport(&mut read))?;
+                read
+            }
+        };
+        ok_gl(viewport(0, 0, surface_w, surface_h))?;
+        ok_gl(enable(gl::BLEND))?;
+        ok_gl(blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA))?;
+        Ok(Self { viewport: saved })
+    }
+
+    fn saved_viewport(&self) -> [i32; 4] {
+        self.viewport
+    }
+}
+
+impl Drop for CompositeGuard {
+    fn drop(&mut self) {
+        let [x, y, w, h] = self.viewport;
+        if viewport(x, y, w, h).is_err() {
+            log::debug!("GlView: viewport restore failed");
+        }
+        if disable(gl::BLEND).is_err() {
+            log::debug!("GlView: blend disable failed");
+        }
+    }
 }
 
 /// Bind a texture unit in one step; the active/bind pair repeats at
@@ -164,9 +231,10 @@ fn allocate(size: usize) -> Box<[u8]> {
     vec![0; size].into_boxed_slice()
 }
 
-/// Upload attempts before a failing OSD layer is dropped. Transient
-/// blips survive; a dead driver stops costing per-frame work.
-const MAX_OSD_UPLOAD_RETRIES: u8 = 3;
+/// Fallback upload attempts before a failing OSD layer drops.
+/// Production views take the max from `RendererConfig`; tests and
+/// `Default` use this when no config is in reach.
+pub const MAX_OSD_UPLOAD_RETRIES: u8 = 3;
 
 /// Frame pipeline resources: textures, program, geometry. One owner for
 /// the game-image domain; OSD and surface state live elsewhere.
@@ -208,10 +276,13 @@ struct OsdResources {
     osd_clear_scratch: Vec<u8>,
 }
 
-/// Surface memo: last viewport applied; skips redundant GL state writes.
+/// Surface memo: last resize inputs plus the applied game viewport.
+/// The resize memo skips redundant GL state writes; the viewport memo
+/// lets the OSD composite skip a synchronous `GetIntegerv` per frame.
 #[derive(Debug, Default)]
 struct SurfaceState {
     last_resize: Option<(i32, i32, ReservedStrip)>,
+    game_viewport: Option<[i32; 4]>,
 }
 
 impl Default for OsdResources {
@@ -230,6 +301,19 @@ impl Default for OsdResources {
     }
 }
 
+/// How many GL names a teardown failed to delete. Best-effort:
+/// a failed delete warns but never fails the rebuild that called it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CloseReport {
+    pub failed_names: u32,
+}
+
+impl CloseReport {
+    pub fn is_ok(self) -> bool {
+        self.failed_names == 0
+    }
+}
+
 #[derive(Debug)]
 pub struct GlView {
     frame: FrameResources,
@@ -237,35 +321,69 @@ pub struct GlView {
     surface: SurfaceState,
 }
 
-/// Validated OSD blit rect: position, size, row stride, and byte
-/// need. Pure so the corrupt-layer policy stays unit-testable.
-/// Required uniform location. Optimized-out names are a broken program
-/// here (unlike optional sampler uploads): fail typed instead of `-1`.
+/// Required uniform location. Structurally-needed names (matrices,
+/// frame samplers) fail typed instead of `-1`: an optimized-out name
+/// there is a broken program. Samplers GL may legally drop (the OSD
+/// overlay) use `uniform_opt` directly at the call site and skip.
 fn required_uniform(shader: &nerust_glwrap::Shader, key: &'static str) -> Result<i32, ViewError> {
     shader
         .uniform_opt(key)
         .ok_or(ViewError::MissingUniform { name: key })
 }
 
+/// Why an OSD layer was rejected. Logged at the drop site so a
+/// corrupt layer names its fault instead of a bare "invalid".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OsdReject {
+    Empty,
+    Short { need: usize, have: usize },
+    OutOfBounds,
+}
+
+/// Validated OSD blit geometry. Pure so the corrupt-layer policy
+/// stays unit-testable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OSDRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub stride: usize,
+    pub need: usize,
+}
+
 fn checked_osd_rect(
     layer: &OsdLayer,
     surface_w: i32,
     surface_h: i32,
-) -> Option<(i32, i32, i32, i32, usize, usize)> {
+) -> Result<OSDRect, OsdReject> {
     let (w, h) = (
-        usize::try_from(layer.width).ok()?,
-        usize::try_from(layer.height).ok()?,
+        usize::try_from(layer.width).map_err(|_| OsdReject::Empty)?,
+        usize::try_from(layer.height).map_err(|_| OsdReject::Empty)?,
     );
-    let stride = w.checked_mul(4)?;
-    let need = stride.checked_mul(h)?;
-    if need == 0 || layer.rgba.len() < need {
-        return None;
+    let stride = w.checked_mul(4).ok_or(OsdReject::Empty)?;
+    let need = stride.checked_mul(h).ok_or(OsdReject::Empty)?;
+    if need == 0 {
+        return Err(OsdReject::Empty);
+    }
+    if layer.rgba.len() < need {
+        return Err(OsdReject::Short {
+            need,
+            have: layer.rgba.len(),
+        });
     }
     let (lx, ly, lw, lh) = (layer.x as i32, layer.y as i32, w as i32, h as i32);
     if lx < 0 || ly < 0 || lx + lw > surface_w || ly + lh > surface_h {
-        return None;
+        return Err(OsdReject::OutOfBounds);
     }
-    Some((lx, ly, lw, lh, stride, need))
+    Ok(OSDRect {
+        x: lx,
+        y: ly,
+        w: lw,
+        h: lh,
+        stride,
+        need,
+    })
 }
 
 impl Default for GlView {
@@ -478,6 +596,7 @@ impl GlView {
         let _ = self.on_close();
         debug_assert_eq!(self.frame.frame_texture, 0);
         self.surface.last_resize = None;
+        self.surface.game_viewport = None;
         self.frame.is_palette_format = render_profile.frame_format == VideoFrameFormat::Palette;
         let version = gl_string(gl::VERSION);
         let is_gles = is_gles_context(version.as_deref());
@@ -573,8 +692,14 @@ impl GlView {
 
     /// Stage an OSD layer for the next present. `None` clears.
     /// Equal layers skip; new content resets the failure budget.
+    /// Override the upload retry budget (from `RendererConfig`).
+    /// Clamps to at least one attempt: zero would drop live layers.
+    pub fn set_osd_retry_max(&mut self, max: u8) {
+        self.osd.osd_retry = RetryBudget::new(max.max(1));
+    }
+
     pub fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
-        if osd_layers_equal(self.osd.osd_layer.as_ref(), layer.as_ref()) {
+        if OsdLayer::same_option(self.osd.osd_layer.as_ref(), layer.as_ref()) {
             return;
         }
         self.osd.osd_layer = layer;
@@ -594,7 +719,7 @@ impl GlView {
                     self.osd.osd_retry.reset();
                 }
                 Err(e) => {
-                    if self.note_osd_upload_failure().is_some() {
+                    if matches!(self.note_osd_upload_failure(), RetryDecision::DropLayer) {
                         return Ok(OsdOutcome::Dropped);
                     }
                     return Err(e);
@@ -603,7 +728,7 @@ impl GlView {
         }
         let (Some(shader), Some(_)) = (self.osd.osd_shader.as_ref(), self.osd.osd_layer.as_ref())
         else {
-            return Ok(OsdOutcome::Presented);
+            return Ok(OsdOutcome::Skipped);
         };
         ok_gl(shader.use_program())?;
         ok_gl(uniform_matrix_4fv(
@@ -612,7 +737,12 @@ impl GlView {
             gl::FALSE,
             Mat4::identity().as_ptr(),
         ))?;
-        ok_gl(uniform_1i(required_uniform(shader, "osd_texture")?, 0))?;
+        // Optional sampler: a dropped `osd_texture` defaults to unit 0,
+        // which is exactly where the layer binds below, so skip the
+        // upload instead of failing the composite.
+        if let Some(sampler) = shader.uniform_opt("osd_texture") {
+            ok_gl(uniform_1i(sampler, 0))?;
+        }
         use_texture(0, self.osd.osd_texture)?;
         if self.frame.use_vao {
             let Some(vba) = self.frame.vba.as_ref() else {
@@ -626,37 +756,31 @@ impl GlView {
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
         // The game viewport (letterboxed by `on_resize_with_strip`) is
-        // global GL state: save it, composite fullscreen, restore it so
-        // the next game frame keeps its strips without a resize event.
-        let mut saved = [0; 4];
-        ok_gl(get_viewport(&mut saved))?;
-        ok_gl(viewport(0, 0, surface_w, surface_h))?;
-        ok_gl(enable(gl::BLEND))?;
-        ok_gl(blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA))?;
-        let drawn = ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4));
-        // Restore unconditionally: a failed restore must not leak the
-        // fullscreen viewport or BLEND into the next game frame. The
-        // draw result reports first; restore failures follow.
-        let restored = ok_gl(viewport(saved[0], saved[1], saved[2], saved[3]));
-        let blend_off = ok_gl(disable(gl::BLEND));
-        drawn?;
-        restored?;
-        blend_off?;
+        // global GL state: composite fullscreen under the guard so the
+        // next game frame keeps its strips without a resize event, even
+        // when the draw below fails. The memoized viewport skips the
+        // per-frame `GetIntegerv`; a cold cache reads once and stores.
+        let _composite =
+            CompositeGuard::fullscreen(surface_w, surface_h, self.surface.game_viewport)?;
+        self.surface.game_viewport = Some(_composite.saved_viewport());
+        ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
         Ok(OsdOutcome::Presented)
     }
 
     /// Record one failed OSD upload (pure state; GL stays out).
-    /// Returns `Some` on the transition that drops the stale layer.
-    fn note_osd_upload_failure(&mut self) -> Option<()> {
-        self.osd.osd_layer.as_ref()?;
+    /// Returns the retry decision directly; the caller matches it.
+    fn note_osd_upload_failure(&mut self) -> RetryDecision {
+        let Some(_) = self.osd.osd_layer.as_ref() else {
+            return RetryDecision::Retry;
+        };
         match self.osd.osd_retry.record_failure() {
-            RetryDecision::Retry => None,
+            RetryDecision::Retry => RetryDecision::Retry,
             RetryDecision::DropLayer => {
                 // No ghost composite, and the next identical push
                 // re-stages via the equality gate.
                 self.osd.osd_layer = None;
                 self.osd.osd_dirty = false;
-                Some(())
+                RetryDecision::DropLayer
             }
         }
     }
@@ -699,9 +823,9 @@ impl GlView {
         // Pure check first, so no layer borrow crosses the mutations.
         let staged = match self.osd.osd_layer.as_ref() {
             Some(layer) => match checked_osd_rect(layer, surface_w, surface_h) {
-                Some(rect) => rect,
-                None => {
-                    log::warn!("GlView: dropping invalid OSD layer");
+                Ok(rect) => rect,
+                Err(reason) => {
+                    log::warn!("GlView: dropping invalid OSD layer ({reason:?})");
                     self.osd.osd_layer = None;
                     self.osd.osd_dirty = false;
                     return Ok(());
@@ -709,7 +833,14 @@ impl GlView {
             },
             None => return Ok(()),
         };
-        let (lx, ly, lw, lh, stride, need) = staged;
+        let OSDRect {
+            x: lx,
+            y: ly,
+            w: lw,
+            h: lh,
+            stride,
+            need,
+        } = staged;
         // Clear the previous rect so moved/shrunk layers leave no ghosts.
         let rect = (lx, ly, lw, lh);
         if self.osd.osd_prev != Some(rect) {
@@ -725,6 +856,13 @@ impl GlView {
         let Some(layer) = self.osd.osd_layer.as_ref() else {
             return Ok(());
         };
+        let texture = self.osd.osd_texture;
+        if layer.rgba.len() == need {
+            // Tight layer: blit directly, skipping the scratch
+            // fill+copy. Padded layers still repack through it.
+            Self::blit_bytes(texture, lx, ly, lw, lh, &layer.rgba[..need])?;
+            return Ok(());
+        }
         {
             let scratch = &mut self.osd.osd_upload_scratch[..need];
             scratch.fill(0);
@@ -732,7 +870,6 @@ impl GlView {
                 scratch[index * stride..index * stride + stride].copy_from_slice(row);
             }
         }
-        let texture = self.osd.osd_texture;
         Self::blit_bytes(
             texture,
             lx,
@@ -828,12 +965,13 @@ impl GlView {
 
         use_texture(0, self.frame.frame_texture)?;
 
-        // Padded rows upload as-is; row length is global pixel-store
-        // state, so restore the default right after the upload.
-        let padded = row_length != self.frame.logical_width;
-        if padded {
-            ok_gl(pixel_storei(gl::UNPACK_ROW_LENGTH, row_length))?;
-        }
+        // Padded rows upload as-is; the guard restores the default
+        // even when an upload below fails with `?`.
+        let _row_guard = if row_length != self.frame.logical_width {
+            UnpackRowLengthGuard::set(row_length)?
+        } else {
+            UnpackRowLengthGuard::none()
+        };
 
         if self.frame.is_palette_format {
             use_texture(1, self.frame.palette_texture)?;
@@ -880,9 +1018,9 @@ impl GlView {
                 screen_ptr,
             ))?;
         }
-        if padded {
-            ok_gl(pixel_storei(gl::UNPACK_ROW_LENGTH, 0))?;
-        }
+        // Guard drops here: `UNPACK_ROW_LENGTH` resets even on the
+        // draw failure below.
+        drop(_row_guard);
         ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
         Ok(())
     }
@@ -943,13 +1081,19 @@ impl GlView {
             Mat4::scale(scale_x, scale_y, 1.0).as_ptr(),
         ))?;
         self.surface.last_resize = Some((viewport_width, viewport_height, strip));
+        self.surface.game_viewport = Some([0, bottom, viewport_width, area_height]);
         Ok(())
     }
 
     /// Explicit teardown while the context is current (fact, no warn).
-    /// Returns true when a GL delete failed; the renderer logs it.
-    pub fn on_close(&mut self) -> bool {
-        let mut failed = false;
+    /// Reports failed deletes; the renderer logs the count.
+    pub fn on_close(&mut self) -> CloseReport {
+        use nerust_glwrap::CurrentContext;
+        // Callers destroy only with a current context (detach checks,
+        // rebuilds run on the GL thread); the token carries that proof
+        // so a bare `true` can never slip in.
+        let current = CurrentContext::current();
+        let mut failed = 0u32;
         let mut ids = Vec::new();
         if self.frame.frame_texture != 0 {
             ids.push(self.frame.frame_texture);
@@ -969,7 +1113,7 @@ impl GlView {
             && let Err(e) = delete_textures(ids.len() as i32, ids.as_ptr())
         {
             log::debug!("GL view teardown failed: {e}");
-            failed = true;
+            failed += 1;
         }
         // Zero what was deleted: a second `on_close` without an
         // intervening `on_load` must not double-delete names.
@@ -980,27 +1124,30 @@ impl GlView {
         self.osd.osd_size = (0, 0);
         self.osd.osd_prev = None;
         self.surface.last_resize = None;
+        self.surface.game_viewport = None;
         if let Some(mut shader) = self.frame.shader.take()
-            && shader.destroy_if_current(true)
+            && shader.destroy_if_current(current)
         {
-            failed = true;
+            failed += 1;
         }
         if let Some(mut shader) = self.osd.osd_shader.take()
-            && shader.destroy_if_current(true)
+            && shader.destroy_if_current(current)
         {
-            failed = true;
+            failed += 1;
         }
         if let Some(mut vba) = self.frame.vba.take()
-            && vba.destroy_if_current(true)
+            && vba.destroy_if_current(current)
         {
-            failed = true;
+            failed += 1;
         }
         if let Some(vbo) = self.frame.vbo.take()
-            && vbo.destroy_if_current(true)
+            && vbo.destroy_if_current(current)
         {
-            failed = true;
+            failed += 1;
         }
-        failed
+        CloseReport {
+            failed_names: failed,
+        }
     }
 }
 
@@ -1024,12 +1171,11 @@ fn configure_ntsc_texture(
     let rgba = &mut scratch[..need];
     for row in 0..actual_height {
         for col in 0..width {
-            let base = (row * width + col) * 4;
-            let dst = (row * width + col) * 4;
-            if base + 4 <= be_data.len() {
-                rgba[dst..dst + 4].copy_from_slice(&be_data[base..base + 4]);
+            let offset = (row * width + col) * 4;
+            if offset + 4 <= be_data.len() {
+                rgba[offset..offset + 4].copy_from_slice(&be_data[offset..offset + 4]);
             } else {
-                rgba[dst..dst + 4].copy_from_slice(&[0, 0, 0, 0]);
+                rgba[offset..offset + 4].copy_from_slice(&[0, 0, 0, 0]);
             }
         }
     }
@@ -1209,8 +1355,8 @@ fn supports_unpack_row_length(version: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        GlView, OsdOutcome, RetryBudget, RetryDecision, build_glsl_source, checked_osd_rect,
-        compose_glsl_source, is_gles_context, ok_gl, osd_layers_equal, supports_unpack_row_length,
+        GlView, OSDRect, OsdOutcome, OsdReject, RetryBudget, RetryDecision, build_glsl_source,
+        checked_osd_rect, compose_glsl_source, is_gles_context, ok_gl, supports_unpack_row_length,
     };
     use nerust_render_traits::renderer::OsdLayer;
 
@@ -1223,24 +1369,40 @@ mod tests {
             height: 1,
             rgba: vec![1; 8],
         };
-        assert_eq!(checked_osd_rect(&inside, 64, 64), Some((4, 6, 2, 1, 8, 8)));
+        assert_eq!(
+            checked_osd_rect(&inside, 64, 64),
+            Ok(OSDRect {
+                x: 4,
+                y: 6,
+                w: 2,
+                h: 1,
+                stride: 8,
+                need: 8,
+            })
+        );
         // Short data, zero area, and out-of-bounds all refuse.
         let short = OsdLayer {
             rgba: vec![1; 7],
             ..inside.clone()
         };
-        assert_eq!(checked_osd_rect(&short, 64, 64), None);
+        assert_eq!(
+            checked_osd_rect(&short, 64, 64),
+            Err(OsdReject::Short { need: 8, have: 7 })
+        );
         let flat = OsdLayer {
             height: 0,
             rgba: vec![],
             ..inside.clone()
         };
-        assert_eq!(checked_osd_rect(&flat, 64, 64), None);
+        assert_eq!(checked_osd_rect(&flat, 64, 64), Err(OsdReject::Empty));
         let outside = OsdLayer {
             x: 63,
             ..inside.clone()
         };
-        assert_eq!(checked_osd_rect(&outside, 64, 64), None);
+        assert_eq!(
+            checked_osd_rect(&outside, 64, 64),
+            Err(OsdReject::OutOfBounds)
+        );
         // Overflow dimensions refuse instead of wrapping.
         let huge = OsdLayer {
             width: u32::MAX,
@@ -1248,7 +1410,10 @@ mod tests {
             rgba: vec![],
             ..inside.clone()
         };
-        assert_eq!(checked_osd_rect(&huge, i32::MAX, i32::MAX), None);
+        assert_eq!(
+            checked_osd_rect(&huge, i32::MAX, i32::MAX),
+            Err(OsdReject::Empty)
+        );
     }
 
     #[test]
@@ -1282,22 +1447,22 @@ mod tests {
             height: 1,
             rgba: vec![9; 8],
         };
-        assert!(osd_layers_equal(Some(&base), Some(&base.clone())));
-        assert!(!osd_layers_equal(
+        assert!(OsdLayer::same_option(Some(&base), Some(&base.clone())));
+        assert!(!OsdLayer::same_option(
             Some(&base),
             Some(&OsdLayer {
                 x: 7,
                 ..base.clone()
             })
         ));
-        assert!(!osd_layers_equal(
+        assert!(!OsdLayer::same_option(
             Some(&base),
             Some(&OsdLayer {
                 rgba: vec![8; 8],
                 ..base.clone()
             })
         ));
-        assert!(!osd_layers_equal(
+        assert!(!OsdLayer::same_option(
             Some(&base),
             Some(&OsdLayer {
                 rgba: vec![9; 4],
@@ -1305,9 +1470,9 @@ mod tests {
                 ..base.clone()
             })
         ));
-        assert!(osd_layers_equal(None, None));
-        assert!(!osd_layers_equal(Some(&base), None));
-        assert!(!osd_layers_equal(None, Some(&base)));
+        assert!(OsdLayer::same_option(None, None));
+        assert!(!OsdLayer::same_option(Some(&base), None));
+        assert!(!OsdLayer::same_option(None, Some(&base)));
     }
 
     #[test]
@@ -1323,11 +1488,7 @@ mod tests {
 
     #[test]
     fn frame_error_carries_sizes() {
-        let err = super::ViewError::Frame {
-            what: "frame buffer too small",
-            need: 10,
-            have: 4,
-        };
+        let err = super::ViewError::from(crate::layout::FrameError::TooShort { need: 10, have: 4 });
         assert!(err.to_string().contains("10"));
         let internal = super::ViewError::NoProgram;
         assert!(internal.to_string().contains("shader"));
@@ -1393,17 +1554,17 @@ mod tests {
     #[test]
     fn upload_failures_retry_then_drop_layer() {
         let mut view = staged_view();
-        assert!(view.note_osd_upload_failure().is_none());
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
         assert!(view.osd.osd_layer.is_some());
         assert!(view.osd.osd_dirty);
-        assert!(view.note_osd_upload_failure().is_none());
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
         assert!(view.osd.osd_layer.is_some());
         // Third strike: the stale layer drops, no ghost composite.
-        assert!(view.note_osd_upload_failure().is_some());
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
         assert!(view.osd.osd_layer.is_none());
         assert!(!view.osd.osd_dirty);
         // Saturated: further failures stay dropped without re-arming.
-        assert!(view.note_osd_upload_failure().is_none());
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
         assert!(view.osd.osd_layer.is_none());
         assert!(!view.osd.osd_dirty);
     }
@@ -1412,7 +1573,7 @@ mod tests {
     fn upload_failure_counter_saturates() {
         let mut view = staged_view();
         view.osd.osd_retry.fails = u8::MAX;
-        assert!(view.note_osd_upload_failure().is_some());
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
         assert_eq!(view.osd.osd_retry.fails, u8::MAX);
         assert!(view.osd.osd_layer.is_none());
     }
@@ -1500,7 +1661,7 @@ mod tests {
             // Reuse after load must not leak: on_load tears down first.
             view.on_load(&profile).unwrap();
             view.on_update(&vec![0x80; 64 * 64 * 4], 64).unwrap();
-            assert_eq!(view.draw_osd(64, 64).unwrap(), OsdOutcome::Presented);
+            assert_eq!(view.draw_osd(64, 64).unwrap(), OsdOutcome::Skipped);
             view.set_osd_layer(Some(gl_test_layer()));
             assert_eq!(view.draw_osd(64, 64).unwrap(), OsdOutcome::Presented);
             // Steady OSD upload reuses staging: identical second draw matches.
@@ -1527,10 +1688,10 @@ mod tests {
             assert_eq!(before, after);
             view.update_palette_texture(&[0x12; 256]).unwrap();
             view.set_osd_layer(None);
-            assert_eq!(view.draw_osd(64, 64).unwrap(), OsdOutcome::Presented);
-            assert!(!view.on_close());
+            assert_eq!(view.draw_osd(64, 64).unwrap(), OsdOutcome::Skipped);
+            assert!(view.on_close().is_ok());
             // Double close is safe: second call finds no names.
-            assert!(!view.on_close());
+            assert!(view.on_close().is_ok());
             drop(view);
             // Palette drive with the NTSC kernel path enabled.
             let ntsc = vec![0xAA; 64 * 42 * 4].into_boxed_slice();
@@ -1539,9 +1700,9 @@ mod tests {
             pview.use_vao(use_vao);
             pview.on_load(&pal).unwrap();
             pview.on_update(&vec![7; 64 * 64], 64).unwrap();
-            assert_eq!(pview.draw_osd(64, 64).unwrap(), OsdOutcome::Presented);
-            assert!(!pview.on_close());
-            assert!(!pview.on_close());
+            assert_eq!(pview.draw_osd(64, 64).unwrap(), OsdOutcome::Skipped);
+            assert!(pview.on_close().is_ok());
+            assert!(pview.on_close().is_ok());
         }
     }
 }
