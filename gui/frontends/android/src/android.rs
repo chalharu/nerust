@@ -169,7 +169,7 @@ fn show_toast(app: &AndroidApp, message: &str) {
     let message = message.to_string();
     app.run_on_java_main_thread(Box::new(move || {
         let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+        if let Err(error) = vm.attach_current_thread(|env| {
             let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
             let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
 
@@ -188,9 +188,11 @@ fn show_toast(app: &AndroidApp, message: &str) {
                 ],
             )?;
             let toast_obj = toast.l()?;
-            let _ = env.call_method(&toast_obj, jni_str!("show"), jni_sig!("()V"), &[]);
-            Ok(())
-        });
+            env.call_method(&toast_obj, jni_str!("show"), jni_sig!("()V"), &[])?;
+            Ok::<(), jni::errors::Error>(())
+        }) {
+            log::warn!("failed to show Android toast: {error:?}");
+        }
     }));
 }
 
@@ -1071,12 +1073,14 @@ impl AndroidFrontend {
                 }
                 self.session.flush_before_exit();
                 let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-                let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+                if let Err(error) = vm.attach_current_thread(|env| {
                     let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
                     let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-                    let _ = env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[]);
-                    Ok(())
-                });
+                    env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[])?;
+                    Ok::<(), jni::errors::Error>(())
+                }) {
+                    log::warn!("failed to finish Android activity on exit: {error:?}");
+                }
             }
             MenuAction::Unload => {
                 if self.session.loaded() {
@@ -1827,7 +1831,7 @@ impl AndroidFrontend {
 
 fn notify_rom_loaded(app: &AndroidApp, system_id: &str) {
     let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
-    let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+    if let Err(error) = vm.attach_current_thread(|env| {
         let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
         let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
         let system_id = env.new_string(system_id)?;
@@ -1837,8 +1841,10 @@ fn notify_rom_loaded(app: &AndroidApp, system_id: &str) {
             jni_sig!("(Ljava/lang/String;)V"),
             &[jni::objects::JValue::Object(system_id.as_ref())],
         )?;
-        Ok(())
-    });
+        Ok::<(), jni::errors::Error>(())
+    }) {
+        log::warn!("failed to notify Android ROM load: {error:?}");
+    }
 }
 
 fn perform_control_haptic(app: &AndroidApp) {
@@ -1846,7 +1852,7 @@ fn perform_control_haptic(app: &AndroidApp) {
     let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
         let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+        if let Err(error) = vm.attach_current_thread(|env| {
             let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
             let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
             env.call_method(
@@ -1855,8 +1861,10 @@ fn perform_control_haptic(app: &AndroidApp) {
                 jni_sig!("()V"),
                 &[],
             )?;
-            Ok(())
-        });
+            Ok::<(), jni::errors::Error>(())
+        }) {
+            log::warn!("failed to play Android control haptic: {error:?}");
+        }
     }));
 }
 
@@ -1870,7 +1878,7 @@ fn update_floating_dpad_visual(
     let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
         let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+        if let Err(error) = vm.attach_current_thread(|env| {
             let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
             let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
             env.call_method(
@@ -1885,8 +1893,10 @@ fn update_floating_dpad_visual(
                     jni::objects::JValue::Float(knob.y),
                 ],
             )?;
-            Ok(())
-        });
+            Ok::<(), jni::errors::Error>(())
+        }) {
+            log::warn!("failed to update Android dpad visual: {error:?}");
+        }
     }));
 }
 
