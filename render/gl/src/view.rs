@@ -438,18 +438,7 @@ impl GlView {
                     self.osd_upload_fails = 0;
                 }
                 Err(e) => {
-                    // Sticky counter: warns once per staged content, not
-                    // per frame on a dead driver with a live ticker.
-                    self.osd_upload_fails = self.osd_upload_fails.saturating_add(1);
-                    if self.osd_upload_fails >= MAX_OSD_UPLOAD_RETRIES {
-                        if self.osd_upload_fails == MAX_OSD_UPLOAD_RETRIES {
-                            log::warn!("GlView: dropping OSD layer after repeated upload failures");
-                        }
-                        // Drop the stale layer: no ghost composite, and the
-                        // next identical push re-stages via the equality gate.
-                        self.osd_layer = None;
-                        self.osd_dirty = false;
-                    }
+                    self.note_osd_upload_failure();
                     return Err(e);
                 }
             }
@@ -483,6 +472,23 @@ impl GlView {
         ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
         ok_gl(disable(gl::BLEND))?;
         Ok(())
+    }
+
+    /// Record one failed OSD upload: bounded retry with a sticky
+    /// warn-once, then drop the stale layer (pure state; GL stays out).
+    fn note_osd_upload_failure(&mut self) {
+        // Sticky counter: warns once per staged content, not per
+        // frame on a dead driver with a live ticker.
+        self.osd_upload_fails = self.osd_upload_fails.saturating_add(1);
+        if self.osd_upload_fails == MAX_OSD_UPLOAD_RETRIES {
+            log::warn!("GlView: dropping OSD layer after repeated upload failures");
+        }
+        if self.osd_upload_fails >= MAX_OSD_UPLOAD_RETRIES {
+            // No ghost composite, and the next identical push
+            // re-stages via the equality gate.
+            self.osd_layer = None;
+            self.osd_dirty = false;
+        }
     }
 
     /// Upload the staged layer into the full-surface texture (draw path only binds).
@@ -953,7 +959,8 @@ fn supports_unpack_row_length(version: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        GlView, build_glsl_source, compose_glsl_source, is_gles_context, supports_unpack_row_length,
+        GlView, build_glsl_source, compose_glsl_source, is_gles_context, ok_gl,
+        supports_unpack_row_length,
     };
     use nerust_render_traits::renderer::OsdLayer;
 
@@ -1022,5 +1029,53 @@ mod tests {
             source,
             "#version 120\n#define NERUST_MEDIUMP\nvoid helper(void) {}\nvoid main(void) {}\n"
         );
+    }
+
+    fn staged_view() -> GlView {
+        let mut view = GlView::default();
+        view.set_osd_layer(Some(OsdLayer {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 1,
+            rgba: vec![255; 2 * 1 * 4],
+        }));
+        view
+    }
+
+    #[test]
+    fn upload_failures_retry_then_drop_layer() {
+        let mut view = staged_view();
+        view.note_osd_upload_failure();
+        assert!(view.osd_layer.is_some());
+        assert!(view.osd_dirty);
+        view.note_osd_upload_failure();
+        assert!(view.osd_layer.is_some());
+        // Third strike: the stale layer drops, no ghost composite.
+        view.note_osd_upload_failure();
+        assert!(view.osd_layer.is_none());
+        assert!(!view.osd_dirty);
+        // Saturated: further failures stay dropped without re-arming.
+        view.note_osd_upload_failure();
+        assert!(view.osd_layer.is_none());
+        assert!(!view.osd_dirty);
+    }
+
+    #[test]
+    fn upload_failure_counter_saturates() {
+        let mut view = staged_view();
+        view.osd_upload_fails = u8::MAX;
+        view.note_osd_upload_failure();
+        assert_eq!(view.osd_upload_fails, u8::MAX);
+        assert!(view.osd_layer.is_none());
+    }
+
+    #[test]
+    fn ok_gl_passes_values_and_maps_errors() {
+        assert_eq!(ok_gl::<u32>(Ok(7)).unwrap(), 7);
+        let mapped = ok_gl::<u32>(Err(nerust_glwrap::GlError::new(vec![
+            gl::INVALID_VALUE.into(),
+        ])));
+        assert!(matches!(mapped, Err(super::ViewError::Gl(_))));
     }
 }
