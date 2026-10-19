@@ -54,6 +54,7 @@ struct TapKey {
     resize_len: usize,
     ntsc_writes: usize,
     ntsc_len: usize,
+    lut_rev: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +70,7 @@ struct LutEntry {
     x_lut: Vec<Option<(u16, u16)>>,
     y_lut: Vec<Option<(u16, u16)>>,
     kernel: ResizeKernel,
+    rev: u64,
 }
 
 impl LutEntry {
@@ -78,7 +80,13 @@ impl LutEntry {
             y_lut: Vec::new(),
             // kernel: ResizeKernel::NearestNeighbor,
             kernel: ResizeKernel::Bilinear,
+            rev: 0,
         }
+    }
+
+    /// Generation counter: any LUT rebuild invalidates tap verdicts.
+    fn bump_rev(&mut self) {
+        self.rev = self.rev.wrapping_add(1);
     }
 
     fn inv_scale(
@@ -118,6 +126,7 @@ impl LutEntry {
         src_h: usize,
         scale: (f32, f32),
     ) {
+        self.bump_rev();
         Self::lut_reserve(&mut self.x_lut, dst_w);
         Self::lut_reserve(&mut self.y_lut, dst_h);
 
@@ -151,6 +160,7 @@ impl LutEntry {
         src_h: usize,
         scale: (f32, f32),
     ) {
+        self.bump_rev();
         Self::lut_reserve(&mut self.x_lut, dst_w * 2);
         Self::lut_reserve(&mut self.y_lut, dst_h * 2);
 
@@ -240,6 +250,7 @@ impl LutEntry {
         physical_aspect_ratio: f32,
         destination_size: SurfaceSize,
     ) {
+        self.bump_rev();
         let dst_w = destination_size.width as usize;
         let dst_h = destination_size.height as usize;
         let src_w = source_size.width as usize;
@@ -309,8 +320,6 @@ impl SoftbufferRenderer {
     }
 
     fn resize_lut(&mut self) {
-        // Taps are rebuilt below: drop the cached verdict (key covers lengths only).
-        self.taps_cache = None;
         self.lut.resize_lut(
             SurfaceSize {
                 width: self.render_profile.logical_size.width as u32,
@@ -472,6 +481,7 @@ impl SoftbufferRenderer {
             resize_len: self.resize_buffer.len(),
             ntsc_writes,
             ntsc_len: self.ntsc_buffer.len(),
+            lut_rev: self.lut.rev,
         };
         if let Some((cached_key, covered)) = &self.taps_cache
             && *cached_key == key
@@ -707,6 +717,9 @@ impl GpuRenderer for SoftbufferRenderer {
         } else {
             0
         };
+        if self.surface.is_none() {
+            return RenderResult::Skipped;
+        }
         if !self.taps_covered(dst_w, avail_h, tap_stride, ntsc_writes) {
             warn!("softbuffer tap coverage mismatch: refusing frame");
             return RenderResult::Skipped;
@@ -714,7 +727,6 @@ impl GpuRenderer for SoftbufferRenderer {
         let Some(surface) = self.surface.as_mut() else {
             return RenderResult::Skipped;
         };
-
         let mut buffer = match surface.buffer_mut() {
             Ok(b) => b,
             Err(e) => {
@@ -1046,10 +1058,53 @@ mod tests {
         renderer.resize_lut();
         assert!(renderer.taps_covered(8, 8, 256, 0));
         assert!(renderer.taps_cache.is_some());
-        // Same-size rebuild must drop the verdict: the key covers
-        // lengths only, so reused taps would go unverified.
+        // Same-size rebuild bumps the generation: the cached verdict
+        // misses on rev even though every length matches.
+        let rev_before = renderer.lut.rev;
         renderer.resize_lut();
-        assert!(renderer.taps_cache.is_none());
+        assert!(renderer.lut.rev != rev_before);
+        assert!(renderer.taps_covered(8, 8, 256, 0));
+        assert!(renderer.taps_cache.is_some());
+    }
+
+    #[test]
+    fn taps_rev_bumps_on_every_mutator() {
+        let mut lut = LutEntry::new();
+        let rev0 = lut.rev;
+        lut.resize_lut_bilinear(2, 2, 2, 2, (1.0, 1.0));
+        assert!(lut.rev != rev0);
+        let rev1 = lut.rev;
+        lut.resize_lut_nearest_neighbor(2, 2, 2, 2, (1.0, 1.0));
+        assert!(lut.rev != rev1);
+        let rev2 = lut.rev;
+        lut.resize_lut(SurfaceSize::new(2, 2), 1.0, SurfaceSize::new(2, 2));
+        assert!(lut.rev != rev2);
+    }
+
+    #[test]
+    fn taps_cache_misses_on_rev_change() {
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        renderer.size = SurfaceSize::new(8, 8);
+        renderer.resize_lut();
+        assert!(renderer.taps_covered(8, 8, 256, 0));
+        // Same lengths, bumped rev: verdict must rescan, not hit cache.
+        renderer.lut.bump_rev();
+        assert!(renderer.taps_covered(8, 8, 256, 0));
+        let (key, covered) = renderer.taps_cache.as_ref().unwrap();
+        assert_eq!(key.lut_rev, renderer.lut.rev);
+        assert!(*covered);
+    }
+
+    #[test]
+    fn render_skips_without_surface_before_tap_scan() {
+        use nerust_render_traits::{FrameBuffer, PixelFormat};
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        renderer.size = SurfaceSize::new(8, 8);
+        renderer.resize_lut();
+        // No surface attached: must skip even with a valid tap key.
+        let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
+        frame.resize(256, 240);
+        assert_eq!(renderer.render(&frame), RenderResult::Skipped);
     }
 
     #[test]
@@ -1066,6 +1121,7 @@ mod tests {
             x_lut: vec![Some((999, 1)), None],
             y_lut: vec![None, None],
             kernel: ResizeKernel::Bilinear,
+            rev: 1,
         };
         renderer.resize_buffer = vec![0; 8];
         assert!(!renderer.taps_covered(1, 1, 4, 0));
@@ -1074,6 +1130,7 @@ mod tests {
             x_lut: vec![Some((0, 1)), None],
             y_lut: vec![Some((99, 1)), None],
             kernel: ResizeKernel::Bilinear,
+            rev: 2,
         };
         renderer.resize_buffer = vec![0; 8 * 4];
         assert!(!renderer.taps_covered(8, 1, 4, 0));

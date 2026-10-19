@@ -17,12 +17,15 @@ pub struct VertexArray {
 #[derive(Debug)]
 struct VertexArrayVAO {
     id: GLuint,
+    deleted: bool,
 }
 
+/// No GL calls here: without a current context delete would fail.
 impl Drop for VertexArrayVAO {
     fn drop(&mut self) {
-        gl_error_handle(|| unsafe { gl::DeleteVertexArrays(1, &self.id) })
-            .unwrap_or_else(|x| log::warn!("{}", x));
+        if !self.deleted {
+            log::debug!("orphan GL VAO {} leaked at drop", self.id);
+        }
     }
 }
 
@@ -42,7 +45,10 @@ impl VertexArray {
         gl_get_error()?;
 
         let mut va = VertexArray {
-            vao: VertexArrayVAO { id: vao },
+            vao: VertexArrayVAO {
+                id: vao,
+                deleted: false,
+            },
             vbo_refs: Vec::new(),
             ibo_ref: None,
         };
@@ -53,6 +59,36 @@ impl VertexArray {
         }
 
         Ok(va)
+    }
+
+    /// Delete the VAO and held buffers when the context is current.
+    /// No GL call without a current context; Drop reports the leak.
+    pub fn destroy_if_current(&mut self, is_current: bool) -> bool {
+        let mut failed = false;
+        for vbo in self.vbo_refs.iter() {
+            if vbo.destroy_if_current(is_current) {
+                failed = true;
+            }
+        }
+        if let Some(ibo) = self.ibo_ref.as_ref()
+            && ibo.destroy_if_current(is_current)
+        {
+            failed = true;
+        }
+        if !self.vao.deleted {
+            if !is_current {
+                log::debug!("orphan GL VAO {} without current context", self.vao.id);
+            } else {
+                use super::raw::delete_vertex_arrays;
+                if delete_vertex_arrays(1, &self.vao.id as *const _ as *mut _).is_err() {
+                    failed = true;
+                }
+                self.vao.deleted = true;
+            }
+        }
+        self.vbo_refs.clear();
+        self.ibo_ref = None;
+        failed
     }
 
     pub fn bind_vao<F>(&self, cb: F) -> Result<(), Error>
@@ -151,12 +187,15 @@ impl VertexArrayBufferContext {
 #[derive(Debug)]
 pub struct VertexBuffer {
     pub id: GLuint,
+    deleted: std::cell::Cell<bool>,
 }
 
+/// No GL calls here: without a current context delete would fail.
 impl Drop for VertexBuffer {
     fn drop(&mut self) {
-        gl_error_handle(|| unsafe { gl::DeleteBuffers(1, &self.id) })
-            .unwrap_or_else(|x| log::warn!("{}", x));
+        if !self.deleted.get() {
+            log::debug!("orphan GL VBO {} leaked at drop", self.id);
+        }
     }
 }
 
@@ -177,7 +216,25 @@ impl VertexBuffer {
         }
         gl_get_error()?;
 
-        Ok(VertexBuffer { id: vbo })
+        Ok(VertexBuffer {
+            id: vbo,
+            deleted: std::cell::Cell::new(false),
+        })
+    }
+
+    /// Delete the buffer when the context is current.
+    /// No GL call without a current context; Drop reports the leak.
+    pub fn destroy_if_current(&self, is_current: bool) -> bool {
+        if self.deleted.get() {
+            return false;
+        }
+        if !is_current {
+            log::debug!("orphan GL VBO {} without current context", self.id);
+            return false;
+        }
+        let failed = super::raw::delete_buffers(1, &self.id).is_err();
+        self.deleted.set(true);
+        failed
     }
 }
 
@@ -186,12 +243,15 @@ pub struct IndexBuffer {
     id: GLuint,
 
     data_type: GLenum,
+    deleted: std::cell::Cell<bool>,
 }
 
+/// No GL calls here: without a current context delete would fail.
 impl Drop for IndexBuffer {
     fn drop(&mut self) {
-        gl_error_handle(|| unsafe { gl::DeleteBuffers(1, &self.id) })
-            .unwrap_or_else(|x| log::warn!("{}", x));
+        if !self.deleted.get() {
+            log::debug!("orphan GL IBO {} leaked at drop", self.id);
+        }
     }
 }
 
@@ -216,7 +276,26 @@ impl IndexBuffer {
         }
         gl_get_error()?;
 
-        Ok(IndexBuffer { id: vbo, data_type })
+        Ok(IndexBuffer {
+            id: vbo,
+            data_type,
+            deleted: std::cell::Cell::new(false),
+        })
+    }
+
+    /// Delete the buffer when the context is current.
+    /// No GL call without a current context; Drop reports the leak.
+    pub fn destroy_if_current(&self, is_current: bool) -> bool {
+        if self.deleted.get() {
+            return false;
+        }
+        if !is_current {
+            log::debug!("orphan GL IBO {} without current context", self.id);
+            return false;
+        }
+        let failed = super::raw::delete_buffers(1, &self.id).is_err();
+        self.deleted.set(true);
+        failed
     }
 }
 

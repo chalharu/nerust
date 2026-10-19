@@ -51,8 +51,11 @@ pub struct Shader {
     program: GLuint,
     attributes: HashMap<String, GLuint>,
     uniforms: HashMap<String, GLint>,
+    deleted: bool,
 }
 
+/// Programs die with the view: rebuilds and detach must not orphan names.
+/// Explicit `destroy_if_current` does the delete; Drop only reports leaks.
 impl Shader {
     pub fn try_new(vert_src: &str, flag_src: &str) -> Result<Self, String> {
         let vtx_shader_id = compile_shader(vert_src, gl::VERTEX_SHADER)?;
@@ -63,28 +66,65 @@ impl Shader {
             program: program_id,
             attributes: get_attributes(program_id)?,
             uniforms: get_uniforms(program_id)?,
+            deleted: false,
         })
     }
 
+    // Optimized-out names legitimately miss; release stays silent.
+    // Debug flags the typo without failing the frame.
     pub fn get_attribute(&self, key: &str) -> GLuint {
-        self.attributes.get(key).map_or_else(|| 0, |&x| x)
+        if let Some(&id) = self.attributes.get(key) {
+            id
+        } else {
+            #[cfg(debug_assertions)]
+            {
+                debug_assert!(false, "missing GL attribute: {key}");
+                log::error!("missing GL attribute: {key}");
+            }
+            0
+        }
     }
 
+    // Optimized-out names legitimately miss; release stays silent.
+    // Debug flags the typo without failing the frame.
     pub fn get_uniform(&self, key: &str) -> GLint {
-        self.uniforms.get(key).map_or(-1, |&x| x)
+        if let Some(&id) = self.uniforms.get(key) {
+            id
+        } else {
+            #[cfg(debug_assertions)]
+            {
+                debug_assert!(false, "missing GL uniform: {key}");
+                log::error!("missing GL uniform: {key}");
+            }
+            -1
+        }
     }
 
     pub fn use_program(&self) -> Result<(), Error> {
         use_program(self.program)
     }
+
+    /// Delete the program when the context is current.
+    /// No GL call without a current context; Drop reports the leak.
+    pub fn destroy_if_current(&mut self, is_current: bool) -> bool {
+        if self.deleted {
+            return false;
+        }
+        if !is_current {
+            log::debug!("orphan GL program {} without current context", self.program);
+            return false;
+        }
+        let failed = delete_program(self.program).is_err();
+        self.deleted = true;
+        failed
+    }
 }
 
-/// Programs die with the view: rebuilds and detach must not orphan names.
-/// Best-effort like the buffer drops; a dead context only warns.
+/// No GL calls here: without a current context delete would fail.
 impl Drop for Shader {
     fn drop(&mut self) {
-        if let Err(e) = delete_program(self.program) {
-            log::warn!("GL shader teardown failed: {e}");
+        if !self.deleted {
+            log::debug!("orphan GL program {} leaked at drop", self.program);
         }
     }
 }

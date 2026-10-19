@@ -117,7 +117,9 @@ pub fn delete_buffers(n: GLsizei, buffers: *const GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::DeleteBuffers(n, buffers) })
 }
 
-pub(crate) fn delete_program(program: GLuint) -> Result<(), Error> {
+/// Delete a program name (symmetric with the other raw wrappers).
+/// Call only with a current context; best-effort at teardown.
+pub fn delete_program(program: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::DeleteProgram(program) })
 }
 
