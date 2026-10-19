@@ -924,9 +924,12 @@ impl AndroidFrontend {
             self.lifecycle_auto_paused,
             self.lifecycle_restore_pending
         );
-        // Lifecycle auto-pause only with a running core: pausing with
-        // no core fails into CommandFailed noise and an unasked modal.
-        if !self.lifecycle_auto_paused && self.session.can_pause() {
+        // Auto-pause only with a pausable session; the predicate
+        // pins the contract (host-tested in `lifecycle_decision`).
+        if crate::lifecycle_decision::should_lifecycle_pause(
+            self.lifecycle_auto_paused,
+            self.session.can_pause(),
+        ) {
             self.pause();
             self.lifecycle_auto_paused = true;
             log::info!("save_lifecycle_state: auto-paused session");
@@ -1295,15 +1298,16 @@ impl AndroidFrontend {
         if restore_hidden_state {
             log::info!("finish_rom_load: restoring hidden lifecycle state");
             self.session.load_hidden_lifecycle_state();
-            // Resume only our own auto-pause: a manual pause predates
-            // the suspend and must survive the round-trip (never steal).
-            if self.lifecycle_auto_paused {
-                self.lifecycle_auto_paused = false;
-                self.resume();
-            }
         } else {
             log::info!("finish_rom_load: clearing hidden lifecycle state");
             self.session.clear_hidden_lifecycle_state();
+        }
+        // Resume fresh loads always; restores only our own auto-pause.
+        // A manual pause predates the suspend and must survive it.
+        if crate::lifecycle_decision::should_resume_after_restore(
+            restore_hidden_state,
+            self.lifecycle_auto_paused,
+        ) {
             self.lifecycle_auto_paused = false;
             self.resume();
         }
