@@ -246,7 +246,7 @@ impl PpuWindowHandle {
 
 impl super::focus::WindowHandler for PpuWindowHandle {
     type Program = PpuProgram;
-    const LOG_TAG: &'static str = "PPU viewer";
+    const LOG_TAG: &str = "PPU viewer";
 
     fn shell(&self) -> &crate::aux::shell::AuxShell<Self::Program> {
         &self.shell
