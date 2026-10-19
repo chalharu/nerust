@@ -63,7 +63,7 @@ use self::{
     settings::AndroidSettings,
     storage::{AndroidStorage, LastMediaReference},
 };
-use crate::error_dialog_controller::{ErrorDialogController, SettingsClosedTransition};
+use crate::error_dialog_controller::{ScreenState, SettingsClosedTransition};
 
 const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 const FOREGROUND_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
@@ -502,8 +502,8 @@ struct AndroidFrontend {
     last_peripheral_config: Option<(bool, bool, u8, RumbleTarget)>,
     last_rumble_intensity: Option<u8>,
     osd: osd::AndroidOsd,
-    error_dialog: ErrorDialogController,
     settings_open: bool,
+    event_scratch: Vec<crate::android::messages::FrontendEvent>,
 }
 
 impl AndroidFrontend {
@@ -585,8 +585,8 @@ impl AndroidFrontend {
             last_peripheral_config: None,
             last_rumble_intensity: None,
             osd: osd::AndroidOsd::new(),
-            error_dialog: ErrorDialogController::new(),
             settings_open: false,
+            event_scratch: Vec::new(),
         };
         if frontend.lifecycle_restore_pending {
             log::info!(
@@ -811,7 +811,7 @@ impl AndroidFrontend {
                 log::info!("handle_picker_result: picker returned URI {uri}");
                 if let Err(error) = self.open_rom_from_uri(event_loop, &uri) {
                     log::error!("{error}");
-                    self.osd.manager_mut().queue_modal(error);
+                    self.session.report_external_error(error);
                 }
             }
             RomPickerResult::TreeSelected(uri) => {
@@ -827,9 +827,9 @@ impl AndroidFrontend {
                     }
                     Err(error) => {
                         log::error!("failed to apply Android storage directory: {error}");
-                        self.osd
-                            .manager_mut()
-                            .queue_modal("Selected directory could not be used".to_string());
+                        self.session.report_external_error(
+                            "Selected directory could not be used".to_string(),
+                        );
                     }
                 }
             }
@@ -844,17 +844,14 @@ impl AndroidFrontend {
         // Settings closed (applied or dismissed): drop the cached open
         // flag, flush the error queue, and resume an orphaned pause.
         self.settings_open = false;
-        match self.error_dialog.on_settings_closed(
-            self.osd.manager_mut(),
-            self.is_resumed,
-            self.session.can_pause(),
-        ) {
+        let screen = ScreenState::new(self.is_resumed, false, self.session.can_pause());
+        match self.osd.settings_closed_error_dialog(screen) {
             SettingsClosedTransition::Show { auto_pause } => {
                 if auto_pause {
                     self.pause();
                 }
-                if let Some(detail) = self.error_dialog.current_detail() {
-                    error_dialog::request_show_error_dialog(&self.app, detail);
+                if let Some(detail) = self.osd.error_detail() {
+                    error_dialog::request_show_error_dialog(&self.app, &detail);
                 }
             }
             SettingsClosedTransition::Resume => self.resume(),
@@ -1103,12 +1100,12 @@ impl AndroidFrontend {
     /// or settings owns the screen. The cached flag avoids a bridge
     /// lock per pass; dismissal still consults the bridge as truth.
     fn maybe_show_error_dialog(&mut self) {
-        let request = self.error_dialog.poll_show(
-            self.osd.manager_mut(),
+        let screen = ScreenState::new(
             self.is_resumed,
             self.settings_open,
             self.session.can_pause(),
         );
+        let request = self.osd.poll_error_dialog(screen);
         let Some(transition) = request else {
             return;
         };
@@ -1117,8 +1114,8 @@ impl AndroidFrontend {
         if transition.auto_pause {
             self.pause();
         }
-        if let Some(detail) = self.error_dialog.current_detail() {
-            error_dialog::request_show_error_dialog(&self.app, detail);
+        if let Some(detail) = self.osd.error_detail() {
+            error_dialog::request_show_error_dialog(&self.app, &detail);
         }
     }
 
@@ -1127,11 +1124,8 @@ impl AndroidFrontend {
     fn handle_error_dialog_dismissed(&mut self) {
         // Bridge truth here: a settings dialog may have opened over the
         // error between the cached flag's last event-driven update.
-        let transition = self.error_dialog.on_dismissed(
-            self.osd.manager_mut(),
-            self.is_resumed,
-            settings::is_dialog_open(),
-        );
+        let screen = ScreenState::new(self.is_resumed, settings::is_dialog_open(), false);
+        let transition = self.osd.dismiss_error_dialog(screen);
         if transition.resume {
             self.resume();
         }
@@ -1315,7 +1309,7 @@ impl AndroidFrontend {
         // never across an error auto-pause (its dismiss owns that).
         if crate::lifecycle_decision::should_resume_on_foreground(
             self.lifecycle_auto_paused,
-            self.error_dialog.auto_paused(),
+            self.osd.error_auto_paused(),
             crate::lifecycle_decision::should_resume_after_restore(
                 restore_hidden_state,
                 self.lifecycle_auto_paused,
@@ -1429,7 +1423,7 @@ impl AndroidFrontend {
                                     log::warn!(
                                         "try_resume_foreground: failed to load last document URI for lifecycle restore: {error}"
                                     );
-                                    self.osd.manager_mut().queue_modal(
+                                    self.session.report_external_error(
                                         "Previous ROM is unavailable; open it again".to_string(),
                                     );
                                     log::info!(
@@ -1492,7 +1486,7 @@ impl AndroidFrontend {
                             log::warn!(
                                 "try_resume_foreground: failed to read last media reference: {error}"
                             );
-                            self.osd.manager_mut().queue_modal(
+                            self.session.report_external_error(
                                 "Previous ROM reference is invalid; open it again".to_string(),
                             );
                             self.session.clear_hidden_lifecycle_state();
@@ -1506,7 +1500,7 @@ impl AndroidFrontend {
                 let want_lifecycle_resume = self.lifecycle_auto_paused;
                 if crate::lifecycle_decision::should_resume_on_foreground(
                     want_lifecycle_resume,
-                    self.error_dialog.auto_paused(),
+                    self.osd.error_auto_paused(),
                     want_lifecycle_resume,
                 ) {
                     self.resume();
@@ -1981,7 +1975,7 @@ impl ApplicationHandler for AndroidFrontend {
         // Transient UI dies with the activity: the controller releases
         // the gate and requeues the unacked head; the settings cache
         // dies with the dialog it tracked.
-        self.error_dialog.on_suspended(self.osd.manager_mut());
+        self.osd.suspend_error_dialog();
         self.settings_open = false;
         self.release_window_resources();
     }
@@ -2035,7 +2029,8 @@ impl ApplicationHandler for AndroidFrontend {
         if let Some(result) = settings::take_result() {
             self.handle_settings_result(result);
         }
-        for event in menu::take_events() {
+        menu::take_events_into(&mut self.event_scratch);
+        for event in self.event_scratch.drain(..) {
             self.handle_menu_action(event);
         }
         self.sync_cartridge_peripherals();

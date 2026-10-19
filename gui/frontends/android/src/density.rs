@@ -4,6 +4,9 @@
 /// Quantized density key: `round(scale * 100)`, clamped to sane range.
 /// Key equality is the epsilon; `u32::MAX` stays a force-miss sentinel.
 pub(crate) fn density_key(scale: f32) -> u32 {
+    if scale.is_nan() {
+        return 0;
+    }
     (scale.clamp(0.25, 8.0) * 100.0).round() as u32
 }
 
@@ -28,7 +31,13 @@ mod tests {
     fn clamps_and_stays_deterministic() {
         assert_eq!(density_key(0.0), density_key(0.25));
         assert_eq!(density_key(100.0), density_key(8.0));
-        assert_eq!(density_key(f32::NAN), density_key(f32::NAN));
+        assert_eq!(density_key(f32::NAN), 0);
         assert_ne!(density_key(1.0), u32::MAX);
+    }
+
+    #[test]
+    fn non_finite_scales_never_panic() {
+        assert_eq!(density_key(f32::INFINITY), density_key(8.0));
+        assert_eq!(density_key(f32::NEG_INFINITY), density_key(0.25));
     }
 }
