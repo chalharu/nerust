@@ -13,7 +13,7 @@ use crate::{
     session::{
         SessionError, SessionHandle,
         commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
-        osd::FrameChannel,
+        osd::{FrameChannel, OsdManager, PumpReport, PushInput},
         persistence::PersistenceManager,
         title::window_title,
     },
@@ -479,10 +479,33 @@ impl SessionHandle {
         self.notifications.drain()
     }
 
-    /// Drain the queue with its display channel (frontends must not re-derive it).
-    pub fn drain_routed(&mut self) -> (Vec<super::notification::UiNotification>, FrameChannel) {
+    /// Single shell pump owning the whole drain path: queue drain
+    /// (skipped when empty: no Vec, no channel derivation), OSD push,
+    /// transient expiry, and modal batch pumping. Frontends call this
+    /// once per tick, then run their presenter sync and modal flow.
+    pub fn pump_osd(&mut self, manager: &mut OsdManager, input: PushInput<'_>) -> PumpReport {
+        let PushInput {
+            settings,
+            language,
+            now,
+        } = input;
+        if self.notifications.pending_len() == 0 {
+            manager.poll(now);
+            let modal_queued = manager.pump_modal();
+            return PumpReport {
+                dirty: manager.dirty(),
+                modal_queued,
+            };
+        }
         let channel = self.frame_channel();
-        (self.drain_notifications(), channel)
+        let drained = self.drain_notifications();
+        manager.push_all(drained, settings, language, now, channel);
+        manager.poll(now);
+        let modal_queued = manager.pump_modal();
+        PumpReport {
+            dirty: manager.dirty(),
+            modal_queued,
+        }
     }
 
     pub fn notification_history(

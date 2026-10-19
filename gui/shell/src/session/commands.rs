@@ -15,6 +15,28 @@ pub enum SessionCommand {
     SelectPreviousSlot,
 }
 
+impl SessionCommand {
+    /// Slot carried for failure messages. Explicit-slot commands use
+    /// their own id; active-slot commands resolve to `active`, the
+    /// rest report `None`. New variants must pick an arm here.
+    pub fn associated_slot(&self, active: Option<u64>) -> Option<u64> {
+        match self {
+            SessionCommand::SaveSlot(id)
+            | SessionCommand::LoadSlot(id)
+            | SessionCommand::DeleteSlot(id)
+            | SessionCommand::SelectActiveSlot(id) => Some(*id),
+            SessionCommand::SaveActiveSlotOrNew | SessionCommand::LoadActiveSlot => active,
+            SessionCommand::Pause
+            | SessionCommand::Resume
+            | SessionCommand::TogglePause
+            | SessionCommand::Reset
+            | SessionCommand::CreateSlot
+            | SessionCommand::SelectNextSlot
+            | SessionCommand::SelectPreviousSlot => None,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct SessionCommandOutcome {
     pub executed: bool,
