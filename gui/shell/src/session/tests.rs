@@ -1300,26 +1300,26 @@ fn live_images_flight_refetches_while_running() {
 fn pump_osd_empty_queue_reports_clean() {
     use std::time::Instant;
 
-    use crate::session::osd::{OsdManager, PushInput};
+    use crate::session::osd::{ModalSource, OsdManager, PushInput, TransientPolicy};
 
     let mut session = test_session();
     let mut manager = OsdManager::new();
     let snapshot = session.settings_snapshot().clone();
     let input = || PushInput {
-        settings: &snapshot.local.notifications,
+        policy: TransientPolicy::from(&snapshot.local.notifications),
         language: AppLanguage::English,
         now: Instant::now(),
     };
     // test_session activates a system but loads no ROM: unpresented.
     assert!(!session.loaded());
     let report = session.pump_osd(&mut manager, input());
-    assert!(!report.dirty);
+    assert!(!report.changed);
     assert!(!report.modal_queued);
     assert!(manager.rows().is_empty());
     assert_eq!(manager.modal_pending(), 0);
     // Repeat: still clean, no accumulation.
     let report = session.pump_osd(&mut manager, input());
-    assert!(!report.dirty);
+    assert!(!report.changed);
     assert!(!report.modal_queued);
 }
 
@@ -1329,7 +1329,7 @@ fn pump_osd_empty_queue_reports_clean() {
 fn pump_osd_routes_no_core_error_to_modal() {
     use std::time::Instant;
 
-    use crate::session::osd::{OsdManager, PushInput};
+    use crate::session::osd::{ModalSource, OsdManager, PushInput, TransientPolicy};
 
     let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
@@ -1342,7 +1342,7 @@ fn pump_osd_routes_no_core_error_to_modal() {
     let report = session.pump_osd(
         &mut manager,
         PushInput {
-            settings: &snapshot.local.notifications,
+            policy: TransientPolicy::from(&snapshot.local.notifications),
             language: AppLanguage::English,
             now: Instant::now(),
         },
@@ -1361,7 +1361,7 @@ fn pump_osd_drops_info_without_frame() {
 
     use crate::session::{
         notification::NotificationKind,
-        osd::{OsdManager, PushInput},
+        osd::{ModalSource, OsdManager, PushInput, TransientPolicy},
     };
 
     let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
@@ -1371,13 +1371,13 @@ fn pump_osd_drops_info_without_frame() {
     let mut manager = OsdManager::new();
     let snapshot = session.settings_snapshot().clone();
     let input = || PushInput {
-        settings: &snapshot.local.notifications,
+        policy: TransientPolicy::from(&snapshot.local.notifications),
         language: AppLanguage::English,
         now: Instant::now(),
     };
     session.notifications.push(NotificationKind::Paused);
     let report = session.pump_osd(&mut manager, input());
-    assert!(!report.dirty);
+    assert!(!report.changed);
     assert!(!report.modal_queued);
     assert!(manager.rows().is_empty());
     assert_eq!(manager.modal_pending(), 0);

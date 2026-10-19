@@ -245,6 +245,7 @@ mod tests {
     use crate::test_session::FakeRomLoader;
     use nerust_gui_shell::registry::SystemRegistry;
     use nerust_gui_shell::session::commands::SessionCommand;
+    use nerust_gui_shell::session::osd::ModalSource;
 
     #[test]
     fn rom_filters_empty_without_cores() {

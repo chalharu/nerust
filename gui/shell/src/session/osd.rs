@@ -211,8 +211,9 @@ struct ModalBox {
     batch: Vec<String>,
     queue: std::collections::VecDeque<String>,
     open: bool,
-    /// Drop-loss warn fires once per full episode; cleared when taken.
-    queue_warned_full: bool,
+    /// Total overflow losses. Pure fact, no I/O: the pump adapter
+    /// decides logging from the delta (see `pump_modal`).
+    dropped_total: u64,
 }
 
 /// Notification display state: transient in-frame rows plus modal batches.
@@ -221,10 +222,12 @@ struct ModalBox {
 pub struct OsdManager {
     transient: TransientQueue,
     modal_box: ModalBox,
-    dirty: bool,
-    /// Monotonic change count. `dirty`/`take_dirty` stay for the
-    /// peek-then-take protocol; new code can poll `generation`.
+    /// Monotonic display-generation. Presenters remember the last
+    /// generation they synced; inequality means re-render.
     generation: u64,
+    /// Overflow warn episode flag. Re-arms when the modal queue
+    /// fully drains (see the modal source below).
+    modal_warned_full: bool,
 }
 
 /// Write side of the modal queue. Only the shell pump and the
@@ -340,9 +343,9 @@ fn duration_ms(level: NotificationLevel, policy: &TransientPolicy) -> u64 {
     u64::from(raw.clamp(500, 60_000))
 }
 
-fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: &'static str) -> OsdRow {
+fn counted_row(base: String, count: u32, rgb: (u8, u8, u8), tag: &'static str) -> OsdRow {
     OsdRow {
-        text: append_count(base.to_string(), count),
+        text: append_count(base, count),
         rgb,
         tag,
     }
@@ -399,7 +402,7 @@ impl TransientQueue {
             && current.key == item.key
         {
             current.count += item.count;
-            current.row = counted_row(&item.key, current.count, item.row.rgb, item.row.tag);
+            current.row = counted_row(item.key.clone(), current.count, item.row.rgb, item.row.tag);
             current.deadline = item.deadline;
             return Some(MergeTarget::Showing);
         }
@@ -408,7 +411,7 @@ impl TransientQueue {
             && back.key == item.key
         {
             back.count += item.count;
-            back.row = counted_row(&item.key, back.count, item.row.rgb, item.row.tag);
+            back.row = counted_row(item.key.clone(), back.count, item.row.rgb, item.row.tag);
             back.deadline = item.deadline;
             return Some(MergeTarget::Queued);
         }
@@ -562,57 +565,45 @@ impl ModalBox {
     /// Queue one aggregated error batch for sequential display.
     /// Capped: a stuck-open dialog plus a per-tick error flood must
     /// not grow memory without bound. Drops the oldest, like the OSD
-    /// pending cap, and logs the loss (history keeps every event).
-    fn queue_modal(&mut self, detail: String) {
-        if self.queue.len() >= Self::MAX_QUEUED {
-            self.warn_once_full("dropping oldest batch");
+    /// pending cap (history keeps every event). Returns true when a
+    /// batch was dropped.
+    fn queue_modal(&mut self, detail: String) -> bool {
+        let dropped = self.queue.len() >= Self::MAX_QUEUED;
+        if dropped {
             self.queue.pop_front();
+            self.dropped_total += 1;
         }
         self.queue.push_back(detail);
+        dropped
     }
 
     /// Re-queue an interrupted head batch preserving display order.
     /// Overflow drops the oldest queued batch behind the head.
-    fn requeue_front(&mut self, detail: String) {
+    fn requeue_front(&mut self, detail: String) -> bool {
         self.queue.push_front(detail);
+        let mut dropped = false;
         while self.queue.len() > Self::MAX_QUEUED {
-            self.warn_once_full("dropping queued batch for requeue");
             self.queue.remove(1);
+            self.dropped_total += 1;
+            dropped = true;
         }
-    }
-
-    /// Warn-once overflow note shared by the queue and requeue paths.
-    fn warn_once_full(&mut self, action: &str) {
-        if !self.queue_warned_full {
-            log::warn!("error modal queue full; {action}");
-            self.queue_warned_full = true;
-        }
-    }
-
-    /// Clear the warn flag once the queue actually drains, so a fresh
-    /// overflow episode warns again. Called from take and close.
-    fn clear_warn_if_drained(&mut self) {
-        if self.queue.is_empty() {
-            self.queue_warned_full = false;
-        }
+        dropped
     }
 
     /// Take the next batch only when no dialog is showing: frontends
-    /// present one dialog at a time and call [`OsdManager::modal_closed`]
-    /// on ack, so errors never stack.
+    /// present one dialog at a time and ack via the modal source, so
+    /// errors never stack.
     fn take_modal_batch(&mut self) -> Option<String> {
         if self.open {
             return None;
         }
         let next = self.queue.pop_front()?;
-        self.clear_warn_if_drained();
         self.open = true;
         Some(next)
     }
 
     fn modal_closed(&mut self) {
         self.open = false;
-        self.clear_warn_if_drained();
     }
 
     fn modal_pending(&self) -> usize {
@@ -623,8 +614,8 @@ impl ModalBox {
 /// Bundled inputs for [`SessionHandle::pump_osd`]: the caller-owned
 /// half of the push. The channel is derived inside the pump, so an
 /// empty queue skips that derivation entirely.
-pub struct PushInput<'a> {
-    pub settings: &'a NotificationSettings,
+pub struct PushInput {
+    pub policy: TransientPolicy,
     pub language: AppLanguage,
     pub now: Instant,
 }
@@ -632,7 +623,7 @@ pub struct PushInput<'a> {
 /// Outcome of [`SessionHandle::pump_osd`] for frontend flow control:
 /// redraw gating and modal auto-pause.
 pub struct PumpReport {
-    pub dirty: bool,
+    pub changed: bool,
     pub modal_queued: bool,
 }
 
@@ -641,20 +632,9 @@ impl OsdManager {
         Self::default()
     }
 
-    pub fn push_all(
-        &mut self,
-        notifications: Vec<UiNotification>,
-        settings: &NotificationSettings,
-        language: AppLanguage,
-        now: Instant,
-        channel: FrameChannel,
-    ) {
-        let policy = TransientPolicy::from(settings);
-        self.push_all_with_policy(notifications, &policy, language, now, channel);
-    }
-
-    /// Core push taking the narrow policy. Decision code here never
+    /// Push taking the narrow policy. Decision code here never
     /// sees the full settings surface (see [`TransientPolicy`]).
+    /// Callers adapt once at the settings boundary via `From`.
     pub fn push_all_with_policy(
         &mut self,
         notifications: Vec<UiNotification>,
@@ -685,7 +665,7 @@ impl OsdManager {
             let tag = level_tag(n.level);
             let duration = Duration::from_millis(duration_ms(n.level, policy));
             let item = OsdItem {
-                row: counted_row(&base, n.count, rgb, tag),
+                row: counted_row(base.clone(), n.count, rgb, tag),
                 level: n.level,
                 key: base,
                 count: n.count,
@@ -716,10 +696,14 @@ impl OsdManager {
 
     /// Drain the aggregated modal batch into the sequential queue.
     /// Internal pump step for [`SessionHandle::pump_osd`]: frontends
-    /// present via `take_modal_batch`, never this.
+    /// present via the modal source, never this. Overflow warns once
+    /// per episode: the flag re-arms when the queue fully drains.
     pub(crate) fn pump_modal(&mut self) -> bool {
         if let Some(detail) = self.take_modal_text() {
-            self.modal_box.queue_modal(detail);
+            if self.modal_box.queue_modal(detail) && !self.modal_warned_full {
+                log::warn!("error modal queue full; dropping oldest batch");
+                self.modal_warned_full = true;
+            }
             true
         } else {
             false
@@ -737,7 +721,6 @@ impl OsdManager {
     }
 
     fn mark_changed(&mut self) {
-        self.dirty = true;
         self.generation = self.generation.wrapping_add(1);
     }
 }
@@ -754,11 +737,18 @@ impl ModalSink for OsdManager {
 
 impl ModalSource for OsdManager {
     fn take_modal_batch(&mut self) -> Option<String> {
-        self.modal_box.take_modal_batch()
+        let next = self.modal_box.take_modal_batch();
+        if next.is_some() && self.modal_box.modal_pending() == 0 {
+            self.modal_warned_full = false;
+        }
+        next
     }
 
     fn modal_closed(&mut self) {
-        self.modal_box.modal_closed()
+        self.modal_box.modal_closed();
+        if self.modal_box.modal_pending() == 0 {
+            self.modal_warned_full = false;
+        }
     }
 
     fn modal_pending(&self) -> usize {
@@ -767,31 +757,10 @@ impl ModalSource for OsdManager {
 }
 
 impl OsdManager {
-    /// Boundary adapters (shell pump, owning frontend adapter) use
-    /// these. New code should bound on [`ModalSink`] or [`ModalSource`].
-    pub fn queue_modal(&mut self, detail: String) {
-        self.modal_box.queue_modal(detail);
-    }
-
-    pub fn requeue_front(&mut self, detail: String) {
-        self.modal_box.requeue_front(detail);
-    }
-
-    pub fn take_modal_batch(&mut self) -> Option<String> {
-        self.modal_box.take_modal_batch()
-    }
-
-    pub fn modal_closed(&mut self) {
-        self.modal_box.modal_closed()
-    }
-
-    pub fn modal_pending(&self) -> usize {
-        self.modal_box.modal_pending()
-    }
-
+    /// Total modal overflow losses (test hook for the warn-once path).
     #[cfg(test)]
-    pub fn modal_warn_flag(&self) -> bool {
-        self.modal_box.queue_warned_full
+    pub fn overflow_dropped(&self) -> u64 {
+        self.modal_box.dropped_total
     }
 
     pub fn has_visible(&self) -> bool {
@@ -800,18 +769,6 @@ impl OsdManager {
 
     pub fn wakeup_deadline(&self, now: Instant) -> Option<Instant> {
         self.transient.wakeup_deadline(now)
-    }
-
-    /// Take the display-state change since the last take. The sync
-    /// owns consumption; the redraw poll only peeks (see `dirty`).
-    pub fn take_dirty(&mut self) -> bool {
-        std::mem::replace(&mut self.dirty, false)
-    }
-
-    /// Peek whether a change is pending without consuming it. The
-    /// redraw decision peeks first, then `sync` takes on the same pass.
-    pub fn dirty(&self) -> bool {
-        self.dirty
     }
 
     /// The single showing row (empty when idle).
@@ -861,33 +818,28 @@ impl StatusGate {
         Self::default()
     }
 
-    pub fn gate(&mut self, now: Instant, label: String, fresh_value: String) -> (String, String) {
+    /// Gated value, computing `fresh` only on a label flip, throttle
+    /// expiry, or empty cache. Steady frames skip float formatting.
+    pub fn gate_or_cached(
+        &mut self,
+        now: Instant,
+        label: String,
+        fresh: impl FnOnce() -> String,
+    ) -> (String, String) {
         let label_changed = self.last_label.as_deref() != Some(label.as_str());
         let tick_due = self
             .last_tick
             .is_none_or(|t| now.duration_since(t) >= STATUS_FPS_MIN_INTERVAL);
-        if label_changed || tick_due {
+        if label_changed || tick_due || self.last_value.is_none() {
+            let value = fresh();
             self.last_label = Some(label.clone());
-            self.last_value = Some(fresh_value.clone());
+            self.last_value = Some(value.clone());
             self.last_tick = Some(now);
-            (label, fresh_value)
+            (label, value)
         } else {
-            (label, self.last_value.clone().unwrap_or(fresh_value))
+            let cached = self.last_value.clone().unwrap_or_else(fresh);
+            (label, cached)
         }
-    }
-
-    /// Cheap pre-check before formatting fresh strings: label flip or
-    /// throttle expiry. Same decision `gate` would make, without cost.
-    fn wants_refresh(&self, now: Instant, label: &str) -> bool {
-        self.last_label.as_deref() != Some(label)
-            || self
-                .last_tick
-                .is_none_or(|t| now.duration_since(t) >= STATUS_FPS_MIN_INTERVAL)
-    }
-
-    /// Last gated value for the steady path (no fresh format needed).
-    fn cached_value(&self) -> Option<&str> {
-        self.last_value.as_deref()
     }
 }
 
@@ -923,29 +875,7 @@ pub struct OsdPlan {
 impl OsdPlan {
     /// Single construction shared by every frontend: rows plus the
     /// status pill with identical colors and corners everywhere.
-    pub fn content(&self) -> nerust_render_traits::renderer::OsdContent {
-        use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
-        OsdContent {
-            rows: self
-                .rows
-                .iter()
-                .map(|row| OsdRow {
-                    tag: row.tag.to_string(),
-                    text: row.text.clone(),
-                    rgb: row.rgb,
-                })
-                .collect(),
-            status: self.status.as_ref().map(|(label, value)| OsdStatus {
-                label: label.clone(),
-                value: value.clone(),
-                rgb: OSD_STATUS_RGB,
-            }),
-            position: self.position,
-            status_position: self.status_position,
-        }
-    }
-
-    /// Moving variant: no second clone at the renderer boundary.
+    /// Takes ownership: no second clone at the renderer boundary.
     pub fn into_content(self) -> nerust_render_traits::renderer::OsdContent {
         use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
         OsdContent {
@@ -969,10 +899,34 @@ impl OsdPlan {
     }
 }
 
+/// Narrow chrome view for [`OsdPresenter::sync`]. Only the fields
+/// the layer decision reads; a new settings field cannot ripple in.
+/// Adapted once per frame at the settings boundary via `From`.
+#[derive(Debug, Clone, Copy)]
+pub struct OsdChrome {
+    pub status_enabled: bool,
+    pub position: NotificationPosition,
+    pub status_position: NotificationPosition,
+    pub area_mode: NotificationAreaMode,
+    pub status_area_mode: NotificationAreaMode,
+}
+
+impl From<&NotificationSettings> for OsdChrome {
+    fn from(settings: &NotificationSettings) -> Self {
+        Self {
+            status_enabled: settings.status_enabled,
+            position: settings.position,
+            status_position: settings.status_position,
+            area_mode: settings.area_mode,
+            status_area_mode: settings.status_area_mode,
+        }
+    }
+}
+
 /// Per-frame inputs for [`OsdPresenter::sync`]. Bundled so the
 /// decision signature stays narrow as inputs evolve.
-pub struct OsdSyncInput<'a> {
-    pub settings: &'a NotificationSettings,
+pub struct OsdSyncInput {
+    pub chrome: OsdChrome,
     pub language: AppLanguage,
     pub fps: f32,
     pub paused: bool,
@@ -1002,6 +956,7 @@ pub enum OsdSync {
 /// renderer; all policy lives here and is headless-testable.
 #[derive(Debug, Default)]
 pub struct OsdPresenter {
+    last_seen: u64,
     gate: StatusGate,
     last_status: Option<(
         String,
@@ -1028,16 +983,23 @@ impl OsdPresenter {
         *self = Self::default();
     }
 
-    /// Decide the layer action for this frame. Pure: the caller owns
-    /// dirty consumption (`take_dirty`), this only reads. Status rides
-    /// outside that flag: pause flips and settings toggles re-render
-    /// immediately, fps digits refresh at 2Hz through the gate. Gate
-    /// runs on cheap keys first, so steady frames skip float
+    /// Last display-generation this presenter synced. The pre-gate
+    /// compares it without forcing a full sync.
+    pub fn last_seen(&self) -> u64 {
+        self.last_seen
+    }
+
+    /// Decide the layer action for this frame. The generation check
+    /// replaces the old peek-then-take flag: inequality against the
+    /// last synced generation means re-render. Status rides outside
+    /// that flag: pause flips and settings toggles re-render
+    /// immediately, fps digits refresh at 2Hz through the gate. The
+    /// gate computes fresh text lazily, so steady frames skip float
     /// formatting. Untouched while disabled: no per-frame formatting,
     /// and the stale gate passes the first fresh value on re-enable.
-    pub fn sync(&mut self, dirty: bool, manager: &OsdManager, input: OsdSyncInput<'_>) -> OsdSync {
+    pub fn sync(&mut self, manager: &OsdManager, input: OsdSyncInput) -> OsdSync {
         let OsdSyncInput {
-            settings,
+            chrome,
             language,
             fps,
             paused,
@@ -1047,6 +1009,8 @@ impl OsdPresenter {
             ui_scale,
             safe_insets,
         } = input;
+        let changed = manager.generation() != self.last_seen;
+        self.last_seen = manager.generation();
         if width == 0 || height == 0 {
             if self.active {
                 self.active = false;
@@ -1054,26 +1018,19 @@ impl OsdPresenter {
             }
             return OsdSync::Skip;
         }
-        let status_key = settings.status_enabled.then(|| {
-            let label = status_label(paused, language);
-            let (label, value) = if self.gate.wants_refresh(now, label) {
+        let status_key = chrome.status_enabled.then(|| {
+            let (label, value) =
                 self.gate
-                    .gate(now, label.to_string(), format!("{fps:.1} fps"))
-            } else {
-                let cached = self
-                    .gate
-                    .cached_value()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| format!("{fps:.1} fps"));
-                (label.to_string(), cached)
-            };
+                    .gate_or_cached(now, status_label(paused, language).to_string(), || {
+                        format!("{fps:.1} fps")
+                    });
             (
                 label,
                 value,
-                settings.position,
-                settings.status_position,
-                settings.area_mode,
-                settings.status_area_mode,
+                chrome.position,
+                chrome.status_position,
+                chrome.area_mode,
+                chrome.status_area_mode,
             )
         });
         if status_key.is_none() {
@@ -1081,13 +1038,14 @@ impl OsdPresenter {
             self.gate = StatusGate::new();
         }
         let status_changed = status_key != self.last_status;
-        let chrome = (safe_insets, ui_scale.to_bits());
-        let chrome_changed = self.last_chrome != Some(chrome);
-        if !dirty && !status_changed && !chrome_changed && self.last_size == Some((width, height)) {
+        let raster = (safe_insets, ui_scale.to_bits());
+        let chrome_changed = self.last_chrome != Some(raster);
+        if !changed && !status_changed && !chrome_changed && self.last_size == Some((width, height))
+        {
             return OsdSync::Skip;
         }
         self.last_size = Some((width, height));
-        self.last_chrome = Some(chrome);
+        self.last_chrome = Some(raster);
         self.last_status = status_key.clone();
         let rows = manager.rows();
         let empty = rows.is_empty() && status_key.is_none();
@@ -1103,7 +1061,7 @@ impl OsdPresenter {
             Some((label, value, position, status_position, _, _)) => {
                 (Some((label, value)), position, status_position)
             }
-            None => (None, settings.position, settings.status_position),
+            None => (None, chrome.position, chrome.status_position),
         };
         OsdSync::Render(OsdPlan {
             rows,
@@ -1175,6 +1133,10 @@ mod tests {
         NotificationSettings::default()
     }
 
+    fn policy() -> TransientPolicy {
+        TransientPolicy::from(&settings())
+    }
+
     #[test]
     fn transient_policy_mirrors_settings_surface() {
         let settings = settings();
@@ -1193,7 +1155,7 @@ mod tests {
         let mut manager = OsdManager::new();
         let now = Instant::now();
         let base = manager.generation();
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
                 kind: K::Paused,
@@ -1201,14 +1163,14 @@ mod tests {
                 seq: 0,
                 at: std::time::SystemTime::now(),
             }],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Unpresented,
         );
         // Unpresented info drops: no visible change, no generation bump.
         assert_eq!(manager.generation(), base);
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Error,
                 kind: K::ExternalError("boom".to_string()),
@@ -1216,7 +1178,7 @@ mod tests {
                 seq: 1,
                 at: std::time::SystemTime::now(),
             }],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Unpresented,
@@ -1232,7 +1194,7 @@ mod tests {
         assert!(kind.wants_modal());
         assert_eq!(kind.text(AppLanguage::English), "picker failed");
         let mut manager = OsdManager::new();
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: kind.level(),
                 kind,
@@ -1240,7 +1202,7 @@ mod tests {
                 seq: 0,
                 at: std::time::SystemTime::now(),
             }],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             Instant::now(),
             FrameChannel::Unpresented,
@@ -1254,7 +1216,7 @@ mod tests {
         use super::super::notification::NotificationKind as K;
         let mut manager = OsdManager::new();
         let now = Instant::now();
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
                 kind: K::Paused,
@@ -1262,19 +1224,17 @@ mod tests {
                 seq: 0,
                 at: std::time::SystemTime::now(),
             }],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
         manager.poll(now);
         let mut presenter = super::OsdPresenter::new();
-        let dirty = manager.take_dirty();
         let plan = match presenter.sync(
-            dirty,
             &manager,
             super::OsdSyncInput {
-                settings: &settings(),
+                chrome: super::OsdChrome::from(&settings()),
                 language: AppLanguage::English,
                 fps: 60.0,
                 paused: false,
@@ -1299,7 +1259,7 @@ mod tests {
     fn error_modal_collects_and_skips_osd() {
         let mut manager = OsdManager::new();
         let now = Instant::now();
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Error,
                 kind: NotificationKind::SlotFailed {
@@ -1310,7 +1270,7 @@ mod tests {
                 seq: 0,
                 at: std::time::SystemTime::now(),
             }],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
@@ -1412,7 +1372,7 @@ mod tests {
             ),
             (NotificationLevel::Info, NotificationKind::Paused),
         ] {
-            manager.push_all(
+            manager.push_all_with_policy(
                 vec![UiNotification {
                     level,
                     kind,
@@ -1420,7 +1380,7 @@ mod tests {
                     seq: 0,
                     at: std::time::SystemTime::now(),
                 }],
-                &without_modal,
+                &TransientPolicy::from(&without_modal),
                 AppLanguage::English,
                 now,
                 FrameChannel::Unpresented,
@@ -1437,7 +1397,8 @@ mod tests {
     fn info_dropped_without_frame_leaves_no_trace() {
         let mut manager = OsdManager::new();
         let now = Instant::now();
-        manager.push_all(
+        let base = manager.generation();
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
                 kind: NotificationKind::Paused,
@@ -1445,12 +1406,12 @@ mod tests {
                 seq: 0,
                 at: std::time::SystemTime::now(),
             }],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Unpresented,
         );
-        assert!(!manager.dirty());
+        assert_eq!(manager.generation(), base);
         assert!(manager.rows().is_empty());
         assert_eq!(manager.take_modal_text(), None);
         assert_eq!(manager.modal_pending(), 0);
@@ -1460,7 +1421,7 @@ mod tests {
     fn info_expires_after_duration() {
         let mut manager = OsdManager::new();
         let now = Instant::now();
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
                 kind: NotificationKind::Paused,
@@ -1468,18 +1429,18 @@ mod tests {
                 seq: 0,
                 at: std::time::SystemTime::now(),
             }],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows().len(), 1);
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(2_001));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows().is_empty());
     }
 
@@ -1488,7 +1449,7 @@ mod tests {
         let mut manager = OsdManager::new();
         let now = Instant::now();
         for seq in 0..2 {
-            manager.push_all(
+            manager.push_all_with_policy(
                 vec![UiNotification {
                     level: NotificationLevel::Info,
                     kind: if seq == 0 {
@@ -1500,27 +1461,27 @@ mod tests {
                     seq,
                     at: std::time::SystemTime::now(),
                 }],
-                &settings(),
+                &policy(),
                 AppLanguage::English,
                 now,
                 FrameChannel::Composited,
             );
         }
         // Showing the first; the second waits its turn.
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows().len(), 1);
         assert_eq!(manager.rows()[0].text, "Paused");
         // First expires after 2s; the second takes over.
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(2_001));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows()[0].text, "Resumed");
         // Second expires; idle afterwards.
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(4_002));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows().is_empty());
         assert!(!manager.has_visible());
     }
@@ -1540,7 +1501,7 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            manager.push_all(
+            manager.push_all_with_policy(
                 vec![UiNotification {
                     level: NotificationLevel::Info,
                     kind,
@@ -1548,14 +1509,14 @@ mod tests {
                     seq: seq as u64,
                     at: std::time::SystemTime::now(),
                 }],
-                &settings(),
+                &policy(),
                 AppLanguage::English,
                 now,
                 FrameChannel::Composited,
             );
         }
         // Identical repeat merges with the tail (×2) instead of queuing.
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
                 kind: NotificationKind::Paused,
@@ -1563,14 +1524,14 @@ mod tests {
                 seq: 99,
                 at: std::time::SystemTime::now(),
             }],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         // Oldest pending (CreatedSlot) shows first; drops removed older.
         assert!(manager.rows()[0].text.contains("Slot"));
         // Drain fully: CreatedSlot, then merged Paused ×2, then idle.
@@ -1578,9 +1539,9 @@ mod tests {
         let mut t = now;
         for _ in 0..5 {
             t += Duration::from_millis(2_001);
-            manager.take_dirty();
+            let base = manager.generation();
             manager.poll(t);
-            if manager.dirty() && !manager.rows().is_empty() {
+            if manager.generation() != base && !manager.rows().is_empty() {
                 shown.push(manager.rows()[0].text.clone());
             }
         }
@@ -1595,7 +1556,7 @@ mod tests {
         altered.error_modal = false;
         let mut manager = OsdManager::new();
         let now = Instant::now();
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Error,
                 kind: NotificationKind::SlotFailed {
@@ -1606,23 +1567,23 @@ mod tests {
                 seq: 0,
                 at: std::time::SystemTime::now(),
             }],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows().len(), 1);
         // Still showing past the Info duration: 5s minimum.
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(2_001));
-        assert!(!manager.dirty());
+        assert_eq!(manager.generation(), base);
         assert_eq!(manager.rows().len(), 1);
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(5_001));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows().is_empty());
     }
 
@@ -1651,47 +1612,47 @@ mod tests {
             at: std::time::UNIX_EPOCH,
         };
         // Showing Info; two Infos queued (full).
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(NotificationKind::Paused, L::Info)],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
-        manager.push_all(
+        assert_ne!(manager.generation(), base);
+        manager.push_all_with_policy(
             vec![note(NotificationKind::Resumed, L::Info)],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(NotificationKind::Reset, L::Info)],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
         // An Error preempts the showing Info; the demoted label waits
         // at the queue head while the tail sheds the newest Info.
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![error()],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(5_001));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows()[0].text.contains("Paused"));
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(7_002));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows()[0].text.contains("Resumed"));
     }
 
@@ -1702,7 +1663,7 @@ mod tests {
         altered.error_modal = false;
         let mut manager = OsdManager::new();
         let now = Instant::now();
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Info,
                 kind: NotificationKind::Paused,
@@ -1710,16 +1671,16 @@ mod tests {
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
             }],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows()[0].tag, "[INFO]");
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Error,
                 kind: NotificationKind::SlotFailed {
@@ -1730,16 +1691,16 @@ mod tests {
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
             }],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
         // The Error takes the display at once; the demoted Info waits.
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(5_001));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows()[0].tag, "[INFO]");
     }
 
@@ -1748,7 +1709,7 @@ mod tests {
         use super::super::notification::NotificationLevel as L;
         let mut manager = OsdManager::new();
         let now = Instant::now();
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Info,
                 kind: NotificationKind::Paused,
@@ -1756,15 +1717,15 @@ mod tests {
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
             }],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
-        manager.push_all(
+        assert_ne!(manager.generation(), base);
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Warning,
                 kind: NotificationKind::SlotFailed {
@@ -1775,16 +1736,16 @@ mod tests {
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
             }],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
         // Only Errors preempt; the Warning waits for expiry.
         assert_eq!(manager.rows()[0].tag, "[INFO]");
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(2_001));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows()[0].tag, "[WARN]");
     }
 
@@ -1823,46 +1784,46 @@ mod tests {
             at: std::time::UNIX_EPOCH,
         };
         // Showing Error (no preempt against itself); queue Warning + Info.
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![error(Some(9))],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
-        manager.push_all(
+        assert_ne!(manager.generation(), base);
+        manager.push_all_with_policy(
             vec![warning],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![info(NotificationKind::Paused)],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
         // A second Info overflows: the oldest Info drops, Warning and
         // Error survive.
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![info(NotificationKind::Reset)],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(5_001));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows()[0].tag, "[WARN]");
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(10_002));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows()[0].text.contains("Reset"));
         assert_eq!(manager.rows()[0].tag, "[INFO]");
     }
@@ -1885,34 +1846,34 @@ mod tests {
             at: std::time::UNIX_EPOCH,
         };
         // Three Errors, nothing showing: the oldest drops (FIFO bound).
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![error(Some(1))],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![error(Some(2))],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![error(Some(3))],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows()[0].text.contains("Slot 2"));
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(5_001));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows()[0].text.contains("Slot 3"));
     }
 
@@ -1944,17 +1905,17 @@ mod tests {
         // Errors always preempt a showing Info, so a full Error
         // queue behind it is unreachable; the demote victim here is
         // the tail Info.
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![info(NotificationKind::Paused)],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
-        manager.push_all(
+        assert_ne!(manager.generation(), base);
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Warning,
                 kind: NotificationKind::SlotFailed {
@@ -1965,39 +1926,39 @@ mod tests {
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
             }],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![info(NotificationKind::Reset)],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
         // The Error preempts; the demote insert overflows and the
         // tail Info drops so the demoted head survives.
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![error(Some(1))],
-            &altered,
+            &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
         assert_eq!(manager.rows()[0].tag, "[ERROR]");
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(5_000));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows()[0].text.contains("Paused"));
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(7_000));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows()[0].tag, "[WARN]");
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(12_000));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows().is_empty());
     }
 
@@ -2013,29 +1974,29 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(3)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(5)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
         // One row only, showing the latest selection.
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows()[0].text.contains("slot 5"));
         assert!(!manager.rows()[0].text.contains("slot 3"));
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(2_001));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows().is_empty());
     }
 
@@ -2051,29 +2012,29 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(3)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows()[0].text.contains("slot 3"));
         // A newer selection rewrites the showing row instead of queuing.
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(7)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
         assert!(manager.rows()[0].text.contains("slot 7"));
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + Duration::from_millis(2_001));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows().is_empty());
     }
 
@@ -2253,30 +2214,26 @@ mod tests {
         let now = Instant::now();
         // First sample passes.
         assert_eq!(
-            gate.gate(now, String::new(), "60.1 fps".to_string()),
+            gate.gate_or_cached(now, String::new(), || "60.1 fps".to_string()),
             (String::new(), "60.1 fps".to_string())
         );
         // Jitter within the interval holds the old digits.
         assert_eq!(
-            gate.gate(now, String::new(), "60.2 fps".to_string()),
+            gate.gate_or_cached(now, String::new(), || "60.2 fps".to_string()),
             (String::new(), "60.1 fps".to_string())
         );
         // After the interval the fresh digits pass.
         assert_eq!(
-            gate.gate(
-                now + STATUS_FPS_MIN_INTERVAL,
-                String::new(),
+            gate.gate_or_cached(now + STATUS_FPS_MIN_INTERVAL, String::new(), || {
                 "60.2 fps".to_string()
-            ),
+            }),
             (String::new(), "60.2 fps".to_string())
         );
         // A pause flip passes immediately even inside the interval.
         assert_eq!(
-            gate.gate(
-                now + STATUS_FPS_MIN_INTERVAL,
-                "Paused".to_string(),
+            gate.gate_or_cached(now + STATUS_FPS_MIN_INTERVAL, "Paused".to_string(), || {
                 "60.3 fps".to_string()
-            ),
+            }),
             ("Paused".to_string(), "60.3 fps".to_string())
         );
     }
@@ -2301,39 +2258,39 @@ mod tests {
             };
         }
         // Pause, +0.5s resume, +0.5s pause, +0.5s resume (2s slots).
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(K::Paused)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             at(0),
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(at(0));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(shown!().as_deref(), Some("Paused"));
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(K::Resumed)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             at(500),
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(at(500));
-        assert!(!manager.dirty());
+        assert_eq!(manager.generation(), base);
         // Interleaved: must queue behind, never merge into the showing label.
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(K::Paused)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             at(1000),
             FrameChannel::Composited,
         );
         assert_eq!(shown!().as_deref(), Some("Paused"));
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(K::Resumed)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             at(1500),
             FrameChannel::Composited,
@@ -2342,27 +2299,27 @@ mod tests {
         // from promotion, not from push time. The cap drops the
         // oldest pending (the first resume), so the legs read
         // pause, pause, resume with no accumulation.
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(at(2000));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(shown!().as_deref(), Some("Paused"));
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(at(3500));
-        assert!(!manager.dirty());
-        manager.take_dirty();
+        assert_eq!(manager.generation(), base);
+        let base = manager.generation();
         manager.poll(at(4000));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(shown!().as_deref(), Some("Resumed"));
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(at(5500));
-        assert!(!manager.dirty());
-        manager.take_dirty();
+        assert_eq!(manager.generation(), base);
+        let base = manager.generation();
         manager.poll(at(6000));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows().is_empty());
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(at(8000));
-        assert!(!manager.dirty());
+        assert_eq!(manager.generation(), base);
     }
 
     #[test]
@@ -2377,33 +2334,33 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(1)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(1)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows().len(), 1);
         assert!(manager.rows()[0].text.ends_with(" ×2"));
         assert!(manager.has_visible());
         // Still showing before the reset deadline; gone after it.
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now + std::time::Duration::from_secs(1));
-        assert!(!manager.dirty());
-        manager.take_dirty();
+        assert_eq!(manager.generation(), base);
+        let base = manager.generation();
         manager.poll(now + std::time::Duration::from_secs(61));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(!manager.has_visible());
     }
 
@@ -2413,7 +2370,7 @@ mod tests {
         let mut manager = OsdManager::new();
         let now = Instant::now();
         assert_eq!(manager.wakeup_deadline(now), None);
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Info,
                 kind: NotificationKind::Paused,
@@ -2421,7 +2378,7 @@ mod tests {
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
             }],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
@@ -2429,9 +2386,9 @@ mod tests {
         // Pending with nothing showing: wake immediately on our clock.
         assert_eq!(manager.wakeup_deadline(now), Some(now));
         // Promoted on the next poll; deadline lands on the duration.
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.wakeup_deadline(now).is_some());
     }
 
@@ -2447,30 +2404,30 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note(NotificationKind::Paused)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         // Queued behind the showing row: no dirty, deadline armed.
-        manager.take_dirty();
-        manager.push_all(
+        let base = manager.generation();
+        manager.push_all_with_policy(
             vec![note(NotificationKind::Resumed)],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        assert!(!manager.dirty());
+        assert_eq!(manager.generation(), base);
         assert!(manager.wakeup_deadline(now).is_some());
         // Expiry promotes the queued row and dirties.
         manager.poll(now + Duration::from_millis(2_001));
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows()[0].text, "Resumed");
     }
 
@@ -2486,83 +2443,89 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![note.clone()],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         // Consecutive duplicate merges into the showing row: visible.
-        manager.take_dirty();
-        manager.push_all(
+        let base = manager.generation();
+        manager.push_all_with_policy(
             vec![note],
-            &settings(),
+            &policy(),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(manager.rows()[0].text.ends_with(" ×2"));
     }
 
     #[test]
-    fn modal_warn_flag_clears_when_queue_drains() {
+    fn modal_overflow_counts_losses() {
+        use super::{ModalSink, ModalSource};
         let mut manager = OsdManager::new();
         for i in 0..9 {
             manager.queue_modal(format!("batch {i}"));
         }
-        assert!(manager.modal_warn_flag());
+        // Nine batches into a cap of eight: one loss recorded.
+        assert_eq!(manager.overflow_dropped(), 1);
+        assert_eq!(manager.modal_pending(), 8);
         // Drain every batch through take and close.
         while manager.modal_pending() > 0 {
             manager.take_modal_batch().expect("queued batch");
             manager.modal_closed();
         }
-        assert!(!manager.modal_warn_flag());
-        // A fresh overflow episode warns again.
+        // A fresh overflow episode counts again.
         for i in 0..9 {
             manager.queue_modal(format!("again {i}"));
         }
-        assert!(manager.modal_warn_flag());
+        assert_eq!(manager.overflow_dropped(), 2);
     }
 
     #[test]
-    fn modal_close_on_empty_queue_clears_warn_flag() {
+    fn modal_requeue_overflow_counts_losses() {
+        use super::{ModalSink, ModalSource};
         let mut manager = OsdManager::new();
-        for i in 0..9 {
+        for i in 0..8 {
             manager.queue_modal(format!("batch {i}"));
         }
-        assert!(manager.modal_warn_flag());
-        // Take one without closing: still episodes pending, flag stays.
-        manager.take_modal_batch().expect("first batch");
-        assert!(manager.modal_warn_flag());
-        manager.modal_closed();
-        // Drained but flag persists until the queue actually empties.
-        while manager.modal_pending() > 0 {
-            manager.take_modal_batch().expect("queued batch");
-            manager.modal_closed();
+        let taken = manager.take_modal_batch().expect("head batch");
+        // Refill while the head is out, then suspend-requeue it back:
+        // both overflow legs record a loss.
+        for i in 0..2 {
+            manager.queue_modal(format!("refill {i}"));
         }
-        assert!(!manager.modal_warn_flag());
+        manager.requeue_front(taken);
+        assert_eq!(manager.overflow_dropped(), 2);
+        assert_eq!(manager.modal_pending(), 8);
     }
 
     #[test]
-    fn gate_precheck_matches_gate_decision() {
+    fn gate_or_cached_computes_fresh_only_on_change() {
         use super::StatusGate;
         let mut gate = StatusGate::new();
         let now = Instant::now();
-        // Fresh gate: refresh wanted, no cached value yet.
-        assert!(gate.wants_refresh(now, "Paused"));
-        assert_eq!(gate.cached_value(), None);
-        gate.gate(now, "Paused".to_string(), "60.0 fps".to_string());
-        assert_eq!(gate.cached_value(), Some("60.0 fps"));
-        // Steady: no refresh, cached value stands in.
-        assert!(!gate.wants_refresh(now, "Paused"));
-        // Label flip or throttle expiry: refresh wanted.
-        assert!(gate.wants_refresh(now, String::new().as_str()));
-        assert!(gate.wants_refresh(now + STATUS_FPS_MIN_INTERVAL, "Paused"));
+        // Fresh gate: fresh computed once.
+        let mut fresh_calls = 0;
+        let (label, value) = gate.gate_or_cached(now, "Paused".to_string(), || {
+            fresh_calls += 1;
+            "60.0 fps".to_string()
+        });
+        assert_eq!((label.as_str(), value.as_str()), ("Paused", "60.0 fps"));
+        assert_eq!(fresh_calls, 1);
+        // Steady: fresh never runs again.
+        let (_, steady) = gate.gate_or_cached(now, "Paused".to_string(), || {
+            fresh_calls += 1;
+            "60.1 fps".to_string()
+        });
+        assert_eq!(steady, "60.0 fps");
+        assert_eq!(fresh_calls, 1);
     }
 
     #[test]
@@ -2645,16 +2608,15 @@ mod tests {
     fn presenter_skips_when_idle_and_clears_zero_size() {
         use super::{OsdPresenter, OsdSync};
         use std::time::Instant;
-        let mut manager = OsdManager::new();
+        let manager = OsdManager::new();
         let mut presenter = OsdPresenter::new();
         let settings = presenter_settings();
         // Idle, no status: nothing to draw, nothing live.
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
                 super::OsdSyncInput {
-                    settings: &settings,
+                    chrome: super::OsdChrome::from(&settings),
                     language: AppLanguage::English,
                     fps: 60.0,
                     paused: false,
@@ -2670,10 +2632,9 @@ mod tests {
         // Zero-size while idle stays skipped.
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
                 super::OsdSyncInput {
-                    settings: &settings,
+                    chrome: super::OsdChrome::from(&settings),
                     language: AppLanguage::English,
                     fps: 60.0,
                     paused: false,
@@ -2692,17 +2653,16 @@ mod tests {
     fn presenter_renders_status_then_skips_and_clears() {
         use super::{OsdPresenter, OsdSync};
         use std::time::Instant;
-        let mut manager = OsdManager::new();
+        let manager = OsdManager::new();
         let mut presenter = OsdPresenter::new();
         let mut settings = presenter_settings();
         settings.status_enabled = true;
         let now = Instant::now();
         // First frame renders the status readout.
         let plan = match presenter.sync(
-            manager.take_dirty(),
             &manager,
             super::OsdSyncInput {
-                settings: &settings,
+                chrome: super::OsdChrome::from(&settings),
                 language: AppLanguage::English,
                 fps: 60.0,
                 paused: false,
@@ -2724,10 +2684,9 @@ mod tests {
         // Same inputs: fps jitter inside the gate holds the digits.
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
                 super::OsdSyncInput {
-                    settings: &settings,
+                    chrome: super::OsdChrome::from(&settings),
                     language: AppLanguage::English,
                     fps: 60.2,
                     paused: false,
@@ -2743,10 +2702,9 @@ mod tests {
         // Pause flips pass through immediately.
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
                 super::OsdSyncInput {
-                    settings: &settings,
+                    chrome: super::OsdChrome::from(&settings),
                     language: AppLanguage::English,
                     fps: 60.2,
                     paused: true,
@@ -2763,10 +2721,9 @@ mod tests {
         settings.status_enabled = false;
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
                 super::OsdSyncInput {
-                    settings: &settings,
+                    chrome: super::OsdChrome::from(&settings),
                     language: AppLanguage::English,
                     fps: 60.2,
                     paused: false,
@@ -2782,10 +2739,9 @@ mod tests {
         // Clearing again stays skipped: nothing live.
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
                 super::OsdSyncInput {
-                    settings: &settings,
+                    chrome: super::OsdChrome::from(&settings),
                     language: AppLanguage::English,
                     fps: 60.2,
                     paused: false,
@@ -2800,16 +2756,16 @@ mod tests {
         ));
     }
 
-    fn sync_input<'a>(
-        settings: &'a NotificationSettings,
+    fn sync_input(
+        chrome: super::OsdChrome,
         now: std::time::Instant,
         width: u32,
         height: u32,
         ui_scale: f32,
         safe_insets: nerust_render_traits::renderer::SafeInsets,
-    ) -> super::OsdSyncInput<'a> {
+    ) -> super::OsdSyncInput {
         super::OsdSyncInput {
-            settings,
+            chrome,
             language: AppLanguage::English,
             fps: 60.0,
             paused: false,
@@ -2821,11 +2777,15 @@ mod tests {
         }
     }
 
+    fn chrome_of(settings: &NotificationSettings) -> super::OsdChrome {
+        super::OsdChrome::from(settings)
+    }
+
     #[test]
     fn presenter_rerenders_on_chrome_change() {
         use super::{OsdPresenter, OsdSync};
         use nerust_render_traits::renderer::SafeInsets;
-        let mut manager = OsdManager::new();
+        let manager = OsdManager::new();
         let mut presenter = OsdPresenter::new();
         let mut settings = presenter_settings();
         settings.status_enabled = true;
@@ -2840,45 +2800,40 @@ mod tests {
         // First frame renders the status readout.
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
-                sync_input(&settings, now, 960, 720, 1.0, plain)
+                sync_input(chrome_of(&settings), now, 960, 720, 1.0, plain)
             ),
             OsdSync::Render(_)
         ));
         // Steady inputs skip.
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
-                sync_input(&settings, now, 960, 720, 1.0, plain)
+                sync_input(chrome_of(&settings), now, 960, 720, 1.0, plain)
             ),
             OsdSync::Skip
         ));
         // Insets move the boxes: re-render without settings churn.
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
-                sync_input(&settings, now, 960, 720, 1.0, inset)
+                sync_input(chrome_of(&settings), now, 960, 720, 1.0, inset)
             ),
             OsdSync::Render(_)
         ));
         // Scale change re-renders too.
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
-                sync_input(&settings, now, 960, 720, 0.5, inset)
+                sync_input(chrome_of(&settings), now, 960, 720, 0.5, inset)
             ),
             OsdSync::Render(_)
         ));
         // Steady again skips.
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
-                sync_input(&settings, now, 960, 720, 0.5, inset)
+                sync_input(chrome_of(&settings), now, 960, 720, 0.5, inset)
             ),
             OsdSync::Skip
         ));
@@ -2888,23 +2843,29 @@ mod tests {
     fn presenter_invalidate_forces_full_repush() {
         use super::{OsdPresenter, OsdSync};
         use nerust_render_traits::renderer::SafeInsets;
-        let mut manager = OsdManager::new();
+        let manager = OsdManager::new();
         let mut presenter = OsdPresenter::new();
         let mut settings = presenter_settings();
         settings.status_enabled = true;
         let now = std::time::Instant::now();
-        let input = || sync_input(&settings, now, 960, 720, 1.0, SafeInsets::default());
+        let input = || {
+            sync_input(
+                chrome_of(&settings),
+                now,
+                960,
+                720,
+                1.0,
+                SafeInsets::default(),
+            )
+        };
         assert!(matches!(
-            presenter.sync(manager.take_dirty(), &manager, input()),
+            presenter.sync(&manager, input()),
             OsdSync::Render(_)
         ));
-        assert!(matches!(
-            presenter.sync(manager.take_dirty(), &manager, input()),
-            OsdSync::Skip
-        ));
+        assert!(matches!(presenter.sync(&manager, input()), OsdSync::Skip));
         presenter.invalidate();
         assert!(matches!(
-            presenter.sync(manager.take_dirty(), &manager, input()),
+            presenter.sync(&manager, input()),
             OsdSync::Render(_)
         ));
     }
@@ -2917,7 +2878,7 @@ mod tests {
         let mut presenter = OsdPresenter::new();
         let settings = presenter_settings();
         let now = std::time::Instant::now();
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
                 kind: NotificationKind::Paused,
@@ -2925,30 +2886,28 @@ mod tests {
                 seq: 0,
                 at: std::time::SystemTime::now(),
             }],
-            &settings,
+            &TransientPolicy::from(&settings),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         // Frontend two-phase: redraw poll peeks, sync takes same pass.
-        assert!(manager.dirty());
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
+        assert_ne!(manager.generation(), base);
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
-                sync_input(&settings, now, 960, 720, 1.0, Default::default())
+                sync_input(chrome_of(&settings), now, 960, 720, 1.0, Default::default())
             ),
             OsdSync::Render(_)
         ));
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
-                sync_input(&settings, now, 960, 720, 1.0, Default::default())
+                sync_input(chrome_of(&settings), now, 960, 720, 1.0, Default::default())
             ),
             OsdSync::Skip
         ));
@@ -2962,7 +2921,7 @@ mod tests {
         let mut presenter = OsdPresenter::new();
         let settings = presenter_settings();
         let now = std::time::Instant::now();
-        manager.push_all(
+        manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
                 kind: NotificationKind::Paused,
@@ -2970,43 +2929,54 @@ mod tests {
                 seq: 0,
                 at: std::time::SystemTime::now(),
             }],
-            &settings,
+            &TransientPolicy::from(&settings),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(now);
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
-                sync_input(&settings, now, 960, 720, 1.0, Default::default())
+                sync_input(chrome_of(&settings), now, 960, 720, 1.0, Default::default())
             ),
             OsdSync::Render(_)
         ));
         // Past the Info duration the row expires: same two-phase order
         // must surface Clear, not Skip, then settle.
         let later = now + Duration::from_millis(2_500);
-        manager.take_dirty();
+        let base = manager.generation();
         manager.poll(later);
-        assert!(manager.dirty());
-        assert!(manager.dirty());
-        assert!(manager.dirty());
+        assert_ne!(manager.generation(), base);
+        assert_ne!(manager.generation(), base);
+        assert_ne!(manager.generation(), base);
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
-                sync_input(&settings, later, 960, 720, 1.0, Default::default())
+                sync_input(
+                    chrome_of(&settings),
+                    later,
+                    960,
+                    720,
+                    1.0,
+                    Default::default()
+                )
             ),
             OsdSync::Clear
         ));
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
-                sync_input(&settings, later, 960, 720, 1.0, Default::default())
+                sync_input(
+                    chrome_of(&settings),
+                    later,
+                    960,
+                    720,
+                    1.0,
+                    Default::default()
+                )
             ),
             OsdSync::Skip
         ));
@@ -3017,17 +2987,16 @@ mod tests {
         use super::{OsdPresenter, OsdSync};
         use nerust_render_traits::renderer::SafeInsets;
         use std::time::Duration;
-        let mut manager = OsdManager::new();
+        let manager = OsdManager::new();
         let mut presenter = OsdPresenter::new();
         let mut settings = presenter_settings();
         settings.status_enabled = true;
         let now = std::time::Instant::now();
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
                 super::OsdSyncInput {
-                    settings: &settings,
+                    chrome: super::OsdChrome::from(&settings),
                     language: AppLanguage::English,
                     fps: 60.0,
                     paused: false,
@@ -3045,10 +3014,9 @@ mod tests {
         let off = now + Duration::from_millis(100);
         assert!(matches!(
             presenter.sync(
-                manager.take_dirty(),
                 &manager,
                 super::OsdSyncInput {
-                    settings: &settings,
+                    chrome: super::OsdChrome::from(&settings),
                     language: AppLanguage::English,
                     fps: 61.0,
                     paused: false,
@@ -3064,10 +3032,9 @@ mod tests {
         // Re-enabled within the throttle window: fresh digits, not stale.
         settings.status_enabled = true;
         let plan = match presenter.sync(
-            manager.take_dirty(),
             &manager,
             super::OsdSyncInput {
-                settings: &settings,
+                chrome: super::OsdChrome::from(&settings),
                 language: AppLanguage::English,
                 fps: 61.0,
                 paused: false,
@@ -3092,7 +3059,7 @@ mod tests {
         let mut manager = OsdManager::new();
         assert_eq!(manager.take_modal_text(), None);
         for slot in [1, 2] {
-            manager.push_all(
+            manager.push_all_with_policy(
                 vec![UiNotification {
                     level: NotificationLevel::Error,
                     kind: NotificationKind::SlotFailed {
@@ -3103,7 +3070,7 @@ mod tests {
                     seq: 0,
                     at: std::time::SystemTime::now(),
                 }],
-                &settings(),
+                &policy(),
                 AppLanguage::English,
                 Instant::now(),
                 FrameChannel::Composited,

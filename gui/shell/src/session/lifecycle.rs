@@ -486,27 +486,28 @@ impl SessionHandle {
     /// (skipped when empty: no Vec, no channel derivation), OSD push,
     /// transient expiry, and modal batch pumping. Frontends call this
     /// once per tick, then run their presenter sync and modal flow.
-    pub fn pump_osd(&mut self, manager: &mut OsdManager, input: PushInput<'_>) -> PumpReport {
+    pub fn pump_osd(&mut self, manager: &mut OsdManager, input: PushInput) -> PumpReport {
         let PushInput {
-            settings,
+            policy,
             language,
             now,
         } = input;
+        let before = manager.generation();
         if self.notifications.pending_len() == 0 {
             manager.poll(now);
             let modal_queued = manager.pump_modal();
             return PumpReport {
-                dirty: manager.dirty(),
+                changed: manager.generation() != before,
                 modal_queued,
             };
         }
         let channel = self.frame_channel();
         let drained = self.drain_notifications();
-        manager.push_all(drained, settings, language, now, channel);
+        manager.push_all_with_policy(drained, &policy, language, now, channel);
         manager.poll(now);
         let modal_queued = manager.pump_modal();
         PumpReport {
-            dirty: manager.dirty(),
+            changed: manager.generation() != before,
             modal_queued,
         }
     }

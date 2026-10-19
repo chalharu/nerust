@@ -11,6 +11,7 @@ use tao::event::WindowEvent;
 use super::HostState;
 use crate::aux::focus::{WindowHandler, aux_focus_step};
 use crate::ports::WindowOpener;
+use nerust_gui_shell::session::osd::ModalSource;
 use nerust_gui_shell::session::osd::strip_rows;
 use nerust_render_traits::ReservedStrip;
 use nerust_render_traits::renderer::strip_pixels;
@@ -24,8 +25,14 @@ pub(crate) struct ModalFlight {
 
 /// Likely-Render gate from cheap state only. Pure so the Skip
 /// side stays unit-testable without a renderer.
-fn osd_sync_likely(dirty: bool, visible: bool, status_on: bool, layer_live: bool) -> bool {
-    dirty || visible || status_on || layer_live
+fn osd_sync_likely(
+    generation: u64,
+    last_seen: u64,
+    visible: bool,
+    status_on: bool,
+    layer_live: bool,
+) -> bool {
+    generation != last_seen || visible || status_on || layer_live
 }
 
 impl HostState {
@@ -203,14 +210,14 @@ impl HostState {
     /// Cheap when idle (dirty-gated sync); safe to call every loop
     /// pass, including paused+unfocused where `on_update` stalls.
     pub(crate) fn poll_notifications(&mut self) {
-        use nerust_gui_shell::session::osd::PushInput;
+        use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
         let now = Instant::now();
         let settings = self.notification_settings();
         let language = self.notification_language();
         let report = self.session.pump_osd(
             &mut self.osd,
             PushInput {
-                settings: &settings,
+                policy: TransientPolicy::from(&settings),
                 language,
                 now,
             },
@@ -225,7 +232,7 @@ impl HostState {
         }
         self.reap_modal();
         self.present_modal();
-        if report.dirty {
+        if report.changed {
             // Paint even idle: no main redraw is scheduled while
             // paused+unfocused, which is exactly when Paused lands.
             self.request_redraw();
@@ -244,28 +251,26 @@ impl HostState {
         renderer: &mut dyn GpuRenderer,
         size: nerust_render_traits::SurfaceSize,
     ) {
-        use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput};
-        // Cheap pre-gate before any snapshot: a clean peek with no
-        // rows, no status, and no live layer can only Skip.
-        let dirty = self.osd.dirty();
+        use nerust_gui_shell::session::osd::{OsdChrome, OsdSync, OsdSyncInput};
         let snapshot = self.session.settings_snapshot();
         let language = snapshot.shared.general.language;
-        let settings = &snapshot.local.notifications;
+        let chrome = OsdChrome::from(&snapshot.local.notifications);
+        // Cheap pre-gate before any snapshot: no rows, no status,
+        // and no live layer can only Skip.
         if !osd_sync_likely(
-            dirty,
+            self.osd.generation(),
+            self.osd_presenter.last_seen(),
             self.osd.has_visible(),
-            settings.status_enabled,
+            chrome.status_enabled,
             self.osd_layer_live,
         ) {
             return;
         }
         let metrics = self.session.metrics();
-        let dirty = self.osd.take_dirty();
         let decision = self.osd_presenter.sync(
-            dirty,
             &self.osd,
             OsdSyncInput {
-                settings,
+                chrome,
                 language,
                 fps: metrics.emulation_fps,
                 paused: metrics.paused,
@@ -352,11 +357,12 @@ mod tests {
 
     #[test]
     fn sync_gate_covers_all_cheap_inputs() {
-        assert!(!osd_sync_likely(false, false, false, false));
-        assert!(osd_sync_likely(true, false, false, false));
-        assert!(osd_sync_likely(false, true, false, false));
-        assert!(osd_sync_likely(false, false, true, false));
-        assert!(osd_sync_likely(false, false, false, true));
+        // Same generation as last sync: only other signals pass.
+        assert!(!osd_sync_likely(7, 7, false, false, false));
+        assert!(osd_sync_likely(8, 7, false, false, false));
+        assert!(osd_sync_likely(7, 7, true, false, false));
+        assert!(osd_sync_likely(7, 7, false, true, false));
+        assert!(osd_sync_likely(7, 7, false, false, true));
     }
 
     #[test]
