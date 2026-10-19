@@ -519,8 +519,7 @@ fn apply_settings_rolls_back_on_save_failure() {
 
     // Assignments should be rolled back
     assert_eq!(
-        Vec::<(String, Option<String>)>::from(&session.input.current_assignments),
-        Vec::<(String, Option<String>)>::from(&original_assignments),
+        session.input.current_assignments, original_assignments,
         "assignments should be rolled back on save failure"
     );
 
@@ -536,7 +535,7 @@ fn apply_settings_rolls_back_on_save_failure() {
 fn apply_settings_rebuilds_when_assignments_change() {
     use crate::test_helpers::{TEST_SLOT_P1, mock_core_creations};
     let mut session = test_session();
-    let prev_pairs = Vec::<(String, Option<String>)>::from(&session.input.current_assignments);
+    let prev_assignments = session.input.current_assignments.clone();
 
     let sid = session.factory().unwrap().system_id();
     let mut next = session.settings_snapshot().clone();
@@ -556,15 +555,16 @@ fn apply_settings_rebuilds_when_assignments_change() {
         "reassignment still reconstructs the core"
     );
 
-    let new_pairs = Vec::<(String, Option<String>)>::from(&session.input.current_assignments);
+    let new_assignments = session.input.current_assignments.clone();
     assert_ne!(
-        new_pairs, prev_pairs,
+        new_assignments, prev_assignments,
         "assignments should be updated after apply"
     );
     assert!(
-        new_pairs
+        new_assignments
+            .slots
             .iter()
-            .any(|(slot, _)| slot == TEST_SLOT_P1.as_str()),
+            .any(|(slot, _)| slot.as_str() == TEST_SLOT_P1.as_str()),
         "new assignments should include the test slot"
     );
 }
@@ -626,10 +626,7 @@ fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
     session.set_settings_snapshot(snapshot);
     RomLoadTarget::set_active_system(&mut session, system_id.as_ref())
         .expect("fallback core creation should succeed");
-    assert_eq!(
-        Vec::<(String, Option<String>)>::from(&session.input.current_assignments),
-        Vec::<(String, Option<String>)>::from(&expected_assignments)
-    );
+    assert_eq!(session.input.current_assignments, expected_assignments);
 }
 
 #[test]

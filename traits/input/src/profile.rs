@@ -155,22 +155,6 @@ impl PartialEq for InputAssignments {
 
 impl Eq for InputAssignments {}
 
-/// Persistable projection (slot_id, option<controller_id>).
-impl From<&InputAssignments> for Vec<(String, Option<String>)> {
-    fn from(assignments: &InputAssignments) -> Self {
-        assignments
-            .slots
-            .iter()
-            .map(|(s, c)| {
-                (
-                    s.to_string(),
-                    c.as_ref().map(|p| p.profile_id().to_string()),
-                )
-            })
-            .collect()
-    }
-}
-
 /// Errors from create_split.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CreateSplitError {

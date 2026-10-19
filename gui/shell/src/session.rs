@@ -532,8 +532,21 @@ impl SessionHandle {
         self.active_system_id.as_deref()
     }
 
+    /// Persistable projection of the live assignments. Lossy by design:
+    /// only slot and controller identifiers survive, never the profiles,
+    /// so this is an explicitly named projection, not a `From` conversion.
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
-        Vec::from(&self.input.current_assignments)
+        self.input
+            .current_assignments
+            .slots
+            .iter()
+            .map(|(slot, controller)| {
+                (
+                    slot.to_string(),
+                    controller.as_ref().map(|p| p.profile_id().to_string()),
+                )
+            })
+            .collect()
     }
 
     pub fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
