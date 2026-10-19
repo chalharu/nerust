@@ -15,12 +15,22 @@ use crate::aux::shell::{AuxShell, PumpOutcome, WindowScaffold};
 /// view-invalidation flag shared with the program). Matches the
 /// debugger/PPU shape so the three aux windows cannot drift apart.
 pub(crate) struct SettingsWindowHandle {
-    pub(crate) shell: AuxShell<SettingsAppProgram>,
+    shell: AuxShell<SettingsAppProgram>,
     view_invalidated: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
 }
 
 impl SettingsWindowHandle {
+    /// Native window identity for event routing.
+    pub(crate) fn tao_window_id(&self) -> tao::window::WindowId {
+        self.shell.tao_window_id()
+    }
+
+    /// Close was requested through the shared flag.
+    pub(crate) fn close_requested(&self) -> bool {
+        self.shell.close_requested()
+    }
+
     pub(crate) fn new(
         snapshot: SettingsSnapshot,
         registry: Arc<SystemRegistry>,
@@ -107,6 +117,8 @@ impl SettingsWindowHandle {
         }
     }
 }
+
+impl crate::aux::focus::WindowHandler for SettingsWindowHandle {}
 
 impl crate::aux::shell::AuxWindow for SettingsWindowHandle {
     fn pump_window_event(&mut self, event: tao::event::WindowEvent) {

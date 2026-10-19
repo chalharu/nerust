@@ -158,7 +158,7 @@ impl HostState {
         } else if focus_ppu && let Some(ppu) = self.debug.ppu_window.as_ref() {
             // Second and later presses: the viewer exists, so take
             // focus instead of no-op.
-            ppu.shell.focus_window();
+            ppu.focus_window();
         }
     }
 

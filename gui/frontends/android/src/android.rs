@@ -841,9 +841,9 @@ impl AndroidFrontend {
     }
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult) {
-        // Settings closed (applied or dismissed): drop the cached open
+        // Settings closed (applied or dismissed): re-derive the open
         // flag, flush the error queue, and resume an orphaned pause.
-        self.settings_open = false;
+        self.settings_open = settings::is_dialog_open();
         let screen = ScreenState::new(self.is_resumed, false, self.session.can_pause());
         match self.osd.settings_closed_error_dialog(screen) {
             SettingsClosedTransition::Show { auto_pause } => {
@@ -1023,17 +1023,17 @@ impl AndroidFrontend {
         );
         current.prioritize_system(self.session.active_system_id());
         match settings::request_show_settings_dialog(&self.app, &current) {
-            Ok(true) => {
-                self.settings_open = true;
-            }
+            Ok(true) => {}
             Ok(false) => {
                 log::debug!("Android settings dialog already open");
             }
             Err(error) => {
-                self.settings_open = false;
                 log::error!("{error}");
             }
         }
+        // Bridge truth, not the request outcome: the sync show path
+        // leaves this dialog up while the request reports "already".
+        self.settings_open = settings::is_dialog_open();
     }
 
     fn handle_menu_action(&mut self, event: FrontendEvent) {
@@ -2030,6 +2030,10 @@ impl ApplicationHandler for AndroidFrontend {
             self.handle_settings_result(result);
         }
         menu::take_events_into(&mut self.event_scratch);
+        // Acks first: modal gate release must not wait behind an input
+        // burst. Stable: menu order is preserved within each class.
+        self.event_scratch
+            .sort_by_key(|event| matches!(event, FrontendEvent::Menu(_)));
         let mut pending = std::mem::take(&mut self.event_scratch);
         for event in pending.drain(..) {
             self.handle_menu_action(event);

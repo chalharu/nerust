@@ -5,7 +5,6 @@
 
 use tao::{event::WindowEvent, event_loop::ControlFlow};
 
-use crate::aux::shell::AuxWindow;
 use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
@@ -94,12 +93,12 @@ impl WindowRuntime {
         let Some(handle) = self.host.settings_window.as_mut() else {
             return;
         };
-        handle.pump_window_event(event);
+        handle.on_event(event);
         // Coalesced present: every visual path above already
         // requested a redraw; presenting here per event would
         // serialize a full draw behind every drag/motion event
         // and unload the backlog as a hang on release.
-        if handle.shell.close_requested() {
+        if handle.close_requested() {
             let Some(handle) = self.host.settings_window.take() else {
                 return;
             };
@@ -126,10 +125,7 @@ impl WindowRuntime {
             return;
         }
         let refocused = matches!(event, WindowEvent::Focused(true));
-        let resume = match self.host.debug.debug_window.as_mut() {
-            Some(handle) => handle.note_focus(&mut self.host.focus, refocused),
-            None => aux_focus_step(&mut self.host.focus, refocused),
-        };
+        let resume = aux_focus_step(&mut self.host.focus, refocused);
         if resume {
             self.host.resume_session();
         }
@@ -173,10 +169,7 @@ impl WindowRuntime {
         // A system-paused session resumes like on main focus;
         // explicit pauses stay paused.
         let refocused = matches!(event, WindowEvent::Focused(true));
-        let resume = match self.host.debug.ppu_window.as_mut() {
-            Some(handle) => handle.note_focus(&mut self.host.focus, refocused),
-            None => aux_focus_step(&mut self.host.focus, refocused),
-        };
+        let resume = aux_focus_step(&mut self.host.focus, refocused);
         if resume {
             self.host.resume_session();
         }

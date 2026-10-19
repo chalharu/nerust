@@ -193,11 +193,26 @@ impl Program for PpuProgram {
 }
 
 pub(crate) struct PpuWindowHandle {
-    pub(crate) shell: crate::aux::shell::AuxShell<PpuProgram>,
+    shell: crate::aux::shell::AuxShell<PpuProgram>,
     bridge: Arc<DebugBridge>,
 }
 
 impl PpuWindowHandle {
+    /// Native window identity for event routing.
+    pub(crate) fn tao_window_id(&self) -> tao::window::WindowId {
+        self.shell.tao_window_id()
+    }
+
+    /// Close was requested through the shared flag.
+    pub(crate) fn close_requested(&self) -> bool {
+        self.shell.close_requested()
+    }
+
+    /// Bring this viewer to the front.
+    pub(crate) fn focus_window(&self) {
+        self.shell.focus_window();
+    }
+
     pub(crate) fn new(
         bridge: Arc<DebugBridge>,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,

@@ -102,7 +102,7 @@ impl HostState {
     pub(crate) fn is_settings_window(&self, window_id: WindowId) -> bool {
         self.settings_window
             .as_ref()
-            .is_some_and(|h| h.shell.tao_window_id() == window_id)
+            .is_some_and(|h| h.tao_window_id() == window_id)
     }
 
     pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
