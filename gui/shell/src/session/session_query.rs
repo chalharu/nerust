@@ -3,7 +3,7 @@
 
 use nerust_emu_thread::ConsoleMetrics;
 
-use crate::session::{SessionHandle, osd::FrameChannel, title::window_title};
+use crate::session::{SessionHandle, osd::TickMetrics, title::window_title};
 
 /// Window size in logical pixels for frontend surface setup.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -15,6 +15,16 @@ pub struct WindowSize {
 impl SessionHandle {
     pub fn metrics(&self) -> ConsoleMetrics {
         self.emu.core_opt().map(|c| c.metrics()).unwrap_or_default()
+    }
+
+    pub fn tick_metrics(&self) -> TickMetrics {
+        let metrics = self.metrics();
+        TickMetrics {
+            fps: metrics.emulation_fps,
+            paused: metrics.paused,
+            loaded: metrics.loaded,
+            frame_counter: metrics.frame_counter,
+        }
     }
 
     pub fn window_size(&self) -> WindowSize {
@@ -41,29 +51,19 @@ impl SessionHandle {
     }
 
     pub fn loaded(&self) -> bool {
-        self.metrics().loaded
-    }
-
-    pub(crate) fn frame_channel(&self) -> FrameChannel {
-        if self.loaded() {
-            FrameChannel::Composited
-        } else {
-            FrameChannel::Unpresented
-        }
+        self.tick_metrics().loaded
     }
 
     pub fn paused(&self) -> bool {
-        self.metrics().paused
+        self.tick_metrics().paused
     }
 
     pub fn can_pause(&self) -> bool {
-        let metrics = self.metrics();
-        metrics.loaded && !metrics.paused
+        self.tick_metrics().can_pause()
     }
 
     pub fn can_resume(&self) -> bool {
-        let metrics = self.metrics();
-        metrics.loaded && metrics.paused
+        self.tick_metrics().can_resume()
     }
 
     pub fn notification_history(

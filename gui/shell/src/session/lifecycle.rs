@@ -92,6 +92,7 @@ impl SessionHandle {
             policy,
             language,
             now,
+            tick,
         } = input;
         let before = manager.generation();
         if self.notifications.pending_len() == 0 {
@@ -102,7 +103,7 @@ impl SessionHandle {
                 modal_queued,
             };
         }
-        let channel = self.frame_channel();
+        let channel = tick.frame_channel();
         let drained = self.drain_notifications();
         manager.push_all_with_policy(drained, &policy, language, now, channel);
         manager.poll(now);

@@ -50,7 +50,7 @@ impl GtkOsd {
         use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
         let now = Instant::now();
         let language = state.settings_snapshot().shared.general.language;
-        let metrics = state.emulation_status();
+        let tick = state.session.tick_metrics();
         let settings = state.settings_snapshot().local.notifications.clone();
         let report = state.session.pump_osd(
             &mut self.manager,
@@ -58,6 +58,7 @@ impl GtkOsd {
                 policy: TransientPolicy::from(&settings),
                 language,
                 now,
+                tick,
             },
         );
         if report.changed {
@@ -69,7 +70,7 @@ impl GtkOsd {
             // Only what we paused resumes, after the last ack.
             {
                 use nerust_gui_shell::session::access::PauseControl;
-                if state.can_pause() && !state.paused() {
+                if tick.can_pause() && !tick.paused {
                     state.pause();
                     resume_after_modal = true;
                 }
@@ -81,9 +82,8 @@ impl GtkOsd {
         if let Some(detail) = self.manager.take_modal_batch() {
             Self::present_modal(surface, window, detail, resume_after_modal);
         }
-        let (fps, paused) = metrics;
         self.apply_strip(&settings, renderer, window);
-        self.sync_layer(&settings, language, paused, fps, renderer, window);
+        self.sync_layer(&settings, language, tick.paused, tick.fps, renderer, window);
     }
 
     /// Reserve edge strips from settings. Game viewport fits into

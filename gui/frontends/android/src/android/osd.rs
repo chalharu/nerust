@@ -50,7 +50,7 @@ pub(super) struct AndroidOsd {
 /// Per-frame sync context. Bundled so the rasterizer handoff
 /// stays narrow as new dimensions (insets, scale) arrive.
 pub(super) struct OsdSyncCtx<'a> {
-    pub session: &'a SessionHandle,
+    pub tick: nerust_gui_shell::session::osd::TickMetrics,
     pub settings: &'a NotificationSettings,
     pub language: AppLanguage,
     pub renderer: &'a mut dyn GpuRenderer,
@@ -135,6 +135,7 @@ impl AndroidOsd {
         settings: &NotificationSettings,
         language: AppLanguage,
         now: Instant,
+        tick: nerust_gui_shell::session::osd::TickMetrics,
     ) -> bool {
         let report = session.pump_osd(
             &mut self.manager,
@@ -142,6 +143,7 @@ impl AndroidOsd {
                 policy: nerust_gui_shell::session::osd::TransientPolicy::from(settings),
                 language,
                 now,
+                tick,
             },
         );
         report.changed
@@ -264,7 +266,7 @@ impl AndroidOsd {
     /// size change it.
     pub(super) fn sync(&mut self, ctx: OsdSyncCtx<'_>) {
         let OsdSyncCtx {
-            session,
+            tick,
             settings,
             language,
             renderer,
@@ -276,14 +278,13 @@ impl AndroidOsd {
             self.last_strip = strip;
             renderer.set_reserved_strip(strip);
         }
-        let metrics = session.metrics();
         let decision = self.presenter.sync(
             &self.manager,
             OsdSyncInput {
                 chrome: nerust_gui_shell::session::osd::OsdChrome::from(settings),
                 language,
-                fps: metrics.emulation_fps,
-                paused: metrics.paused,
+                fps: tick.fps,
+                paused: tick.paused,
                 now: Instant::now(),
                 width: size.width,
                 height: size.height,
