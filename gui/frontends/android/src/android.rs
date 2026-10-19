@@ -812,7 +812,7 @@ impl AndroidFrontend {
                 log::info!("handle_picker_result: picker returned URI {uri}");
                 if let Err(error) = self.open_rom_from_uri(event_loop, &uri) {
                     log::error!("{error}");
-                    show_toast(&self.app, &error);
+                    self.osd.queue_modal(error);
                 }
             }
             RomPickerResult::TreeSelected(uri) => {
@@ -828,7 +828,8 @@ impl AndroidFrontend {
                     }
                     Err(error) => {
                         log::error!("failed to apply Android storage directory: {error}");
-                        show_toast(&self.app, "Selected directory could not be used");
+                        self.osd
+                            .queue_modal("Selected directory could not be used".to_string());
                     }
                 }
             }
@@ -923,7 +924,9 @@ impl AndroidFrontend {
             self.lifecycle_auto_paused,
             self.lifecycle_restore_pending
         );
-        if !self.lifecycle_auto_paused && !self.session.paused() {
+        // Lifecycle auto-pause only with a running core: pausing with
+        // no core fails into CommandFailed noise and an unasked modal.
+        if !self.lifecycle_auto_paused && self.session.can_pause() {
             self.pause();
             self.lifecycle_auto_paused = true;
             log::info!("save_lifecycle_state: auto-paused session");
@@ -1403,9 +1406,8 @@ impl AndroidFrontend {
                                     log::warn!(
                                         "try_resume_foreground: failed to load last document URI for lifecycle restore: {error}"
                                     );
-                                    show_toast(
-                                        &self.app,
-                                        "Previous ROM is unavailable; open it again",
+                                    self.osd.queue_modal(
+                                        "Previous ROM is unavailable; open it again".to_string(),
                                     );
                                     log::info!(
                                         "try_resume_foreground: preserving hidden state until the ROM URI is reconnected"
@@ -1466,9 +1468,8 @@ impl AndroidFrontend {
                             log::warn!(
                                 "try_resume_foreground: failed to read last media reference: {error}"
                             );
-                            show_toast(
-                                &self.app,
-                                "Previous ROM reference is invalid; open it again",
+                            self.osd.queue_modal(
+                                "Previous ROM reference is invalid; open it again".to_string(),
                             );
                             self.session.clear_hidden_lifecycle_state();
                             self.storage.clear_restore_pending();
