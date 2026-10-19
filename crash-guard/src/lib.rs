@@ -8,6 +8,31 @@ use std::{
     sync::Once,
 };
 
+/// Record sink for the panic hook. Production logs; tests capture.
+/// `Mutex`-free swap via `OnceLock`: set once, read on every panic.
+type RecordSink = fn(&PanicRecord);
+
+fn default_sink(record: &PanicRecord) {
+    log::error!(
+        "panic on thread '{}': {}\nbacktrace:\n{}",
+        record.thread,
+        record.detail,
+        record.backtrace
+    );
+}
+
+static SINK: std::sync::OnceLock<RecordSink> = std::sync::OnceLock::new();
+
+/// Override the record sink (tests, embedders). First call wins;
+/// production never calls this so the log sink stands.
+pub fn set_record_sink(sink: RecordSink) {
+    let _ = SINK.set(sink);
+}
+
+fn emit(record: &PanicRecord) {
+    SINK.get().copied().unwrap_or(default_sink)(record);
+}
+
 /// Install the process-wide panic hook (idempotent, chains previous).
 /// Best-effort log for pre-guard windows; `run_guarded` is authoritative.
 pub fn install() {
@@ -16,12 +41,7 @@ pub fn install() {
         let previous = panic::take_hook();
         panic::set_hook(Box::new(move |info: &PanicHookInfo<'_>| {
             let record = PanicRecord::capture(info.to_string());
-            log::error!(
-                "panic on thread '{}': {}\nbacktrace:\n{}",
-                record.thread,
-                record.detail,
-                record.backtrace
-            );
+            emit(&record);
             previous(info);
         }));
     });

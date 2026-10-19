@@ -580,6 +580,55 @@ impl SoftbufferRenderer {
 }
 
 impl SoftbufferRenderer {
+    /// Validate dimensions and tap coverage without touching the surface.
+    /// Pure read phase: mismatches skip before any indexer runs.
+    fn validate_frame(&mut self, frame: &FrameBuffer) -> Option<(usize, usize, usize, usize)> {
+        if frame.width() != self.render_profile.source_logical_size.width
+            || frame.height() != self.render_profile.source_logical_size.height
+        {
+            // Profile/frame races (e.g. right after a system switch)
+            // must skip, never render mismatched: every indexer below
+            // trusts these dimensions, and a panic here would take
+            // down the UI thread every frame until they agree again.
+            error!(
+                "Frame size mismatch: expected {}x{}, got {}x{}",
+                self.render_profile.source_logical_size.width,
+                self.render_profile.source_logical_size.height,
+                frame.width(),
+                frame.height()
+            );
+            return None;
+        }
+        let dst_w = self.size.width as usize;
+        let dst_h = self.size.height as usize;
+        if dst_w == 0 || dst_h == 0 || self.surface.is_none() {
+            return None;
+        }
+        // Refuse stale-profile frames before any indexer runs (warned, not fatal).
+        let avail_h = dst_h.saturating_sub(self.reserved.height_loss(self.size.height) as usize);
+        let src_stride = frame.stride();
+        let src_h = self.render_profile.source_logical_size.height;
+        let use_ntsc = matches!(frame.format(), PixelFormat::PaletteIndex { .. })
+            && self.render_profile.ntsc_packed_rgba8.is_some();
+        let tap_stride = if matches!(frame.format(), PixelFormat::Rgba) {
+            src_stride / 4
+        } else if use_ntsc {
+            self.render_profile.logical_size.width
+        } else {
+            src_stride
+        };
+        let ntsc_writes = if use_ntsc {
+            src_h.saturating_mul(self.render_profile.logical_size.width)
+        } else {
+            0
+        };
+        if !self.taps_covered(dst_w, avail_h, tap_stride, ntsc_writes) {
+            warn!("softbuffer tap coverage mismatch: refusing frame");
+            return None;
+        }
+        Some((dst_w, dst_h, avail_h, src_stride))
+    }
+
     /// Straight-alpha blend of the OSD layer, clipped to the buffer.
     fn blend_osd(
         buffer: &mut [u32],
@@ -686,22 +735,9 @@ impl GpuRenderer for SoftbufferRenderer {
     }
 
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
-        if frame.width() != self.render_profile.source_logical_size.width
-            || frame.height() != self.render_profile.source_logical_size.height
-        {
-            // Profile/frame races (e.g. right after a system switch)
-            // must skip, never render mismatched: every indexer below
-            // trusts these dimensions, and a panic here would take
-            // down the UI thread every frame until they agree again.
-            error!(
-                "Frame size mismatch: expected {}x{}, got {}x{}",
-                self.render_profile.source_logical_size.width,
-                self.render_profile.source_logical_size.height,
-                frame.width(),
-                frame.height()
-            );
+        let Some((dst_w, dst_h, _avail_h, _src_stride)) = self.validate_frame(frame) else {
             return RenderResult::Skipped;
-        }
+        };
         let dst_w = self.size.width as usize;
         let dst_h = self.size.height as usize;
         if dst_w == 0 || dst_h == 0 {
