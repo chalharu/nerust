@@ -1,6 +1,6 @@
 //! OSD display state shared by frontends: queue folding, expiry,
 //! burst caps, strip math, and modal aggregation. Frontends render
-//! `rows()` and honor `next_deadline()`; all policy lives here so
+//! `rows()` and honor `wakeup_deadline()`; all policy lives here so
 //! tao/gtk/android behave identically.
 
 use nerust_render_traits::renderer::OsdAnchor;
@@ -11,7 +11,7 @@ use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationPosition, NotificationSettings,
 };
 
-use super::notification::{NotificationKind, NotificationLevel, UiNotification};
+use super::notification::{NotificationKind, NotificationLevel, UiNotification, append_count};
 
 /// Level tag prefixing OSD labels: text (not color or shape
 /// alone) carries severity. History uses [`level_name`]
@@ -124,10 +124,7 @@ pub fn history_lines<'a>(
     let offset_secs = local_utc_offset_secs();
     history
         .map(|n| {
-            let mut text = n.kind.text(language);
-            if n.count > 1 {
-                text = format!("{text} ×{}", n.count);
-            }
+            let text = super::notification::render_text(&n.kind, n.count, language);
             HistoryLine {
                 datetime: format_datetime_in(n.at, offset_secs),
                 level: n.level,
@@ -168,11 +165,9 @@ struct OsdItem {
     /// carrying the push-time remainder.
     duration: Duration,
     deadline: Instant,
-    /// Selection echo rows collapse latest-wins; at most one exists.
-    /// This flags one specific shell notification kind inside display
-    /// state: if a second kind ever needs latest-wins, generalize to
-    /// a replace-group enum instead of adding another bool.
-    selected: bool,
+    /// Latest-wins replace group ([`NotificationKind::replace_group`]):
+    /// at most one row per group exists. `None` rows always queue.
+    group: Option<u8>,
 }
 
 /// Single sequential display (no stacking): one label at a time,
@@ -211,6 +206,22 @@ pub struct OsdManager {
     dirty: bool,
 }
 
+/// Push routing outcome: only a changed showing label dirties.
+/// Queued rows just arm the deadline; promotion dirties on expiry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouteEffect {
+    ShowingChanged,
+    QueuedBehind,
+}
+
+/// Merge target for a consecutive duplicate: the showing label
+/// (visible change) or the queue tail (deadline refresh only).
+#[derive(Debug, Clone, Copy)]
+enum MergeTarget {
+    Showing,
+    Queued,
+}
+
 /// Which end the drop victim is taken from. Separate names keep
 /// call sites readable; a bool would not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,16 +240,19 @@ pub enum FrameChannel {
     Unpresented,
 }
 
-/// Modal fallback: without a composited frame every row goes modal.
-/// Exhaustive: a new channel must pick its route here.
+/// Modal fallback: without a composited frame only modal-worthy
+/// kinds (errors, warnings) go modal; info is dropped. Exhaustive:
+/// a new channel must pick its route here.
 fn falls_back_to_modal(
-    level: NotificationLevel,
+    kind: &NotificationKind,
     settings: &NotificationSettings,
     channel: FrameChannel,
 ) -> bool {
     match channel {
-        FrameChannel::Unpresented => true,
-        FrameChannel::Composited => level == NotificationLevel::Error && settings.error_modal,
+        FrameChannel::Unpresented => kind.wants_modal(),
+        FrameChannel::Composited => {
+            kind.level() == NotificationLevel::Error && settings.error_modal
+        }
     }
 }
 
@@ -261,12 +275,11 @@ fn duration_ms(level: NotificationLevel, settings: &NotificationSettings) -> u64
 }
 
 fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: &'static str) -> OsdRow {
-    let text = if count > 1 {
-        format!("{base} ×{count}")
-    } else {
-        base.to_string()
-    };
-    OsdRow { text, rgb, tag }
+    OsdRow {
+        text: append_count(base.to_string(), count),
+        rgb,
+        tag,
+    }
 }
 
 fn color(level: NotificationLevel, settings: &NotificationSettings) -> (u8, u8, u8) {
@@ -306,14 +319,14 @@ impl TransientQueue {
     /// queue tail (`×N`, timer reset). Anything interleaved breaks the
     /// run, so pause/resume flaps keep full slots. Consecutiveness is
     /// derived here from the last accepted identity, so callers pass
-    /// only the row.
-    fn merge_consecutive(&mut self, item: &OsdItem) -> bool {
+    /// only the row. Reports where the merge landed for dirty gating.
+    fn merge_consecutive(&mut self, item: &OsdItem) -> Option<MergeTarget> {
         let consecutive = self
             .last_key
             .as_ref()
             .is_some_and(|(level, key)| *level == item.level && key == &item.key);
         if !consecutive {
-            return false;
+            return None;
         }
         if let Some(current) = self.current.as_mut()
             && current.level == item.level
@@ -322,7 +335,7 @@ impl TransientQueue {
             current.count += item.count;
             current.row = counted_row(&item.key, current.count, item.row.rgb, item.row.tag);
             current.deadline = item.deadline;
-            return true;
+            return Some(MergeTarget::Showing);
         }
         if let Some(back) = self.pending.back_mut()
             && back.level == item.level
@@ -331,9 +344,9 @@ impl TransientQueue {
             back.count += item.count;
             back.row = counted_row(&item.key, back.count, item.row.rgb, item.row.tag);
             back.deadline = item.deadline;
-            return true;
+            return Some(MergeTarget::Queued);
         }
-        false
+        None
     }
 
     /// Error rows preempt a non-Error showing label (Warnings wait
@@ -359,40 +372,44 @@ impl TransientQueue {
         None
     }
 
-    /// Selection echo keeps latest-wins: replace the existing row in
-    /// place instead of queuing stale echoes. Returns the row
-    /// unhandled when no selection row exists yet.
-    fn replace_selected(&mut self, item: OsdItem) -> Option<OsdItem> {
-        if !item.selected {
-            return Some(item);
-        }
+    /// Grouped rows collapse latest-wins in place: a row replaces the
+    /// showing or queued row of the same group instead of queueing.
+    /// `Ok` reports whether the showing label changed; `Err` returns
+    /// the row unhandled when no row of its group exists yet.
+    fn replace_grouped(&mut self, item: OsdItem) -> Result<RouteEffect, OsdItem> {
+        let Some(group) = item.group else {
+            return Err(item);
+        };
         if let Some(current) = self.current.as_mut()
-            && current.selected
+            && current.group == Some(group)
         {
             *current = item;
-            return None;
+            return Ok(RouteEffect::ShowingChanged);
         }
-        if let Some(existing) = self.pending.iter_mut().find(|row| row.selected) {
+        if let Some(existing) = self.pending.iter_mut().find(|row| row.group == Some(group)) {
             *existing = item;
-            return None;
+            return Ok(RouteEffect::QueuedBehind);
         }
-        Some(item)
+        Err(item)
     }
 
     /// Route one staged row through merge, preempt, and replace
     /// policies, queuing what survives. Ownership stays inside this
     /// dispatcher so helpers move rows instead of cloning them.
-    fn route_row(&mut self, item: OsdItem) {
+    fn route_row(&mut self, item: OsdItem) -> RouteEffect {
         let merged = self.merge_consecutive(&item);
         self.last_key = Some((item.level, item.key.clone()));
-        if merged {
-            return;
+        match merged {
+            Some(MergeTarget::Showing) => return RouteEffect::ShowingChanged,
+            Some(MergeTarget::Queued) => return RouteEffect::QueuedBehind,
+            None => {}
         }
         let Some(item) = self.preempt_for_error(item) else {
-            return;
+            return RouteEffect::ShowingChanged;
         };
-        let Some(item) = self.replace_selected(item) else {
-            return;
+        let item = match self.replace_grouped(item) {
+            Ok(effect) => return effect,
+            Err(item) => item,
         };
         self.pending.push_back(item);
         // Full queue drops the lowest severity first; Errors drop
@@ -400,6 +417,7 @@ impl TransientQueue {
         while self.pending.len() > MAX_TRANSIENT_QUEUED {
             Self::evict_overflow(&mut self.pending, VictimEdge::Oldest);
         }
+        RouteEffect::QueuedBehind
     }
 
     /// Promote pending when idle, or advance on expiry. True only
@@ -434,11 +452,13 @@ impl TransientQueue {
         self.current.is_some()
     }
 
-    fn next_deadline(&self) -> Option<Instant> {
+    /// OSD expiry deadline for the loop wait, on the caller's tick
+    /// clock (no second clock read inside).
+    fn wakeup_deadline(&self, now: Instant) -> Option<Instant> {
         match &self.current {
             Some(current) => Some(current.deadline),
             // Pending work with nothing showing: wake immediately.
-            None if !self.pending.is_empty() => Some(Instant::now()),
+            None if !self.pending.is_empty() => Some(now),
             None => None,
         }
     }
@@ -479,10 +499,7 @@ impl ModalBox {
     /// pending cap, and logs the loss (history keeps every event).
     fn queue_modal(&mut self, detail: String) {
         if self.queue.len() >= Self::MAX_QUEUED {
-            if !self.queue_warned_full {
-                log::warn!("error modal queue full; dropping oldest batch");
-                self.queue_warned_full = true;
-            }
+            self.warn_once_full("dropping oldest batch");
             self.queue.pop_front();
         }
         self.queue.push_back(detail);
@@ -493,11 +510,24 @@ impl ModalBox {
     fn requeue_front(&mut self, detail: String) {
         self.queue.push_front(detail);
         while self.queue.len() > Self::MAX_QUEUED {
-            if !self.queue_warned_full {
-                log::warn!("error modal queue full; dropping queued batch for requeue");
-                self.queue_warned_full = true;
-            }
+            self.warn_once_full("dropping queued batch for requeue");
             self.queue.remove(1);
+        }
+    }
+
+    /// Warn-once overflow note shared by the queue and requeue paths.
+    fn warn_once_full(&mut self, action: &str) {
+        if !self.queue_warned_full {
+            log::warn!("error modal queue full; {action}");
+            self.queue_warned_full = true;
+        }
+    }
+
+    /// Clear the warn flag once the queue actually drains, so a fresh
+    /// overflow episode warns again. Called from take and close.
+    fn clear_warn_if_drained(&mut self) {
+        if self.queue.is_empty() {
+            self.queue_warned_full = false;
         }
     }
 
@@ -509,18 +539,35 @@ impl ModalBox {
             return None;
         }
         let next = self.queue.pop_front()?;
-        self.queue_warned_full = false;
+        self.clear_warn_if_drained();
         self.open = true;
         Some(next)
     }
 
     fn modal_closed(&mut self) {
         self.open = false;
+        self.clear_warn_if_drained();
     }
 
     fn modal_pending(&self) -> usize {
         self.queue.len()
     }
+}
+
+/// Bundled inputs for [`SessionHandle::pump_osd`]: the caller-owned
+/// half of the push. The channel is derived inside the pump, so an
+/// empty queue skips that derivation entirely.
+pub struct PushInput<'a> {
+    pub settings: &'a NotificationSettings,
+    pub language: AppLanguage,
+    pub now: Instant,
+}
+
+/// Outcome of [`SessionHandle::pump_osd`] for frontend flow control:
+/// redraw gating and modal auto-pause.
+pub struct PumpReport {
+    pub dirty: bool,
+    pub modal_queued: bool,
 }
 
 impl OsdManager {
@@ -536,24 +583,24 @@ impl OsdManager {
         now: Instant,
         channel: FrameChannel,
     ) {
-        // Dirty only on a real change: filtered rows and empty drains
-        // must not schedule a redraw.
+        // Dirty only on a real change: filtered rows, dropped info,
+        // and queued-behind rows must not schedule a redraw.
         let mut changed = false;
         for n in notifications {
             if !enabled(n.level, settings) {
                 continue;
             }
-            let base = n.kind.text(language);
-            let mut text = base.clone();
-            if n.count > 1 {
-                text = format!("{text} ×{}", n.count);
+            // No composited frame and not modal-worthy: drop the row.
+            if channel == FrameChannel::Unpresented && !n.kind.wants_modal() {
+                continue;
             }
-            // No composited frame: route everything to modal, never stay silent.
-            if falls_back_to_modal(n.level, settings, channel) {
-                self.modal_box.push(text);
+            if falls_back_to_modal(&n.kind, settings, channel) {
+                self.modal_box
+                    .push(super::notification::render_text(&n.kind, n.count, language));
                 changed = true;
                 continue;
             }
+            let base = n.kind.text(language);
             let rgb = color(n.level, settings);
             let tag = level_tag(n.level);
             let duration = Duration::from_millis(duration_ms(n.level, settings));
@@ -564,10 +611,11 @@ impl OsdManager {
                 count: n.count,
                 duration,
                 deadline: now + duration,
-                selected: matches!(n.kind, NotificationKind::SelectedSlot(_)),
+                group: n.kind.replace_group(),
             };
-            self.transient.route_row(item);
-            changed = true;
+            if self.transient.route_row(item) == RouteEffect::ShowingChanged {
+                changed = true;
+            }
         }
         if changed {
             self.dirty = true;
@@ -586,7 +634,19 @@ impl OsdManager {
         self.transient.rows()
     }
 
-    pub fn take_modal_text(&mut self) -> Option<String> {
+    /// Drain the aggregated modal batch into the sequential queue.
+    /// Internal pump step for [`SessionHandle::pump_osd`]: frontends
+    /// present via `take_modal_batch`, never this.
+    pub(crate) fn pump_modal(&mut self) -> bool {
+        if let Some(detail) = self.take_modal_text() {
+            self.modal_box.queue_modal(detail);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn take_modal_text(&mut self) -> Option<String> {
         self.modal_box.take_modal_text()
     }
 
@@ -611,12 +671,17 @@ impl OsdManager {
         self.modal_box.modal_pending()
     }
 
+    #[cfg(test)]
+    pub fn modal_warn_flag(&self) -> bool {
+        self.modal_box.queue_warned_full
+    }
+
     pub fn has_visible(&self) -> bool {
         self.transient.has_visible()
     }
 
-    pub fn next_deadline(&self) -> Option<Instant> {
-        self.transient.next_deadline()
+    pub fn wakeup_deadline(&self, now: Instant) -> Option<Instant> {
+        self.transient.wakeup_deadline(now)
     }
 
     /// Take the display-state change since the last take. The sync
@@ -637,16 +702,20 @@ impl OsdManager {
     /// pill, so the digits never shift when the label appears,
     /// disappears, or changes language.
     pub fn status_parts(fps: f32, paused: bool, language: AppLanguage) -> (String, String) {
-        let value = format!("{fps:.1} fps");
-        if paused {
-            let label = match language {
-                AppLanguage::Japanese => "一時停止中".to_string(),
-                _ => "Paused".to_string(),
-            };
-            (label, value)
-        } else {
-            (String::new(), value)
+        (status_label(paused, language), format!("{fps:.1} fps"))
+    }
+}
+
+/// Pause label without the fps value: cheap key for the gate
+/// pre-check, so steady frames skip float formatting.
+fn status_label(paused: bool, language: AppLanguage) -> String {
+    if paused {
+        match language {
+            AppLanguage::Japanese => "一時停止中".to_string(),
+            _ => "Paused".to_string(),
         }
+    } else {
+        String::new()
     }
 }
 
@@ -684,6 +753,20 @@ impl StatusGate {
         } else {
             (label, self.last_value.clone().unwrap_or(fresh_value))
         }
+    }
+
+    /// Cheap pre-check before formatting fresh strings: label flip or
+    /// throttle expiry. Same decision `gate` would make, without cost.
+    fn wants_refresh(&self, now: Instant, label: &str) -> bool {
+        self.last_label.as_deref() != Some(label)
+            || self
+                .last_tick
+                .is_none_or(|t| now.duration_since(t) >= STATUS_FPS_MIN_INTERVAL)
+    }
+
+    /// Last gated value for the steady path (no fresh format needed).
+    fn cached_value(&self) -> Option<String> {
+        self.last_value.clone()
     }
 }
 
@@ -801,13 +884,14 @@ impl OsdPresenter {
         *self = Self::default();
     }
 
-    /// Decide the layer action for this frame. Consumes the
-    /// manager's dirty flag. Status rides outside that flag: pause
-    /// flips and settings toggles re-render immediately, fps digits
-    /// refresh at 2Hz through the gate. Untouched while disabled:
-    /// no per-frame formatting, and the stale gate passes the first
-    /// fresh value on re-enable.
-    pub fn sync(&mut self, manager: &mut OsdManager, input: OsdSyncInput<'_>) -> OsdSync {
+    /// Decide the layer action for this frame. Pure: the caller owns
+    /// dirty consumption (`take_dirty`), this only reads. Status rides
+    /// outside that flag: pause flips and settings toggles re-render
+    /// immediately, fps digits refresh at 2Hz through the gate. Gate
+    /// runs on cheap keys first, so steady frames skip float
+    /// formatting. Untouched while disabled: no per-frame formatting,
+    /// and the stale gate passes the first fresh value on re-enable.
+    pub fn sync(&mut self, dirty: bool, manager: &OsdManager, input: OsdSyncInput<'_>) -> OsdSync {
         let OsdSyncInput {
             settings,
             language,
@@ -826,10 +910,17 @@ impl OsdPresenter {
             }
             return OsdSync::Skip;
         }
-        let dirty = manager.take_dirty();
         let status_key = settings.status_enabled.then(|| {
-            let (label, fresh_value) = OsdManager::status_parts(fps, paused, language);
-            let (label, value) = self.gate.gate(now, label, fresh_value);
+            let label = status_label(paused, language);
+            let (label, value) = if self.gate.wants_refresh(now, &label) {
+                self.gate.gate(now, label, format!("{fps:.1} fps"))
+            } else {
+                let cached = self
+                    .gate
+                    .cached_value()
+                    .unwrap_or_else(|| format!("{fps:.1} fps"));
+                (label, cached)
+            };
             (
                 label,
                 value,
@@ -964,43 +1055,68 @@ mod tests {
 
     #[test]
     fn falls_back_to_modal_covers_levels_and_channels() {
+        use super::super::notification::NotificationKind as K;
         let mut modal = settings();
         modal.error_modal = true;
         let mut osd = settings();
         osd.error_modal = false;
+        let error = K::SlotFailed {
+            slot: Some(1),
+            reason: SlotOpFailure::Storage,
+        };
+        let warning = K::SlotFailed {
+            slot: None,
+            reason: SlotOpFailure::Missing,
+        };
         // Composited: only Error with modal enabled.
         assert!(falls_back_to_modal(
-            NotificationLevel::Error,
+            &error,
+            &modal,
+            FrameChannel::Composited
+        ));
+        assert!(!falls_back_to_modal(&error, &osd, FrameChannel::Composited));
+        assert!(!falls_back_to_modal(
+            &warning,
             &modal,
             FrameChannel::Composited
         ));
         assert!(!falls_back_to_modal(
-            NotificationLevel::Error,
+            &K::Paused,
+            &modal,
+            FrameChannel::Composited
+        ));
+        // Unpresented: Error and Warning go modal even with it off.
+        assert!(falls_back_to_modal(
+            &error,
+            &modal,
+            FrameChannel::Unpresented
+        ));
+        assert!(falls_back_to_modal(
+            &warning,
+            &modal,
+            FrameChannel::Unpresented
+        ));
+        assert!(falls_back_to_modal(&error, &osd, FrameChannel::Unpresented));
+        assert!(falls_back_to_modal(
+            &warning,
             &osd,
-            FrameChannel::Composited
+            FrameChannel::Unpresented
+        ));
+        // Unpresented: Info is dropped, never modal.
+        assert!(!falls_back_to_modal(
+            &K::Paused,
+            &modal,
+            FrameChannel::Unpresented
         ));
         assert!(!falls_back_to_modal(
-            NotificationLevel::Info,
-            &modal,
-            FrameChannel::Composited
+            &K::Paused,
+            &osd,
+            FrameChannel::Unpresented
         ));
-        // Unpresented: every level, regardless of the modal setting.
-        for level in [
-            NotificationLevel::Info,
-            NotificationLevel::Warning,
-            NotificationLevel::Error,
-        ] {
-            assert!(falls_back_to_modal(
-                level,
-                &modal,
-                FrameChannel::Unpresented
-            ));
-            assert!(falls_back_to_modal(level, &osd, FrameChannel::Unpresented));
-        }
     }
 
     #[test]
-    fn inactive_core_routes_all_levels_to_modal() {
+    fn inactive_core_routes_errors_and_warnings_to_modal() {
         let mut manager = OsdManager::new();
         let mut without_modal = settings();
         without_modal.error_modal = false;
@@ -1037,8 +1153,33 @@ mod tests {
             );
         }
         assert!(manager.rows().is_empty());
-        let batch = manager.take_modal_text().expect("three modal lines");
-        assert_eq!(batch.lines().count(), 3);
+        // Info is dropped without a frame: only two modal lines.
+        let batch = manager.take_modal_text().expect("two modal lines");
+        assert_eq!(batch.lines().count(), 2);
+        assert!(!batch.contains("Paused"));
+    }
+
+    #[test]
+    fn info_dropped_without_frame_leaves_no_trace() {
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        manager.push_all(
+            vec![UiNotification {
+                level: NotificationLevel::Info,
+                kind: NotificationKind::Paused,
+                count: 1,
+                seq: 0,
+                at: std::time::SystemTime::now(),
+            }],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Unpresented,
+        );
+        assert!(!manager.dirty());
+        assert!(manager.rows().is_empty());
+        assert_eq!(manager.take_modal_text(), None);
+        assert_eq!(manager.modal_pending(), 0);
     }
 
     #[test]
@@ -1993,11 +2134,11 @@ mod tests {
     }
 
     #[test]
-    fn next_deadline_distinguishes_idle_and_queued() {
+    fn wakeup_deadline_distinguishes_idle_and_queued() {
         use super::super::notification::NotificationLevel as L;
         let mut manager = OsdManager::new();
-        assert_eq!(manager.next_deadline(), None);
         let now = Instant::now();
+        assert_eq!(manager.wakeup_deadline(now), None);
         manager.push_all(
             vec![UiNotification {
                 level: L::Info,
@@ -2011,11 +2152,143 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
+        // Pending with nothing showing: wake immediately on our clock.
+        assert_eq!(manager.wakeup_deadline(now), Some(now));
         // Promoted on the next poll; deadline lands on the duration.
         manager.take_dirty();
         manager.poll(now);
         assert!(manager.dirty());
-        assert!(manager.next_deadline().is_some());
+        assert!(manager.wakeup_deadline(now).is_some());
+    }
+
+    #[test]
+    fn queued_behind_leaves_clean_until_promotion() {
+        use super::super::notification::NotificationLevel as L;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        let note = |kind| UiNotification {
+            level: L::Info,
+            kind,
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        manager.push_all(
+            vec![note(NotificationKind::Paused)],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
+        // Queued behind the showing row: no dirty, deadline armed.
+        manager.take_dirty();
+        manager.push_all(
+            vec![note(NotificationKind::Resumed)],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        assert!(!manager.dirty());
+        assert!(manager.wakeup_deadline(now).is_some());
+        // Expiry promotes the queued row and dirties.
+        manager.poll(now + Duration::from_millis(2_001));
+        assert!(manager.dirty());
+        assert_eq!(manager.rows()[0].text, "Resumed");
+    }
+
+    #[test]
+    fn merged_showing_row_dirties() {
+        use super::super::notification::NotificationLevel as L;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        let note = UiNotification {
+            level: L::Info,
+            kind: NotificationKind::Paused,
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        };
+        manager.push_all(
+            vec![note.clone()],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        manager.take_dirty();
+        manager.poll(now);
+        assert!(manager.dirty());
+        // Consecutive duplicate merges into the showing row: visible.
+        manager.take_dirty();
+        manager.push_all(
+            vec![note],
+            &settings(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        assert!(manager.dirty());
+        assert!(manager.rows()[0].text.ends_with(" ×2"));
+    }
+
+    #[test]
+    fn modal_warn_flag_clears_when_queue_drains() {
+        let mut manager = OsdManager::new();
+        for i in 0..9 {
+            manager.queue_modal(format!("batch {i}"));
+        }
+        assert!(manager.modal_warn_flag());
+        // Drain every batch through take and close.
+        while manager.modal_pending() > 0 {
+            manager.take_modal_batch().expect("queued batch");
+            manager.modal_closed();
+        }
+        assert!(!manager.modal_warn_flag());
+        // A fresh overflow episode warns again.
+        for i in 0..9 {
+            manager.queue_modal(format!("again {i}"));
+        }
+        assert!(manager.modal_warn_flag());
+    }
+
+    #[test]
+    fn modal_close_on_empty_queue_clears_warn_flag() {
+        let mut manager = OsdManager::new();
+        for i in 0..9 {
+            manager.queue_modal(format!("batch {i}"));
+        }
+        assert!(manager.modal_warn_flag());
+        // Take one without closing: still episodes pending, flag stays.
+        manager.take_modal_batch().expect("first batch");
+        assert!(manager.modal_warn_flag());
+        manager.modal_closed();
+        // Drained but flag persists until the queue actually empties.
+        while manager.modal_pending() > 0 {
+            manager.take_modal_batch().expect("queued batch");
+            manager.modal_closed();
+        }
+        assert!(!manager.modal_warn_flag());
+    }
+
+    #[test]
+    fn gate_precheck_matches_gate_decision() {
+        use super::StatusGate;
+        let mut gate = StatusGate::new();
+        let now = Instant::now();
+        // Fresh gate: refresh wanted, no cached value yet.
+        assert!(gate.wants_refresh(now, "Paused"));
+        assert_eq!(gate.cached_value(), None);
+        gate.gate(now, "Paused".to_string(), "60.0 fps".to_string());
+        assert_eq!(gate.cached_value().as_deref(), Some("60.0 fps"));
+        // Steady: no refresh, cached value stands in.
+        assert!(!gate.wants_refresh(now, "Paused"));
+        // Label flip or throttle expiry: refresh wanted.
+        assert!(gate.wants_refresh(now, String::new().as_str()));
+        assert!(gate.wants_refresh(now + STATUS_FPS_MIN_INTERVAL, "Paused"));
     }
 
     #[test]
@@ -2104,7 +2377,8 @@ mod tests {
         // Idle, no status: nothing to draw, nothing live.
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 super::OsdSyncInput {
                     settings: &settings,
                     language: AppLanguage::English,
@@ -2122,7 +2396,8 @@ mod tests {
         // Zero-size while idle stays skipped.
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 super::OsdSyncInput {
                     settings: &settings,
                     language: AppLanguage::English,
@@ -2150,7 +2425,8 @@ mod tests {
         let now = Instant::now();
         // First frame renders the status readout.
         let plan = match presenter.sync(
-            &mut manager,
+            manager.take_dirty(),
+            &manager,
             super::OsdSyncInput {
                 settings: &settings,
                 language: AppLanguage::English,
@@ -2174,7 +2450,8 @@ mod tests {
         // Same inputs: fps jitter inside the gate holds the digits.
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 super::OsdSyncInput {
                     settings: &settings,
                     language: AppLanguage::English,
@@ -2192,7 +2469,8 @@ mod tests {
         // Pause flips pass through immediately.
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 super::OsdSyncInput {
                     settings: &settings,
                     language: AppLanguage::English,
@@ -2211,7 +2489,8 @@ mod tests {
         settings.status_enabled = false;
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 super::OsdSyncInput {
                     settings: &settings,
                     language: AppLanguage::English,
@@ -2229,7 +2508,8 @@ mod tests {
         // Clearing again stays skipped: nothing live.
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 super::OsdSyncInput {
                     settings: &settings,
                     language: AppLanguage::English,
@@ -2286,7 +2566,8 @@ mod tests {
         // First frame renders the status readout.
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 sync_input(&settings, now, 960, 720, 1.0, plain)
             ),
             OsdSync::Render(_)
@@ -2294,7 +2575,8 @@ mod tests {
         // Steady inputs skip.
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 sync_input(&settings, now, 960, 720, 1.0, plain)
             ),
             OsdSync::Skip
@@ -2302,7 +2584,8 @@ mod tests {
         // Insets move the boxes: re-render without settings churn.
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 sync_input(&settings, now, 960, 720, 1.0, inset)
             ),
             OsdSync::Render(_)
@@ -2310,7 +2593,8 @@ mod tests {
         // Scale change re-renders too.
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 sync_input(&settings, now, 960, 720, 0.5, inset)
             ),
             OsdSync::Render(_)
@@ -2318,7 +2602,8 @@ mod tests {
         // Steady again skips.
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 sync_input(&settings, now, 960, 720, 0.5, inset)
             ),
             OsdSync::Skip
@@ -2336,16 +2621,16 @@ mod tests {
         let now = std::time::Instant::now();
         let input = || sync_input(&settings, now, 960, 720, 1.0, SafeInsets::default());
         assert!(matches!(
-            presenter.sync(&mut manager, input()),
+            presenter.sync(manager.take_dirty(), &manager, input()),
             OsdSync::Render(_)
         ));
         assert!(matches!(
-            presenter.sync(&mut manager, input()),
+            presenter.sync(manager.take_dirty(), &manager, input()),
             OsdSync::Skip
         ));
         presenter.invalidate();
         assert!(matches!(
-            presenter.sync(&mut manager, input()),
+            presenter.sync(manager.take_dirty(), &manager, input()),
             OsdSync::Render(_)
         ));
     }
@@ -2379,14 +2664,16 @@ mod tests {
         assert!(manager.dirty());
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 sync_input(&settings, now, 960, 720, 1.0, Default::default())
             ),
             OsdSync::Render(_)
         ));
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 sync_input(&settings, now, 960, 720, 1.0, Default::default())
             ),
             OsdSync::Skip
@@ -2419,7 +2706,8 @@ mod tests {
         assert!(manager.dirty());
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 sync_input(&settings, now, 960, 720, 1.0, Default::default())
             ),
             OsdSync::Render(_)
@@ -2434,14 +2722,16 @@ mod tests {
         assert!(manager.dirty());
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 sync_input(&settings, later, 960, 720, 1.0, Default::default())
             ),
             OsdSync::Clear
         ));
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 sync_input(&settings, later, 960, 720, 1.0, Default::default())
             ),
             OsdSync::Skip
@@ -2460,7 +2750,8 @@ mod tests {
         let now = std::time::Instant::now();
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 super::OsdSyncInput {
                     settings: &settings,
                     language: AppLanguage::English,
@@ -2480,7 +2771,8 @@ mod tests {
         let off = now + Duration::from_millis(100);
         assert!(matches!(
             presenter.sync(
-                &mut manager,
+                manager.take_dirty(),
+                &manager,
                 super::OsdSyncInput {
                     settings: &settings,
                     language: AppLanguage::English,
@@ -2498,7 +2790,8 @@ mod tests {
         // Re-enabled within the throttle window: fresh digits, not stale.
         settings.status_enabled = true;
         let plan = match presenter.sync(
-            &mut manager,
+            manager.take_dirty(),
+            &manager,
             super::OsdSyncInput {
                 settings: &settings,
                 language: AppLanguage::English,

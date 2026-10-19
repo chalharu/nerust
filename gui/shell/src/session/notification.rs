@@ -64,6 +64,10 @@ fn bilingual_str<'a>(ja: bool, en: &'a str, ja_text: &'a str) -> &'a str {
     if ja { ja_text } else { en }
 }
 
+/// Latest-wins replace group for selection echoes. One group
+/// today; add constants (not bools) for future latest-wins kinds.
+pub const SELECTED_SLOT_GROUP: u8 = 0;
+
 impl NotificationKind {
     pub fn level(&self) -> NotificationLevel {
         match self {
@@ -86,6 +90,21 @@ impl NotificationKind {
             | NotificationKind::CreatedSlot
             | NotificationKind::SelectedSlot(_) => NotificationLevel::Info,
         }
+    }
+
+    /// Latest-wins group for OSD replacement, if any. Only
+    /// selection echoes collapse; everything else queues.
+    pub fn replace_group(&self) -> Option<u8> {
+        match self {
+            NotificationKind::SelectedSlot(_) => Some(SELECTED_SLOT_GROUP),
+            _ => None,
+        }
+    }
+
+    /// Modal fallback without a composited frame: errors and
+    /// warnings stay visible, info is dropped (nothing to show on).
+    pub fn wants_modal(&self) -> bool {
+        !matches!(self.level(), NotificationLevel::Info)
     }
 
     /// Channel policy: the log line for this kind, or `None` when the
@@ -214,16 +233,17 @@ impl NotificationCenter {
         let seq = self.next_seq;
         self.next_seq += 1;
         self.history_seq += 1;
+        // One event (one clock): cloned for history, moved pending.
         let event = UiNotification {
             level,
-            kind: kind.clone(),
+            kind,
             count: 1,
             seq,
             at: std::time::SystemTime::now(),
         };
         // Channel policy lives on the kind: screen-only kinds skip
         // the eager log line (history still records every event).
-        if let Some(emit) = kind.log_level() {
+        if let Some(emit) = event.kind.log_level() {
             match emit {
                 NotificationLevel::Info => log::info!("notification: {}", kind_text(&event)),
                 NotificationLevel::Warning => log::warn!("notification: {}", kind_text(&event)),
@@ -233,10 +253,10 @@ impl NotificationCenter {
         if self.history.len() >= MAX_HISTORY {
             self.history.pop_front();
         }
-        self.history.push_back(event);
+        self.history.push_back(event.clone());
         if let Some(back) = self.pending.back_mut()
-            && back.level == level
-            && back.kind == kind
+            && back.level == event.level
+            && back.kind == event.kind
         {
             back.count += 1;
             return;
@@ -244,13 +264,7 @@ impl NotificationCenter {
         if self.pending.len() >= MAX_PENDING {
             self.pending.pop_front();
         }
-        self.pending.push_back(UiNotification {
-            level,
-            kind,
-            count: 1,
-            seq,
-            at: std::time::SystemTime::now(),
-        });
+        self.pending.push_back(event);
     }
 
     pub fn drain(&mut self) -> Vec<UiNotification> {
@@ -276,6 +290,22 @@ impl NotificationCenter {
     }
 }
 
+/// Single text source for history rows and OSD labels: base
+/// text plus the `×N` suffix for coalesced repeats.
+pub fn render_text(kind: &NotificationKind, count: u32, language: AppLanguage) -> String {
+    append_count(kind.text(language), count)
+}
+
+/// Suffix rule shared by [`render_text`] and OSD rows (which keep
+/// the bare base as their coalescing key).
+pub fn append_count(base: String, count: u32) -> String {
+    if count > 1 {
+        format!("{base} ×{count}")
+    } else {
+        base
+    }
+}
+
 /// Log module emitting `notification:` lines; history rows map 1:1
 /// to those records so the module column greps the logs.
 pub const LOG_MODULE: &str = module_path!();
@@ -294,22 +324,7 @@ pub fn outcome_notifications(
     active_slot: Option<u64>,
 ) -> Vec<NotificationKind> {
     if let Some(reason) = outcome.slot_failure {
-        // Exhaustive: a new slot-carrying command must declare its
-        // slot here instead of silently routing with `slot: None`.
-        let slot = match command {
-            SessionCommand::SaveSlot(id)
-            | SessionCommand::LoadSlot(id)
-            | SessionCommand::DeleteSlot(id)
-            | SessionCommand::SelectActiveSlot(id) => Some(id),
-            SessionCommand::SaveActiveSlotOrNew | SessionCommand::LoadActiveSlot => active_slot,
-            SessionCommand::Pause
-            | SessionCommand::Resume
-            | SessionCommand::TogglePause
-            | SessionCommand::Reset
-            | SessionCommand::CreateSlot
-            | SessionCommand::SelectNextSlot
-            | SessionCommand::SelectPreviousSlot => None,
-        };
+        let slot = command.associated_slot(active_slot);
         return vec![NotificationKind::SlotFailed { slot, reason }];
     }
     if !outcome.executed {
@@ -560,5 +575,135 @@ mod tests {
         assert_eq!(center.history_seq(), 2);
         center.clear_history();
         assert_eq!(center.history_seq(), 3);
+    }
+
+    #[test]
+    fn associated_slot_covers_every_command() {
+        use SessionCommand as C;
+        for (command, expected) in [
+            (C::SaveSlot(4), Some(4)),
+            (C::LoadSlot(4), Some(4)),
+            (C::DeleteSlot(4), Some(4)),
+            (C::SelectActiveSlot(4), Some(4)),
+            (C::SaveActiveSlotOrNew, Some(7)),
+            (C::LoadActiveSlot, Some(7)),
+            (C::Pause, None),
+            (C::Resume, None),
+            (C::TogglePause, None),
+            (C::Reset, None),
+            (C::CreateSlot, None),
+            (C::SelectNextSlot, None),
+            (C::SelectPreviousSlot, None),
+        ] {
+            assert_eq!(command.associated_slot(Some(7)), expected);
+        }
+        // Active-slot commands without an active slot report none.
+        assert_eq!(C::SaveActiveSlotOrNew.associated_slot(None), None);
+        assert_eq!(C::LoadActiveSlot.associated_slot(None), None);
+        // Failure routing follows the slot: active-slot ops carry it.
+        let failed = SessionCommandOutcome {
+            executed: false,
+            needs_redraw: false,
+            slot_failure: Some(SlotOpFailure::Missing),
+        };
+        assert_eq!(
+            outcome_notifications(C::SaveActiveSlotOrNew, &failed, Some(7)),
+            [NotificationKind::SlotFailed {
+                slot: Some(7),
+                reason: SlotOpFailure::Missing,
+            }]
+        );
+        assert_eq!(
+            outcome_notifications(C::Pause, &failed, Some(7)),
+            [NotificationKind::SlotFailed {
+                slot: None,
+                reason: SlotOpFailure::Missing,
+            }]
+        );
+    }
+
+    #[test]
+    fn outcome_success_covers_active_slot_commands() {
+        let ok = SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+            slot_failure: None,
+        };
+        assert_eq!(
+            outcome_notifications(SessionCommand::SaveActiveSlotOrNew, &ok, Some(3)),
+            [NotificationKind::SavedSlot(3)]
+        );
+        assert_eq!(
+            outcome_notifications(SessionCommand::SelectActiveSlot(5), &ok, Some(3)),
+            [NotificationKind::SelectedSlot(5)]
+        );
+    }
+
+    #[test]
+    fn replace_group_flags_only_selection() {
+        assert_eq!(
+            NotificationKind::SelectedSlot(2).replace_group(),
+            Some(super::SELECTED_SLOT_GROUP)
+        );
+        for kind in [
+            NotificationKind::Paused,
+            NotificationKind::SavedSlot(1),
+            NotificationKind::PersistenceUnavailable,
+            NotificationKind::CommandFailed("Reset"),
+        ] {
+            assert_eq!(kind.replace_group(), None);
+        }
+    }
+
+    #[test]
+    fn wants_modal_keeps_errors_and_warnings() {
+        assert!(NotificationKind::CommandFailed("Reset").wants_modal());
+        assert!(NotificationKind::PersistenceUnavailable.wants_modal());
+        assert!(
+            NotificationKind::SlotFailed {
+                slot: None,
+                reason: SlotOpFailure::Storage,
+            }
+            .wants_modal()
+        );
+        assert!(
+            NotificationKind::SlotFailed {
+                slot: None,
+                reason: SlotOpFailure::Missing,
+            }
+            .wants_modal()
+        );
+        assert!(!NotificationKind::Paused.wants_modal());
+        assert!(!NotificationKind::SelectedSlot(1).wants_modal());
+    }
+
+    #[test]
+    fn render_text_adds_count_suffix() {
+        assert_eq!(
+            super::render_text(&NotificationKind::Paused, 1, AppLanguage::English),
+            "Paused"
+        );
+        assert_eq!(
+            super::render_text(&NotificationKind::Paused, 3, AppLanguage::English),
+            "Paused ×3"
+        );
+        assert!(
+            super::render_text(&NotificationKind::SavedSlot(7), 2, AppLanguage::Japanese)
+                .contains("×2")
+        );
+    }
+
+    #[test]
+    fn push_shares_one_event_between_history_and_queue() {
+        let mut center = NotificationCenter::new();
+        center.push(NotificationKind::Paused);
+        let drained = center.drain();
+        let history: Vec<_> = center.history().collect();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(history.len(), 1);
+        // One construction: same identity on both sides.
+        assert_eq!(drained[0].seq, history[0].seq);
+        assert_eq!(drained[0].at, history[0].at);
+        assert_eq!(drained[0].count, history[0].count);
     }
 }

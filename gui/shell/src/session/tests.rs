@@ -1292,3 +1292,98 @@ fn live_images_flight_refetches_while_running() {
     );
     session.debug_pause();
 }
+
+/// Empty queue: the pump skips drain/channel work, reports clean,
+/// and leaves no rows or modal batches behind.
+#[test]
+fn pump_osd_empty_queue_reports_clean() {
+    use std::time::Instant;
+
+    use crate::session::osd::{OsdManager, PushInput};
+
+    let mut session = test_session();
+    let mut manager = OsdManager::new();
+    let snapshot = session.settings_snapshot().clone();
+    let input = || PushInput {
+        settings: &snapshot.local.notifications,
+        language: AppLanguage::English,
+        now: Instant::now(),
+    };
+    // test_session activates a system but loads no ROM: unpresented.
+    assert!(!session.loaded());
+    let report = session.pump_osd(&mut manager, input());
+    assert!(!report.dirty);
+    assert!(!report.modal_queued);
+    assert!(manager.rows().is_empty());
+    assert_eq!(manager.modal_pending(), 0);
+    // Repeat: still clean, no accumulation.
+    let report = session.pump_osd(&mut manager, input());
+    assert!(!report.dirty);
+    assert!(!report.modal_queued);
+}
+
+/// No-ROM command failure (Error) still reaches the modal through
+/// the pump: the desktop T7 behavior.
+#[test]
+fn pump_osd_routes_no_core_error_to_modal() {
+    use std::time::Instant;
+
+    use crate::session::osd::{OsdManager, PushInput};
+
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    let mut manager = OsdManager::new();
+    let snapshot = session.settings_snapshot().clone();
+    // No core at all: Pause fails and pushes CommandFailed (Error).
+    let outcome = session.run_command(SessionCommand::Pause);
+    assert!(outcome.is_err());
+    let report = session.pump_osd(
+        &mut manager,
+        PushInput {
+            settings: &snapshot.local.notifications,
+            language: AppLanguage::English,
+            now: Instant::now(),
+        },
+    );
+    assert!(report.modal_queued);
+    let batch = manager.take_modal_batch().expect("error modal batch");
+    assert!(batch.contains("Pause"));
+    manager.modal_closed();
+}
+
+/// Info without a composited frame is dropped by the pump: no dirty,
+/// no rows, no modal. Warnings still reach the modal.
+#[test]
+fn pump_osd_drops_info_without_frame() {
+    use std::time::Instant;
+
+    use crate::session::{
+        notification::NotificationKind,
+        osd::{OsdManager, PushInput},
+    };
+
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    assert!(!session.loaded());
+    let mut manager = OsdManager::new();
+    let snapshot = session.settings_snapshot().clone();
+    let input = || PushInput {
+        settings: &snapshot.local.notifications,
+        language: AppLanguage::English,
+        now: Instant::now(),
+    };
+    session.notifications.push(NotificationKind::Paused);
+    let report = session.pump_osd(&mut manager, input());
+    assert!(!report.dirty);
+    assert!(!report.modal_queued);
+    assert!(manager.rows().is_empty());
+    assert_eq!(manager.modal_pending(), 0);
+    session
+        .notifications
+        .push(NotificationKind::PersistenceUnavailable);
+    let report = session.pump_osd(&mut manager, input());
+    assert!(report.modal_queued);
+    assert_eq!(manager.modal_pending(), 1);
+}
