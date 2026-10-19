@@ -12,7 +12,6 @@ use super::HostState;
 use crate::aux::focus::WindowHandler;
 use crate::ports::WindowOpener;
 use nerust_gui_shell::session::osd::ModalSource;
-use nerust_gui_shell::session::osd::strip_rows;
 use nerust_render_traits::ReservedStrip;
 use nerust_render_traits::renderer::strip_pixels;
 
@@ -24,15 +23,20 @@ pub(crate) struct ModalFlight {
 }
 
 /// Likely-Render gate from cheap state only. Pure so the Skip
-/// side stays unit-testable without a renderer.
+/// side stays unit-testable without a renderer. Passes on every
+/// signal the presenter reads: generation, visibility, status (its
+/// 2Hz digits tick without a generation bump), and geometry (size
+/// or chrome moves boxes without touching settings). The live-layer
+/// memo is deliberately not an input: a live but steady layer must
+/// Skip without running the presenter.
 fn osd_sync_likely(
     generation: u64,
     last_seen: u64,
     visible: bool,
     status_on: bool,
-    layer_live: bool,
+    geometry_changed: bool,
 ) -> bool {
-    generation != last_seen || visible || status_on || layer_live
+    generation != last_seen || visible || status_on || geometry_changed
 }
 
 /// One settings snapshot per frame. `poll_notifications` + `sync_osd_layer`
@@ -125,22 +129,19 @@ impl HostState {
         self.osd.presenter.invalidate();
     }
 
-    /// Reserved edge strips in physical pixels. Static per settings
-    /// (not per frame) so the renderer never churns surfaces.
+    /// Reserved edge strips in physical pixels. Row policy lives in
+    /// the shell (`OsdChrome::reserved_rows`); only pixel conversion
+    /// stays here with the renderer. Static per settings (not per
+    /// frame) so the renderer never churns surfaces.
     fn reserved_strip_with(&self, frame: &FrameSnapshot) -> ReservedStrip {
-        let settings = &frame.notifications;
+        use nerust_gui_shell::session::osd::OsdChrome;
+        let chrome = OsdChrome::from(&frame.notifications);
         let client_h = self
             .window
             .as_ref()
             .map(|window| window.inner_size().height)
             .unwrap_or(0);
-        let (top_rows, bottom_rows) = strip_rows(
-            settings.area_mode,
-            settings.position,
-            settings.status_area_mode,
-            settings.status_position,
-            settings.status_enabled,
-        );
+        let (top_rows, bottom_rows) = chrome.reserved_rows();
         ReservedStrip {
             top: strip_pixels(client_h, top_rows, 1.0),
             bottom: strip_pixels(client_h, bottom_rows, 1.0),
@@ -286,14 +287,17 @@ impl HostState {
         use nerust_gui_shell::session::osd::{OsdChrome, OsdSync, OsdSyncInput};
         let language = frame.language;
         let chrome = OsdChrome::from(&frame.notifications);
-        // Cheap pre-gate before any snapshot: no rows, no status,
-        // and no live layer can only Skip.
+        // Cheap pre-gate before any snapshot: generation, visibility,
+        // status liveness, and geometry (size/chrome) mirror exactly
+        // the signals the presenter reads.
+        let geometry = (size.width, size.height, chrome);
+        let geometry_changed = self.osd.last_sync_geometry != Some(geometry);
         if !osd_sync_likely(
             self.osd.manager.generation(),
             self.osd.presenter.last_seen(),
             self.osd.manager.has_visible(),
             chrome.status_enabled,
-            self.osd.layer_live,
+            geometry_changed,
         ) {
             return;
         }
@@ -306,12 +310,13 @@ impl HostState {
                 fps: tick.fps,
                 paused: tick.paused,
                 now: Instant::now(),
-                width: size.width,
-                height: size.height,
+                width: geometry.0,
+                height: geometry.1,
                 ui_scale: 1.0,
                 safe_insets: nerust_gui_shell::session::osd::UiInsets::default(),
             },
         );
+        self.osd.last_sync_geometry = Some(geometry);
         match decision {
             OsdSync::Skip => {}
             OsdSync::Clear => {
@@ -389,6 +394,7 @@ mod tests {
     #[test]
     fn sync_gate_covers_all_cheap_inputs() {
         // Same generation as last sync: only other signals pass.
+        // Geometry covers resizes and corner flips without a bump.
         assert!(!osd_sync_likely(7, 7, false, false, false));
         assert!(osd_sync_likely(8, 7, false, false, false));
         assert!(osd_sync_likely(7, 7, true, false, false));

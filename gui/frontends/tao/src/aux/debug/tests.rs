@@ -435,7 +435,7 @@ fn uishell_headless_build_pump_relayout_draw() {
         iced::window::Id::unique(),
         bounds,
         &mut backend,
-        &invalidated,
+        crate::aux::shell::Dirty::view(&invalidated),
     );
     assert!(!invalidated.load(Ordering::Acquire));
     shell.relayout(iced::Size::new(900.0, 650.0), &mut backend);

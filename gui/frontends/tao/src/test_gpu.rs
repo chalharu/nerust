@@ -48,6 +48,7 @@ mod tests {
                 ntsc_packed_rgba8: None,
             },
             vsync: false,
+            max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
         }
     }
     #[test]

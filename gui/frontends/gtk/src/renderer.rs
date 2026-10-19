@@ -39,6 +39,7 @@ impl GtkRenderer {
         let config = RendererConfig {
             render_profile: profile.clone(),
             vsync: true,
+            max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
         };
         match self.factory.create_renderer(&config, display_handle) {
             Ok(mut r) => {

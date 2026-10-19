@@ -319,7 +319,7 @@ impl HistoryWindowHandle {
     pub(crate) fn sync(&mut self, lines: Vec<HistoryLine>, language: AppLanguage) {
         self.shell.process(
             vec![HistoryMessage::Sync { lines, language }],
-            &self.view_invalidated,
+            crate::aux::shell::Dirty::history(&self.view_invalidated),
         );
     }
 }
@@ -345,7 +345,10 @@ impl super::focus::WindowHandler for HistoryWindowHandle {
         }
         let rebuilt =
             if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-                self.shell.process(messages, &self.view_invalidated)
+                self.shell.process(
+                    messages,
+                    crate::aux::shell::Dirty::history(&self.view_invalidated),
+                )
             } else {
                 false
             };
@@ -531,7 +534,7 @@ mod tests {
             iced::window::Id::unique(),
             iced::Size::new(800.0, 600.0),
             &mut backend,
-            &invalidated,
+            crate::aux::shell::Dirty::view(&invalidated),
         );
         assert!(!invalidated.load(Ordering::Acquire));
         assert!(close.load(Ordering::Acquire));

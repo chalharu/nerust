@@ -240,10 +240,13 @@ impl PpuWindowHandle {
 
     pub(crate) fn sync_from_bridge(&mut self) {
         // Derive cached bytes first (one scale per drain), then
-        // rebuild the view from cache.
-        self.shell.push_message(PpuMessage::Sync);
+        // rebuild the view from cache. The Sync message rides the
+        // process pass so `instance` mutates only under take→rebuild.
         self.bridge.ppu_invalidated.store(true, Ordering::Release);
-        self.shell.process(Vec::new(), &self.bridge.ppu_invalidated);
+        self.shell.process(
+            vec![PpuMessage::Sync],
+            crate::aux::shell::Dirty::ppu(&self.bridge.ppu_invalidated),
+        );
         // Deterministic pixels per drain: render synchronously
         // instead of depending on the next window event, so the
         // viewer never sits on a stale or blank frame.
@@ -273,7 +276,10 @@ impl super::focus::WindowHandler for PpuWindowHandle {
         }
         let rebuilt =
             if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-                self.shell.process(messages, &self.bridge.ppu_invalidated)
+                self.shell.process(
+                    messages,
+                    crate::aux::shell::Dirty::ppu(&self.bridge.ppu_invalidated),
+                )
             } else {
                 false
             };
