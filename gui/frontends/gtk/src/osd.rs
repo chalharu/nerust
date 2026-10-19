@@ -5,7 +5,7 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use gtk::{glib, prelude::*};
-use nerust_gui_shell::session::osd::OsdManager;
+use nerust_gui_shell::session::osd::{ModalSource, OsdManager};
 use nerust_settings_core::model::local::NotificationSettings;
 
 use super::{State, renderer::GtkRenderer};
@@ -47,7 +47,7 @@ impl GtkOsd {
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
     ) {
-        use nerust_gui_shell::session::osd::PushInput;
+        use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
         let now = Instant::now();
         let language = state.settings_snapshot().shared.general.language;
         let metrics = state.emulation_status();
@@ -55,12 +55,12 @@ impl GtkOsd {
         let report = state.session.pump_osd(
             &mut self.manager,
             PushInput {
-                settings: &settings,
+                policy: TransientPolicy::from(&settings),
                 language,
                 now,
             },
         );
-        if report.dirty {
+        if report.changed {
             log::debug!("gtk osd: display state changed");
         }
         let mut resume_after_modal = false;
@@ -131,12 +131,11 @@ impl GtkOsd {
         let scale = window.scale_factor().max(1) as u32;
         let w = window.width().max(0) as u32 * scale;
         let h = window.height().max(0) as u32 * scale;
-        let dirty = self.manager.take_dirty();
+        let chrome = nerust_gui_shell::session::osd::OsdChrome::from(settings);
         let decision = self.presenter.sync(
-            dirty,
             &self.manager,
             OsdSyncInput {
-                settings,
+                chrome,
                 language,
                 fps,
                 paused,

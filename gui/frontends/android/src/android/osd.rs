@@ -139,12 +139,12 @@ impl AndroidOsd {
         let report = session.pump_osd(
             &mut self.manager,
             nerust_gui_shell::session::osd::PushInput {
-                settings,
+                policy: nerust_gui_shell::session::osd::TransientPolicy::from(settings),
                 language,
                 now,
             },
         );
-        report.dirty
+        report.changed
     }
 
     /// OSD expiry deadline for the event-loop wait, if any labels are visible.
@@ -277,12 +277,10 @@ impl AndroidOsd {
             renderer.set_reserved_strip(strip);
         }
         let metrics = session.metrics();
-        let dirty = self.manager.take_dirty();
         let decision = self.presenter.sync(
-            dirty,
             &self.manager,
             OsdSyncInput {
-                settings,
+                chrome: nerust_gui_shell::session::osd::OsdChrome::from(settings),
                 language,
                 fps: metrics.emulation_fps,
                 paused: metrics.paused,
