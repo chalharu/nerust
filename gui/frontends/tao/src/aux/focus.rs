@@ -93,18 +93,14 @@ pub(crate) fn aux_focus_step(focus: &mut FocusState, focused: bool) -> bool {
     }
 }
 
-/// Uniform aux-window handler: event feed plus the shared focus
-/// agreement. Debug/PPU/history implement this; arms stay one shape.
+/// Uniform aux-window handler: one entry for the event feed.
+/// Debug/PPU/history/settings implement this; arms stay one shape.
+/// Focus agreement is [`aux_focus_step`] directly: no handle state
+/// participates, so a trait default would only fake polymorphism.
 pub(crate) trait WindowHandler: AuxWindow {
     /// Feed one native event to the aux shell.
     fn on_event(&mut self, event: WindowEvent) {
         AuxWindow::pump_window_event(self, event);
-    }
-    /// Shared aux-focus agreement (see [`aux_focus_step`]).
-    /// Reports resume. Default so all twins match; override only to diverge.
-    fn note_focus(&mut self, focus: &mut FocusState, focused: bool) -> bool {
-        let _ = self;
-        aux_focus_step(focus, focused)
     }
 }
 

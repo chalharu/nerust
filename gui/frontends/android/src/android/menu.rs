@@ -83,9 +83,16 @@ fn decode_frontend_event(raw: &str) -> Option<FrontendEvent> {
 }
 
 fn publish_event(event: FrontendEvent) {
-    log::info!("Android menu: published event: {:?}", event);
+    log::debug!("Android menu: published event: {:?}", event);
     bridge::with_state(|state| state.frontend_events.push_back(event));
     bridge::wake();
+}
+
+/// Failure synthesis path: a dead JNI bridge cannot deliver a Kotlin
+/// dismiss, so the gate, flag, and auto-pause are released here.
+/// Single writer alongside `publish_event` (see module docs).
+pub(crate) fn publish_dialog_dismissed() {
+    publish_event(FrontendEvent::ErrorDialogDismissed);
 }
 
 #[unsafe(no_mangle)]

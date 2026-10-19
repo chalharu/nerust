@@ -252,7 +252,7 @@ impl Program for DebugProgram {
 }
 
 pub(crate) struct DebugWindowHandle {
-    pub(crate) shell: crate::aux::shell::AuxShell<DebugProgram>,
+    shell: crate::aux::shell::AuxShell<DebugProgram>,
     pub(crate) bridge: Arc<DebugBridge>,
 }
 
@@ -281,6 +281,16 @@ fn cursor_page(physical: &iced::keyboard::key::Physical) -> Option<DebugMessage>
 }
 
 impl DebugWindowHandle {
+    /// Native window identity for event routing.
+    pub(crate) fn tao_window_id(&self) -> tao::window::WindowId {
+        self.shell.tao_window_id()
+    }
+
+    /// Close was requested through the shared flag.
+    pub(crate) fn close_requested(&self) -> bool {
+        self.shell.close_requested()
+    }
+
     pub(crate) fn new(
         display: DisplayCache,
         spaces: Vec<(SpaceId, String, u32)>,

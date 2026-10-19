@@ -47,7 +47,7 @@ impl HostState {
     pub(crate) fn is_history_window(&self, id: tao::window::WindowId) -> bool {
         self.history_window
             .as_ref()
-            .is_some_and(|handle| handle.shell.tao_window_id() == id)
+            .is_some_and(|handle| handle.tao_window_id() == id)
     }
 
     pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
@@ -87,16 +87,13 @@ impl HostState {
         // Same aux-focus agreement as debugger/PPU: same-app moves
         // cancel a pending auto-pause; leaving anywhere arms it.
         let focused = matches!(event, WindowEvent::Focused(true));
-        let resume = match self.history_window.as_mut() {
-            Some(handle) => handle.note_focus(&mut self.focus, focused),
-            None => aux_focus_step(&mut self.focus, focused),
-        };
+        let resume = aux_focus_step(&mut self.focus, focused);
         if resume {
             self.resume_session();
         }
         if let Some(handle) = self.history_window.as_mut() {
             handle.on_event(event);
-            if handle.shell.close_requested() {
+            if handle.close_requested() {
                 self.history_window = None;
                 return;
             }

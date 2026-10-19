@@ -264,7 +264,7 @@ impl Program for HistoryProgram {
 }
 
 pub(crate) struct HistoryWindowHandle {
-    pub(crate) shell: crate::aux::shell::AuxShell<HistoryProgram>,
+    shell: crate::aux::shell::AuxShell<HistoryProgram>,
     clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// View-refresh flag, separate from the shell close flag (like
     /// the debug/PPU twins): `sync` must never consume a close.
@@ -272,6 +272,16 @@ pub(crate) struct HistoryWindowHandle {
 }
 
 impl HistoryWindowHandle {
+    /// Native window identity for event routing.
+    pub(crate) fn tao_window_id(&self) -> tao::window::WindowId {
+        self.shell.tao_window_id()
+    }
+
+    /// Close was requested through the shared flag.
+    pub(crate) fn close_requested(&self) -> bool {
+        self.shell.close_requested()
+    }
+
     pub(crate) fn new(
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         language: AppLanguage,
