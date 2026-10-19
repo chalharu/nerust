@@ -4,9 +4,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --manifest-path "${WORKSPACE_ROOT}/Cargo.toml" --format-version 1 --no-deps | perl -0ne 'print $1 if /"target_directory"\s*:\s*"([^"]+)"/')}"
+TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --manifest-path "${WORKSPACE_ROOT}/Cargo.toml" --format-version 1 --no-deps 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 
-TAG_NAME="${TAG_NAME:-$(git -C "${WORKSPACE_ROOT}" describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")}"
+if [[ -z "${TAG_NAME:-}" ]]; then
+    TAG_NAME="$(git -C "${WORKSPACE_ROOT}" describe --tags --abbrev=0 2>/dev/null || true)"
+    if [[ -z "${TAG_NAME}" ]]; then
+        # Non-reproducible dev fallback: release builds must export TAG_NAME.
+        echo "warning: no git tag found; using non-reproducible version v0.1.0" >&2
+        TAG_NAME="v0.1.0"
+    fi
+fi
 OUT_DIR="${OUT_DIR:-${TARGET_DIR}/dist}"
 JNI_LIBS_DIR="${SCRIPT_DIR}/app/src/main/jniLibs"
 APK_SRC="${SCRIPT_DIR}/app/build/outputs/apk/release/app-release.apk"
@@ -15,11 +22,18 @@ SIGNING_TEMP_DIR=""
 export CARGO_NDK_PLATFORM="${CARGO_NDK_PLATFORM:-28}"
 
 cleanup() {
-    if [[ -n "${SIGNING_TEMP_DIR}" && -d "${SIGNING_TEMP_DIR}" ]]; then
+    if [[ -n "${SIGNING_TEMP_DIR:-}" && -d "${SIGNING_TEMP_DIR}" ]]; then
         rm -rf "${SIGNING_TEMP_DIR}"
     fi
 }
-trap cleanup EXIT
+
+cleanup_staging() {
+    if [[ -n "${STAGE_JNI_LIBS:-}" && -d "${STAGE_JNI_LIBS}" ]]; then
+        rm -rf "${STAGE_JNI_LIBS}"
+    fi
+    cleanup
+}
+trap cleanup_staging EXIT
 
 prepare_signing_keystore() {
     if [[ -n "${ANDROID_KEY_STORE_PATH:-}" ]]; then
@@ -92,8 +106,11 @@ prepare_signing_keystore() {
 echo "Packaging Android APK"
 echo "  output : ${OUT_DIR}/${APK_NAME}"
 
-rm -rf "${JNI_LIBS_DIR}"
-mkdir -p "${JNI_LIBS_DIR}"
+# Stage native libs outside the tree: a failed build must not leave
+# a half-populated jniLibs behind (stale .so would ship silently).
+STAGE_JNI_LIBS="$(mktemp -d)"
+trap cleanup_staging EXIT
+mkdir -p "${STAGE_JNI_LIBS}"
 
 prepare_signing_keystore
 
@@ -121,19 +138,21 @@ echo "Using Android NDK: ${ANDROID_NDK_HOME}"
 cargo ndk \
     --manifest-path "${WORKSPACE_ROOT}/Cargo.toml" \
     -t arm64-v8a \
-    -o "${JNI_LIBS_DIR}" \
+    -o "${STAGE_JNI_LIBS}" \
     build -p nerust_android --release
 
-(
-    cd "${SCRIPT_DIR}"
-    ./gradlew --no-daemon assembleRelease
-)
-
 # Loud gate against silent native bloat: DWARF must be gone and each
-# release .so must stay within budget (thin-LTO DWARF incident: 133MB).
-# Resolves llvm-readelf from the NDK first, then PATH; warns and skips
-# the gate when no reader exists off CI, fails hard when CI needs it.
-BUDGET_BYTES="${BUDGET_BYTES:-41943040}"
+# release .so must stay within its per-ABI budget (thin-LTO DWARF
+# incident: 133MB). Resolves llvm-readelf from the NDK first, then PATH;
+# warns and skips the gate when no reader exists off CI, fails hard when
+# CI needs it. Gates the *staged* tree; the in-tree jniLibs update only
+# after every .so passes.
+budget_for_abi() {
+    case "$1" in
+        arm64-v8a) printf '%s' "${BUDGET_BYTES:-41943040}" ;;
+        *) printf '%s' "${BUDGET_BYTES:-41943040}" ;;
+    esac
+}
 readelf_bin=""
 for cand in "${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf; do
     if [[ -x "${cand}" ]]; then
@@ -148,7 +167,7 @@ if [[ -z "${readelf_bin}" ]] && command -v readelf >/dev/null 2>&1; then
     readelf_bin="readelf"
 fi
 if [[ -n "${SKIP_NATIVE_GATE:-}" ]]; then
-    echo "Skipping native DWARF/size gate (SKIP_NATIVE_GATE is set)" >&2
+    echo "warning: native DWARF/size gate skipped by request; a bloated .so will ship silently" >&2
 elif [[ -z "${readelf_bin}" ]]; then
     if [[ -n "${CI:-}" ]]; then
         echo "no llvm-readelf/readelf found: cannot verify DWARF strip" >&2
@@ -157,30 +176,37 @@ elif [[ -z "${readelf_bin}" ]]; then
     echo "warning: no llvm-readelf/readelf found; skipping DWARF/size gate" >&2
 else
     shopt -s nullglob
-    so_files=("${JNI_LIBS_DIR}"/*/libmain.so)
+    so_files=("${STAGE_JNI_LIBS}"/*/libmain.so)
     shopt -u nullglob
     if (( ${#so_files[@]} == 0 )); then
-        if [[ -n "${CI:-}" ]]; then
-            echo "no libmain.so found under ${JNI_LIBS_DIR}" >&2
+        echo "no libmain.so produced under staging dir; refusing to ship stale jniLibs" >&2
+        exit 1
+    fi
+    for main_so in "${so_files[@]}"; do
+        abi="$(basename "$(dirname "${main_so}")")"
+        budget="$(budget_for_abi "${abi}")"
+        if "${readelf_bin}" -S "${main_so}" | grep -Eq '\.debug_(info|abbrev|line|str|ranges|addr|loclists?)|\.zdebug_'; then
+            echo "${abi}/libmain.so contains DWARF sections; release strip is not effective" >&2
             exit 1
         fi
-        echo "warning: no libmain.so found under ${JNI_LIBS_DIR}; skipping gate" >&2
-    else
-        for main_so in "${so_files[@]}"; do
-            abi="$(basename "$(dirname "${main_so}")")"
-            if "${readelf_bin}" -S "${main_so}" | grep -Eq '\.debug_(info|abbrev|line|str|ranges|addr|loclists?)'; then
-                echo "${abi}/libmain.so contains DWARF sections; release strip is not effective" >&2
-                exit 1
-            fi
-            so_size="$(wc -c < "${main_so}" | tr -d '[:space:]')"
-            if (( so_size > BUDGET_BYTES )); then
-                echo "${abi}/libmain.so is ${so_size} bytes, over the ${BUDGET_BYTES} budget (${abi})" >&2
-                exit 1
-            fi
-            echo "${abi}/libmain.so: ${so_size} bytes, no DWARF"
-        done
-    fi
+        so_size="$(wc -c < "${main_so}" | tr -d '[:space:]')"
+        if (( so_size > budget )); then
+            echo "${abi}/libmain.so is ${so_size} bytes, over the ${budget} budget (${abi})" >&2
+            exit 1
+        fi
+        echo "${abi}/libmain.so: ${so_size} bytes, no DWARF"
+    done
 fi
+# Gate passed (or deliberately skipped): publish the staged libs.
+rm -rf "${JNI_LIBS_DIR}"
+mkdir -p "${JNI_LIBS_DIR}"
+cp -r "${STAGE_JNI_LIBS}/." "${JNI_LIBS_DIR}/"
+
+(
+    cd "${SCRIPT_DIR}"
+    ./gradlew --no-daemon assembleRelease
+)
+
 
 mkdir -p "${OUT_DIR}"
 cp "${APK_SRC}" "${OUT_DIR}/${APK_NAME}"
