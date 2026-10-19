@@ -52,6 +52,13 @@ impl SettingsWindowHandle {
             None,
             "settings window",
         )
+        .map_err(|error| {
+            // Typed scaffold failures carry the window tag plus the
+            // native detail; surface them here since the opener seam
+            // is Option-based.
+            log::error!("{error}");
+            error
+        })
         .ok()?;
         // Birth geometry is a placeholder on some compositors; record
         // it to tell "born 0x0, never resized" apart from later traffic.

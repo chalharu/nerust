@@ -731,7 +731,7 @@ fn debug_snapshot_without_core_is_unavailable() {
     let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
     // No core: paused reads as true (nothing runs), spaces are empty,
     // and the snapshot carries degenerates only.
-    assert!(session.debug_paused());
+    assert!(session.debug_snapshot_ready());
     assert!(session.debug_spaces().is_empty());
     let snapshot = session.debug_snapshot(None, 0, None, false, None);
     assert!(!snapshot.available);
@@ -950,7 +950,7 @@ fn loaded_debug_session() -> SessionHandle {
     session
         .run_command(SessionCommand::Pause)
         .expect("debug sessions start paused");
-    assert!(session.debug_paused());
+    assert!(session.debug_snapshot_ready());
     session
 }
 
@@ -1263,7 +1263,7 @@ fn live_images_flight_refetches_while_running() {
     // would serve one converted image at the same generation.
     let session = loaded_debug_session();
     session.debug_resume();
-    assert!(!session.debug_paused());
+    assert!(!session.debug_snapshot_ready());
     fn fetch(session: &SessionHandle) -> (u64, usize) {
         let mut flight = session.debug_live_images_begin(true);
         let deadline = Instant::now() + Duration::from_secs(10);

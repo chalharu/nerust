@@ -21,9 +21,7 @@ impl HostState {
         if result.scaling_changed {
             self.update_window_size_for_scaling();
         }
-        self.sync_menu_state();
-        self.refresh_window_title();
-        self.request_redraw();
+        self.sync_chrome(true);
         Ok(result)
     }
 
@@ -36,8 +34,7 @@ impl HostState {
         if should_resume {
             self.resume();
         } else {
-            self.sync_menu_state();
-            self.refresh_window_title();
+            self.sync_chrome(false);
         }
     }
 

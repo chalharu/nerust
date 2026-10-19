@@ -3,7 +3,6 @@
 
 use std::time::{Duration, Instant};
 
-use nerust_render_traits::renderer::{OsdAnchor, SafeInsets};
 use nerust_settings_core::model::language::AppLanguage;
 use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationPosition, NotificationSettings,
@@ -70,60 +69,29 @@ impl StatusGate {
     }
 }
 
-/// Settings corner mapped once to the render-space anchor. The
-/// rasterizer only speaks [`OsdAnchor`], so this is the single
-/// place where settings vocabulary crosses into render vocabulary.
-pub fn osd_anchor(position: NotificationPosition) -> OsdAnchor {
-    match position {
-        NotificationPosition::TopLeft => OsdAnchor::TopLeft,
-        NotificationPosition::TopRight => OsdAnchor::TopRight,
-        NotificationPosition::BottomLeft => OsdAnchor::BottomLeft,
-        NotificationPosition::BottomRight => OsdAnchor::BottomRight,
-    }
+/// Display insets in settings-owned vocabulary. The render crate
+/// defines an identical shape; conversion lives in the render adapter
+/// ([`osd_render`](crate::session::osd_render)) so this decision
+/// module never names render types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct UiInsets {
+    pub top: u32,
+    pub right: u32,
+    pub bottom: u32,
+    pub left: u32,
 }
 
-/// Status pill color. One constant so every frontend renders the
-/// persistent readout identically; transient rows keep per-level
-/// colors from [`OsdManager::push_all`].
-pub const OSD_STATUS_RGB: (u8, u8, u8) = (200, 200, 200);
-
 /// Raster-ready frame decided by [`OsdPresenter`]: rows plus the
-/// gated status text, with anchors already mapped to render space.
+/// gated status text, with corners in settings vocabulary. The render
+/// adapter maps them once at the boundary (see `osd_render`).
 #[derive(Debug, Clone)]
 pub struct OsdPlan {
     pub rows: Vec<OsdRow>,
     pub status: Option<(String, String)>,
-    pub position: OsdAnchor,
-    pub status_position: OsdAnchor,
+    pub position: NotificationPosition,
+    pub status_position: NotificationPosition,
     pub width: u32,
     pub height: u32,
-}
-
-impl OsdPlan {
-    /// Single construction shared by every frontend: rows plus the
-    /// status pill with identical colors and corners everywhere.
-    /// Takes ownership: no second clone at the renderer boundary.
-    pub fn into_content(self) -> nerust_render_traits::renderer::OsdContent {
-        use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
-        OsdContent {
-            rows: self
-                .rows
-                .into_iter()
-                .map(|row| OsdRow {
-                    tag: row.tag.to_string(),
-                    text: row.text,
-                    rgb: row.rgb,
-                })
-                .collect(),
-            status: self.status.map(|(label, value)| OsdStatus {
-                label,
-                value,
-                rgb: OSD_STATUS_RGB,
-            }),
-            position: self.position,
-            status_position: self.status_position,
-        }
-    }
 }
 
 /// Narrow chrome view for [`OsdPresenter::sync`]. Only the fields
@@ -164,7 +132,7 @@ pub struct OsdSyncInput {
     /// touching settings, so the fingerprint must see them or the
     /// gate would suppress the re-render.
     pub ui_scale: f32,
-    pub safe_insets: SafeInsets,
+    pub safe_insets: UiInsets,
 }
 
 /// Per-frame layer decision. `Clear` is only emitted while a layer
@@ -207,7 +175,7 @@ pub struct OsdPresenter {
     /// status tuple only exists while enabled, so a position flip with
     /// status off needs its own fingerprint or the Skip gate sticks.
     last_chrome: Option<OsdChrome>,
-    last_raster: Option<(nerust_render_traits::renderer::SafeInsets, u32)>,
+    last_raster: Option<(UiInsets, u32)>,
     active: bool,
 }
 
@@ -306,8 +274,8 @@ impl OsdPresenter {
         OsdSync::Render(OsdPlan {
             rows: state.rows(),
             status: label_value,
-            position: osd_anchor(position),
-            status_position: osd_anchor(status_position),
+            position,
+            status_position,
             width,
             height,
         })
@@ -366,9 +334,8 @@ pub fn strip_rows(
 mod tests {
     use super::{
         OsdChrome, OsdPresenter, OsdRow, OsdState, OsdSync, OsdSyncInput, STATUS_FPS_MIN_INTERVAL,
-        StatusGate, osd_anchor, strip_rows,
+        StatusGate, UiInsets, strip_rows,
     };
-    use nerust_render_traits::renderer::SafeInsets;
     use nerust_settings_core::model::language::AppLanguage;
     use nerust_settings_core::model::local::{
         NotificationAreaMode as M, NotificationPosition as P, NotificationSettings,
@@ -428,7 +395,7 @@ mod tests {
         width: u32,
         height: u32,
         ui_scale: f32,
-        safe_insets: SafeInsets,
+        safe_insets: UiInsets,
     ) -> OsdSyncInput {
         OsdSyncInput {
             chrome,
@@ -598,15 +565,6 @@ mod tests {
     }
 
     #[test]
-    fn anchor_mapping_covers_all_corners() {
-        use nerust_render_traits::renderer::OsdAnchor as A;
-        assert_eq!(osd_anchor(P::TopLeft), A::TopLeft);
-        assert_eq!(osd_anchor(P::TopRight), A::TopRight);
-        assert_eq!(osd_anchor(P::BottomLeft), A::BottomLeft);
-        assert_eq!(osd_anchor(P::BottomRight), A::BottomRight);
-    }
-
-    #[test]
     fn into_content_moves_rows_without_second_clone() {
         let state = row_state("Paused");
         let mut presenter = OsdPresenter::new();
@@ -619,7 +577,7 @@ mod tests {
                 320,
                 240,
                 1.0,
-                SafeInsets::default(),
+                UiInsets::default(),
             ),
         ) {
             OsdSync::Render(plan) => plan,
@@ -737,8 +695,8 @@ mod tests {
         let mut settings = presenter_settings();
         settings.status_enabled = true;
         let now = Instant::now();
-        let plain = SafeInsets::default();
-        let inset = SafeInsets {
+        let plain = UiInsets::default();
+        let inset = UiInsets {
             top: 40,
             right: 24,
             bottom: 40,
@@ -797,7 +755,7 @@ mod tests {
         let input = |pos| {
             let mut chrome = chrome_of(&settings);
             chrome.position = pos;
-            sync_input(chrome, now, 960, 720, 1.0, SafeInsets::default())
+            sync_input(chrome, now, 960, 720, 1.0, UiInsets::default())
         };
         // Rows showing, status off: first frame renders.
         assert!(matches!(
@@ -834,7 +792,7 @@ mod tests {
                 960,
                 720,
                 1.0,
-                SafeInsets::default(),
+                UiInsets::default(),
             )
         };
         // First frame renders the status readout, the repeat skips.

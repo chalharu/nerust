@@ -161,6 +161,12 @@ pub(crate) trait WindowHandler: AuxWindow {
     }
 }
 
+/// Blanket pump: every aux window routes through its
+/// [`WindowHandler`]. Consequence of coherence: a type can only be an
+/// `AuxWindow` by implementing `WindowHandler` — a direct `AuxWindow`
+/// impl alongside this blanket impl is a compile error (E0119). All
+/// aux windows must therefore be `WindowHandler`s; do not add direct
+/// `AuxWindow` impls.
 impl<T: WindowHandler> AuxWindow for T {
     fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
         self.shell_mut().handle_common_event(&event);

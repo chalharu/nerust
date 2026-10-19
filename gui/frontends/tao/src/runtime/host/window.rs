@@ -89,9 +89,7 @@ impl HostState {
         }
         self.window = Some(window);
         self.sync_fullscreen_from_settings();
-        self.sync_menu_state();
-        self.request_redraw();
-        self.refresh_window_title();
+        self.sync_chrome(true);
     }
 
     pub(crate) fn is_window(&self, window_id: WindowId) -> bool {
@@ -215,9 +213,7 @@ impl HostState {
         let osd_deadline = self.osd_wakeup();
         if osd_deadline.is_some() {
             // Redraw while labels show so expiry applies even paused.
-            if let Some(window) = self.window.as_ref() {
-                window.request_redraw();
-            }
+            self.request_redraw();
         }
         *control_flow = next_control_flow(
             Instant::now(),
@@ -237,10 +233,8 @@ impl HostState {
         // debugger while the game runs): frames keep coming and must
         // show. Paused, unfocused, and unfollowed sleeps.
         let running = self.session.loaded() && !self.session.paused();
-        if (self.main_active() || live || running)
-            && let Some(window) = self.window.as_ref()
-        {
-            window.request_redraw();
+        if self.main_active() || live || running {
+            self.request_redraw();
         }
     }
 

@@ -634,9 +634,14 @@ impl GlView {
         ok_gl(enable(gl::BLEND))?;
         ok_gl(blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA))?;
         let drawn = ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4));
-        ok_gl(viewport(saved[0], saved[1], saved[2], saved[3]))?;
-        ok_gl(disable(gl::BLEND))?;
+        // Restore unconditionally: a failed restore must not leak the
+        // fullscreen viewport or BLEND into the next game frame. The
+        // draw result reports first; restore failures follow.
+        let restored = ok_gl(viewport(saved[0], saved[1], saved[2], saved[3]));
+        let blend_off = ok_gl(disable(gl::BLEND));
         drawn?;
+        restored?;
+        blend_off?;
         Ok(OsdOutcome::Presented)
     }
 
@@ -1119,21 +1124,24 @@ fn compile_shader_program(is_palette: bool, is_gles: bool) -> Result<Shader, Vie
     let fragment_compat = DIRECT_FRAGMENT_COMPAT; // no palette fallback for legacy
 
     let candidates: Vec<(&str, String, String)> = if is_gles {
-        vec![
-            (
-                "gles3",
-                build_glsl_source(
-                    include_str!("vertex_desktop.glsl"),
-                    Some("#version 300 es"),
-                    &["precision mediump float;"],
-                ),
-                compose_glsl_source(
-                    "#version 300 es",
-                    &["precision mediump float;"],
-                    &[fragment_desktop],
-                ),
+        let mut gles = vec![(
+            "gles3",
+            build_glsl_source(
+                include_str!("vertex_desktop.glsl"),
+                Some("#version 300 es"),
+                &["precision mediump float;"],
             ),
-            (
+            compose_glsl_source(
+                "#version 300 es",
+                &["precision mediump float;"],
+                &[fragment_desktop],
+            ),
+        )];
+        // Legacy fixed-function has no palette sampler: offering it
+        // for palette frames would sample indices as RGBA without an
+        // error. Same rule as the desktop-legacy candidate below.
+        if !is_palette {
+            gles.push((
                 "gles2",
                 include_str!("vertex.glsl").to_owned(),
                 compose_glsl_source(
@@ -1141,8 +1149,9 @@ fn compile_shader_program(is_palette: bool, is_gles: bool) -> Result<Shader, Vie
                     &["#define NERUST_MEDIUMP mediump"],
                     &[fragment_compat],
                 ),
-            ),
-        ]
+            ));
+        }
+        gles
     } else {
         let mut desktop = vec![(
             "desktop-core",
@@ -1170,10 +1179,14 @@ fn compile_shader_program(is_palette: bool, is_gles: bool) -> Result<Shader, Vie
                 log::info!("selected {name} shader pipeline");
                 return Ok(shader);
             }
-            Err(err) => errors.push(format!("{name}: {err}")),
+            Err(err) => {
+                log::warn!("{name} shader pipeline unavailable: {err}");
+                errors.push(format!("{name}: {err}"));
+            }
         }
     }
 
+    log::warn!("no GL shader pipeline compiled: {}", errors.join("; "));
     Err(ViewError::NoProgram)
 }
 

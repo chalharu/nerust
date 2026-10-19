@@ -14,6 +14,15 @@ pub(crate) enum PersistenceSetup {
     Unavailable,
 }
 
+/// Whether the mapper save loads from disk during setup. `Load` on
+/// fresh ROM loads, `Skip` when the caller already restored runtime
+/// state (settings re-apply) and must not clobber it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MapperRestore {
+    Load,
+    Skip,
+}
+
 impl SessionHandle {
     fn resolve_persistence_paths(
         &self,
@@ -40,7 +49,7 @@ impl SessionHandle {
     pub(crate) fn setup_persistence(
         &mut self,
         rom_path: Option<&Path>,
-        load_mapper_save: bool,
+        mapper_restore: MapperRestore,
     ) -> PersistenceSetup {
         let sidecars = self
             .emu
@@ -55,7 +64,7 @@ impl SessionHandle {
             .configure(sidecars.states_dir, sidecars.mapper_save_path);
         if let Some(core) = self.emu.core_opt() {
             self.media.persistence.refresh_slots(core);
-            if load_mapper_save
+            if mapper_restore == MapperRestore::Load
                 && let Err(e) = self.media.persistence.load_mapper_save_if_needed(core)
             {
                 log::warn!("load_mapper_save_if_needed failed: {e}");

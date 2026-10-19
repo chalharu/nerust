@@ -80,9 +80,18 @@ impl HostState {
 
     /// Refresh chrome after a ROM (re)load: menu, title, frame.
     pub(super) fn after_rom_load(&mut self) {
+        self.sync_chrome(true);
+    }
+
+    /// Single chrome-sync choke point: menu, title, and optionally a
+    /// frame. Call sites that re-derived the triad in varying order
+    /// converge here; omitting the redraw stays explicit at the call.
+    pub(crate) fn sync_chrome(&mut self, redraw: bool) {
         self.sync_menu_state();
-        self.request_redraw();
         self.refresh_window_title();
+        if redraw {
+            self.request_redraw();
+        }
     }
 
     pub(super) fn sync_fullscreen_from_settings(&mut self) {
@@ -110,9 +119,7 @@ impl HostState {
     ) -> Result<SettingsResult, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
         self.sync_fullscreen_from_settings();
-        self.sync_menu_state();
-        self.refresh_window_title();
-        self.request_redraw();
+        self.sync_chrome(true);
         Ok(SettingsResult {
             renderer_needs_rebuild: plan.renderer_rebuild_required
                 || plan.session_rebuild_required

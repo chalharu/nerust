@@ -730,7 +730,7 @@ class MainActivity :
      * Read by Rust every frame; the cache is refreshed on the UI thread by
      * [installSafeInsetsListener], so this call never touches the view tree.
      */
-    fun getSafeInsetsPx(): IntArray = cachedSafeInsetsPx
+    fun getSafeInsetsPx(): IntArray = cachedSafeInsetsPx.clone()
 
     private fun installSafeInsetsListener() {
         val decor = window?.decorView ?: return

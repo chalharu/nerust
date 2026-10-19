@@ -292,10 +292,9 @@ impl HostState {
 
     /// Focus-driven chrome sync. Menu/title refresh always runs; the
     /// emu snapshot only runs when pause state moved, so focus bursts
-    /// never re-hit the thread.
+    /// never re-hit the thread. No redraw: focus alone paints nothing.
     pub(crate) fn sync_debug_chrome(&mut self) {
-        self.sync_menu_state();
-        self.refresh_window_title();
+        self.sync_chrome(false);
         if chrome_drain_due(
             self.debug.is_debug_open(),
             self.debug.last_drain_paused(),

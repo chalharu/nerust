@@ -285,6 +285,13 @@ impl HistoryWindowHandle {
             None,
             "history window",
         )
+        .map_err(|error| {
+            // Typed scaffold failures carry the window tag plus the
+            // native detail; surface them here since the opener seam
+            // is Option-based.
+            log::error!("{error}");
+            error
+        })
         .ok()?;
         let clear_requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let view_invalidated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -333,11 +340,15 @@ impl super::focus::WindowHandler for HistoryWindowHandle {
         let (messages, outcome) = self.shell.pump_frame(mapped);
         // Repaint already requested a redraw inside `pump_frame`.
         let repainted = matches!(outcome, crate::aux::shell::PumpOutcome::Repaint);
-        let rebuilt = if !messages.is_empty() {
-            self.shell.process(messages, &self.view_invalidated)
-        } else {
-            false
-        };
+        if matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
+            self.shell.request_redraw();
+        }
+        let rebuilt =
+            if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
+                self.shell.process(messages, &self.view_invalidated)
+            } else {
+                false
+            };
         repainted || rebuilt
     }
 }

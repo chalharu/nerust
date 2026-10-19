@@ -32,7 +32,7 @@ fn touch_role_for_abstract_key(key: AbstractKey) -> Option<TouchControlRole> {
 
 /// Abstraction over a binding type (keyboard, gamepad, etc.) for building
 /// a source-key → field-index map from an InputAssignments field_map.
-trait InputBinding {
+pub(crate) trait InputBinding {
     type Id: Copy + Eq + Hash;
     fn matches(&self, attachment: &AttachmentId, control: &DigitalControlId) -> bool;
     fn source_id(&self) -> Self::Id;
@@ -49,7 +49,7 @@ impl InputBinding for KeyboardBinding {
 }
 
 /// Generic rebuild: iterate field_map, find matching bindings, populate target map.
-fn rebuild_input_map<B: InputBinding>(
+pub(crate) fn rebuild_input_map<B: InputBinding>(
     field_map: &HashMap<(AttachmentId, DigitalControlId), usize>,
     bindings: &[B],
     target: &mut HashMap<B::Id, usize>,
@@ -139,27 +139,22 @@ impl SessionHandle {
     }
 
     pub fn rebuild_key_field_map(&mut self) {
-        self.input.key_field_map.clear();
-        let Some(factory) = self.active_factory() else {
-            return;
-        };
-        let system_id = factory.system_id();
-        let Some(profile) = self
-            .settings
-            .snapshot
-            .shared
-            .input
-            .systems
-            .get(&system_id)
-            .and_then(|s| s.implicit_keyboard_profile())
-        else {
-            return;
-        };
-        rebuild_input_map(
-            &self.input.field_map,
-            &profile.bindings,
-            &mut self.input.key_field_map,
-        );
+        let bindings = self
+            .active_factory()
+            .map(|factory| factory.system_id())
+            .and_then(|system_id| {
+                self.settings
+                    .snapshot
+                    .shared
+                    .input
+                    .systems
+                    .get(&system_id)
+                    .and_then(|s| s.implicit_keyboard_profile())
+            });
+        // The cluster owns the map; the session only resolves which
+        // profile is active.
+        self.input
+            .rebuild_key_field_map(bindings.map(|p| p.bindings.as_slice()));
     }
 }
 

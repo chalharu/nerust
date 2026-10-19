@@ -17,9 +17,13 @@ impl SessionHandle {
             .unwrap_or_default()
     }
 
-    /// Whether the emulation is paused. Snapshot reads require pause;
-    /// frontends offer debugger refreshes only while paused.
-    pub fn debug_paused(&self) -> bool {
+    /// Whether a debugger snapshot read is safe. True while paused,
+    /// and also with no core (nothing runs, so nothing can change
+    /// under the read). Deliberately different from [`paused`]:
+    /// that reports the emulation pause flag (`false` with no core),
+    /// this reports read safety (`true` with no core).
+    /// [`paused`]: SessionHandle::paused
+    pub fn debug_snapshot_ready(&self) -> bool {
         self.emu.core_opt().is_none_or(|core| core.metrics().paused)
     }
 
