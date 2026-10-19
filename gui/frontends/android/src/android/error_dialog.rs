@@ -12,8 +12,9 @@ pub(crate) fn request_show_error_dialog(app: &AndroidApp, message: &str) {
     let callback_app = app.clone();
     let message = message.to_string();
     app.run_on_java_main_thread(Box::new(move || {
-        let result = unsafe { JavaVM::from_raw(callback_app.vm_as_ptr() as _) }
-            .attach_current_thread(|env| {
+        let result = super::bridge::with_java_env(
+            &unsafe { JavaVM::from_raw(callback_app.vm_as_ptr() as _) },
+            |env| {
                 let activity_raw = callback_app.activity_as_ptr() as jobject;
                 let activity = unsafe { JObject::from_raw(env, activity_raw) };
                 let text = env.new_string(&message)?;
@@ -24,7 +25,8 @@ pub(crate) fn request_show_error_dialog(app: &AndroidApp, message: &str) {
                     &[JValue::Object(text.as_ref())],
                 )?;
                 Ok::<_, jni::errors::Error>(())
-            });
+            },
+        );
         if let Err(error) = result {
             log::error!("failed to show Android error dialog: {error:?}");
             // No Kotlin dismiss will arrive: synthesize one so the gate,

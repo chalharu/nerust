@@ -3,6 +3,8 @@
 
 /// Quantized density key: `round(scale * 100)`, clamped to sane range.
 /// Key equality is the epsilon; `u32::MAX` stays a force-miss sentinel.
+/// NaN maps to 0 (unreachable after the 0.25 clamp floor), so 0 means
+/// "unmeasurable" without colliding with any real key.
 pub(crate) fn density_key(scale: f32) -> u32 {
     if scale.is_nan() {
         return 0;

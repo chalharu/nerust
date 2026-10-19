@@ -100,7 +100,7 @@ impl AndroidStorageBackend {
         payload: Option<&str>,
     ) -> Result<Option<String>, PersistenceError> {
         let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        vm.attach_current_thread(|env| {
+        super::bridge::with_java_env(&vm, |env| {
             let activity_raw = self.app.activity_as_ptr() as jobject;
             let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
             let uri = JString::from_str(env, uri)?;

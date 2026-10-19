@@ -170,7 +170,7 @@ fn show_toast(app: &AndroidApp, message: &str) {
     let message = message.to_string();
     app.run_on_java_main_thread(Box::new(move || {
         let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        if let Err(error) = vm.attach_current_thread(|env| {
+        if let Err(error) = bridge::with_java_env(&vm, |env| {
             let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
             let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
 
@@ -216,7 +216,7 @@ fn configure_controls_overlay(
     let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
         let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+        let result: Result<(), jni::errors::Error> = bridge::with_java_env(&vm, |env| {
             let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
             let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
             let visibility = env.new_string(&visibility)?;
@@ -258,7 +258,7 @@ fn configure_cartridge_peripherals(
     let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
         let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+        let result: Result<(), jni::errors::Error> = bridge::with_java_env(&vm, |env| {
             let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
             let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
             let target = env.new_string(&target)?;
@@ -286,7 +286,7 @@ fn set_cartridge_rumble(app: &AndroidApp, intensity: u8) {
     let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
         let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+        let result: Result<(), jni::errors::Error> = bridge::with_java_env(&vm, |env| {
             let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
             let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
             env.call_method(
@@ -845,16 +845,17 @@ impl AndroidFrontend {
                 log::info!("handle_picker_result: picker dismissed");
             }
         }
+        // Transient UI summons IME and system bars: the cached insets
+        // key (size+density) cannot see those, so re-query next frame.
+        self.osd.invalidate_system_insets();
     }
 
-    fn handle_settings_result(&mut self, result: SettingsDialogResult) {
+    fn handle_settings_result(&mut self, result: SettingsDialogResult, tick: TickMetrics) {
         // Settings closed (applied or dismissed): re-derive the open
         // flag, flush the error queue, and resume an orphaned pause.
-        // The gate reads the same bridge truth as the cache: a sync-path
-        // reopen racing this result keeps its shield instead of taking
-        // an auto-paused error dialog underneath.
         self.settings_open = settings::is_dialog_open();
-        if self.settings_open {
+        let is_applied = matches!(result, SettingsDialogResult::Applied(_));
+        if self.settings_open && !is_applied {
             // Stale synthesized dismiss racing a suspend-then-rerequest:
             // the dialog is visually up, so this result belongs to a
             // dead flight. Ignore it; the live flight's result arrives
@@ -862,22 +863,27 @@ impl AndroidFrontend {
             log::debug!("handle_settings_result: stale result while dialog open; ignoring");
             return;
         }
-        let screen = Screen::show_gate(
-            self.is_resumed,
-            self.settings_open,
-            self.session.can_pause(),
-        );
-        match self.osd.settings_closed_error_dialog(screen) {
-            SettingsClosedTransition::Show { auto_pause } => {
-                if auto_pause {
-                    self.pause();
+        if self.settings_open {
+            // Applied racing a live re-request (suspend cleared the
+            // old pending, the rerequest minted a new one before this
+            // ran): the values are real user input, so apply them even
+            // though the new dialog shows pre-apply content. Error
+            // flush stays shielded below; the user re-saves if needed.
+            log::warn!("handle_settings_result: applying settings while a newer dialog is open");
+        } else {
+            let screen = Screen::show_gate(self.is_resumed, self.settings_open, tick.can_pause());
+            match self.osd.settings_closed_error_dialog(screen) {
+                SettingsClosedTransition::Show { auto_pause } => {
+                    if auto_pause {
+                        self.pause();
+                    }
+                    if let Some(detail) = self.osd.current_detail() {
+                        error_dialog::request_show_error_dialog(&self.app, &detail);
+                    }
                 }
-                if let Some(detail) = self.osd.current_detail() {
-                    error_dialog::request_show_error_dialog(&self.app, &detail);
-                }
+                SettingsClosedTransition::Resume => self.resume(),
+                SettingsClosedTransition::Idle => {}
             }
-            SettingsClosedTransition::Resume => self.resume(),
-            SettingsClosedTransition::Idle => {}
         }
         let SettingsDialogResult::Applied(values) = result else {
             log::info!("handle_settings_result: settings dialog dismissed");
@@ -1081,7 +1087,7 @@ impl AndroidFrontend {
                     }
                     self.session.flush_before_exit();
                     let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-                    if let Err(error) = vm.attach_current_thread(|env| {
+                    if let Err(error) = bridge::with_java_env(&vm, |env| {
                         let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
                         let activity =
                             unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
@@ -1123,12 +1129,19 @@ impl AndroidFrontend {
     }
 
     /// Show the oldest queued error unless suspended, already showing,
-    /// or settings owns the screen. The cached flag avoids a bridge
-    /// lock per pass; dismissal still consults the bridge as truth.
+    /// or settings owns the screen. Bridge truth, not the cached flag:
+    /// the sync JNI path shows the settings dialog before the event
+    /// loop drains the open event, so the cache can read stale `false`
+    /// in that window and evict just-opened settings (Kotlin now also
+    /// refuses the eviction; both layers guard the same race).
     /// Takes the pass tick so the caller pays one metrics lock, not
     /// one per dialog gate.
     fn maybe_show_error_dialog(&mut self, tick: TickMetrics) {
-        let screen = Screen::show_gate(self.is_resumed, self.settings_open, tick.can_pause());
+        let screen = Screen::show_gate(
+            self.is_resumed,
+            settings::is_dialog_open(),
+            tick.can_pause(),
+        );
         let request = self.osd.poll_error_dialog(screen);
         let Some(transition) = request else {
             return;
@@ -1293,6 +1306,7 @@ impl AndroidFrontend {
         let config = RendererConfig {
             render_profile,
             vsync,
+            max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
         };
         let renderer_result = self
             .gpu_factory
@@ -1334,9 +1348,14 @@ impl AndroidFrontend {
             log::info!("finish_rom_load: clearing hidden lifecycle state");
             self.session.clear_hidden_lifecycle_state();
         }
-        // Resume fresh loads always; restores only our own auto-pause
-        // (a manual pause predates the suspend and must survive it),
-        // never across an error auto-pause (its dismiss owns that).
+        // Stale batches straddle no ROM boundary: requeue the unacked
+        // head so the previous ROM's error never describes the new one.
+        // The pause flag survives, so the gate below holds the resume
+        // until the requeued dialog is dismissed.
+        self.osd.suspend_error_dialog();
+        // Resume fresh loads and own auto-pauses, never across an error
+        // auto-pause (its dismiss owns that); a manual pause predates
+        // the suspend and must survive it.
         let want = crate::lifecycle_decision::should_resume_after_restore(
             restore_hidden_state,
             self.lifecycle_auto_paused,
@@ -1344,7 +1363,6 @@ impl AndroidFrontend {
         let want = want.then_some(crate::lifecycle_decision::ResumeWant::FreshLoad);
         if crate::lifecycle_decision::should_resume_on_foreground(
             crate::lifecycle_decision::ForegroundResume {
-                lifecycle_paused: self.lifecycle_auto_paused,
                 error_paused: self.osd.error_auto_paused(),
                 want,
             },
@@ -1538,7 +1556,6 @@ impl AndroidFrontend {
                     .then_some(crate::lifecycle_decision::ResumeWant::LifecycleRetry);
                 if crate::lifecycle_decision::should_resume_on_foreground(
                     crate::lifecycle_decision::ForegroundResume {
-                        lifecycle_paused: self.lifecycle_auto_paused,
                         error_paused: self.osd.error_auto_paused(),
                         want,
                     },
@@ -1846,7 +1863,7 @@ impl AndroidFrontend {
 
 fn notify_rom_loaded(app: &AndroidApp, system_id: &str) {
     let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
-    if let Err(error) = vm.attach_current_thread(|env| {
+    if let Err(error) = bridge::with_java_env(&vm, |env| {
         let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
         let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
         let system_id = env.new_string(system_id)?;
@@ -1867,7 +1884,7 @@ fn perform_control_haptic(app: &AndroidApp) {
     let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
         let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        if let Err(error) = vm.attach_current_thread(|env| {
+        if let Err(error) = bridge::with_java_env(&vm, |env| {
             let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
             let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
             env.call_method(
@@ -1893,7 +1910,7 @@ fn update_floating_dpad_visual(
     let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
         let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        if let Err(error) = vm.attach_current_thread(|env| {
+        if let Err(error) = bridge::with_java_env(&vm, |env| {
             let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
             let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
             env.call_method(
@@ -2074,21 +2091,25 @@ impl ApplicationHandler for AndroidFrontend {
             return;
         }
         let now = Instant::now();
+        // One metrics lock per pass: dialog gates below thread this
+        // tick instead of re-locking per predicate.
+        let tick = self.session.tick_metrics();
         self.try_resume_foreground(event_loop);
         if let Some(result) = picker::take_result() {
             self.handle_picker_result(event_loop, result);
         }
         if let Some(result) = settings::take_result() {
-            self.handle_settings_result(result);
+            self.handle_settings_result(result, tick);
+            // Same transient-UI reason as the picker path above.
+            self.osd.invalidate_system_insets();
         }
         menu::take_events_into(&mut self.event_scratch);
         // Acks first: modal gate release must not wait behind an input
-        // burst. Single-pass stable partition keeps menu order.
+        // burst. Stable in-place sort keeps menu order without
+        // allocating two Vecs per burst tick.
         let mut pending = std::mem::take(&mut self.event_scratch);
-        let (acks, rest): (Vec<_>, Vec<_>) = pending
-            .drain(..)
-            .partition(|event| matches!(event, FrontendEvent::ErrorDialogDismissed));
-        for event in acks.into_iter().chain(rest) {
+        pending.sort_by_key(|event| !matches!(event, FrontendEvent::ErrorDialogDismissed));
+        for event in pending.drain(..) {
             self.handle_menu_action(event);
         }
         self.event_scratch = pending;
@@ -2096,7 +2117,6 @@ impl ApplicationHandler for AndroidFrontend {
         self.maybe_refresh_title(now);
         let settings = self.notification_settings();
         let language = self.notification_language();
-        let tick = self.session.tick_metrics();
         if self
             .osd
             .poll(&mut self.session, &settings, language, now, tick)

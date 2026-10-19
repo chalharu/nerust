@@ -43,6 +43,7 @@ import android.widget.PopupWindow
 import android.widget.TextView
 import android.window.OnBackInvokedDispatcher
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1251,6 +1252,15 @@ class MainActivity :
      * next queued error. A long batch scrolls instead of clipping.
      */
     fun showErrorDialog(message: String) {
+        // Never evict the settings dialog: Rust gates on bridge truth,
+        // but a racing show must not destroy in-progress settings input
+        // either. Ack as dismissed so Rust keeps the batch queued behind
+        // settings instead of losing it.
+        if (composeDialogTag == SETTINGS_DIALOG_TAG && composeDialog?.isShowing == true) {
+            Log.i(TAG, "showErrorDialog: suppressed while settings dialog is showing")
+            dispatchMenuAction(MENU_ACTION_ERROR_DIALOG_DISMISSED)
+            return
+        }
         showComposeDialog(
             dialogTag = ERROR_DIALOG_TAG,
             contentDescription = message,
@@ -1629,6 +1639,14 @@ class MainActivity :
             lastDialogStateForTest = "show failed for $dialogTag: illegal state"
             Log.w(TAG, "showComposeDialog: failed for $dialogTag with illegal state", error)
             onDismiss()
+        } catch (error: RuntimeException) {
+            // Compose content threw on the main thread: release the
+            // gate like any other show failure so Rust never wedges.
+            dialog.setOnDismissListener(null)
+            clearComposeDialogWindowReferences()
+            lastDialogStateForTest = "show failed for $dialogTag: runtime"
+            Log.w(TAG, "showComposeDialog: failed for $dialogTag with runtime error", error)
+            onDismiss()
         }
     }
 
@@ -1935,13 +1953,15 @@ private fun NerustErrorDialogCard(
                 TextButton(onClick = onDismissRequest) { Text("OK") }
             },
         ) {
-            Text(
-                text = message,
-                modifier =
-                    Modifier
-                        .heightIn(max = 480.dp)
-                        .verticalScroll(rememberScrollState()),
-            )
+            SelectionContainer {
+                Text(
+                    text = message,
+                    modifier =
+                        Modifier
+                            .heightIn(max = 480.dp)
+                            .verticalScroll(rememberScrollState()),
+                )
+            }
         }
     }
 }

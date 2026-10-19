@@ -774,8 +774,9 @@ pub(crate) fn apply_screen_orientation(app: &AndroidApp, orientation: ScreenOrie
     let app = app.clone();
     let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
-        let result = unsafe { JavaVM::from_raw(callback_app.vm_as_ptr() as _) }
-            .attach_current_thread(|env| {
+        let result = super::bridge::with_java_env(
+            &unsafe { JavaVM::from_raw(callback_app.vm_as_ptr() as _) },
+            |env| {
                 let activity_raw = callback_app.activity_as_ptr() as jobject;
                 let activity = unsafe { JObject::from_raw(env, activity_raw) };
                 let value = match orientation {
@@ -790,7 +791,8 @@ pub(crate) fn apply_screen_orientation(app: &AndroidApp, orientation: ScreenOrie
                     &[JValue::Int(value)],
                 )?;
                 Ok::<_, jni::errors::Error>(())
-            });
+            },
+        );
         if let Err(error) = result {
             log::error!("failed to apply Android screen orientation: {error:?}");
         }
@@ -873,7 +875,7 @@ pub(crate) fn request_show_settings_dialog(
 
 fn show_settings_on_java_main_thread(app: &AndroidApp, payload: &str) -> Result<(), String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    vm.attach_current_thread(|env| {
+    super::bridge::with_java_env(&vm, |env| {
         let activity_raw = app.activity_as_ptr() as jobject;
         let activity = unsafe { JObject::from_raw(env, activity_raw) };
         show_settings_with_env_inner(env, activity.as_ref(), payload)
@@ -940,6 +942,28 @@ fn resolve_pending_as_dismissed() {
     bridge::wake();
 }
 
+/// Id-conditional variant for callbacks that parsed far enough to
+/// trust the request id (e.g. schema mismatch): a stale callback
+/// racing a suspend-then-rerequest must not clear the live flight.
+/// Production dismissals always carry an id (Kotlin synthesizes
+/// dismissed JSON with the request id); only id-less paths (null
+/// test hooks, undecodable payloads) use the unconditional form.
+fn resolve_pending_as_dismissed_for(request_id: u64) {
+    let cleared = with_state(|state| {
+        if state.pending_request_id != Some(request_id) {
+            return false;
+        }
+        state.result = Some(SettingsDialogResult::Dismissed);
+        state.pending_request_id = None;
+        true
+    });
+    if !cleared {
+        log::warn!("ignoring stale Android settings failure for request {request_id}");
+        return;
+    }
+    bridge::wake();
+}
+
 // JNI callback for the settings dialog result.
 // Null means dismissed; otherwise versioned JSON with ID and values.
 
@@ -973,7 +997,9 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
                     "unsupported Android settings result schema {}",
                     payload.schema_version
                 );
-                resolve_pending_as_dismissed();
+                // The payload parsed, so its id is trustworthy:
+                // clear only its own flight, never a newer rerequest.
+                resolve_pending_as_dismissed_for(payload.request_id);
             }
             Err(error) => {
                 log::error!("failed to parse Android settings result: {error}");

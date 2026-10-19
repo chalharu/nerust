@@ -4,11 +4,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required (cargo metadata target_directory parsing)" >&2
+    exit 1
+fi
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --manifest-path "${WORKSPACE_ROOT}/Cargo.toml" --format-version 1 --no-deps 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 
 if [[ -z "${TAG_NAME:-}" ]]; then
     TAG_NAME="$(git -C "${WORKSPACE_ROOT}" describe --tags --abbrev=0 2>/dev/null || true)"
     if [[ -z "${TAG_NAME}" ]]; then
+        if [[ -n "${CI:-}" ]]; then
+            echo "release builds must export TAG_NAME (no git tag found)" >&2
+            exit 1
+        fi
         # Non-reproducible dev fallback: release builds must export TAG_NAME.
         echo "warning: no git tag found; using non-reproducible version v0.1.0" >&2
         TAG_NAME="v0.1.0"
@@ -113,7 +121,7 @@ echo "  output : ${OUT_DIR}/${APK_NAME}"
 # Stage native libs outside the tree: a failed build must not leave
 # a half-populated jniLibs behind (stale .so would ship silently).
 STAGE_JNI_LIBS="$(mktemp -d)"
-trap cleanup_staging EXIT
+# Single EXIT trap (cleanup_staging covers both temp dirs).
 mkdir -p "${STAGE_JNI_LIBS}"
 
 prepare_signing_keystore
@@ -157,7 +165,12 @@ native_budget_bytes() {
     printf '%s' "${BUDGET_BYTES:-41943040}"
 }
 readelf_bin=""
-for cand in "${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf; do
+# Array expansion keeps NDK paths with spaces intact; the unquoted
+# glob below would word-split them.
+shopt -s nullglob
+ndk_readelfs=("${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf)
+shopt -u nullglob
+for cand in ${ndk_readelfs[@]+"${ndk_readelfs[@]}"}; do
     if [[ -x "${cand}" ]]; then
         readelf_bin="${cand}"
         break
@@ -172,11 +185,10 @@ fi
 if [[ -n "${SKIP_NATIVE_GATE:-}" ]]; then
     echo "warning: native DWARF/size gate skipped by request; a bloated .so will ship silently" >&2
 elif [[ -z "${readelf_bin}" ]]; then
-    if [[ -n "${CI:-}" ]]; then
-        echo "no llvm-readelf/readelf found: cannot verify DWARF strip" >&2
-        exit 1
-    fi
-    echo "warning: no llvm-readelf/readelf found; skipping DWARF/size gate" >&2
+    # The gate exists because of the 156MB incident: a missing reader
+    # off CI is a hole, not a pass. Require the explicit bypass there too.
+    echo "no llvm-readelf/readelf found: cannot verify DWARF strip (set SKIP_NATIVE_GATE=1 to bypass explicitly)" >&2
+    exit 1
 else
     shopt -s nullglob
     so_files=("${STAGE_JNI_LIBS}"/*/libmain.so)
@@ -201,9 +213,14 @@ else
     done
 fi
 # Gate passed (or deliberately skipped): publish the staged libs.
+# Swap via a temp dir so an interrupted copy never leaves a
+# half-populated jniLibs tree behind.
+stage_publish_tmp="${JNI_LIBS_DIR}.new"
+rm -rf "${stage_publish_tmp}"
+mkdir -p "${stage_publish_tmp}"
+cp -r "${STAGE_JNI_LIBS}/." "${stage_publish_tmp}/"
 rm -rf "${JNI_LIBS_DIR}"
-mkdir -p "${JNI_LIBS_DIR}"
-cp -r "${STAGE_JNI_LIBS}/." "${JNI_LIBS_DIR}/"
+mv "${stage_publish_tmp}" "${JNI_LIBS_DIR}"
 
 (
     cd "${SCRIPT_DIR}"
