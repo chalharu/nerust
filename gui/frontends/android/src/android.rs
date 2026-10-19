@@ -63,7 +63,7 @@ use self::{
     settings::AndroidSettings,
     storage::{AndroidStorage, LastMediaReference},
 };
-use crate::error_dialog_controller::{ScreenState, SettingsClosedTransition};
+use crate::error_dialog_controller::{Screen, SettingsClosedTransition};
 
 const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 const FOREGROUND_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
@@ -848,7 +848,7 @@ impl AndroidFrontend {
         // Settings closed (applied or dismissed): re-derive the open
         // flag, flush the error queue, and resume an orphaned pause.
         self.settings_open = settings::is_dialog_open();
-        let screen = ScreenState::new(self.is_resumed, false, self.session.can_pause());
+        let screen = Screen::show_gate(self.is_resumed, false, self.session.can_pause());
         match self.osd.settings_closed_error_dialog(screen) {
             SettingsClosedTransition::Show { auto_pause } => {
                 if auto_pause {
@@ -1104,7 +1104,7 @@ impl AndroidFrontend {
     /// or settings owns the screen. The cached flag avoids a bridge
     /// lock per pass; dismissal still consults the bridge as truth.
     fn maybe_show_error_dialog(&mut self) {
-        let screen = ScreenState::new(
+        let screen = Screen::show_gate(
             self.is_resumed,
             self.settings_open,
             self.session.can_pause(),
@@ -1128,7 +1128,7 @@ impl AndroidFrontend {
     fn handle_error_dialog_dismissed(&mut self) {
         // Bridge truth here: a settings dialog may have opened over the
         // error between the cached flag's last event-driven update.
-        let screen = ScreenState::new(self.is_resumed, settings::is_dialog_open(), false);
+        let screen = Screen::show_gate(self.is_resumed, settings::is_dialog_open(), false);
         let transition = self.osd.dismiss_error_dialog(screen);
         if transition.resume {
             self.resume();
@@ -1311,13 +1311,17 @@ impl AndroidFrontend {
         // Resume fresh loads always; restores only our own auto-pause
         // (a manual pause predates the suspend and must survive it),
         // never across an error auto-pause (its dismiss owns that).
-        if crate::lifecycle_decision::should_resume_on_foreground(
+        let want = crate::lifecycle_decision::should_resume_after_restore(
+            restore_hidden_state,
             self.lifecycle_auto_paused,
-            self.osd.error_auto_paused(),
-            crate::lifecycle_decision::should_resume_after_restore(
-                restore_hidden_state,
-                self.lifecycle_auto_paused,
-            ),
+        );
+        let want = want.then_some(crate::lifecycle_decision::ResumeWant::FreshLoad);
+        if crate::lifecycle_decision::should_resume_on_foreground(
+            crate::lifecycle_decision::ForegroundResume {
+                lifecycle_paused: self.lifecycle_auto_paused,
+                error_paused: self.osd.error_auto_paused(),
+                want,
+            },
         ) {
             self.lifecycle_auto_paused = false;
             self.resume();
@@ -1503,11 +1507,15 @@ impl AndroidFrontend {
                 }
                 // Resume only our own lifecycle auto-pause, never across
                 // an error auto-pause (its dismiss path owns that resume).
-                let want_lifecycle_resume = self.lifecycle_auto_paused;
+                let want = self
+                    .lifecycle_auto_paused
+                    .then_some(crate::lifecycle_decision::ResumeWant::LifecycleRetry);
                 if crate::lifecycle_decision::should_resume_on_foreground(
-                    want_lifecycle_resume,
-                    self.osd.error_auto_paused(),
-                    want_lifecycle_resume,
+                    crate::lifecycle_decision::ForegroundResume {
+                        lifecycle_paused: self.lifecycle_auto_paused,
+                        error_paused: self.osd.error_auto_paused(),
+                        want,
+                    },
                 ) {
                     self.resume();
                     self.lifecycle_auto_paused = false;

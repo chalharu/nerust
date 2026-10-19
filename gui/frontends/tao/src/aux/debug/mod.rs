@@ -308,7 +308,7 @@ impl DebugWindowHandle {
             Some(DEBUG_WINDOW_MIN_SIZE),
             position,
             "debugger window",
-        )?;
+        ).ok()?;
         let program = DebugProgram {
             bridge: Arc::clone(&bridge),
         };

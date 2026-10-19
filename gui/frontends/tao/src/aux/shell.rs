@@ -58,6 +58,21 @@ pub(crate) struct WindowScaffold {
     pub(crate) surface: Surface,
 }
 
+/// Why an aux window failed to open. Carried to the log with the
+/// window tag so headless/CI failures name the lost window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScaffoldError {
+    BuildWindow,
+}
+
+impl core::fmt::Display for ScaffoldError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ScaffoldError::BuildWindow => write!(f, "native window build failed"),
+        }
+    }
+}
+
 impl WindowScaffold {
     pub(crate) fn open(
         event_loop: &EventLoopWindowTarget<UserEvent>,
@@ -66,7 +81,7 @@ impl WindowScaffold {
         min_size: Option<(f64, f64)>,
         position: Option<(i32, i32)>,
         log_tag: &'static str,
-    ) -> Option<Self> {
+    ) -> Result<Self, ScaffoldError> {
         let mut builder = WindowBuilder::new()
             .with_title(title)
             .with_inner_size(tao::dpi::LogicalSize::new(size.0, size.1));
@@ -84,7 +99,7 @@ impl WindowScaffold {
             Ok(window) => window,
             Err(error) => {
                 log::error!("failed to create {log_tag}: {error}");
-                return None;
+                return Err(ScaffoldError::BuildWindow);
             }
         });
         let window_id = iced::window::Id::unique();
@@ -103,7 +118,7 @@ impl WindowScaffold {
         let renderer = compositor.create_renderer();
         let surface =
             compositor.create_surface(Arc::clone(&window), window_size.width, window_size.height);
-        Some(Self {
+        Ok(Self {
             window,
             window_id,
             scale_factor,
@@ -285,6 +300,8 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         self.ui = Some(rebuilt);
     }
 
+    /// Runs pending messages, rebuilding once. Reports whether a
+    /// rebuild happened so the shell redraws only on real change.
     pub(crate) fn process_messages(
         &mut self,
         messages: Vec<P::Message>,
@@ -292,9 +309,9 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         bounds: Size,
         renderer: &mut Renderer,
         invalidated: &AtomicBool,
-    ) {
+    ) -> bool {
         if messages.is_empty() && !invalidated.load(Ordering::Acquire) {
-            return;
+            return false;
         }
         // Single build: take the old UI out, harvest its cache, run
         // the messages, and rebuild once.
@@ -308,6 +325,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         let rebuilt = Self::build_ui(&self.instance, window_id, bounds, cache, renderer);
         self.ui = Some(rebuilt);
         invalidated.store(false, Ordering::Release);
+        true
     }
 }
 
@@ -372,17 +390,22 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         (messages, outcome)
     }
 
-    /// Run pending messages against the retained tree, then redraw.
+    /// Run pending messages against the retained tree, redrawing only
+    /// on a real rebuild. Quiet batches (no messages, no flag) skip
+    /// the frame: the trailing redraw in `pump_window_event` stays the
+    /// safety net for paths that bypass `process`.
     pub(crate) fn process(&mut self, messages: Vec<P::Message>, invalidated: &AtomicBool) {
         let bounds = self.logical_bounds();
-        self.ui_state.process_messages(
+        let rebuilt = self.ui_state.process_messages(
             messages,
             self.window_id,
             bounds,
             &mut self.renderer.backend,
             invalidated,
         );
-        self.window.request_redraw();
+        if rebuilt {
+            self.window.request_redraw();
+        }
     }
 }
 
