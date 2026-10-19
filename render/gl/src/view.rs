@@ -972,7 +972,7 @@ mod tests {
             y: 0,
             width: 2,
             height: 1,
-            rgba: vec![255; 2 * 1 * 4],
+            rgba: vec![255; 8],
         };
         view.set_osd_layer(Some(layer.clone()));
         assert!(view.osd_dirty);
@@ -1038,7 +1038,7 @@ mod tests {
             y: 0,
             width: 2,
             height: 1,
-            rgba: vec![255; 2 * 1 * 4],
+            rgba: vec![255; 8],
         }));
         view
     }
