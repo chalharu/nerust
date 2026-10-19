@@ -330,10 +330,8 @@ impl DebugWindowHandle {
 
     pub(crate) fn sync_from_bridge(&mut self) {
         self.bridge.view_invalidated.store(true, Ordering::Release);
-        self.shell.process(
-            Vec::new(),
-            crate::aux::shell::Dirty::view(&self.bridge.view_invalidated),
-        );
+        self.shell
+            .process(Vec::new(), &self.bridge.view_invalidated);
     }
 }
 
@@ -383,10 +381,7 @@ impl super::focus::WindowHandler for DebugWindowHandle {
         }
         let rebuilt =
             if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-                self.shell.process(
-                    messages,
-                    crate::aux::shell::Dirty::view(&self.bridge.view_invalidated),
-                )
+                self.shell.process(messages, &self.bridge.view_invalidated)
             } else {
                 false
             };

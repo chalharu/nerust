@@ -13,6 +13,49 @@ pub struct SettingsSnapshot {
     pub app_state: DesktopAppState,
 }
 
+/// How the session absorbs a settings delta without (or with) a rebuild.
+///
+/// Derived from [`SettingsApplyPlan`] plus session state, so every
+/// caller (apply, rollback, tests) names the same strategy instead of
+/// re-deriving it from raw flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveStrategy {
+    /// No runtime state to move: volume-only or nothing.
+    Idle,
+    /// Swap the audio backend live; the new backend carries volume.
+    AudioSwap,
+    /// Try a presentation-only swap; fall back to [`Rebuild`](Self::Rebuild) when unavailable.
+    PresentationSwap,
+    /// Full core reconstruction.
+    Rebuild,
+}
+
+impl SettingsApplyPlan {
+    /// Fold the plan flags into one strategy. `assignments_changed`
+    /// forces reconstruction (field maps are build-time); `has_core`
+    /// gates the live paths (nothing to swap without a core).
+    pub fn live_strategy(&self, assignments_changed: bool, has_core: bool) -> LiveStrategy {
+        // `session_rebuild_required` folds the rate/latency and visual
+        // reasons; the live paths below absorb the audio-only delta,
+        // leaving only core behavior changes (and reassignments) on
+        // the rebuild path.
+        let visual_changed = self.session_rebuild_required && !self.audio_backend_changed;
+        if self.audio_backend_changed && !visual_changed && !assignments_changed && has_core {
+            // Audio-only delta: the swap absorbs the rebuild entirely
+            // (the replacement backend carries the new volume too).
+            LiveStrategy::AudioSwap
+        } else if visual_changed || assignments_changed {
+            if visual_changed && !assignments_changed && has_core {
+                LiveStrategy::PresentationSwap
+            } else {
+                LiveStrategy::Rebuild
+            }
+        } else {
+            LiveStrategy::Idle
+        }
+    }
+}
+
 /// Flags describing what changed between two snapshots.
 ///
 /// Returned by `derive_apply_plan()` in `nerust_gui_runtime::settings::apply`.

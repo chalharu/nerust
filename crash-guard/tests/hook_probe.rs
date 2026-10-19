@@ -23,5 +23,7 @@ fn guard_exits_101_with_logged_report() {
     assert_eq!(output.status.code(), Some(101), "probe must exit(101)");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("probe crash"), "{stderr}");
-    assert!(stderr.contains("crashed on thread"), "{stderr}");
+    // The panic hook is the sole logger; `run_guarded` builds the report
+    // silently for the host dialog (see the probe's "dialog would show" line).
+    assert!(stderr.contains("panic on thread"), "{stderr}");
 }

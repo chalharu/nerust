@@ -87,38 +87,28 @@ impl State {
         self.session.render_profile()
     }
 
-    pub(crate) fn can_pause(&self) -> bool {
-        self.session.can_pause()
-    }
-
-    pub(crate) fn can_resume(&self) -> bool {
-        self.session.can_resume()
-    }
-
     /// Load a ROM, flagging a renderer rebuild on success.
     /// Returns the failure detail on error; presenting it (dialog)
     /// is the caller's job so no error state is stashed here.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        if let Err(error) = self.ctx.rom_loader.load_rom(path, &mut self.session) {
+        let mut target =
+            nerust_gui_shell::session::load_adapter::SessionLoadAdapter::new(&mut self.session);
+        if let Err(error) = self.ctx.rom_loader.load_rom(path, &mut target) {
             log::warn!("ROM load failed: {error}");
             return Err(error.to_string());
         }
-        if self.session.loaded() {
+        if self.session.tick_metrics().loaded {
             self.renderer_reload_pending = true;
         }
         Ok(())
     }
 
-    pub(crate) fn loaded(&self) -> bool {
-        self.session.loaded()
-    }
-
     pub(crate) fn paused(&self) -> bool {
-        self.session.paused()
+        self.session.tick_metrics().paused
     }
 
     pub(crate) fn title(&self) -> String {
-        self.session.window_title()
+        self.session.window_title(&self.session.tick_metrics())
     }
 
     pub(crate) fn flush_before_exit(&mut self) {

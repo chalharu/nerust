@@ -26,11 +26,11 @@ impl HostState {
     }
 
     pub(crate) fn on_settings_closed(&mut self) {
-        if self.settings.window.is_none() {
+        if !self.settings_open() {
             return;
         }
-        self.settings.window = None;
-        let should_resume = std::mem::take(&mut self.settings.resume_after);
+        let should_resume = self.settings.take_resume_after();
+        self.settings.close_all();
         if should_resume {
             self.resume();
         } else {
@@ -42,8 +42,10 @@ impl HostState {
         if self.settings_open() {
             return;
         }
-        self.settings.resume_after = self.session.loaded() && !self.session.paused();
-        if self.settings.resume_after {
+        let tick = self.session.tick_metrics();
+        let resume_after = tick.loaded && !tick.paused;
+        self.settings.set_resume_after(resume_after);
+        if resume_after {
             self.pause();
         } else {
             self.sync_menu_state();
@@ -54,10 +56,11 @@ impl HostState {
             self.ctx.registry.clone(),
             self.ctx.audio_registry.clone(),
         ) {
-            Some(handle) => self.settings.window = Some(handle),
+            Some(handle) => self.settings.open(handle),
             None => {
                 log::error!("failed to open settings window");
-                if self.settings.resume_after {
+                self.settings.close_all();
+                if resume_after {
                     self.resume();
                 } else {
                     self.sync_menu_state();
@@ -99,7 +102,6 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         host.open_settings_window(&opener);
         assert_eq!(opener.calls(), [OpenerCall::Settings]);
-        assert!(host.settings.window.is_none());
         assert!(!host.settings_open());
     }
 
@@ -110,7 +112,6 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         host.open_settings_window(&opener);
         assert_eq!(opener.calls(), [OpenerCall::Settings]);
-        assert!(host.settings.window.is_none());
         assert!(!host.settings_open());
         // Failure leaves the guard closed; the dirty gate collapses
         // the pre + rollback syncs into one push.
@@ -138,10 +139,10 @@ mod tests {
         // flag: the handle is the only open truth.
         let support = TestHost::new();
         let mut host = support.host;
-        host.settings.resume_after = true;
+        host.settings.set_resume_after(true);
         host.on_settings_closed();
         assert!(!host.settings_open());
-        assert!(host.settings.resume_after);
+        assert!(host.settings.take_resume_after());
         assert!(support.menu.updates().is_empty());
     }
 }

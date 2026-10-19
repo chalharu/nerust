@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use nerust_gui_shell::session::{
     SessionHandle,
-    osd::{OsdManager, OsdPresenter, OsdSync, OsdSyncInput, strip_rows},
+    osd::{OsdManager, OsdPresenter, OsdSync, OsdSyncInput},
 };
 use nerust_render_traits::{
     ReservedStrip, SurfaceSize,
@@ -35,10 +35,11 @@ const EDGE_SAFE_DP: f32 = 24.0;
 const BAR_AXIS_EXTRA_DP: f32 = 16.0;
 
 /// OSD display state plus the sync fingerprint. One field on the
-/// frontend; everything OSD lives here.
+/// frontend; everything OSD lives here. Error-dialog flow lives in
+/// `DialogCoordinator` (frontend-owned); this struct keeps raster, strip,
+/// insets, and the notification manager only.
 pub(super) struct AndroidOsd {
     manager: OsdManager,
-    controller: crate::error_dialog_controller::ErrorDialogController,
     raster: nerust_render_osd::OsdRaster,
     presenter: OsdPresenter,
     last_strip: ReservedStrip,
@@ -48,7 +49,8 @@ pub(super) struct AndroidOsd {
 }
 
 /// Per-frame sync context. Bundled so the rasterizer handoff
-/// stays narrow as new dimensions (insets, scale) arrive.
+/// stays narrow as new dimensions (insets, scale) arrive. `now` is
+/// injected by the caller so render and poll share one clock read.
 pub(super) struct OsdSyncCtx<'a> {
     pub tick: nerust_gui_shell::session::osd::TickMetrics,
     pub settings: &'a NotificationSettings,
@@ -56,6 +58,7 @@ pub(super) struct OsdSyncCtx<'a> {
     pub renderer: &'a mut dyn GpuRenderer,
     pub size: SurfaceSize,
     pub insets: SafeInsets,
+    pub now: Instant,
 }
 
 impl AndroidOsd {
@@ -64,7 +67,6 @@ impl AndroidOsd {
         raster.set_ui_scale(OSD_UI_SCALE);
         Self {
             manager: OsdManager::new(),
-            controller: crate::error_dialog_controller::ErrorDialogController::new(),
             raster,
             presenter: OsdPresenter::new(),
             last_strip: ReservedStrip::default(),
@@ -72,6 +74,13 @@ impl AndroidOsd {
             last_system_scale_key: u32::MAX,
             last_system: SafeInsets::default(),
         }
+    }
+
+    /// Borrow the notification manager for the frontend-owned dialog
+    /// coordinator. The coordinator never touches raster/strip/insets,
+    /// and this struct never touches dialog flow.
+    pub(super) fn manager_mut(&mut self) -> &mut OsdManager {
+        &mut self.manager
     }
 
     /// Forget sync state after a renderer rebuild: the new object
@@ -90,44 +99,9 @@ impl AndroidOsd {
         self.last_system_scale_key = u32::MAX;
     }
 
-    /// Frontend-owned modal flow: the only `&mut` path to the
-    /// shell queue besides the shell pump. Callers never touch the
-    /// manager directly, so the one-dialog invariant has one owner.
-    pub(super) fn poll_error_dialog(
-        &mut self,
-        screen: crate::error_dialog_controller::Screen,
-    ) -> Option<crate::error_dialog_controller::ShowTransition> {
-        self.controller.poll_show(&mut self.manager, screen)
-    }
-
-    /// Borrow the showing batch for the JNI handoff. The dialog bridge
-    /// copies it once into a Java string; no intermediate `String`.
-    pub(super) fn current_detail(&self) -> Option<&str> {
-        self.controller.current_detail()
-    }
-
-    pub(super) fn dismiss_error_dialog(
-        &mut self,
-        screen: crate::error_dialog_controller::Screen,
-    ) -> crate::error_dialog_controller::DismissTransition {
-        self.controller.on_dismissed(&mut self.manager, screen)
-    }
-
-    pub(super) fn suspend_error_dialog(&mut self) {
-        self.controller.on_suspended(&mut self.manager);
-    }
-
-    pub(super) fn settings_closed_error_dialog(
-        &mut self,
-        screen: crate::error_dialog_controller::Screen,
-    ) -> crate::error_dialog_controller::SettingsClosedTransition {
-        self.controller
-            .on_settings_closed(&mut self.manager, screen)
-    }
-
-    pub(super) fn error_auto_paused(&self) -> bool {
-        self.controller.auto_paused()
-    }
+    // Frontend-owned modal flow lives in `DialogCoordinator`; the only
+    // `&mut` path to the shell queue besides the shell pump is
+    // `manager_mut` above, so the one-dialog invariant keeps one owner.
 
     /// Drain shell notifications into display state. Error batches join
     /// the shell modal queue; the dialog shows one at a time.
@@ -159,13 +133,8 @@ impl AndroidOsd {
     /// Reserved edge strips in physical pixels. Static per settings
     /// (not per frame) so the renderer never churns surfaces.
     pub(super) fn reserved_strip(settings: &NotificationSettings, client_h: u32) -> ReservedStrip {
-        let (top_rows, bottom_rows) = strip_rows(
-            settings.area_mode,
-            settings.position,
-            settings.status_area_mode,
-            settings.status_position,
-            settings.status_enabled,
-        );
+        let (top_rows, bottom_rows) =
+            nerust_gui_shell::session::osd::OsdChrome::from(settings).reserved_rows();
         ReservedStrip {
             top: strip_pixels(client_h, top_rows, OSD_UI_SCALE),
             bottom: strip_pixels(client_h, bottom_rows, OSD_UI_SCALE),
@@ -214,6 +183,9 @@ impl AndroidOsd {
 
     /// Java window insets, re-queried only on size/density change.
     /// Per-frame JNI is the cost; IME-without-resize stays a known gap.
+    /// Prefers the UI-thread push cache (see `bridge::cached_system_insets`):
+    /// the render thread never blocks on JNI once the UI thread has
+    /// delivered a layout pass; the direct query only covers the first frame.
     pub(super) fn system_insets(
         &mut self,
         app: &AndroidApp,
@@ -224,9 +196,21 @@ impl AndroidOsd {
         if size != self.last_system_size || scale_key != self.last_system_scale_key {
             self.last_system_size = size;
             self.last_system_scale_key = scale_key;
-            self.last_system = Self::query_system_insets(app);
+            self.last_system = Self::cached_or_queried(app);
         }
         self.last_system
+    }
+
+    fn cached_or_queried(app: &AndroidApp) -> SafeInsets {
+        if let Some([top, right, bottom, left]) = super::bridge::cached_system_insets() {
+            return SafeInsets {
+                top: top.max(0) as u32,
+                right: right.max(0) as u32,
+                bottom: bottom.max(0) as u32,
+                left: left.max(0) as u32,
+            };
+        }
+        Self::query_system_insets(app)
     }
 
     /// Root-window safe insets in physical pixels, cached on the Java
@@ -269,7 +253,8 @@ impl AndroidOsd {
 
     /// Rasterize the OSD layer on change and hand it to the renderer.
     /// Also applies the reserved edge strip when settings or surface
-    /// size change it.
+    /// size change it. `now` is injected by the caller so render and
+    /// poll share one clock read per tick.
     pub(super) fn sync(&mut self, ctx: OsdSyncCtx<'_>) {
         let OsdSyncCtx {
             tick,
@@ -278,6 +263,7 @@ impl AndroidOsd {
             renderer,
             size,
             insets,
+            now,
         } = ctx;
         let strip = Self::reserved_strip(settings, size.height);
         if strip != self.last_strip {
@@ -287,11 +273,10 @@ impl AndroidOsd {
         let decision = self.presenter.sync(
             &self.manager,
             OsdSyncInput {
+                tick,
                 chrome: nerust_gui_shell::session::osd::OsdChrome::from(settings),
                 language,
-                fps: tick.fps,
-                paused: tick.paused,
-                now: Instant::now(),
+                now,
                 width: size.width,
                 height: size.height,
                 ui_scale: OSD_UI_SCALE,

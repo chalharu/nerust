@@ -38,9 +38,14 @@ impl InputStateBuffer for GbaInputBuffer {
         self.0 = 0x03FF;
     }
 
-    fn copy_state(&mut self, other: &dyn InputStateBuffer) {
+    fn copy_state(&mut self, other: &dyn InputStateBuffer) -> Result<(), BufferError> {
         if let Some(other) = other.downcast_ref::<Self>() {
             self.0 = other.0;
+            Ok(())
+        } else {
+            Err(BufferError::MismatchedBuffer {
+                expected: "GbaInputBuffer",
+            })
         }
     }
 }
@@ -92,7 +97,7 @@ mod tests {
     fn copy_state_copies_u16() {
         let mut a = GbaInputBuffer(0x0200);
         let b = GbaInputBuffer(0x0155);
-        a.copy_state(&b);
+        a.copy_state(&b).unwrap();
         assert_eq!(a.0, 0x0155);
     }
 

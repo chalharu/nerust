@@ -115,10 +115,7 @@ impl crate::aux::focus::WindowHandler for SettingsWindowHandle {
 
         let repainted = matches!(outcome, PumpOutcome::Repaint);
         let rebuilt = if !messages.is_empty() || matches!(outcome, PumpOutcome::Rebuild) {
-            self.shell.process(
-                messages,
-                crate::aux::shell::Dirty::settings(&self.view_invalidated),
-            )
+            self.shell.process(messages, &self.view_invalidated)
         } else {
             false
         };

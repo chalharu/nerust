@@ -20,7 +20,7 @@ impl HostState {
         if !self.focus.take_armed() {
             return;
         }
-        if self.session.can_pause() {
+        if self.session.tick_metrics().can_pause() {
             self.pause_session();
             self.focus.mark_auto_paused();
             self.sync_debug_chrome();

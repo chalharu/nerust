@@ -43,21 +43,31 @@ pub struct SoftbufferRenderer {
     osd: Option<nerust_render_traits::renderer::OsdLayer>,
     /// Last tap-coverage verdict with its inputs; skips the scan on a key match.
     taps_cache: Option<(TapKey, bool)>,
+    /// Frame counter for the periodic full-rescan revalidation.
+    scan_counter: u64,
 }
 
 /// Tap-coverage inputs for one frame shape. Caches negative verdicts
 /// too: the key carries buffer lengths plus `lut_rev`, so transient
 /// LUT/buffer growth during `resize_lut` changes the key and the stale
-/// `false` never survives the resize that fixes it.
+/// `false` never survives the resize that fixes it. `src` geometry,
+/// `avail_h`, kernel, and reserved strips are part of the key so a
+/// stale `true` cannot survive a profile/strip change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TapKey {
     dst_w: usize,
     dst_h: usize,
+    avail_h: usize,
+    src_w: usize,
+    src_h: usize,
     tap_stride: usize,
     resize_len: usize,
     ntsc_writes: usize,
     ntsc_len: usize,
     lut_rev: u64,
+    kernel_bilinear: bool,
+    reserved_top: u32,
+    reserved_bottom: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,6 +327,7 @@ impl SoftbufferRenderer {
             resize_buffer: Vec::new(),
             ntsc_buffer: Vec::new(),
             taps_cache: None,
+            scan_counter: 0,
         }
     }
 
@@ -355,84 +366,89 @@ impl SoftbufferRenderer {
         lut: &LutEntry,
         resize_buffer: &mut [u32],
     ) {
-        // 横方向に拡大
+        // Hoisted tap width: no per-pixel method call on the hot path.
+        let px = lut.lut_pixel_size();
+        // Two-tap hand loop with consistent LE packing on both passes.
+        // No `filter_map`+`reduce` allocation dance; weights sum to one
+        // in the interior, edges go black where taps fall outside.
         for y in 0..src_h {
             let dst_y_index = y * dst_w;
             let src_y_index = y * src_stride;
             for x in 0..dst_w {
                 let dst_index = dst_y_index + x;
-                let lut_index = x * lut.lut_pixel_size();
-                let c = lut.x_lut[lut_index..lut_index + lut.lut_pixel_size()]
-                    .iter()
-                    .filter_map(|&x| x)
-                    .map(|(i, w)| {
-                        let src_index = src_y_index + i as usize;
-                        // Callers supply [R, G, B, A]; repack to
-                        // [B, G, R, A] for the vertical pass below.
-                        let src_val = src_f(src_index);
-                        // 重みを適用する
-                        [
-                            ((src_val[2] as u16 * w).saturating_add(0x80) >> 8) as u8, // Blue
-                            ((src_val[1] as u16 * w).saturating_add(0x80) >> 8) as u8, // Green
-                            ((src_val[0] as u16 * w).saturating_add(0x80) >> 8) as u8, // Red
-                            ((src_val[3] as u16 * w).saturating_add(0x80) >> 8) as u8, // Alpha
-                        ]
-                    })
-                    .reduce(|acc, val| {
-                        // 4チャンネルの色を加算する
-                        [
-                            acc[0].saturating_add(val[0]), // Blue
-                            acc[1].saturating_add(val[1]), // Green
-                            acc[2].saturating_add(val[2]), // Red
-                            acc[3].saturating_add(val[3]), // Alpha
-                        ]
-                    })
-                    .map(u32::from_ne_bytes); // NEを使うことで、速度を優先する
-
-                resize_buffer[dst_index] = c.unwrap_or(0);
+                let base = x * px;
+                let mut acc = [0u16; 4];
+                let mut touched = false;
+                for tap in lut.x_lut.get(base..base + px).unwrap_or(&[]) {
+                    let Some((i, w)) = tap else { continue };
+                    let src_index = src_y_index + *i as usize;
+                    let src_val = src_f(src_index);
+                    let w = *w;
+                    acc[0] = acc[0].saturating_add((src_val[2] as u16 * w + 0x80) >> 8);
+                    acc[1] = acc[1].saturating_add((src_val[1] as u16 * w + 0x80) >> 8);
+                    acc[2] = acc[2].saturating_add((src_val[0] as u16 * w + 0x80) >> 8);
+                    acc[3] = acc[3].saturating_add((src_val[3] as u16 * w + 0x80) >> 8);
+                    touched = true;
+                }
+                let word = if touched {
+                    u32::from_le_bytes([
+                        acc[0].min(255) as u8,
+                        acc[1].min(255) as u8,
+                        acc[2].min(255) as u8,
+                        acc[3].min(255) as u8,
+                    ])
+                } else {
+                    0
+                };
+                if dst_index < resize_buffer.len() {
+                    resize_buffer[dst_index] = word;
+                }
             }
         }
 
-        // 縦方向に拡大。タップは最大2件のため行毎の確保はしない。
+        // Vertical pass over the horizontal result. Taps are at most 2.
         for y in 0..dst_h {
-            let lut_index = y * lut.lut_pixel_size();
+            let base = y * px;
             let mut taps = [(0u16, 0u16); 2];
             let mut tap_count = 0;
-            for &tap in &lut.y_lut[lut_index..lut_index + lut.lut_pixel_size()] {
-                if let Some(tap) = tap {
-                    taps[tap_count] = tap;
-                    tap_count += 1;
+            if let Some(slice) = lut.y_lut.get(base..base + px) {
+                for tap in slice.iter().flatten() {
+                    if tap_count < 2 {
+                        taps[tap_count] = *tap;
+                        tap_count += 1;
+                    }
                 }
             }
             let taps = &taps[..tap_count];
             for x in 0..dst_w {
                 let dst_index = y * dst_w + x;
-                let c = taps
-                    .iter()
-                    .copied()
-                    .map(|(i, w)| {
-                        let src_index = i as usize * dst_w + x;
-                        let src_val = resize_buffer[src_index].to_ne_bytes(); // 格納時にNEを使ったので、ここでもNEを使う
-                        // 重みを適用する, 横方向に拡大した結果を縦方向に拡大するので、横方向の色順序はそのまま使う
-                        [
-                            ((src_val[0] as u16 * w).saturating_add(0x80) >> 8) as u8, // Blue
-                            ((src_val[1] as u16 * w).saturating_add(0x80) >> 8) as u8, // Green
-                            ((src_val[2] as u16 * w).saturating_add(0x80) >> 8) as u8, // Red
-                            ((src_val[3] as u16 * w).saturating_add(0x80) >> 8) as u8, // Alpha
-                        ]
-                    })
-                    .reduce(|acc, val| {
-                        // 4チャンネルの色を加算する
-                        [
-                            acc[0].saturating_add(val[0]), // Blue
-                            acc[1].saturating_add(val[1]), // Green
-                            acc[2].saturating_add(val[2]), // Red
-                            acc[3].saturating_add(val[3]), // Alpha
-                        ]
-                    })
-                    .map(u32::from_le_bytes);
-
-                dst[dst_index] = c.unwrap_or(0);
+                if dst_index >= dst.len() {
+                    break;
+                }
+                let mut acc = [0u16; 4];
+                let mut touched = false;
+                for (i, w) in taps.iter().copied() {
+                    let src_index = i as usize * dst_w + x;
+                    let Some(word) = resize_buffer.get(src_index) else {
+                        continue;
+                    };
+                    let src_val = word.to_le_bytes();
+                    acc[0] = acc[0].saturating_add((src_val[0] as u16 * w + 0x80) >> 8);
+                    acc[1] = acc[1].saturating_add((src_val[1] as u16 * w + 0x80) >> 8);
+                    acc[2] = acc[2].saturating_add((src_val[2] as u16 * w + 0x80) >> 8);
+                    acc[3] = acc[3].saturating_add((src_val[3] as u16 * w + 0x80) >> 8);
+                    touched = true;
+                }
+                dst[dst_index] = if touched {
+                    u32::from_le_bytes([
+                        acc[0].min(255) as u8,
+                        acc[1].min(255) as u8,
+                        acc[2].min(255) as u8,
+                        acc[3].min(255) as u8,
+                    ])
+                } else {
+                    0
+                };
             }
         }
     }
@@ -472,26 +488,53 @@ impl SoftbufferRenderer {
     }
 
     /// Cached [`Self::taps_cover`]: geometry rarely changes, so a key
-    /// match skips the per-frame LUT scan.
+    /// match skips the per-frame LUT scan. The key carries `src`
+    /// geometry, `avail_h`, kernel, and strips, so a stale `true`
+    /// cannot survive a shape change. Every 256th hit forces a full
+    /// rescan (`debug_assert` verifies the cache); release keeps the
+    /// cached verdict for speed.
     fn taps_covered(
         &mut self,
         dst_w: usize,
-        dst_h: usize,
+        avail_h: usize,
         tap_stride: usize,
         ntsc_writes: usize,
     ) -> bool {
         let key = TapKey {
             dst_w,
-            dst_h,
+            dst_h: avail_h,
+            avail_h,
+            src_w: self.render_profile.source_logical_size.width,
+            src_h: self.render_profile.source_logical_size.height,
             tap_stride,
             resize_len: self.resize_buffer.len(),
             ntsc_writes,
             ntsc_len: self.ntsc_buffer.len(),
             lut_rev: self.lut.rev,
+            kernel_bilinear: matches!(self.lut.kernel, ResizeKernel::Bilinear),
+            reserved_top: self.reserved.top,
+            reserved_bottom: self.reserved.bottom,
         };
         if let Some((cached_key, covered)) = &self.taps_cache
             && *cached_key == key
         {
+            self.scan_counter = self.scan_counter.wrapping_add(1);
+            if self.scan_counter.is_multiple_of(256) {
+                let fresh = Self::taps_cover(
+                    &self.lut,
+                    self.resize_buffer.len(),
+                    self.ntsc_buffer.len(),
+                    dst_w,
+                    avail_h,
+                    tap_stride,
+                    ntsc_writes,
+                );
+                debug_assert_eq!(
+                    fresh, *covered,
+                    "tap cache stale-true: periodic rescan disagrees"
+                );
+                return fresh;
+            }
             return *covered;
         }
         let covered = Self::taps_cover(
@@ -499,10 +542,11 @@ impl SoftbufferRenderer {
             self.resize_buffer.len(),
             self.ntsc_buffer.len(),
             dst_w,
-            dst_h,
+            avail_h,
             tap_stride,
             ntsc_writes,
         );
+        self.scan_counter = self.scan_counter.wrapping_add(1);
         self.taps_cache = Some((key, covered));
         covered
     }
@@ -601,15 +645,13 @@ struct ValidatedFrame {
 impl SoftbufferRenderer {
     /// Validate dimensions without touching the surface or the tap
     /// cache. Pure read: tap coverage (which memoizes) runs separately
-    /// at the call site, so this half stays `&self`.
+    /// at the call site, so this half stays `&self`. Also
+    /// pre-validates `stride >= width * bpp` so the fallible indexers
+    /// below never read out of bounds on the UI thread.
     fn validate_frame(&self, frame: &FrameBuffer) -> Option<ValidatedFrame> {
         if frame.width() != self.render_profile.source_logical_size.width
             || frame.height() != self.render_profile.source_logical_size.height
         {
-            // Profile/frame races (e.g. right after a system switch)
-            // must skip, never render mismatched: every indexer below
-            // trusts these dimensions, and a panic here would take
-            // down the UI thread every frame until they agree again.
             error!(
                 "Frame size mismatch: expected {}x{}, got {}x{}",
                 self.render_profile.source_logical_size.width,
@@ -624,10 +666,21 @@ impl SoftbufferRenderer {
         if dst_w == 0 || dst_h == 0 || self.surface.is_none() {
             return None;
         }
-        // Refuse stale-profile frames before any indexer runs (warned, not fatal).
         let avail_h = dst_h.saturating_sub(self.reserved.height_loss(self.size.height) as usize);
         let src_stride = frame.stride();
         let src_h = self.render_profile.source_logical_size.height;
+        let src_w = self.render_profile.source_logical_size.width;
+        let bpp = frame.format().bytes_per_pixel();
+        // Stride must cover one tight row; otherwise the pixel indexer
+        // would read past the source on the UI thread.
+        if src_stride < src_w.saturating_mul(bpp) {
+            warn!(
+                "softbuffer stride too small: have {}, need {}",
+                src_stride,
+                src_w.saturating_mul(bpp)
+            );
+            return None;
+        }
         let use_ntsc = matches!(frame.format(), PixelFormat::PaletteIndex { .. })
             && self.render_profile.ntsc_packed_rgba8.is_some();
         let tap_stride = if matches!(frame.format(), PixelFormat::Rgba) {
@@ -637,6 +690,9 @@ impl SoftbufferRenderer {
         } else {
             src_stride
         };
+        if tap_stride == 0 {
+            return None;
+        }
         let ntsc_writes = if use_ntsc {
             src_h.saturating_mul(self.render_profile.logical_size.width)
         } else {
@@ -838,16 +894,20 @@ impl GpuRenderer for SoftbufferRenderer {
 
         match frame.format() {
             PixelFormat::Rgba => {
-                // Stride is bytes; the indexer below counts pixels
-                // (the closure scales by 4), so convert once here.
-                // PaletteIndex is 1bpp and needs no conversion.
+                // Fallible indexer: `get(..)` renders opaque black on
+                // short rows instead of `unwrap()` panicking the UI.
                 Self::rendering(
                     dst,
                     src_stride / 4,
                     src_h,
                     dst_w,
                     avail_h,
-                    move |i| src[i * 4..i * 4 + 4].try_into().unwrap(),
+                    |i| {
+                        let base = i.saturating_mul(4);
+                        src.get(base..base.saturating_add(4))
+                            .and_then(|s| s.try_into().ok())
+                            .unwrap_or([0, 0, 0, 255])
+                    },
                     &self.lut,
                     &mut self.resize_buffer,
                 );
@@ -866,7 +926,7 @@ impl GpuRenderer for SoftbufferRenderer {
                         src_h,
                         dst_w,
                         avail_h,
-                        |i| self.ntsc_buffer[i].to_be_bytes(),
+                        |i| self.ntsc_buffer.get(i).copied().unwrap_or(0).to_be_bytes(),
                         &self.lut,
                         &mut self.resize_buffer,
                     );
@@ -879,12 +939,9 @@ impl GpuRenderer for SoftbufferRenderer {
                         src_h,
                         dst_w,
                         avail_h,
-                        move |i| {
-                            palette
-                                .get(src.get(i).copied().unwrap_or(0) as usize)
-                                .copied()
-                                .unwrap_or(0)
-                                .to_be_bytes()
+                        |i| {
+                            let idx = src.get(i).copied().unwrap_or(0) as usize;
+                            palette.get(idx).copied().unwrap_or(0).to_be_bytes()
                         },
                         &self.lut,
                         &mut self.resize_buffer,
@@ -1031,7 +1088,12 @@ mod tests {
             4,
             8,
             8,
-            |i| src[i * 4..i * 4 + 4].try_into().unwrap(),
+            |i| {
+                let base = i.saturating_mul(4);
+                src.get(base..base.saturating_add(4))
+                    .and_then(|s| s.try_into().ok())
+                    .unwrap_or([0, 0, 0, 255])
+            },
             &lut,
             &mut resize_buffer,
         );
@@ -1079,7 +1141,12 @@ mod tests {
                 4,
                 8,
                 8,
-                |i| src[i * 4..i * 4 + 4].try_into().unwrap(),
+                |i| {
+                    let base = i.saturating_mul(4);
+                    src.get(base..base.saturating_add(4))
+                        .and_then(|s| s.try_into().ok())
+                        .unwrap_or([0, 0, 0, 255])
+                },
                 &lut,
                 &mut resize_buffer,
             );
@@ -1228,5 +1295,41 @@ mod tests {
         renderer.resize_buffer = vec![0; 8 * 4];
         renderer.ntsc_buffer = vec![0; 10];
         assert!(!renderer.taps_covered(8, 8, 4, 100));
+    }
+
+    #[test]
+    fn tap_key_distinguishes_shape_and_reservation() {
+        // Same dst/tap numbers but different src geometry or strips
+        // must not hit the stale-true cache.
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        renderer.size = SurfaceSize::new(8, 8);
+        renderer.resize_lut();
+        assert!(renderer.taps_covered(8, 8, 256, 0));
+        let first_key = renderer.taps_cache.as_ref().unwrap().0;
+        // Reserved strip change flips the key.
+        renderer.reserved.top = 2;
+        renderer.resize_lut();
+        assert!(renderer.taps_covered(8, 6, 256, 0));
+        let second_key = renderer.taps_cache.as_ref().unwrap().0;
+        assert_ne!(first_key, second_key);
+        assert_eq!(second_key.reserved_top, 2);
+        assert_eq!(second_key.avail_h, 6);
+        assert_eq!(second_key.src_w, 256);
+    }
+
+    #[test]
+    fn fallible_rgba_indexer_renders_black_on_short_rows() {
+        // Short source rows never panic: missing texels fall back to
+        // opaque black instead of `unwrap()` on the UI thread.
+        let short: Vec<u8> = vec![0x10, 0x20];
+        let px = |i: usize| {
+            let base = i.saturating_mul(4);
+            short
+                .get(base..base.saturating_add(4))
+                .and_then(|s| s.try_into().ok())
+                .unwrap_or([0, 0, 0, 255])
+        };
+        assert_eq!(px(0), [0, 0, 0, 255]);
+        assert_eq!(px(99), [0, 0, 0, 255]);
     }
 }

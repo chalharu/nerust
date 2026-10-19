@@ -17,35 +17,48 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use crate::ports::WindowOpener;
 
-/// Pure wake policy: earliest deadline among live tick, flight
-/// poll, and OSD expiry wins. No side effects; the host supplies
-/// the inputs, so the min-fold stays unit-testable.
+/// Wake policy: earliest deadline among live tick, flight poll,
+/// and OSD expiry wins. No side effects; the host supplies the
+/// inputs, so the min-fold stays unit-testable.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct WakeInputs {
+pub(crate) struct WakePolicy {
     pub live_tick: Option<Instant>,
-    pub flight_pending: bool,
+    pub flight_deadline: Option<Instant>,
     pub osd_deadline: Option<Instant>,
 }
 
-pub(crate) fn next_control_flow(now: Instant, inputs: &WakeInputs) -> ControlFlow {
-    let mut flow = ControlFlow::Wait;
-    if let Some(next) = inputs.live_tick {
-        flow = ControlFlow::WaitUntil(next);
+impl WakePolicy {
+    /// Poll latency for an in-flight drain/live fetch: the backstop
+    /// that bounds reply latency when the loop would otherwise sleep.
+    pub(crate) fn flight_backstop(now: Instant) -> Instant {
+        now + std::time::Duration::from_millis(30)
     }
-    if inputs.flight_pending {
-        let soon = now + std::time::Duration::from_millis(30);
-        flow = match flow {
-            ControlFlow::WaitUntil(at) => ControlFlow::WaitUntil(at.min(soon)),
-            _ => ControlFlow::WaitUntil(soon),
-        };
+
+    /// Earliest deadline wins; no deadline sleeps.
+    pub(crate) fn next(&self) -> ControlFlow {
+        [self.live_tick, self.flight_deadline, self.osd_deadline]
+            .into_iter()
+            .flatten()
+            .min()
+            .map_or(ControlFlow::Wait, ControlFlow::WaitUntil)
     }
-    if let Some(deadline) = inputs.osd_deadline {
-        flow = match flow {
-            ControlFlow::WaitUntil(at) => ControlFlow::WaitUntil(at.min(deadline)),
-            _ => ControlFlow::WaitUntil(deadline),
-        };
+}
+
+/// Redraw policy: repaint while focused, while the PPU follows a
+/// running core, or while the session runs (a bare WaitUntil alone
+/// would not reliably wake the loop, at the cost of one running
+/// frame render).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RedrawPolicy {
+    pub main_active: bool,
+    pub live_follow: bool,
+    pub running: bool,
+}
+
+impl RedrawPolicy {
+    pub(crate) fn wants_redraw(&self) -> bool {
+        self.main_active || self.live_follow || self.running
     }
-    flow
 }
 
 impl HostState {
@@ -63,7 +76,7 @@ impl HostState {
             .fullscreen_default;
         let window = match opener.create_main(create_window_builder(
             self.startup_window_size(),
-            self.session.window_title(),
+            self.session.window_title(&self.session.tick_metrics()),
             fullscreen,
         )) {
             Ok(window) => window,
@@ -112,46 +125,59 @@ impl HostState {
     /// Native attach target for the game renderer: the content area
     /// below the menubar when available, else the toplevel. The xid
     /// tags the target so a target change recreates the surface.
+    /// Single helper: the content-area target or the toplevel
+    /// fallback, so `surface_target` and `surface_xid` cannot drift.
     pub(crate) fn surface_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
-        if !self.close.is_live() {
-            return None;
-        }
-        let window = self.window.as_ref()?;
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "netbsd",
-            target_os = "openbsd"
-        ))]
-        if let Some(area) = self.content_area.as_ref()
-            && let Some((handle, size, xid)) = area.target()
-        {
-            return Some((handle, size, Some(xid)));
-        }
-        let handle = window.window_handle().ok()?.as_raw();
-        Some((handle, window_surface_size(window.inner_size()), None))
+        let (handle, size, xid) = self.attach_target()?;
+        Some((handle, size, xid))
     }
 
     /// Xid the surface is currently attached to (`None` = toplevel
     /// fallback). Mirrors [`HostState::surface_target`] without
     /// rebuilding handles, for the runtime's recreate check.
     pub(crate) fn surface_xid(&self) -> Option<u64> {
-        if !self.close.is_live() {
+        let (_, _, xid) = self.attach_target()?;
+        xid
+    }
+
+    /// Shared attach-target resolution: content area below the menubar
+    /// when it yields a native target (Wayland/pre-layout yields
+    /// nothing), else the toplevel window with no xid.
+    fn attach_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
+        if !self.close.is_usable() {
             return None;
         }
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "netbsd",
-            target_os = "openbsd"
-        ))]
-        if let Some(area) = self.content_area.as_ref()
-            && let Some((_, _, xid)) = area.target()
-        {
-            return Some(xid);
+        let window = self.window.as_ref()?;
+        if let Some((handle, size, xid)) = self.content_target() {
+            return Some((handle, size, Some(xid)));
         }
+        let handle = window.window_handle().ok()?.as_raw();
+        Some((handle, window_surface_size(window.inner_size()), None))
+    }
+
+    /// Content-area target below the menubar (`None` where unsupported
+    /// or not yet laid out). Linux/BSD only; elsewhere always `None`.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    fn content_target(&self) -> Option<(RawWindowHandle, SurfaceSize, u64)> {
+        self.content_area.as_ref()?.target()
+    }
+
+    /// Content-area target below the menubar (`None` where unsupported
+    /// or not yet laid out). Linux/BSD only; elsewhere always `None`.
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    )))]
+    fn content_target(&self) -> Option<(RawWindowHandle, SurfaceSize, u64)> {
         None
     }
 
@@ -159,7 +185,9 @@ impl HostState {
     /// the failure detail on error; presenting it (dialog) is the
     /// caller's job so the file-dialog and startup paths can differ.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        match self.ctx.rom_loader.load_rom(path, &mut self.session) {
+        let mut target =
+            nerust_gui_shell::session::load_adapter::SessionLoadAdapter::new(&mut self.session);
+        match self.ctx.rom_loader.load_rom(path, &mut target) {
             Ok(()) => {
                 self.after_rom_load();
                 Ok(())
@@ -194,19 +222,22 @@ impl HostState {
         // would collapse the live cadence to zero whenever the aux
         // windows (not the main one) hold focus.
         let live_tick = if self.live_follow_active() {
-            self.debug.next_live_tick()
+            self.next_live_tick()
         } else {
             None
         };
         // While a drain or live flight is pending, wake soon to poll
         // it: the reply applies within ~30ms instead of waiting for
         // the next input event.
-        let flight_pending = drain_pending || self.live_flight.is_some();
+        let flight_deadline = (drain_pending || self.live_flight.is_some())
+            .then(|| WakePolicy::flight_backstop(Instant::now()));
 
         // Drain notifications here, not only in on_update: a paused
         // unfocused loop schedules no redraws, which is exactly when
-        // pause/error notices must still land and expire.
-        self.poll_notifications();
+        // pause/error notices must still land and expire. One capture
+        // for the whole pass, threaded through.
+        let frame = self.frame_snapshot();
+        self.poll_notifications(&frame);
         // Post-pump the deadline implies a showing label (promotion
         // is eager), so one call drives the expiry redraw and the
         // wait: plain Wait would leave a stale label up otherwise.
@@ -215,14 +246,12 @@ impl HostState {
             // Redraw while labels show so expiry applies even paused.
             self.request_redraw();
         }
-        *control_flow = next_control_flow(
-            Instant::now(),
-            &WakeInputs {
-                live_tick,
-                flight_pending,
-                osd_deadline,
-            },
-        );
+        *control_flow = WakePolicy {
+            live_tick,
+            flight_deadline,
+            osd_deadline,
+        }
+        .next();
 
         // Inactive loop sleeps; redraw while focused, while the PPU
         // follows a running core, or while the session runs (a bare
@@ -232,8 +261,15 @@ impl HostState {
         // Repaint a running session even unfocused (e.g. operating the
         // debugger while the game runs): frames keep coming and must
         // show. Paused, unfocused, and unfollowed sleeps.
-        let running = self.session.loaded() && !self.session.paused();
-        if self.main_active() || live || running {
+        let tick = self.session.tick_metrics();
+        let running = tick.loaded && !tick.paused;
+        if (RedrawPolicy {
+            main_active: self.main_active(),
+            live_follow: live,
+            running,
+        })
+        .wants_redraw()
+        {
             self.request_redraw();
         }
     }
@@ -254,13 +290,13 @@ impl HostState {
     }
 
     pub(crate) fn request_redraw(&mut self) {
-        self.shell.needs_redraw = true;
-        if !self.close.is_live() {
-            // Silent drops here are invisible headless bugs (tests
-            // exercise close paths without windows), so say so once.
-            log::debug!("tao redraw dropped: no live window");
+        // Liveness gates all dead-handle use: check first, so closed
+        // or failed hosts never flag a redraw that cannot land.
+        if !self.close.is_usable() {
+            log::trace!("tao redraw dropped: no usable window");
             return;
         }
+        self.shell.needs_redraw = true;
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
@@ -277,8 +313,10 @@ impl HostState {
             return;
         }
         self.remember_fit_window_size();
-        self.settings.resume_after = false;
-        self.settings.window.take();
+        // Every cluster drops its windows, sync memos, flights, and
+        // resume flags: no history/modal/resume leaks past close.
+        self.settings.close_all();
+        self.osd.close_all();
         self.debug.close_all();
         self.session.flush_before_exit();
     }
@@ -353,7 +391,7 @@ mod tests {
         assert!(!host.settings_open());
         // Liveness gates all dead-handle use; the native handles stay
         // for natural post-loop teardown (no re-entrant destroy).
-        assert!(!host.close.is_live());
+        assert!(!host.close.is_usable());
         assert!(host.surface_target().is_none());
         assert!(host.surface_xid().is_none());
         // Second delivery (Destroyed after CloseRequested) is a
@@ -395,46 +433,57 @@ mod tests {
 
     #[test]
     fn wake_policy_folds_to_earliest_deadline() {
-        use super::{WakeInputs, next_control_flow};
+        use super::{RedrawPolicy, WakePolicy};
         let now = Instant::now();
-        let idle = WakeInputs {
+        let idle = WakePolicy {
             live_tick: None,
-            flight_pending: false,
+            flight_deadline: None,
             osd_deadline: None,
         };
-        assert_eq!(next_control_flow(now, &idle), ControlFlow::Wait);
+        assert_eq!(idle.next(), ControlFlow::Wait);
         // Flight poll alone wakes soon (30ms backstop).
-        let flight = WakeInputs {
+        let flight = WakePolicy {
             live_tick: None,
-            flight_pending: true,
+            flight_deadline: Some(WakePolicy::flight_backstop(now)),
             osd_deadline: None,
         };
         assert_eq!(
-            next_control_flow(now, &flight),
+            flight.next(),
             ControlFlow::WaitUntil(now + std::time::Duration::from_millis(30))
         );
         // Earliest wins across all three sources.
         let tick = now + std::time::Duration::from_millis(250);
         let soon_deadline = now + std::time::Duration::from_millis(10);
-        let raced = WakeInputs {
+        let raced = WakePolicy {
             live_tick: Some(tick),
-            flight_pending: true,
+            flight_deadline: Some(WakePolicy::flight_backstop(now)),
             osd_deadline: Some(soon_deadline),
         };
-        assert_eq!(
-            next_control_flow(now, &raced),
-            ControlFlow::WaitUntil(soon_deadline)
-        );
+        assert_eq!(raced.next(), ControlFlow::WaitUntil(soon_deadline));
         // Live tick earlier than the flight backstop survives.
         let early_tick = now + std::time::Duration::from_millis(5);
-        let tick_wins = WakeInputs {
+        let tick_wins = WakePolicy {
             live_tick: Some(early_tick),
-            flight_pending: true,
+            flight_deadline: Some(WakePolicy::flight_backstop(now)),
             osd_deadline: None,
         };
-        assert_eq!(
-            next_control_flow(now, &tick_wins),
-            ControlFlow::WaitUntil(early_tick)
+        assert_eq!(tick_wins.next(), ControlFlow::WaitUntil(early_tick));
+        // Redraw policy: any live source repaints; quiet sleeps.
+        assert!(
+            RedrawPolicy {
+                main_active: false,
+                live_follow: false,
+                running: true,
+            }
+            .wants_redraw()
+        );
+        assert!(
+            !RedrawPolicy {
+                main_active: false,
+                live_follow: false,
+                running: false,
+            }
+            .wants_redraw()
         );
     }
 

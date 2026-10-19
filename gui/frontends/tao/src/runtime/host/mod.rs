@@ -15,7 +15,7 @@ use std::{rc::Rc, sync::Arc};
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::ElementState,
-    window::{Fullscreen, Window as TaoWindow, WindowBuilder},
+    window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
 
 use crate::menu::MenuSink;
@@ -104,11 +104,14 @@ fn backend_capabilities() -> HostBackendCapabilities {
     }
 }
 
-/// Menu/title signature for the chrome dirty gate. Owned clones so
-/// the comparison is exact (slots, shortcuts, title); small enough
-/// that the clone is cheaper than the menu IPC it skips.
+/// Menu signature for the chrome dirty gate. Owned clones so the
+/// comparison is exact (slots, shortcuts); small enough that the
+/// clone beats the menu IPC it skips -- and the clone only runs after
+/// the cheap scalar/length gate in `sync_menu_state` passes. The
+/// window title lives apart (see `HostState::last_title`) with its
+/// own gate, so title-only moves never touch the menu path.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct ChromeSig {
+pub(super) struct MenuSig {
     pub(super) loaded: bool,
     pub(super) paused: bool,
     pub(super) settings_open: bool,
@@ -116,7 +119,6 @@ pub(super) struct ChromeSig {
     pub(super) active_slot: Option<u64>,
     pub(super) slots: Vec<nerust_persistence::model::StateSlotSummary>,
     pub(super) shortcuts: Vec<nerust_settings_core::model::input::ShortcutBinding>,
-    pub(super) title: String,
 }
 
 /// Settings-window cluster: handle plus its resume bookkeeping. Single
@@ -127,6 +129,36 @@ pub(super) struct SettingsHost {
 }
 
 impl SettingsHost {
+    /// Seat a newly created settings window (single writer: the open
+    /// path in `HostState::open_settings_window`).
+    pub(super) fn open(&mut self, handle: crate::aux::settings::window::SettingsWindowHandle) {
+        self.window = Some(handle);
+    }
+
+    /// Close teardown: drop the handle and clear the resume flag, so
+    /// no stale resume leaks past window close.
+    pub(super) fn close_all(&mut self) {
+        self.window.take();
+        self.resume_after = false;
+    }
+
+    /// Whether the settings window is currently open. Single truth:
+    /// no bool shadow to drift from the handle.
+    pub(super) fn is_open(&self) -> bool {
+        self.window.is_some()
+    }
+
+    /// Record whether closing must resume the session (test and the
+    /// open path only; teardown consumes it via `take_resume_after`).
+    pub(super) fn set_resume_after(&mut self, resume: bool) {
+        self.resume_after = resume;
+    }
+
+    /// Consume the pending resume flag for close teardown.
+    pub(super) fn take_resume_after(&mut self) -> bool {
+        std::mem::take(&mut self.resume_after)
+    }
+
     /// Take the settings window for close teardown, if one is open.
     /// Single writer alongside `open` (see `HostState::open_settings_window`).
     fn take(&mut self) -> Option<crate::aux::settings::window::SettingsWindowHandle> {
@@ -188,6 +220,43 @@ impl OsdHost {
         self.history_window.as_mut()
     }
 
+    /// Close teardown: drop the history viewer, its sync memo, any
+    /// in-flight error dialog, and the modal resume flag, so none
+    /// leaks past window close.
+    pub(super) fn close_all(&mut self) {
+        self.history_window.take();
+        self.history_sync_key = None;
+        self.modal_flight.take();
+        self.resume_after_modal = false;
+    }
+
+    /// Queued error batches awaiting a dialog (test read;
+    /// production drains through `take_modal_batch`).
+    #[cfg(test)]
+    pub(super) fn modal_pending(&self) -> usize {
+        self.manager.modal_pending()
+    }
+
+    /// Test seam: simulate a dialog thread that died before acking.
+    #[cfg(test)]
+    pub(super) fn inject_modal_flight_for_test(&mut self, flight: ModalFlight) {
+        self.modal_flight = Some(flight);
+    }
+
+    /// Whether an error dialog is currently showing (test read).
+    #[cfg(test)]
+    pub(super) fn modal_showing(&self) -> bool {
+        self.modal_flight.is_some()
+    }
+
+    /// Last synced history content key (test read).
+    #[cfg(test)]
+    pub(super) fn history_key(
+        &self,
+    ) -> Option<(u64, nerust_settings_core::model::language::AppLanguage)> {
+        self.history_sync_key
+    }
+
     fn new() -> Self {
         Self {
             manager: OsdManager::new(),
@@ -208,12 +277,14 @@ pub(crate) struct HostState {
     window: Option<Arc<TaoWindow>>,
     /// Creation failure, close idempotence, and native liveness.
     close: close::CloseGuard,
+    /// Session handle. `pub(super)`: the `runtime` drain router polls
+    /// session state alongside its flights in one pass.
     pub(super) session: SessionHandle,
     ctx: FrontendContext,
     app_menu: Box<dyn MenuSink>,
     dialogs: std::sync::Arc<dyn DialogPorts>,
     shell: NativeShellState,
-    pub(super) settings: SettingsHost,
+    settings: SettingsHost,
     pending_fullscreen_sync: Option<bool>,
     /// Focus truth plus the deferred auto-pause protocol. Only
     /// reachable through the intent methods below; the burst protocol
@@ -222,17 +293,23 @@ pub(crate) struct HostState {
     /// In-flight async debug drain: `run_debug_drain` starts it, the
     /// event loop polls it (`poll_debug_flight`). A newer batch
     /// supersedes the stored one; orphaned replies are ignored.
+    /// `pub(super)`: the `runtime` drain router owns the flight.
     pub(super) drain_flight: Option<DrainFlight>,
     /// In-flight async live-images fetch: the live tick starts it,
     /// the event loop polls it. At most one; a newer tick supersedes.
+    /// `pub(super)`: the `runtime` drain router owns the flight.
     pub(super) live_flight: Option<LiveImagesFlight>,
     /// Aux-window state (debugger + PPU viewer). Orchestration lives
-    /// here; ownership lives there.
+    /// here; ownership lives there. `pub(super)`: the `runtime`
+    /// dispatch router drives window teardown directly.
     pub(super) debug: DebugWindows,
-    pub(super) osd: OsdHost,
-    /// Last pushed menu/title signature. Menu IPC and `set_title`
-    /// run only on change; focus bursts and drains re-hit this path.
-    last_chrome_sig: Option<ChromeSig>,
+    osd: OsdHost,
+    /// Last pushed menu signature. Menu IPC runs only on change;
+    /// focus bursts and drains re-hit this path.
+    last_menu_sig: Option<MenuSig>,
+    /// Last pushed window title, with its own gate. Title-only moves
+    /// (the 500ms throttle path) never touch the menu signature.
+    last_title: Option<String>,
     /// Linux render target below the muda menubar (`None` elsewhere).
     /// When it yields no native target (Wayland, pre-layout) the
     /// toplevel fallback applies and the menu stays occluded.
@@ -293,7 +370,8 @@ impl HostState {
             live_flight: None,
             debug: DebugWindows::new(),
             osd: OsdHost::new(),
-            last_chrome_sig: None,
+            last_menu_sig: None,
+            last_title: None,
             #[cfg(any(
                 target_os = "linux",
                 target_os = "dragonfly",
@@ -324,16 +402,10 @@ impl HostState {
     /// Close teardown already ran. Test-only read of the idempotence
     /// guard: double-delivered close events must flush exactly once.
     /// Report an aux-window focus change. Returns whether a
-    /// system-paused session should resume (see `aux_focus_step`).
-    pub(super) fn note_aux_focus(&mut self, focused: bool) -> bool {
-        crate::aux::focus::aux_focus_step(&mut self.focus, focused)
-    }
-
-    /// Quiet aux-window focus change: cancels a pending pause without
-    /// ever reporting a resume (settings must not resume anything).
-    /// See `aux_focus_step_quiet`.
-    pub(super) fn note_aux_focus_quiet(&mut self, focused: bool) {
-        crate::aux::focus::aux_focus_step_quiet(&mut self.focus, focused);
+    /// system-paused session should resume; the resume-vs-quiet
+    /// protocol decision lives in [`crate::aux::focus`].
+    pub(super) fn on_aux_focus(&mut self, kind: crate::aux::focus::AuxKind, focused: bool) -> bool {
+        crate::aux::focus::on_aux_focus(&mut self.focus, kind, focused)
     }
 
     /// Main window gained focus: activate and report a pending resume.
@@ -354,7 +426,7 @@ impl HostState {
     /// Settings dialog owns the screen iff its handle lives.
     /// Single truth: no bool shadow to drift from the handle.
     pub(crate) fn settings_open(&self) -> bool {
-        self.settings.window.is_some()
+        self.settings.is_open()
     }
 
     /// Take the settings window for close teardown, if one is open.
@@ -395,6 +467,113 @@ impl HostState {
     #[cfg(test)]
     pub(crate) fn close_exited(&self) -> bool {
         self.close.exited()
+    }
+}
+
+/// `HostState` orchestration over the [`DebugWindows`] cluster: same-
+/// crate callers route through here instead of reaching through
+/// `host.debug`, so the cluster stays free to reorganize its fields.
+impl HostState {
+    pub(crate) fn is_debug_window(&self, window_id: WindowId) -> bool {
+        self.debug.is_debug_window(window_id)
+    }
+
+    pub(crate) fn is_ppu_window(&self, window_id: WindowId) -> bool {
+        self.debug.is_ppu_window(window_id)
+    }
+
+    pub(crate) fn is_debug_open(&self) -> bool {
+        self.debug.is_debug_open()
+    }
+
+    pub(crate) fn is_ppu_open(&self) -> bool {
+        self.debug.is_ppu_open()
+    }
+
+    pub(super) fn debug_window(&self) -> Option<&crate::aux::debug::DebugWindowHandle> {
+        self.debug.debug_window()
+    }
+
+    pub(super) fn debug_window_mut(&mut self) -> Option<&mut crate::aux::debug::DebugWindowHandle> {
+        self.debug.debug_window_mut()
+    }
+
+    pub(super) fn ppu_window(&self) -> Option<&crate::aux::ppu::PpuWindowHandle> {
+        self.debug.ppu_window()
+    }
+
+    pub(super) fn ppu_window_mut(&mut self) -> Option<&mut crate::aux::ppu::PpuWindowHandle> {
+        self.debug.ppu_window_mut()
+    }
+
+    pub(crate) fn debug_window_pos(&self) -> Option<(i32, i32)> {
+        self.debug.debug_window_pos()
+    }
+
+    pub(crate) fn ppu_window_pos(&self) -> Option<(i32, i32)> {
+        self.debug.ppu_window_pos()
+    }
+
+    pub(crate) fn remember_debug_window_pos(&mut self, x: i32, y: i32) {
+        self.debug.remember_debug_window_pos(x, y);
+    }
+
+    pub(crate) fn remember_ppu_window_pos(&mut self, x: i32, y: i32) {
+        self.debug.remember_ppu_window_pos(x, y);
+    }
+
+    pub(crate) fn request_debug_open(&mut self) {
+        self.debug.request_debug_open();
+    }
+
+    pub(super) fn request_ppu_open(&mut self) {
+        self.debug.request_ppu_open();
+    }
+
+    pub(super) fn set_debug_window(&mut self, handle: crate::aux::debug::DebugWindowHandle) {
+        self.debug.set_debug_window(handle);
+    }
+
+    pub(super) fn set_ppu_window(&mut self, handle: crate::aux::ppu::PpuWindowHandle) {
+        self.debug.set_ppu_window(handle);
+    }
+
+    pub(super) fn take_debug_batch(
+        &mut self,
+    ) -> Option<(bool, Vec<nerust_gui_shell::debug::DebugAction>)> {
+        self.debug.take_debug_batch()
+    }
+
+    pub(super) fn last_drain_paused(&self) -> Option<bool> {
+        self.debug.last_drain_paused()
+    }
+
+    pub(super) fn set_last_drain_paused(&mut self, paused: bool) {
+        self.debug.set_last_drain_paused(paused);
+    }
+
+    pub(super) fn live_due(&mut self, now: std::time::Instant) -> bool {
+        self.debug.live_due(now)
+    }
+
+    pub(super) fn next_live_tick(&self) -> Option<std::time::Instant> {
+        self.debug.next_live_tick()
+    }
+
+    pub(super) fn drop_debug_window(&mut self) {
+        self.debug.drop_debug_window();
+    }
+
+    pub(super) fn drop_ppu_window(&mut self) {
+        self.debug.drop_ppu_window();
+    }
+
+    pub(super) fn debug_close_requested(&self) -> bool {
+        self.debug.debug_close_requested()
+    }
+
+    pub(super) fn ppu_close_requested(&self) -> bool {
+        self.debug.ppu_close_requested()
     }
 }
 
@@ -492,7 +671,7 @@ mod tests {
         let mut host = support.host;
         let _ = host.gpu_factory();
         let _ = host.session_mut();
-        assert!(!host.session().loaded());
+        assert!(!host.session().tick_metrics().loaded);
     }
 
     #[test]
@@ -511,7 +690,7 @@ mod tests {
     fn headless_host_builds_and_syncs_menu() {
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(!host.session().loaded());
+        assert!(!host.session().tick_metrics().loaded);
         host.sync_menu_state();
         assert_eq!(
             support.menu.updates(),

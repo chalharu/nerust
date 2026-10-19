@@ -8,7 +8,7 @@
 //! [`osd_modal`](crate::session::osd_modal), and the sync decision in
 //! [`osd_presenter`](crate::session::osd_presenter).
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use nerust_settings_core::model::language::AppLanguage;
 
@@ -21,17 +21,14 @@ pub use super::osd_history::{
 pub use crate::session::osd_modal::{ModalSink, ModalSource};
 pub use crate::session::osd_presenter::{
     OsdChrome, OsdPlan, OsdPresenter, OsdState, OsdSync, OsdSyncInput, STATUS_FPS_MIN_INTERVAL,
-    StatusGate, UiInsets, strip_rows,
+    StatusGate, TickMetrics, UiInsets,
 };
 pub use crate::session::osd_render::{OSD_STATUS_RGB, osd_anchor};
 pub use crate::session::osd_transient::{FrameChannel, OsdRow, TransientPolicy};
 
 use crate::session::osd_modal::ModalBox;
-use crate::session::osd_presenter::status_label;
-use crate::session::osd_transient::{
-    OsdItem, RouteEffect, TransientQueue, color, counted_row, duration_ms, enabled,
-    falls_back_to_modal,
-};
+use crate::session::osd_presenter::{ModalRoute, ModalRouter, status_key, status_text};
+use crate::session::osd_transient::{OsdItem, RouteEffect, TransientQueue, counted_row};
 
 /// Notification display state: transient in-frame rows plus modal batches.
 /// Queue discipline lives in TransientQueue, pumping in ModalBox.
@@ -57,37 +54,6 @@ pub struct PushInput {
     pub tick: TickMetrics,
 }
 
-/// One metrics read per tick. `metrics()` locks and queries the emu
-/// thread; tick paths fetch once and thread this through instead of
-/// calling `loaded`/`paused`/`can_pause` separately.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TickMetrics {
-    pub fps: f32,
-    pub paused: bool,
-    pub loaded: bool,
-    pub frame_counter: u64,
-}
-
-impl TickMetrics {
-    /// Display channel for notifications: without a loaded core no
-    /// frame is composited, so the OSD is invisible.
-    pub fn frame_channel(&self) -> FrameChannel {
-        if self.loaded {
-            FrameChannel::Composited
-        } else {
-            FrameChannel::Unpresented
-        }
-    }
-
-    pub fn can_pause(&self) -> bool {
-        self.loaded && !self.paused
-    }
-
-    pub fn can_resume(&self) -> bool {
-        self.loaded && self.paused
-    }
-}
-
 /// Outcome of [`SessionHandle::pump_osd`] for frontend flow control:
 /// redraw gating and modal auto-pause.
 pub struct PumpReport {
@@ -103,6 +69,8 @@ impl OsdManager {
     /// Push taking the narrow policy. Decision code here never
     /// sees the full settings surface (see [`TransientPolicy`]).
     /// Callers adapt once at the settings boundary via `From`.
+    /// Channel-to-modal routing lives in [`ModalRouter`]; this only
+    /// renders the routed rows.
     pub fn push_all_with_policy(
         &mut self,
         notifications: impl IntoIterator<Item = UiNotification>,
@@ -114,31 +82,33 @@ impl OsdManager {
         // Dirty only on a real change: filtered rows, dropped info,
         // and queued-behind rows must not schedule a redraw.
         let mut changed = false;
+        let router = ModalRouter { policy, channel };
         for n in notifications {
-            if !enabled(n.level, policy) {
-                continue;
-            }
-            // No composited frame and not modal-worthy: drop the row.
-            if channel == FrameChannel::Unpresented && !n.kind.wants_modal() {
-                continue;
-            }
-            if falls_back_to_modal(&n.kind, policy, channel) {
-                self.modal_box
-                    .push(super::notification::render_text(&n.kind, n.count, language));
-                changed = true;
-                continue;
+            match router.route(&n.kind) {
+                // No composited frame and not modal-worthy: drop.
+                // Disabled levels never display.
+                ModalRoute::Drop => continue,
+                ModalRoute::Modal => {
+                    self.modal_box
+                        .push(super::notification::render_text(&n.kind, n.count, language));
+                    changed = true;
+                    continue;
+                }
+                ModalRoute::Transient => {}
             }
             let base = n.kind.text(language);
-            let rgb = color(n.level, policy);
-            let tag = level_tag(n.level);
-            let duration = Duration::from_millis(duration_ms(n.level, policy));
             let item = OsdItem {
-                row: counted_row(base.clone(), n.count, rgb, tag),
+                row: counted_row(
+                    base.clone(),
+                    n.count,
+                    policy.color(n.level),
+                    level_tag(n.level),
+                ),
                 level: n.level,
                 key: base,
                 count: n.count,
-                duration,
-                deadline: now + duration,
+                duration: policy.duration(n.level),
+                deadline: now + policy.duration(n.level),
                 group: n.kind.replace_group(),
             };
             if self.transient.route_row(item) == RouteEffect::ShowingChanged {
@@ -158,7 +128,7 @@ impl OsdManager {
         }
     }
 
-    pub fn rows(&self) -> Vec<OsdRow> {
+    pub fn rows(&self) -> &[OsdRow] {
         self.transient.rows()
     }
 
@@ -170,21 +140,30 @@ impl OsdManager {
 
     /// Drain the aggregated modal batch into the sequential queue.
     /// Internal pump step for [`SessionHandle::pump_osd`]: frontends
-    /// present via the modal source, never this. Overflow warns once
-    /// per episode: the flag re-arms when the queue fully drains.
+    /// present via the modal source, never this. Bullet formatting
+    /// happens here at the render boundary, so the box keeps raw
+    /// lines. Overflow warns once per episode: the flag re-arms when
+    /// the queue fully drains.
     pub(crate) fn pump_modal(&mut self) -> bool {
-        if let Some(detail) = self.take_modal_text() {
-            if self.modal_box.queue_modal(detail) && !self.modal_warned_full {
-                log::warn!("error modal queue full; dropping oldest batch");
-                self.modal_warned_full = true;
-            }
-            true
-        } else {
-            false
+        let lines = self.take_modal_text();
+        if lines.is_empty() {
+            return false;
         }
+        // Single source for the aggregation wording: dialogs show it
+        // as-is on every frontend, Android included.
+        let detail = lines
+            .iter()
+            .map(|line| format!("• {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if self.modal_box.queue_modal(detail) && !self.modal_warned_full {
+            log::warn!("error modal queue full; dropping oldest batch");
+            self.modal_warned_full = true;
+        }
+        true
     }
 
-    fn take_modal_text(&mut self) -> Option<String> {
+    fn take_modal_text(&mut self) -> Vec<String> {
         self.modal_box.take_modal_text()
     }
 
@@ -237,6 +216,13 @@ impl OsdManager {
         self.modal_box.dropped_total
     }
 
+    /// Queued error batches awaiting a dialog, for the wake policy.
+    /// Inherent twin of the [`ModalSource`] read: frontends that own
+    /// the manager directly (no trait import) use this.
+    pub fn modal_pending(&self) -> usize {
+        self.modal_box.modal_pending()
+    }
+
     pub fn has_visible(&self) -> bool {
         self.transient.has_visible()
     }
@@ -252,7 +238,7 @@ impl OsdManager {
     /// disappears, or changes language.
     pub fn status_parts(fps: f32, paused: bool, language: AppLanguage) -> (String, String) {
         (
-            status_label(paused, language).to_string(),
+            status_text(status_key(paused), language).to_string(),
             format!("{fps:.1} fps"),
         )
     }
@@ -267,7 +253,7 @@ impl crate::session::osd_presenter::OsdState for OsdManager {
         self.visible_row()
     }
 
-    fn rows(&self) -> Vec<OsdRow> {
+    fn rows(&self) -> &[OsdRow] {
         self.rows()
     }
 }
@@ -280,6 +266,7 @@ mod tests {
     use crate::session::notification::NotificationLevel;
     use nerust_settings_core::model::language::AppLanguage;
     use nerust_settings_core::model::local::NotificationSettings;
+    use std::time::Duration;
 
     fn settings() -> NotificationSettings {
         NotificationSettings::default()
@@ -357,7 +344,7 @@ mod tests {
             FrameChannel::Unpresented,
         );
         assert!(manager.rows().is_empty());
-        assert!(manager.take_modal_text().is_some());
+        assert!(!manager.take_modal_text().is_empty());
     }
 
     #[test]
@@ -381,7 +368,7 @@ mod tests {
             FrameChannel::Composited,
         );
         assert!(manager.rows().is_empty());
-        assert!(manager.take_modal_text().is_some());
+        assert!(!manager.take_modal_text().is_empty());
     }
 
     #[test]
@@ -423,9 +410,9 @@ mod tests {
         }
         assert!(manager.rows().is_empty());
         // Info is dropped without a frame: only two modal lines.
-        let batch = manager.take_modal_text().expect("two modal lines");
-        assert_eq!(batch.lines().count(), 2);
-        assert!(!batch.contains("Paused"));
+        let batch = manager.take_modal_text();
+        assert_eq!(batch.len(), 2);
+        assert!(batch.iter().all(|line| !line.contains("Paused")));
     }
 
     #[test]
@@ -448,7 +435,7 @@ mod tests {
         );
         assert_eq!(manager.generation(), base);
         assert!(manager.rows().is_empty());
-        assert_eq!(manager.take_modal_text(), None);
+        assert!(manager.take_modal_text().is_empty());
         assert_eq!(manager.modal_pending(), 0);
     }
 

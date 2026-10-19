@@ -5,9 +5,10 @@ pub mod vertex;
 pub use error::Error as GlError;
 
 /// Proof that the GL context is current on this thread. Destroy
-/// entry points take this instead of a bare `bool` so the provenance
-/// (`ctx.is_current()` at the call site) cannot be erased or
-/// transposed at a later call.
+/// entry points take `Option<Self>` so a detached teardown skips GL
+/// calls instead of fabricating currency. Build with
+/// [`CurrentContext::assert_current`]; `current()` remains for
+/// call sites that already hold the context current (tests, load).
 #[derive(Debug, Clone, Copy)]
 pub struct CurrentContext(());
 
@@ -16,6 +17,12 @@ impl CurrentContext {
     /// destroy call in the teardown sequence.
     pub fn current() -> Self {
         Self(())
+    }
+
+    /// Checked proof: `Some` only when the caller verified
+    /// `ctx.is_current()`. `None` skips GL deletes and reports.
+    pub fn assert_current(is_current: bool) -> Option<Self> {
+        is_current.then_some(Self(()))
     }
 }
 
@@ -35,10 +42,20 @@ use self::{
     },
 };
 
-fn gl_error_handle<T, F: Fn() -> T>(func: F) -> Result<T, Error> {
+/// Per-call drain in debug builds; release no-op to avoid a
+/// pipeline stall on every GL call. Release builds rely on the
+/// batched [`check_frame`] drain once per frame.
+#[cfg(debug_assertions)]
+fn gl_error_handle<T, F: FnMut() -> T>(mut func: F) -> Result<T, Error> {
     let result = func();
     gl_get_error()?;
     Ok(result)
+}
+
+/// Release fast path: run the call, skip the synchronous drain.
+#[cfg(not(debug_assertions))]
+fn gl_error_handle<T, F: FnMut() -> T>(mut func: F) -> Result<T, Error> {
+    Ok(func())
 }
 
 fn gl_get_error() -> Result<(), Error> {
@@ -55,6 +72,14 @@ fn gl_get_error() -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+/// Batched per-frame error drain. Call once at the end of a frame
+/// instead of relying on the per-call drain in release builds.
+/// In debug builds every wrapper still drains (see `gl_error_handle`);
+/// in release wrappers are no-ops and this is the only check.
+pub fn check_frame() -> Result<(), Error> {
+    gl_get_error()
 }
 
 pub fn use_program(program: GLuint) -> Result<(), Error> {
@@ -108,13 +133,39 @@ pub struct Shader {
     deleted: bool,
 }
 
+/// RAII shader-object guard: deleting happens on drop. A failed
+/// fragment compile or link no longer orphans the vertex shader (or
+/// both shaders on link failure); success paths detach then drop.
+struct ShaderId(GLuint);
+
+impl ShaderId {
+    fn id(&self) -> GLuint {
+        self.0
+    }
+}
+
+impl Drop for ShaderId {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteShader(self.0);
+        }
+    }
+}
+
 /// Programs die with the view: rebuilds and detach must not orphan names.
 /// Explicit `destroy_if_current` does the delete; Drop only reports leaks.
 impl Shader {
     pub fn try_new(vert_src: &str, flag_src: &str) -> Result<Self, ShaderError> {
-        let vtx_shader_id = compile_shader(vert_src, gl::VERTEX_SHADER)?;
-        let flag_shader_id = compile_shader(flag_src, gl::FRAGMENT_SHADER)?;
-        let program_id = link_program(vtx_shader_id, flag_shader_id)?;
+        let vtx = ShaderId(compile_shader(vert_src, gl::VERTEX_SHADER)?);
+        let frag = ShaderId(compile_shader(flag_src, gl::FRAGMENT_SHADER)?);
+        let program_id = link_program(vtx.id(), frag.id())?;
+        // Link keeps its own copy: detach then delete via Drop.
+        unsafe {
+            gl::DetachShader(program_id, vtx.id());
+            gl::DetachShader(program_id, frag.id());
+        }
+        drop(vtx);
+        drop(frag);
 
         Ok(Self {
             program: program_id,
@@ -142,12 +193,26 @@ impl Shader {
         use_program(self.program)
     }
 
+    pub fn id(&self) -> GLuint {
+        self.program
+    }
+
     /// Delete the program when the context is current.
+    /// `None` skips the GL call and reports failure so the caller
+    /// counts the orphan instead of deleting without a context.
     /// No GL call without a current context; Drop reports the leak.
-    pub fn destroy_if_current(&mut self, _current: CurrentContext) -> bool {
+    pub fn destroy_if_current(&mut self, current: Option<CurrentContext>) -> bool {
         if self.deleted {
             return false;
         }
+        let Some(_current) = current else {
+            log::debug!(
+                "orphan GL program {} skipped: no current context",
+                self.program
+            );
+            self.deleted = true;
+            return true;
+        };
         let failed = delete_program(self.program).is_err();
         self.deleted = true;
         failed

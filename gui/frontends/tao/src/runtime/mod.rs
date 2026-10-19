@@ -174,17 +174,17 @@ impl WindowRuntime {
             }
             Event::WindowEvent {
                 event, window_id, ..
-            } if self.host.debug.is_debug_window(window_id) => {
+            } if self.host.is_debug_window(window_id) => {
                 let opener = TaoWindowOpener::new(event_loop);
                 self.on_debug_event(&opener, event);
             }
-            Event::RedrawRequested(window_id) if self.host.debug.is_debug_window(window_id) => {
+            Event::RedrawRequested(window_id) if self.host.is_debug_window(window_id) => {
                 let opener = TaoWindowOpener::new(event_loop);
                 self.on_debug_redrawn(&opener);
             }
             Event::WindowEvent {
                 event, window_id, ..
-            } if self.host.debug.is_ppu_window(window_id) => {
+            } if self.host.is_ppu_window(window_id) => {
                 self.on_ppu_event(event);
             }
             Event::WindowEvent {
@@ -197,8 +197,8 @@ impl WindowRuntime {
                     handle.render();
                 }
             }
-            Event::RedrawRequested(window_id) if self.host.debug.is_ppu_window(window_id) => {
-                if let Some(handle) = self.host.debug.ppu_window_mut() {
+            Event::RedrawRequested(window_id) if self.host.is_ppu_window(window_id) => {
+                if let Some(handle) = self.host.ppu_window_mut() {
                     handle.render();
                 }
             }
@@ -245,7 +245,11 @@ impl WindowRuntime {
 
         // No notification drain here: `update_control_flow` drains
         // every pass (also paused/unfocused ones with no redraw).
-        self.host.render_osd_frame(renderer.as_mut(), window_size);
+        // One capture for the whole redraw: strips and the layer sync
+        // share the frame instead of cloning the snapshot twice.
+        let frame = self.host.frame_snapshot();
+        self.host
+            .render_osd_frame(renderer.as_mut(), window_size, &frame);
 
         self.host.session_mut().swap_frame_buffer();
         if let Some(fb) = self.host.session_mut().frame_buffer() {

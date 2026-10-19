@@ -13,9 +13,9 @@ impl PortId {
     }
 }
 
-impl PartialEq<AttachmentId> for PortId {
-    fn eq(&self, other: &AttachmentId) -> bool {
-        self.0 == other.0
+impl std::fmt::Display for PortId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
     }
 }
 
@@ -48,6 +48,12 @@ impl DeviceKindId {
 
     pub const fn as_str(self) -> &'static str {
         self.0
+    }
+}
+
+impl std::fmt::Display for DeviceKindId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
     }
 }
 
@@ -100,5 +106,11 @@ impl AnalogControlId {
 
     pub const fn as_str(self) -> &'static str {
         self.0
+    }
+}
+
+impl std::fmt::Display for AnalogControlId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
     }
 }

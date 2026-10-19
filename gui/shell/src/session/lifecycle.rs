@@ -8,12 +8,12 @@ use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest};
 use crate::session::{
     SessionError, SessionHandle,
     osd::{OsdManager, PumpReport, PushInput},
-    persistence_setup::MapperRestore,
+    persistence_setup::{MapperRestore, PersistenceBinder},
 };
 
 impl SessionHandle {
     pub fn restart_audio(&mut self) {
-        if let Some(core) = self.emu.core_opt()
+        if let Some(core) = self.emu.core().ok()
             && let Err(error) = core.restart_audio()
         {
             log::warn!("restart_audio failed: {error}");
@@ -26,7 +26,7 @@ impl SessionHandle {
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
         {
-            let Some(core) = self.emu.core_opt() else {
+            let Some(core) = self.emu.core().ok() else {
                 return Err(SessionError::NoCore);
             };
             // Best-effort: a stale battery-save write failure must
@@ -43,25 +43,25 @@ impl SessionHandle {
             }
         }
         self.emu
-            .core_opt_mut()
+            .core_mut()
+            .ok()
             .ok_or(SessionError::NoCore)?
             .load(&media, Some(resolved.options))?;
         self.media.loaded = Some(super::LoadedMedia {
             media: media.clone(),
         });
 
-        let setup = self.setup_persistence(media.native_path(), MapperRestore::Load);
-        self.note_persistence_setup(setup);
+        PersistenceBinder::bind(self, media.native_path(), MapperRestore::Load);
 
         self.remember_last_successful_rom_directory(media.native_path());
         Ok(())
     }
 
     pub fn unload(&mut self) -> Result<(), SessionError> {
-        if let Some(core) = self.emu.core_opt() {
+        if let Ok(core) = self.emu.core() {
             self.media.persistence.flush_mapper_save(core)?;
         }
-        if let Some(core) = self.emu.core_opt_mut() {
+        if let Ok(core) = self.emu.core_mut() {
             core.unload()?;
         }
         self.media.loaded = None;
@@ -70,7 +70,7 @@ impl SessionHandle {
     }
 
     pub fn flush_before_exit(&mut self) {
-        if let Some(core) = self.emu.core_opt()
+        if let Some(core) = self.emu.core().ok()
             && let Err(error) = self.media.persistence.flush_mapper_save(core)
         {
             log::warn!("mapper save flush before close failed: {error}");

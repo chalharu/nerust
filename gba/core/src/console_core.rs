@@ -94,7 +94,7 @@ impl GbaConsoleCore {
         self.emu_input.take();
         let input = self
             .emu_input
-            .read_buf
+            .read_buffer()
             .downcast_ref::<GbaInputBuffer>()
             .ok_or_else(|| CoreError::Core(Box::new(GbaLoadError::InvalidInputBuffer)))?
             .0;

@@ -564,7 +564,7 @@ impl DebuggerWindowCore {
             let live = win.borrow().window.is_visible() && win.borrow().ppu_window.is_some() && {
                 let state = win.borrow().state.clone();
                 let session = &state.borrow().session;
-                session.loaded() && !session.paused()
+                session.tick_metrics().loaded && !session.tick_metrics().paused
             };
             if live {
                 Self::live_tick(&win);
@@ -589,7 +589,7 @@ impl DebuggerWindowCore {
         let live = win.borrow().window.is_visible() && win.borrow().ppu_window.is_some() && {
             let state = win.borrow().state.clone();
             let session = &state.borrow().session;
-            session.loaded() && !session.paused()
+            session.tick_metrics().loaded && !session.tick_metrics().paused
         };
         if !live {
             return;
@@ -656,7 +656,7 @@ impl DebuggerWindowCore {
             let running = {
                 let state = this.state.clone();
                 let session = &state.borrow().session;
-                session.loaded() && !session.paused()
+                session.tick_metrics().loaded && !session.tick_metrics().paused
             };
             (this.data.language, running)
         };

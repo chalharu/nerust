@@ -468,36 +468,35 @@ impl WindowExtend for Window {
     fn update_actions(&self) {
         let state = self.state();
         let state = state.borrow();
-        self.borrow().close_action.set_enabled(state.loaded());
-        self.borrow().pause_action.set_enabled(state.can_pause());
-        self.borrow().resume_action.set_enabled(state.can_resume());
-        self.borrow().reset_action.set_enabled(state.loaded());
+        let tick = state.session.tick_metrics();
+        self.borrow().close_action.set_enabled(tick.loaded);
+        self.borrow().pause_action.set_enabled(tick.can_pause());
+        self.borrow().resume_action.set_enabled(tick.can_resume());
+        self.borrow().reset_action.set_enabled(tick.loaded);
         // Coreless open is a designed state (NoCore status with
         // guidance, same as F4): gating on `loaded` would disagree
         // with the shortcut, so the action stays enabled.
         self.borrow().debugger_action.set_enabled(true);
         self.borrow().history_action.set_enabled(true);
-        self.borrow()
-            .state_create_action
-            .set_enabled(state.loaded());
+        self.borrow().state_create_action.set_enabled(tick.loaded);
         self.borrow()
             .state_save_active_action
-            .set_enabled(state.loaded());
+            .set_enabled(tick.loaded);
         self.borrow()
             .state_load_active_action
             .set_enabled(state.active_slot_id().is_some());
         self.borrow()
             .state_select_slot_action
-            .set_enabled(state.loaded() && !state.slots().is_empty());
+            .set_enabled(tick.loaded && !state.slots().is_empty());
         self.borrow()
             .state_save_slot_action
-            .set_enabled(state.loaded() && !state.slots().is_empty());
+            .set_enabled(tick.loaded && !state.slots().is_empty());
         self.borrow()
             .state_load_slot_action
-            .set_enabled(state.loaded() && !state.slots().is_empty());
+            .set_enabled(tick.loaded && !state.slots().is_empty());
         self.borrow()
             .state_delete_slot_action
-            .set_enabled(state.loaded() && !state.slots().is_empty());
+            .set_enabled(tick.loaded && !state.slots().is_empty());
 
         let language = state.settings_snapshot().shared.general.language;
         rebuild_slot_menu(

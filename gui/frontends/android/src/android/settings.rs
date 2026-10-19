@@ -1024,6 +1024,60 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
 }
 
 // ---------------------------------------------------------------------------
+// Settings apply plan: the ~100-line `handle_settings_result` body split
+// into a pure decision (here) and execution (the frontend). The frontend
+// matches on the plan; no settings branching lives at the call site.
+// ---------------------------------------------------------------------------
+
+/// Outcome of decoding + validating a settings dialog result.
+pub(crate) enum SettingsPlan {
+    /// Decoded snapshot ready to apply (overlay/cache follow-ups included).
+    Apply { next: SettingsSnapshot },
+    /// Applying needs a document tree first: the frontend stashes `next`
+    /// as pending and opens the directory picker.
+    NeedDocumentTree { next: SettingsSnapshot },
+    /// Undecodable or unapplicable payload: log `reason`, apply nothing.
+    Invalid { reason: String },
+}
+
+/// Pure plan step for `handle_settings_result`. Takes the dialog values,
+/// the pre-dialog `AndroidSettings` (codec context), and the live snapshot;
+/// returns what the frontend must execute.
+pub(crate) struct SettingsApplier;
+
+impl SettingsApplier {
+    pub(crate) fn plan(
+        values: &BTreeMap<String, usize>,
+        current: &AndroidSettings,
+        snapshot: &SettingsSnapshot,
+        registry: &SystemRegistry,
+    ) -> SettingsPlan {
+        let Some(android_settings) = AndroidSettings::from_keyed_indices(values, current) else {
+            return SettingsPlan::Invalid {
+                reason: "Android settings dialog returned invalid keyed values".to_string(),
+            };
+        };
+        let mut next = snapshot.clone();
+        if let Err(error) = android_settings.apply_to_snapshot(&mut next, registry) {
+            return SettingsPlan::Invalid {
+                reason: format!("failed to update Android system settings: {error}"),
+            };
+        }
+        let previous_storage_policy = snapshot.shared.persistence.storage_policy;
+        if android_settings.storage_policy != StoragePolicy::AppSharedData
+            && (android_settings.storage_policy != previous_storage_policy
+                || next.shared.persistence.storage_document_tree_uri.is_none())
+        {
+            return SettingsPlan::NeedDocumentTree { next };
+        }
+        if android_settings.storage_policy == StoragePolicy::AppSharedData {
+            next.shared.persistence.storage_document_tree_uri = None;
+        }
+        SettingsPlan::Apply { next }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1542,5 +1596,71 @@ mod tests {
         assert!(!is_dialog_open());
         assert_eq!(take_result(), Some(SettingsDialogResult::Dismissed));
         assert_eq!(take_result(), None);
+    }
+
+    fn current_values(android: &AndroidSettings) -> BTreeMap<String, usize> {
+        android
+            .setting_defs()
+            .into_iter()
+            .map(|def| (def.key, def.current))
+            .collect()
+    }
+
+    #[test]
+    fn settings_plan_applies_current_values() {
+        let registry = registry();
+        let mut snapshot = default_snapshot();
+        // App storage needs no document tree: the unchanged round-trip
+        // applies directly.
+        snapshot.shared.persistence.storage_policy = StoragePolicy::AppSharedData;
+        let current = android_settings(&snapshot, &registry);
+        match SettingsApplier::plan(&current_values(&current), &current, &snapshot, &registry) {
+            SettingsPlan::Apply { next } => {
+                assert_eq!(
+                    next.shared.persistence.storage_policy,
+                    current.storage_policy
+                );
+                assert!(
+                    next.shared.persistence.storage_document_tree_uri.is_none(),
+                    "app storage clears the tree URI"
+                );
+            }
+            SettingsPlan::NeedDocumentTree { .. } => {
+                panic!("current values must not need a document tree")
+            }
+            SettingsPlan::Invalid { reason } => panic!("current values must apply: {reason}"),
+        }
+    }
+
+    #[test]
+    fn settings_plan_routes_custom_directory_to_tree_picker() {
+        let registry = registry();
+        let snapshot = default_snapshot();
+        let current = android_settings(&snapshot, &registry);
+        let mut android = current.clone();
+        android.storage_policy = StoragePolicy::CustomDirectory;
+        match SettingsApplier::plan(&current_values(&android), &current, &snapshot, &registry) {
+            SettingsPlan::NeedDocumentTree { next } => {
+                assert_eq!(
+                    next.shared.persistence.storage_policy,
+                    StoragePolicy::CustomDirectory
+                );
+            }
+            SettingsPlan::Apply { .. } => {
+                panic!("custom directory without a tree URI must need the picker")
+            }
+            SettingsPlan::Invalid { reason } => panic!("custom directory must plan: {reason}"),
+        }
+    }
+
+    #[test]
+    fn settings_plan_rejects_garbage_values() {
+        let registry = registry();
+        let snapshot = default_snapshot();
+        let current = android_settings(&snapshot, &registry);
+        match SettingsApplier::plan(&BTreeMap::new(), &current, &snapshot, &registry) {
+            SettingsPlan::Invalid { .. } => {}
+            _ => panic!("empty values must be invalid"),
+        }
     }
 }

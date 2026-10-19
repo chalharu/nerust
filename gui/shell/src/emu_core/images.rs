@@ -11,6 +11,11 @@ use nerust_emu_thread::OperationError;
 
 use super::{EmuCore, recv_debug_reply};
 
+/// Live PPU image batch: generation plus one `(label, width, height,
+/// rgba)` tuple per image. Aliased so the fetch signature stays
+/// readable (clippy `type_complexity`).
+pub type LiveImages = Option<(u64, Vec<(String, u32, u32, Vec<u8>)>)>;
+
 /// Cached system images for the debugger PPU viewer. Anything
 /// advancing or replacing memory marks dirty; viewers compare
 /// `generation` instead of hashing.

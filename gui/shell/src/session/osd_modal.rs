@@ -1,6 +1,18 @@
 //! Modal error batches: sequential display pumping.
 //! The shell pump and the owning frontend adapter are the only writers.
 
+/// Queue caps for the OSD subsystem. One home so burst-cap tuning
+/// stays grep-able instead of scattering literals across the queue
+/// and modal boxes.
+pub(crate) struct OsdLimits;
+
+impl OsdLimits {
+    /// Sequential display (one showing row) plus pending rows.
+    pub(crate) const MAX_TRANSIENT_QUEUED: usize = 2;
+    /// Sequential modal batches; overflow drops the oldest.
+    pub(crate) const MAX_MODAL_QUEUED: usize = 8;
+}
+
 /// Modal error batches with sequential display pumping.
 #[derive(Debug, Default)]
 pub(crate) struct ModalBox {
@@ -29,7 +41,7 @@ pub trait ModalSource {
 
 impl ModalBox {
     /// Cap shared by queue and requeue paths (drop-oldest discipline).
-    const MAX_QUEUED: usize = 8;
+    const MAX_QUEUED: usize = OsdLimits::MAX_MODAL_QUEUED;
 
     pub(crate) fn push(&mut self, text: String) {
         self.batch.push(text);
@@ -39,21 +51,11 @@ impl ModalBox {
         std::mem::take(&mut self.batch)
     }
 
-    /// Take pending error lines as one display batch, bulleted.
-    /// Single source for the aggregation wording: dialogs show it
-    /// as-is on every frontend, Android included.
-    pub(crate) fn take_modal_text(&mut self) -> Option<String> {
-        let modal = self.take_batch();
-        if modal.is_empty() {
-            return None;
-        }
-        Some(
-            modal
-                .iter()
-                .map(|line| format!("• {line}"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
+    /// Take pending error lines as one display batch. Returns the raw
+    /// lines: bullet formatting happens at the render boundary
+    /// (`pump_modal`), so queued content stays plain data.
+    pub(crate) fn take_modal_text(&mut self) -> Vec<String> {
+        self.take_batch()
     }
 
     /// Queue one aggregated error batch for sequential display.
@@ -110,15 +112,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn take_modal_text_joins_bullets_and_drains() {
+    fn take_modal_text_drains_raw_lines() {
         let mut modal = ModalBox::default();
-        assert_eq!(modal.take_modal_text(), None);
+        assert!(modal.take_modal_text().is_empty());
         modal.push("first".to_string());
         modal.push("second".to_string());
-        let detail = modal.take_modal_text().expect("joined batch");
-        assert_eq!(detail.lines().count(), 2);
-        assert!(detail.lines().all(|line| line.starts_with("• ")));
-        assert_eq!(modal.take_modal_text(), None);
+        // Raw lines: bullet formatting lives at the render boundary
+        // (`pump_modal`), not in the box.
+        assert_eq!(modal.take_modal_text(), vec!["first", "second"]);
+        assert!(modal.take_modal_text().is_empty());
     }
 
     #[test]

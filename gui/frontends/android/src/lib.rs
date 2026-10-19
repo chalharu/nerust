@@ -29,6 +29,8 @@ use jni::{
 };
 #[cfg(target_os = "android")]
 use nerust_core_traits::audio::AudioBackendRegistry;
+#[cfg(any(target_os = "android", test))]
+use nerust_core_traits::factory::CoreFactory;
 #[cfg(target_os = "android")]
 use nerust_crash_guard::GuardOutcome;
 #[cfg(any(target_os = "android", test))]
@@ -61,12 +63,26 @@ fn init_android_logging() {
 }
 
 #[cfg(any(target_os = "android", test))]
-fn create_system_registry() -> Arc<SystemRegistry> {
-    Arc::new(SystemRegistry::new(vec![
+fn default_factories() -> Vec<Arc<dyn CoreFactory>> {
+    vec![
         Arc::new(NesFactory),
         Arc::new(GbcFactory),
         Arc::new(GbaFactory),
-    ]))
+    ]
+}
+
+#[cfg(any(target_os = "android", test))]
+fn create_system_registry() -> Arc<SystemRegistry> {
+    create_system_registry_with(default_factories())
+}
+
+/// Inject the factory set from the composition root (`android_main`).
+/// Tests use this to build reduced registries; production passes the
+/// default set. Adding a system means extending `default_factories`,
+/// not touching call sites.
+#[cfg(any(target_os = "android", test))]
+fn create_system_registry_with(factories: Vec<Arc<dyn CoreFactory>>) -> Arc<SystemRegistry> {
+    Arc::new(SystemRegistry::new(factories))
 }
 
 #[cfg(target_os = "android")]
@@ -209,5 +225,17 @@ mod tests {
                 .to_string(),
             "gba"
         );
+    }
+
+    #[test]
+    fn registry_injection_builds_reduced_registry() {
+        let registry = create_system_registry_with(vec![Arc::new(NesFactory)]);
+        let ids: Vec<_> = registry
+            .all()
+            .iter()
+            .map(|factory| factory.system_id().to_string())
+            .collect();
+
+        assert_eq!(ids, ["nes"]);
     }
 }

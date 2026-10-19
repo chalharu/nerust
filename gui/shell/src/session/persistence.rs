@@ -6,7 +6,10 @@ use std::{
 use std::io::Error as IoError;
 
 use crate::state::resolve_state_format;
-use nerust_core_traits::{identity::SystemIdentity, save_state::save_state_with_header};
+use nerust_core_traits::{
+    identity::SystemIdentity,
+    save_state::{SaveStateHeader, save_state_with_header},
+};
 use nerust_persistence::{
     error::PersistenceError,
     model::{LoadedStateSlot, StateSlotSummary},
@@ -25,9 +28,13 @@ use crate::emu_core::CorePersistence;
 use super::error::SlotOpFailure;
 
 /// Classify a persistence-layer failure for user-facing messages:
-/// transport problems are `Storage`, undecodable payloads `Corrupt`.
-fn storage_or_corrupt(error: &PersistenceError) -> SlotOpFailure {
+/// missing files are `Missing`, other transport problems `Storage`,
+/// undecodable payloads `Corrupt`.
+fn classify(error: &PersistenceError) -> SlotOpFailure {
     match error {
+        PersistenceError::Io(error) if error.kind() == ErrorKind::NotFound => {
+            SlotOpFailure::Missing
+        }
         PersistenceError::Io(_) => SlotOpFailure::Storage,
         _ => SlotOpFailure::Corrupt,
     }
@@ -71,6 +78,14 @@ pub trait AutoSaveBackend: Send {
         identity: &SystemIdentity,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError>;
     fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError>;
+    /// Quarantine the hidden autosave aside instead of deleting it.
+    /// Returns the quarantine path, or `None` when nothing was kept
+    /// (absent file, or a backend with no rename that deletes).
+    /// Default deletes; filesystem backends rename aside so a
+    /// version-skewed snapshot stays inspectable.
+    fn quarantine_autosave(&self, dir: &Path) -> Result<Option<PathBuf>, PersistenceError> {
+        self.delete_autosave(dir).map(|_| None)
+    }
 }
 
 /// Platform abstraction for mapper save I/O.
@@ -215,6 +230,25 @@ impl AutoSaveBackend for FsSlotBackend {
     fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError> {
         delete_state_slot(&autosave_state_slot_path(dir))
     }
+    fn quarantine_autosave(&self, dir: &Path) -> Result<Option<PathBuf>, PersistenceError> {
+        let path = autosave_state_slot_path(dir);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let quarantined = dir.join(".autosave_slot.quarantined");
+        let _ = std::fs::remove_file(&quarantined);
+        match std::fs::rename(&path, &quarantined) {
+            Ok(()) => {
+                log::warn!(
+                    "quarantined incompatible hidden lifecycle state to {}",
+                    quarantined.display()
+                );
+                Ok(Some(quarantined))
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
 }
 impl MapperSaveBackend for FsSlotBackend {
     fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
@@ -230,6 +264,19 @@ impl MapperSaveBackend for FsSlotBackend {
     ) -> Result<PathBuf, PersistenceError> {
         write_recovery_mapper_save(path, data)
     }
+}
+
+/// Outcome of a mapper-save flush. Callers distinguish "nothing
+/// to do" from "wrote" without re-reading manager state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapperFlush {
+    /// Battery save exported and written to the sidecar path.
+    Flushed,
+    /// Auto-load failed earlier, so the flush was degraded: the
+    /// in-core save went to a recovery file instead.
+    DegradedRecoveryWritten,
+    /// No sidecar path configured (ROM-less switch or reset state).
+    SkippedNoPath,
 }
 
 pub struct PersistenceManager {
@@ -356,7 +403,7 @@ impl PersistenceManager {
                     }
                     Err(error) => {
                         log::warn!("saving state slot failed: {error}");
-                        Err(storage_or_corrupt(&error))
+                        Err(classify(&error))
                     }
                 }
             }
@@ -381,7 +428,7 @@ impl PersistenceManager {
                 Ok(slot_id) => slot_id,
                 Err(error) => {
                     log::warn!("allocating state slot failed: {error}");
-                    return Err(storage_or_corrupt(&error));
+                    return Err(classify(&error));
                 }
             },
         };
@@ -398,7 +445,7 @@ impl PersistenceManager {
             Ok(slot_id) => self.save_slot(slot_id, emu, true),
             Err(error) => {
                 log::warn!("allocating state slot failed: {error}");
-                Err(storage_or_corrupt(&error))
+                Err(classify(&error))
             }
         }
     }
@@ -430,7 +477,7 @@ impl PersistenceManager {
             }
             Err(error) => {
                 log::warn!("loading state slot failed: {error}");
-                Err(storage_or_corrupt(&error))
+                Err(classify(&error))
             }
         }
     }
@@ -465,7 +512,7 @@ impl PersistenceManager {
             }
             Err(error) => {
                 log::warn!("deleting state slot failed: {error}");
-                Err(SlotOpFailure::Storage)
+                Err(classify(&error))
             }
         }
     }
@@ -529,18 +576,18 @@ impl PersistenceManager {
     pub fn flush_mapper_save(
         &mut self,
         emu: &impl CorePersistence,
-    ) -> Result<(), PersistenceError> {
+    ) -> Result<MapperFlush, PersistenceError> {
         // No path configured means no save location exists, not a
         // failure: `set_active_system` resets paths before every
         // activation, so the first load and ROM-less system switches
-        // always flush here. Returning Err would break those flows.
-        // Only a configured path with a failing export is an error.
+        // always flush here. Returning Skipped keeps those flows
+        // quiet. Only a configured path with a failing export errors.
         let Some(path) = self.mapper_save_path.as_ref() else {
-            return Ok(());
+            return Ok(MapperFlush::SkippedNoPath);
         };
         if !self.mapper_save_flush_allowed {
             if self.mapper_save_recovery_written {
-                return Ok(());
+                return Ok(MapperFlush::DegradedRecoveryWritten);
             }
             if let Some(bytes) = emu
                 .save_mapper_raw()
@@ -559,12 +606,16 @@ impl PersistenceManager {
                     "mapper save auto-load failed earlier; wrote recovery save to {}",
                     recovery_path.display()
                 );
+                return Ok(MapperFlush::DegradedRecoveryWritten);
             }
-            return Ok(());
+            return Ok(MapperFlush::SkippedNoPath);
         }
-        match emu.save_mapper_raw() {
-            Ok(Some(bytes)) => self.mapper_backend.write_mapper_save(path, &bytes)?,
-            Ok(None) => {}
+        let flushed = match emu.save_mapper_raw() {
+            Ok(Some(bytes)) => self
+                .mapper_backend
+                .write_mapper_save(path, &bytes)
+                .map(|_| MapperFlush::Flushed)?,
+            Ok(None) => MapperFlush::Flushed,
             Err(error) => {
                 // Fail loudly: callers propagate this to the UI instead
                 // of silently dropping the in-core battery save.
@@ -572,8 +623,8 @@ impl PersistenceManager {
                 log::warn!("{error}");
                 return Err(error);
             }
-        }
-        Ok(())
+        };
+        Ok(flushed)
     }
 
     pub fn load_mapper_save_if_needed(
@@ -599,7 +650,7 @@ impl PersistenceManager {
         }
     }
 
-    pub fn save_hidden(&mut self, emu: &impl CorePersistence) -> bool {
+    pub fn save_hidden(&self, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("save_hidden: no states_dir configured; cannot save hidden lifecycle state");
             return false;
@@ -628,7 +679,7 @@ impl PersistenceManager {
         }
     }
 
-    pub fn load_hidden(&mut self, emu: &impl CorePersistence) -> bool {
+    pub fn load_hidden(&self, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("load_hidden: no states_dir configured; cannot load hidden lifecycle state");
             return false;
@@ -638,18 +689,20 @@ impl PersistenceManager {
         };
         match self.autosave_backend.read_autosave(dir, &identity) {
             Ok(Some(slot)) => {
-                if slot.summary.emulator_version != env!("CARGO_PKG_VERSION") {
-                    log::warn!(
-                        "ignoring hidden lifecycle state from emulator version {} on {}",
-                        slot.summary.emulator_version,
-                        env!("CARGO_PKG_VERSION")
-                    );
-                    let _ = self.autosave_backend.delete_autosave(dir);
+                if state_header_version(&slot.machine_state)
+                    != Some(SaveStateHeader::new(&[]).version)
+                {
+                    log::warn!("ignoring hidden lifecycle state with unsupported state version");
+                    if let Err(error) = self.autosave_backend.quarantine_autosave(dir) {
+                        log::warn!("failed to quarantine hidden lifecycle state: {error}");
+                    }
                     return false;
                 }
                 if let Err(error) = emu.load_state_raw(resolve_state_format(&slot.machine_state)) {
                     log::warn!("hidden lifecycle state import failed: {error}");
-                    let _ = self.autosave_backend.delete_autosave(dir);
+                    if let Err(error) = self.autosave_backend.quarantine_autosave(dir) {
+                        log::warn!("failed to quarantine hidden lifecycle state: {error}");
+                    }
                     false
                 } else {
                     true
@@ -661,7 +714,7 @@ impl PersistenceManager {
             }
             Err(PersistenceError::Io(error)) if error.kind() == ErrorKind::NotFound => false,
             Err(error) => {
-                eprintln!("loading hidden lifecycle state failed: {error}");
+                log::warn!("loading hidden lifecycle state failed: {error}");
                 let _ = self.autosave_backend.delete_autosave(dir);
                 false
             }
@@ -679,18 +732,23 @@ impl PersistenceManager {
     }
 }
 
-/// Slot navigation direction. Replaces the `forward: bool` pair so
-/// call sites read as `Next`/`Previous` instead of `true`/`false`.
+/// Decode the save-state envelope version from a stored blob.
+/// `None` means pre-header (or corrupt) data, which never matches the
+/// current version. Compares the envelope, not the build string: a
+/// version-skewed snapshot quarantines instead of loading.
+fn state_header_version(blob: &[u8]) -> Option<u32> {
+    // 12-byte `SaveStateHeader` (`NRST` magic + version + size).
+    let buf: &[u8; 12] = blob.get(..12)?.try_into().ok()?;
+    SaveStateHeader::decode(buf)
+        .ok()
+        .map(|header| header.version)
+}
+
+/// Slot navigation direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotDirection {
     Next,
     Previous,
-}
-
-impl SlotDirection {
-    fn is_next(self) -> bool {
-        matches!(self, SlotDirection::Next)
-    }
 }
 
 pub fn adjacent_slot_id(
@@ -698,25 +756,21 @@ pub fn adjacent_slot_id(
     active_slot_id: Option<u64>,
     direction: SlotDirection,
 ) -> Option<u64> {
-    let forward = direction.is_next();
     if slots.is_empty() {
         return None;
     }
+    // No active slot: wrap around from the far end so the first step
+    // lands on a real slot in either direction.
     let current_index = active_slot_id
         .and_then(|active| slots.iter().position(|slot| slot.slot_id == active))
-        .unwrap_or_else(|| {
-            if forward {
-                slots.len().saturating_sub(1)
-            } else {
-                0
-            }
+        .unwrap_or_else(|| match direction {
+            SlotDirection::Next => slots.len().saturating_sub(1),
+            SlotDirection::Previous => 0,
         });
-    let next_index = if forward {
-        (current_index + 1) % slots.len()
-    } else if current_index == 0 {
-        slots.len() - 1
-    } else {
-        current_index - 1
+    let next_index = match direction {
+        SlotDirection::Next => (current_index + 1) % slots.len(),
+        SlotDirection::Previous if current_index == 0 => slots.len() - 1,
+        SlotDirection::Previous => current_index - 1,
     };
     Some(slots[next_index].slot_id)
 }

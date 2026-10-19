@@ -8,7 +8,7 @@ use tao::{event::WindowEvent, event_loop::ControlFlow};
 use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
-use crate::aux::focus::WindowHandler;
+use crate::aux::focus::{AuxKind, WindowHandler};
 
 impl WindowRuntime {
     pub(super) fn on_main_event(
@@ -83,7 +83,7 @@ impl WindowRuntime {
         // leaving anywhere arms it (see the main arms). Runs
         // before borrowing the handle below.
         if let WindowEvent::Focused(focused) = event {
-            self.host.note_aux_focus_quiet(focused);
+            self.host.on_aux_focus(AuxKind::Settings, focused);
         }
         let Some(handle) = self.host.settings_window_mut() else {
             return;
@@ -105,26 +105,26 @@ impl WindowRuntime {
 
     pub(super) fn on_debug_event(&mut self, opener: &dyn WindowOpener, event: WindowEvent) {
         if let WindowEvent::Moved(position) = &event {
-            self.host
-                .debug
-                .remember_debug_window_pos(position.x, position.y);
+            self.host.remember_debug_window_pos(position.x, position.y);
         }
         // Focus re-reads, never force-pauses. External destroy
         // drops the handle so a later F4 reopens; checked before
         // focus handling so a dead window arms no auto-pause.
         if matches!(event, WindowEvent::Destroyed) {
-            self.host.debug.drop_debug_window();
+            self.host.drop_debug_window();
             self.host.request_redraw();
             return;
         }
         // Focus-only drive: Moved/Resized/key events must not arm
         // the deferred pause. Only Focused(true/false) touches it.
         let focused = matches!(event, WindowEvent::Focused(true));
-        if matches!(event, WindowEvent::Focused(_)) && self.host.note_aux_focus(focused) {
+        if matches!(event, WindowEvent::Focused(_))
+            && self.host.on_aux_focus(AuxKind::Debug, focused)
+        {
             self.host.resume_session();
         }
         {
-            let Some(handle) = self.host.debug.debug_window_mut() else {
+            let Some(handle) = self.host.debug_window_mut() else {
                 return;
             };
             handle.on_event(event);
@@ -134,20 +134,20 @@ impl WindowRuntime {
         }
         self.drain_and_maybe_open_ppu(opener);
         // Closing never resumes: resume is always explicit.
-        if self.host.debug.is_debug_open() {
+        if self.host.is_debug_open() {
             // Coalesced redraw: the event/drain paths above already
             // flagged what changed; one request covers the frame.
             self.host.request_redraw();
         }
-        if self.host.debug.debug_close_requested() {
-            self.host.debug.drop_debug_window();
+        if self.host.debug_close_requested() {
+            self.host.drop_debug_window();
             self.host.request_redraw();
         }
     }
 
     pub(super) fn on_debug_redrawn(&mut self, opener: &dyn WindowOpener) {
         self.drain_and_maybe_open_ppu(opener);
-        if let Some(handle) = self.host.debug.debug_window_mut() {
+        if let Some(handle) = self.host.debug_window_mut() {
             handle.render();
         }
     }
@@ -156,7 +156,7 @@ impl WindowRuntime {
         // Same external-destroy guard as the debugger: a dead
         // handle must not linger and block reopening.
         if matches!(event, WindowEvent::Destroyed) {
-            self.host.debug.drop_ppu_window();
+            self.host.drop_ppu_window();
             self.host.request_redraw();
             return;
         }
@@ -165,22 +165,21 @@ impl WindowRuntime {
         // Focus-only drive: Moved/Resized/key events must not arm
         // the deferred pause. Only Focused(true/false) touches it.
         let focused = matches!(event, WindowEvent::Focused(true));
-        if matches!(event, WindowEvent::Focused(_)) && self.host.note_aux_focus(focused) {
+        if matches!(event, WindowEvent::Focused(_)) && self.host.on_aux_focus(AuxKind::Ppu, focused)
+        {
             self.host.resume_session();
         }
         if let WindowEvent::Moved(position) = &event {
-            self.host
-                .debug
-                .remember_ppu_window_pos(position.x, position.y);
+            self.host.remember_ppu_window_pos(position.x, position.y);
         }
         {
-            let Some(handle) = self.host.debug.ppu_window_mut() else {
+            let Some(handle) = self.host.ppu_window_mut() else {
                 return;
             };
             handle.on_event(event);
         }
-        if self.host.debug.ppu_close_requested() {
-            self.host.debug.drop_ppu_window();
+        if self.host.ppu_close_requested() {
+            self.host.drop_ppu_window();
             self.host.request_redraw();
         }
     }
@@ -201,6 +200,7 @@ mod tests {
     use tao::{dpi::PhysicalPosition, event::WindowEvent, event_loop::ControlFlow};
 
     use super::WindowRuntime;
+    use crate::aux::focus::AuxKind;
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
 
@@ -263,7 +263,7 @@ mod tests {
         assert!(!runtime.host.main_active());
         runtime.on_main_event(&opener, WindowEvent::Focused(true), &mut flow);
         assert!(runtime.host.main_active());
-        // Dirty gate: departure pushes once, arrival with identical
+        // dirty gate: departure pushes once, arrival with identical
         // chrome skips the duplicate IPC.
         assert_eq!(menu.updates().len(), 1);
     }
@@ -286,7 +286,7 @@ mod tests {
     fn debug_open_request_reaches_opener_once() {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        runtime.host.debug.request_debug_open();
+        runtime.host.request_debug_open();
         runtime.pump_debug_open_request(&opener);
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
         // Consumed: a second pump without re-arm stays quiet.
@@ -303,7 +303,7 @@ mod tests {
         runtime.on_settings_event(WindowEvent::Focused(false));
         assert!(runtime.host.main_active());
         assert!(menu.updates().is_empty());
-        runtime.host.note_aux_focus_quiet(true);
+        runtime.host.on_aux_focus(AuxKind::Settings, true);
     }
 
     #[test]
@@ -318,7 +318,7 @@ mod tests {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
         runtime.on_debug_event(&opener, WindowEvent::Moved(PhysicalPosition::new(60, 20)));
-        assert_eq!(runtime.host.debug.debug_window_pos(), Some((60, 20)));
+        assert_eq!(runtime.host.debug_window_pos(), Some((60, 20)));
     }
 
     #[test]
@@ -346,7 +346,7 @@ mod tests {
     fn ppu_moved_remembers_position() {
         let (mut runtime, _) = test_runtime();
         runtime.on_ppu_event(WindowEvent::Moved(PhysicalPosition::new(1250, 100)));
-        assert_eq!(runtime.host.debug.ppu_window_pos(), Some((1250, 100)));
+        assert_eq!(runtime.host.ppu_window_pos(), Some((1250, 100)));
     }
 
     #[test]
@@ -361,7 +361,7 @@ mod tests {
     fn ppu_request_opens_debugger_once() {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        runtime.host.debug.request_ppu_open();
+        runtime.host.request_ppu_open();
         runtime.on_debug_redrawn(&opener);
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
         runtime.on_debug_redrawn(&opener);
@@ -392,7 +392,7 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         runtime.host.open_debug_windows(&opener, true);
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
-        assert!(!runtime.host.debug.is_debug_open());
-        assert!(!runtime.host.debug.is_ppu_open());
+        assert!(!runtime.host.is_debug_open());
+        assert!(!runtime.host.is_ppu_open());
     }
 }

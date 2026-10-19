@@ -1,4 +1,12 @@
 //! Static input topology descriptors: ports, attachments, and devices.
+//!
+//! These descriptors are built once during factory/session initialization
+//! and then shared read-only. The `Vec` storage and the linear
+//! [`InputTopologyDescriptor::attachment`]/[`InputTopologyDescriptor::device`]
+//! scans are init-only costs; do not query them per frame on the hot path.
+//! Cloning a topology is cheap enough for init-time sharing (small vectors
+//! of descriptors) but clone-once-and-share (`Arc`) rather than cloning
+//! per frame.
 
 use super::ids::{AnalogControlId, AttachmentId, DeviceKindId, DigitalControlId, PortId};
 
@@ -8,6 +16,10 @@ pub enum ControlId {
     Analog(AnalogControlId),
 }
 
+/// Static description of every port and device a system exposes.
+///
+/// Built once at init time and shared read-only afterwards; the linear
+/// lookup helpers below are init-only conveniences, not per-frame queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputTopologyDescriptor {
     pub ports: Vec<PortDescriptor>,
@@ -15,6 +27,7 @@ pub struct InputTopologyDescriptor {
 }
 
 impl InputTopologyDescriptor {
+    /// Init-only linear scan for an attachment across all ports.
     pub fn attachment(&self, id: AttachmentId) -> Option<&AttachmentSlotDescriptor> {
         self.ports
             .iter()
@@ -22,6 +35,7 @@ impl InputTopologyDescriptor {
             .find(|attachment| attachment.id == id)
     }
 
+    /// Init-only linear scan for a device by kind.
     pub fn device(&self, kind: DeviceKindId) -> Option<&DeviceDescriptor> {
         self.devices.iter().find(|device| device.kind == kind)
     }

@@ -36,9 +36,14 @@ impl InputStateBuffer for GbcInputBuffer {
         self.0 = 0xFF;
     }
 
-    fn copy_state(&mut self, other: &dyn InputStateBuffer) {
+    fn copy_state(&mut self, other: &dyn InputStateBuffer) -> Result<(), BufferError> {
         if let Some(other) = other.downcast_ref::<Self>() {
             self.0 = other.0;
+            Ok(())
+        } else {
+            Err(BufferError::MismatchedBuffer {
+                expected: "GbcInputBuffer",
+            })
         }
     }
 }

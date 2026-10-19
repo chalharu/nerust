@@ -237,6 +237,27 @@ pub fn disable(cap: GLenum) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::Disable(cap) })
 }
 
+/// `glIsEnabled` with error drain (debug) / fast path (release).
+pub fn is_enabled(cap: GLenum) -> Result<bool, Error> {
+    gl_error_handle(|| unsafe { gl::IsEnabled(cap) == gl::TRUE })
+}
+
+/// Single-integer `glGetIntegerv` for save/restore guards
+/// (program, active texture, blend factors, bindings).
+pub fn get_integer(pname: GLenum) -> Result<GLint, Error> {
+    let mut value: GLint = 0;
+    gl_error_handle(|| unsafe {
+        gl::GetIntegerv(pname, &mut value);
+        value
+    })
+}
+
+/// Batched per-frame drain. Prefer this over per-call drains in
+/// release builds; wrappers are no-ops there (see `gl_error_handle`).
+pub fn check_frame() -> Result<(), Error> {
+    super::check_frame()
+}
+
 pub fn blend_func(sfactor: GLenum, dfactor: GLenum) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::BlendFunc(sfactor, dfactor) })
 }

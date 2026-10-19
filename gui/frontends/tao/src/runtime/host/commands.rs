@@ -129,7 +129,7 @@ impl HostState {
             // sets the flag here because opening needs the event loop,
             // which the runtime arm owns.
             KeyboardShortcut::OpenDebugger => {
-                self.debug.request_debug_open();
+                self.request_debug_open();
                 return;
             }
             KeyboardShortcut::Session(action) => dispatch_session_action(self, action),
@@ -241,7 +241,6 @@ mod tests {
     use crate::test_session::FakeRomLoader;
     use nerust_gui_shell::registry::SystemRegistry;
     use nerust_gui_shell::session::commands::SessionCommand;
-    use nerust_gui_shell::session::osd::ModalSource;
 
     #[test]
     fn rom_filters_empty_without_cores() {
@@ -363,7 +362,7 @@ mod tests {
             HostAction::None
         );
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
-        assert!(!host.debug.is_debug_open());
+        assert!(!host.is_debug_open());
     }
 
     #[test]
@@ -393,7 +392,7 @@ mod tests {
                 HostAction::None
             );
         }
-        // Dirty gate: identical chrome skips the IPC. Only the
+        // dirty gate: identical chrome skips the IPC. Only the
         // first sync and the active-slot selection change the sig.
         assert_eq!(support.menu.updates().len(), before + 2);
         assert!(opener.calls().is_empty());
@@ -404,11 +403,11 @@ mod tests {
         use nerust_gui_shell::session::access::{PauseControl, SessionControl, SlotControl};
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(!host.session.paused());
+        assert!(!host.session.tick_metrics().paused);
         host.pause();
         host.resume();
         host.toggle_pause();
-        assert!(!host.session.paused());
+        assert!(!host.session.tick_metrics().paused);
         assert!(!host.save_active_slot());
         assert!(!host.load_active_slot());
         host.select_next_slot();
@@ -420,7 +419,7 @@ mod tests {
         host.create_slot();
         host.reset();
         host.unload();
-        assert!(!host.session.loaded());
+        assert!(!host.session.tick_metrics().loaded);
     }
 
     #[test]
@@ -431,20 +430,22 @@ mod tests {
         // No core: TogglePause fails into a CommandFailed error,
         // which routes to the modal path (error_modal defaults on).
         let _ = host.session.run_command(SessionCommand::TogglePause);
-        host.poll_notifications();
+        let frame = host.frame_snapshot();
+        host.poll_notifications(&frame);
         // Bounded wait for the background ack. The loop itself never
         // blocked: rfd runs on its own thread (see `ModalFlight`).
         // FakeDialogs answers instantly, so this exits on an early pass.
         let mut tries = 0;
-        while support.dialogs.errors().is_empty() || host.osd.manager.modal_pending() != 0 {
-            host.poll_notifications();
+        while support.dialogs.errors().is_empty() || host.osd.modal_pending() != 0 {
+            let frame = host.frame_snapshot();
+            host.poll_notifications(&frame);
             tries += 1;
             assert!(tries < 500, "modal ack never arrived");
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         assert_eq!(support.dialogs.errors().len(), 1);
         assert!(support.dialogs.errors()[0].contains("TogglePause"));
-        assert_eq!(host.osd.manager.modal_pending(), 0);
+        assert_eq!(host.osd.modal_pending(), 0);
     }
 
     #[test]
@@ -456,14 +457,15 @@ mod tests {
         // sender is dropped without sending (Disconnected).
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         drop(tx);
-        host.osd.modal_flight = Some(ModalFlight {
+        host.osd.inject_modal_flight_for_test(ModalFlight {
             done: rx,
             resume_after: false,
         });
-        host.poll_notifications();
+        let frame = host.frame_snapshot();
+        host.poll_notifications(&frame);
         // Reaped as a failed ack: flight gone, queue unblocked.
-        assert!(host.osd.modal_flight.is_none());
-        assert_eq!(host.osd.manager.modal_pending(), 0);
+        assert!(!host.osd.modal_showing());
+        assert_eq!(host.osd.modal_pending(), 0);
     }
 
     #[test]
@@ -472,11 +474,13 @@ mod tests {
         let mut host = support.host;
         // No notifications, no windows: drain, expiry, dirty gate,
         // and the history fast path all no-op without a core.
-        host.poll_notifications();
-        host.poll_notifications();
+        let frame = host.frame_snapshot();
+        host.poll_notifications(&frame);
+        let frame = host.frame_snapshot();
+        host.poll_notifications(&frame);
         assert!(support.dialogs.errors().is_empty());
-        assert_eq!(host.osd.manager.modal_pending(), 0);
-        assert!(host.osd.history_sync_key.is_none());
+        assert_eq!(host.osd.modal_pending(), 0);
+        assert!(host.osd.history_key().is_none());
     }
 
     #[test]
@@ -490,7 +494,7 @@ mod tests {
         assert!(support.menu.updates().is_empty());
         host.apply_keyboard_shortcut(KeyboardShortcut::Session(ShortcutAction::TogglePause));
         host.apply_keyboard_shortcut(KeyboardShortcut::ToggleFullscreen);
-        // Dirty gate: the pause sync pushes once (headless toggle
+        // dirty gate: the pause sync pushes once (headless toggle
         // without a window adds no second change).
         assert_eq!(support.menu.updates().len(), 1);
     }
@@ -504,7 +508,7 @@ mod tests {
         host.clear_keys();
         host.sync_fullscreen_from_settings();
         let _ = host.persist_fullscreen_default(false);
-        assert!(!host.session.loaded());
+        assert!(!host.session.tick_metrics().loaded);
     }
 
     #[test]
@@ -515,6 +519,6 @@ mod tests {
         let snapshot = host.session.settings_snapshot().clone();
         let _ = host.apply_settings(snapshot);
         let _ = host.set_fullscreen_default(true);
-        assert!(!host.session.loaded());
+        assert!(!host.session.tick_metrics().loaded);
     }
 }

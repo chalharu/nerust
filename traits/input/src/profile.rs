@@ -10,8 +10,9 @@ use std::{
 
 use super::{
     devices::ControllerCollection,
-    events::InputStateBuffer,
-    ids::{AttachmentId, DigitalControlId, ProfileId},
+    events::{BufferError, InputStateBuffer, InputValue},
+    ids::{AttachmentId, DeviceKindId, DigitalControlId, ProfileId},
+    topology::ControlId,
 };
 
 /// A set of port identifiers a controller can occupy.
@@ -37,7 +38,7 @@ impl SlotInfo {
 /// Describes one control on a controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ControlInfo {
-    pub id: DigitalControlId,
+    pub id: ControlId,
     pub label: &'static str,
     pub kind: ControlKind,
     pub abstract_key: Option<AbstractKey>,
@@ -88,14 +89,24 @@ pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
     /// Override when different port groups within the same profile
     /// represent different device kinds (e.g. NES Famicom P2 has
     /// a microphone that P1 doesn't).
-    fn device_kind_for_group(&self, _group_index: usize) -> &'static str {
-        self.profile_id().as_str()
+    fn device_kind_for_group(&self, _group_index: usize) -> DeviceKindId {
+        DeviceKindId::new(self.profile_id().as_str())
     }
 }
 
 /// System port layout query. Factory → Frontend.
+///
+/// `slots()` and `controllers()` describe static init-time topology:
+/// build them once during session setup and cache the result. The
+/// default `resolve_*` helpers linearly scan those lists, which is fine
+/// at init time but must not run per frame.
 pub trait InputPorts: std::fmt::Debug {
     fn slots(&self) -> &[SlotInfo];
+    /// All controller profiles this system supports.
+    ///
+    /// Init-only: returns a freshly allocated `Vec` per call, so callers
+    /// must invoke it during setup and cache the result rather than
+    /// polling it on the hot path.
     fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>>;
 
     /// Resolve a persisted slot ID string to an AttachmentId.
@@ -116,6 +127,11 @@ pub trait InputPorts: std::fmt::Debug {
 /// Slot-to-controller assignments.
 /// Uses Rc<dyn ControllerProfile> so callers can inspect profile methods directly
 /// without string-based lookups.
+///
+/// Equality is order-sensitive and structural: slots must appear in the same
+/// order with equal attachment ids, and each paired controller is compared by
+/// [`ProfileId`] (not by pointer identity). Persisting an `InputAssignments`
+/// must therefore preserve slot order for round-trip equality to hold.
 #[derive(Clone)]
 pub struct InputAssignments {
     pub slots: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>,
@@ -136,9 +152,11 @@ impl std::fmt::Debug for InputAssignments {
     }
 }
 
-/// Structural equality: slot ids and controller profile ids in order.
-/// No string allocation; the persistable projection lives in the
-/// `From` impl below.
+/// Order-sensitive structural equality: slot ids and controller profile ids
+/// compared pairwise in order. The persistable (stringly-typed) projection of
+/// these assignments lives in `SessionHandle::current_assignments_pairs`
+/// (gui shell); that projection must preserve slot order for round-trip
+/// equality to hold.
 impl PartialEq for InputAssignments {
     fn eq(&self, other: &Self) -> bool {
         self.slots.len() == other.slots.len()
@@ -189,7 +207,7 @@ pub struct InputResources {
 pub struct InputSplit {
     pub shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
     pub flag: Arc<AtomicBool>,
-    pub new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer>>,
+    pub new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
 }
 
 impl std::fmt::Debug for InputSplit {
@@ -202,13 +220,13 @@ impl std::fmt::Debug for InputSplit {
 }
 
 /// GUI thread input delivery.
-/// Maintains absolute input state in `state` buffer.
+/// Maintains absolute input state in an internal buffer.
 /// On publish, copies state → write_buf → shared (swap), preserving held keys.
 #[derive(Debug)]
 pub struct GuiInput {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
     flag: Arc<AtomicBool>,
-    pub state: Box<dyn InputStateBuffer>,
+    state: Box<dyn InputStateBuffer>,
     write_buf: Box<dyn InputStateBuffer>,
 }
 
@@ -216,16 +234,13 @@ impl GuiInput {
     pub fn new(
         shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
         flag: Arc<AtomicBool>,
-        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer>>,
+        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
     ) -> Self {
-        let state = (new_buffer)();
-        let write_buf = (new_buffer)();
-        Self {
+        Self::from_split(&InputSplit {
             shared,
             flag,
-            state,
-            write_buf,
-        }
+            new_buffer,
+        })
     }
 
     pub fn from_split(split: &InputSplit) -> Self {
@@ -237,15 +252,23 @@ impl GuiInput {
         }
     }
 
+    /// Write one absolute field of the staged GUI state.
+    pub fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
+        self.state.set(field, value)
+    }
+
     /// Must be called every frame. Copies absolute state into shared.
     pub fn publish(&mut self) {
-        // Prepare write_buf from absolute state (fast concrete copy)
-        self.write_buf.copy_state(&*self.state);
-        // Swap into shared (fast pointer exchange).
-        // SAFETY: The mutex is never poisoned because publish() only performs
-        // std::mem::swap() and AtomicBool::store() while holding the lock,
-        // neither of which can panic. copy_state() runs before the lock.
-        let mut lock = self.shared.lock().unwrap();
+        // Prepare write_buf from absolute state (fast concrete copy).
+        // Both buffers come from the same `new_buffer` factory, so a
+        // mismatch here is a programming error; surface it loudly in
+        // debug builds but keep release behavior total.
+        let copy = self.write_buf.copy_state(&*self.state);
+        debug_assert!(copy.is_ok(), "GuiInput buffers must share a concrete type");
+        let _ = copy;
+        // Swap into shared (fast pointer exchange). The mutex cannot be
+        // poisoned: only std::mem::swap (non-panicking) runs under the lock.
+        let mut lock = self.shared.lock().unwrap_or_else(|e| e.into_inner());
         std::mem::swap(&mut *lock, &mut self.write_buf);
         self.flag.store(true, Ordering::Release);
     }
@@ -260,21 +283,20 @@ impl GuiInput {
 pub struct EmuInput {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
     flag: Arc<AtomicBool>,
-    pub read_buf: Box<dyn InputStateBuffer>,
+    read_buf: Box<dyn InputStateBuffer>,
 }
 
 impl EmuInput {
     pub fn new(
         shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
         flag: Arc<AtomicBool>,
-        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer>>,
+        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
     ) -> Self {
-        let read_buf = (new_buffer)();
-        Self {
+        Self::from_split(&InputSplit {
             shared,
             flag,
-            read_buf,
-        }
+            new_buffer,
+        })
     }
 
     pub fn from_split(split: &InputSplit) -> Self {
@@ -285,12 +307,19 @@ impl EmuInput {
         }
     }
 
+    /// Borrow the latest emu-side snapshot without taking it.
+    /// Cores downcast this to their concrete buffer type per frame.
+    pub fn read_buffer(&self) -> &dyn InputStateBuffer {
+        &*self.read_buf
+    }
+
     /// Must be called every frame start. Takes latest input from GUI.
     pub fn take(&mut self) {
         if self.flag.swap(false, Ordering::Acquire) {
-            // SAFETY: take() only performs std::mem::swap() under the lock,
-            // which never panics, so the mutex can never be poisoned.
-            let mut lock = self.shared.lock().unwrap();
+            // Only std::mem::swap (non-panicking) runs under the lock,
+            // so the mutex cannot be poisoned; recover the inner guard
+            // defensively anyway.
+            let mut lock = self.shared.lock().unwrap_or_else(|e| e.into_inner());
             std::mem::swap(&mut *lock, &mut self.read_buf);
         }
     }

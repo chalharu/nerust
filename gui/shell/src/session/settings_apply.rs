@@ -4,30 +4,64 @@
 
 use std::{path::Path, sync::Arc};
 
-use nerust_core_traits::factory::CoreFactory;
+use nerust_core_traits::{audio::AudioBackendRegistry, factory::CoreFactory};
+use nerust_gui_runtime::settings::{LiveStrategy, SettingsApplyPlan, SettingsSnapshot};
 use nerust_input_traits::InputAssignments;
 
-use crate::session::{SessionError, SessionHandle, persistence_setup::MapperRestore};
+use crate::session::{
+    SessionError, SessionHandle,
+    persistence_setup::{MapperRestore, PersistenceBinder},
+};
 use nerust_settings_core::factory::settings_view;
 
-/// What `apply_live_runtime` did, so a failed settings save can undo
-/// exactly that (rebuild vs swap-back) instead of guessing.
+/// What `rollback_runtime_apply` undid. Failures are reported here,
+/// never swallowed: a failed rollback leaves the new runtime live,
+/// and the caller surfaces that alongside the original save error.
 #[derive(Debug, Default)]
-struct RuntimeApplyOutcome {
-    rebuilt: bool,
-    audio_swapped: bool,
-    visual_swapped: bool,
+pub struct RollbackReport {
+    pub restored_rebuild: bool,
+    pub restored_presentation: bool,
+    pub restored_audio: bool,
+    /// First rollback failure, if any.
+    pub error: Option<SessionError>,
+}
+
+impl RollbackReport {
+    fn fail(&mut self, error: SessionError) {
+        if self.error.is_none() {
+            self.error = Some(error);
+        }
+    }
+}
+
+/// One snapshot of load-bearing runtime state, captured once per
+/// rebuild. Single source for the export/restore decision below, so
+/// the emu-side tick and the session-side record cannot disagree
+/// mid-rebuild.
+struct LoadedState {
+    present: bool,
+    core_bytes: Option<Vec<u8>>,
+}
+
+/// Derived apply inputs: the pure plan plus what the session resolved
+/// around it. Splits derivation (testable, no `&mut`) from the
+/// mutating apply below.
+struct DerivedApply {
+    plan: SettingsApplyPlan,
+    strategy: LiveStrategy,
+    next_assignments: Option<InputAssignments>,
+    assignments_changed: bool,
 }
 
 impl SessionHandle {
-    fn apply_live_volume(&self, next_settings: &nerust_gui_runtime::settings::SettingsSnapshot) {
+    fn apply_live_volume(&self, next_settings: &SettingsSnapshot) {
         let volume = f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
         let volume = if next_settings.local.audio.muted {
             0.0
         } else {
             volume
         };
-        if let Some(core) = self.emu.core_opt()
+        if let Some(core) = self.emu.core().ok()
             && let Err(error) = core.set_volume(volume)
         {
             log::warn!("set_volume failed: {error}");
@@ -36,7 +70,7 @@ impl SessionHandle {
 
     fn swap_audio_for_settings(
         &self,
-        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        next_settings: &SettingsSnapshot,
     ) -> Result<(), SessionError> {
         let core = self.emu.core()?;
         let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
@@ -48,8 +82,8 @@ impl SessionHandle {
     fn swap_presentation_for_settings(
         &mut self,
         factory: &Arc<dyn CoreFactory>,
-        previous: &nerust_gui_runtime::settings::SettingsSnapshot,
-        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        previous: &SettingsSnapshot,
+        next_settings: &SettingsSnapshot,
     ) -> Result<bool, SessionError> {
         let system_id = factory.system_id();
         let before_view = settings_view(previous, system_id.as_ref());
@@ -63,77 +97,105 @@ impl SessionHandle {
         Ok(true)
     }
 
+    /// Derive the plan, strategy, and assignments for `next_settings`.
+    /// Pure read: no mutation, so tests can assert the strategy matrix
+    /// without a live core.
+    fn derive_apply(&self, next_settings: &SettingsSnapshot) -> DerivedApply {
+        let previous_assignments = &self.input.current_assignments;
+        let factory = self.active_factory().cloned();
+        let next_assignments = factory.as_ref().map(|f| {
+            let sid = f.system_id();
+            Self::load_assignments(f, next_settings, sid.as_ref())
+        });
+        let plan = nerust_gui_runtime::settings::apply::derive_apply_plan(
+            &self.capabilities,
+            &self.settings.snapshot,
+            next_settings,
+            self.active_system_id(),
+        );
+        let assignments_changed = next_assignments
+            .as_ref()
+            .is_some_and(|a| a != previous_assignments);
+        let strategy = plan.live_strategy(assignments_changed, self.emu.core().is_ok());
+        DerivedApply {
+            plan,
+            strategy,
+            next_assignments,
+            assignments_changed,
+        }
+    }
+
+    /// Run one derived strategy against the live runtime, returning
+    /// the effective strategy for rollback. A refused presentation
+    /// swap falls back to a rebuild, which is what gets undone.
     fn apply_live_runtime(
         &mut self,
-        plan: &nerust_gui_runtime::settings::SettingsApplyPlan,
+        strategy: LiveStrategy,
+        plan: &SettingsApplyPlan,
         factory: &Option<Arc<dyn CoreFactory>>,
-        previous: &nerust_gui_runtime::settings::SettingsSnapshot,
-        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        previous: &SettingsSnapshot,
+        next_settings: &SettingsSnapshot,
         applied_assignments: &InputAssignments,
-        assignments_changed: bool,
-    ) -> Result<RuntimeApplyOutcome, SessionError> {
-        // `session_rebuild_required` folds the rate/latency and visual
-        // reasons; the live paths below absorb both, leaving only core
-        // behavior changes (and reassignments) on the rebuild path.
-        let visual_changed = plan.session_rebuild_required && !plan.audio_backend_changed;
-        let mut outcome = RuntimeApplyOutcome::default();
-        let mut needs_rebuild = visual_changed || assignments_changed;
-        if plan.audio_backend_changed
-            && !visual_changed
-            && !assignments_changed
-            && self.emu.core_opt().is_some()
-        {
-            // Audio-only delta: the swap absorbs the rebuild entirely
-            // (the replacement backend carries the new volume too).
-            self.swap_audio_for_settings(next_settings)?;
-            outcome.audio_swapped = true;
-            needs_rebuild = false;
-        }
-        if needs_rebuild {
-            let mut swapped = false;
-            if visual_changed
-                && !assignments_changed
-                && self.emu.core_opt().is_some()
-                && let Some(factory) = factory
-            {
-                swapped = self.swap_presentation_for_settings(factory, previous, next_settings)?;
+    ) -> Result<LiveStrategy, SessionError> {
+        let effective = match strategy {
+            LiveStrategy::AudioSwap => {
+                self.swap_audio_for_settings(next_settings)?;
+                LiveStrategy::AudioSwap
             }
-            if swapped {
-                outcome.visual_swapped = true;
-                if plan.audio_backend_changed {
-                    self.swap_audio_for_settings(next_settings)?;
-                    outcome.audio_swapped = true;
+            LiveStrategy::PresentationSwap => {
+                let mut swapped = false;
+                if let Some(factory) = factory {
+                    swapped =
+                        self.swap_presentation_for_settings(factory, previous, next_settings)?;
                 }
-                if plan.audio_volume_changed {
-                    self.apply_live_volume(next_settings);
+                if swapped {
+                    if plan.audio_backend_changed {
+                        self.swap_audio_for_settings(next_settings)?;
+                    }
+                    LiveStrategy::PresentationSwap
+                } else {
+                    // Core behavior changed (or no factory to swap
+                    // with): full reconstruction carries the new speaker too.
+                    self.rebuild_for_settings(next_settings, applied_assignments)?;
+                    LiveStrategy::Rebuild
                 }
-            } else {
-                // Core behavior changed (or controllers reassigned):
-                // full reconstruction carries the new speaker too.
+            }
+            LiveStrategy::Rebuild => {
                 self.rebuild_for_settings(next_settings, applied_assignments)?;
-                outcome.rebuilt = true;
+                LiveStrategy::Rebuild
             }
-        } else if plan.audio_volume_changed && !outcome.audio_swapped {
+            LiveStrategy::Idle => LiveStrategy::Idle,
+        };
+        // The audio swap and the rebuild both carry the new volume;
+        // only the presentation/idle paths need a separate nudge.
+        if matches!(
+            effective,
+            LiveStrategy::Idle | LiveStrategy::PresentationSwap
+        ) && plan.audio_volume_changed
+        {
             self.apply_live_volume(next_settings);
         }
-        Ok(outcome)
+        Ok(effective)
     }
 
     fn rollback_runtime_apply(
         &mut self,
         factory: &Option<Arc<dyn CoreFactory>>,
-        previous: &nerust_gui_runtime::settings::SettingsSnapshot,
-        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        previous: &SettingsSnapshot,
+        next_settings: &SettingsSnapshot,
         previous_assignments: &InputAssignments,
-        outcome: &RuntimeApplyOutcome,
-    ) {
-        if outcome.rebuilt
+        effective: LiveStrategy,
+    ) -> RollbackReport {
+        let mut report = RollbackReport::default();
+        if effective == LiveStrategy::Rebuild
             && let Err(e) = self.rebuild_for_settings(previous, previous_assignments)
         {
-            log::warn!("failed to rollback settings rebuild: {e}");
-            return;
+            log::error!("failed to rollback settings rebuild: {e}");
+            report.fail(e);
+            return report;
         }
-        if outcome.visual_swapped
+        report.restored_rebuild = effective == LiveStrategy::Rebuild;
+        if effective == LiveStrategy::PresentationSwap
             && let Some(factory) = factory
         {
             let system_id = factory.system_id();
@@ -141,10 +203,13 @@ impl SessionHandle {
             let after_view = settings_view(previous, system_id.as_ref());
             match factory.presentation_swap_assets(&before_view, &after_view) {
                 Some((profile, palette)) => {
-                    if let Some(core) = self.emu.core_opt_mut()
+                    if let Some(core) = self.emu.core_mut().ok()
                         && let Err(e) = core.apply_presentation(profile, palette)
                     {
-                        log::warn!("failed to rollback presentation swap: {e}");
+                        log::error!("failed to rollback presentation swap: {e}");
+                        report.fail(e.into());
+                    } else {
+                        report.restored_presentation = true;
                     }
                 }
                 None => {
@@ -152,142 +217,146 @@ impl SessionHandle {
                 }
             }
         }
-        if outcome.audio_swapped {
+        if effective == LiveStrategy::AudioSwap {
             let speaker = crate::settings::build_speaker(&self.audio_registry, &previous.local);
             let rate = speaker.sample_rate();
-            if let Some(core) = self.emu.core_opt()
+            if let Some(core) = self.emu.core().ok()
                 && let Err(e) = core.swap_audio_backend(speaker, rate)
             {
-                log::warn!("failed to rollback audio swap: {e}");
+                log::error!("failed to rollback audio swap: {e}");
+                report.fail(e.into());
+            } else {
+                report.restored_audio = true;
             }
         }
+        report
     }
 
+    /// Persist `next_settings` and absorb it into the live session.
+    /// Derivation, runtime apply, and input rebind run as named
+    /// stages so each can be read (and tested) in isolation.
     pub fn apply_settings(
         &mut self,
-        next_settings: nerust_gui_runtime::settings::SettingsSnapshot,
-    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
+        next_settings: SettingsSnapshot,
+    ) -> Result<SettingsApplyPlan, SessionError> {
+        let plan = self.apply_derived(next_settings)?;
+        Ok(plan)
+    }
+
+    fn apply_derived(
+        &mut self,
+        next_settings: SettingsSnapshot,
+    ) -> Result<SettingsApplyPlan, SessionError> {
         let previous = self.settings.snapshot.clone();
         let previous_assignments = self.input.current_assignments.clone();
         let factory = self.active_factory().cloned();
+        let derived = self.derive_apply(&next_settings);
 
-        let next_assignments = factory.as_ref().map(|f| {
-            let sid = f.system_id();
-            Self::load_assignments(f, &next_settings, sid.as_ref())
-        });
-
-        let plan = nerust_gui_runtime::settings::apply::derive_apply_plan(
-            &self.capabilities,
-            &previous,
-            &next_settings,
-            self.active_system_id(),
-        );
-
-        let assignments_changed = next_assignments
-            .as_ref()
-            .is_some_and(|a| a != &previous_assignments);
-
-        if plan.persistence_changed
-            && let Some(core) = self.emu.core_opt()
+        if derived.plan.persistence_changed
+            && let Ok(core) = self.emu.core()
         {
             self.media.persistence.flush_mapper_save(core)?;
         }
 
-        let outcome = self.apply_live_runtime(
-            &plan,
+        let effective = self.apply_live_runtime(
+            derived.strategy,
+            &derived.plan,
             &factory,
             &previous,
             &next_settings,
-            next_assignments.as_ref().unwrap_or(&previous_assignments),
-            assignments_changed,
+            derived
+                .next_assignments
+                .as_ref()
+                .unwrap_or(&previous_assignments),
         )?;
 
         if let Err(error) = self.settings.manager.save_snapshot(next_settings.clone()) {
-            self.rollback_runtime_apply(
+            let report = self.rollback_runtime_apply(
                 &factory,
                 &previous,
                 &next_settings,
                 &previous_assignments,
-                &outcome,
+                effective,
             );
+            if let Some(rollback_error) = report.error {
+                log::error!("settings rollback failed: {rollback_error}");
+            }
             return Err(SessionError::Settings(error));
         }
 
-        if assignments_changed && let Some(a) = next_assignments {
+        if derived.assignments_changed
+            && let Some(a) = derived.next_assignments
+        {
             self.input.current_assignments = a;
         }
 
         self.settings.snapshot = next_settings;
-        if plan.persistence_changed && self.tick_metrics().loaded {
+        if derived.plan.persistence_changed && self.tick_metrics().loaded {
             let rom_path = self
                 .media
                 .loaded
                 .as_ref()
                 .and_then(|media| media.media.native_path().map(Path::to_path_buf));
-            let setup = self.setup_persistence(rom_path.as_deref(), MapperRestore::Skip);
-            self.note_persistence_setup(setup);
+            PersistenceBinder::bind(self, rom_path.as_deref(), MapperRestore::Skip);
         }
+        self.rebind_input();
+        Ok(derived.plan)
+    }
+
+    /// Rebuild the keyboard reverse map after anything that moves
+    /// bindings, assignments, or controllers.
+    fn rebind_input(&mut self) {
         self.input.pressed_keys.clear();
         self.clear_input();
         self.rebuild_key_field_map();
-        Ok(plan)
     }
 
     pub fn set_fullscreen_default(
         &mut self,
         fullscreen: bool,
-    ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
+    ) -> Result<SettingsApplyPlan, SessionError> {
         if self.settings.snapshot.local.video.window.fullscreen_default == fullscreen {
-            return Ok(nerust_gui_runtime::settings::SettingsApplyPlan::default());
+            return Ok(SettingsApplyPlan::default());
         }
 
         let mut next_settings = self.settings.snapshot.clone();
         next_settings.local.video.window.fullscreen_default = fullscreen;
-        let plan = nerust_gui_runtime::settings::apply::derive_apply_plan(
-            &self.capabilities,
-            &self.settings.snapshot,
-            &next_settings,
-            self.active_system_id(),
-        );
-
-        if let Err(error) = self.settings.manager.save_snapshot(next_settings.clone()) {
-            return Err(SessionError::Settings(error));
-        }
-
-        self.settings.snapshot = next_settings;
-        Ok(plan)
+        self.apply_settings(next_settings)
     }
 
     pub(super) fn rebuild_for_settings(
         &mut self,
-        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        next_settings: &SettingsSnapshot,
         assignments: &InputAssignments,
     ) -> Result<(), SessionError> {
         let tick = self.tick_metrics();
-        let exported_core_bytes = if tick.loaded {
-            Some(
-                self.emu
-                    .core_opt()
-                    .ok_or(SessionError::NoCore)?
-                    .save_state_raw()?,
-            )
-        } else {
-            None
+        let loaded = LoadedState {
+            present: tick.loaded || self.media.loaded.is_some(),
+            core_bytes: tick
+                .loaded
+                .then(|| {
+                    let core = self.emu.core().ok().ok_or(SessionError::NoCore)?;
+                    core.save_state_raw().map_err(SessionError::from)
+                })
+                .transpose()?,
         };
-        let restored_runtime_state = exported_core_bytes.is_some();
 
         let factory = self.active_factory().ok_or(SessionError::NoCore)?.clone();
-        let rebuilt = self.build_core_for_settings(next_settings, &factory, assignments)?;
+        let rebuilt =
+            build_core_for_settings(&self.audio_registry, next_settings, &factory, assignments)?;
         let rebuilt_core = rebuilt.emu_core;
+        // The export decides the restore: a captured snapshot means
+        // the runtime round-trips (skip the disk mapper save); no
+        // capture means the disk save is the only continuity.
+        let restored_runtime_state = loaded.core_bytes.is_some();
 
-        if self.media.loaded.is_some() {
+        if loaded.present
+            && let Some(media) = self.media.loaded.as_ref().map(|loaded| &loaded.media)
+        {
             // Borrow, don't clone: `MediaObject` bytes ride an `Arc`,
             // but even the `PathBuf` half need not duplicate per rebuild.
-            let load_media = self.media.loaded.as_ref().map(|loaded| &loaded.media);
-            if let Some(media) = load_media {
-                rebuilt_core.load(media, None)?;
-            }
-            if let Some(core_bytes) = exported_core_bytes {
+            rebuilt_core.load(media, None)?;
+            if let Some(core_bytes) = loaded.core_bytes {
                 // Move, don't clone: the snapshot is hundreds of KB.
                 rebuilt_core.load_state_raw(core_bytes)?;
                 if !tick.paused {
@@ -298,22 +367,20 @@ impl SessionHandle {
 
         self.emu.install(rebuilt_core, rebuilt.gui_input);
         self.input.field_map = rebuilt.field_map;
-        if tick.loaded {
+        if loaded.present {
             let rom_path = self
                 .media
                 .loaded
                 .as_ref()
                 .and_then(|m| m.media.native_path().map(Path::to_path_buf));
-            let rom_path_deref = rom_path.as_deref();
             let restore = if restored_runtime_state {
                 MapperRestore::Skip
             } else {
                 MapperRestore::Load
             };
-            let setup = self.setup_persistence(rom_path_deref, restore);
-            self.note_persistence_setup(setup);
+            PersistenceBinder::bind(self, rom_path.as_deref(), restore);
             if tick.paused
-                && let Some(core) = self.emu.core_opt_mut()
+                && let Ok(core) = self.emu.core_mut()
             {
                 core.pause()?;
             }
@@ -321,26 +388,12 @@ impl SessionHandle {
         Ok(())
     }
 
-    fn build_core_for_settings(
-        &self,
-        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
-        factory: &Arc<dyn CoreFactory>,
-        assignments: &InputAssignments,
-    ) -> Result<super::CoreRuntime, SessionError> {
-        let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
-        let system_id = factory.system_id();
-        let view = settings_view(next_settings, system_id.as_ref());
-        let parts =
-            factory.create_core_and_adapter_with_assignments(&view, speaker, assignments)?;
-        Ok(super::CoreRuntime::from_factory_parts(parts))
-    }
-
     pub(crate) fn remember_last_successful_rom_directory(&mut self, path: Option<&Path>) {
-        if let Some(path) = path
-            && let Err(error) = self
-                .settings
-                .manager
-                .update_last_successful_rom_directory(path)
+        let Some(path) = path else { return };
+        if let Err(error) = self
+            .settings
+            .manager
+            .update_last_successful_rom_directory(path)
         {
             log::warn!("failed to update app state: {error}");
         }
@@ -348,4 +401,21 @@ impl SessionHandle {
             self.settings.snapshot = snapshot;
         }
     }
+}
+
+/// Build a fresh core for `next_settings` plus `assignments`. Free
+/// function of exactly what the build consumes (speaker registry,
+/// settings view, assignments); no session borrowing, so callers can
+/// hold the session borrow for the install that follows.
+fn build_core_for_settings(
+    audio_registry: &AudioBackendRegistry,
+    next_settings: &SettingsSnapshot,
+    factory: &Arc<dyn CoreFactory>,
+    assignments: &InputAssignments,
+) -> Result<super::CoreRuntime, SessionError> {
+    let speaker = crate::settings::build_speaker(audio_registry, &next_settings.local);
+    let system_id = factory.system_id();
+    let view = settings_view(next_settings, system_id.as_ref());
+    let parts = factory.create_core_and_adapter_with_assignments(&view, speaker, assignments)?;
+    Ok(super::CoreRuntime::from_factory_parts(parts))
 }

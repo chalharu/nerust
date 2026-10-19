@@ -6,7 +6,7 @@ use iced_tiny_skia::Renderer;
 use iced_winit::program::Program;
 use tao::event::WindowEvent;
 
-use super::shell::{AuxShell, AuxWindow};
+use super::shell::AuxShell;
 
 /// Main-window focus truth plus the deferred auto-pause protocol.
 /// Invariants: a pause lands only via the burst-end commit after
@@ -109,13 +109,38 @@ pub(crate) fn aux_focus_step_quiet(focus: &mut FocusState, focused: bool) {
     }
 }
 
-/// Uniform aux-window handler: event feed plus shell access.
-/// Handles keep only their program type, log tag, shell access, and
+/// Which aux window changed focus. The deferred auto-pause protocol
+/// decision lives here (not at the dispatch call sites): interactive
+/// viewers (debugger, PPU) may report a resume, while read-only
+/// viewers (settings, history) only cancel a pending pause and never
+/// resume anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuxKind {
+    Debug,
+    Ppu,
+    History,
+    Settings,
+}
+
+/// Shared aux-focus step with the resume protocol chosen by window
+/// kind. Returns whether a system-paused session should resume.
+pub(crate) fn on_aux_focus(focus: &mut FocusState, kind: AuxKind, focused: bool) -> bool {
+    match kind {
+        AuxKind::Debug | AuxKind::Ppu => aux_focus_step(focus, focused),
+        AuxKind::Settings | AuxKind::History => {
+            aux_focus_step_quiet(focus, focused);
+            false
+        }
+    }
+}
+
+/// Uniform aux-window handler: event feed plus shell access. Handles
+/// keep only their program type, log tag, shell access, and
 /// program-specific [`WindowHandler::handle_event`]; identity, close,
-/// focus, render, and the pump stay default so the four twins cannot
-/// drift apart. Focus agreement stays [`aux_focus_step`]/quiet outside
-/// the trait: no handle state participates.
-pub(crate) trait WindowHandler: AuxWindow {
+/// focus, render, and the pump stay default so the twins cannot drift
+/// apart. The sole aux-window trait: every aux window implements
+/// `WindowHandler` (no separate routing trait, no coherence trap).
+pub(crate) trait WindowHandler {
     type Program: Program<Theme = iced::Theme, Renderer = Renderer>;
     /// Log tag for the shared render path (per-window identity).
     const LOG_TAG: &str;
@@ -134,9 +159,21 @@ pub(crate) trait WindowHandler: AuxWindow {
         }
     }
 
+    /// Feed one native event to the aux shell: shared prelude
+    /// (resize/scale/modifiers/close), program dispatch, redraw
+    /// request. Resize/scale/modifier paths never rebuild, so the
+    /// trailing request stays their only repaint; rebuild/repaint
+    /// passes already requested above and skip the duplicate.
+    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
+        self.shell_mut().handle_common_event(&event);
+        if !self.handle_tao_event(event) {
+            self.shell().request_redraw();
+        }
+    }
+
     /// Feed one native event to the aux shell.
     fn on_event(&mut self, event: WindowEvent) {
-        AuxWindow::pump_window_event(self, event);
+        self.pump_window_event(event);
     }
 
     /// Native window identity for event routing.
@@ -158,24 +195,6 @@ pub(crate) trait WindowHandler: AuxWindow {
     fn render(&mut self) {
         let tag = Self::LOG_TAG;
         self.shell_mut().render(tag);
-    }
-}
-
-/// Blanket pump: every aux window routes through its
-/// [`WindowHandler`]. Consequence of coherence: a type can only be an
-/// `AuxWindow` by implementing `WindowHandler` — a direct `AuxWindow`
-/// impl alongside this blanket impl is a compile error (E0119). All
-/// aux windows must therefore be `WindowHandler`s; do not add direct
-/// `AuxWindow` impls.
-impl<T: WindowHandler> AuxWindow for T {
-    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
-        self.shell_mut().handle_common_event(&event);
-        // Resize/scale/modifier paths never rebuild, so the trailing
-        // request stays their only repaint; rebuild/repaint passes
-        // already requested above and skip the duplicate.
-        if !self.handle_tao_event(event) {
-            self.shell().request_redraw();
-        }
     }
 }
 
@@ -247,5 +266,38 @@ mod tests {
         focus.mark_auto_paused();
         focus.cancel_pending();
         assert!(focus.arrive_main());
+    }
+
+    #[test]
+    fn aux_kind_routes_resume_protocol() {
+        // Interactive viewers may resume; read-only viewers never do.
+        for kind in [AuxKind::Debug, AuxKind::Ppu] {
+            let mut focus = FocusState::new();
+            focus.leave_main();
+            assert!(focus.take_armed());
+            focus.mark_auto_paused();
+            assert!(on_aux_focus(&mut focus, kind, true));
+        }
+        for kind in [AuxKind::Settings, AuxKind::History] {
+            let mut focus = FocusState::new();
+            focus.leave_main();
+            assert!(focus.take_armed());
+            focus.mark_auto_paused();
+            // Arrival cancels the pending pause but reports no resume;
+            // the protocol pause still resumes on main return.
+            assert!(!on_aux_focus(&mut focus, kind, true));
+            assert!(focus.arrive_main());
+        }
+        // Leaving arms the pause for every kind.
+        for kind in [
+            AuxKind::Debug,
+            AuxKind::Ppu,
+            AuxKind::History,
+            AuxKind::Settings,
+        ] {
+            let mut focus = FocusState::new();
+            assert!(!on_aux_focus(&mut focus, kind, false));
+            assert!(focus.take_armed());
+        }
     }
 }

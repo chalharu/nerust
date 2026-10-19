@@ -42,12 +42,15 @@ impl SessionHandle {
                 continue;
             };
             for info in *group {
+                let nerust_input_traits::ControlId::Digital(control_id) = info.id else {
+                    continue;
+                };
                 let Some(role) = info.abstract_key.and_then(touch_role_for_abstract_key) else {
                     continue;
                 };
                 controls.push(TouchControl {
                     attachment_id: *attachment_id,
-                    control_id: info.id,
+                    control_id,
                     role,
                     label: info.label.to_string(),
                 });
@@ -61,9 +64,7 @@ impl SessionHandle {
         if let Some(&field) = self.input.field_map.get(&(event.attachment, event.control))
             && let Some(gui_input) = self.emu.input_mut()
         {
-            let _ = gui_input
-                .state
-                .set(field, InputValue::Digital(event.is_pressed()));
+            let _ = gui_input.set(field, InputValue::Digital(event.is_pressed()));
         }
     }
 
@@ -78,7 +79,7 @@ impl SessionHandle {
         if let Some(&field) = self.input.key_field_map.get(&key)
             && let Some(gui_input) = self.emu.input_mut()
         {
-            let _ = gui_input.state.set(field, InputValue::Digital(pressed));
+            let _ = gui_input.set(field, InputValue::Digital(pressed));
         }
 
         if first_press {
@@ -127,8 +128,8 @@ mod tests {
     use std::{collections::HashMap, rc::Rc};
 
     use nerust_input_traits::{
-        AbstractKey, AttachmentId, ControlInfo, ControlKind, ControllerProfile, DigitalControlId,
-        PortSet, ProfileId, SlotInfo,
+        AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, ControllerProfile,
+        DeviceKindId, DigitalControlId, PortSet, ProfileId, SlotInfo,
     };
     use nerust_settings_core::model::input::KeyboardBinding;
     use nerust_settings_core::model::input::PersistedControlId;
@@ -197,7 +198,7 @@ mod tests {
 
         fn port_groups(&self) -> &[&[ControlInfo]] {
             static CONTROLS: &[ControlInfo] = &[ControlInfo {
-                id: DigitalControlId::new("test.topology.a"),
+                id: ControlId::Digital(DigitalControlId::new("test.topology.a")),
                 label: "A",
                 kind: ControlKind::Digital,
                 abstract_key: Some(AbstractKey::Button1),
@@ -206,8 +207,8 @@ mod tests {
             GROUPS
         }
 
-        fn device_kind_for_group(&self, _group_index: usize) -> &'static str {
-            "test.topology.pad"
+        fn device_kind_for_group(&self, _group_index: usize) -> DeviceKindId {
+            DeviceKindId::new("test.topology.pad")
         }
     }
 
@@ -333,6 +334,6 @@ mod tests {
     fn device_kind_delegates_to_profile_method() {
         let profile = MockSinglePort;
         let kind = device_kind(&profile, 0);
-        assert_eq!(kind, "test.standard");
+        assert_eq!(kind.as_str(), "test.standard");
     }
 }

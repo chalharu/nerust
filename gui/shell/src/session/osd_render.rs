@@ -1,7 +1,8 @@
 //! Render adapter: the single point where OSD decisions cross into
 //! render vocabulary. The decision core (`osd_presenter`) stays on
 //! settings-owned types (`NotificationPosition`, [`UiInsets`]); only
-//! this module names `nerust_render_traits` types.
+//! this module names `nerust_render_traits` types, and only it maps
+//! settings corners into render anchors.
 
 use nerust_render_traits::renderer::{OsdAnchor, SafeInsets};
 use nerust_settings_core::model::local::NotificationPosition;
@@ -36,21 +37,11 @@ impl From<SafeInsets> for UiInsets {
     }
 }
 
-impl From<UiInsets> for SafeInsets {
-    fn from(insets: UiInsets) -> Self {
-        Self {
-            top: insets.top,
-            right: insets.right,
-            bottom: insets.bottom,
-            left: insets.left,
-        }
-    }
-}
-
 impl OsdPlan {
     /// Single construction shared by every frontend: rows plus the
     /// status pill with identical colors and corners everywhere.
-    /// Takes ownership: no second clone at the renderer boundary.
+    /// Takes ownership: no second clone at the renderer boundary. Row
+    /// tags ride through as static markers: no per-frame allocation.
     pub fn into_content(self) -> nerust_render_traits::renderer::OsdContent {
         use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
         OsdContent {
@@ -58,7 +49,7 @@ impl OsdPlan {
                 .rows
                 .into_iter()
                 .map(|row| OsdRow {
-                    tag: row.tag.to_string(),
+                    tag: row.tag,
                     text: row.text,
                     rgb: row.rgb,
                 })

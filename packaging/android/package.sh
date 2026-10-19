@@ -167,29 +167,34 @@ native_budget_bytes() {
     printf '%s' "${BUDGET_BYTES:-41943040}"
 }
 readelf_bin=""
-# Array expansion keeps NDK paths with spaces intact; the unquoted
-# glob below would word-split them.
+# Quoted array expansion keeps NDK paths with spaces intact; an unquoted
+# expansion would word-split them. The length guard keeps `set -u`
+# happy when nullglob matches nothing.
 shopt -s nullglob
 ndk_readelfs=("${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf)
 shopt -u nullglob
-for cand in ${ndk_readelfs[@]+"${ndk_readelfs[@]}"}; do
-    if [[ -x "${cand}" ]]; then
-        readelf_bin="${cand}"
-        break
-    fi
-done
+if (( ${#ndk_readelfs[@]} > 0 )); then
+    for cand in "${ndk_readelfs[@]}"; do
+        if [[ -x "${cand}" ]]; then
+            readelf_bin="${cand}"
+            break
+        fi
+    done
+fi
 if [[ -z "${readelf_bin}" ]] && command -v llvm-readelf >/dev/null 2>&1; then
     readelf_bin="llvm-readelf"
 fi
 if [[ -z "${readelf_bin}" ]] && command -v readelf >/dev/null 2>&1; then
     readelf_bin="readelf"
 fi
+# Fail-closed: SKIP_NATIVE_GATE no longer bypasses the gate. The gate
+# exists because of the 156MB incident; a missing reader or a bloated
+# .so is a hard failure everywhere, never a warning.
 if [[ -n "${SKIP_NATIVE_GATE:-}" ]]; then
-    echo "warning: native DWARF/size gate skipped by request; a bloated .so will ship silently" >&2
+    echo "SKIP_NATIVE_GATE is no longer honored: the native DWARF/size gate always runs" >&2
+    exit 1
 elif [[ -z "${readelf_bin}" ]]; then
-    # The gate exists because of the 156MB incident: a missing reader
-    # off CI is a hole, not a pass. Require the explicit bypass there too.
-    echo "no llvm-readelf/readelf found: cannot verify DWARF strip (set SKIP_NATIVE_GATE=1 to bypass explicitly)" >&2
+    echo "no llvm-readelf/readelf found: cannot verify DWARF strip" >&2
     exit 1
 else
     shopt -s nullglob
@@ -214,7 +219,7 @@ else
         echo "${abi}/libmain.so: ${so_size} bytes, no DWARF"
     done
 fi
-# Gate passed (or deliberately skipped): publish the staged libs.
+# Gate passed: publish the staged libs.
 # Swap via a temp dir so an interrupted copy never leaves a
 # half-populated jniLibs tree behind.
 stage_publish_tmp="${JNI_LIBS_DIR}.new"

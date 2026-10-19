@@ -23,6 +23,24 @@ pub(crate) enum MapperRestore {
     Skip,
 }
 
+/// One-call persistence wiring: resolve sidecars, configure the
+/// manager, refresh slots, optionally load the mapper save, and
+/// report unavailability through the session notifications.
+/// Callers never touch the two phases separately, so a bound session
+/// cannot forget its notice.
+pub(crate) struct PersistenceBinder;
+
+impl PersistenceBinder {
+    pub(crate) fn bind(
+        session: &mut SessionHandle,
+        rom_path: Option<&Path>,
+        mapper_restore: MapperRestore,
+    ) {
+        let setup = session.setup_persistence(rom_path, mapper_restore);
+        session.note_persistence_setup(setup);
+    }
+}
+
 impl SessionHandle {
     fn resolve_persistence_paths(
         &self,
@@ -53,7 +71,8 @@ impl SessionHandle {
     ) -> PersistenceSetup {
         let sidecars = self
             .emu
-            .core_opt()
+            .core()
+            .ok()
             .and_then(|c| c.canonical_media_identity())
             .and_then(|identity| self.resolve_persistence_paths(rom_path, &identity));
         let Some(sidecars) = sidecars else {
@@ -62,7 +81,7 @@ impl SessionHandle {
         self.media
             .persistence
             .configure(sidecars.states_dir, sidecars.mapper_save_path);
-        if let Some(core) = self.emu.core_opt() {
+        if let Ok(core) = self.emu.core() {
             self.media.persistence.refresh_slots(core);
             if mapper_restore == MapperRestore::Load
                 && let Err(e) = self.media.persistence.load_mapper_save_if_needed(core)
