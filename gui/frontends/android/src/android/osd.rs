@@ -97,6 +97,12 @@ impl AndroidOsd {
         self.manager.requeue_front(detail);
     }
 
+    /// Queue an out-of-band error (picker/load failures bypass the
+    /// notification center). Same cap and drop-oldest as the rest.
+    pub(super) fn queue_modal(&mut self, detail: String) {
+        self.manager.queue_modal(detail);
+    }
+
     /// Queued error batches still awaiting display.
     pub(super) fn modal_pending(&self) -> usize {
         self.manager.modal_pending()
