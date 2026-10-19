@@ -268,7 +268,10 @@ impl GuiInput {
         let _ = copy;
         // Swap into shared (fast pointer exchange). The mutex cannot be
         // poisoned: only std::mem::swap (non-panicking) runs under the lock.
-        let mut lock = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+        let mut lock = self
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::mem::swap(&mut *lock, &mut self.write_buf);
         self.flag.store(true, Ordering::Release);
     }
@@ -319,7 +322,10 @@ impl EmuInput {
             // Only std::mem::swap (non-panicking) runs under the lock,
             // so the mutex cannot be poisoned; recover the inner guard
             // defensively anyway.
-            let mut lock = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+            let mut lock = self
+                .shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             std::mem::swap(&mut *lock, &mut self.read_buf);
         }
     }

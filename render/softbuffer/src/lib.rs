@@ -368,9 +368,21 @@ impl SoftbufferRenderer {
     ) {
         // Hoisted tap width: no per-pixel method call on the hot path.
         let px = lut.lut_pixel_size();
-        // Two-tap hand loop with consistent LE packing on both passes.
-        // No `filter_map`+`reduce` allocation dance; weights sum to one
-        // in the interior, edges go black where taps fall outside.
+        Self::horizontal_pass(src_stride, src_h, dst_w, &src_f, lut, px, resize_buffer);
+        Self::vertical_pass(dst, dst_w, dst_h, lut, px, resize_buffer);
+    }
+
+    /// Horizontal two-tap loop with consistent LE packing. Weights sum to
+    /// one in the interior; edges go black where taps fall outside.
+    fn horizontal_pass<F: Fn(usize) -> [u8; 4]>(
+        src_stride: usize,
+        src_h: usize,
+        dst_w: usize,
+        src_f: &F,
+        lut: &LutEntry,
+        px: usize,
+        resize_buffer: &mut [u32],
+    ) {
         for y in 0..src_h {
             let dst_y_index = y * dst_w;
             let src_y_index = y * src_stride;
@@ -405,8 +417,17 @@ impl SoftbufferRenderer {
                 }
             }
         }
+    }
 
-        // Vertical pass over the horizontal result. Taps are at most 2.
+    /// Vertical pass over the horizontal result. Taps are at most 2.
+    fn vertical_pass(
+        dst: &mut [u32],
+        dst_w: usize,
+        dst_h: usize,
+        lut: &LutEntry,
+        px: usize,
+        resize_buffer: &[u32],
+    ) {
         for y in 0..dst_h {
             let base = y * px;
             let mut taps = [(0u16, 0u16); 2];

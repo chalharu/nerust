@@ -84,9 +84,9 @@ class SensorController(
     }
 
     fun onDestroy() {
-        activityResumed = false
-        updateMotionRegistration()
-        cancelRumble()
+        onPause()
+        sensorRegistered = false
+        accelerometer = null
     }
 
     fun configure(
