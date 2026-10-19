@@ -26,7 +26,6 @@ pub struct GlRenderer {
     view: Option<GlView>,
     context: Option<glutin::context::PossiblyCurrentContext>,
     gl_surface: Option<glutin::surface::Surface<WindowSurface>>,
-    expected_frame_len: usize,
     size: SurfaceSize,
     reserved: nerust_render_traits::ReservedStrip,
     osd: Option<OsdLayer>,
@@ -138,7 +137,6 @@ impl GpuRenderer for GlRenderer {
         self.view = Some(self.fresh_view(&self.render_profile)?);
         self.context = Some(ctx);
         self.gl_surface = Some(surf);
-        self.expected_frame_len = frame_byte_len(&self.render_profile);
         Ok(())
     }
 
@@ -198,7 +196,6 @@ impl GpuRenderer for GlRenderer {
         // Build before tearing down: a failed compile keeps the old
         // view live instead of leaving a half-closed one behind.
         let fresh = self.fresh_view(profile)?;
-        self.expected_frame_len = frame_byte_len(profile);
         self.close_live_view();
         self.view = Some(fresh);
         Ok(())
@@ -291,16 +288,6 @@ impl GpuRenderer for GlRenderer {
 /// Shared OSD equality lives on [`OsdLayer`] (single source).
 fn osd_layers_equal(a: Option<&OsdLayer>, b: Option<&OsdLayer>) -> bool {
     OsdLayer::same_option(a, b)
-}
-
-/// Expected upload length for a profile: logical pixels for RGBA,
-/// source pixels for palette, times bytes per pixel.
-fn frame_byte_len(profile: &VideoRenderProfile) -> usize {
-    let fs = match profile.frame_format {
-        VideoFrameFormat::Rgba => profile.logical_size,
-        VideoFrameFormat::Palette => profile.source_logical_size,
-    };
-    fs.width * fs.height * profile.frame_format.bytes_per_pixel()
 }
 
 /// Checked frame geometry shared by the attach guard and the three
@@ -501,7 +488,6 @@ impl GpuFactory for GlFactory {
             view: None,
             context: None,
             gl_surface: None,
-            expected_frame_len: 0,
             size: SurfaceSize::new(0, 0),
             reserved: nerust_render_traits::ReservedStrip::default(),
             osd: None,
@@ -579,37 +565,6 @@ mod tests {
             overflow,
             Err(crate::view::ViewError::Frame { need: 0, .. })
         ));
-    }
-
-    #[test]
-    fn frame_byte_len_covers_both_pixel_formats() {
-        use nerust_render_traits::{
-            VideoFrameFormat, logical::LogicalSize, physical::PhysicalSize,
-        };
-        let profile = |format| nerust_render_traits::VideoRenderProfile {
-            frame_format: format,
-            source_logical_size: LogicalSize {
-                width: 64,
-                height: 64,
-            },
-            logical_size: LogicalSize {
-                width: 128,
-                height: 128,
-            },
-            physical_size: PhysicalSize {
-                width: 64.0,
-                height: 64.0,
-            },
-            ntsc_packed_rgba8: None,
-        };
-        assert_eq!(
-            super::frame_byte_len(&profile(VideoFrameFormat::Rgba)),
-            128 * 128 * 4
-        );
-        assert_eq!(
-            super::frame_byte_len(&profile(VideoFrameFormat::Palette)),
-            64 * 64
-        );
     }
 
     #[test]
@@ -699,7 +654,6 @@ mod tests {
             view: None,
             context: None,
             gl_surface: None,
-            expected_frame_len: 0,
             size: SurfaceSize::new(64, 64),
             reserved: nerust_render_traits::ReservedStrip::default(),
             osd: None,

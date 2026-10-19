@@ -32,7 +32,7 @@ use nerust_core_traits::{
     },
     identity::SystemId,
 };
-use nerust_emu_thread::{ConsoleMetrics, OperationError};
+use nerust_emu_thread::OperationError;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
@@ -40,7 +40,7 @@ use nerust_gui_runtime::settings::{
 use nerust_gui_viewmodel::debugger as debug_vm;
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
 use nerust_keyboard::Key;
-use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
+use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
 use nerust_settings_core::model::input::ShortcutAction;
@@ -82,13 +82,6 @@ struct CoreCreation {
 #[derive(Debug, Clone)]
 pub(super) struct LoadedMedia {
     media: MediaObject,
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionSnapshot {
-    pub metrics: ConsoleMetrics,
-    pub slots: Arc<[StateSlotSummary]>,
-    pub active_slot_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -433,14 +426,6 @@ impl SessionHandle {
     ) -> Self {
         Self::new_inner(capabilities, registry, None, audio_registry, false)
             .expect("core creation with defaults must succeed in tests")
-    }
-
-    pub fn snapshot(&self) -> SessionSnapshot {
-        SessionSnapshot {
-            metrics: self.emu.core_opt().map(|c| c.metrics()).unwrap_or_default(),
-            slots: Arc::from(self.media.persistence.slots().to_vec()),
-            active_slot_id: self.media.persistence.active_slot_id(),
-        }
     }
 
     pub fn render_profile(&self) -> Option<&VideoRenderProfile> {
