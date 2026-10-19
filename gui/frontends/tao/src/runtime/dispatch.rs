@@ -72,12 +72,12 @@ impl WindowRuntime {
         // is already gone, so run the normal close path (pending
         // apply still commits).
         if matches!(event, WindowEvent::Destroyed) {
-            if let Some(handle) = self.host.take_settings_window() {
-                if self.host.close_settings_and_maybe_rebuild(handle) {
-                    self.recreate_renderer();
-                }
-                return;
+            if let Some(handle) = self.host.take_settings_window()
+                && self.host.close_settings_and_maybe_rebuild(handle)
+            {
+                self.recreate_renderer();
             }
+            return;
         }
         // Same-app focus moves cancel a pending auto-pause;
         // leaving anywhere arms it (see the main arms). Runs
