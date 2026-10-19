@@ -95,6 +95,10 @@ pub(crate) fn aux_focus_step(focus: &mut FocusState, focused: bool) -> bool {
     }
 }
 
+/// Quiet aux-focus step for windows that must never resume: arrival
+/// only cancels a pending pause (the auto-pause flag stays intact),
+/// leaving arms the deferred pause. Settings uses this; debug/PPU/
+/// history use [`aux_focus_step`], which may report a resume.
 pub(crate) fn aux_focus_step_quiet(focus: &mut FocusState, focused: bool) {
     if focused {
         // Cancel only: unlike `arrive_aux`, the auto-pause flag is
@@ -168,11 +172,6 @@ impl<T: WindowHandler> AuxWindow for T {
         }
     }
 }
-
-/// Quiet aux-focus step for windows that must never resume: arrival
-/// only cancels a pending pause (the auto-pause flag stays intact),
-/// leaving arms the deferred pause. Settings uses this; debug/PPU/
-/// history use [`aux_focus_step`], which may report a resume.
 
 #[cfg(test)]
 mod tests {
