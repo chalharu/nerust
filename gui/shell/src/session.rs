@@ -1,5 +1,5 @@
 pub mod access;
-pub mod command_exec;
+pub(crate) mod command_exec;
 pub mod commands;
 pub mod debug_ops;
 pub mod error;
@@ -12,10 +12,11 @@ pub(crate) mod osd_modal;
 pub(crate) mod osd_presenter;
 pub(crate) mod osd_transient;
 pub mod persistence;
+pub(crate) mod persistence_setup;
 #[cfg(test)]
 mod persistence_test;
 pub mod session_query;
-pub mod settings_apply;
+pub(crate) mod settings_apply;
 pub mod title;
 
 use std::{

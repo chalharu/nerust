@@ -7,6 +7,7 @@ use crate::emu_core::CorePersistenceError;
 use crate::session::commands::{SessionCommand, SessionCommandOutcome};
 use crate::session::error::SlotOpFailure;
 use crate::session::persistence::FailingSlotBackend;
+use crate::session::persistence_setup::PersistenceSetup;
 use crate::session::test_util::*;
 use crate::test_helpers::*;
 
@@ -351,9 +352,9 @@ fn setup_failure_pushes_persistence_unavailable() {
     let mut session = test_session();
     assert_eq!(
         session.setup_persistence(None, false),
-        crate::session::persistence::PersistenceSetup::Unavailable
+        PersistenceSetup::Unavailable
     );
-    session.note_persistence_setup(crate::session::persistence::PersistenceSetup::Unavailable);
+    session.note_persistence_setup(PersistenceSetup::Unavailable);
     let notes = session.drain_notifications();
     assert_eq!(notes.len(), 1);
     assert!(matches!(
