@@ -350,32 +350,13 @@ impl DebugWindowHandle {
         } else {
             None
         };
-        let (mut messages, outcome) = self.shell.ui_state.pump(
-            mapped,
-            self.shell.cursor,
-            &mut self.shell.clipboard,
-            &mut self.shell.renderer.backend,
-        );
+        let (mut messages, outcome) = self.shell.pump_frame(mapped);
         messages.extend(page);
-        match outcome {
-            crate::aux::shell::PumpOutcome::Rebuild => {
-                self.bridge.view_invalidated.store(true, Ordering::Release);
-            }
-            crate::aux::shell::PumpOutcome::Repaint => {
-                self.shell.window.request_redraw();
-            }
-            crate::aux::shell::PumpOutcome::Idle => {}
+        if matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
+            self.bridge.view_invalidated.store(true, Ordering::Release);
         }
         if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-            let bounds = self.shell.logical_bounds();
-            self.shell.ui_state.process_messages(
-                messages,
-                self.shell.window_id,
-                bounds,
-                &mut self.shell.renderer.backend,
-                &self.bridge.view_invalidated,
-            );
-            self.shell.window.request_redraw();
+            self.shell.process(messages, &self.bridge.view_invalidated);
         }
     }
 
@@ -387,15 +368,8 @@ impl DebugWindowHandle {
 
     pub(crate) fn sync_from_bridge(&mut self) {
         self.bridge.view_invalidated.store(true, Ordering::Release);
-        let bounds = self.shell.logical_bounds();
-        self.shell.ui_state.process_messages(
-            Vec::new(),
-            self.shell.window_id,
-            bounds,
-            &mut self.shell.renderer.backend,
-            &self.bridge.view_invalidated,
-        );
-        self.shell.window.request_redraw();
+        self.shell
+            .process(Vec::new(), &self.bridge.view_invalidated);
     }
 }
 
@@ -403,7 +377,7 @@ impl crate::aux::shell::AuxWindow for DebugWindowHandle {
     fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
         self.shell.handle_common_event(&event);
         self.handle_tao_event(event);
-        self.shell.window.request_redraw();
+        self.shell.request_redraw();
     }
 }
 

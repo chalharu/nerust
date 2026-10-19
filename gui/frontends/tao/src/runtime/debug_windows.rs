@@ -42,13 +42,13 @@ impl DebugWindows {
     pub(crate) fn is_debug_window(&self, window_id: WindowId) -> bool {
         self.debug_window
             .as_ref()
-            .is_some_and(|h| h.shell.window.id() == window_id)
+            .is_some_and(|h| h.shell.tao_window_id() == window_id)
     }
 
     pub(crate) fn is_ppu_window(&self, window_id: WindowId) -> bool {
         self.ppu_window
             .as_ref()
-            .is_some_and(|h| h.shell.window.id() == window_id)
+            .is_some_and(|h| h.shell.tao_window_id() == window_id)
     }
 
     pub(crate) fn request_debug_open(&mut self) {
@@ -142,20 +142,16 @@ impl DebugWindows {
 
     /// Close-request flag raised by the debugger window itself.
     pub(super) fn debug_close_requested(&self) -> bool {
-        self.debug_window.as_ref().is_some_and(|h| {
-            h.shell
-                .should_close
-                .load(std::sync::atomic::Ordering::Acquire)
-        })
+        self.debug_window
+            .as_ref()
+            .is_some_and(|h| h.shell.close_requested())
     }
 
     /// Same flag for the PPU viewer.
     pub(super) fn ppu_close_requested(&self) -> bool {
-        self.ppu_window.as_ref().is_some_and(|h| {
-            h.shell
-                .should_close
-                .load(std::sync::atomic::Ordering::Acquire)
-        })
+        self.ppu_window
+            .as_ref()
+            .is_some_and(|h| h.shell.close_requested())
     }
 }
 

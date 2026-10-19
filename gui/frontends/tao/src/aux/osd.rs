@@ -309,16 +309,10 @@ impl HistoryWindowHandle {
     }
 
     pub(crate) fn sync(&mut self, lines: Vec<HistoryLine>, language: AppLanguage) {
-        let bounds = self.shell.logical_bounds();
-        let window_id = self.shell.window_id;
-        self.shell.ui_state.process_messages(
+        self.shell.process(
             vec![HistoryMessage::Sync { lines, language }],
-            window_id,
-            bounds,
-            &mut self.shell.renderer.backend,
             &self.view_invalidated,
         );
-        self.shell.window.request_redraw();
     }
 }
 
@@ -330,28 +324,12 @@ impl HistoryWindowHandle {
 
 impl HistoryWindowHandle {
     fn handle_event(&mut self, mapped: iced::Event) {
-        let (messages, outcome) = self.shell.ui_state.pump(
-            mapped,
-            self.shell.cursor,
-            &mut self.shell.clipboard,
-            &mut self.shell.renderer.backend,
-        );
-        if matches!(
-            outcome,
-            crate::aux::shell::PumpOutcome::Repaint | crate::aux::shell::PumpOutcome::Rebuild
-        ) {
-            self.shell.window.request_redraw();
+        let (messages, outcome) = self.shell.pump_frame(mapped);
+        if matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
+            self.shell.request_redraw();
         }
         if !messages.is_empty() {
-            let bounds = self.shell.logical_bounds();
-            self.shell.ui_state.process_messages(
-                messages,
-                self.shell.window_id,
-                bounds,
-                &mut self.shell.renderer.backend,
-                &self.view_invalidated,
-            );
-            self.shell.window.request_redraw();
+            self.shell.process(messages, &self.view_invalidated);
         }
     }
 }
@@ -362,7 +340,7 @@ impl AuxWindow for HistoryWindowHandle {
         if let Some(mapped) = self.shell.feed_tao_event(event) {
             self.handle_event(mapped);
         }
-        self.shell.window.request_redraw();
+        self.shell.request_redraw();
     }
 }
 
