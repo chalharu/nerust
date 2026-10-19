@@ -351,9 +351,9 @@ fn setup_failure_pushes_persistence_unavailable() {
     let mut session = test_session();
     assert_eq!(
         session.setup_persistence(None, false),
-        crate::session::lifecycle::PersistenceSetup::Unavailable
+        crate::session::persistence::PersistenceSetup::Unavailable
     );
-    session.note_persistence_setup(crate::session::lifecycle::PersistenceSetup::Unavailable);
+    session.note_persistence_setup(crate::session::persistence::PersistenceSetup::Unavailable);
     let notes = session.drain_notifications();
     assert_eq!(notes.len(), 1);
     assert!(matches!(

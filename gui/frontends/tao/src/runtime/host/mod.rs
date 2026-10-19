@@ -5,7 +5,7 @@ use nerust_gui_runtime::{
 use nerust_gui_shell::{
     context::FrontendContext,
     debug::{DrainFlight, LiveImagesFlight},
-    session::{SessionHandle, lifecycle::WindowSize},
+    session::{SessionHandle, session_query::WindowSize},
 };
 use nerust_render_traits::{SurfaceSize, renderer::GpuFactory};
 use nerust_settings_core::model::app_state::RememberedWindowSize;
@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn window_size_math_scales_and_falls_back() {
-        use nerust_gui_shell::session::lifecycle::WindowSize;
+        use nerust_gui_shell::session::session_query::WindowSize;
         use nerust_settings_core::model::app_state::RememberedWindowSize;
 
         use super::{
