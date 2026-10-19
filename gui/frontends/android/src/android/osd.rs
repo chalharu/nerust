@@ -92,12 +92,6 @@ impl AndroidOsd {
         self.manager.modal_closed();
     }
 
-    /// Re-queue a batch the user never saw (dialog preempted).
-    /// Same cap and drop-oldest discipline as the normal path.
-    pub(super) fn queue_modal(&mut self, detail: String) {
-        self.manager.queue_modal(detail);
-    }
-
     /// Re-queue an interrupted head batch preserving display order.
     pub(super) fn requeue_front(&mut self, detail: String) {
         self.manager.requeue_front(detail);
