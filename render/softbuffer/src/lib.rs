@@ -433,36 +433,37 @@ impl SoftbufferRenderer {
 
     /// Tap coverage for one frame: every touched LUT entry must exist and
     /// point inside its target; mismatch refuses the frame instead of panicking.
+    /// Pure in its inputs so LUT fixtures test it without a renderer.
     fn taps_cover(
-        &self,
+        lut: &LutEntry,
+        resize_len: usize,
+        ntsc_len: usize,
         dst_w: usize,
         dst_h: usize,
         tap_stride: usize,
         ntsc_writes: usize,
     ) -> bool {
-        let px = self.lut.lut_pixel_size();
-        if self.lut.x_lut.len() < dst_w.saturating_mul(px)
-            || self.lut.y_lut.len() < dst_h.saturating_mul(px)
+        let px = lut.lut_pixel_size();
+        if lut.x_lut.len() < dst_w.saturating_mul(px)
+            || lut.y_lut.len() < dst_h.saturating_mul(px)
         {
             return false;
         }
-        if !self.lut.x_lut[..dst_w.saturating_mul(px)]
+        if !lut.x_lut[..dst_w.saturating_mul(px)]
             .iter()
             .flatten()
             .all(|&(i, _)| (i as usize) < tap_stride)
         {
             return false;
         }
-        if !self.lut.y_lut[..dst_h.saturating_mul(px)]
+        if !lut.y_lut[..dst_h.saturating_mul(px)]
             .iter()
             .flatten()
-            .all(|&(i, _)| {
-                (i as usize).saturating_add(1).saturating_mul(dst_w) <= self.resize_buffer.len()
-            })
+            .all(|&(i, _)| (i as usize).saturating_add(1).saturating_mul(dst_w) <= resize_len)
         {
             return false;
         }
-        ntsc_writes <= self.ntsc_buffer.len()
+        ntsc_writes <= ntsc_len
     }
 
     /// Cached [`Self::taps_cover`]: geometry rarely changes, so a key
@@ -488,7 +489,15 @@ impl SoftbufferRenderer {
         {
             return *covered;
         }
-        let covered = self.taps_cover(dst_w, dst_h, tap_stride, ntsc_writes);
+        let covered = Self::taps_cover(
+            &self.lut,
+            self.resize_buffer.len(),
+            self.ntsc_buffer.len(),
+            dst_w,
+            dst_h,
+            tap_stride,
+            ntsc_writes,
+        );
         self.taps_cache = Some((key, covered));
         covered
     }
@@ -699,6 +708,9 @@ impl GpuRenderer for SoftbufferRenderer {
         if dst_w == 0 || dst_h == 0 {
             return RenderResult::Skipped;
         }
+        if self.surface.is_none() {
+            return RenderResult::Skipped;
+        }
         // Refuse stale-profile frames before any indexer runs (warned, not fatal).
         let avail_h = dst_h.saturating_sub(self.reserved.height_loss(self.size.height) as usize);
         let src_stride = frame.stride();
@@ -717,9 +729,6 @@ impl GpuRenderer for SoftbufferRenderer {
         } else {
             0
         };
-        if self.surface.is_none() {
-            return RenderResult::Skipped;
-        }
         if !self.taps_covered(dst_w, avail_h, tap_stride, ntsc_writes) {
             warn!("softbuffer tap coverage mismatch: refusing frame");
             return RenderResult::Skipped;

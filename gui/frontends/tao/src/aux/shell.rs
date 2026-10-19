@@ -518,19 +518,50 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
                 .resize(self.viewport_physical.0, self.viewport_physical.1);
             self.surface_size = self.viewport_physical;
         }
-        self.render_ui_with(log_tag);
+        self.render_ui(log_tag);
     }
 
-    fn render_ui_with(&mut self, log_tag: &'static str) {
-        render_ui(
-            &mut self.ui_state,
-            &mut self.renderer,
-            self.viewport_physical,
+    /// Shared full render: Light theme, redraw pump, draw, present.
+    /// Method on the shell so viewers never destructure it.
+    fn render_ui(&mut self, log_tag: &'static str) {
+        // Nothing to draw into yet (minimize/dock transient):
+        // presenting a zero-size surface panics in pixel-map creation.
+        if self.viewport_physical.0 == 0 || self.viewport_physical.1 == 0 {
+            return;
+        }
+        let theme = iced::Theme::Light;
+        let style = <iced::Theme as theme::Base>::base(&theme);
+        let viewport = Viewport::with_physical_size(
+            Size::new(self.viewport_physical.0, self.viewport_physical.1),
             self.scale_factor,
-            self.cursor,
-            &mut self.clipboard,
-            log_tag,
         );
+        let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
+            std::time::Instant::now(),
+        ));
+        let Some(ui) = self.ui_state.ui_mut() else {
+            log::warn!("aux window ui unavailable after panicked relayout");
+            return;
+        };
+        // Redraw-only pump: widget rebuild requests wait for the next
+        // event-driven pump (`pump_outcome` mapping lives there).
+        let _ = ui.update(
+            &[redraw_event],
+            self.cursor,
+            &mut self.renderer.backend,
+            &mut self.clipboard,
+            &mut std::vec::Vec::new(),
+        );
+        ui.draw(
+            &mut self.renderer.backend,
+            &theme,
+            &renderer::Style {
+                text_color: style.text_color,
+            },
+            self.cursor,
+        );
+        if let Err(error) = self.renderer.present(&viewport, style.background_color) {
+            log::warn!("{log_tag} render present failed: {error}");
+        }
     }
 }
 
@@ -541,58 +572,6 @@ pub(crate) trait AuxWindow {
     fn pump_window_event(&mut self, event: tao::event::WindowEvent);
 }
 
-/// Shared full render: Light theme, redraw pump, draw, present.
-/// Viewers call this; only the failure log tag differs.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn render_ui<P: Program<Theme = iced::Theme, Renderer = Renderer>>(
-    ui: &mut UiShell<P>,
-    renderer: &mut ShellRenderer,
-    viewport_physical: (u32, u32),
-    scale_factor: f32,
-    cursor: mouse::Cursor,
-    clipboard: &mut Clipboard,
-    log_tag: &'static str,
-) {
-    // Nothing to draw into yet (minimize/dock transient): presenting
-    // a zero-size surface panics in the pixel-map creation.
-    if viewport_physical.0 == 0 || viewport_physical.1 == 0 {
-        return;
-    }
-    // Light theme for OS light-theme nativeness.
-    let theme = iced::Theme::Light;
-    let style = <iced::Theme as theme::Base>::base(&theme);
-    let viewport = Viewport::with_physical_size(
-        Size::new(viewport_physical.0, viewport_physical.1),
-        scale_factor,
-    );
-    let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
-        std::time::Instant::now(),
-    ));
-    let Some(ui) = ui.ui_mut() else {
-        log::warn!("aux window ui unavailable after panicked relayout");
-        return;
-    };
-    // Redraw-only pump: widget rebuild requests wait for the next
-    // event-driven pump (`pump_outcome` mapping lives there).
-    let _ = ui.update(
-        &[redraw_event],
-        cursor,
-        &mut renderer.backend,
-        clipboard,
-        &mut std::vec::Vec::new(),
-    );
-    ui.draw(
-        &mut renderer.backend,
-        &theme,
-        &renderer::Style {
-            text_color: style.text_color,
-        },
-        cursor,
-    );
-    if let Err(error) = renderer.present(&viewport, style.background_color) {
-        log::warn!("{log_tag} render present failed: {error}");
-    }
-}
 
 #[cfg(test)]
 mod tests {
