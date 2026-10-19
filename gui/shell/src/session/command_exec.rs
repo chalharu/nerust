@@ -7,7 +7,7 @@ use crate::{
     session::{
         SessionError, SessionHandle,
         commands::{
-            SessionCommand, SessionCommandOutcome, command_name, outcome_notifications,
+            SessionCommand, SessionCommandOutcome, command_name, outcome_notification,
             resolve_toggle,
         },
         error::SlotOpFailure,
@@ -21,8 +21,8 @@ impl SessionHandle {
         command: SessionCommand,
     ) -> Result<SessionCommandOutcome, SessionError> {
         // Resolve TogglePause to its steady arm so notifications name
-        // the state actually entered.
-        let was_paused = self.paused();
+        // the state actually entered. One metrics lock per command.
+        let was_paused = self.tick_metrics().paused;
         let result = self.run_command_inner(command);
         match &result {
             Ok(outcome) => {
@@ -33,7 +33,7 @@ impl SessionHandle {
                     SessionCommand::TogglePause => resolve_toggle(command, was_paused),
                     other => other,
                 };
-                for kind in outcome_notifications(notified, outcome, active) {
+                if let Some(kind) = outcome_notification(notified, outcome, active) {
                     self.notifications.push(kind);
                 }
             }
@@ -44,11 +44,11 @@ impl SessionHandle {
                 let name = command_name(command);
                 log::warn!("run_command {name} failed: {error}");
                 self.notifications.push(
-                    crate::session::notification::NotificationKind::CommandFailure {
-                        origin: crate::session::notification::FailureOrigin::Command,
-                        id: name,
-                        detail: error.to_string(),
-                    },
+                    crate::session::notification::NotificationKind::command_failure(
+                        crate::session::notification::FailureOrigin::Command,
+                        name,
+                        error.to_string(),
+                    ),
                 )
             }
         }
@@ -72,7 +72,7 @@ impl SessionHandle {
             SessionCommand::SelectActiveSlot(id) => Ok(self.cmd_select_active_slot(id)),
             SessionCommand::SaveSlot(id) => Ok(self.slot_op_ok(|p, c| p.save_slot(id, c, false))),
             SessionCommand::LoadSlot(id) => Ok(self.load_slot_op(|p, c| p.load_slot(id, c))),
-            SessionCommand::DeleteSlot(id) => Ok(self.slot_op(|p, c| p.delete_slot(id, c))),
+            SessionCommand::DeleteSlot(id) => Ok(self.slot_op_ok(|p, c| p.delete_slot(id, c))),
             SessionCommand::SelectNextSlot => Ok(self.cmd_adjacent_slot(SlotDirection::Next)),
             SessionCommand::SelectPreviousSlot => {
                 Ok(self.cmd_adjacent_slot(SlotDirection::Previous))
@@ -81,10 +81,10 @@ impl SessionHandle {
     }
 
     fn cmd_pause(&mut self) -> Result<SessionCommandOutcome, SessionError> {
-        if self.paused() {
+        if self.tick_metrics().paused {
             return Ok(SessionCommandOutcome::default());
         }
-        self.core()?.pause()?;
+        self.emu.core()?.pause()?;
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
@@ -93,19 +93,20 @@ impl SessionHandle {
     }
 
     fn cmd_resume(&mut self) -> Result<SessionCommandOutcome, SessionError> {
-        if !self.paused() {
+        let tick = self.tick_metrics();
+        if !tick.paused {
             return Ok(SessionCommandOutcome::default());
         }
-        self.core()?.resume()?;
+        self.emu.core()?.resume()?;
         Ok(SessionCommandOutcome {
             executed: true,
-            needs_redraw: self.loaded(),
+            needs_redraw: tick.loaded,
             slot_failure: None,
         })
     }
 
     fn cmd_toggle_pause(&mut self) -> Result<SessionCommandOutcome, SessionError> {
-        if self.paused() {
+        if self.tick_metrics().paused {
             self.cmd_resume()
         } else {
             self.cmd_pause()
@@ -113,7 +114,7 @@ impl SessionHandle {
     }
 
     fn cmd_reset(&mut self) -> Result<SessionCommandOutcome, SessionError> {
-        self.core()?.reset()?;
+        self.emu.core()?.reset()?;
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
@@ -142,31 +143,6 @@ impl SessionHandle {
         }
     }
 
-    fn core(&mut self) -> Result<&EmuCore, SessionError> {
-        self.emu.core_opt().ok_or(SessionError::NoCore)
-    }
-
-    fn slot_op(
-        &mut self,
-        op: impl FnOnce(&mut PersistenceManager, &EmuCore),
-    ) -> SessionCommandOutcome {
-        // No core ran anything: report it like the fallible legs do
-        // instead of a success toast for a no-op.
-        let Some(core) = self.emu.core_opt() else {
-            return SessionCommandOutcome {
-                executed: false,
-                needs_redraw: false,
-                slot_failure: Some(SlotOpFailure::Empty),
-            };
-        };
-        op(&mut self.media.persistence, core);
-        SessionCommandOutcome {
-            executed: true,
-            needs_redraw: false,
-            slot_failure: None,
-        }
-    }
-
     fn slot_op_ok(
         &mut self,
         op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> Result<(), SlotOpFailure>,
@@ -174,7 +150,7 @@ impl SessionHandle {
         let slot_failure = if let Some(core) = self.emu.core_opt() {
             op(&mut self.media.persistence, core).err()
         } else {
-            Some(SlotOpFailure::Unavailable)
+            Some(SlotOpFailure::Empty)
         };
         SessionCommandOutcome {
             executed: slot_failure.is_none(),
@@ -187,16 +163,17 @@ impl SessionHandle {
         &mut self,
         op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> Result<(), SlotOpFailure>,
     ) -> SessionCommandOutcome {
-        let was_paused = self.paused();
+        let was_paused = self.tick_metrics().paused;
         let slot_failure = if let Some(core) = self.emu.core_opt() {
             op(&mut self.media.persistence, core).err()
         } else {
             Some(SlotOpFailure::Empty)
         };
         let executed = slot_failure.is_none();
+        let now_paused = self.tick_metrics().paused;
         SessionCommandOutcome {
             executed,
-            needs_redraw: executed && was_paused && !self.paused(),
+            needs_redraw: executed && was_paused && !now_paused,
             slot_failure,
         }
     }

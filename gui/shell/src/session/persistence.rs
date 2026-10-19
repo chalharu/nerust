@@ -445,10 +445,14 @@ impl PersistenceManager {
         }
     }
 
-    pub fn delete_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) {
+    pub fn delete_slot(
+        &mut self,
+        slot_id: u64,
+        emu: &impl CorePersistence,
+    ) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("delete_slot: no states_dir configured; cannot delete slot {slot_id}");
-            return;
+            return Err(SlotOpFailure::Unavailable);
         };
         match self.slot_backend.delete_slot(dir, slot_id) {
             Ok(()) => {
@@ -457,8 +461,12 @@ impl PersistenceManager {
                 }
                 let identity = emu.canonical_media_identity();
                 self.refresh_slots_inner(identity.as_ref());
+                Ok(())
             }
-            Err(error) => log::warn!("deleting state slot failed: {error}"),
+            Err(error) => {
+                log::warn!("deleting state slot failed: {error}");
+                Err(SlotOpFailure::Storage)
+            }
         }
     }
 

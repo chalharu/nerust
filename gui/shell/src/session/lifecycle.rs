@@ -29,7 +29,18 @@ impl SessionHandle {
             let Some(core) = self.emu.core_opt() else {
                 return Err(SessionError::NoCore);
             };
-            self.media.persistence.flush_mapper_save(core)?;
+            // Best-effort: a stale battery-save write failure must
+            // never veto opening a new ROM.
+            if let Err(error) = self.media.persistence.flush_mapper_save(core) {
+                log::warn!("mapper-save flush before load failed: {error}");
+                self.notifications.push(
+                    crate::session::notification::NotificationKind::command_failure(
+                        crate::session::notification::FailureOrigin::Bridge,
+                        "mapper-flush",
+                        error.to_string(),
+                    ),
+                );
+            }
         }
         self.emu
             .core_opt_mut()
@@ -120,14 +131,10 @@ impl SessionHandle {
         origin: super::notification::FailureOrigin,
         detail: String,
     ) {
-        use super::notification::MAX_EXTERNAL_DETAIL;
         debug_assert!(origin != super::notification::FailureOrigin::Command);
-        let detail: String = detail.chars().take(MAX_EXTERNAL_DETAIL).collect();
         self.notifications
-            .push(super::notification::NotificationKind::CommandFailure {
-                origin,
-                id: "",
-                detail,
-            });
+            .push(super::notification::NotificationKind::command_failure(
+                origin, "", detail,
+            ));
     }
 }

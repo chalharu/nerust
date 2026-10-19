@@ -50,18 +50,27 @@ impl SessionHandle {
         )
     }
 
+    /// Single-use convenience: one metrics lock per call. Tick
+    /// paths must fetch `tick_metrics()` once and thread the value
+    /// instead of combining these predicates.
     pub fn loaded(&self) -> bool {
         self.tick_metrics().loaded
     }
 
+    /// Single-use convenience: one metrics lock per call. See
+    /// [`SessionHandle::loaded`].
     pub fn paused(&self) -> bool {
         self.tick_metrics().paused
     }
 
+    /// Single-use convenience: one metrics lock per call. See
+    /// [`SessionHandle::loaded`].
     pub fn can_pause(&self) -> bool {
         self.tick_metrics().can_pause()
     }
 
+    /// Single-use convenience: one metrics lock per call. See
+    /// [`SessionHandle::loaded`].
     pub fn can_resume(&self) -> bool {
         self.tick_metrics().can_resume()
     }

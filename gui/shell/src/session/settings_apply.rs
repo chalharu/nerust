@@ -218,7 +218,7 @@ impl SessionHandle {
         }
 
         self.settings.snapshot = next_settings;
-        if plan.persistence_changed && self.loaded() {
+        if plan.persistence_changed && self.tick_metrics().loaded {
             let rom_path = self
                 .media
                 .loaded
@@ -263,9 +263,8 @@ impl SessionHandle {
         next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
         assignments: &InputAssignments,
     ) -> Result<(), SessionError> {
-        let was_loaded = self.loaded();
-        let was_paused = self.paused();
-        let exported_core_bytes = if was_loaded {
+        let tick = self.tick_metrics();
+        let exported_core_bytes = if tick.loaded {
             Some(
                 self.emu
                     .core_opt()
@@ -281,11 +280,17 @@ impl SessionHandle {
         let rebuilt = self.build_core_for_settings(next_settings, &factory, assignments)?;
         let rebuilt_core = rebuilt.emu_core;
 
-        if let Some(loaded_media) = self.media.loaded.clone() {
-            rebuilt_core.load(&loaded_media.media, None)?;
-            if let Some(core_bytes) = exported_core_bytes.as_ref() {
-                rebuilt_core.load_state_raw(core_bytes.clone())?;
-                if !was_paused {
+        if self.media.loaded.is_some() {
+            // Borrow, don't clone: `MediaObject` bytes ride an `Arc`,
+            // but even the `PathBuf` half need not duplicate per rebuild.
+            let load_media = self.media.loaded.as_ref().map(|loaded| &loaded.media);
+            if let Some(media) = load_media {
+                rebuilt_core.load(media, None)?;
+            }
+            if let Some(core_bytes) = exported_core_bytes {
+                // Move, don't clone: the snapshot is hundreds of KB.
+                rebuilt_core.load_state_raw(core_bytes)?;
+                if !tick.paused {
                     rebuilt_core.resume()?;
                 }
             }
@@ -293,7 +298,7 @@ impl SessionHandle {
 
         self.emu.install(rebuilt_core, rebuilt.gui_input);
         self.input.field_map = rebuilt.field_map;
-        if was_loaded {
+        if tick.loaded {
             let rom_path = self
                 .media
                 .loaded
@@ -307,7 +312,9 @@ impl SessionHandle {
             };
             let setup = self.setup_persistence(rom_path_deref, restore);
             self.note_persistence_setup(setup);
-            if was_paused && let Some(core) = self.emu.core_opt_mut() {
+            if tick.paused
+                && let Some(core) = self.emu.core_opt_mut()
+            {
                 core.pause()?;
             }
         }
