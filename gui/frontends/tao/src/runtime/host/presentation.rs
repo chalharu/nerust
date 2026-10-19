@@ -45,7 +45,7 @@ impl HostState {
             paused: self.session.paused(),
             slots,
             active_slot: self.session.active_slot_id(),
-            settings_open: self.settings_open,
+            settings_open: self.settings_open(),
             language: snapshot.shared.general.language,
             shortcuts: &snapshot.shared.input.shortcuts.keyboard,
         });

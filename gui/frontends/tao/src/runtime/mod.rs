@@ -166,7 +166,7 @@ impl WindowRuntime {
             }
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
             Event::RedrawRequested(window_id) if self.host.is_settings_window(window_id) => {
-                if let Some(handle) = self.host.settings_window.as_mut() {
+                if let Some(handle) = self.host.settings.window.as_mut() {
                     handle.render();
                 }
             }
@@ -191,7 +191,7 @@ impl WindowRuntime {
                 self.host.on_history_event(event);
             }
             Event::RedrawRequested(window_id) if self.host.is_history_window(window_id) => {
-                if let Some(handle) = self.host.history_window.as_mut() {
+                if let Some(handle) = self.host.osd.history_window.as_mut() {
                     handle.render();
                 }
             }
@@ -242,8 +242,8 @@ impl WindowRuntime {
         }
 
         let strip = self.host.reserved_strip();
-        if strip != self.host.osd_last_strip {
-            self.host.osd_last_strip = strip;
+        if strip != self.host.osd.last_strip {
+            self.host.osd.last_strip = strip;
             renderer.set_reserved_strip(strip);
         }
         // No notification drain here: `update_control_flow` drains

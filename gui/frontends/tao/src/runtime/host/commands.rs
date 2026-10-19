@@ -23,7 +23,7 @@ impl HostState {
         command: MenuCommand,
         opener: &dyn WindowOpener,
     ) -> HostAction {
-        if self.settings_open {
+        if self.settings_open() {
             return match command {
                 MenuCommand::Quit => {
                     self.prepare_close();
@@ -70,7 +70,7 @@ impl HostState {
     }
 
     pub(crate) fn on_keyboard_input(&mut self, input: KeyEvent) {
-        if self.settings_open {
+        if self.settings_open() {
             return;
         }
         if let Some(pressed) = element_state_to_pressed(input.state)
@@ -287,7 +287,6 @@ mod tests {
     fn settings_open_guard_swallows_non_quit() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.settings_open = true;
         let opener = FakeOpener::failing("no display");
         assert_eq!(
             host.on_menu_command(MenuCommand::Open, &opener),
@@ -355,7 +354,7 @@ mod tests {
             HostAction::None
         );
         assert_eq!(opener.calls(), [OpenerCall::Settings]);
-        assert!(!host.settings_open);
+        assert!(!host.settings_open());
     }
 
     #[test]
@@ -440,7 +439,7 @@ mod tests {
         // blocked: rfd runs on its own thread (see `ModalFlight`).
         // FakeDialogs answers instantly, so this exits on an early pass.
         let mut tries = 0;
-        while support.dialogs.errors().is_empty() || host.osd.modal_pending() != 0 {
+        while support.dialogs.errors().is_empty() || host.osd.manager.modal_pending() != 0 {
             host.poll_notifications();
             tries += 1;
             assert!(tries < 500, "modal ack never arrived");
@@ -448,7 +447,7 @@ mod tests {
         }
         assert_eq!(support.dialogs.errors().len(), 1);
         assert!(support.dialogs.errors()[0].contains("TogglePause"));
-        assert_eq!(host.osd.modal_pending(), 0);
+        assert_eq!(host.osd.manager.modal_pending(), 0);
     }
 
     #[test]
@@ -460,14 +459,14 @@ mod tests {
         // sender is dropped without sending (Disconnected).
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         drop(tx);
-        host.modal_flight = Some(ModalFlight {
+        host.osd.modal_flight = Some(ModalFlight {
             done: rx,
             resume_after: false,
         });
         host.poll_notifications();
         // Reaped as a failed ack: flight gone, queue unblocked.
-        assert!(host.modal_flight.is_none());
-        assert_eq!(host.osd.modal_pending(), 0);
+        assert!(host.osd.modal_flight.is_none());
+        assert_eq!(host.osd.manager.modal_pending(), 0);
     }
 
     #[test]
@@ -479,8 +478,8 @@ mod tests {
         host.poll_notifications();
         host.poll_notifications();
         assert!(support.dialogs.errors().is_empty());
-        assert_eq!(host.osd.modal_pending(), 0);
-        assert!(host.history_sync_key.is_none());
+        assert_eq!(host.osd.manager.modal_pending(), 0);
+        assert!(host.osd.history_sync_key.is_none());
     }
 
     #[test]
