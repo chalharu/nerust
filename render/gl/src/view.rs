@@ -388,49 +388,31 @@ impl GlView {
         ];
 
         let vbo = Rc::new(ok_gl(VertexBuffer::from_slice(&vertex_data))?);
+        // Resolve before the GL-typed builder closure: a missing name
+        // is a broken program, and 0 would alias a valid attribute.
+        let position = shader.attribute_opt("position").ok_or(ViewError::Internal {
+            what: "GL view has no position attribute",
+        })?;
+        let uv = shader.attribute_opt("uv").ok_or(ViewError::Internal {
+            what: "GL view has no uv attribute",
+        })?;
         if self.use_vao {
             let vbo = vbo.clone();
             self.vba = Some(ok_gl(VertexArray::new(|vaic| {
                 vaic.bind_vbo(vbo, |vac| {
-                    vac.attr_pointer(
-                        Attrib {
-                            id: shader.get_attribute("position"),
-                        },
-                        2,
-                        gl::FLOAT,
-                        16,
-                        0,
-                    )?;
-                    vac.attr_pointer(
-                        Attrib {
-                            id: shader.get_attribute("uv"),
-                        },
-                        2,
-                        gl::FLOAT,
-                        16,
-                        8,
-                    )
+                    vac.attr_pointer(Attrib { id: position }, 2, gl::FLOAT, 16, 0)?;
+                    vac.attr_pointer(Attrib { id: uv }, 2, gl::FLOAT, 16, 8)
                 })
             }))?);
         } else {
             ok_gl(vertex_attrib_pointer(
-                shader.get_attribute("position"),
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                16,
-                ptr::null(),
+                position, 2, gl::FLOAT, gl::FALSE, 16, ptr::null(),
             ))?;
-            ok_gl(enable_vertex_attrib_array(shader.get_attribute("position")))?;
+            ok_gl(enable_vertex_attrib_array(position))?;
             ok_gl(vertex_attrib_pointer(
-                shader.get_attribute("uv"),
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                16,
-                8 as *const c_void,
+                uv, 2, gl::FLOAT, gl::FALSE, 16, 8 as *const c_void,
             ))?;
-            ok_gl(enable_vertex_attrib_array(shader.get_attribute("uv")))?;
+            ok_gl(enable_vertex_attrib_array(uv))?;
             self.vbo = Some(vbo.clone());
         }
 
