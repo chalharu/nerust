@@ -600,9 +600,7 @@ impl GlView {
     /// Record one failed OSD upload (pure state; GL stays out).
     /// Returns `Some` on the transition that drops the stale layer.
     fn note_osd_upload_failure(&mut self) -> Option<()> {
-        if self.osd.osd_layer.is_none() {
-            return None;
-        }
+        self.osd.osd_layer.as_ref()?;
         match self.osd.osd_retry.record_failure() {
             RetryDecision::Retry => None,
             RetryDecision::DropLayer => {

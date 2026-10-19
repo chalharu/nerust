@@ -738,11 +738,6 @@ impl GpuRenderer for SoftbufferRenderer {
         let Some((dst_w, dst_h, _avail_h, _src_stride)) = self.validate_frame(frame) else {
             return RenderResult::Skipped;
         };
-        let dst_w = self.size.width as usize;
-        let dst_h = self.size.height as usize;
-        if dst_w == 0 || dst_h == 0 {
-            return RenderResult::Skipped;
-        }
         if self.surface.is_none() {
             return RenderResult::Skipped;
         }

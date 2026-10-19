@@ -89,11 +89,29 @@ impl std::fmt::Display for CrashReport {
 }
 
 /// Thread, detail, and backtrace captured once for hook and report.
+/// Public so embedders can implement `set_record_sink`.
 #[derive(Debug)]
-struct PanicRecord {
+pub struct PanicRecord {
     thread: String,
     detail: String,
     backtrace: String,
+}
+
+impl PanicRecord {
+    /// Failing thread name.
+    pub fn thread(&self) -> &str {
+        &self.thread
+    }
+
+    /// Panic payload text.
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+
+    /// Captured backtrace.
+    pub fn backtrace(&self) -> &str {
+        &self.backtrace
+    }
 }
 
 impl PanicRecord {

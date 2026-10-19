@@ -103,7 +103,6 @@ struct InputCluster {
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_keyboard::Key, usize>,
     pressed_keys: BTreeSet<Key>,
-    runtime: Option<CoreRuntime>,
 }
 
 /// Settings cluster: manager plus its snapshot. Single owner for the
@@ -320,7 +319,6 @@ impl SessionHandle {
                 host_peripherals,
                 key_field_map: HashMap::new(),
                 pressed_keys: BTreeSet::new(),
-                runtime: None,
             },
             registry,
             active_system_id,
