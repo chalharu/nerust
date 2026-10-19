@@ -21,16 +21,6 @@ pub(crate) struct SettingsWindowHandle {
 }
 
 impl SettingsWindowHandle {
-    /// Native window identity for event routing.
-    pub(crate) fn tao_window_id(&self) -> tao::window::WindowId {
-        self.shell.tao_window_id()
-    }
-
-    /// Close was requested through the shared flag.
-    pub(crate) fn close_requested(&self) -> bool {
-        self.shell.close_requested()
-    }
-
     pub(crate) fn new(
         snapshot: SettingsSnapshot,
         registry: Arc<SystemRegistry>,
@@ -80,7 +70,24 @@ impl SettingsWindowHandle {
         })
     }
 
-    pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
+    pub(crate) fn take_pending_apply(&mut self) -> Option<SettingsSnapshot> {
+        lock_recovered(&self.pending_apply).take()
+    }
+}
+
+impl crate::aux::focus::WindowHandler for SettingsWindowHandle {
+    type Program = SettingsAppProgram;
+    const LOG_TAG: &'static str = "settings";
+
+    fn shell(&self) -> &AuxShell<Self::Program> {
+        &self.shell
+    }
+
+    fn shell_mut(&mut self) -> &mut AuxShell<Self::Program> {
+        &mut self.shell
+    }
+
+    fn handle_event(&mut self, mapped: iced::Event) -> bool {
         let capture = if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
             physical_key,
             repeat: false,
@@ -99,36 +106,13 @@ impl SettingsWindowHandle {
                 .store(true, std::sync::atomic::Ordering::Release);
         }
 
-        if !messages.is_empty() || matches!(outcome, PumpOutcome::Rebuild) {
-            self.shell.process(messages, &self.view_invalidated);
-        }
-    }
-
-    pub(crate) fn render(&mut self) {
-        self.shell.render("settings");
-    }
-
-    pub(crate) fn take_pending_apply(&mut self) -> Option<SettingsSnapshot> {
-        lock_recovered(&self.pending_apply).take()
-    }
-
-    fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
-        if let Some(iced_event) = self.shell.feed_tao_event(event) {
-            self.handle_event(iced_event);
-        }
-    }
-}
-
-impl crate::aux::focus::WindowHandler for SettingsWindowHandle {}
-
-impl crate::aux::shell::AuxWindow for SettingsWindowHandle {
-    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
-        // Modifiers/close ride the shared prelude; convert repeats
-        // both idempotently inside `handle_tao_event`, so no second
-        // pass is needed here.
-        self.shell.handle_common_event(&event);
-        self.handle_tao_event(event);
-        self.shell.request_redraw();
+        let repainted = matches!(outcome, PumpOutcome::Repaint);
+        let rebuilt = if !messages.is_empty() || matches!(outcome, PumpOutcome::Rebuild) {
+            self.shell.process(messages, &self.view_invalidated)
+        } else {
+            false
+        };
+        repainted || rebuilt
     }
 }
 #[cfg(test)]

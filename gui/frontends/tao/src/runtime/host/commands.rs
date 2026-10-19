@@ -367,7 +367,7 @@ mod tests {
             HostAction::None
         );
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
-        assert!(host.debug.debug_window.is_none());
+        assert!(!host.debug.is_debug_open());
     }
 
     #[test]

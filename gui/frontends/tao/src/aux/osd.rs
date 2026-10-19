@@ -11,7 +11,7 @@ use nerust_settings_core::{
 };
 use tao::event_loop::EventLoopWindowTarget;
 
-use crate::aux::shell::{AuxWindow, WindowScaffold, aux_settings, aux_theme};
+use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 
 // ── History viewer ─────────────────────────────────────────────
 
@@ -272,16 +272,6 @@ pub(crate) struct HistoryWindowHandle {
 }
 
 impl HistoryWindowHandle {
-    /// Native window identity for event routing.
-    pub(crate) fn tao_window_id(&self) -> tao::window::WindowId {
-        self.shell.tao_window_id()
-    }
-
-    /// Close was requested through the shared flag.
-    pub(crate) fn close_requested(&self) -> bool {
-        self.shell.close_requested()
-    }
-
     pub(crate) fn new(
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         language: AppLanguage,
@@ -327,35 +317,30 @@ impl HistoryWindowHandle {
     }
 }
 
-impl HistoryWindowHandle {
-    pub(crate) fn render(&mut self) {
-        self.shell.render("history window");
-    }
-}
+impl super::focus::WindowHandler for HistoryWindowHandle {
+    type Program = HistoryProgram;
+    const LOG_TAG: &'static str = "history window";
 
-impl HistoryWindowHandle {
-    fn handle_event(&mut self, mapped: iced::Event) {
+    fn shell(&self) -> &crate::aux::shell::AuxShell<Self::Program> {
+        &self.shell
+    }
+
+    fn shell_mut(&mut self) -> &mut crate::aux::shell::AuxShell<Self::Program> {
+        &mut self.shell
+    }
+
+    fn handle_event(&mut self, mapped: iced::Event) -> bool {
         let (messages, outcome) = self.shell.pump_frame(mapped);
-        if matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-            self.shell.request_redraw();
-        }
-        if !messages.is_empty() {
-            self.shell.process(messages, &self.view_invalidated);
-        }
+        // Repaint already requested a redraw inside `pump_frame`.
+        let repainted = matches!(outcome, crate::aux::shell::PumpOutcome::Repaint);
+        let rebuilt = if !messages.is_empty() {
+            self.shell.process(messages, &self.view_invalidated)
+        } else {
+            false
+        };
+        repainted || rebuilt
     }
 }
-
-impl AuxWindow for HistoryWindowHandle {
-    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
-        self.shell.handle_common_event(&event);
-        if let Some(mapped) = self.shell.feed_tao_event(event) {
-            self.handle_event(mapped);
-        }
-        self.shell.request_redraw();
-    }
-}
-
-impl super::focus::WindowHandler for HistoryWindowHandle {}
 
 #[cfg(test)]
 mod tests {

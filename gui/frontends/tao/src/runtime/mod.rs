@@ -19,6 +19,7 @@ use tao::{
 };
 
 use self::host::{HostAction, HostState};
+use crate::aux::focus::WindowHandler;
 use crate::event::UserEvent;
 use crate::menu::imp::AppMenu;
 use crate::ports::{NativeDialogs, TaoWindowOpener};
@@ -166,7 +167,7 @@ impl WindowRuntime {
             }
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
             Event::RedrawRequested(window_id) if self.host.is_settings_window(window_id) => {
-                if let Some(handle) = self.host.settings.window.as_mut() {
+                if let Some(handle) = self.host.settings_window_mut() {
                     handle.render();
                 }
             }
@@ -191,12 +192,12 @@ impl WindowRuntime {
                 self.host.on_history_event(event);
             }
             Event::RedrawRequested(window_id) if self.host.is_history_window(window_id) => {
-                if let Some(handle) = self.host.osd.history_window.as_mut() {
+                if let Some(handle) = self.host.history_window_mut() {
                     handle.render();
                 }
             }
             Event::RedrawRequested(window_id) if self.host.debug.is_ppu_window(window_id) => {
-                if let Some(handle) = self.host.debug.ppu_window.as_mut() {
+                if let Some(handle) = self.host.debug.ppu_window_mut() {
                     handle.render();
                 }
             }

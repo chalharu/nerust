@@ -13,6 +13,7 @@ use iced_winit::program::{self, Program};
 use tao::event_loop::EventLoopWindowTarget;
 
 use super::bridge::{DebugBridge, lock_recovered};
+use super::focus::WindowHandler;
 use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 
 /// Initial PPU viewer window size (verified Xvfb fit).
@@ -198,21 +199,6 @@ pub(crate) struct PpuWindowHandle {
 }
 
 impl PpuWindowHandle {
-    /// Native window identity for event routing.
-    pub(crate) fn tao_window_id(&self) -> tao::window::WindowId {
-        self.shell.tao_window_id()
-    }
-
-    /// Close was requested through the shared flag.
-    pub(crate) fn close_requested(&self) -> bool {
-        self.shell.close_requested()
-    }
-
-    /// Bring this viewer to the front.
-    pub(crate) fn focus_window(&self) {
-        self.shell.focus_window();
-    }
-
     pub(crate) fn new(
         bridge: Arc<DebugBridge>,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
@@ -245,28 +231,6 @@ impl PpuWindowHandle {
         Some(Self { shell, bridge })
     }
 
-    pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
-        let (messages, outcome) = self.shell.pump_frame(mapped);
-        if matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-            self.bridge
-                .ppu_invalidated
-                .store(true, std::sync::atomic::Ordering::Release);
-        }
-        if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-            self.shell.process(messages, &self.bridge.ppu_invalidated);
-        }
-    }
-
-    pub(crate) fn render(&mut self) {
-        self.shell.render("PPU viewer");
-    }
-
-    fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
-        if let Some(iced_event) = self.shell.feed_tao_event(event) {
-            self.handle_event(iced_event);
-        }
-    }
-
     pub(crate) fn sync_from_bridge(&mut self) {
         // Derive cached bytes first (one scale per drain), then
         // rebuild the view from cache.
@@ -280,15 +244,35 @@ impl PpuWindowHandle {
     }
 }
 
-impl crate::aux::shell::AuxWindow for PpuWindowHandle {
-    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
-        self.shell.handle_common_event(&event);
-        self.handle_tao_event(event);
-        self.shell.request_redraw();
+impl super::focus::WindowHandler for PpuWindowHandle {
+    type Program = PpuProgram;
+    const LOG_TAG: &'static str = "PPU viewer";
+
+    fn shell(&self) -> &crate::aux::shell::AuxShell<Self::Program> {
+        &self.shell
+    }
+
+    fn shell_mut(&mut self) -> &mut crate::aux::shell::AuxShell<Self::Program> {
+        &mut self.shell
+    }
+
+    fn handle_event(&mut self, mapped: iced::Event) -> bool {
+        let (messages, outcome) = self.shell.pump_frame(mapped);
+        let repainted = matches!(outcome, crate::aux::shell::PumpOutcome::Repaint);
+        if matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
+            self.bridge
+                .ppu_invalidated
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        let rebuilt =
+            if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
+                self.shell.process(messages, &self.bridge.ppu_invalidated)
+            } else {
+                false
+            };
+        repainted || rebuilt
     }
 }
-
-impl super::focus::WindowHandler for PpuWindowHandle {}
 
 #[cfg(test)]
 mod tests {

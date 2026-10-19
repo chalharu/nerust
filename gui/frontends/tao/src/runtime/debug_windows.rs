@@ -4,6 +4,7 @@
 
 use std::time::{Duration, Instant};
 
+use crate::aux::focus::WindowHandler;
 use tao::window::WindowId;
 
 /// Live PPU cadence while the core runs: the viewer follows the
@@ -13,8 +14,8 @@ use tao::window::WindowId;
 pub(super) const PPU_LIVE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(super) struct DebugWindows {
-    pub(super) debug_window: Option<crate::aux::debug::DebugWindowHandle>,
-    pub(super) ppu_window: Option<crate::aux::ppu::PpuWindowHandle>,
+    debug_window: Option<crate::aux::debug::DebugWindowHandle>,
+    ppu_window: Option<crate::aux::ppu::PpuWindowHandle>,
     debug_open_requested: bool,
     ppu_open_requested: bool,
     debug_window_pos: Option<(i32, i32)>,
@@ -37,6 +38,46 @@ impl DebugWindows {
             last_ppu_live: None,
             last_drain_paused: None,
         }
+    }
+
+    /// Share the debugger window for bridge reads, if open.
+    pub(super) fn debug_window(&self) -> Option<&crate::aux::debug::DebugWindowHandle> {
+        self.debug_window.as_ref()
+    }
+
+    /// Borrow the debugger window for event routing, if open.
+    pub(super) fn debug_window_mut(&mut self) -> Option<&mut crate::aux::debug::DebugWindowHandle> {
+        self.debug_window.as_mut()
+    }
+
+    /// Share the PPU viewer for bridge reads, if open.
+    pub(super) fn ppu_window(&self) -> Option<&crate::aux::ppu::PpuWindowHandle> {
+        self.ppu_window.as_ref()
+    }
+
+    /// Borrow the PPU viewer for event routing, if open.
+    pub(super) fn ppu_window_mut(&mut self) -> Option<&mut crate::aux::ppu::PpuWindowHandle> {
+        self.ppu_window.as_mut()
+    }
+
+    /// Seat a newly created debugger window (single writer: the open path).
+    pub(super) fn set_debug_window(&mut self, handle: crate::aux::debug::DebugWindowHandle) {
+        self.debug_window = Some(handle);
+    }
+
+    /// Seat a newly created PPU viewer (single writer: the open path).
+    pub(super) fn set_ppu_window(&mut self, handle: crate::aux::ppu::PpuWindowHandle) {
+        self.ppu_window = Some(handle);
+    }
+
+    /// Whether the debugger window is currently open.
+    pub(super) fn is_debug_open(&self) -> bool {
+        self.debug_window.is_some()
+    }
+
+    /// Whether the PPU viewer is currently open.
+    pub(super) fn is_ppu_open(&self) -> bool {
+        self.ppu_window.is_some()
     }
 
     pub(crate) fn is_debug_window(&self, window_id: WindowId) -> bool {

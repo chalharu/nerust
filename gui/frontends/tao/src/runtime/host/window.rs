@@ -5,6 +5,7 @@ use super::{
     create_window_builder, default_fit_window_size, logical_size_from_remembered,
     logical_window_size, window_is_fullscreen, window_surface_size,
 };
+use crate::aux::focus::WindowHandler;
 use std::path::Path;
 use std::time::Instant;
 use tao::{dpi::LogicalSize as TaoLogicalSize, event_loop::ControlFlow, window::WindowId};
@@ -236,7 +237,7 @@ impl HostState {
         // debugger while the game runs): frames keep coming and must
         // show. Paused, unfocused, and unfollowed sleeps.
         let running = self.session.loaded() && !self.session.paused();
-        if (self.focus.main_active() || live || running)
+        if (self.main_active() || live || running)
             && let Some(window) = self.window.as_ref()
         {
             window.request_redraw();
@@ -261,6 +262,9 @@ impl HostState {
     pub(crate) fn request_redraw(&mut self) {
         self.shell.needs_redraw = true;
         if !self.close.is_live() {
+            // Silent drops here are invisible headless bugs (tests
+            // exercise close paths without windows), so say so once.
+            log::debug!("tao redraw dropped: no live window");
             return;
         }
         if let Some(window) = self.window.as_ref() {
@@ -445,12 +449,12 @@ mod tests {
         use tao::event_loop::ControlFlow;
         let support = TestHost::new();
         let mut host = support.host;
-        host.focus.leave_main();
+        host.note_main_departure();
         let mut flow = ControlFlow::Wait;
         host.update_control_flow(&mut flow);
         assert_eq!(flow, ControlFlow::Wait);
         // Consumed: arriving now reports no resume.
-        assert!(!host.focus.arrive_main());
+        assert!(!host.note_main_arrival());
     }
 
     #[test]

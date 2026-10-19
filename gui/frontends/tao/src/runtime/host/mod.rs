@@ -107,8 +107,21 @@ fn backend_capabilities() -> HostBackendCapabilities {
 /// Settings-window cluster: handle plus its resume bookkeeping. Single
 /// owner for the settings-modal domain; the open truth is the handle.
 pub(super) struct SettingsHost {
-    pub(super) window: Option<crate::aux::settings::window::SettingsWindowHandle>,
+    window: Option<crate::aux::settings::window::SettingsWindowHandle>,
     resume_after: bool,
+}
+
+impl SettingsHost {
+    /// Take the settings window for close teardown, if one is open.
+    /// Single writer alongside `open` (see `HostState::open_settings_window`).
+    fn take(&mut self) -> Option<crate::aux::settings::window::SettingsWindowHandle> {
+        self.window.take()
+    }
+
+    /// Borrow the settings window for event routing, if one is open.
+    fn borrow_mut(&mut self) -> Option<&mut crate::aux::settings::window::SettingsWindowHandle> {
+        self.window.as_mut()
+    }
 }
 
 impl SettingsHost {
@@ -123,8 +136,8 @@ impl SettingsHost {
 /// OSD cluster: shell display state, raster, presenter, layer memo,
 /// modal flight, and history viewer. One owner for the overlay domain.
 pub(super) struct OsdHost {
-    pub(super) manager: OsdManager,
-    pub(super) raster: nerust_render_osd::OsdRaster,
+    manager: OsdManager,
+    raster: nerust_render_osd::OsdRaster,
     /// Owns the whole OSD sync fingerprint. The per-frame decision
     /// procedure lives in shell `OsdPresenter`; this host only
     /// rasterizes the resulting plan.
@@ -135,18 +148,25 @@ pub(super) struct OsdHost {
     /// Last applied edge strip. The reservation only changes with
     /// settings or surface size, so unchanged strips skip the
     /// renderer call (same gate pattern as the gtk frontend).
-    pub(super) last_strip: nerust_render_traits::ReservedStrip,
-    pub(super) history_window: Option<HistoryWindowHandle>,
+    last_strip: nerust_render_traits::ReservedStrip,
+    history_window: Option<HistoryWindowHandle>,
     /// In-flight async error dialog plus resume bookkeeping.
-    pub(super) modal_flight: Option<ModalFlight>,
-    pub(super) resume_after_modal: bool,
+    modal_flight: Option<ModalFlight>,
+    resume_after_modal: bool,
     /// Last synced history content: sequence plus language. The sync
     /// runs on every loop pass while the viewer is open; unchanged
     /// content skips the full row rebuild (P1 perf gate).
-    pub(super) history_sync_key: Option<(u64, nerust_settings_core::model::language::AppLanguage)>,
+    history_sync_key: Option<(u64, nerust_settings_core::model::language::AppLanguage)>,
 }
 
 impl OsdHost {
+    /// Borrow the history window for event routing, if one is open.
+    pub(super) fn history_window_mut(
+        &mut self,
+    ) -> Option<&mut crate::aux::osd::HistoryWindowHandle> {
+        self.history_window.as_mut()
+    }
+
     fn new() -> Self {
         Self {
             manager: OsdManager::new(),
@@ -173,8 +193,10 @@ pub(crate) struct HostState {
     shell: NativeShellState,
     pub(super) settings: SettingsHost,
     pending_fullscreen_sync: Option<bool>,
-    /// Focus truth plus the deferred auto-pause protocol.
-    pub(super) focus: FocusState,
+    /// Focus truth plus the deferred auto-pause protocol. Only
+    /// reachable through the intent methods below; the burst protocol
+    /// must not be poked field by field.
+    focus: FocusState,
     /// In-flight async debug drain: `run_debug_drain` starts it, the
     /// event loop polls it (`poll_debug_flight`). A newer batch
     /// supersedes the stored one; orphaned replies are ignored.
@@ -275,10 +297,73 @@ impl HostState {
 
     /// Close teardown already ran. Test-only read of the idempotence
     /// guard: double-delivered close events must flush exactly once.
+    /// Report an aux-window focus change. Returns whether a
+    /// system-paused session should resume (see `aux_focus_step`).
+    pub(super) fn note_aux_focus(&mut self, focused: bool) -> bool {
+        crate::aux::focus::aux_focus_step(&mut self.focus, focused)
+    }
+
+    /// Quiet aux-window focus change: cancels a pending pause without
+    /// ever reporting a resume (settings must not resume anything).
+    /// See `aux_focus_step_quiet`.
+    pub(super) fn note_aux_focus_quiet(&mut self, focused: bool) {
+        crate::aux::focus::aux_focus_step_quiet(&mut self.focus, focused);
+    }
+
+    /// Main window gained focus: activate and report a pending resume.
+    pub(super) fn note_main_arrival(&mut self) -> bool {
+        self.focus.arrive_main()
+    }
+
+    /// Main window lost focus: deactivate and arm the deferred pause.
+    pub(super) fn note_main_departure(&mut self) {
+        self.focus.leave_main();
+    }
+
+    /// Main window holds focus (for the redraw policy).
+    pub(super) fn main_active(&self) -> bool {
+        self.focus.main_active()
+    }
+
     /// Settings dialog owns the screen iff its handle lives.
     /// Single truth: no bool shadow to drift from the handle.
     pub(crate) fn settings_open(&self) -> bool {
         self.settings.window.is_some()
+    }
+
+    /// Take the settings window for close teardown, if one is open.
+    /// Single writer alongside `open_settings_window`.
+    pub(super) fn take_settings_window(
+        &mut self,
+    ) -> Option<crate::aux::settings::window::SettingsWindowHandle> {
+        self.settings.take()
+    }
+
+    /// Borrow the settings window for event routing, if one is open.
+    pub(super) fn settings_window_mut(
+        &mut self,
+    ) -> Option<&mut crate::aux::settings::window::SettingsWindowHandle> {
+        self.settings.borrow_mut()
+    }
+
+    /// Borrow the history window for event routing, if one is open.
+    pub(super) fn history_window_mut(
+        &mut self,
+    ) -> Option<&mut crate::aux::osd::HistoryWindowHandle> {
+        self.osd.history_window_mut()
+    }
+
+    /// Close the settings window and rebuild the renderer when the
+    /// applied settings change the render target. Single home for the
+    /// Destroyed and close-requested paths.
+    pub(super) fn close_settings_and_maybe_rebuild(
+        &mut self,
+        handle: crate::aux::settings::window::SettingsWindowHandle,
+    ) -> bool {
+        let plan = self.close_settings_window(handle);
+        let rebuild = plan.is_some_and(|p| p.renderer_needs_rebuild);
+        self.request_redraw();
+        rebuild
     }
 
     #[cfg(test)]

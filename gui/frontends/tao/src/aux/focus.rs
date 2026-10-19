@@ -2,9 +2,11 @@
 //! home for the deferred auto-pause protocol: aux handles implement
 //! [`WindowHandler`], runtime only drives it. No runtime imports.
 
+use iced_tiny_skia::Renderer;
+use iced_winit::program::Program;
 use tao::event::WindowEvent;
 
-use super::shell::AuxWindow;
+use super::shell::{AuxShell, AuxWindow};
 
 /// Main-window focus truth plus the deferred auto-pause protocol.
 /// Invariants: a pause lands only via the burst-end commit after
@@ -93,16 +95,84 @@ pub(crate) fn aux_focus_step(focus: &mut FocusState, focused: bool) -> bool {
     }
 }
 
-/// Uniform aux-window handler: one entry for the event feed.
-/// Debug/PPU/history/settings implement this; arms stay one shape.
-/// Focus agreement is [`aux_focus_step`] directly: no handle state
-/// participates, so a trait default would only fake polymorphism.
+pub(crate) fn aux_focus_step_quiet(focus: &mut FocusState, focused: bool) {
+    if focused {
+        // Cancel only: unlike `arrive_aux`, the auto-pause flag is
+        // preserved so a later main-window arrival still resumes.
+        focus.cancel_pending();
+    } else {
+        focus.leave_aux();
+    }
+}
+
+/// Uniform aux-window handler: event feed plus shell access.
+/// Handles keep only their program type, log tag, shell access, and
+/// program-specific [`WindowHandler::handle_event`]; identity, close,
+/// focus, render, and the pump stay default so the four twins cannot
+/// drift apart. Focus agreement stays [`aux_focus_step`]/quiet outside
+/// the trait: no handle state participates.
 pub(crate) trait WindowHandler: AuxWindow {
+    type Program: Program<Theme = iced::Theme, Renderer = Renderer>;
+    /// Log tag for the shared render path (per-window identity).
+    const LOG_TAG: &'static str;
+    fn shell(&self) -> &AuxShell<Self::Program>;
+    fn shell_mut(&mut self) -> &mut AuxShell<Self::Program>;
+    /// Handle one converted event. Returns whether this pass already
+    /// requested a redraw, so the pump can skip its trailing request.
+    fn handle_event(&mut self, mapped: iced::Event) -> bool;
+
+    /// Feed one native event through the shared prelude.
+    fn handle_tao_event(&mut self, event: WindowEvent) -> bool {
+        if let Some(mapped) = self.shell_mut().feed_tao_event(event) {
+            self.handle_event(mapped)
+        } else {
+            false
+        }
+    }
+
     /// Feed one native event to the aux shell.
     fn on_event(&mut self, event: WindowEvent) {
         AuxWindow::pump_window_event(self, event);
     }
+
+    /// Native window identity for event routing.
+    fn tao_window_id(&self) -> tao::window::WindowId {
+        self.shell().tao_window_id()
+    }
+
+    /// Close was requested through the shared flag.
+    fn close_requested(&self) -> bool {
+        self.shell().close_requested()
+    }
+
+    /// Bring this viewer to the front.
+    fn focus_window(&self) {
+        self.shell().focus_window();
+    }
+
+    /// Full render through the shared pump; only the log tag differs.
+    fn render(&mut self) {
+        let tag = Self::LOG_TAG;
+        self.shell_mut().render(tag);
+    }
 }
+
+impl<T: WindowHandler> AuxWindow for T {
+    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
+        self.shell_mut().handle_common_event(&event);
+        // Resize/scale/modifier paths never rebuild, so the trailing
+        // request stays their only repaint; rebuild/repaint passes
+        // already requested above and skip the duplicate.
+        if !self.handle_tao_event(event) {
+            self.shell().request_redraw();
+        }
+    }
+}
+
+/// Quiet aux-focus step for windows that must never resume: arrival
+/// only cancels a pending pause (the auto-pause flag stays intact),
+/// leaving arms the deferred pause. Settings uses this; debug/PPU/
+/// history use [`aux_focus_step`], which may report a resume.
 
 #[cfg(test)]
 mod tests {
