@@ -26,12 +26,11 @@ mod commands;
 mod focus;
 mod osd;
 use osd::ModalFlight;
-pub(crate) use osd::{WindowHandler, aux_focus_step};
 mod presentation;
 mod settings;
 mod window;
 
-use self::focus::FocusState;
+use crate::aux::focus::FocusState;
 use crate::aux::osd::HistoryWindowHandle;
 use crate::ports::DialogPorts;
 use nerust_gui_shell::session::osd::OsdManager;

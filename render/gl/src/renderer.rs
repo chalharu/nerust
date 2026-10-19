@@ -53,6 +53,16 @@ impl GlRenderer {
         view.set_osd_layer(self.osd.clone());
         Ok(view)
     }
+
+    /// Tear down the live view, warning once on failure. Best-effort:
+    /// a failed delete must not fail the rebuild that triggered it.
+    fn close_live_view(&mut self) {
+        if let Some(ref mut v) = self.view
+            && v.on_close()
+        {
+            log::warn!("GlRenderer: view teardown failed");
+        }
+    }
 }
 
 impl GpuRenderer for GlRenderer {
@@ -189,16 +199,8 @@ impl GpuRenderer for GlRenderer {
         // Build before tearing down: a failed compile keeps the old
         // view live instead of leaving a half-closed one behind.
         let fresh = self.fresh_view(profile)?;
-        let fs = match profile.frame_format {
-            VideoFrameFormat::Rgba => profile.logical_size,
-            VideoFrameFormat::Palette => profile.source_logical_size,
-        };
-        self.expected_frame_len = fs.width * fs.height * profile.frame_format.bytes_per_pixel();
-        if let Some(ref mut v) = self.view
-            && v.on_close()
-        {
-            log::warn!("GlRenderer: view teardown failed");
-        }
+        self.expected_frame_len = frame_byte_len(profile);
+        self.close_live_view();
         self.view = Some(fresh);
         Ok(())
     }
@@ -294,6 +296,16 @@ fn osd_layers_equal(a: Option<&OsdLayer>, b: Option<&OsdLayer>) -> bool {
         }
         (None, Some(_)) | (Some(_), None) => false,
     }
+}
+
+/// Expected upload length for a profile: logical pixels for RGBA,
+/// source pixels for palette, times bytes per pixel.
+fn frame_byte_len(profile: &VideoRenderProfile) -> usize {
+    let fs = match profile.frame_format {
+        VideoFrameFormat::Rgba => profile.logical_size,
+        VideoFrameFormat::Palette => profile.source_logical_size,
+    };
+    fs.width * fs.height * profile.frame_format.bytes_per_pixel()
 }
 
 /// Upload one frame through the three stride paths (direct,
@@ -485,6 +497,37 @@ mod tests {
         pack_rows_stripped(&source, 6, 2, &mut destination, 4);
 
         assert_eq!(destination, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn frame_byte_len_covers_both_pixel_formats() {
+        use nerust_render_traits::{
+            VideoFrameFormat, logical::LogicalSize, physical::PhysicalSize,
+        };
+        let profile = |format| nerust_render_traits::VideoRenderProfile {
+            frame_format: format,
+            source_logical_size: LogicalSize {
+                width: 64,
+                height: 64,
+            },
+            logical_size: LogicalSize {
+                width: 128,
+                height: 128,
+            },
+            physical_size: PhysicalSize {
+                width: 64.0,
+                height: 64.0,
+            },
+            ntsc_packed_rgba8: None,
+        };
+        assert_eq!(
+            super::frame_byte_len(&profile(VideoFrameFormat::Rgba)),
+            128 * 128 * 4
+        );
+        assert_eq!(
+            super::frame_byte_len(&profile(VideoFrameFormat::Palette)),
+            64 * 64
+        );
     }
 
     #[test]

@@ -17,9 +17,9 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     libasound2-dev \
     libcubeb-dev \
     libepoxy-dev \
+    libgl1-mesa-dri \
     libgtk-3-dev \
     libgtk-4-dev \
-    libgl1-mesa-dri \
     libudev-dev \
     libwebkit2gtk-4.1-dev \
     libxdo-dev \

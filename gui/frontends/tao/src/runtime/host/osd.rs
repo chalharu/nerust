@@ -9,8 +9,7 @@ use nerust_render_traits::renderer::GpuRenderer;
 use tao::event::WindowEvent;
 
 use super::HostState;
-use super::focus::FocusState;
-use crate::aux::shell::AuxWindow;
+use crate::aux::focus::{WindowHandler, aux_focus_step};
 use crate::ports::WindowOpener;
 use nerust_gui_shell::session::osd::strip_rows;
 use nerust_render_traits::ReservedStrip;
@@ -23,36 +22,10 @@ pub(crate) struct ModalFlight {
     pub(super) resume_after: bool,
 }
 
-/// Shared aux-focus step: same-app arrival cancels a pending pause
-/// (reporting resume); leaving anywhere arms it. Single source below.
-pub(crate) fn aux_focus_step(focus: &mut FocusState, focused: bool) -> bool {
-    if focused {
-        focus.arrive_aux()
-    } else {
-        focus.leave_aux();
-        false
-    }
-}
-
 /// Likely-Render gate from cheap state only. Pure so the Skip
 /// side stays unit-testable without a renderer.
 fn osd_sync_likely(dirty: bool, visible: bool, status_on: bool, layer_live: bool) -> bool {
     dirty || visible || status_on || layer_live
-}
-
-/// Uniform aux-window handler: event feed plus the shared focus
-/// agreement. Debug/PPU/history implement this; arms stay one shape.
-pub(crate) trait WindowHandler: AuxWindow {
-    /// Feed one native event to the aux shell.
-    fn on_event(&mut self, event: WindowEvent) {
-        AuxWindow::pump_window_event(self, event);
-    }
-    /// Shared aux-focus agreement (see [`aux_focus_step`]).
-    /// Reports resume. Default so all twins match; override only to diverge.
-    fn note_focus(&mut self, focus: &mut FocusState, focused: bool) -> bool {
-        let _ = self;
-        aux_focus_step(focus, focused)
-    }
 }
 
 impl HostState {

@@ -9,7 +9,7 @@ use crate::aux::shell::AuxWindow;
 use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
-use super::host::{WindowHandler, aux_focus_step};
+use crate::aux::focus::{WindowHandler, aux_focus_step};
 
 impl WindowRuntime {
     pub(super) fn on_main_event(
