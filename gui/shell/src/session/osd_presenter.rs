@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub use nerust_render_traits::renderer::ViewInsets;
 use nerust_settings_core::model::language::AppLanguage;
 use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationPosition, NotificationSettings,
@@ -140,15 +141,6 @@ impl StatusGate {
     }
 }
 
-/// Display insets in settings-owned vocabulary; converted to render types at the boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct UiInsets {
-    pub top: u32,
-    pub right: u32,
-    pub bottom: u32,
-    pub left: u32,
-}
-
 /// Raster-ready frame decided by [`OsdPresenter`]: rows plus gated status text.
 /// Status shares the fingerprint pair: steady renders clone the `Rc`.
 #[derive(Debug, Clone)]
@@ -233,7 +225,7 @@ pub struct OsdSyncInput {
     pub height: u32,
     /// Raster scale and safe insets: the fingerprint must see them or re-render is suppressed.
     pub ui_scale: f32,
-    pub safe_insets: UiInsets,
+    pub safe_insets: ViewInsets,
 }
 
 /// Per-frame layer decision. `Clear` is only emitted while a layer
@@ -274,7 +266,7 @@ pub struct OsdPresenter {
     /// Last layer geometry; the status tuple exists only while enabled.
     /// A position flip with status off needs its own fingerprint or the Skip gate sticks.
     last_chrome: Option<OsdChrome>,
-    last_raster: Option<(UiInsets, u32)>,
+    last_raster: Option<(ViewInsets, u32)>,
     active: bool,
     /// Reused render buffer: steady renders extend it instead of allocating per frame.
     row_buffer: Vec<OsdRow>,
@@ -350,7 +342,7 @@ impl OsdPresenter {
     fn sync_geometry(
         &mut self,
         chrome: OsdChrome,
-        safe_insets: UiInsets,
+        safe_insets: ViewInsets,
         ui_scale: f32,
         width: u32,
         height: u32,
@@ -435,7 +427,7 @@ impl OsdPresenter {
 mod tests {
     use super::{
         OsdChrome, OsdPresenter, OsdRow, OsdState, OsdSync, OsdSyncInput, STATUS_FPS_MIN_INTERVAL,
-        StatusGate, UiInsets,
+        StatusGate, ViewInsets,
     };
     use crate::session::osd_presenter::TickMetrics;
     use nerust_settings_core::model::language::AppLanguage;
@@ -495,7 +487,7 @@ mod tests {
         width: u32,
         height: u32,
         ui_scale: f32,
-        safe_insets: UiInsets,
+        safe_insets: ViewInsets,
     ) -> OsdSyncInput {
         OsdSyncInput {
             tick: TickMetrics {
@@ -794,8 +786,8 @@ mod tests {
         let mut settings = presenter_settings();
         settings.status_enabled = true;
         let now = Instant::now();
-        let plain = UiInsets::default();
-        let inset = UiInsets {
+        let plain = ViewInsets::default();
+        let inset = ViewInsets {
             top: 40,
             right: 24,
             bottom: 40,
@@ -854,7 +846,7 @@ mod tests {
         let input = |pos| {
             let mut chrome = chrome_of(&settings);
             chrome.position = pos;
-            sync_input(chrome, now, 960, 720, 1.0, UiInsets::default())
+            sync_input(chrome, now, 960, 720, 1.0, ViewInsets::default())
         };
         // Rows showing, status off: first frame renders.
         assert!(matches!(
@@ -891,7 +883,7 @@ mod tests {
                 960,
                 720,
                 1.0,
-                UiInsets::default(),
+                ViewInsets::default(),
             )
         };
         // First frame renders the status readout, the repeat skips.

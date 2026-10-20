@@ -261,7 +261,7 @@ impl HostState {
                 width: geometry.0,
                 height: geometry.1,
                 ui_scale: 1.0,
-                safe_insets: nerust_gui_shell::session::osd::UiInsets::default(),
+                safe_insets: nerust_gui_shell::session::osd::ViewInsets::default(),
             },
         );
         log::trace!(

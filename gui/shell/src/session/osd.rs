@@ -15,7 +15,7 @@ pub use super::osd_history::{
 pub use crate::session::osd_modal::{ModalSink, ModalSource};
 pub use crate::session::osd_presenter::{
     OsdChrome, OsdPlan, OsdPresenter, OsdState, OsdSync, OsdSyncInput, STATUS_FPS_MIN_INTERVAL,
-    StatusGate, TickMetrics, UiInsets, format_status_value,
+    StatusGate, TickMetrics, ViewInsets, format_status_value,
 };
 pub use crate::session::osd_render::{OSD_STATUS_RGB, osd_anchor};
 pub use crate::session::osd_transient::{FrameChannel, OsdRow, TransientPolicy};
@@ -309,7 +309,7 @@ mod tests {
             vec![UiNotification {
                 level: NotificationLevel::Error,
                 kind: K::CommandFailure {
-                    origin: super::super::notification::FailureOrigin::Bridge,
+                    origin: super::super::notification::FailureOrigin::Host,
                     id: "",
                     detail: "boom".to_string(),
                 },
@@ -329,7 +329,7 @@ mod tests {
     fn external_error_routes_modal_without_frame() {
         use super::super::notification::{FailureOrigin, NotificationKind as K};
         let kind = K::CommandFailure {
-            origin: FailureOrigin::Picker,
+            origin: FailureOrigin::Selection,
             id: "",
             detail: "picker failed".to_string(),
         };

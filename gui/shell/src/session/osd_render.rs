@@ -1,10 +1,10 @@
 //! Render adapter: the single point where OSD decisions cross into render vocabulary.
 //! Only this module names `nerust_render_traits` types and maps settings corners to anchors.
 
-use nerust_render_traits::renderer::{OsdAnchor, OsdContent, OsdRow, OsdStatus, SafeInsets};
+use nerust_render_traits::renderer::{OsdAnchor, OsdContent, OsdRow, OsdStatus};
 use nerust_settings_core::model::local::NotificationPosition;
 
-use crate::session::osd_presenter::{OsdPlan, UiInsets};
+use crate::session::osd_presenter::OsdPlan;
 
 /// Status pill color, identical on every frontend; transient rows keep per-level colors.
 pub const OSD_STATUS_RGB: (u8, u8, u8) = (200, 200, 200);
@@ -17,17 +17,6 @@ pub fn osd_anchor(position: NotificationPosition) -> OsdAnchor {
         NotificationPosition::TopRight => OsdAnchor::TopRight,
         NotificationPosition::BottomLeft => OsdAnchor::BottomLeft,
         NotificationPosition::BottomRight => OsdAnchor::BottomRight,
-    }
-}
-
-impl From<SafeInsets> for UiInsets {
-    fn from(insets: SafeInsets) -> Self {
-        Self {
-            top: insets.top,
-            right: insets.right,
-            bottom: insets.bottom,
-            left: insets.left,
-        }
     }
 }
 
@@ -68,24 +57,6 @@ mod tests {
         assert_eq!(osd_anchor(P::TopRight), A::TopRight);
         assert_eq!(osd_anchor(P::BottomLeft), A::BottomLeft);
         assert_eq!(osd_anchor(P::BottomRight), A::BottomRight);
-    }
-}
-
-#[cfg(test)]
-mod insets_tests {
-    use crate::session::osd_presenter::UiInsets;
-    use crate::session::osd_render::*;
-
-    #[test]
-    fn safe_insets_convert_losslessly() {
-        let safe = SafeInsets {
-            top: 40,
-            right: 24,
-            bottom: 40,
-            left: 24,
-        };
-        let ui = UiInsets::from(safe);
-        assert_eq!((ui.top, ui.right, ui.bottom, ui.left), (40, 24, 40, 24));
     }
 }
 
