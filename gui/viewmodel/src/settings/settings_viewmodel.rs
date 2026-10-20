@@ -1,10 +1,11 @@
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use crate::settings::catalog::FactoryCatalog;
+use crate::settings::topology_adapter::build_topology;
 use nerust_core_traits::factory::CoreFactory;
+use nerust_settings_core::bindings::conflicting_keys;
 use nerust_settings_core::model::shared::StoragePolicy;
 use nerust_settings_core::model::snapshot::SettingsSnapshot;
-use nerust_settings_core::{bindings::conflicting_keys, input::build_topology};
 
 use super::{
     ValidationState,

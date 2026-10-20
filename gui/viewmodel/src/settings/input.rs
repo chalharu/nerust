@@ -8,8 +8,10 @@ use nerust_settings_core::{
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
     editor::{CaptureTarget, current_binding_label},
     i18n::{UiText, text as ui_text},
-    input::{build_topology, clear_multi_port_conflicts},
+    input::clear_multi_port_conflicts,
 };
+
+use super::topology_adapter::build_topology;
 
 use super::{
     EditorState,

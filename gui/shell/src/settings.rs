@@ -4,7 +4,27 @@ pub mod defaults;
 use nerust_core_traits::audio::{AudioBackend, AudioBackendRegistry, GainBackend};
 use nerust_settings_core::model::local::{HostBackendLocalSettings, ScalingMode};
 
+/// Port for building the live audio speaker from local settings.
+/// Session code depends on this seam; the registry adapter implements it once.
+pub trait AudioSpeakerFactory: Send + Sync {
+    /// Build the gain-wrapped speaker for `settings`.
+    fn build_speaker(&self, settings: &HostBackendLocalSettings) -> Box<dyn AudioBackend>;
+}
+
+impl AudioSpeakerFactory for AudioBackendRegistry {
+    fn build_speaker(&self, settings: &HostBackendLocalSettings) -> Box<dyn AudioBackend> {
+        build_speaker_impl(self, settings)
+    }
+}
+
 pub fn build_speaker(
+    registry: &AudioBackendRegistry,
+    settings: &HostBackendLocalSettings,
+) -> Box<dyn AudioBackend> {
+    build_speaker_impl(registry, settings)
+}
+
+fn build_speaker_impl(
     registry: &AudioBackendRegistry,
     settings: &HostBackendLocalSettings,
 ) -> Box<dyn AudioBackend> {

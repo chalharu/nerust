@@ -1,25 +1,38 @@
 //! Static input topology descriptors: ports, attachments, and devices.
 //! Built once at init and shared read-only; init-only costs, never per-frame.
 
-use super::ids::{AnalogControlId, AttachmentId, DeviceKindId, DigitalControlId, PortId};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ControlId {
-    Digital(DigitalControlId),
-    Analog(AnalogControlId),
-}
+use super::ids::{
+    AnalogControlId, AttachmentId, ControlId, DeviceKindId, DigitalControlId, PortId,
+};
 
 /// Static description of every port and device a system exposes.
-/// Built once at init, shared read-only; the lookups are init-only conveniences.
+/// Built once at init, shared read-only; the lookups are index-backed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputTopologyDescriptor {
     ports: Vec<PortDescriptor>,
     devices: Vec<DeviceDescriptor>,
+    attachment_index: std::collections::HashMap<AttachmentId, (usize, usize)>,
+    device_index: std::collections::HashMap<DeviceKindId, usize>,
 }
 
 impl InputTopologyDescriptor {
     pub fn new(ports: Vec<PortDescriptor>, devices: Vec<DeviceDescriptor>) -> Self {
-        Self { ports, devices }
+        let mut attachment_index = std::collections::HashMap::new();
+        for (port_no, port) in ports.iter().enumerate() {
+            for (slot_no, attachment) in port.attachments.iter().enumerate() {
+                attachment_index.insert(attachment.id, (port_no, slot_no));
+            }
+        }
+        let mut device_index = std::collections::HashMap::new();
+        for (device_no, device) in devices.iter().enumerate() {
+            device_index.insert(device.kind, device_no);
+        }
+        Self {
+            ports,
+            devices,
+            attachment_index,
+            device_index,
+        }
     }
 
     pub fn ports(&self) -> &[PortDescriptor] {
@@ -30,17 +43,15 @@ impl InputTopologyDescriptor {
         &self.devices
     }
 
-    /// Init-only linear scan for an attachment across all ports.
+    /// Index-backed attachment lookup across all ports.
     pub fn attachment(&self, id: AttachmentId) -> Option<&AttachmentSlotDescriptor> {
-        self.ports
-            .iter()
-            .flat_map(|port| port.attachments.iter())
-            .find(|attachment| attachment.id == id)
+        let (port_no, slot_no) = self.attachment_index.get(&id)?;
+        Some(&self.ports[*port_no].attachments[*slot_no])
     }
 
-    /// Init-only linear scan for a device by kind.
+    /// Index-backed device lookup by kind.
     pub fn device(&self, kind: DeviceKindId) -> Option<&DeviceDescriptor> {
-        self.devices.iter().find(|device| device.kind == kind)
+        self.device_index.get(&kind).map(|i| &self.devices[*i])
     }
 }
 
@@ -155,8 +166,8 @@ pub enum ControlDescriptor {
 impl ControlDescriptor {
     pub const fn id(&self) -> ControlId {
         match self {
-            Self::Digital(control) => ControlId::Digital(control.id),
-            Self::Analog(control) => ControlId::Analog(control.id),
+            Self::Digital(control) => ControlId::digital(control.id),
+            Self::Analog(control) => ControlId::analog(control.id),
         }
     }
 }
@@ -264,11 +275,11 @@ mod tests {
         let controls = &topology.device(device).unwrap().controls;
         assert_eq!(
             controls[0].id(),
-            ControlId::Digital(DigitalControlId::new("test.a"))
+            ControlId::digital(DigitalControlId::new("test.a"))
         );
         assert_eq!(
             controls[1].id(),
-            ControlId::Analog(AnalogControlId::new("test.stick_x"))
+            ControlId::analog(AnalogControlId::new("test.stick_x"))
         );
     }
 }

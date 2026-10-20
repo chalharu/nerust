@@ -3,8 +3,7 @@ use std::rc::Rc;
 use nerust_gbc_core::input_types::GbcInputBuffer;
 use nerust_input_traits::{
     AttachmentId, ControllerCollection, ControllerProfile, CreateSplitError, InputAssignments,
-    InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory, ProfileId,
-    SimplePort, SlotInfo,
+    InputPorts, InputResources, InputSystemFactory, ProfileId, SimplePort, SlotInfo,
 };
 
 pub(crate) const GBC_ATTACHMENT: AttachmentId = AttachmentId::new("gbc.attachment.player1");
@@ -54,21 +53,15 @@ impl InputSystemFactory for crate::GbcFactory {
                     controller: ProfileId::new("gbc.standard_pad"),
                 });
             };
-            let mut entries = Vec::new();
-            dev.field_map(&GBC_PORT, &mut entries);
-            entries
+            dev.field_entries(&GBC_PORT)
                 .into_iter()
                 .map(|entry| ((entry.attachment, entry.control), entry.field))
                 .collect()
         };
-        let shared: std::sync::Arc<std::sync::Mutex<Box<dyn InputStateBuffer>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(Box::<GbcInputBuffer>::default()));
-        let split = InputSplit::new(
-            std::sync::Arc::clone(&shared),
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        Ok(InputResources::new(
+            field_map,
             Box::new(|| Box::<GbcInputBuffer>::default()),
-        );
-        Ok(InputResources::new(split, field_map))
+        ))
     }
 }
 
@@ -98,7 +91,7 @@ mod tests {
         let controllers = ControllerCollection::new(vec![Box::new(StandardPad::new())]);
         let resources = crate::GbcFactory.create_split(&controllers).unwrap();
         assert_eq!(resources.field_map().len(), 8);
-        let buffer = (resources.split().new_buffer())();
+        let buffer = (resources.new_buffer())();
         assert!(buffer.downcast_ref::<GbcInputBuffer>().is_some());
     }
 

@@ -274,6 +274,8 @@ pub struct OsdPresenter {
     last_chrome: Option<OsdChrome>,
     last_raster: Option<(UiInsets, u32)>,
     active: bool,
+    /// Reused render buffer: steady renders extend it instead of allocating per frame.
+    row_buffer: Vec<OsdRow>,
 }
 
 impl OsdPresenter {
@@ -293,33 +295,15 @@ impl OsdPresenter {
         self.last_seen
     }
 
-    /// Decide the layer action for this frame: generation inequality means re-render.
-    /// Status rides outside that flag: pause flips and toggles re-render, fps digits at 2Hz.
-    pub fn sync(&mut self, state: &impl OsdState, input: OsdSyncInput) -> OsdSync {
-        let OsdSyncInput {
-            tick,
-            chrome,
-            language,
-            now,
-            width,
-            height,
-            ui_scale,
-            safe_insets,
-        } = input;
-        // Recorded only after the size decision, so a zero-size bump is never swallowed.
-        let changed = state.generation() != self.last_seen;
-        if width == 0 || height == 0 {
-            if self.active {
-                self.active = false;
-                return OsdSync::Clear;
-            }
-            return OsdSync::Skip;
-        }
-        self.last_seen = state.generation();
-        // Non-finite scales never reach the fingerprint: NaN would defeat `to_bits` equality.
-        debug_assert!(ui_scale.is_finite(), "non-finite OSD scale");
-        let ui_scale = if ui_scale.is_finite() { ui_scale } else { 1.0 };
-        // Borrow-compare before allocating: steady frames that end in `Skip` never format or box.
+    /// Content gate: generation is compared by the caller; this folds the status readout.
+    /// Borrow-compares before allocating, so steady skipped frames never format or box.
+    fn sync_status(
+        &mut self,
+        tick: &TickMetrics,
+        chrome: &OsdChrome,
+        language: AppLanguage,
+        now: Instant,
+    ) -> bool {
         let mut status_fingerprint: Option<StatusFingerprint> = None;
         let status_changed = if chrome.status_enabled {
             let key = status_key(tick.paused);
@@ -352,19 +336,65 @@ impl OsdPresenter {
             self.gate = StatusGate::new();
             self.last_status.is_some()
         };
-        let raster = (safe_insets, ui_scale.to_bits());
-        let chrome_changed = self.last_chrome != Some(chrome) || self.last_raster != Some(raster);
-        if !changed && !status_changed && !chrome_changed && self.last_size == Some((width, height))
-        {
-            return OsdSync::Skip;
-        }
-        self.last_size = Some((width, height));
-        self.last_chrome = Some(chrome);
-        self.last_raster = Some(raster);
         if status_changed {
             // Only a real change replaces the stored fingerprint; the
             // unchanged path keeps serving it without cloning.
             self.last_status = status_fingerprint;
+        }
+        status_changed
+    }
+
+    /// Geometry gate: chrome, raster, and size only invalidate the cached plan.
+    fn sync_geometry(
+        &mut self,
+        chrome: OsdChrome,
+        safe_insets: UiInsets,
+        ui_scale: f32,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let raster = (safe_insets, ui_scale.to_bits());
+        let changed = self.last_chrome != Some(chrome)
+            || self.last_raster != Some(raster)
+            || self.last_size != Some((width, height));
+        self.last_size = Some((width, height));
+        self.last_chrome = Some(chrome);
+        self.last_raster = Some(raster);
+        changed
+    }
+
+    /// Decide the layer action for this frame: generation inequality means re-render.
+    /// Status rides outside that flag: pause flips and toggles re-render, fps digits at 2Hz.
+    pub fn sync(&mut self, state: &dyn OsdState, input: OsdSyncInput) -> OsdSync {
+        let OsdSyncInput {
+            tick,
+            chrome,
+            language,
+            now,
+            width,
+            height,
+            ui_scale,
+            safe_insets,
+        } = input;
+        // Recorded only after the size decision, so a zero-size bump is never swallowed.
+        let changed = state.generation() != self.last_seen;
+        if width == 0 || height == 0 {
+            if self.active {
+                self.active = false;
+                return OsdSync::Clear;
+            }
+            return OsdSync::Skip;
+        }
+        self.last_seen = state.generation();
+        // Non-finite scales never reach the fingerprint: NaN would defeat `to_bits` equality.
+        debug_assert!(ui_scale.is_finite(), "non-finite OSD scale");
+        let ui_scale = if ui_scale.is_finite() { ui_scale } else { 1.0 };
+        // Content decision first: generation plus status only.
+        let status_changed = self.sync_status(&tick, &chrome, language, now);
+        // Geometry only invalidates the cached plan; it never formats or boxes.
+        let geometry_changed = self.sync_geometry(chrome, safe_insets, ui_scale, width, height);
+        if !changed && !status_changed && !geometry_changed {
+            return OsdSync::Skip;
         }
         let empty = state.visible_row().is_none() && self.last_status.is_none();
         if empty {
@@ -388,8 +418,10 @@ impl OsdPresenter {
             ),
             None => (None, chrome.position, chrome.status_position),
         };
+        self.row_buffer.clear();
+        self.row_buffer.extend(state.rows().iter().cloned());
         OsdSync::Render(OsdPlan {
-            rows: state.rows().to_vec(),
+            rows: std::mem::take(&mut self.row_buffer),
             status: label_value,
             position,
             status_position,

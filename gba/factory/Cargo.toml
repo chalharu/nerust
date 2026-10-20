@@ -12,6 +12,7 @@ nerust_core_traits.workspace = true
 nerust_gba_core.workspace = true
 nerust_gba_device.workspace = true
 nerust_gba_settings.workspace = true
+nerust_emu_thread.workspace = true
 nerust_input_traits.workspace = true
 nerust_render_traits.workspace = true
 nerust_settings_traits.workspace = true

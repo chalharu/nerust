@@ -3,9 +3,35 @@
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use cosmic_text::{CacheKey, SwashContent};
-use nerust_render_traits::renderer::{
-    OsdAnchor, OsdContent, OsdLayer, OsdStatus, SafeInsets, osd_font_px,
-};
+use nerust_render_traits::renderer::{OsdAnchor, OsdLayer, SafeInsets, osd_font_px};
+use std::{collections::HashMap, rc::Rc};
+
+/// One raster pill row: tag plus body in a single color.
+/// Tag is a static level marker: no per-frame allocation at the shell boundary.
+#[derive(Debug, Clone)]
+pub struct OsdRow {
+    pub tag: &'static str,
+    pub text: String,
+    pub rgb: (u8, u8, u8),
+}
+
+/// Status readout: label plus right-aligned value in a fixed-width
+/// pill so digits never shift.
+#[derive(Debug, Clone)]
+pub struct OsdStatus {
+    pub label: String,
+    pub value: String,
+    pub rgb: (u8, u8, u8),
+}
+
+/// Raster input: transient rows plus optional status, with corners.
+#[derive(Debug, Clone, Default)]
+pub struct OsdContent {
+    pub rows: Vec<OsdRow>,
+    pub status: Option<OsdStatus>,
+    pub position: OsdAnchor,
+    pub status_position: OsdAnchor,
+}
 
 /// System font preference. Extra scan roots arrive via
 /// [`OsdRaster::with_font_dirs`].
@@ -55,12 +81,21 @@ struct ShapedGlyph {
 }
 
 /// One shaped line: glyph positions plus total advance.
+/// Shared by cache: identical lines shape once per size.
+#[derive(Clone)]
 struct ShapedSpan {
     glyphs: Vec<ShapedGlyph>,
     width: f32,
     ascent: f32,
     descent: f32,
 }
+
+/// Cache key for one shaped line: text plus pixel size.
+type ShapeKey = (String, u32);
+
+/// Bounded line-shape cache: identical OSD lines shape once per size.
+/// Cleared wholesale past the cap; OSD text has a tiny live set.
+const SHAPE_CACHE_CAP: usize = 256;
 
 /// Rasterizer backed by cosmic-text shaping. Pixels are device pixels.
 pub struct OsdRaster {
@@ -70,6 +105,7 @@ pub struct OsdRaster {
     has_fonts: bool,
     ui_scale: f32,
     safe_insets: SafeInsets,
+    shape_cache: HashMap<ShapeKey, Rc<ShapedSpan>>,
 }
 
 impl OsdRaster {
@@ -97,6 +133,7 @@ impl OsdRaster {
             has_fonts,
             ui_scale: 1.0,
             safe_insets: SafeInsets::default(),
+            shape_cache: HashMap::new(),
         }
     }
 
@@ -152,17 +189,19 @@ impl OsdRaster {
         for b in &boxes {
             let base_y = b.y - min_y;
             match &b.body {
-                RowBody::Line { span } => {
+                RowBody::Line {
+                    tag,
+                    text,
+                    gap,
+                    ascent,
+                    descent,
+                } => {
                     draw_pill(&mut rgba, width, b.x - min_x, b.y - min_y, b.w, b.h, radius);
-                    let baseline = self.centered_baseline(base_y, b.h, span.ascent, span.descent);
-                    self.draw_span(
-                        &mut rgba,
-                        width,
-                        span,
-                        (b.x - min_x + pad_x) as i32,
-                        baseline,
-                        b.rgb,
-                    );
+                    let baseline = self.centered_baseline(base_y, b.h, *ascent, *descent);
+                    let mut pen = (b.x - min_x + pad_x) as i32;
+                    self.draw_span(&mut rgba, width, tag, pen, baseline, b.rgb);
+                    pen += tag.width.ceil() as i32 + *gap as i32;
+                    self.draw_span(&mut rgba, width, text, pen, baseline, b.rgb);
                 }
                 RowBody::Pair {
                     outer,
@@ -203,13 +242,7 @@ impl OsdRaster {
                 }
             }
         }
-        Some(OsdLayer {
-            x: min_x,
-            y: min_y,
-            width,
-            height,
-            rgba,
-        })
+        Some(OsdLayer::new(min_x, min_y, width, height, rgba))
     }
 
     fn layout(
@@ -229,20 +262,20 @@ impl OsdRaster {
         Some(boxes)
     }
 
-    /// Split transient rows and the status readout by vertical edge.
-    /// Same-corner entries stack in push order.
-    fn collect_entries(content: &OsdContent) -> (Vec<Entry>, Vec<Entry>) {
+    /// Split rows and status by vertical edge; borrows content, never one string.
+    fn collect_entries(content: &OsdContent) -> (Vec<Entry<'_>>, Vec<Entry<'_>>) {
         let same_corner = content.position == content.status_position;
         let transient_top = content.position.is_top();
         let status_top = content.status_position.is_top();
-        let mut top: Vec<Entry> = Vec::new();
-        let mut bottom: Vec<Entry> = Vec::new();
+        let mut top: Vec<Entry<'_>> = Vec::new();
+        let mut bottom: Vec<Entry<'_>> = Vec::new();
         for row in &content.rows {
-            let entry = Entry::Line(
-                format!("{} {}", row.tag, row.text),
-                row.rgb,
-                content.position,
-            );
+            let entry = Entry::Line {
+                tag: row.tag,
+                text: row.text.as_str(),
+                rgb: row.rgb,
+                anchor: content.position,
+            };
             if transient_top {
                 top.push(entry);
             } else {
@@ -250,7 +283,7 @@ impl OsdRaster {
             }
         }
         if let Some(status) = content.status.as_ref() {
-            let entry = Entry::Status(status.clone(), content.status_position);
+            let entry = Entry::Status(status, content.status_position);
             if same_corner {
                 if transient_top {
                     top.insert(0, entry);
@@ -357,16 +390,35 @@ impl OsdRaster {
     }
 
     /// Shape one entry: intrinsic width plus row height.
-    fn shape_entry(&mut self, entry: Entry, font_px: u32) -> Shaped {
+    /// Tag and body are two cached spans; the pill covers both plus one space.
+    fn shape_entry(&mut self, entry: Entry<'_>, font_px: u32) -> Shaped {
         let pad_x = self.scaled(PILL_PAD_X);
         match entry {
-            Entry::Line(line, rgb, anchor) => {
-                let span = self.shape_line(&line, font_px);
-                let row_h = self.row_height(font_px, span.ascent, span.descent);
-                let w = span.width.ceil() as u32 + pad_x * 2;
+            Entry::Line {
+                tag,
+                text,
+                rgb,
+                anchor,
+            } => {
+                let tag_span = self.shape_cached(tag, font_px);
+                let text_span = self.shape_cached(text, font_px);
+                let gap = self.shape_cached(" ", font_px).width;
+                let ascent = tag_span.ascent.max(text_span.ascent);
+                let descent = tag_span.descent.min(text_span.descent);
+                let row_h = self.row_height(font_px, ascent, descent);
+                let w = tag_span.width.ceil() as u32
+                    + gap.ceil() as u32
+                    + text_span.width.ceil() as u32
+                    + pad_x * 2;
                 Shaped {
                     anchor,
-                    body: RowBody::Line { span },
+                    body: RowBody::Line {
+                        tag: tag_span,
+                        text: text_span,
+                        gap: gap.ceil() as u32,
+                        ascent,
+                        descent,
+                    },
                     rgb,
                     w,
                     row_h,
@@ -378,17 +430,24 @@ impl OsdRaster {
 
     /// Shape the status readout: solo value pill, or a label/value pair.
     /// The value pill's outer edge pins to the margin either way.
-    fn shape_status(&mut self, status: OsdStatus, anchor: OsdAnchor, font_px: u32) -> Shaped {
-        let label = self.shape_line(&status.label, font_px);
-        let value = self.shape_line(&status.value, font_px);
+    fn shape_status(&mut self, status: &OsdStatus, anchor: OsdAnchor, font_px: u32) -> Shaped {
+        let label = self.shape_cached(status.label.as_str(), font_px);
+        let value = self.shape_cached(status.value.as_str(), font_px);
         if status.label.is_empty() {
             // Solo value pill, as before.
             let row_h = self.row_height(font_px, value.ascent, value.descent);
             let pad_x = self.scaled(PILL_PAD_X);
             let w = value.width.ceil() as u32 + pad_x * 2;
+            let gap = self.shape_cached(" ", font_px).width;
             return Shaped {
                 anchor,
-                body: RowBody::Line { span: value },
+                body: RowBody::Line {
+                    tag: value.clone(),
+                    text: self.shape_cached("", font_px),
+                    gap: gap.ceil() as u32,
+                    ascent: value.ascent,
+                    descent: value.descent,
+                },
                 rgb: status.rgb,
                 w,
                 row_h,
@@ -418,9 +477,30 @@ impl OsdRaster {
         }
     }
 
-    /// Shape one line with full GPOS kerning and script fallback.
-    /// Measure and draw share the span, so the box always fits.
-    fn shape_line(&mut self, line: &str, font_px: u32) -> ShapedSpan {
+    /// Cached shape: identical lines shape once per pixel size.
+    /// Evicts wholesale past the cap; one key allocation per call at most.
+    fn shape_cached(&mut self, line: &str, font_px: u32) -> Rc<ShapedSpan> {
+        let key = (line.to_string(), font_px);
+        if let Some(hit) = self.shape_cache.get(&key).cloned() {
+            return hit;
+        }
+        let span = Rc::new(self.shape_uncached(line, font_px));
+        if self.shape_cache.len() >= SHAPE_CACHE_CAP {
+            self.shape_cache.clear();
+        }
+        self.shape_cache.insert(key, Rc::clone(&span));
+        span
+    }
+
+    /// Test seam for shaping assertions: production shapes through the cache.
+    #[cfg(test)]
+    fn shape_line(&mut self, line: &str, font_px: u32) -> Rc<ShapedSpan> {
+        self.shape_cached(line, font_px)
+    }
+
+    /// Uncached shaping behind [`OsdRaster::shape_cached`].
+    /// One cosmic buffer per miss; hits never touch the font system.
+    fn shape_uncached(&mut self, line: &str, font_px: u32) -> ShapedSpan {
         let size = font_px as f32;
         let metrics = Metrics::new(size, size);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
@@ -531,9 +611,15 @@ struct PlacedRow {
 }
 
 /// Layout entry: each carries its own anchor corner for split placement.
-enum Entry {
-    Line(String, (u8, u8, u8), OsdAnchor),
-    Status(OsdStatus, OsdAnchor),
+/// Borrows the content; tag and body shape as two cached spans, never one string.
+enum Entry<'a> {
+    Line {
+        tag: &'static str,
+        text: &'a str,
+        rgb: (u8, u8, u8),
+        anchor: OsdAnchor,
+    },
+    Status(&'a OsdStatus, OsdAnchor),
 }
 
 /// Shaped entry: intrinsic width plus row height.
@@ -547,7 +633,11 @@ struct Shaped {
 
 enum RowBody {
     Line {
-        span: ShapedSpan,
+        tag: Rc<ShapedSpan>,
+        text: Rc<ShapedSpan>,
+        gap: u32,
+        ascent: f32,
+        descent: f32,
     },
     Pair {
         outer: StatusSpan,
@@ -559,7 +649,7 @@ enum RowBody {
 }
 
 struct StatusSpan {
-    span: ShapedSpan,
+    span: Rc<ShapedSpan>,
 }
 
 /// Baseline that centers the content block in the pill. The pill is
@@ -573,15 +663,15 @@ impl OsdRaster {
     }
 }
 
-/// Straight-alpha blend of one pixel over the layer buffer.
+/// Integer straight-alpha blend of one pixel over the layer buffer.
+/// Round-half-up fixed point; no FPU on the per-pixel path.
 fn blend_over(dst: &mut [u8], r: u8, g: u8, b: u8, a: u8) {
-    let alpha = f32::from(a) / 255.0;
-    dst[0] = (f32::from(r) * alpha + f32::from(dst[0]) * (1.0 - alpha)).round() as u8;
-    dst[1] = (f32::from(g) * alpha + f32::from(dst[1]) * (1.0 - alpha)).round() as u8;
-    dst[2] = (f32::from(b) * alpha + f32::from(dst[2]) * (1.0 - alpha)).round() as u8;
-    dst[3] = (f32::from(a) + f32::from(dst[3]) * (1.0 - alpha))
-        .round()
-        .min(255.0) as u8;
+    let alpha = u32::from(a);
+    let inv = 255 - alpha;
+    dst[0] = ((u32::from(r) * alpha + u32::from(dst[0]) * inv + 127) / 255) as u8;
+    dst[1] = ((u32::from(g) * alpha + u32::from(dst[1]) * inv + 127) / 255) as u8;
+    dst[2] = ((u32::from(b) * alpha + u32::from(dst[2]) * inv + 127) / 255) as u8;
+    dst[3] = ((alpha * 255 + u32::from(dst[3]) * inv + 127) / 255).min(255) as u8;
 }
 
 /// Rounded-rect pill fill on the layer (top-left origin, cropped space).
@@ -606,7 +696,8 @@ fn draw_pill(rgba: &mut [u8], stride_w: u32, x: u32, y: u32, w: u32, h: u32, rad
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus, SafeInsets};
+    use super::{OsdContent, OsdRow, OsdStatus};
+    use nerust_render_traits::renderer::SafeInsets;
 
     fn content() -> OsdContent {
         OsdContent {

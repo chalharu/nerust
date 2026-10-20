@@ -58,7 +58,8 @@ impl HostState {
             }
             MenuCommand::Session(command) => {
                 let _ = self.session.run_command(command);
-                self.sync_chrome(false);
+                let ctx = self.frame_ctx();
+                self.sync_chrome(&ctx, false);
                 HostAction::None
             }
             MenuCommand::Quit => {
@@ -116,7 +117,8 @@ impl HostState {
 
     fn close_rom(&mut self) {
         SessionControl::unload(self);
-        self.sync_chrome(true);
+        let ctx = self.frame_ctx();
+        self.sync_chrome(&ctx, true);
     }
 
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
@@ -130,7 +132,8 @@ impl HostState {
             KeyboardShortcut::Session(action) => dispatch_session_action(self, action),
             KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
         }
-        self.sync_chrome(false);
+        let ctx = self.frame_ctx();
+        self.sync_chrome(&ctx, false);
     }
 }
 
@@ -423,13 +426,13 @@ mod tests {
         // No core: TogglePause fails into a CommandFailed error,
         // which routes to the modal path (error_modal defaults on).
         let _ = host.session.run_command(SessionCommand::TogglePause);
-        let frame = host.frame_snapshot();
-        host.poll_notifications(&frame);
+        let ctx = host.frame_ctx();
+        host.poll_notifications(&ctx);
         // Bounded wait for the background ack; FakeDialogs answers instantly.
         let mut tries = 0;
         while support.dialogs.errors().is_empty() || host.osd.modal_pending() != 0 {
-            let frame = host.frame_snapshot();
-            host.poll_notifications(&frame);
+            let ctx = host.frame_ctx();
+            host.poll_notifications(&ctx);
             tries += 1;
             assert!(tries < 500, "modal ack never arrived");
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -452,8 +455,8 @@ mod tests {
             done: rx,
             resume_after: false,
         });
-        let frame = host.frame_snapshot();
-        host.poll_notifications(&frame);
+        let ctx = host.frame_ctx();
+        host.poll_notifications(&ctx);
         // Reaped as a failed ack: flight gone, queue unblocked.
         assert!(!host.osd.modal_showing());
         assert_eq!(host.osd.modal_pending(), 0);
@@ -465,10 +468,10 @@ mod tests {
         let mut host = support.host;
         // No notifications, no windows: drain, expiry, dirty gate,
         // and the history fast path all no-op without a core.
-        let frame = host.frame_snapshot();
-        host.poll_notifications(&frame);
-        let frame = host.frame_snapshot();
-        host.poll_notifications(&frame);
+        let ctx = host.frame_ctx();
+        host.poll_notifications(&ctx);
+        let ctx = host.frame_ctx();
+        host.poll_notifications(&ctx);
         assert!(support.dialogs.errors().is_empty());
         assert_eq!(host.osd.modal_pending(), 0);
         assert!(host.osd.history_key().is_none());

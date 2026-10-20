@@ -821,14 +821,14 @@ impl DrainFlight {
             self.phase = FlightPhase::Watch;
             return;
         };
-        // A running core advances memory at any time: dirty first so
-        // the lookup below always refetches (mirrors `debug_images`).
+        // A running core advances memory at any time: dirty first so the
+        // lookup below always refetches (mirrors `debug_images`).
         if !core.metrics().paused {
             core.mark_images_dirty();
         }
-        if let Some((generation, images)) = core.images_cache_lookup() {
+        if let Some((generation, shared)) = core.images_cache_lookup() {
             self.images_gen = generation;
-            self.images = images;
+            self.images = Vec::clone(&shared);
             self.phase = FlightPhase::Watch;
             return;
         }
@@ -881,10 +881,7 @@ impl DrainFlight {
 
     fn fold_watch(&self, addr: u32) -> Option<u8> {
         let snap = self.snap.as_ref()?;
-        snap.dump_rows
-            .iter()
-            .find(|row| addr >= row.addr && addr < row.addr + u32::from(row.valid))
-            .map(|row| row.bytes[(addr - row.addr) as usize])
+        crate::session::debug_snapshot::fold_watch_byte(&snap.dump_rows, addr)
     }
 
     fn resolve_step(&mut self, reply: Result<u64, DebuggerError>) {
@@ -956,20 +953,15 @@ impl DrainFlight {
             Ok(batch) => batch,
             Err(_) => return,
         };
-        let inspected = match batch.inspect {
-            Ok(inspected) => inspected,
-            Err(_) => return,
+        let Some(parts) = crate::session::debug_snapshot::assemble_snapshot_parts(batch) else {
+            return;
         };
         self.snap = Some(StoredSnapshot {
-            regs: inspected
-                .registers
-                .iter()
-                .map(|&(name, value)| (name, value))
-                .collect(),
-            reg_names: inspected.registers.iter().map(|(name, _)| *name).collect(),
-            dump_rows: inspected.dump.rows.iter().copied().collect(),
-            panels: inspected.panels.iter().cloned().collect(),
-            disasm: batch.disasm,
+            regs: parts.regs,
+            reg_names: parts.reg_names,
+            dump_rows: parts.dump_rows,
+            panels: parts.panels,
+            disasm: parts.disasm,
         });
     }
 
@@ -991,6 +983,18 @@ impl DrainFlight {
     }
 
     fn finish(&mut self) -> DebugDrainOutput {
+        // Domain snapshot first; the display adapter renders it against the previous rows.
+        let snapshot = self.finish_snapshot();
+        let reselected = snapshot.reselected;
+        let display = snapshot.into_display(&self.prev_dump_rows);
+        DebugDrainOutput {
+            display,
+            reselected,
+        }
+    }
+
+    /// Domain snapshot for one finished batch: moves the stored sections out, no cloning.
+    fn finish_snapshot(&mut self) -> DrainSnapshot {
         // Move out of the stored snapshot: the flight is done, so the
         // vecs travel instead of cloning (same output, no second copy).
         let snap = self.snap.take().unwrap_or_default();
@@ -1000,26 +1004,68 @@ impl DrainFlight {
         } else {
             vm::StatusMessage::Running
         });
-        let display = DisplayCache {
+        DrainSnapshot {
             regs: snap.regs,
-            diff: vm::diff_rows(&self.prev_dump_rows, &snap.dump_rows),
+            reg_names: snap.reg_names,
             dump_rows: snap.dump_rows,
-            disasm_lines: snap.disasm,
             panels: snap.panels,
-            images: std::mem::take(&mut self.images)
-                .iter()
-                .map(vm::rgba_image)
-                .collect(),
+            disasm: snap.disasm,
+            images: std::mem::take(&mut self.images),
             images_gen: self.images_gen,
             watch_value: self.watch_value,
             paused,
-            reg_names: snap.reg_names,
             status,
             pending: self.ctx.lock_txn().pending(),
-        };
-        DebugDrainOutput {
-            display,
             reselected: self.reselected,
+        }
+    }
+}
+
+/// Domain snapshot for one drain batch: structured sections, no rendering decisions.
+/// The display adapter consumes this; the flight never formats.
+pub struct DrainSnapshot {
+    /// Register `(name, value)` pairs in thread order.
+    pub regs: Vec<(&'static str, u64)>,
+    /// Register names in thread order.
+    pub reg_names: Vec<&'static str>,
+    /// Memory dump rows.
+    pub dump_rows: Vec<HexRow>,
+    /// Debugger panels.
+    pub panels: Vec<nerust_core_traits::debugger::DebugPanel>,
+    /// Disassembly lines at the anchor.
+    pub disasm: Vec<nerust_core_traits::debugger::DisasmLine>,
+    /// Fetched system images (empty when unchanged or skipped).
+    pub images: Vec<DebugImage>,
+    /// Source generation of the served images.
+    pub images_gen: u64,
+    /// Folded watch value, if the watch landed on the page or the fallback read.
+    pub watch_value: Option<u8>,
+    /// Pause truth behind this batch.
+    pub paused: bool,
+    /// Batch status for the status line.
+    pub status: vm::StatusMessage,
+    /// Staged but uncommitted write, if any.
+    pub pending: Option<vm::PendingWrite>,
+    /// Fresh `(address, old byte)` when the batch selected a row.
+    pub reselected: Option<(u32, Option<u8>)>,
+}
+
+impl DrainSnapshot {
+    /// Render-ready display for one domain snapshot, diffed against the previous dump rows.
+    pub fn into_display(self, prev_dump_rows: &[HexRow]) -> DisplayCache {
+        DisplayCache {
+            regs: self.regs,
+            diff: vm::diff_rows(prev_dump_rows, &self.dump_rows),
+            dump_rows: self.dump_rows,
+            disasm_lines: self.disasm,
+            panels: self.panels,
+            images: self.images.iter().map(vm::rgba_image).collect(),
+            images_gen: self.images_gen,
+            watch_value: self.watch_value,
+            paused: self.paused,
+            reg_names: self.reg_names,
+            status: self.status,
+            pending: self.pending,
         }
     }
 }
@@ -1118,13 +1164,13 @@ impl LiveImagesFlight {
         if !core.metrics().paused {
             core.mark_images_dirty();
         }
-        if let Some((generation, images)) = core.images_cache_lookup() {
+        if let Some((generation, shared)) = core.images_cache_lookup() {
             return Self {
                 core: Some(core),
                 deadline,
                 state: Some(LiveImagesState::Ready(Some((
                     generation,
-                    images.iter().map(vm::rgba_image).collect(),
+                    shared.iter().map(vm::rgba_image).collect(),
                 )))),
             };
         }

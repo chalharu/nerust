@@ -2,7 +2,9 @@ pub mod access;
 pub(crate) mod command_exec;
 pub mod commands;
 pub mod debug_ops;
+pub(crate) mod debug_snapshot;
 pub mod error;
+pub mod fs;
 pub mod input;
 pub(crate) mod input_map;
 pub mod lifecycle;
@@ -19,6 +21,7 @@ pub mod persistence;
 pub(crate) mod persistence_setup;
 #[cfg(test)]
 mod persistence_test;
+pub mod ports;
 pub mod session_query;
 pub(crate) mod settings_apply;
 pub mod title;
@@ -44,7 +47,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_viewmodel::debugger as debug_vm;
-use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
+use nerust_input_traits::{AttachmentId, DigitalControlId, InputAssignments};
 use nerust_keyboard::Key;
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
@@ -56,7 +59,6 @@ use crate::{
     emu_core::{EmuCore, LiveCore},
     registry::SystemRegistry,
     session::persistence::{PersistenceBackends, PersistenceManager, StateExporter},
-    settings,
 };
 
 /// Live PPU image batch; canonical home is [`emu_core::images`](crate::emu_core::images).
@@ -64,7 +66,7 @@ pub use crate::emu_core::images::LiveImages;
 
 struct CoreRuntime {
     emu_core: EmuCore,
-    gui_input: GuiInput,
+    gui_input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
     field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
 }
@@ -120,9 +122,9 @@ struct InputDept {
 impl InputDept {
     /// Rebuild the keyboard reverse map from the implicit profile.
     /// Takes only the bindings it reads; never reaches into settings or the registry.
-    pub(crate) fn rebuild_key_field_map<B: crate::session::input_map::InputBinding<Id = Key>>(
+    pub(crate) fn rebuild_key_field_map(
         &mut self,
-        bindings: Option<&[B]>,
+        bindings: Option<&[nerust_settings_core::model::input::KeyboardBinding]>,
     ) {
         self.key_field_map.clear();
         if let Some(bindings) = bindings
@@ -187,7 +189,7 @@ impl MediaDept {
 /// Everything touching the running core goes through these typed methods.
 struct EmuCluster {
     core: Option<EmuCore>,
-    input: Option<GuiInput>,
+    input: Option<Box<dyn nerust_core_traits::factory::GuiInputPort>>,
 }
 
 impl EmuCluster {
@@ -226,13 +228,19 @@ impl EmuCluster {
 
     /// Paired install: core and input always arrive together from the
     /// factory, so they are never half-present.
-    fn install(&mut self, core: EmuCore, input: GuiInput) {
+    fn install(
+        &mut self,
+        core: EmuCore,
+        input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
+    ) {
         self.core = Some(core);
         self.input = Some(input);
     }
 
-    fn input_mut(&mut self) -> Option<&mut GuiInput> {
-        self.input.as_mut()
+    fn input_mut(
+        &mut self,
+    ) -> Option<&mut (dyn nerust_core_traits::factory::GuiInputPort + 'static)> {
+        self.input.as_mut().map(|boxed| boxed.as_mut())
     }
 }
 
@@ -288,11 +296,11 @@ impl SessionHandle {
 
     fn create_core_with_assignments(
         factory: &Arc<dyn CoreFactory>,
-        registry: &AudioBackendRegistry,
+        speaker_factory: &dyn crate::settings::AudioSpeakerFactory,
         snapshot: &SettingsSnapshot,
         assignments: &InputAssignments,
     ) -> Result<CoreCreation, SessionError> {
-        let speaker = settings::build_speaker(registry, &snapshot.local);
+        let speaker = speaker_factory.build_speaker(&snapshot.local);
         let system_id = factory.system_id();
         let view = settings_view(snapshot, system_id.as_ref());
         let (parts, applied_assignments) =
@@ -308,7 +316,7 @@ impl SessionHandle {
                         local: default_local_settings(),
                         app_state: default_app_state(),
                     };
-                    let fallback_speaker = settings::build_speaker(registry, &fallback.local);
+                    let fallback_speaker = speaker_factory.build_speaker(&fallback.local);
                     let fallback_view = settings_view(&fallback, system_id.as_ref());
                     let fallback_assignments = factory.input_system_factory().default_assignments();
                     let parts = factory
@@ -408,7 +416,7 @@ impl SessionHandle {
             let requested_assignments = Self::load_assignments(f, &settings_snapshot, sid.as_ref());
             let created = Self::create_core_with_assignments(
                 f,
-                &audio_registry,
+                audio_registry.as_ref(),
                 &settings_snapshot,
                 &requested_assignments,
             )?;
@@ -616,6 +624,11 @@ impl SessionHandle {
         self.settings.snapshot = snapshot;
     }
 
+    /// Port for building live speakers: session code depends on this seam, never the registry.
+    pub(crate) fn speaker_factory(&self) -> &dyn crate::settings::AudioSpeakerFactory {
+        self.audio_registry.as_ref()
+    }
+
     /// Narrow active-factory query: clone the factory without exposing
     /// the registry lookup. Same-crate settings/input paths use this.
     pub(crate) fn active_factory_cloned(&self) -> Option<Arc<dyn CoreFactory>> {
@@ -743,7 +756,7 @@ impl SessionHandle {
             Self::load_assignments(&factory, &self.settings.snapshot, system_id);
         let created = Self::create_core_with_assignments(
             &factory,
-            &self.audio_registry,
+            self.speaker_factory(),
             &self.settings.snapshot,
             &requested_assignments,
         )

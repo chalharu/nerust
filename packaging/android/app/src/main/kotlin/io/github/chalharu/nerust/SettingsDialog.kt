@@ -42,13 +42,13 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 
-/** Settings dialog UI: cards, section builders, same-edge filtering, and selection state. */
+/** Settings dialog UI: cards, section builders, visibility filtering, and selection state. */
 internal data class AndroidSetting(
     val key: String,
     val section: String,
     val label: String,
     val choices: List<String>,
-    val edges: List<String> = emptyList(),
+    val visible: Boolean = true,
 )
 
 internal data class AndroidSettingsSection(
@@ -64,7 +64,7 @@ internal data class SettingsDialogContent(
     val choiceStrings: List<String>,
     val currentIndices: List<String>,
     val sections: List<String>,
-    val edgeStrings: List<String>,
+    val visibleFlags: List<Boolean>,
 )
 
 @Composable
@@ -178,7 +178,7 @@ internal fun NerustSettingsDialogCard(
             val activeSection = sections.find { it.id == activeSectionId }
             val visibleSettingCount =
                 activeSection
-                    ?.let { visibleSettingIndices(settings, it, selections).size }
+                    ?.let { visibleSettingIndices(settings, it).size }
             SettingsNavigationHeader(
                 title =
                     activeSettingIndex?.let { settings[it].label }
@@ -220,7 +220,7 @@ internal fun NerustSettingsDialogCard(
                     val visibleSection =
                         activeSection.copy(
                             settingIndices =
-                                visibleSettingIndices(settings, activeSection, selections),
+                                visibleSettingIndices(settings, activeSection),
                         )
                     SettingsSectionList(
                         section = visibleSection,
@@ -279,7 +279,7 @@ private fun SettingsCategoryList(
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         itemsIndexed(sections) { index, section ->
-            val visibleIndices = visibleSettingIndices(settings, section, selections)
+            val visibleIndices = visibleSettingIndices(settings, section)
             val summary =
                 visibleIndices.take(2).joinToString(" · ") { settingIndex ->
                     val setting = settings[settingIndex]
@@ -390,27 +390,11 @@ internal fun settingsSectionLabel(id: String): String =
 
 internal fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) "setting" else "settings"}"
 
-// Same-edge follow: the notification area mode governs the edge.
-// Edge classes come from the Rust payload; nothing here assumes choice indices.
+// Visibility is resolved in Rust per field; Kotlin only filters on the flag.
 internal fun visibleSettingIndices(
     settings: List<AndroidSetting>,
     section: AndroidSettingsSection,
-    selections: List<Int>,
-): List<Int> {
-    val notifPos = settings.indexOfFirst { it.key == "notifications.position" }
-    val statusPos = settings.indexOfFirst { it.key == "status.position" }
-    val statusArea = settings.indexOfFirst { it.key == "status.area_mode" }
-    if (notifPos < 0 || statusPos < 0 || statusArea < 0) return section.settingIndices
-    fun edgeOf(settingIndex: Int): String {
-        val setting = settings.getOrNull(settingIndex) ?: return ""
-        return setting.edges.getOrElse(selections.getOrElse(settingIndex) { 0 }) { "" }
-    }
-    val notifEdge = edgeOf(notifPos)
-    val statusEdge = edgeOf(statusPos)
-    if (notifEdge.isEmpty() || statusEdge.isEmpty()) return section.settingIndices
-    if (notifEdge != statusEdge) return section.settingIndices
-    return section.settingIndices.filter { it != statusArea }
-}
+): List<Int> = section.settingIndices.filter { settings[it].visible }
 
 @Composable
 internal fun rememberSettingsSelections(

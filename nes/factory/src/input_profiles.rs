@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use nerust_input_traits::{
     AttachmentId, ControllerCollection, ControllerProfile, CreateSplitError, InputAssignments,
-    InputPorts, InputResources, InputSplit, InputSystemFactory, ProfileId, SlotInfo,
+    InputPorts, InputResources, InputSystemFactory, ProfileId, SlotInfo,
 };
 use nerust_nes_core::input_types::NesInputBuffer;
 
@@ -40,9 +40,6 @@ impl InputSystemFactory for crate::NesFactory {
         &self,
         controllers: &ControllerCollection,
     ) -> Result<InputResources, CreateSplitError> {
-        use std::sync::{Arc, Mutex};
-
-        use nerust_input_traits::InputStateBuffer;
         use nerust_nes_core::controller::NES_PORTS;
 
         let mut field_map = std::collections::HashMap::new();
@@ -50,9 +47,7 @@ impl InputSystemFactory for crate::NesFactory {
             let Some(dev) = controllers.get(idx) else {
                 continue;
             };
-            let mut entries = Vec::new();
-            dev.field_map(port, &mut entries);
-            for entry in entries {
+            for entry in dev.field_entries(port) {
                 field_map.insert((entry.attachment, entry.control), entry.field);
             }
         }
@@ -62,16 +57,9 @@ impl InputSystemFactory for crate::NesFactory {
             });
         }
 
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-            Arc::new(Mutex::new(Box::<NesInputBuffer>::default()));
-        let flag = std::sync::atomic::AtomicBool::new(false);
-
-        let split = InputSplit::new(
-            Arc::clone(&shared),
-            Arc::new(flag),
+        Ok(InputResources::new(
+            field_map,
             Box::new(|| Box::<NesInputBuffer>::default()),
-        );
-
-        Ok(InputResources::new(split, field_map))
+        ))
     }
 }

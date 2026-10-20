@@ -3,7 +3,7 @@
 
 use std::{path::Path, sync::Arc};
 
-use nerust_core_traits::{audio::AudioBackendRegistry, factory::CoreFactory};
+use nerust_core_traits::factory::CoreFactory;
 use nerust_gui_runtime::settings::{LiveStrategy, SettingsApplyPlan, SettingsSnapshot};
 use nerust_input_traits::InputAssignments;
 
@@ -14,7 +14,7 @@ use crate::session::{
 };
 use nerust_settings_core::factory::settings_view;
 
-/// What `rollback_runtime_apply` undid; failures are reported here, never swallowed.
+/// What [`ApplyRevert::revert`] undid; failures are reported here, never swallowed.
 /// A failed rollback leaves the new runtime live for the caller to surface.
 #[derive(Debug, Default)]
 pub struct RollbackReport {
@@ -49,7 +49,7 @@ struct DerivedApply {
     assignments_changed: bool,
 }
 
-/// Bundled inputs for one live-runtime apply. Keeps the 7-field
+/// Bundled inputs for one live-runtime apply. Keeps the 8-field
 /// call legible without a positional bool/enum trap.
 struct LiveRuntimeInput<'a> {
     strategy: LiveStrategy,
@@ -58,6 +58,7 @@ struct LiveRuntimeInput<'a> {
     previous: &'a SettingsSnapshot,
     next_settings: &'a SettingsSnapshot,
     applied_assignments: &'a InputAssignments,
+    previous_assignments: &'a InputAssignments,
     tick: &'a TickMetrics,
 }
 
@@ -81,7 +82,7 @@ impl SessionHandle {
         next_settings: &SettingsSnapshot,
     ) -> Result<(), SessionError> {
         let core = self.emu.core()?;
-        let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
+        let speaker = self.speaker_factory().build_speaker(&next_settings.local);
         let rate = speaker.sample_rate();
         core.swap_audio_backend(speaker, rate)?;
         Ok(())
@@ -137,7 +138,7 @@ impl SessionHandle {
     fn apply_live_runtime(
         &mut self,
         input: LiveRuntimeInput<'_>,
-    ) -> Result<LiveStrategy, SessionError> {
+    ) -> Result<(LiveStrategy, ApplyRevert), SessionError> {
         let LiveRuntimeInput {
             strategy,
             plan,
@@ -145,11 +146,21 @@ impl SessionHandle {
             previous,
             next_settings,
             applied_assignments,
+            previous_assignments,
             tick,
         } = input;
+        // Revert token skeleton: each arm fills the legs its strategy can undo.
+        let mut revert = ApplyRevert {
+            strategy,
+            previous: None,
+            previous_assignments: None,
+            presentation_assets: None,
+            audio: None,
+        };
         let effective = match strategy {
             LiveStrategy::AudioSwap => {
                 self.swap_audio_for_settings(next_settings)?;
+                revert.audio = Some(previous_speaker(self, previous));
                 LiveStrategy::AudioSwap
             }
             LiveStrategy::PresentationSwap => {
@@ -157,6 +168,14 @@ impl SessionHandle {
                 if let Some(factory) = factory {
                     swapped =
                         self.swap_presentation_for_settings(factory, previous, next_settings)?;
+                    // Capture the swap-back assets with the forward pass, not at rollback time.
+                    if swapped {
+                        let system_id = factory.system_id();
+                        let before_view = settings_view(next_settings, system_id.as_ref());
+                        let after_view = settings_view(previous, system_id.as_ref());
+                        revert.presentation_assets =
+                            factory.presentation_swap_assets(&before_view, &after_view);
+                    }
                 }
                 if swapped {
                     if plan.audio_backend_changed {
@@ -167,15 +186,20 @@ impl SessionHandle {
                     // Core behavior changed (or no factory to swap
                     // with): full reconstruction carries the new speaker too.
                     self.rebuild_for_settings(next_settings, applied_assignments, tick)?;
+                    revert.previous = Some(previous.clone());
+                    revert.previous_assignments = Some(previous_assignments.clone());
                     LiveStrategy::Rebuild
                 }
             }
             LiveStrategy::Rebuild => {
                 self.rebuild_for_settings(next_settings, applied_assignments, tick)?;
+                revert.previous = Some(previous.clone());
+                revert.previous_assignments = Some(previous_assignments.clone());
                 LiveStrategy::Rebuild
             }
             LiveStrategy::Idle => LiveStrategy::Idle,
         };
+        revert.strategy = effective;
         // The audio swap and the rebuild both carry the new volume;
         // only the presentation/idle paths need a separate nudge.
         if matches!(
@@ -185,36 +209,49 @@ impl SessionHandle {
         {
             self.apply_live_volume(next_settings);
         }
-        Ok(effective)
+        Ok((effective, revert))
     }
+}
 
-    fn rollback_runtime_apply(
-        &mut self,
-        factory: &Option<Arc<dyn CoreFactory>>,
-        previous: &SettingsSnapshot,
-        next_settings: &SettingsSnapshot,
-        previous_assignments: &InputAssignments,
-        effective: LiveStrategy,
-        tick: &TickMetrics,
-    ) -> RollbackReport {
+/// Revert token for one applied strategy: everything `revert` needs, captured up front.
+/// The forward pass pushes exactly one token; a save failure pops and runs it.
+struct ApplyRevert {
+    strategy: LiveStrategy,
+    /// Previous snapshot for rebuild undo; cloned only on the rebuild path.
+    previous: Option<SettingsSnapshot>,
+    /// Previous assignments for rebuild undo; cloned only on the rebuild path.
+    previous_assignments: Option<InputAssignments>,
+    /// Previous presentation assets for swap-back; computed with the forward pass.
+    presentation_assets: Option<(nerust_render_traits::VideoRenderProfile, Box<[u32]>)>,
+    /// Previous speaker plus rate for audio swap-back; built with the forward pass.
+    audio: Option<(Box<dyn nerust_core_traits::audio::AudioBackend>, u32)>,
+}
+
+impl ApplyRevert {
+    /// Run the undo against the live session, reporting what each leg restored.
+    /// A failed rollback leaves the new runtime live for the caller to surface.
+    fn revert(self, session: &mut SessionHandle) -> RollbackReport {
         let mut report = RollbackReport::default();
-        if effective == LiveStrategy::Rebuild
-            && let Err(e) = self.rebuild_for_settings(previous, previous_assignments, tick)
-        {
-            log::error!("failed to rollback settings rebuild: {e}");
-            report.fail(e);
-            return report;
+        if self.strategy == LiveStrategy::Rebuild {
+            let (Some(previous), Some(previous_assignments)) =
+                (self.previous.as_ref(), self.previous_assignments.as_ref())
+            else {
+                log::error!("rebuild revert token missing previous runtime");
+                return report;
+            };
+            // Tick is lock-free now: the pass tick re-reads without locking.
+            let tick = session.tick_metrics();
+            if let Err(e) = session.rebuild_for_settings(previous, previous_assignments, &tick) {
+                log::error!("failed to rollback settings rebuild: {e}");
+                report.fail(e);
+                return report;
+            }
         }
-        report.restored_rebuild = effective == LiveStrategy::Rebuild;
-        if effective == LiveStrategy::PresentationSwap
-            && let Some(factory) = factory
-        {
-            let system_id = factory.system_id();
-            let before_view = settings_view(next_settings, system_id.as_ref());
-            let after_view = settings_view(previous, system_id.as_ref());
-            match factory.presentation_swap_assets(&before_view, &after_view) {
+        report.restored_rebuild = self.strategy == LiveStrategy::Rebuild;
+        if self.strategy == LiveStrategy::PresentationSwap {
+            match self.presentation_assets {
                 Some((profile, palette)) => {
-                    if let Some(core) = self.emu.core_mut().ok()
+                    if let Some(core) = session.emu.core_mut().ok()
                         && let Err(e) = core.apply_presentation(profile, palette)
                     {
                         log::error!("failed to rollback presentation swap: {e}");
@@ -228,10 +265,10 @@ impl SessionHandle {
                 }
             }
         }
-        if effective == LiveStrategy::AudioSwap {
-            let speaker = crate::settings::build_speaker(&self.audio_registry, &previous.local);
-            let rate = speaker.sample_rate();
-            if let Some(core) = self.emu.core().ok()
+        if self.strategy == LiveStrategy::AudioSwap
+            && let Some((speaker, rate)) = self.audio
+        {
+            if let Some(core) = session.emu.core().ok()
                 && let Err(e) = core.swap_audio_backend(speaker, rate)
             {
                 log::error!("failed to rollback audio swap: {e}");
@@ -242,7 +279,25 @@ impl SessionHandle {
         }
         report
     }
+}
 
+/// Undo stack for one settings apply: forward passes push revert tokens, failures pop them.
+#[derive(Default)]
+struct ApplyUndoStack(Vec<ApplyRevert>);
+
+impl ApplyUndoStack {
+    /// Push one forward pass's revert token.
+    fn push_revert(&mut self, revert: ApplyRevert) {
+        self.0.push(revert);
+    }
+
+    /// Pop the latest token for rollback. Empty outside a failed apply.
+    fn pop_revert(&mut self) -> Option<ApplyRevert> {
+        self.0.pop()
+    }
+}
+
+impl SessionHandle {
     /// Persist `next_settings` and absorb it into the live session.
     /// Derivation, runtime apply, and input rebind run as named stages.
     pub fn apply_settings(
@@ -261,7 +316,7 @@ impl SessionHandle {
         let previous_assignments = self.input.current_assignments.clone();
         let factory = self.active_factory_cloned();
         let derived = self.derive_apply(&next_settings);
-        // One metrics lock for the whole apply: the tick threads
+        // One lock-free tick for the whole apply: the tick threads
         // through the runtime apply and the persistence re-bind below.
         let tick = self.tick_metrics();
 
@@ -271,7 +326,7 @@ impl SessionHandle {
             self.media.persistence.flush_mapper_save(exporter)?;
         }
 
-        let effective = self.apply_live_runtime(LiveRuntimeInput {
+        let (_effective, revert) = self.apply_live_runtime(LiveRuntimeInput {
             strategy: derived.strategy,
             plan: &derived.plan,
             factory: &factory,
@@ -281,20 +336,19 @@ impl SessionHandle {
                 .next_assignments
                 .as_ref()
                 .unwrap_or(&previous_assignments),
+            previous_assignments: &previous_assignments,
             tick: &tick,
         })?;
+        // Stack discipline: the forward pass pushed one token; only a save failure pops it.
+        let mut undo = ApplyUndoStack::default();
+        undo.push_revert(revert);
 
         if let Err(error) = self.settings.manager.save_snapshot(next_settings.clone()) {
-            let report = self.rollback_runtime_apply(
-                &factory,
-                &previous,
-                &next_settings,
-                &previous_assignments,
-                effective,
-                &tick,
-            );
-            if let Some(rollback_error) = report.error {
-                log::error!("settings rollback failed: {rollback_error}");
+            if let Some(revert) = undo.pop_revert() {
+                let report = revert.revert(self);
+                if let Some(rollback_error) = report.error {
+                    log::error!("settings rollback failed: {rollback_error}");
+                }
             }
             return Err(SessionError::Settings(error));
         }
@@ -361,7 +415,7 @@ impl SessionHandle {
 
         let factory = self.active_factory_cloned().ok_or(SessionError::NoCore)?;
         let rebuilt =
-            build_core_for_settings(&self.audio_registry, next_settings, &factory, assignments)?;
+            build_core_for_settings(self.speaker_factory(), next_settings, &factory, assignments)?;
         let rebuilt_core = rebuilt.emu_core;
         // The export decides the restore: a captured snapshot round-trips the runtime.
         // No capture means the disk mapper save is the only continuity.
@@ -420,15 +474,25 @@ impl SessionHandle {
     }
 }
 
+/// Previous speaker plus rate for audio swap-back, built with the forward pass.
+fn previous_speaker(
+    session: &SessionHandle,
+    previous: &SettingsSnapshot,
+) -> (Box<dyn nerust_core_traits::audio::AudioBackend>, u32) {
+    let speaker = session.speaker_factory().build_speaker(&previous.local);
+    let rate = speaker.sample_rate();
+    (speaker, rate)
+}
+
 /// Build a fresh core for `next_settings` plus `assignments`, with no session borrowing.
 /// Free function of exactly what the build consumes, so callers hold the session borrow.
 fn build_core_for_settings(
-    audio_registry: &AudioBackendRegistry,
+    speaker_factory: &dyn crate::settings::AudioSpeakerFactory,
     next_settings: &SettingsSnapshot,
     factory: &Arc<dyn CoreFactory>,
     assignments: &InputAssignments,
 ) -> Result<super::CoreRuntime, SessionError> {
-    let speaker = crate::settings::build_speaker(audio_registry, &next_settings.local);
+    let speaker = speaker_factory.build_speaker(&next_settings.local);
     let system_id = factory.system_id();
     let view = settings_view(next_settings, system_id.as_ref());
     let parts = factory.create_core_and_adapter_with_assignments(&view, speaker, assignments)?;

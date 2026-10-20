@@ -1,21 +1,10 @@
+pub mod context;
 mod error;
 pub mod raw;
 pub mod vertex;
 
+pub use context::{Current, CurrentContext, DeletionPolicy, GlObject, ScopeGuard};
 pub use error::Error as GlError;
-
-/// Proof that the GL context is current on this thread. Build only with
-/// [`CurrentContext::assert_current`]; destroy takes `Option<Self>`.
-#[derive(Debug, Clone, Copy)]
-pub struct CurrentContext(());
-
-impl CurrentContext {
-    /// Checked proof: `Some` only when the caller verified `ctx.is_current()`.
-    /// Takes the `bool` verdict so this crate stays free of a glutin dependency.
-    pub fn assert_current(is_current: bool) -> Option<Self> {
-        is_current.then_some(Self(()))
-    }
-}
 
 use std::{
     collections::HashMap,
@@ -395,5 +384,11 @@ fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, ShaderError> {
             });
         }
         Ok(program)
+    }
+}
+
+impl context::GlObject for Shader {
+    fn destroy_if_current(&mut self, current: Option<Current>) -> bool {
+        Shader::destroy_if_current(self, current)
     }
 }

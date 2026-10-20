@@ -1,19 +1,11 @@
-//! Controller profiles, slot assignments, and the GUI/emu split runtime.
+//! Controller profiles, slot assignments, and the input factory plan.
 
-use std::{
-    collections::HashMap,
-    rc::Rc,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{collections::HashMap, rc::Rc};
 
 use super::{
     devices::ControllerCollection,
-    events::{BufferError, InputStateBuffer, InputValue},
-    ids::{AttachmentId, DeviceKindId, ProfileId},
-    topology::ControlId,
+    events::{InputStateBuffer, InputValue},
+    ids::{AttachmentId, ControlId, DeviceKindId, ProfileId},
 };
 
 /// A set of port identifiers a controller can occupy.
@@ -197,25 +189,30 @@ pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
     ) -> Result<InputResources, CreateSplitError>;
 }
 
-/// Output of create_split.
-/// `field_map` uses the standard `HashMap` hasher: init-time only, no extra dependency.
-#[derive(Debug)]
+/// Init-time factory output: field map plus a buffer factory.
+/// Thread endpoints live behind `nerust_emu_thread::InputPort`; this stays thread-free.
 pub struct InputResources {
-    split: InputSplit,
     field_map: HashMap<(AttachmentId, ControlId), usize>,
+    new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
+}
+
+impl std::fmt::Debug for InputResources {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InputResources")
+            .field("field_map", &self.field_map)
+            .finish_non_exhaustive()
+    }
 }
 
 impl InputResources {
-    pub fn new(split: InputSplit, field_map: HashMap<(AttachmentId, ControlId), usize>) -> Self {
-        Self { split, field_map }
-    }
-
-    pub fn split(&self) -> &InputSplit {
-        &self.split
-    }
-
-    pub fn split_mut(&mut self) -> &mut InputSplit {
-        &mut self.split
+    pub fn new(
+        field_map: HashMap<(AttachmentId, ControlId), usize>,
+        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
+    ) -> Self {
+        Self {
+            field_map,
+            new_buffer,
+        }
     }
 
     pub fn field_map(&self) -> &HashMap<(AttachmentId, ControlId), usize> {
@@ -225,157 +222,22 @@ impl InputResources {
     pub fn field_map_mut(&mut self) -> &mut HashMap<(AttachmentId, ControlId), usize> {
         &mut self.field_map
     }
-}
-
-/// Thread-shared state reference.
-/// `Send + Sync`: safe to share between the GUI producer and emu consumer threads.
-pub struct InputSplit {
-    shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-    flag: Arc<AtomicBool>,
-    new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
-}
-
-impl InputSplit {
-    pub fn new(
-        shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-        flag: Arc<AtomicBool>,
-        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
-    ) -> Self {
-        Self {
-            shared,
-            flag,
-            new_buffer,
-        }
-    }
-
-    pub fn shared(&self) -> &Arc<Mutex<Box<dyn InputStateBuffer>>> {
-        &self.shared
-    }
-
-    pub fn flag(&self) -> &Arc<AtomicBool> {
-        &self.flag
-    }
 
     pub fn new_buffer(&self) -> &(dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync) {
         &*self.new_buffer
     }
-}
 
-impl std::fmt::Debug for InputSplit {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InputSplit")
-            .field("shared", &self.shared)
-            .field("flag", &self.flag)
-            .finish_non_exhaustive()
-    }
-}
-
-/// GUI thread input delivery.
-/// `Send` but `!Sync`: keep each `GuiInput` on its owning GUI thread.
-#[derive(Debug)]
-pub struct GuiInput {
-    shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-    flag: Arc<AtomicBool>,
-    state: Box<dyn InputStateBuffer>,
-    write_buf: Box<dyn InputStateBuffer>,
-}
-
-impl GuiInput {
-    pub fn new(
-        shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-        flag: Arc<AtomicBool>,
-        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
-    ) -> Self {
-        Self {
-            shared,
-            flag,
-            state: (new_buffer)(),
-            write_buf: (new_buffer)(),
-        }
+    pub fn take_factory(self) -> Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync> {
+        self.new_buffer
     }
 
-    pub fn from_split(split: &InputSplit) -> Self {
-        Self {
-            shared: Arc::clone(split.shared()),
-            flag: Arc::clone(split.flag()),
-            state: (split.new_buffer())(),
-            write_buf: (split.new_buffer())(),
-        }
-    }
-
-    /// Write one absolute field of the staged GUI state.
-    pub fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
-        self.state.set(field, value)
-    }
-
-    /// Must be called every frame. Copies absolute state into shared.
-    pub fn publish(&mut self) {
-        // Both buffers come from the same factory; a mismatch is a programming
-        // error: panic loudly instead of silently dropping input.
-        if let Err(error) = self.write_buf.copy_state(&*self.state) {
-            unreachable!("GuiInput buffers must share a concrete type: {error}");
-        }
-        // Swap into shared (fast pointer exchange). The mutex cannot be
-        // poisoned: only std::mem::swap (non-panicking) runs under the lock.
-        let mut lock = self
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        std::mem::swap(&mut *lock, &mut self.write_buf);
-        self.flag.store(true, Ordering::Release);
-    }
-
-    pub fn clear(&mut self) {
-        self.state.clear();
-    }
-}
-
-/// Emu thread input consumer.
-/// `Send` but `!Sync`: keep each `EmuInput` on its owning emu thread.
-#[derive(Debug)]
-pub struct EmuInput {
-    shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-    flag: Arc<AtomicBool>,
-    read_buf: Box<dyn InputStateBuffer>,
-}
-
-impl EmuInput {
-    pub fn new(
-        shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-        flag: Arc<AtomicBool>,
-        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
-    ) -> Self {
-        Self {
-            shared,
-            flag,
-            read_buf: (new_buffer)(),
-        }
-    }
-
-    pub fn from_split(split: &InputSplit) -> Self {
-        Self {
-            shared: Arc::clone(split.shared()),
-            flag: Arc::clone(split.flag()),
-            read_buf: (split.new_buffer())(),
-        }
-    }
-
-    /// Borrow the latest emu-side snapshot without taking it.
-    /// Cores downcast this to their concrete buffer type per frame.
-    pub fn read_buffer(&self) -> &dyn InputStateBuffer {
-        &*self.read_buf
-    }
-
-    /// Must be called every frame start. Takes latest input from GUI.
-    pub fn take(&mut self) {
-        if self.flag.swap(false, Ordering::Acquire) {
-            // Only non-panicking `swap` runs under the lock, so the mutex
-            // cannot poison; recover the guard defensively anyway.
-            let mut lock = self
-                .shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            std::mem::swap(&mut *lock, &mut self.read_buf);
-        }
+    /// Write one absolute field through a fresh buffer (init-time helper).
+    pub fn probe_set(
+        &self,
+        field: usize,
+        value: InputValue,
+    ) -> Result<(), super::events::BufferError> {
+        let mut buf = (self.new_buffer)();
+        buf.set(field, value)
     }
 }

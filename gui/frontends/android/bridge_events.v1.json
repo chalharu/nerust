@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "nerust Android bridge events v1",
-  "description": "Canonical schema for Kotlin→Rust bridge strings sent via MainActivity.onMenuAction. New APKs SHOULD send v1 JSON objects; the Rust decoder in gui/frontends/android/src/android/menu.rs keeps the legacy bare-string IDs for old APKs. A dedicated onErrorDialogDismissed()V native exists for new APKs; the error_dialog_dismissed menu string remains decodable for old APKs.",
+  "description": "Canonical schema for Kotlin→Rust bridge strings sent via MainActivity.onMenuAction. Kotlin builds every string with the BridgeContract builders; the Rust decoder in gui/frontends/android/src/android/menu.rs accepts v1 JSON only. The error-dialog ack travels on the dedicated onErrorDialogDismissed()V native.",
   "type": "object",
   "oneOf": [
     { "$ref": "#/definitions/menuEvent" },
@@ -72,7 +72,7 @@
     "controller": "MenuAction::ControllerInput{device_id,key,pressed}"
   },
   "x-kotlin-constants": {
-    "note": "Kotlin senders MUST use the same strings; see ChromeManager.kt DRAWER_ACTIONS / MENU_ACTION_* and MainActivity.sendMenuAction. MENU_ACTION_ERROR_DIALOG_DISMISSED is legacy-only; prefer onErrorDialogDismissed().",
-    "file": "packaging/android/app/src/main/kotlin/io/github/chalharu/nerust/ChromeManager.kt"
+    "note": "Kotlin senders MUST use BridgeContract.menuEventJson/controllerEventJson; see packaging/android/app/src/main/kotlin/io/github/chalharu/nerust/BridgeContract.kt. A Rust unit test pins this schema version and action table.",
+    "file": "packaging/android/app/src/main/kotlin/io/github/chalharu/nerust/BridgeContract.kt"
   }
 }

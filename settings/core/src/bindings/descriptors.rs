@@ -67,15 +67,20 @@ pub fn keyboard_binding_descriptors(
     topology: &InputTopologyDescriptor,
     system: &dyn SystemId,
 ) -> Vec<KeyboardBindingDescriptor> {
+    // Index devices by kind once; attachments resolve through the map
+    // instead of a devices × ports × attachments scan.
+    let by_kind: std::collections::HashMap<_, _> = topology
+        .devices()
+        .iter()
+        .map(|device| (device.kind(), device))
+        .collect();
     let mut descriptors = Vec::new();
-    for device in topology.devices() {
-        for port in topology.ports() {
-            for att in port.attachments() {
-                if att.device() != device.kind() {
-                    continue;
-                }
-                descriptors.extend(collect_device_bindings(device, port, att, system));
-            }
+    for port in topology.ports() {
+        for att in port.attachments() {
+            let Some(device) = by_kind.get(&att.device()) else {
+                continue;
+            };
+            descriptors.extend(collect_device_bindings(device, port, att, system));
         }
     }
     descriptors
@@ -108,15 +113,16 @@ pub fn keyboard_binding_sections(
 ) -> Vec<KeyboardBindingSectionDescriptor> {
     let bindings = keyboard_binding_descriptors(topology, system);
     let mut sections: Vec<KeyboardBindingSectionDescriptor> = Vec::new();
+    // Index sections by attachment instead of a linear find per binding.
+    let mut index: std::collections::HashMap<nerust_input_traits::AttachmentId, usize> =
+        std::collections::HashMap::new();
     for binding in bindings {
-        if let Some(section) = sections
-            .iter_mut()
-            .find(|s| s.attachment == binding.attachment)
-        {
-            section.bindings.push(binding);
+        if let Some(&at) = index.get(&binding.attachment) {
+            sections[at].bindings.push(binding);
         } else {
             let attachment = binding.attachment;
             let attachment_label = binding.attachment_label;
+            index.insert(attachment, sections.len());
             sections.push(KeyboardBindingSectionDescriptor {
                 system: system.clone_box(),
                 attachment,

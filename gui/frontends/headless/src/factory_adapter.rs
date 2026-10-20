@@ -16,7 +16,7 @@ use nerust_core_traits::{
     },
 };
 use nerust_gui_shell::emu_core::EmuCore;
-use nerust_input_traits::{GuiInput, InputAssignments, InputValue};
+use nerust_input_traits::{InputAssignments, InputValue};
 use nerust_render_traits::FrameBuffer;
 
 use crate::{error::RomTestError, manifest::RomCase};
@@ -25,7 +25,7 @@ use crate::{error::RomTestError, manifest::RomCase};
 /// execution plus input writer and nominal-audio tap.
 pub(crate) struct TestSystem {
     emu: EmuCore,
-    gui_input: GuiInput,
+    gui_input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
     pad_buttons: Vec<Vec<(&'static str, usize)>>,
     spaces: Vec<SpaceInfo>,
     tap: Arc<Mutex<Vec<StereoSample>>>,
@@ -134,7 +134,7 @@ pub(crate) fn open_headless_system(
             .ok_or_else(|| construction(format!("slot {pad} has no control group")))?;
         let mut buttons = Vec::with_capacity(group.len());
         for info in group.iter() {
-            let nerust_input_traits::ControlId::Digital(control_id) = info.id else {
+            let Some(control_id) = info.id.as_digital() else {
                 continue;
             };
             let field = field_map
@@ -229,7 +229,7 @@ impl TestSystem {
     pub(crate) fn control(&mut self) -> SystemControl<'_> {
         SystemControl {
             emu: &self.emu,
-            gui_input: &mut self.gui_input,
+            gui_input: &mut *self.gui_input,
             pad_buttons: &self.pad_buttons,
         }
     }
@@ -259,7 +259,7 @@ impl TestSystem {
 /// its three fields; driving code provably cannot observe.
 pub(crate) struct SystemControl<'a> {
     emu: &'a EmuCore,
-    gui_input: &'a mut GuiInput,
+    gui_input: &'a mut (dyn nerust_core_traits::factory::GuiInputPort + 'static),
     pad_buttons: &'a [Vec<(&'static str, usize)>],
 }
 

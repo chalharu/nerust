@@ -27,6 +27,7 @@ pub(crate) mod test_session;
 
 pub(crate) mod aux;
 pub(crate) mod runtime;
+pub(crate) mod util;
 
 use nerust_crash_guard::{CRASH_EXIT_CODE, GuardOutcome};
 use nerust_gui_shell::context::FrontendContext;

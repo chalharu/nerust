@@ -4,7 +4,8 @@ use nerust_core_traits::{
     debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
 };
-use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
+use nerust_emu_thread::EmuInput;
+use nerust_input_traits::{ControllerCollection, ControllerHub as _};
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
@@ -317,8 +318,9 @@ mod tests {
     };
 
     use nerust_core_traits::{CoreConfig, debugger::Debugger as _};
+    use nerust_emu_thread::EmuInput;
     use nerust_input_traits::{
-        Controller, ControllerCollection, EmuInput, OpenBusReadResult, Port,
+        Controller, ControllerCollection, OpenBusReadResult, Port, StrobeTarget,
     };
     use nerust_render_traits::PixelFormat;
 
@@ -342,12 +344,15 @@ mod tests {
 
     #[derive(Debug)]
     struct MockController;
+    impl StrobeTarget for MockController {
+        fn strobe(&mut self, _value: u8) {}
+    }
+
     impl Controller for MockController {
         fn read(&mut self, _port: &dyn Port) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
         }
         fn write(&mut self, _port: &dyn Port, _value: u8) {}
-        fn strobe(&mut self, _value: u8) {}
     }
 
     fn test_rom() -> Vec<u8> {

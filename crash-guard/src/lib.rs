@@ -1,23 +1,20 @@
 //! Outermost crash containment: hook install plus guarded entry.
-//! The hook preserves only the log; dialogs and termination are the host's job.
+//! Hook preserves only the record; dialogs and termination are the host's job.
 
 use std::{
     any::Any,
-    backtrace::Backtrace,
     panic::{self, PanicHookInfo},
     sync::Once,
 };
 
 /// Record sink for the panic hook. Set at most once per process; [`install`]
 /// chains the previous hook so host behavior is never swallowed.
-type RecordSink = fn(&PanicRecord);
+pub type RecordSink = fn(&PanicRecord);
 
 fn default_sink(record: &PanicRecord) {
-    log::error!(
+    eprintln!(
         "panic on thread '{}': {}\nbacktrace:\n{}",
-        record.thread,
-        record.detail,
-        record.backtrace
+        record.thread, record.detail, record.backtrace
     );
 }
 
@@ -29,19 +26,40 @@ pub fn set_record_sink(sink: RecordSink) -> bool {
     SINK.set(sink).is_ok()
 }
 
-fn emit(record: &PanicRecord) {
-    SINK.get().copied().unwrap_or(default_sink)(record);
+/// Backtrace source: injected so hosts and tests avoid the real capture.
+/// Production passes [`capture_backtrace`]; tests pass a fixed string.
+pub type BacktraceSource = fn() -> String;
+
+fn capture_backtrace() -> String {
+    std::backtrace::Backtrace::capture().to_string()
+}
+
+static BACKTRACE: std::sync::OnceLock<BacktraceSource> = std::sync::OnceLock::new();
+
+/// Override the backtrace source (tests). Returns whether this call won.
+pub fn set_backtrace_source(source: BacktraceSource) -> bool {
+    BACKTRACE.set(source).is_ok()
+}
+
+fn backtrace() -> String {
+    BACKTRACE.get().copied().unwrap_or(capture_backtrace)()
 }
 
 /// Install the process-wide panic hook (idempotent, chains previous).
-/// Best-effort log for pre-guard windows; `run_guarded` is authoritative.
+/// Best-effort record for pre-guard windows; `run_guarded` is authoritative.
 pub fn install() {
+    install_with(SINK.get().copied().unwrap_or(default_sink));
+}
+
+/// Install the hook with an explicit sink, bypassing the global slot.
+/// Idempotent per process; chains the previous hook either way.
+pub fn install_with(sink: RecordSink) {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let previous = panic::take_hook();
         panic::set_hook(Box::new(move |info: &PanicHookInfo<'_>| {
-            let record = PanicRecord::capture(info.to_string());
-            emit(&record);
+            let record = PanicRecord::capture_with(info.to_string(), backtrace());
+            sink(&record);
             previous(info);
         }));
     });
@@ -117,13 +135,17 @@ impl PanicRecord {
 impl PanicRecord {
     // Release keeps symtab only: names resolve, file:line does not.
     fn capture(detail: String) -> Self {
-        // Symbolication cost is acceptable: panics never run on a hot path.
-        // `Backtrace::capture` respects `RUST_BACKTRACE`: unset/`0` yields a placeholder.
+        Self::capture_with(detail, backtrace())
+    }
+
+    /// Capture with an injected backtrace (hook path and tests).
+    /// `Backtrace::capture` respects `RUST_BACKTRACE`: unset/`0` yields a placeholder.
+    fn capture_with(detail: String, backtrace: String) -> Self {
         let thread = std::thread::current();
         Self {
             thread: thread.name().unwrap_or("unnamed").to_owned(),
             detail,
-            backtrace: Backtrace::capture().to_string(),
+            backtrace,
         }
     }
 }

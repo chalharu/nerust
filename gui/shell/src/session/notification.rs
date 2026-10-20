@@ -72,10 +72,188 @@ pub enum FailureOrigin {
 /// Longest kept detail suffix: a pathological message must not wedge the capped modal queue.
 pub const MAX_EXTERNAL_DETAIL: usize = 512;
 
+/// Stable localization key for one notification shape.
+/// The domain emits this plus args; only the renderer localizes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageKey {
+    Paused,
+    Resumed,
+    Reset,
+    SlotCreated,
+    SlotSaved,
+    SlotLoaded,
+    SlotDeleted,
+    SlotSelected,
+    SavesUnavailable,
+    SlotFailed,
+    CommandFailed,
+}
+
+/// Domain payload for one notification: key plus raw args, no language.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    /// Stable key selecting the localized template.
+    pub key: MessageKey,
+    /// Slot carried for slot-bound messages.
+    pub slot: Option<u64>,
+    /// Failure reason for slot/command failures.
+    pub reason: Option<SlotOpFailure>,
+    /// Failure origin for command failures.
+    pub origin: Option<FailureOrigin>,
+    /// Stable command id for command failures.
+    pub id: &'static str,
+    /// Truncated detail for command failures.
+    pub detail: String,
+}
+
+impl Message {
+    /// Key-only message with no args.
+    pub fn unit(key: MessageKey) -> Self {
+        Self {
+            key,
+            slot: None,
+            reason: None,
+            origin: None,
+            id: "",
+            detail: String::new(),
+        }
+    }
+
+    /// Slot-bound message carrying one slot id.
+    pub fn slot(key: MessageKey, slot: Option<u64>) -> Self {
+        Self {
+            slot,
+            ..Self::unit(key)
+        }
+    }
+}
+
+/// Single localization adapter: the only place turning keys into text.
+#[derive(Debug, Clone, Copy)]
+pub struct NotificationRenderer {
+    /// Target language for every rendered string.
+    pub language: AppLanguage,
+}
+
+impl NotificationRenderer {
+    /// Render one domain event in the adapter language.
+    pub fn render(&self, kind: &NotificationKind) -> String {
+        render_message(&kind.message(), self.language)
+    }
+
+    /// Render one stable level name in the adapter language.
+    pub fn level_name(&self, level: NotificationLevel) -> &'static str {
+        level_key(level, self.language)
+    }
+}
+
+/// Stable level key; only the renderer resolves it per language.
+fn level_key(level: NotificationLevel, language: AppLanguage) -> &'static str {
+    use nerust_settings_core::i18n::{UiText, text as ui_text};
+    match level {
+        NotificationLevel::Info => ui_text(language, UiText::NotificationInfo),
+        NotificationLevel::Warning => ui_text(language, UiText::NotificationWarning),
+        NotificationLevel::Error => ui_text(language, UiText::Error),
+    }
+}
+
+/// Template fill for one domain message in one language.
+fn render_message(message: &Message, language: AppLanguage) -> String {
+    match message.key {
+        MessageKey::Paused => bilingual(language, "Paused", "一時停止しました"),
+        MessageKey::Resumed => bilingual(language, "Resumed", "再開しました"),
+        MessageKey::Reset => bilingual(language, "Reset", "リセットしました"),
+        MessageKey::SlotCreated => bilingual(language, "Slot created", "スロットを作成しました"),
+        MessageKey::SlotSaved => slot_text(message.slot, language, "Saved to", "保存しました"),
+        MessageKey::SlotLoaded => slot_text(message.slot, language, "Loaded", "読み込みました"),
+        MessageKey::SlotDeleted => slot_text(message.slot, language, "Deleted", "削除しました"),
+        MessageKey::SlotSelected => slot_text(message.slot, language, "Selected", "選択しました"),
+        MessageKey::SavesUnavailable => {
+            bilingual(language, "Saves unavailable", "保存機能が利用できません")
+        }
+        MessageKey::SlotFailed => {
+            let reason = message.reason.unwrap_or(SlotOpFailure::Unavailable);
+            slot_failed_text(message.slot, reason, language)
+        }
+        MessageKey::CommandFailed => {
+            let origin = message.origin.unwrap_or(FailureOrigin::Command);
+            command_failed_text(origin, message.id, &message.detail, language)
+        }
+    }
+}
+
+fn command_failed_text(
+    origin: FailureOrigin,
+    id: &str,
+    detail: &str,
+    language: AppLanguage,
+) -> String {
+    let prefix = match (origin, language) {
+        (FailureOrigin::Command, AppLanguage::Japanese) => {
+            return if detail.is_empty() {
+                format!("{id} に失敗しました")
+            } else {
+                format!("{id} に失敗しました: {detail}")
+            };
+        }
+        (FailureOrigin::Command, _) => {
+            return if detail.is_empty() {
+                format!("{id} failed")
+            } else {
+                format!("{id} failed: {detail}")
+            };
+        }
+        (FailureOrigin::Picker, AppLanguage::Japanese) => "選択",
+        (FailureOrigin::Picker, _) => "Picker",
+        (FailureOrigin::Restore, AppLanguage::Japanese) => "復元",
+        (FailureOrigin::Restore, _) => "Restore",
+        (FailureOrigin::Bridge, AppLanguage::Japanese) => "通知",
+        (FailureOrigin::Bridge, _) => "Bridge",
+    };
+    if detail.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}: {detail}")
+    }
+}
+
+fn slot_failed_text(slot: Option<u64>, reason: SlotOpFailure, language: AppLanguage) -> String {
+    let what = failure_reason_text(reason, language);
+    match (slot, language) {
+        (Some(id), AppLanguage::Japanese) => format!("スロット{id}: {what}"),
+        (Some(id), _) => format!("Slot {id}: {what}"),
+        (None, _) => what.to_string(),
+    }
+}
+
+fn failure_reason_text(reason: SlotOpFailure, language: AppLanguage) -> &'static str {
+    match reason {
+        SlotOpFailure::Empty => bilingual_str(language, "slot is empty", "空きスロットです"),
+        SlotOpFailure::Missing => bilingual_str(language, "no data", "データがありません"),
+        SlotOpFailure::Storage => bilingual_str(language, "storage failure", "保存に失敗しました"),
+        SlotOpFailure::Corrupt => {
+            bilingual_str(language, "data is corrupt", "データが壊れています")
+        }
+        SlotOpFailure::Incompatible => {
+            bilingual_str(language, "incompatible data", "互換性がありません")
+        }
+        SlotOpFailure::Unavailable => bilingual_str(language, "unavailable", "利用できません"),
+    }
+}
+
 /// Pick the language side. Splitting this out (instead of inline
 /// `language` matches per arm) keeps `text()` under the complexity budget.
 fn bilingual(language: AppLanguage, en: &str, ja_text: &str) -> String {
     bilingual_str(language, en, ja_text).to_string()
+}
+
+fn slot_text(slot: Option<u64>, language: AppLanguage, en: &str, ja: &str) -> String {
+    match (slot, language) {
+        (Some(id), AppLanguage::Japanese) => format!("スロット{id}に{ja}"),
+        (Some(id), _) => format!("{en} slot {id}"),
+        (None, AppLanguage::Japanese) => ja.to_string(),
+        (None, _) => en.to_string(),
+    }
 }
 
 fn bilingual_str<'a>(language: AppLanguage, en: &'a str, ja_text: &'a str) -> &'a str {
@@ -168,97 +346,42 @@ impl NotificationKind {
         }
     }
 
-    fn slot_text(slot: Option<u64>, language: AppLanguage, en: &str, ja: &str) -> String {
-        match (slot, language) {
-            (Some(id), AppLanguage::Japanese) => format!("スロット{id}に{ja}"),
-            (Some(id), _) => format!("{en} slot {id}"),
-            (None, AppLanguage::Japanese) => ja.to_string(),
-            (None, _) => en.to_string(),
-        }
-    }
-
-    pub fn text(&self, language: AppLanguage) -> String {
+    /// Domain payload for this event: stable key plus raw args, no language.
+    pub fn message(&self) -> Message {
         match self {
-            NotificationKind::Paused => bilingual(language, "Paused", "一時停止しました"),
-            NotificationKind::Resumed => bilingual(language, "Resumed", "再開しました"),
-            NotificationKind::Reset => bilingual(language, "Reset", "リセットしました"),
-            NotificationKind::CreatedSlot => {
-                bilingual(language, "Slot created", "スロットを作成しました")
-            }
-            NotificationKind::SavedSlot(id) => {
-                Self::slot_text(Some(*id), language, "Saved to", "保存しました")
-            }
-            NotificationKind::LoadedSlot(id) => {
-                Self::slot_text(Some(*id), language, "Loaded", "読み込みました")
-            }
-            NotificationKind::DeletedSlot(id) => {
-                Self::slot_text(Some(*id), language, "Deleted", "削除しました")
-            }
+            NotificationKind::Paused => Message::unit(MessageKey::Paused),
+            NotificationKind::Resumed => Message::unit(MessageKey::Resumed),
+            NotificationKind::Reset => Message::unit(MessageKey::Reset),
+            NotificationKind::CreatedSlot => Message::unit(MessageKey::SlotCreated),
+            NotificationKind::SavedSlot(id) => Message::slot(MessageKey::SlotSaved, Some(*id)),
+            NotificationKind::LoadedSlot(id) => Message::slot(MessageKey::SlotLoaded, Some(*id)),
+            NotificationKind::DeletedSlot(id) => Message::slot(MessageKey::SlotDeleted, Some(*id)),
             NotificationKind::SelectedSlot(id) => {
-                Self::slot_text(Some(*id), language, "Selected", "選択しました")
+                Message::slot(MessageKey::SlotSelected, Some(*id))
             }
-            NotificationKind::PersistenceUnavailable => {
-                bilingual(language, "Saves unavailable", "保存機能が利用できません")
-            }
-            NotificationKind::SlotFailed { slot, reason } => {
-                Self::slot_failed_text(*slot, *reason, language)
-            }
-            NotificationKind::CommandFailure { origin, id, detail } => {
-                let prefix = match (origin, language) {
-                    (FailureOrigin::Command, AppLanguage::Japanese) => {
-                        return if detail.is_empty() {
-                            format!("{id} に失敗しました")
-                        } else {
-                            format!("{id} に失敗しました: {detail}")
-                        };
-                    }
-                    (FailureOrigin::Command, _) => {
-                        return if detail.is_empty() {
-                            format!("{id} failed")
-                        } else {
-                            format!("{id} failed: {detail}")
-                        };
-                    }
-                    (FailureOrigin::Picker, AppLanguage::Japanese) => "選択",
-                    (FailureOrigin::Picker, _) => "Picker",
-                    (FailureOrigin::Restore, AppLanguage::Japanese) => "復元",
-                    (FailureOrigin::Restore, _) => "Restore",
-                    (FailureOrigin::Bridge, AppLanguage::Japanese) => "通知",
-                    (FailureOrigin::Bridge, _) => "Bridge",
-                };
-                if detail.is_empty() {
-                    prefix.to_string()
-                } else {
-                    format!("{prefix}: {detail}")
-                }
-            }
+            NotificationKind::PersistenceUnavailable => Message::unit(MessageKey::SavesUnavailable),
+            NotificationKind::SlotFailed { slot, reason } => Message {
+                key: MessageKey::SlotFailed,
+                slot: *slot,
+                reason: Some(*reason),
+                origin: None,
+                id: "",
+                detail: String::new(),
+            },
+            NotificationKind::CommandFailure { origin, id, detail } => Message {
+                key: MessageKey::CommandFailed,
+                slot: None,
+                reason: None,
+                origin: Some(*origin),
+                id,
+                detail: detail.clone(),
+            },
         }
     }
 
-    fn slot_failed_text(slot: Option<u64>, reason: SlotOpFailure, language: AppLanguage) -> String {
-        let what = Self::failure_reason_text(reason, language);
-        match (slot, language) {
-            (Some(id), AppLanguage::Japanese) => format!("スロット{id}: {what}"),
-            (Some(id), _) => format!("Slot {id}: {what}"),
-            (None, _) => what.to_string(),
-        }
-    }
-
-    fn failure_reason_text(reason: SlotOpFailure, language: AppLanguage) -> &'static str {
-        match reason {
-            SlotOpFailure::Empty => bilingual_str(language, "slot is empty", "空きスロットです"),
-            SlotOpFailure::Missing => bilingual_str(language, "no data", "データがありません"),
-            SlotOpFailure::Storage => {
-                bilingual_str(language, "storage failure", "保存に失敗しました")
-            }
-            SlotOpFailure::Corrupt => {
-                bilingual_str(language, "data is corrupt", "データが壊れています")
-            }
-            SlotOpFailure::Incompatible => {
-                bilingual_str(language, "incompatible data", "互換性がありません")
-            }
-            SlotOpFailure::Unavailable => bilingual_str(language, "unavailable", "利用できません"),
-        }
+    /// Localized text via the single renderer adapter.
+    pub fn text(&self, language: AppLanguage) -> String {
+        NotificationRenderer { language }.render(self)
     }
 }
 
@@ -286,14 +409,130 @@ pub struct UiNotification {
     pub at: std::time::SystemTime,
 }
 
+/// Bounded event log: every event is recorded; version advances on push and clear.
 #[derive(Debug, Default)]
-pub struct NotificationCenter {
-    pending: VecDeque<UiNotification>,
+pub struct EventLog {
     history: VecDeque<UiNotification>,
     next_seq: u64,
     /// History version: advanced on every push and clear.
     /// Hosts skip grid rebuilds while it is unchanged.
     history_seq: u64,
+}
+
+impl EventLog {
+    /// Record one event, assigning its sequence number.
+    pub fn record(&mut self, kind: NotificationKind, at: std::time::SystemTime) -> UiNotification {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        self.history_seq += 1;
+        let event = UiNotification {
+            level: kind.level(),
+            kind,
+            count: 1,
+            seq,
+            at,
+        };
+        if self.history.len() >= MAX_HISTORY {
+            self.history.pop_front();
+        }
+        self.history.push_back(event.clone());
+        event
+    }
+
+    /// Borrowed history for grid rendering.
+    pub fn history(&self) -> impl Iterator<Item = &UiNotification> {
+        self.history.iter()
+    }
+
+    /// Clear the log, advancing the version.
+    pub fn clear(&mut self) {
+        self.history.clear();
+        self.history_seq += 1;
+    }
+
+    /// Current history version (see `history_seq`).
+    pub fn history_seq(&self) -> u64 {
+        self.history_seq
+    }
+}
+
+/// Coalescing pending queue: identical neighbours merge, oldest drops past the cap.
+#[derive(Debug, Default)]
+pub struct PendingQueue {
+    pending: VecDeque<UiNotification>,
+}
+
+impl PendingQueue {
+    /// Offer one logged event; identical neighbours coalesce.
+    pub fn offer(&mut self, event: UiNotification) {
+        if let Some(back) = self.pending.back_mut()
+            && back.level == event.level
+            && back.kind == event.kind
+        {
+            back.count += 1;
+            return;
+        }
+        if self.pending.len() >= MAX_PENDING {
+            self.pending.pop_front();
+        }
+        self.pending.push_back(event);
+    }
+
+    /// Drain the queued events for one OSD pass.
+    pub fn drain(&mut self) -> Vec<UiNotification> {
+        self.pending.drain(..).collect()
+    }
+
+    /// Queued event count.
+    pub fn len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Whether the queue holds no events.
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+}
+
+/// Log sink: the single emission point for notification log lines.
+#[derive(Debug, Default)]
+pub struct LogSink;
+
+impl LogSink {
+    /// Emit the log line for one event; screen-only kinds stay silent.
+    pub fn emit(&self, event: &UiNotification) {
+        // Screen-only kinds skip the log line; steady-state pushes skip formatting when gated.
+        if let Some(emit) = event.kind.log_level() {
+            let text;
+            match emit {
+                NotificationLevel::Info => {
+                    if log::log_enabled!(log::Level::Info) {
+                        text = kind_text(event);
+                        log::info!("notification: {text}");
+                    }
+                }
+                NotificationLevel::Warning => {
+                    if log::log_enabled!(log::Level::Warn) {
+                        text = kind_text(event);
+                        log::warn!("notification: {text}");
+                    }
+                }
+                NotificationLevel::Error => {
+                    if log::log_enabled!(log::Level::Error) {
+                        text = kind_text(event);
+                        log::error!("notification: {text}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct NotificationCenter {
+    log: EventLog,
+    queue: PendingQueue,
+    sink: LogSink,
 }
 
 impl NotificationCenter {
@@ -309,85 +548,37 @@ impl NotificationCenter {
 
     /// Push with an explicit timestamp. Tests inject fixed times.
     pub fn push_at(&mut self, kind: NotificationKind, at: std::time::SystemTime) {
-        let level = kind.level();
-        let seq = self.next_seq;
-        self.next_seq += 1;
-        self.history_seq += 1;
-        let event = UiNotification {
-            level,
-            kind,
-            count: 1,
-            seq,
-            at,
-        };
-        // Screen-only kinds skip the log line; steady-state pushes skip formatting when gated.
-        if let Some(emit) = event.kind.log_level() {
-            let text;
-            match emit {
-                NotificationLevel::Info => {
-                    if log::log_enabled!(log::Level::Info) {
-                        text = kind_text(&event);
-                        log::info!("notification: {text}");
-                    }
-                }
-                NotificationLevel::Warning => {
-                    if log::log_enabled!(log::Level::Warn) {
-                        text = kind_text(&event);
-                        log::warn!("notification: {text}");
-                    }
-                }
-                NotificationLevel::Error => {
-                    if log::log_enabled!(log::Level::Error) {
-                        text = kind_text(&event);
-                        log::error!("notification: {text}");
-                    }
-                }
-            }
-        }
-        if self.history.len() >= MAX_HISTORY {
-            self.history.pop_front();
-        }
-        self.history.push_back(event.clone());
-        if let Some(back) = self.pending.back_mut()
-            && back.level == event.level
-            && back.kind == event.kind
-        {
-            back.count += 1;
-            return;
-        }
-        if self.pending.len() >= MAX_PENDING {
-            self.pending.pop_front();
-        }
-        self.pending.push_back(event);
+        let event = self.log.record(kind, at);
+        self.sink.emit(&event);
+        self.queue.offer(event);
     }
 
     pub fn drain(&mut self) -> Vec<UiNotification> {
-        self.pending.drain(..).collect()
+        self.queue.drain()
     }
 
     pub fn history(&self) -> impl Iterator<Item = &UiNotification> {
-        self.history.iter()
+        self.log.history()
     }
 
     pub fn clear_history(&mut self) {
-        self.history.clear();
-        self.history_seq += 1;
+        self.log.clear();
     }
 
     /// Current history version (see `history_seq`).
     pub fn history_seq(&self) -> u64 {
-        self.history_seq
+        self.log.history_seq()
     }
 
     pub fn pending_len(&self) -> usize {
-        self.pending.len()
+        self.queue.len()
     }
 }
 
 /// Single text source for history rows and OSD labels: base
 /// text plus the `×N` suffix for coalesced repeats.
 pub fn render_text(kind: &NotificationKind, count: u32, language: AppLanguage) -> String {
-    append_count(kind.text(language), count)
+    append_count(NotificationRenderer { language }.render(kind), count)
 }
 
 /// Suffix rule shared by [`render_text`] and OSD rows (which keep

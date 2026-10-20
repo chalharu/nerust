@@ -24,6 +24,9 @@ pub(super) struct InputRouter {
     floating_dpad: Option<FloatingDpadState>,
     physical_pressed: HashSet<(i32, AbstractKey)>,
     overlay_revision: u64,
+    /// Last pushed joystick visual, quantized to half pixels.
+    /// Touch-move floods one JNI push per event; repeats are no-ops.
+    last_dpad_visual: Option<(bool, i32, i32, i32, i32)>,
 }
 
 impl InputRouter {
@@ -34,6 +37,7 @@ impl InputRouter {
             floating_dpad: None,
             physical_pressed: HashSet::new(),
             overlay_revision: 0,
+            last_dpad_visual: None,
         }
     }
 
@@ -55,6 +59,7 @@ impl InputRouter {
                 ));
             }
         }
+        self.last_dpad_visual = None;
         update_floating_dpad_visual(
             app,
             false,
@@ -140,7 +145,7 @@ impl InputRouter {
     }
 
     /// Rebuild the hit-zone overlay for the current window size and push it to Kotlin.
-    /// Includes the resolved relative zones.
+    /// Pushes the resolved zones plus the joystick home; Kotlin draws only these.
     pub(super) fn rebuild_overlay(
         &mut self,
         session: &SessionHandle,
@@ -154,14 +159,6 @@ impl InputRouter {
         let overlay_settings = &session.settings_snapshot().local.touch_overlay;
         self.overlay_revision = self.overlay_revision.wrapping_add(1);
         let model = session.touch_overlay_model(self.overlay_revision);
-        // Shoulder zones are drawn only for systems that have them
-        // (GBA); GBC/NES profiles expose no shoulder controls.
-        let shoulders_visible = model.controls.iter().any(|control| {
-            matches!(
-                control.role,
-                TouchControlRole::LeftShoulder | TouchControlRole::RightShoulder
-            )
-        });
         self.overlay = if overlay_settings.visibility
             == nerust_settings_core::model::local::TouchOverlayVisibility::Hidden
         {
@@ -184,7 +181,16 @@ impl InputRouter {
                 )
             })
             .unwrap_or_default();
-        configure_controls_overlay(app, overlay_settings, shoulders_visible, &zones);
+        let joystick = self
+            .overlay
+            .as_ref()
+            .map(|overlay| {
+                ProfileTouchOverlay::encode_joystick(
+                    &overlay.relative_joystick(width as f32, height as f32),
+                )
+            })
+            .unwrap_or_default();
+        configure_controls_overlay(app, overlay_settings, &zones, &joystick);
     }
 
     /// Single touch action dispatch: the old `Vec<TouchOverlayAction>`
@@ -276,7 +282,7 @@ impl InputRouter {
             point.x,
             point.y
         );
-        update_floating_dpad_visual(app, true, point, point);
+        self.push_dpad_visual(app, true, point, point);
         if haptics {
             perform_control_haptic(app);
         }
@@ -298,14 +304,40 @@ impl InputRouter {
         let targets = overlay.floating_dpad_targets(center, point);
         let knob = overlay.floating_knob(center, point);
         self.sync_floating_dpad_targets(session, &targets);
-        update_floating_dpad_visual(app, true, center, knob);
+        self.push_dpad_visual(app, true, center, knob);
+    }
+
+    /// Quantized visual push: touch-move floods events, but the JNI
+    /// crossing only fires when the half-pixel key changes.
+    fn push_dpad_visual(
+        &mut self,
+        app: &AndroidApp,
+        active: bool,
+        center: TouchPoint,
+        knob: TouchPoint,
+    ) {
+        fn quantize(value: f32) -> i32 {
+            (value * 2.0).round() as i32
+        }
+        let key = (
+            active,
+            quantize(center.x),
+            quantize(center.y),
+            quantize(knob.x),
+            quantize(knob.y),
+        );
+        if self.last_dpad_visual == Some(key) {
+            return;
+        }
+        self.last_dpad_visual = Some(key);
+        update_floating_dpad_visual(app, active, center, knob);
     }
 
     fn end_floating_dpad(&mut self, session: &mut SessionHandle, app: &AndroidApp) {
         self.sync_floating_dpad_targets(session, &NO_DPAD_TARGETS);
         self.floating_dpad = None;
         log::info!("floating D-Pad ended");
-        update_floating_dpad_visual(
+        self.push_dpad_visual(
             app,
             false,
             TouchPoint { x: 0.0, y: 0.0 },
@@ -368,8 +400,8 @@ impl InputRouter {
 pub(super) fn configure_controls_overlay(
     app: &AndroidApp,
     settings: &nerust_settings_core::model::local::TouchOverlaySettings,
-    shoulders_visible: bool,
     zones: &str,
+    joystick: &str,
 ) {
     let visibility = match settings.visibility {
         nerust_settings_core::model::local::TouchOverlayVisibility::Always => "always",
@@ -378,28 +410,26 @@ pub(super) fn configure_controls_overlay(
     }
     .to_string();
     let opacity = i32::from(settings.opacity_percent);
-    let scale = i32::from(settings.scale_percent);
-    let offset = i32::from(settings.vertical_offset_percent);
     let haptics = settings.haptics;
     let zones = zones.to_string();
+    let joystick = joystick.to_string();
     bridge::call_on_activity(
         app,
         "configure Android controls overlay",
         move |env, activity| {
             let visibility = env.new_string(&visibility)?;
             let zones = env.new_string(&zones)?;
+            let joystick = env.new_string(&joystick)?;
             env.call_method(
                 &activity,
                 jni_str!("configureControlsOverlay"),
-                jni_sig!("(Ljava/lang/String;IIIZZLjava/lang/String;)V"),
+                jni_sig!("(Ljava/lang/String;IZZLjava/lang/String;Ljava/lang/String;)V"),
                 &[
                     jni::objects::JValue::Object(visibility.as_ref()),
                     jni::objects::JValue::Int(opacity),
-                    jni::objects::JValue::Int(scale),
-                    jni::objects::JValue::Int(offset),
                     jni::objects::JValue::Bool(haptics),
-                    jni::objects::JValue::Bool(shoulders_visible),
                     jni::objects::JValue::Object(zones.as_ref()),
+                    jni::objects::JValue::Object(joystick.as_ref()),
                 ],
             )?;
             Ok(())

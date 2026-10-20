@@ -375,12 +375,15 @@ impl AndroidFrontend {
                 uri,
                 file_name,
                 bytes,
+                digest,
             } => {
                 log::info!(
                     "handle_picker_result: worker delivered {} bytes for {uri}",
                     bytes.len()
                 );
-                if let Err(error) = self.open_rom_from_bytes(event_loop, &uri, &file_name, bytes) {
+                if let Err(error) =
+                    self.open_rom_from_bytes(event_loop, &uri, &file_name, bytes, digest)
+                {
                     log::error!("{error}");
                     self.session.report_external_error(
                         nerust_gui_shell::session::notification::FailureOrigin::Picker,

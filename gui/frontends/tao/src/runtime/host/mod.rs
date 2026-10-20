@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::{rc::Rc, sync::Arc};
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
-    event::ElementState,
+    event::{ElementState, WindowEvent},
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
 
@@ -22,17 +22,20 @@ use crate::menu::MenuSink;
 
 use super::debug_windows::DebugWindows;
 use crate::aux::focus::{AuxKind, FocusCoordinator, FocusEffect, FocusEvent};
+use crate::aux::registry::AuxRegistry;
+use crate::util::Dirty;
 
 pub(crate) mod close;
 mod commands;
 mod focus;
 mod osd;
-use osd::ModalFlight;
+use osd::{FrameSnapshot, ModalFlight};
 mod presentation;
 mod settings;
 mod window;
 
-use crate::aux::osd::HistoryWindowHandle;
+pub(crate) use window::{WakeNeed, WindowCluster};
+
 use crate::ports::DialogPorts;
 use nerust_gui_shell::session::osd::ModalSource as _;
 use nerust_gui_shell::session::osd::OsdManager;
@@ -119,40 +122,43 @@ pub(super) struct MenuSig {
 
 impl MenuSig {
     /// Cheap content fingerprint: FNV-1a over slot ids/timestamps and shortcut codes.
+    /// Integers and hashes only, never `format!`.
     pub(super) fn fingerprint(
         slots: &[nerust_persistence::model::StateSlotSummary],
         shortcuts: &[nerust_settings_core::model::input::ShortcutBinding],
     ) -> u64 {
-        let mut hash: u64 = 0xcbf29ce484222325;
-        let mut mix = |byte: u8| {
-            hash ^= u64::from(byte);
-            hash = hash.wrapping_mul(0x100000001b3);
-        };
-        for slot in slots {
-            for byte in slot.slot_id.to_le_bytes() {
-                mix(byte);
-            }
-            if let Ok(age) = slot.saved_at.duration_since(std::time::UNIX_EPOCH) {
-                for byte in age.as_secs().to_le_bytes() {
-                    mix(byte);
+        use std::hash::{Hash, Hasher};
+        struct Fnv(u64);
+        impl Hasher for Fnv {
+            fn write(&mut self, bytes: &[u8]) {
+                for byte in bytes {
+                    self.0 ^= u64::from(*byte);
+                    self.0 = self.0.wrapping_mul(0x100000001b3);
                 }
             }
-            for byte in slot.emulator_version.as_bytes() {
-                mix(*byte);
+            fn finish(&self) -> u64 {
+                self.0
             }
+        }
+        let mut hasher = Fnv(0xcbf29ce484222325);
+        for slot in slots {
+            slot.slot_id.hash(&mut hasher);
+            if let Ok(age) = slot.saved_at.duration_since(std::time::UNIX_EPOCH) {
+                age.as_secs().hash(&mut hasher);
+            }
+            slot.emulator_version.hash(&mut hasher);
         }
         for shortcut in shortcuts {
-            for byte in format!("{:?}{:?}", shortcut.action, shortcut.key).bytes() {
-                mix(byte);
-            }
+            shortcut.action.hash(&mut hasher);
+            shortcut.key.hash(&mut hasher);
         }
-        hash
+        hasher.finish()
     }
 }
 
-/// Scalar snapshot for the cheap chrome gate. One struct instead
-/// of eight positional scalars at the call site.
-pub(super) struct ChromeScalars<'a> {
+/// Scalar snapshot for the cheap chrome gate: title is gated
+/// separately, so it never blocks here.
+pub(super) struct ChromeScalars {
     pub(super) loaded: bool,
     pub(super) paused: bool,
     pub(super) settings_open: bool,
@@ -160,21 +166,20 @@ pub(super) struct ChromeScalars<'a> {
     pub(super) active_slot: Option<u64>,
     pub(super) slots_len: usize,
     pub(super) shortcuts_len: usize,
-    pub(super) title: &'a str,
 }
 
 /// Chrome sync state: last pushed menu signature plus last pushed window title.
 #[derive(Debug, Default)]
 pub(super) struct ChromeSync {
     last_menu_sig: Option<MenuSig>,
-    last_title: crate::aux::focus::Memo<String>,
+    last_title: Dirty<String>,
 }
 
 impl ChromeSync {
     fn new() -> Self {
         Self {
             last_menu_sig: None,
-            last_title: crate::aux::focus::Memo::new(),
+            last_title: Dirty::new(),
         }
     }
 
@@ -189,10 +194,7 @@ impl ChromeSync {
                 && sig.active_slot == scalars.active_slot
                 && sig.slots.len() == scalars.slots_len
                 && sig.shortcuts.len() == scalars.shortcuts_len
-        }) && self
-            .last_title
-            .get()
-            .is_some_and(|last| last == scalars.title)
+        })
     }
 
     /// Exact gate: generation first, then slice compare. True means
@@ -224,35 +226,14 @@ impl ChromeSync {
     }
 }
 
-/// Settings-window cluster: handle plus its resume bookkeeping. Single
-/// owner for the settings-modal domain; the open truth is the handle.
+/// Settings-window cluster: the resume protocol only. The window
+/// itself lives in the aux registry; open truth is `contains(Settings)`.
 pub(super) struct SettingsHost {
-    window: Option<crate::aux::settings::window::SettingsWindowHandle>,
     resume_after: bool,
 }
 
 impl SettingsHost {
-    /// Seat a newly created settings window (single writer: the open
-    /// path in `HostState::open_settings_window`).
-    pub(super) fn open(&mut self, handle: crate::aux::settings::window::SettingsWindowHandle) {
-        self.window = Some(handle);
-    }
-
-    /// Close teardown: drop the handle and clear the resume flag, so
-    /// no stale resume leaks past window close.
-    pub(super) fn close_all(&mut self) {
-        self.window.take();
-        self.resume_after = false;
-    }
-
-    /// Whether the settings window is currently open. Single truth:
-    /// no bool shadow to drift from the handle.
-    pub(super) fn is_open(&self) -> bool {
-        self.window.is_some()
-    }
-
-    /// Record whether closing must resume the session (test and the
-    /// open path only; teardown consumes it via `take_resume_after`).
+    /// Record whether closing must resume the session (open path only).
     pub(super) fn set_resume_after(&mut self, resume: bool) {
         self.resume_after = resume;
     }
@@ -262,83 +243,74 @@ impl SettingsHost {
         std::mem::take(&mut self.resume_after)
     }
 
-    /// Take the settings window for close teardown, if one is open.
-    /// Single writer alongside `open` (see `HostState::open_settings_window`).
-    fn take(&mut self) -> Option<crate::aux::settings::window::SettingsWindowHandle> {
-        self.window.take()
-    }
-
-    /// Borrow the settings window for event routing, if one is open.
-    fn borrow_mut(&mut self) -> Option<&mut crate::aux::settings::window::SettingsWindowHandle> {
-        self.window.as_mut()
+    /// Close teardown: clear the resume flag, so no stale
+    /// resume leaks past window close.
+    pub(super) fn close_all(&mut self) {
+        self.resume_after = false;
     }
 }
 
 impl SettingsHost {
     fn new() -> Self {
         Self {
-            window: None,
             resume_after: false,
         }
     }
 }
 
-/// OSD service: one owner for the overlay domain.
-/// `commands.rs` routes through the ports below, never the fields.
-pub(super) struct OsdService {
-    pub(super) manager: OsdManager,
+/// OSD layer sync: rasterizer, presenter, and live-layer state.
+pub(super) struct OsdLayerSync {
     pub(super) raster: nerust_render_osd::OsdRaster,
-    /// Owns the whole OSD sync fingerprint; this host only rasterizes the plan.
     pub(super) presenter: nerust_gui_shell::session::osd::OsdPresenter,
-    /// Last sync left a layer on the renderer; `Clear` needs it to know a layer exists.
     pub(super) layer_live: bool,
-    /// Last applied edge strip; unchanged strips skip the renderer call.
-    pub(super) last_strip: crate::aux::focus::Memo<nerust_render_traits::ReservedStrip>,
-    pub(super) history_window: Option<HistoryWindowHandle>,
-    /// In-flight async error dialog plus resume bookkeeping.
-    pub(super) modal_flight: Option<ModalFlight>,
+    pub(super) last_strip: Dirty<nerust_render_traits::ReservedStrip>,
+    pub(super) last_sync_geometry: Dirty<(u32, u32, nerust_gui_shell::session::osd::OsdChrome)>,
+}
+
+/// History viewer sync: content key only. The window lives in the registry.
+pub(super) struct HistoryViewer {
+    pub(super) sync_key: Dirty<(u64, nerust_settings_core::model::language::AppLanguage)>,
+}
+
+/// Modal queue: error batches plus the in-flight dialog.
+pub(super) struct ModalQueue {
+    pub(super) manager: OsdManager,
+    pub(super) flight: Option<ModalFlight>,
     pub(super) resume_after_modal: bool,
-    /// Last synced history content: sequence plus language (gated via [`Memo`]).
-    pub(super) history_sync_key:
-        crate::aux::focus::Memo<(u64, nerust_settings_core::model::language::AppLanguage)>,
-    /// Last geometry the presenter ran with: surface size plus chrome.
-    pub(super) last_sync_geometry:
-        crate::aux::focus::Memo<(u32, u32, nerust_gui_shell::session::osd::OsdChrome)>,
+}
+
+/// OSD service: layer sync plus history plus modal queue.
+pub(super) struct OsdService {
+    pub(super) layer: OsdLayerSync,
+    pub(super) history: HistoryViewer,
+    pub(super) modal: ModalQueue,
 }
 
 impl OsdService {
-    /// Borrow the history window for event routing, if one is open.
-    pub(super) fn history_window_mut(
-        &mut self,
-    ) -> Option<&mut crate::aux::osd::HistoryWindowHandle> {
-        self.history_window.as_mut()
-    }
-
-    /// Close teardown: drop the history viewer, sync memo, dialog, and resume flag.
+    /// Close teardown: sync memos, dialog, and resume flag.
     pub(super) fn close_all(&mut self) {
-        self.history_window.take();
-        self.history_sync_key.clear();
-        self.modal_flight.take();
-        self.resume_after_modal = false;
+        self.history.sync_key.clear();
+        self.modal.flight.take();
+        self.modal.resume_after_modal = false;
     }
 
     /// Queued error batches awaiting a dialog (test read;
     /// production drains through the modal ports).
     #[cfg(test)]
     pub(super) fn modal_pending(&self) -> usize {
-        self.manager.modal_pending()
+        self.modal.manager.modal_pending()
     }
 
     /// Test seam: simulate a dialog thread that died before acking.
     #[cfg(test)]
     pub(super) fn inject_modal_flight_for_test(&mut self, flight: ModalFlight) {
-        self.modal_flight = Some(flight);
+        self.modal.flight = Some(flight);
     }
 
     /// Whether an error dialog is currently showing (test read).
     #[cfg(test)]
     pub(super) fn modal_showing(&self) -> bool {
-        self.modal_flight.is_some()
+        self.modal.flight.is_some()
     }
 
     /// Last synced history content key (test read).
@@ -346,40 +318,74 @@ impl OsdService {
     pub(super) fn history_key(
         &self,
     ) -> Option<(u64, nerust_settings_core::model::language::AppLanguage)> {
-        self.history_sync_key.get().copied()
+        self.history.sync_key.get().copied()
     }
 
     /// Port for the modal drain: next queued error batch, if any and
     /// no dialog is showing.
     pub(super) fn take_modal_batch(&mut self) -> Option<String> {
-        if self.modal_flight.is_some() {
+        if self.modal.flight.is_some() {
             return None;
         }
-        self.manager.take_modal_batch()
+        self.modal.manager.take_modal_batch()
     }
 
     /// Port for the modal drain: close the acked batch.
     pub(super) fn modal_closed(&mut self) {
-        self.manager.modal_closed();
+        self.modal.manager.modal_closed();
     }
 
     /// Port for the modal drain: queued batch count.
     pub(super) fn modal_queue_len(&self) -> usize {
-        self.manager.modal_pending()
+        self.modal.manager.modal_pending()
     }
 
     fn new() -> Self {
         Self {
-            manager: OsdManager::new(),
-            raster: nerust_render_osd::OsdRaster::new(),
-            presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
-            layer_live: false,
-            last_strip: crate::aux::focus::Memo::new(),
-            history_window: None,
-            modal_flight: None,
-            resume_after_modal: false,
-            history_sync_key: crate::aux::focus::Memo::new(),
-            last_sync_geometry: crate::aux::focus::Memo::new(),
+            layer: OsdLayerSync {
+                raster: nerust_render_osd::OsdRaster::new(),
+                presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
+                layer_live: false,
+                last_strip: Dirty::new(),
+                last_sync_geometry: Dirty::new(),
+            },
+            history: HistoryViewer {
+                sync_key: Dirty::new(),
+            },
+            modal: ModalQueue {
+                manager: OsdManager::new(),
+                flight: None,
+                resume_after_modal: false,
+            },
+        }
+    }
+}
+
+/// One capture per entry point: settings, tick, slots, shortcuts, plus the OSD frame.
+/// Built once, threaded by reference through the whole pass.
+pub(crate) struct FrameCtx {
+    pub(super) settings: nerust_gui_runtime::settings::SettingsSnapshot,
+    pub(super) tick: nerust_gui_shell::session::osd::TickMetrics,
+    pub(super) slots: Arc<[nerust_persistence::model::StateSlotSummary]>,
+    pub(super) shortcuts: Arc<[nerust_settings_core::model::input::ShortcutBinding]>,
+    pub(super) frame: FrameSnapshot,
+}
+
+impl FrameCtx {
+    pub(super) fn capture(session: &SessionHandle) -> Self {
+        let settings = session.settings_snapshot().clone();
+        let tick = session.tick_metrics();
+        let slots: Arc<[nerust_persistence::model::StateSlotSummary]> =
+            session.slots().to_vec().into();
+        let shortcuts: Arc<[nerust_settings_core::model::input::ShortcutBinding]> =
+            settings.shared.input.shortcuts.keyboard.clone().into();
+        let frame = FrameSnapshot::capture(session);
+        Self {
+            settings,
+            tick,
+            slots,
+            shortcuts,
+            frame,
         }
     }
 }
@@ -433,19 +439,16 @@ impl DebugOrchestrator {
         self.live_flight.is_some()
     }
 
-    pub(super) fn close_all(&mut self) {
-        self.windows.close_all();
+    /// Drop in-flight async fetches (close teardown; handles live in the registry).
+    pub(super) fn close_flights(&mut self) {
         self.drain_flight.take();
         self.live_flight.take();
     }
 }
 
 pub(crate) struct HostState {
-    /// Owned native window. All dead-handle checks flow through
-    /// [`close::LiveWindow`]; no bare `Arc<TaoWindow>` escapes.
-    window: Option<close::LiveWindow>,
-    /// Creation failure, close idempotence, and native liveness.
-    close: close::CloseGuard,
+    /// Main window cluster: handle, liveness, surface target.
+    pub(super) windows: WindowCluster,
     /// Session handle. Private: `runtime` reaches session state only
     /// through the narrow accessors and drain/chrome methods below.
     session: SessionHandle,
@@ -454,26 +457,16 @@ pub(crate) struct HostState {
     dialogs: std::sync::Arc<dyn DialogPorts>,
     shell: NativeShellState,
     settings: SettingsHost,
-    pending_fullscreen_sync: Option<bool>,
+    /// Aux-window route table: every secondary window lives here.
+    pub(super) aux: AuxRegistry,
     /// Focus truth plus the deferred auto-pause protocol; never poked field by field.
     focus: FocusCoordinator,
     /// Aux-window cluster plus in-flight async flights.
-    debug: DebugOrchestrator,
-    /// OSD overlay domain. Private: `commands.rs` routes through the
-    /// [`OsdService`] ports; the per-frame sync stays in `host::osd`.
+    pub(super) debug: DebugOrchestrator,
+    /// OSD overlay domain: layer sync plus history plus modal queue.
     osd: OsdService,
-    /// Last pushed menu signature plus window title, each with its
-    /// own gate. Private: presentation syncs through [`ChromeSync`].
+    /// Last pushed menu signature plus window title, each with its own gate.
     chrome: ChromeSync,
-    /// Linux render target below the muda menubar (`None` elsewhere).
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
-    ))]
-    content_area: Option<crate::gtk_embed::ContentArea>,
 }
 
 impl HostState {
@@ -509,28 +502,24 @@ impl HostState {
             e.to_string()
         })?;
         Ok(Self {
-            window: None,
-            close: close::CloseGuard::new(),
+            windows: WindowCluster::new(),
             session,
             ctx,
             app_menu,
             dialogs,
             shell: NativeShellState::new(),
             settings: SettingsHost::new(),
-            pending_fullscreen_sync: None,
+            aux: AuxRegistry::new(),
             focus: FocusCoordinator::new(),
             debug: DebugOrchestrator::new(),
             osd: OsdService::new(),
             chrome: ChromeSync::new(),
-            #[cfg(any(
-                target_os = "linux",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "netbsd",
-                target_os = "openbsd"
-            ))]
-            content_area: None,
         })
+    }
+
+    /// One capture for the whole pass: built once per entry point, threaded by `&`.
+    pub(crate) fn frame_ctx(&self) -> FrameCtx {
+        FrameCtx::capture(&self.session)
     }
 
     pub(crate) fn gpu_factory(&self) -> &Rc<dyn GpuFactory> {
@@ -547,12 +536,12 @@ impl HostState {
 
     #[cfg(test)]
     pub(crate) fn window(&self) -> Option<&close::LiveWindow> {
-        self.window.as_ref()
+        self.windows.live()
     }
 
     /// Shared native window for renderer attach paths.
     pub(crate) fn window_arc(&self) -> Option<Arc<TaoWindow>> {
-        self.window.as_ref().map(|w| w.shared())
+        self.windows.live().map(|w| w.shared())
     }
 
     /// Narrow orchestrator access for the `runtime` drain router.
@@ -596,94 +585,41 @@ impl HostState {
         self.focus.main_active()
     }
 
-    /// Settings dialog owns the screen iff its handle lives.
-    /// Single truth: no bool shadow to drift from the handle.
+    /// Kind of the aux window behind this id, if registered.
+    pub(super) fn aux_kind_of(&self, id: WindowId) -> Option<AuxKind> {
+        self.aux.kind_of(id)
+    }
+
+    /// Pump one native event through the matching aux entry.
+    pub(super) fn aux_on_event(
+        &mut self,
+        kind: AuxKind,
+        event: WindowEvent,
+    ) -> Option<crate::aux::registry::AuxOutcome> {
+        let id = self.aux_id(kind)?;
+        self.aux.on_event(id, event)
+    }
+
+    /// Native id of the open window of this kind, if any.
+    fn aux_id(&self, kind: AuxKind) -> Option<WindowId> {
+        self.aux.id_of(kind)
+    }
+
+    /// Render the aux window of this kind, if open.
+    pub(super) fn render_aux(&mut self, kind: AuxKind) {
+        self.aux.render_kind(kind);
+    }
+
+    /// Settings window owns the screen iff registered.
     pub(crate) fn settings_open(&self) -> bool {
-        self.settings.is_open()
-    }
-
-    /// Take the settings window for close teardown, if one is open.
-    /// Single writer alongside `open_settings_window`.
-    pub(super) fn take_settings_window(
-        &mut self,
-    ) -> Option<crate::aux::settings::window::SettingsWindowHandle> {
-        self.settings.take()
-    }
-
-    /// Close-request flag raised by the settings window itself.
-    /// Narrow read: dispatch checks it without borrowing the handle.
-    pub(super) fn settings_close_requested(&self) -> bool {
-        use crate::aux::focus::AuxWindow;
-        self.settings
-            .window
-            .as_ref()
-            .is_some_and(|handle| handle.close_requested())
-    }
-
-    /// Run `f` against the settings window, if one is open. The borrow never escapes.
-    pub(super) fn with_settings_window<R>(
-        &mut self,
-        f: impl FnOnce(&mut crate::aux::settings::window::SettingsWindowHandle) -> R,
-    ) -> Option<R> {
-        self.settings.borrow_mut().map(f)
-    }
-
-    /// Render the settings window, if one is open.
-    pub(super) fn render_settings_window(&mut self) {
-        use crate::aux::focus::AuxWindow;
-        if let Some(handle) = self.settings.borrow_mut() {
-            handle.render();
-        }
-    }
-
-    /// Render the history window, if one is open.
-    pub(super) fn render_history_window(&mut self) {
-        use crate::aux::focus::AuxWindow;
-        if let Some(handle) = self.osd.history_window_mut() {
-            handle.render();
-        }
-    }
-
-    /// Run `f` against the debugger window, if one is open. Narrow
-    /// port replacing `debug_window_mut`: the borrow never escapes.
-    pub(super) fn with_debug_window<R>(
-        &mut self,
-        f: impl FnOnce(&mut crate::aux::debug::DebugWindowHandle) -> R,
-    ) -> Option<R> {
-        self.debug.windows_mut().debug_window_mut().map(f)
-    }
-
-    /// Run `f` against the PPU viewer, if one is open. Narrow port
-    /// replacing `ppu_window_mut`: the borrow never escapes.
-    pub(super) fn with_ppu_window<R>(
-        &mut self,
-        f: impl FnOnce(&mut crate::aux::ppu::PpuWindowHandle) -> R,
-    ) -> Option<R> {
-        self.debug.windows_mut().ppu_window_mut().map(f)
-    }
-
-    /// Render the debugger window, if one is open.
-    pub(super) fn render_debug_window(&mut self) {
-        use crate::aux::focus::AuxWindow;
-        if let Some(handle) = self.debug.windows_mut().debug_window_mut() {
-            handle.render();
-        }
-    }
-
-    /// Render the PPU viewer, if one is open.
-    pub(super) fn render_ppu_window(&mut self) {
-        use crate::aux::focus::AuxWindow;
-        if let Some(handle) = self.debug.windows_mut().ppu_window_mut() {
-            handle.render();
-        }
+        self.aux.contains(AuxKind::Settings)
     }
 
     /// Close the settings window and rebuild the renderer when the render target changed.
-    pub(super) fn close_settings_and_maybe_rebuild(
-        &mut self,
-        handle: crate::aux::settings::window::SettingsWindowHandle,
-    ) -> bool {
-        let plan = self.close_settings_window(handle);
+    pub(super) fn close_settings_and_maybe_rebuild(&mut self) -> bool {
+        let pending = self.aux.settings_take_pending();
+        self.aux.remove_kind(AuxKind::Settings);
+        let plan = self.close_settings_window(pending);
         let rebuild = plan.is_some_and(|p| p.renderer_needs_rebuild);
         self.request_redraw();
         rebuild
@@ -693,33 +629,25 @@ impl HostState {
     /// guard: double-delivered close events must flush exactly once.
     #[cfg(test)]
     pub(crate) fn close_exited(&self) -> bool {
-        self.close.exited()
+        self.windows.close_exited()
     }
 }
 
 /// `HostState` orchestration over the [`DebugOrchestrator`].
 impl HostState {
-    pub(crate) fn is_debug_window(&self, window_id: WindowId) -> bool {
-        self.debug.windows().is_debug_window(window_id)
-    }
-
-    pub(crate) fn is_ppu_window(&self, window_id: WindowId) -> bool {
-        self.debug.windows().is_ppu_window(window_id)
-    }
-
     pub(crate) fn is_debug_open(&self) -> bool {
-        self.debug.windows().is_debug_open()
+        self.aux.contains(AuxKind::Debug)
     }
 
     pub(crate) fn is_ppu_open(&self) -> bool {
-        self.debug.windows().is_ppu_open()
+        self.aux.contains(AuxKind::Ppu)
     }
 
     /// Narrow shared bridge for PPU-viewer creation. Cloned `Arc`, never a lock.
     pub(super) fn debug_bridge_for_ppu(
         &self,
     ) -> Option<std::sync::Arc<crate::aux::bridge::DebugBridge>> {
-        self.debug.windows().shared_bridge_for_ppu()
+        self.aux.debug_bridge()
     }
 
     pub(crate) fn debug_window_pos(&self) -> Option<(i32, i32)> {
@@ -747,17 +675,28 @@ impl HostState {
     }
 
     pub(super) fn set_debug_window(&mut self, handle: crate::aux::debug::DebugWindowHandle) {
-        self.debug.windows_mut().set_debug_window(handle);
+        self.aux.insert(Box::new(handle));
     }
 
     pub(super) fn set_ppu_window(&mut self, handle: crate::aux::ppu::PpuWindowHandle) {
-        self.debug.windows_mut().set_ppu_window(handle);
+        self.aux.insert(Box::new(handle));
+    }
+
+    pub(super) fn set_history_window(&mut self, handle: crate::aux::osd::HistoryWindowHandle) {
+        self.aux.insert(Box::new(handle));
+    }
+
+    pub(super) fn set_settings_window(
+        &mut self,
+        handle: crate::aux::settings::window::SettingsWindowHandle,
+    ) {
+        self.aux.insert(Box::new(handle));
     }
 
     pub(super) fn take_debug_batch(
         &mut self,
     ) -> Option<(bool, Vec<nerust_gui_shell::debug::DebugAction>)> {
-        self.debug.windows_mut().take_debug_batch()
+        self.aux.debug_take_requests()
     }
 
     pub(super) fn last_drain_paused(&self) -> Option<bool> {
@@ -772,24 +711,26 @@ impl HostState {
         self.debug.windows_mut().live_due(now)
     }
 
+    /// Live-tick interest handle for the tick thread (parks when clear).
+    pub(super) fn live_tick_wanted(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.debug.windows().live_wanted()
+    }
+
     pub(super) fn next_live_tick(&self) -> Option<std::time::Instant> {
         self.debug.windows().next_live_tick()
     }
 
     pub(super) fn drop_debug_window(&mut self) {
-        self.debug.windows_mut().drop_debug_window();
+        self.aux.remove_kind(AuxKind::Debug);
     }
 
     pub(super) fn drop_ppu_window(&mut self) {
-        self.debug.windows_mut().drop_ppu_window();
+        self.aux.remove_kind(AuxKind::Ppu);
     }
 
-    pub(super) fn debug_close_requested(&self) -> bool {
-        self.debug.windows().debug_close_requested()
-    }
-
-    pub(super) fn ppu_close_requested(&self) -> bool {
-        self.debug.windows().ppu_close_requested()
+    pub(super) fn drop_history_window(&mut self) {
+        self.aux.remove_kind(AuxKind::History);
+        self.osd.history.sync_key.clear();
     }
 
     /// Whether a live-images flight is still pending (control-flow
@@ -913,7 +854,8 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         assert!(!host.session().tick_metrics().loaded);
-        host.sync_menu_state();
+        let ctx = host.frame_ctx();
+        host.sync_menu_state(&ctx);
         assert_eq!(
             support.menu.updates(),
             [crate::test_menu::MenuSyncSnapshot {

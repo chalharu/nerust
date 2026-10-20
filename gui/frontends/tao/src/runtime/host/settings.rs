@@ -21,7 +21,8 @@ impl HostState {
         if result.scaling_changed {
             self.update_window_size_for_scaling();
         }
-        self.sync_chrome(true);
+        let ctx = self.frame_ctx();
+        self.sync_chrome(&ctx, true);
         Ok(result)
     }
 
@@ -34,7 +35,8 @@ impl HostState {
         if should_resume {
             self.resume();
         } else {
-            self.sync_chrome(false);
+            let ctx = self.frame_ctx();
+            self.sync_chrome(&ctx, false);
         }
     }
 
@@ -48,7 +50,8 @@ impl HostState {
         if resume_after {
             self.pause();
         } else {
-            self.sync_menu_state();
+            let ctx = self.frame_ctx();
+            self.sync_menu_state(&ctx);
         }
 
         match opener.create_settings(
@@ -56,14 +59,15 @@ impl HostState {
             self.ctx.registry.clone(),
             self.ctx.audio_registry.clone(),
         ) {
-            Some(handle) => self.settings.open(handle),
+            Some(handle) => self.set_settings_window(handle),
             None => {
                 log::error!("failed to open settings window");
                 self.settings.close_all();
                 if resume_after {
                     self.resume();
                 } else {
-                    self.sync_menu_state();
+                    let ctx = self.frame_ctx();
+                    self.sync_menu_state(&ctx);
                 }
             }
         }
@@ -71,10 +75,8 @@ impl HostState {
 
     pub(crate) fn close_settings_window(
         &mut self,
-        mut handle: crate::aux::settings::window::SettingsWindowHandle,
+        pending: Option<SettingsSnapshot>,
     ) -> Option<SettingsResult> {
-        let pending = handle.take_pending_apply();
-        drop(handle);
         self.on_settings_closed();
         if let Some(snapshot) = pending {
             match self.apply_settings(snapshot) {
@@ -95,8 +97,8 @@ mod tests {
 
     #[test]
     fn open_settings_attempt_records_request_and_stays_closed() {
-        // Single truth is the handle: headless open fails, so no handle
-        // exists and the guard stays closed.
+        // Single truth is the registry: headless open fails, so no
+        // handle exists and the guard stays closed.
         let support = TestHost::new();
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");

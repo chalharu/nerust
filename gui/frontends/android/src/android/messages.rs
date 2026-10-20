@@ -34,12 +34,12 @@ pub(crate) enum RomPickerResult {
     Cancelled,
     Selected(String),
     TreeSelected(String),
-    /// Worker-thread completion: the document bytes were fetched off the
-    /// event-loop thread; the event thread only dispatches this buffer.
+    /// Worker-thread completion: bytes fetched off-thread; digest rides along.
     RomBytes {
         uri: String,
         file_name: String,
         bytes: Vec<u8>,
+        digest: [u8; 32],
     },
     /// Worker-thread failure: surfaces on the event thread through the
     /// normal picker-error path (error dialog queue).

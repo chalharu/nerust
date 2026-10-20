@@ -6,7 +6,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use nerust_core_traits::debugger::SpaceId;
+use nerust_core_traits::debugger::{HexRow, SpaceId};
 use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::model::language::AppLanguage;
@@ -20,18 +20,19 @@ pub(crate) fn lock_recovered<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     })
 }
 
-/// Snapshot returned by [`DebugBridge::drain_snapshot`]: nav, anchors,
-/// watch/freeze/reg-target, previous rows, and the PPU-open flag.
-pub(crate) type DrainSnapshot = (
-    Option<SpaceId>,
-    u32,
-    Option<u32>,
-    Option<u32>,
-    Option<(u32, u8)>,
-    Option<&'static str>,
-    std::sync::Arc<[nerust_core_traits::debugger::HexRow]>,
-    bool,
-);
+/// Narrow drain snapshot: nav, anchors, watch/freeze/reg-target,
+/// previous rows, plus the PPU-open flag.
+#[derive(Debug, Clone)]
+pub(crate) struct DrainSnapshot {
+    pub space: Option<SpaceId>,
+    pub mem_addr: u32,
+    pub dis_addr: Option<u32>,
+    pub watch: Option<u32>,
+    pub freeze: Option<(u32, u8)>,
+    pub reg_target: Option<&'static str>,
+    pub prev_rows: std::sync::Arc<[HexRow]>,
+    pub ppu_open: bool,
+}
 
 pub(crate) struct DebugBridge {
     pub(crate) nav: Mutex<NavState>,
@@ -95,27 +96,27 @@ impl DebugBridge {
         (lock_recovered(&self.nav), lock_recovered(&self.display))
     }
 
-    pub(crate) fn selected_space(&self) -> Option<SpaceId> {
-        let idx = lock_recovered(&self.nav).space_idx();
-        self.spaces.get(idx).map(|(id, _, _)| *id)
-    }
-
-    /// Narrow drain snapshot: nav plus small fields plus previous dump rows.
-    /// Lock order inside: nav, then display, then one small field at a time.
+    /// Narrow drain snapshot: one nav lock section, then one small field at a time.
     pub(crate) fn drain_snapshot(&self, ppu_open: bool) -> DrainSnapshot {
-        let nav = lock_recovered(&self.nav);
-        let mem_addr = nav.mem_addr();
-        let dis_addr = nav.dis_addr();
-        drop(nav);
-        let space = self.selected_space();
-        let prev: std::sync::Arc<[nerust_core_traits::debugger::HexRow]> =
-            lock_recovered(&self.display).dump_rows.clone().into();
+        let (space_idx, mem_addr, dis_addr) = {
+            let nav = lock_recovered(&self.nav);
+            (nav.space_idx(), nav.mem_addr(), nav.dis_addr())
+        };
+        let space = self.spaces.get(space_idx).map(|(id, _, _)| *id);
+        let prev: std::sync::Arc<[HexRow]> = lock_recovered(&self.display).dump_rows.clone().into();
         let watch = *lock_recovered(&self.watch);
         let freeze = *lock_recovered(&self.freeze);
         let reg_target = *lock_recovered(&self.reg_target);
-        (
-            space, mem_addr, dis_addr, watch, freeze, reg_target, prev, ppu_open,
-        )
+        DrainSnapshot {
+            space,
+            mem_addr,
+            dis_addr,
+            watch,
+            freeze,
+            reg_target,
+            prev_rows: prev,
+            ppu_open,
+        }
     }
 
     /// Apply a finished live-images fetch: images land when newer, chrome only while running.
@@ -217,13 +218,10 @@ impl DebugBridge {
     }
 }
 
-/// Narrow host-drain port over [`DebugBridge`]. `drain.rs` takes
-/// `&dyn BridgeLock` and never locks `handle.bridge.display` directly.
+/// Narrow host-drain port over [`DebugBridge`]: snapshot plus batch take.
 pub(crate) trait BridgeLock {
     fn drain_snapshot(&self, ppu_open: bool) -> DrainSnapshot;
     fn take_debug_batch(&self) -> (bool, Vec<DebugAction>);
-    /// Contended lock names, if any (see `try_lock_audit`).
-    fn try_lock_audit(&self) -> Vec<&'static str>;
 }
 
 impl BridgeLock for DebugBridge {
@@ -237,10 +235,6 @@ impl BridgeLock for DebugBridge {
                 .swap(false, std::sync::atomic::Ordering::SeqCst),
             self.take_requests(),
         )
-    }
-
-    fn try_lock_audit(&self) -> Vec<&'static str> {
-        DebugBridge::try_lock_audit(self)
     }
 }
 
@@ -305,9 +299,9 @@ mod tests {
     }
 
     #[test]
-    fn selected_space_and_name_follow_nav_index() {
+    fn drain_snapshot_space_and_name_follow_nav_index() {
         let bridge = test_bridge();
-        assert_eq!(bridge.selected_space(), Some(SpaceId(0)));
+        assert_eq!(bridge.drain_snapshot(false).space, Some(SpaceId(0)));
         assert_eq!(bridge.selected_name(), Some("Memory".to_string()));
     }
 

@@ -12,12 +12,14 @@ use iced_winit::program::{self, Program};
 use tao::event_loop::EventLoopWindowTarget;
 
 use super::bridge::{DebugBridge, lock_recovered};
-use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
+use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
 
 /// Initial PPU viewer window size (verified Xvfb fit).
 pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
 
-use super::focus::AuxWindow as _;
+use super::focus::{AuxRender as _, AuxShellRef};
+
+use super::registry::AuxController;
 use nerust_gui_viewmodel::debugger::scale2x_nearest;
 
 /// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
@@ -131,13 +133,22 @@ impl Program for PpuProgram {
                 bridge.ppu_invalidated.store(true, Ordering::Release);
             }
             PpuMessage::Sync => {
-                let display = lock_recovered(&bridge.display);
+                // Clone the source under the lock, then scale lock-free:
+                // the 2x derivation must never hold the display guard.
+                let (images, generation, panels) = {
+                    let display = lock_recovered(&bridge.display);
+                    (
+                        display.images.clone(),
+                        display.images_gen,
+                        nerust_gui_viewmodel::debugger::format_panels(&display.panels),
+                    )
+                };
                 let current = Arc::clone(&lock_recovered(&state.snapshot));
                 // Sync swaps once per drain: scaled re-derived only on
                 // generation change, hover preserved as-is.
-                let scaled: ScaledPictures = if current.source_gen != display.images_gen {
-                    let mut scaled = Vec::with_capacity(display.images.len());
-                    for (label, width, height, rgba) in &display.images {
+                let scaled: ScaledPictures = if current.source_gen != generation {
+                    let mut scaled = Vec::with_capacity(images.len());
+                    for (label, width, height, rgba) in &images {
                         let bytes = scale2x_nearest(rgba, *width, *height);
                         scaled.push((
                             label.clone(),
@@ -150,11 +161,7 @@ impl Program for PpuProgram {
                 } else {
                     Arc::clone(&current.scaled)
                 };
-                let generation = display.images_gen;
-                let panels: Arc<str> = Arc::from(nerust_gui_viewmodel::debugger::format_panels(
-                    &display.panels,
-                ));
-                drop(display);
+                let panels: Arc<str> = Arc::from(panels);
                 *lock_recovered(&state.snapshot) = Arc::new(PpuSnapshot {
                     scaled,
                     panels,
@@ -242,13 +249,14 @@ impl PpuWindowHandle {
         use nerust_settings_core::i18n::{UiText, text as ui_text};
         let language = bridge.language;
         let title = ui_text(language, UiText::PpuViewer).to_string();
-        let scaffold = WindowScaffold::open(
+        let surface = AuxSurface::open(
             event_loop,
             &title,
             PPU_WINDOW_SIZE,
             None,
             position,
             "PPU viewer window",
+            Arc::new(AtomicBool::new(false)),
         )
         .map_err(|error| {
             // Typed scaffold failure: surface the tagged native detail here.
@@ -260,11 +268,7 @@ impl PpuWindowHandle {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let shell = crate::aux::shell::AuxShell::assemble(
-            scaffold,
-            instance,
-            Arc::new(AtomicBool::new(false)),
-        );
+        let shell = crate::aux::shell::AuxShell::assemble(surface, instance);
         // The viewer opens on demand from the debugger toolbar: take
         // focus so keyboard and wheel go straight to the tiles.
         shell.focus_window();
@@ -281,47 +285,30 @@ impl PpuWindowHandle {
     }
 }
 
-impl super::focus::AuxWindow for PpuWindowHandle {
+impl AuxShellRef for PpuWindowHandle {
     fn kind(&self) -> super::focus::AuxKind {
         super::focus::AuxKind::Ppu
     }
 
-    fn tao_window_id(&self) -> tao::window::WindowId {
-        self.shell.tao_window_id()
+    fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
+        &self.shell
     }
 
-    fn close_requested(&self) -> bool {
-        self.shell.close_requested()
+    fn shell_mut(&mut self) -> &mut dyn crate::aux::shell::AuxShellOps {
+        &mut self.shell
     }
+}
 
-    fn focus_window(&self) {
-        self.shell.focus_window();
-    }
-
-    fn request_redraw(&self) {
-        self.shell.request_redraw();
-    }
-
-    fn handle_common(&mut self, event: &tao::event::WindowEvent) {
-        self.shell.handle_common_event(event);
-    }
-
-    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
-        self.shell.feed_tao_event(event)
-    }
-
-    fn render(&mut self) {
-        let tag = self.kind().log_tag();
-        self.shell.render(tag);
+impl AuxController for PpuWindowHandle {
+    fn sync_view(&mut self) {
+        self.sync_from_bridge();
     }
 }
 
 impl super::focus::AuxEvents for PpuWindowHandle {
     fn handle(&mut self, mapped: iced::Event) -> bool {
-        let mut messages = Vec::new();
-        let outcome = self.shell.pump_frame(mapped, &mut messages);
         self.shell
-            .finish(outcome, messages, &self.bridge.ppu_invalidated)
+            .pump_finish(mapped, None, &self.bridge.ppu_invalidated)
     }
 }
 

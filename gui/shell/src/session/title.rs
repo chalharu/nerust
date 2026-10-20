@@ -9,25 +9,20 @@ pub struct TitleInput<'a> {
     pub slot_count: usize,
 }
 
-pub fn window_title(
-    paused: bool,
-    loaded: bool,
-    system_name: Option<&str>,
-    active_slot: Option<u64>,
-    slot_count: usize,
-) -> String {
-    window_title_input(TitleInput {
-        paused,
-        loaded,
-        system_name,
-        active_slot,
-        slot_count,
-    })
+/// Stable state key for title caching: pause/load quadrants as one static.
+/// Frontends key their own caches on this instead of formatting first.
+pub fn title_state_key(paused: bool, loaded: bool) -> &'static str {
+    match (paused, loaded) {
+        (true, true) => "paused-loaded",
+        (true, false) => "paused-unloaded",
+        (false, true) => "running-loaded",
+        (false, false) => "running-unloaded",
+    }
 }
 
-/// Structured form of [`window_title`]: single source for the text,
-/// so positional call sites cannot misalign the flags.
-pub fn window_title_input(input: TitleInput<'_>) -> String {
+/// Single title builder: structured input in, display text out.
+/// All title entry points delegate here.
+pub fn title(input: TitleInput<'_>) -> String {
     let label = input.system_name.unwrap_or("");
     let state = if input.paused {
         format!("{label} -- Paused")
@@ -48,6 +43,28 @@ pub fn window_title_input(input: TitleInput<'_>) -> String {
     } else {
         format!("{state}{slot} | No ROM")
     }
+}
+
+pub fn window_title(
+    paused: bool,
+    loaded: bool,
+    system_name: Option<&str>,
+    active_slot: Option<u64>,
+    slot_count: usize,
+) -> String {
+    window_title_input(TitleInput {
+        paused,
+        loaded,
+        system_name,
+        active_slot,
+        slot_count,
+    })
+}
+
+/// Structured form of [`window_title`]: single source for the text,
+/// so positional call sites cannot misalign the flags.
+pub fn window_title_input(input: TitleInput<'_>) -> String {
+    title(input)
 }
 
 /// Cache key for [`TitleCache`]: everything the title text reads.
@@ -89,7 +106,7 @@ impl TitleCache {
     pub fn title(&mut self, input: TitleInput<'_>) -> &str {
         let key = TitleKey::from(&input);
         if self.last_key.as_ref() != Some(&key) {
-            self.last_title = window_title_input(input);
+            self.last_title = title(input);
             self.last_key = Some(key);
         }
         &self.last_title

@@ -10,9 +10,31 @@ use super::bridge;
 /// Last-pushed peripheral state plus a generation dirty flag.
 /// Pushes only on change; suspended all-off state skips `host_peripherals()`.
 pub(super) struct PeripheralSync {
-    last_config: Option<(bool, bool, u8, RumbleTarget)>,
+    last_config: Option<PeripheralConfig>,
     last_intensity: Option<u8>,
     config_dirty: bool,
+}
+
+/// One cartridge-peripheral push: motion, rumble switch, strength, target.
+/// Named fields so a reorder fails to compile here, not silently in Kotlin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PeripheralConfig {
+    motion: bool,
+    rumble: bool,
+    strength: u8,
+    target: RumbleTarget,
+}
+
+impl PeripheralConfig {
+    /// Suspended all-off state: the dirty gate skips re-pushing zeros.
+    const fn all_off() -> Self {
+        Self {
+            motion: false,
+            rumble: false,
+            strength: 0,
+            target: RumbleTarget::Auto,
+        }
+    }
 }
 
 impl PeripheralSync {
@@ -35,7 +57,7 @@ impl PeripheralSync {
         // return before the `host_peripherals()` access.
         if !is_resumed
             && !self.config_dirty
-            && self.last_config == Some((false, false, 0, RumbleTarget::Auto))
+            && self.last_config == Some(PeripheralConfig::all_off())
             && self.last_intensity == Some(0)
         {
             return;
@@ -56,14 +78,20 @@ impl PeripheralSync {
                 .flatten(),
         );
 
-        let config = (
-            motion_active,
-            settings.rumble_enabled,
-            settings.rumble_strength_percent.min(100),
-            settings.rumble_target,
-        );
+        let config = PeripheralConfig {
+            motion: motion_active,
+            rumble: settings.rumble_enabled,
+            strength: settings.rumble_strength_percent.min(100),
+            target: settings.rumble_target,
+        };
         if self.config_dirty || self.last_config != Some(config) {
-            configure_cartridge_peripherals(app, config.0, config.1, config.2, config.3);
+            configure_cartridge_peripherals(
+                app,
+                config.motion,
+                config.rumble,
+                config.strength,
+                config.target,
+            );
             self.last_config = Some(config);
             self.last_rumble_intensity_reset();
         }
@@ -96,7 +124,7 @@ impl PeripheralSync {
         set_cartridge_rumble(app, 0);
         // Settle the cache to all-off so the next suspended sync hits the
         // dirty gate instead of re-pushing zeros every pass.
-        self.last_config = Some((false, false, 0, RumbleTarget::Auto));
+        self.last_config = Some(PeripheralConfig::all_off());
         self.last_intensity = Some(0);
         self.config_dirty = false;
     }

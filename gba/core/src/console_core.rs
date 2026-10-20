@@ -6,7 +6,7 @@ use nerust_core_traits::{
     debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
 };
-use nerust_input_traits::EmuInput;
+use nerust_emu_thread::EmuInput;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
@@ -388,7 +388,8 @@ mod tests {
     };
 
     use nerust_core_traits::CoreConfig;
-    use nerust_input_traits::{EmuInput, InputStateBuffer};
+    use nerust_emu_thread::EmuInput;
+    use nerust_input_traits::InputStateBuffer;
 
     use super::*;
     use crate::{debugger::SPACE_MEMORY, input_types::GbaInputBuffer};

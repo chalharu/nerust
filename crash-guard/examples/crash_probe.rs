@@ -1,28 +1,15 @@
 //! Subprocess hook probe. Production code never references this.
 
-/// Minimal stderr logger: the leaf emits via the `log` facade only,
-// so the probe must provide a backend (real frontends use SimpleLogger).
-struct StderrLogger;
-
-impl log::Log for StderrLogger {
-    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() <= log::Level::Error
-    }
-
-    fn log(&self, record: &log::Record<'_>) {
-        if self.enabled(record.metadata()) {
-            eprintln!("{}", record.args());
-        }
-    }
-
-    fn flush(&self) {}
-}
-
-static LOGGER: StderrLogger = StderrLogger;
-
 fn main() {
-    log::set_logger(&LOGGER).expect("probe logger installs once");
-    log::set_max_level(log::LevelFilter::Error);
+    // Leaf design: the host injects the sink; the guard never touches `log`.
+    nerust_crash_guard::set_record_sink(|record| {
+        eprintln!(
+            "panic on thread '{}': {}\nbacktrace:\n{}",
+            record.thread(),
+            record.detail(),
+            record.backtrace()
+        );
+    });
     // The dialog runs in the Crashed arm, mirroring real frontends.
     // Exhaustive: a future outcome must not silently pass through.
     match nerust_crash_guard::run_guarded(|| panic!("probe crash")) {

@@ -1,3 +1,7 @@
+pub mod input_port;
+
+pub use input_port::{EmuInput, GuiInput, InputPort, InputSplit};
+
 use std::{
     collections::HashMap,
     fmt,

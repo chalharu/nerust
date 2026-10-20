@@ -45,13 +45,12 @@ impl SessionHandle {
             .ok()
             .ok_or(SessionError::NoCore)?
             .load(&media, Some(resolved.options))?;
-        self.media.set_loaded(Some(super::LoadedMedia {
-            media: media.clone(),
-        }));
 
         PersistenceBinder::bind(self, media.native_path(), MapperRestore::Load);
 
         self.remember_last_successful_rom_directory(media.native_path());
+        // Move, don't clone: the core borrowed the bytes above; the media travels into storage.
+        self.media.set_loaded(Some(super::LoadedMedia { media }));
         Ok(())
     }
 

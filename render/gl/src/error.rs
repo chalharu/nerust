@@ -1,7 +1,7 @@
 //! GL view error vocabulary shared by the view orchestrator and its leaf modules.
 
-/// View failures: GL errors, shader errors, invariant and frame faults.
-/// Translated to a warned `RenderResult::Error` at the render boundary.
+/// View failures translated to a warned `RenderResult::Error` at the boundary.
+/// `Frame` is the frame-fault path; backend faults stay fully typed.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ViewError {
     #[error(transparent)]

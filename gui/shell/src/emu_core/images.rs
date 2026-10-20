@@ -20,7 +20,7 @@ pub type LiveImages = Option<(u64, Vec<(String, u32, u32, Vec<u8>)>)>;
 pub(crate) struct CachedImages {
     pub(crate) dirty: bool,
     pub(crate) generation: u64,
-    pub(crate) images: Vec<DebugImage>,
+    pub(crate) images: std::sync::Arc<Vec<DebugImage>>,
     /// Content hash and generation of the last served decode, for the
     /// identical-content skip in [`EmuCore::images_store`].
     pub(crate) served_hash: Option<u64>,
@@ -71,11 +71,12 @@ impl EmuCore {
     pub fn debug_images(
         &self,
     ) -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError> {
+        // A running core advances memory at any time: dirty first so the lookup below refetches.
         if !self.metrics().paused {
             self.mark_images_dirty();
         }
-        if let Some(cached) = self.images_cache_lookup() {
-            return Ok(Ok(cached));
+        if let Some((generation, shared)) = self.images_cache_lookup() {
+            return Ok(Ok((generation, Vec::clone(&shared))));
         }
         let result = recv_debug_reply(self.images_send()?);
         let images = match result {
@@ -89,12 +90,12 @@ impl EmuCore {
 
     /// Paused-cache lookup for [`EmuCore::debug_images`]: a fresh hit skips the emu thread.
     /// Pure query with no side effects; callers mark dirty explicitly when memory may advance.
-    pub(crate) fn images_cache_lookup(&self) -> Option<(u64, Vec<DebugImage>)> {
+    pub(crate) fn images_cache_lookup(&self) -> Option<(u64, std::sync::Arc<Vec<DebugImage>>)> {
         self.image_cache
             .lock()
             .ok()
             .filter(|cache| !cache.dirty && !cache.images.is_empty())
-            .map(|cache| (cache.generation, cache.images.clone()))
+            .map(|cache| (cache.generation, std::sync::Arc::clone(&cache.images)))
     }
 
     /// Send half of the [`EmuCore::debug_images`] fetch: queues without
@@ -113,11 +114,13 @@ impl EmuCore {
     /// Content-identical refetches report the *served* generation so viewers skip re-deriving.
     pub(crate) fn images_store(&self, images: Vec<DebugImage>) -> StoredImages {
         let hash = hash_debug_images(&images);
+        // One shared copy: the cache holds it, the report moves the input without re-cloning.
+        let shared = std::sync::Arc::new(images);
         let mut cache = self.image_cache.lock().unwrap_or_else(|e| {
             log::warn!("image cache mutex poisoned, recovering");
             e.into_inner()
         });
-        cache.images.clone_from(&images);
+        cache.images = std::sync::Arc::clone(&shared);
         cache.dirty = false;
         if cache.served_hash == Some(hash) {
             // Identical content collapses the dirty bump back to the served generation.
@@ -125,7 +128,7 @@ impl EmuCore {
             cache.generation = cache.served_generation;
             StoredImages {
                 generation: cache.served_generation,
-                images,
+                images: Vec::clone(&shared),
                 fresh: false,
             }
         } else {
@@ -133,7 +136,7 @@ impl EmuCore {
             cache.served_generation = cache.generation;
             StoredImages {
                 generation: cache.generation,
-                images,
+                images: Vec::clone(&shared),
                 fresh: true,
             }
         }

@@ -83,6 +83,27 @@ impl AndroidStorageBackend {
         }
     }
 
+    /// Sized read: skips the size probe when the batch listing carries the length.
+    /// Prefers `byte[]`; falls back to Base64 chunks.
+    fn read_sized(
+        &self,
+        uri: &str,
+        relative: &str,
+        size: i64,
+    ) -> Result<Option<Vec<u8>>, PersistenceError> {
+        Self::validate_relative_path(relative)?;
+        if size < 0 {
+            return Ok(None);
+        }
+        match self.read_chunked_bytes_sized(uri, relative, size) {
+            Ok(bytes) => Ok(bytes),
+            Err(error) => {
+                log::debug!("SAF byte[] read unavailable, falling back to Base64 chunks: {error}");
+                self.read_chunked_base64_sized(uri, relative, size)
+            }
+        }
+    }
+
     /// `byte[]` chunked read: size probe then raw chunks, one JNI crossing per 64KB.
     /// Absence (old APK) surfaces as `Err`; the caller falls back.
     fn read_chunked_bytes(
@@ -91,6 +112,16 @@ impl AndroidStorageBackend {
         relative: &str,
     ) -> Result<Option<Vec<u8>>, PersistenceError> {
         let size = self.call_file_size(uri, relative)?;
+        self.read_chunked_bytes_sized(uri, relative, size)
+    }
+
+    /// `byte[]` chunked read with a known size: no probe crossing.
+    fn read_chunked_bytes_sized(
+        &self,
+        uri: &str,
+        relative: &str,
+        size: i64,
+    ) -> Result<Option<Vec<u8>>, PersistenceError> {
         if size < 0 {
             return Ok(None);
         }
@@ -150,6 +181,16 @@ impl AndroidStorageBackend {
         relative: &str,
     ) -> Result<Option<Vec<u8>>, PersistenceError> {
         let size = self.call_file_size(uri, relative)?;
+        self.read_chunked_base64_sized(uri, relative, size)
+    }
+
+    /// Base64 chunked read with a known size: no probe crossing.
+    fn read_chunked_base64_sized(
+        &self,
+        uri: &str,
+        relative: &str,
+        size: i64,
+    ) -> Result<Option<Vec<u8>>, PersistenceError> {
         if size < 0 {
             return Ok(None);
         }
@@ -236,16 +277,13 @@ impl AndroidStorageBackend {
         chunk: &[u8],
         append: bool,
     ) -> Result<Option<String>, PersistenceError> {
-        let owned = chunk.to_vec();
         let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
         super::bridge::with_java_env(&vm, |env| {
             let activity_raw = self.app.activity_as_ptr() as jobject;
             let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
             let uri = JString::from_str(env, uri)?;
             let relative = JString::from_str(env, relative)?;
-            let buffer = env.new_byte_array(owned.len())?;
-            let signed: Vec<i8> = owned.iter().map(|byte| *byte as i8).collect();
-            buffer.set_region(env, 0, &signed)?;
+            let buffer = env.byte_array_from_slice(chunk)?;
             let object = env
                 .call_method(
                     activity.as_ref(),
@@ -317,20 +355,22 @@ impl AndroidStorageBackend {
         serde_json::from_str(&value).map_err(Self::io_error)
     }
 
-    /// Batched name+size listing: one JNI crossing per directory instead
-    /// of one list plus one size probe per entry (scan N+1).
+    /// Batched listing: one JNI crossing per directory; negatives mean unknown.
     fn list_with_sizes(
         &self,
         uri: &str,
         relative: &str,
-    ) -> Result<Vec<(String, i64)>, PersistenceError> {
+    ) -> Result<Vec<(String, Option<i64>)>, PersistenceError> {
         let value = self
             .call_list_with_sizes(uri, relative)?
             .unwrap_or_else(|| "[]".to_string());
         let entries: Vec<SizedEntry> = serde_json::from_str(&value).map_err(Self::io_error)?;
         Ok(entries
             .into_iter()
-            .map(|entry| (entry.name, entry.size))
+            .map(|entry| {
+                let size = entry.known_size();
+                (entry.name, size)
+            })
             .collect())
     }
 
@@ -569,18 +609,23 @@ enum SafStringOp {
     ListWithSizes,
 }
 
-/// One entry of the `listSafFilesWithSizes` JSON batch.
-/// Sizes ride the same crossing as names; no per-entry probe.
+/// One entry of the `listSafFilesWithSizes` batch; unknown sizes are `None`.
 #[derive(Debug, serde::Deserialize)]
 struct SizedEntry {
     name: String,
     #[serde(default)]
-    size: i64,
+    size: Option<i64>,
+}
+
+impl SizedEntry {
+    /// Negative Kotlin lengths normalize to unknown.
+    fn known_size(&self) -> Option<i64> {
+        self.size.filter(|size| *size >= 0)
+    }
 }
 
 impl SlotBackend for AndroidStorageBackend {
-    /// SAF scan runs on the session/persistence thread, never the event loop or UI thread.
-    /// The sized batch keeps it to one crossing per entry plus one listing.
+    /// SAF scan runs off the event loop; one crossing carries every (name, size).
     fn scan(
         &self,
         dir: &Path,
@@ -589,14 +634,36 @@ impl SlotBackend for AndroidStorageBackend {
         let Some((uri, relative)) = Self::decode(dir) else {
             return FsSlotBackend.scan(dir, identity);
         };
+        let entries: Vec<(String, Option<i64>)> = match self.list_with_sizes(&uri, &relative) {
+            Ok(entries) => entries,
+            Err(_) => {
+                // Old APK without the sized batch: names only, sizes unknown.
+                let value = self
+                    .call_list(&uri, &relative)?
+                    .unwrap_or_else(|| "[]".to_string());
+                serde_json::from_str::<Vec<String>>(&value)
+                    .map_err(Self::io_error)?
+                    .into_iter()
+                    .map(|name| (name, None))
+                    .collect()
+            }
+        };
         let mut result = Vec::new();
-        for name in self
-            .list(&uri, &relative)?
+        for (name, size) in entries
             .into_iter()
-            .filter(|name| name.ends_with(".state"))
+            .filter(|(name, _)| name.ends_with(".state"))
         {
+            // Empty files cannot hold an archive; unknown sizes still read.
+            if size == Some(0) {
+                continue;
+            }
             let path = dir.join(&name);
-            let Some(bytes) = self.read(&uri, &format!("{relative}/{name}"))? else {
+            let child = format!("{relative}/{name}");
+            let bytes = match size {
+                Some(size) => self.read_sized(&uri, &child, size)?,
+                None => self.read(&uri, &child)?,
+            };
+            let Some(bytes) = bytes else {
                 continue;
             };
             if let Some(slot) = load_state_slot_bytes(path, bytes, Some(identity))? {
@@ -756,13 +823,16 @@ mod tests {
     }
 
     #[test]
-    fn sized_entry_batch_decodes_names_and_sizes() {
-        let entries: Vec<super::SizedEntry> =
-            serde_json::from_str(r#"[{"name":"0.state","size":42},{"name":"1.state"}]"#).unwrap();
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].name, "0.state");
-        assert_eq!(entries[0].size, 42);
-        // Missing sizes default to 0 (unknown), never a decode failure.
-        assert_eq!(entries[1].size, 0);
+    fn sized_entry_batch_normalizes_names_and_sizes() {
+        let entries: Vec<super::SizedEntry> = serde_json::from_str(
+            r#"[{"name":"0.state","size":42},{"name":"1.state"},{"name":"2.state","size":-1}]"#,
+        )
+        .unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].known_size(), Some(42));
+        // Missing sizes are unknown, never a decode failure.
+        assert_eq!(entries[1].known_size(), None);
+        // Negative Kotlin lengths normalize to unknown.
+        assert_eq!(entries[2].known_size(), None);
     }
 }

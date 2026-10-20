@@ -50,7 +50,6 @@ impl Screen {
 
 #[derive(Debug, Default)]
 pub(crate) struct ErrorDialogController {
-    showing: bool,
     current: Option<String>,
     auto_paused: bool,
 }
@@ -70,6 +69,12 @@ impl ErrorDialogController {
         self.auto_paused
     }
 
+    /// Whether an error dialog is currently presented.
+    /// `current` is the showing state; no second bool can disagree with it.
+    pub(crate) fn is_showing(&self) -> bool {
+        self.current.is_some()
+    }
+
     /// Take the next queued batch for display, unless suspended, showing,
     /// or settings owns the screen. Moves the batch into the controller.
     pub(crate) fn poll_show(
@@ -80,12 +85,11 @@ impl ErrorDialogController {
         let Screen::Foreground { can_pause } = screen else {
             return None;
         };
-        if self.showing {
+        if self.is_showing() {
             return None;
         }
         let detail = queue.take_modal_batch()?;
         self.current = Some(detail);
-        self.showing = true;
         if can_pause {
             self.auto_paused = true;
         }
@@ -102,11 +106,10 @@ impl ErrorDialogController {
         screen: Screen,
     ) -> DismissTransition {
         const IDLE: DismissTransition = DismissTransition::Idle;
-        if !self.showing && self.current.is_none() {
+        if self.current.is_none() {
             queue.modal_closed();
             return IDLE;
         }
-        self.showing = false;
         queue.modal_closed();
         if screen == Screen::SettingsOpen {
             // Preempted, never acked: requeue the head so the ack
@@ -136,7 +139,6 @@ impl ErrorDialogController {
         if let Some(detail) = self.current.take() {
             queue.requeue_front(detail);
         }
-        self.showing = false;
     }
 
     /// Settings close flushes the queue; an orphaned auto-pause resumes
@@ -156,7 +158,7 @@ impl ErrorDialogController {
         if let Some(ShowTransition::Present { auto_pause }) = self.poll_show(queue, unshielded) {
             return SettingsClosedTransition::Show { auto_pause };
         }
-        if !self.showing && queue.modal_pending() == 0 && self.auto_paused {
+        if !self.is_showing() && queue.modal_pending() == 0 && self.auto_paused {
             self.auto_paused = false;
             return SettingsClosedTransition::Resume;
         }

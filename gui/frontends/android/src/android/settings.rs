@@ -80,6 +80,15 @@ struct AndroidSystemChoice {
     options: Vec<(SystemSettingsChoiceId, String)>,
 }
 
+/// Ranged-int encoding: Kotlin expands `min..=max` with `unit`.
+/// The 101-string tables are never built or shipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RangeSpec {
+    pub min: i64,
+    pub max: i64,
+    pub unit: &'static str,
+}
+
 /// One settings-dialog row: key, label, choices, and current index travel together.
 /// All arrays and codecs derive from `setting_defs`; rows cannot drift from choices.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,12 +97,13 @@ pub(crate) struct SettingDef {
     pub label: String,
     pub choices: Vec<String>,
     pub current: usize,
-    /// Edge class per choice ("top"/"bottom") for position pickers. Empty for other rows.
-    /// The index→edge mapping lives in Rust alone.
-    pub edges: Vec<String>,
+    /// `Some` for ranged ints: `choices` stays empty, Kotlin expands locally.
+    pub range: Option<RangeSpec>,
+    /// Same-edge rule resolved in Rust; Kotlin only filters on this flag.
+    pub visible: bool,
 }
 
-/// Canonical corner order shared by labels, indices, and edges.
+/// Canonical corner order shared by labels and indices.
 /// Every position picker follows this sequence; nothing else assumes the mapping.
 const CORNERS: [NotificationPosition; 4] = [
     NotificationPosition::BottomLeft,
@@ -103,19 +113,6 @@ const CORNERS: [NotificationPosition; 4] = [
 ];
 
 const CORNER_LABELS: [&str; 4] = ["Bottom Left", "Bottom Right", "Top Left", "Top Right"];
-
-fn corner_edges() -> Vec<String> {
-    CORNERS
-        .into_iter()
-        .map(|pos| {
-            if pos.is_top() {
-                "top".to_string()
-            } else {
-                "bottom".to_string()
-            }
-        })
-        .collect()
-}
 
 fn corner_index(position: NotificationPosition) -> usize {
     CORNERS
@@ -249,32 +246,42 @@ impl AndroidSettings {
     /// Sole source of truth; codecs index this same list.
     pub(crate) fn setting_defs(&self) -> Vec<SettingDef> {
         let off_on = || vec!["Off".to_string(), "On".to_string()];
-        let percent = |range: std::ops::RangeInclusive<u8>| {
-            range.map(|value| format!("{value}%")).collect::<Vec<_>>()
-        };
+        // Same-edge rule resolved here: the area row hides when both
+        // positions share an edge; Kotlin only filters on `visible`.
+        let status_area_visible =
+            self.notifications_position.is_top() != self.status_position.is_top();
         let mut defs = vec![
             SettingDef {
                 key: "audio_muted".to_string(),
                 label: "Mute".to_string(),
                 choices: off_on(),
                 current: usize::from(self.audio_muted),
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "master_volume".to_string(),
                 label: "Volume".to_string(),
-                choices: percent(VOLUME_MIN..=VOLUME_MAX),
+                choices: Vec::new(),
                 current: usize::from(self.master_volume_percent.min(VOLUME_MAX)),
-                edges: Vec::new(),
+                range: Some(RangeSpec {
+                    min: i64::from(VOLUME_MIN),
+                    max: i64::from(VOLUME_MAX),
+                    unit: "%",
+                }),
+                visible: true,
             },
             SettingDef {
                 key: "latency_ms".to_string(),
                 label: "Audio Latency (ms)".to_string(),
-                choices: (LATENCY_MIN..=LATENCY_MAX)
-                    .map(|value| format!("{value} ms"))
-                    .collect(),
+                choices: Vec::new(),
                 current: usize::from(self.latency_ms.clamp(LATENCY_MIN, LATENCY_MAX) - LATENCY_MIN),
-                edges: Vec::new(),
+                range: Some(RangeSpec {
+                    min: i64::from(LATENCY_MIN),
+                    max: i64::from(LATENCY_MAX),
+                    unit: " ms",
+                }),
+                visible: true,
             },
             SettingDef {
                 key: "sample_rate".to_string(),
@@ -288,14 +295,16 @@ impl AndroidSettings {
                     .iter()
                     .position(|&v| v == self.sample_rate)
                     .unwrap_or(SAMPLE_RATE_CHOICES.len().saturating_sub(1)),
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "vsync".to_string(),
                 label: "VSync".to_string(),
                 choices: off_on(),
                 current: usize::from(self.vsync),
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "screen.orientation".to_string(),
@@ -309,7 +318,8 @@ impl AndroidSettings {
                     ScreenOrientation::Portrait => 1,
                     ScreenOrientation::Landscape => 2,
                 },
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "storage.policy".to_string(),
@@ -323,7 +333,8 @@ impl AndroidSettings {
                     StoragePolicy::AppSharedData => 1,
                     StoragePolicy::CustomDirectory => 2,
                 },
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "controls.overlay.visibility".to_string(),
@@ -337,67 +348,89 @@ impl AndroidSettings {
                     TouchOverlayVisibility::Auto => 1,
                     TouchOverlayVisibility::Hidden => 2,
                 },
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "controls.overlay.opacity".to_string(),
                 label: "Overlay Opacity".to_string(),
-                choices: percent(0..=100),
+                choices: Vec::new(),
                 current: usize::from(self.overlay_opacity_percent.min(100)),
-                edges: Vec::new(),
+                range: Some(RangeSpec {
+                    min: 0,
+                    max: 100,
+                    unit: "%",
+                }),
+                visible: true,
             },
             SettingDef {
                 key: "controls.overlay.scale".to_string(),
                 label: "Overlay Scale".to_string(),
-                choices: percent(OVERLAY_SCALE_MIN..=OVERLAY_SCALE_MAX),
+                choices: Vec::new(),
                 current: usize::from(
                     self.overlay_scale_percent
                         .clamp(OVERLAY_SCALE_MIN, OVERLAY_SCALE_MAX)
                         - OVERLAY_SCALE_MIN,
                 ),
-                edges: Vec::new(),
+                range: Some(RangeSpec {
+                    min: i64::from(OVERLAY_SCALE_MIN),
+                    max: i64::from(OVERLAY_SCALE_MAX),
+                    unit: "%",
+                }),
+                visible: true,
             },
             SettingDef {
                 key: "controls.overlay.vertical_offset".to_string(),
                 label: "Overlay Vertical Position".to_string(),
-                choices: (OVERLAY_OFFSET_MIN..=OVERLAY_OFFSET_MAX)
-                    .map(|value| format!("{value}%"))
-                    .collect(),
+                choices: Vec::new(),
                 current: i16::from(
                     self.overlay_vertical_offset_percent
                         .clamp(OVERLAY_OFFSET_MIN, OVERLAY_OFFSET_MAX),
                 )
                 .checked_sub(i16::from(OVERLAY_OFFSET_MIN))
                 .unwrap_or_default() as usize,
-                edges: Vec::new(),
+                range: Some(RangeSpec {
+                    min: i64::from(OVERLAY_OFFSET_MIN),
+                    max: i64::from(OVERLAY_OFFSET_MAX),
+                    unit: "%",
+                }),
+                visible: true,
             },
             SettingDef {
                 key: "controls.overlay.haptics".to_string(),
                 label: "Overlay Haptics".to_string(),
                 choices: off_on(),
                 current: usize::from(self.overlay_haptics),
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "controls.cartridge.motion".to_string(),
                 label: "Cartridge Motion Sensor".to_string(),
                 choices: off_on(),
                 current: usize::from(self.motion_enabled),
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "controls.cartridge.rumble".to_string(),
                 label: "Cartridge Rumble".to_string(),
                 choices: off_on(),
                 current: usize::from(self.rumble_enabled),
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "controls.cartridge.rumble_strength".to_string(),
                 label: "Rumble Strength".to_string(),
-                choices: percent(0..=100),
+                choices: Vec::new(),
                 current: usize::from(self.rumble_strength_percent.min(100)),
-                edges: Vec::new(),
+                range: Some(RangeSpec {
+                    min: 0,
+                    max: 100,
+                    unit: "%",
+                }),
+                visible: true,
             },
             SettingDef {
                 key: "controls.cartridge.rumble_target".to_string(),
@@ -411,35 +444,40 @@ impl AndroidSettings {
                     RumbleTarget::Handset => 1,
                     RumbleTarget::Controller => 2,
                 },
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "notifications.info".to_string(),
                 label: "Info Notifications".to_string(),
                 choices: off_on(),
                 current: usize::from(self.notifications_info_enabled),
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "notifications.warning".to_string(),
                 label: "Warning Notifications".to_string(),
                 choices: off_on(),
                 current: usize::from(self.notifications_warning_enabled),
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "notifications.error".to_string(),
                 label: "Error Notifications".to_string(),
                 choices: off_on(),
                 current: usize::from(self.notifications_error_enabled),
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "notifications.position".to_string(),
                 label: "Notification Position".to_string(),
                 choices: CORNER_LABELS.into_iter().map(str::to_string).collect(),
                 current: corner_index(self.notifications_position),
-                edges: corner_edges(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "notifications.area_mode".to_string(),
@@ -452,21 +490,24 @@ impl AndroidSettings {
                     NotificationAreaMode::Overlay => 0,
                     NotificationAreaMode::Strip => 1,
                 },
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "status.enabled".to_string(),
                 label: "Status Display".to_string(),
                 choices: off_on(),
                 current: usize::from(self.status_enabled),
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "status.position".to_string(),
                 label: "Status Position".to_string(),
                 choices: CORNER_LABELS.into_iter().map(str::to_string).collect(),
                 current: corner_index(self.status_position),
-                edges: corner_edges(),
+                range: None,
+                visible: true,
             },
             SettingDef {
                 key: "status.area_mode".to_string(),
@@ -479,10 +520,10 @@ impl AndroidSettings {
                     NotificationAreaMode::Overlay => 0,
                     NotificationAreaMode::Strip => 1,
                 },
-                edges: Vec::new(),
+                range: None,
+                visible: status_area_visible,
             },
         ];
-        // Same-edge follow is handled live in the dialog UI.
         // The codec stays key-driven so order never matters.
         defs.extend(self.system_choices.iter().map(|choice| {
             SettingDef {
@@ -498,21 +539,29 @@ impl AndroidSettings {
                     .iter()
                     .position(|(id, _)| id == &choice.selected)
                     .unwrap_or_default(),
-                edges: Vec::new(),
+                range: None,
+                visible: true,
             }
         }));
         defs
     }
 
     /// Cached [`Self::setting_defs`], keyed by a fingerprint of every field it reads.
-    /// Callers build one `HashMap` key→index per decode so field lookup is O(1).
-    pub(crate) fn cached_setting_defs(&self) -> Vec<SettingDef> {
-        let hash = self.defs_fingerprint();
-        if let Some(defs) = defs_cache_get(hash) {
+    /// The entry lives on the bridge state, not a global, so tests stay isolated.
+    pub(crate) fn cached_setting_defs(current: &AndroidSettings) -> Vec<SettingDef> {
+        let hash = current.defs_fingerprint();
+        let cached = with_state(|state| {
+            state
+                .defs_cache
+                .as_ref()
+                .filter(|(cached_hash, _)| *cached_hash == hash)
+                .map(|(_, defs)| defs.clone())
+        });
+        if let Some(defs) = cached {
             return defs;
         }
-        let defs = self.setting_defs();
-        defs_cache_put(hash, &defs);
+        let defs = current.setting_defs();
+        with_state(|state| state.defs_cache = Some((hash, defs.clone())));
         defs
     }
 
@@ -608,7 +657,7 @@ impl AndroidSettings {
 
         // Key-driven: field order never affects decoding; missing rows keep current values.
         // One key→index map per decode keeps field lookup O(1).
-        let defs = current.cached_setting_defs();
+        let defs = AndroidSettings::cached_setting_defs(current);
         if indices.len() != defs.len() {
             return None;
         }
@@ -742,7 +791,7 @@ impl AndroidSettings {
 
     pub(crate) fn dialog_payload(&self, request_id: u64) -> String {
         let mut sections: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
-        for def in self.cached_setting_defs() {
+        for def in AndroidSettings::cached_setting_defs(self) {
             let section = if def.key.starts_with("system.") {
                 def.key.split('.').take(2).collect::<Vec<_>>().join(".")
             } else if def.key.starts_with("controls.") {
@@ -761,11 +810,15 @@ impl AndroidSettings {
                     "label": def.label,
                     "kind": "choice",
                     "value": def.current,
-                    "options": def.choices,
+                    "visible": def.visible,
                     "enabled": true,
             });
-            if !def.edges.is_empty() {
-                field["edges"] = serde_json::json!(def.edges);
+            if let Some(range) = def.range {
+                field["min"] = serde_json::json!(range.min);
+                field["max"] = serde_json::json!(range.max);
+                field["unit"] = serde_json::json!(range.unit);
+            } else {
+                field["options"] = serde_json::json!(def.choices);
             }
             if let Some((_, fields)) = sections.iter_mut().find(|(id, _)| id == &section) {
                 fields.push(field);
@@ -789,9 +842,8 @@ impl AndroidSettings {
         values: &BTreeMap<String, usize>,
         current: &Self,
     ) -> Option<Self> {
-        // Cached defs: shares the fingerprint cache with
-        // `from_choice_indices` instead of building the table twice.
-        let defs = current.cached_setting_defs();
+        // Shared cache entry with `from_choice_indices`.
+        let defs = AndroidSettings::cached_setting_defs(current);
         if values.len() != defs.len() || defs.iter().any(|def| !values.contains_key(&def.key)) {
             return None;
         }
@@ -802,31 +854,6 @@ impl AndroidSettings {
             .join(",");
         Self::from_choice_indices(&raw, current)
     }
-}
-
-/// Fingerprint→defs cache backing `cached_setting_defs`. Single entry is
-/// enough: decodes always run against the pre-dialog snapshot.
-static DEFS_CACHE: Mutex<Option<(u64, Vec<SettingDef>)>> = Mutex::new(None);
-
-fn defs_cache_get(hash: u64) -> Option<Vec<SettingDef>> {
-    // No re-entrancy guard here: this leaf never calls back into any `with_state`.
-    // The guard covers the three bridge mutexes only.
-    let guard = DEFS_CACHE.lock().unwrap_or_else(|poison| {
-        log::error!("settings defs cache mutex poisoned; recovering state");
-        poison.into_inner()
-    });
-    guard
-        .as_ref()
-        .filter(|(cached_hash, _)| *cached_hash == hash)
-        .map(|(_, defs)| defs.clone())
-}
-
-fn defs_cache_put(hash: u64, defs: &[SettingDef]) {
-    let mut guard = DEFS_CACHE.lock().unwrap_or_else(|poison| {
-        log::error!("settings defs cache mutex poisoned; recovering state");
-        poison.into_inner()
-    });
-    *guard = Some((hash, defs.to_vec()));
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -847,6 +874,7 @@ struct SettingsBridgeState {
     cache: Option<AndroidSettings>,
     next_request_id: u64,
     pending_request_id: Option<u64>,
+    defs_cache: Option<(u64, Vec<SettingDef>)>,
 }
 
 static SETTINGS_STATE: Mutex<SettingsBridgeState> = Mutex::new(SettingsBridgeState {
@@ -854,6 +882,7 @@ static SETTINGS_STATE: Mutex<SettingsBridgeState> = Mutex::new(SettingsBridgeSta
     cache: None,
     next_request_id: 1,
     pending_request_id: None,
+    defs_cache: None,
 });
 
 fn with_state<T>(operation: impl FnOnce(&mut SettingsBridgeState) -> T) -> T {
@@ -1425,23 +1454,15 @@ mod tests {
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
         let defs = android.setting_defs();
-        let volume_choices = &defs[1].choices;
-        let latency_choices = &defs[2].choices;
-        let sample_rate_choices = &defs[3].choices;
-
-        assert_eq!(volume_choices.first().map(String::as_str), Some("0%"));
-        assert_eq!(volume_choices.last().map(String::as_str), Some("100%"));
-        assert_eq!(volume_choices.len(), 101);
-
-        assert_eq!(latency_choices.first().map(String::as_str), Some("10 ms"));
-        assert_eq!(latency_choices.last().map(String::as_str), Some("200 ms"));
-        assert_eq!(latency_choices.len(), 191);
-
-        assert!(
-            !sample_rate_choices.is_empty(),
-            "sample rate choices should be non-empty"
-        );
-        for choice in sample_rate_choices {
+        let by_key = |key: &str| defs.iter().find(|def| def.key == key).unwrap();
+        let volume = by_key("master_volume").range.unwrap();
+        assert_eq!((volume.min, volume.max, volume.unit), (0, 100, "%"));
+        let latency = by_key("latency_ms").range.unwrap();
+        assert_eq!((latency.min, latency.max, latency.unit), (10, 200, " ms"));
+        let sample_rate = by_key("sample_rate");
+        assert!(sample_rate.range.is_none());
+        assert!(!sample_rate.choices.is_empty());
+        for choice in &sample_rate.choices {
             let Some(rate_str) = choice.strip_suffix(" Hz") else {
                 panic!("sample rate choice '{choice}' must end with ' Hz'");
             };
@@ -1465,7 +1486,8 @@ mod tests {
 
     #[test]
     fn setting_defs_are_internally_consistent() {
-        // Every row must offer a choice, point at a valid one, and carry a unique key.
+        // Every row must point at a valid choice, carry a unique key,
+        // and either list choices or declare a range.
         let snapshot = default_snapshot();
         let registry = registry();
         let android = android_settings(&snapshot, &registry);
@@ -1474,13 +1496,23 @@ mod tests {
         for def in &defs {
             assert!(keys.insert(def.key.clone()), "duplicate key {}", def.key);
             assert!(!def.label.is_empty(), "empty label for {}", def.key);
-            assert!(!def.choices.is_empty(), "no choices for {}", def.key);
-            assert!(
-                def.current < def.choices.len(),
-                "current {} out of range for {}",
-                def.current,
-                def.key
-            );
+            match def.range {
+                Some(range) => {
+                    assert!(range.min <= range.max, "empty range for {}", def.key);
+                    assert!(def.choices.is_empty(), "range rows list no choices");
+                    let value = range.min + def.current as i64;
+                    assert!((range.min..=range.max).contains(&value));
+                }
+                None => {
+                    assert!(!def.choices.is_empty(), "no choices for {}", def.key);
+                    assert!(
+                        def.current < def.choices.len(),
+                        "current {} out of range for {}",
+                        def.current,
+                        def.key
+                    );
+                }
+            }
         }
     }
 
@@ -1488,42 +1520,64 @@ mod tests {
     fn dialog_choices_align_with_keys() {
         // Regression test: each key must carry its own setting's choice list.
         // A past misalignment silently rejected valid saves.
-        use std::collections::BTreeMap;
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
-        let owned: BTreeMap<String, Vec<String>> = android
-            .setting_defs()
-            .into_iter()
-            .map(|def| (def.key, def.choices))
-            .collect();
-        let at = |key: &str| owned.get(key).unwrap().join("\t");
+        let defs = android.setting_defs();
+        let at = |key: &str| {
+            defs.iter()
+                .find(|def| def.key == key)
+                .unwrap()
+                .choices
+                .join("\t")
+        };
+        let range_at = |key: &str| {
+            defs.iter()
+                .find(|def| def.key == key)
+                .unwrap()
+                .range
+                .unwrap()
+        };
         assert_eq!(at("screen.orientation"), "Auto Rotate\tPortrait\tLandscape");
         assert_eq!(
             at("storage.policy"),
             "Next to ROM\tApp Storage\tCustom Directory"
         );
         assert_eq!(at("controls.overlay.visibility"), "Always\tAuto\tHidden");
-        let opacity_str = at("controls.overlay.opacity");
-        let opacity: Vec<_> = opacity_str.split('\t').collect();
-        assert_eq!(opacity.len(), 101);
-        assert_eq!(opacity.first(), Some(&"0%"));
-        assert_eq!(opacity.last(), Some(&"100%"));
-        let scale_str = at("controls.overlay.scale");
-        let scale: Vec<_> = scale_str.split('\t').collect();
-        assert_eq!(scale.len(), 101);
-        assert_eq!(scale.first(), Some(&"50%"));
-        assert_eq!(scale.last(), Some(&"150%"));
-        let offset_str = at("controls.overlay.vertical_offset");
-        let offset: Vec<_> = offset_str.split('\t').collect();
-        assert_eq!(offset.len(), 61);
-        assert_eq!(offset.first(), Some(&"-30%"));
-        assert_eq!(offset.last(), Some(&"30%"));
+        assert_eq!(
+            range_at("controls.overlay.opacity"),
+            RangeSpec {
+                min: 0,
+                max: 100,
+                unit: "%"
+            }
+        );
+        assert_eq!(
+            range_at("controls.overlay.scale"),
+            RangeSpec {
+                min: 50,
+                max: 150,
+                unit: "%"
+            }
+        );
+        assert_eq!(
+            range_at("controls.overlay.vertical_offset"),
+            RangeSpec {
+                min: -30,
+                max: 30,
+                unit: "%"
+            }
+        );
         assert_eq!(at("controls.overlay.haptics"), "Off\tOn");
         assert_eq!(at("controls.cartridge.motion"), "Off\tOn");
         assert_eq!(at("controls.cartridge.rumble"), "Off\tOn");
-        let strength_str = at("controls.cartridge.rumble_strength");
-        let strength: Vec<_> = strength_str.split('\t').collect();
-        assert_eq!(strength.len(), 101);
+        assert_eq!(
+            range_at("controls.cartridge.rumble_strength"),
+            RangeSpec {
+                min: 0,
+                max: 100,
+                unit: "%"
+            }
+        );
         assert_eq!(
             at("controls.cartridge.rumble_target"),
             "Auto\tHandset\tController"
@@ -1554,8 +1608,11 @@ mod tests {
             .iter()
             .find(|field| field["key"] == "master_volume")
             .unwrap();
-        assert_eq!(volume["options"][0], "0%");
-        assert_eq!(volume["options"][100], "100%");
+        assert!(volume.get("options").is_none());
+        assert_eq!(volume["min"], 0);
+        assert_eq!(volume["max"], 100);
+        assert_eq!(volume["unit"], "%");
+        assert_eq!(volume["visible"], true);
         let storage = fields
             .iter()
             .find(|field| field["key"] == "storage.policy")
@@ -1587,7 +1644,9 @@ mod tests {
     }
 
     #[test]
-    fn dialog_payload_marks_position_edges() {
+    fn dialog_payload_marks_hidden_area_mode() {
+        // Same-edge rule resolved in Rust: `status.area_mode` hides when both
+        // positions share an edge; Kotlin only filters on `visible`.
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
         let doc: serde_json::Value = serde_json::from_str(&android.dialog_payload(1)).unwrap();
@@ -1597,19 +1656,26 @@ mod tests {
             .iter()
             .flat_map(|section| section["fields"].as_array().unwrap().iter())
             .collect();
-        let position = fields
+        let visible = |key: &str| {
+            fields.iter().find(|field| field["key"] == key).unwrap()["visible"]
+                .as_bool()
+                .unwrap()
+        };
+        // Defaults: BottomLeft vs TopLeft differ, so the row shows.
+        assert!(visible("status.area_mode"));
+        assert!(visible("notifications.position"));
+        let mut same_edge = android;
+        same_edge.status_position = NotificationPosition::BottomRight;
+        let doc: serde_json::Value = serde_json::from_str(&same_edge.dialog_payload(2)).unwrap();
+        let area = doc["sections"]
+            .as_array()
+            .unwrap()
             .iter()
-            .find(|field| field["key"] == "notifications.position")
+            .flat_map(|section| section["fields"].as_array().unwrap().iter())
+            .find(|field| field["key"] == "status.area_mode")
             .unwrap();
-        assert_eq!(
-            position["edges"],
-            serde_json::json!(["bottom", "bottom", "top", "top"])
-        );
-        let volume = fields
-            .iter()
-            .find(|field| field["key"] == "master_volume")
-            .unwrap();
-        assert!(volume.get("edges").is_none());
+        assert_eq!(area["visible"], false);
+        assert!(area.get("edges").is_none());
     }
 
     #[test]
@@ -1633,11 +1699,15 @@ mod tests {
         let mut android = android_settings(&default_snapshot(), &registry);
         android.status_position = NotificationPosition::BottomRight;
         android.status_area_mode = NotificationAreaMode::Strip;
-        // Same edge as the default BottomLeft notification: the row stays.
+        // Same edge as the default BottomLeft notification: the row hides.
         // The value follows the notification mode at render time.
         let defs = android.setting_defs();
         assert_eq!(defs.len(), 29);
-        assert!(defs.iter().any(|def| def.key == "status.area_mode"));
+        let area = defs
+            .iter()
+            .find(|def| def.key == "status.area_mode")
+            .unwrap();
+        assert!(!area.visible);
         let raw = def_currents(&android)
             .into_iter()
             .map(|index| index.to_string())

@@ -43,17 +43,36 @@ pub(crate) fn aux_settings() -> iced::Settings {
     }
 }
 
-/// Window creation scaffolding both auxiliary windows share.
-/// Programs and UI instances stay per-window.
-pub(crate) struct WindowScaffold {
+/// Object-safe window-system surface behind every aux handle.
+/// Lets the focus/registry layers route without naming the program type.
+pub(crate) trait AuxShellOps {
+    fn tao_window_id(&self) -> tao::window::WindowId;
+    fn close_requested(&self) -> bool;
+    fn focus_window(&self);
+    fn request_redraw(&self);
+    fn handle_common(&mut self, event: &tao::event::WindowEvent);
+    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event>;
+    fn render_tagged(&mut self, tag: &'static str);
+}
+
+/// Window creation plus the live window system in one surface.
+/// Programs and UI instances stay per-window in [`UiShell`].
+pub(crate) struct AuxSurface {
     pub(crate) window: Arc<TaoWindow>,
     pub(crate) window_id: iced::window::Id,
     pub(crate) scale_factor: f32,
     pub(crate) viewport_physical: (u32, u32),
     pub(crate) bounds: Size,
-    pub(crate) compositor: Compositor,
-    pub(crate) renderer: Renderer,
-    pub(crate) surface: Surface,
+    compositor: Compositor,
+    surface: Surface,
+    backend: Renderer,
+    /// Last surface-configured size. Resize storms only relayout;
+    /// the realloc happens in `render`, once per presented frame.
+    surface_size: (u32, u32),
+    modifiers: iced::keyboard::Modifiers,
+    should_close: Arc<AtomicBool>,
+    cursor: mouse::Cursor,
+    clipboard: Clipboard,
 }
 
 /// Why an aux window failed to open: which window plus the native error.
@@ -72,7 +91,7 @@ impl core::fmt::Display for ScaffoldError {
     }
 }
 
-impl WindowScaffold {
+impl AuxSurface {
     pub(crate) fn open(
         event_loop: &EventLoopWindowTarget<UserEvent>,
         title: &str,
@@ -80,6 +99,7 @@ impl WindowScaffold {
         min_size: Option<(f64, f64)>,
         position: Option<(i32, i32)>,
         log_tag: &'static str,
+        should_close: Arc<AtomicBool>,
     ) -> Result<Self, ScaffoldError> {
         let mut builder = WindowBuilder::new()
             .with_title(title)
@@ -127,9 +147,142 @@ impl WindowScaffold {
             viewport_physical,
             bounds,
             compositor,
-            renderer,
+            backend: renderer,
             surface,
+            surface_size: viewport_physical,
+            modifiers: iced::keyboard::Modifiers::default(),
+            should_close,
+            cursor: mouse::Cursor::default(),
+            clipboard: Clipboard::unconnected(),
         })
+    }
+
+    /// Native window identity for event routing.
+    fn tao_window_id(&self) -> tao::window::WindowId {
+        self.window.id()
+    }
+
+    /// Close was requested through the shared flag.
+    fn close_requested(&self) -> bool {
+        self.should_close.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Native redraw request without reaching into the window.
+    fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
+    /// Bring this window to the front.
+    fn focus_window(&self) {
+        self.window.set_focus();
+    }
+
+    /// Resize the raster and record fresh bounds (no view rebuild).
+    /// The surface realloc is deferred to `render`; same-size events skip everything.
+    fn resize(&mut self, width: u32, height: u32, relayout: &mut impl FnMut(Size)) {
+        if self.viewport_physical == (width, height) {
+            return;
+        }
+        self.viewport_physical = (width, height);
+        log::debug!(
+            "aux resize: physical={width}x{height} scale={} bounds={:?}",
+            self.scale_factor,
+            logical_bounds((width, height), self.scale_factor)
+        );
+        relayout(logical_bounds((width, height), self.scale_factor));
+        self.window.request_redraw();
+    }
+
+    /// Scale changes move every layout bound: record like resize.
+    fn set_scale_factor(&mut self, scale_factor: f32, relayout: &mut impl FnMut(Size)) {
+        self.scale_factor = scale_factor;
+        relayout(logical_bounds(self.viewport_physical, self.scale_factor));
+        self.window.request_redraw();
+    }
+
+    fn set_modifiers(&mut self, modifiers: tao::keyboard::ModifiersState) {
+        self.modifiers = crate::convert::tao_modifiers_to_iced(modifiers);
+    }
+
+    /// Shared event prelude (resize/scale/modifiers/close).
+    fn handle_common_event(
+        &mut self,
+        event: &tao::event::WindowEvent,
+        relayout: &mut impl FnMut(Size),
+    ) {
+        match event {
+            tao::event::WindowEvent::Resized(size) => {
+                self.resize(size.width, size.height, relayout)
+            }
+            tao::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                self.set_scale_factor(*scale_factor as f32, relayout);
+            }
+            tao::event::WindowEvent::ModifiersChanged(state) => self.set_modifiers(*state),
+            tao::event::WindowEvent::CloseRequested => {
+                self.should_close
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+            _ => {}
+        }
+    }
+
+    /// Feed one native event, returning the converted iced event.
+    fn feed_tao_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
+        crate::convert::convert_tao_window_event(
+            event,
+            &mut self.cursor,
+            self.scale_factor,
+            &mut self.modifiers,
+            &self.should_close,
+        )
+    }
+
+    /// Logical layout bounds for the current viewport and scale.
+    fn logical_bounds(&self) -> Size {
+        logical_bounds(self.viewport_physical, self.scale_factor)
+    }
+
+    /// Surface realloc, at most once per frame.
+    fn configure_surface(&mut self) {
+        if self.surface_size != self.viewport_physical {
+            let (width, height) = self.viewport_physical;
+            if width != 0 && height != 0 {
+                self.compositor
+                    .configure_surface(&mut self.surface, width, height);
+            }
+            self.surface_size = self.viewport_physical;
+        }
+    }
+
+    /// Self-healing scale: re-query the live factor and relayout on drift.
+    fn heal_scale(&mut self, log_tag: &'static str, relayout: &mut impl FnMut(Size)) {
+        let live_scale = self.window.scale_factor() as f32;
+        if live_scale != self.scale_factor {
+            log::debug!(
+                "{log_tag} render: scale drift {} -> {}; relayout",
+                self.scale_factor,
+                live_scale
+            );
+            self.scale_factor = live_scale;
+            relayout(logical_bounds(self.viewport_physical, self.scale_factor));
+        }
+    }
+
+    fn present(
+        &mut self,
+        viewport: &Viewport,
+        background_color: iced::Color,
+        log_tag: &'static str,
+    ) {
+        if let Err(error) = self.compositor.present(
+            &mut self.backend,
+            &mut self.surface,
+            viewport,
+            background_color,
+            || {},
+        ) {
+            log::warn!("{log_tag} render present failed: {error}");
+        }
     }
 }
 
@@ -141,42 +294,8 @@ pub(crate) fn logical_bounds(viewport_physical: (u32, u32), scale_factor: f32) -
     )
     .logical_size()
 }
-/// Renderer triple both auxiliary windows share. Field names mirror
-/// the former per-window structs so call sites barely change.
-pub(crate) struct ShellRenderer {
-    pub(crate) compositor: Compositor,
-    pub(crate) surface: Surface,
-    pub(crate) backend: Renderer,
-}
-
-impl ShellRenderer {
-    pub(crate) fn present(
-        &mut self,
-        viewport: &Viewport,
-        background_color: iced::Color,
-    ) -> Result<(), iced_tiny_skia::graphics::compositor::SurfaceError> {
-        self.compositor.present(
-            &mut self.backend,
-            &mut self.surface,
-            viewport,
-            background_color,
-            || {},
-        )
-    }
-
-    pub(crate) fn resize(&mut self, width: u32, height: u32) {
-        // Zero-size configures poison the next present (tiny-skia
-        // pixel-map mismatch): skip until a real size arrives.
-        if width == 0 || height == 0 {
-            return;
-        }
-        self.compositor
-            .configure_surface(&mut self.surface, width, height);
-    }
-}
-
-/// Owned program instance plus its widget cache and geometry.
-/// The iced `UserInterface` is built transiently per pass: no self-reference, no `unsafe`.
+/// Program UI shell: [`ViewTree`] plus a [`MessageQueue`] on the side.
+/// No interface is retained across calls.
 pub(crate) struct ViewTree<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     instance: Box<program::Instance<P>>,
     cache: Cache,
@@ -209,6 +328,8 @@ impl<M> MessageQueue<M> {
 pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     tree: ViewTree<P>,
     queue: MessageQueue<P::Message>,
+    /// Reused event-draw scratch: pumps and redraws never allocate per event.
+    scratch: Vec<P::Message>,
 }
 
 /// What a pumped event needs after `update`: nothing, a repaint,
@@ -246,6 +367,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
                 bounds,
             },
             queue: MessageQueue::new(),
+            scratch: Vec::new(),
         }
     }
 
@@ -345,42 +467,49 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     }
 }
 
-/// Window-system half shared by the debugger and PPU viewer.
+/// One window-system surface plus one program shell.
 /// Program-specific halves stay in the handles.
 pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
-    window: Arc<TaoWindow>,
+    surface: AuxSurface,
     ui_state: UiShell<P>,
-    renderer: ShellRenderer,
-    viewport_physical: (u32, u32),
-    /// Last surface-configured size. Resize storms only relayout;
-    /// the realloc happens in `render`, once per presented frame.
-    surface_size: (u32, u32),
-    scale_factor: f32,
-    modifiers: iced::keyboard::Modifiers,
-    should_close: Arc<AtomicBool>,
-    cursor: mouse::Cursor,
-    clipboard: Clipboard,
+}
+
+impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShellOps for AuxShell<P> {
+    fn tao_window_id(&self) -> tao::window::WindowId {
+        self.surface.tao_window_id()
+    }
+
+    fn close_requested(&self) -> bool {
+        self.surface.close_requested()
+    }
+
+    fn focus_window(&self) {
+        self.surface.focus_window();
+    }
+
+    fn request_redraw(&self) {
+        self.surface.request_redraw();
+    }
+
+    fn handle_common(&mut self, event: &tao::event::WindowEvent) {
+        let ui_state = &mut self.ui_state;
+        self.surface
+            .handle_common_event(event, &mut |bounds| ui_state.relayout(bounds));
+    }
+
+    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
+        self.surface.feed_tao_event(event)
+    }
+
+    fn render_tagged(&mut self, tag: &'static str) {
+        self.render(tag);
+    }
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
-    /// Native window identity for event routing.
-    pub(crate) fn tao_window_id(&self) -> tao::window::WindowId {
-        self.window.id()
-    }
-
-    /// Close was requested through the shared flag.
-    pub(crate) fn close_requested(&self) -> bool {
-        self.should_close.load(std::sync::atomic::Ordering::Acquire)
-    }
-
-    /// Native redraw request without reaching into the window.
-    pub(crate) fn request_redraw(&self) {
-        self.window.request_redraw();
-    }
-
     /// Bring this window to the front.
     pub(crate) fn focus_window(&self) {
-        self.window.set_focus();
+        self.surface.focus_window();
     }
 
     /// Pump one converted event through the retained tree.
@@ -392,22 +521,39 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     ) -> PumpOutcome {
         let outcome = self.ui_state.pump(
             mapped,
-            self.cursor,
-            &mut self.clipboard,
-            &mut self.renderer.backend,
+            self.surface.cursor,
+            &mut self.surface.clipboard,
+            &mut self.surface.backend,
             out,
         );
         if matches!(outcome, PumpOutcome::Repaint) {
-            self.window.request_redraw();
+            self.surface.request_redraw();
         }
         outcome
+    }
+
+    /// Pump plus finish through the retained scratch buffer.
+    /// One line per aux window; no per-event alloc.
+    pub(crate) fn pump_finish(
+        &mut self,
+        mapped: iced::Event,
+        extra: impl IntoIterator<Item = P::Message>,
+        invalidated: &AtomicBool,
+    ) -> bool {
+        let mut out = std::mem::take(&mut self.ui_state.scratch);
+        let outcome = self.pump_frame(mapped, &mut out);
+        out.extend(extra);
+        let done = self.finish(outcome, &mut out, invalidated);
+        out.clear();
+        self.ui_state.scratch = out;
+        done
     }
 
     /// Shared pump finish for the four aux windows: repaint, rebuild, conditional process.
     pub(crate) fn finish(
         &mut self,
         outcome: PumpOutcome,
-        messages: Vec<P::Message>,
+        messages: &mut Vec<P::Message>,
         invalidated: &AtomicBool,
     ) -> bool {
         let repainted = matches!(outcome, PumpOutcome::Repaint);
@@ -415,7 +561,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
             invalidated.store(true, Ordering::Release);
         }
         let rebuilt = if !messages.is_empty() || matches!(outcome, PumpOutcome::Rebuild) {
-            self.process(messages, invalidated)
+            self.process(messages.drain(..), invalidated)
         } else {
             false
         };
@@ -429,138 +575,37 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         messages: impl IntoIterator<Item = P::Message>,
         invalidated: &AtomicBool,
     ) -> bool {
-        let bounds = self.logical_bounds();
+        let bounds = self.surface.logical_bounds();
         self.ui_state.set_bounds(bounds);
         let rebuilt =
             self.ui_state
-                .process_messages(messages, &mut self.renderer.backend, invalidated);
+                .process_messages(messages, &mut self.surface.backend, invalidated);
         if rebuilt {
-            self.window.request_redraw();
+            self.surface.request_redraw();
         }
         rebuilt
     }
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
-    /// Assemble from a scaffold plus a program instance.
-    /// The close flag is a parameter so sharing programs observe the same flag.
-    pub(crate) fn assemble(
-        scaffold: WindowScaffold,
-        instance: program::Instance<P>,
-        should_close: Arc<AtomicBool>,
-    ) -> Self {
-        let WindowScaffold {
-            window,
-            window_id,
-            scale_factor,
-            viewport_physical,
-            bounds,
-            compositor,
-            renderer,
-            surface,
-        } = scaffold;
-        let ui_state = UiShell::new(instance, window_id, bounds);
-        window.request_redraw();
+    /// Assemble from a surface plus a program instance.
+    /// The surface already carries the shared close flag.
+    pub(crate) fn assemble(surface: AuxSurface, instance: program::Instance<P>) -> Self {
+        let (window_id, bounds) = (surface.window_id, surface.bounds);
+        surface.request_redraw();
         Self {
-            window,
-            ui_state,
-            renderer: ShellRenderer {
-                compositor,
-                surface,
-                backend: renderer,
-            },
-            viewport_physical,
-            // The scaffold builds the surface at this size.
-            surface_size: viewport_physical,
-            scale_factor,
-            modifiers: iced::keyboard::Modifiers::default(),
-            should_close,
-            cursor: mouse::Cursor::default(),
-            clipboard: Clipboard::unconnected(),
+            surface,
+            ui_state: UiShell::new(instance, window_id, bounds),
         }
     }
 
-    /// Resize the raster and record fresh bounds (no view rebuild).
-    /// The surface realloc is deferred to `render`; same-size events skip everything.
-    pub(crate) fn resize(&mut self, width: u32, height: u32) {
-        if self.viewport_physical == (width, height) {
-            return;
-        }
-        self.viewport_physical = (width, height);
-        log::debug!(
-            "aux resize: physical={width}x{height} scale={} bounds={:?}",
-            self.scale_factor,
-            logical_bounds((width, height), self.scale_factor)
-        );
-        let bounds = logical_bounds((width, height), self.scale_factor);
-        self.ui_state.relayout(bounds);
-        self.window.request_redraw();
-    }
-
-    /// Scale changes move every layout bound: record like resize.
-    pub(crate) fn set_scale_factor(&mut self, scale_factor: f32) {
-        self.scale_factor = scale_factor;
-        let bounds = logical_bounds(self.viewport_physical, self.scale_factor);
-        self.ui_state.relayout(bounds);
-        self.window.request_redraw();
-    }
-
-    pub(crate) fn set_modifiers(&mut self, modifiers: tao::keyboard::ModifiersState) {
-        self.modifiers = crate::convert::tao_modifiers_to_iced(modifiers);
-    }
-
-    /// Shared event prelude for both twins (resize/scale/modifiers/close).
-    pub(crate) fn handle_common_event(&mut self, event: &tao::event::WindowEvent) {
-        match event {
-            tao::event::WindowEvent::Resized(size) => self.resize(size.width, size.height),
-            tao::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.set_scale_factor(*scale_factor as f32);
-            }
-            tao::event::WindowEvent::ModifiersChanged(state) => self.set_modifiers(*state),
-            tao::event::WindowEvent::CloseRequested => {
-                self.should_close
-                    .store(true, std::sync::atomic::Ordering::Release);
-            }
-            _ => {}
-        }
-    }
-
-    /// Feed one native event, returning the converted iced event.
-    /// Returns the event instead of taking a closure so callers never double-borrow.
-    pub(crate) fn feed_tao_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
-        crate::convert::convert_tao_window_event(
-            event,
-            &mut self.cursor,
-            self.scale_factor,
-            &mut self.modifiers,
-            &self.should_close,
-        )
-    }
-
-    /// Logical layout bounds for the current viewport and scale.
-    pub(crate) fn logical_bounds(&self) -> Size {
-        logical_bounds(self.viewport_physical, self.scale_factor)
-    }
     /// Full render through the shared pump; only the log tag differs.
     pub(crate) fn render(&mut self, log_tag: &'static str) {
-        // Self-healing scale: re-query the live factor and relayout on drift.
-        let live_scale = self.window.scale_factor() as f32;
-        if live_scale != self.scale_factor {
-            log::debug!(
-                "{log_tag} render: scale drift {} -> {}; relayout",
-                self.scale_factor,
-                live_scale
-            );
-            self.scale_factor = live_scale;
-            let bounds = logical_bounds(self.viewport_physical, self.scale_factor);
-            self.ui_state.relayout(bounds);
-        }
+        let ui_state = &mut self.ui_state;
+        self.surface
+            .heal_scale(log_tag, &mut |bounds| ui_state.relayout(bounds));
         // Deferred surface configure: the realloc lands here, at most once per frame.
-        if self.surface_size != self.viewport_physical {
-            self.renderer
-                .resize(self.viewport_physical.0, self.viewport_physical.1);
-            self.surface_size = self.viewport_physical;
-        }
+        self.surface.configure_surface();
         self.render_ui(log_tag);
     }
 
@@ -568,14 +613,17 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     fn render_ui(&mut self, log_tag: &'static str) {
         // Nothing to draw into yet (minimize/dock transient):
         // presenting a zero-size surface panics in pixel-map creation.
-        if self.viewport_physical.0 == 0 || self.viewport_physical.1 == 0 {
+        if self.surface.viewport_physical.0 == 0 || self.surface.viewport_physical.1 == 0 {
             return;
         }
         let theme = iced::Theme::Light;
         let style = <iced::Theme as theme::Base>::base(&theme);
         let viewport = Viewport::with_physical_size(
-            Size::new(self.viewport_physical.0, self.viewport_physical.1),
-            self.scale_factor,
+            Size::new(
+                self.surface.viewport_physical.0,
+                self.surface.viewport_physical.1,
+            ),
+            self.surface.scale_factor,
         );
         let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
             std::time::Instant::now(),
@@ -583,34 +631,36 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         {
             let tree = &mut self.ui_state.tree;
             let cache = std::mem::take(&mut tree.cache);
+            let mut sink = std::mem::take(&mut self.ui_state.scratch);
+            sink.clear();
             let mut ui = UserInterface::build(
                 tree.instance.view(tree.window_id),
                 tree.bounds,
                 cache,
-                &mut self.renderer.backend,
+                &mut self.surface.backend,
             );
             // Redraw-only pump: widget rebuild requests wait for the next
             // event-driven pump (`pump_outcome` mapping lives there).
             let _ = ui.update(
                 &[redraw_event],
-                self.cursor,
-                &mut self.renderer.backend,
-                &mut self.clipboard,
-                &mut std::vec::Vec::new(),
+                self.surface.cursor,
+                &mut self.surface.backend,
+                &mut self.surface.clipboard,
+                &mut sink,
             );
             ui.draw(
-                &mut self.renderer.backend,
+                &mut self.surface.backend,
                 &theme,
                 &renderer::Style {
                     text_color: style.text_color,
                 },
-                self.cursor,
+                self.surface.cursor,
             );
             tree.cache = ui.into_cache();
+            self.ui_state.scratch = sink;
         }
-        if let Err(error) = self.renderer.present(&viewport, style.background_color) {
-            log::warn!("{log_tag} render present failed: {error}");
-        }
+        self.surface
+            .present(&viewport, style.background_color, log_tag);
     }
 }
 

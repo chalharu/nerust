@@ -3,8 +3,7 @@ use std::rc::Rc;
 use nerust_gba_core::input_types::GbaInputBuffer;
 use nerust_input_traits::{
     AttachmentId, ControllerCollection, ControllerProfile, CreateSplitError, InputAssignments,
-    InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory, ProfileId,
-    SimplePort, SlotInfo,
+    InputPorts, InputResources, InputSystemFactory, ProfileId, SimplePort, SlotInfo,
 };
 
 pub(crate) const GBA_ATTACHMENT: AttachmentId = AttachmentId::new("gba.attachment.player1");
@@ -54,21 +53,15 @@ impl InputSystemFactory for crate::GbaFactory {
                     controller: ProfileId::new("gba.standard_pad"),
                 });
             };
-            let mut entries = Vec::new();
-            dev.field_map(&GBA_PORT, &mut entries);
-            entries
+            dev.field_entries(&GBA_PORT)
                 .into_iter()
                 .map(|entry| ((entry.attachment, entry.control), entry.field))
                 .collect()
         };
-        let shared: std::sync::Arc<std::sync::Mutex<Box<dyn InputStateBuffer>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(Box::<GbaInputBuffer>::default()));
-        let split = InputSplit::new(
-            std::sync::Arc::clone(&shared),
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        Ok(InputResources::new(
+            field_map,
             Box::new(|| Box::<GbaInputBuffer>::default()),
-        );
-        Ok(InputResources::new(split, field_map))
+        ))
     }
 }
 
@@ -98,7 +91,7 @@ mod tests {
         let controllers = ControllerCollection::new(vec![Box::new(StandardPad::new())]);
         let resources = crate::GbaFactory.create_split(&controllers).unwrap();
         assert_eq!(resources.field_map().len(), 10);
-        let buffer = (resources.split().new_buffer())();
+        let buffer = (resources.new_buffer())();
         assert!(buffer.downcast_ref::<GbaInputBuffer>().is_some());
     }
 

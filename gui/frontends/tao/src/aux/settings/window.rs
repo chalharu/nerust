@@ -8,7 +8,7 @@ use tao::event_loop::EventLoopWindowTarget;
 
 use super::program::{Message, SettingsAppProgram, find_duplicate_system_id};
 use crate::aux::bridge::lock_recovered;
-use crate::aux::shell::{AuxShell, WindowScaffold};
+use crate::aux::shell::{AuxShell, AuxSurface};
 
 /// Settings dialog: shared [`AuxShell`] host plus pending-apply staging.
 /// Matches the debugger/PPU shape.
@@ -42,13 +42,14 @@ impl SettingsWindowHandle {
             view_invalidated: Arc::clone(&view_invalidated),
         };
         let (instance, _task) = program::Instance::new(program);
-        let scaffold = WindowScaffold::open(
+        let surface = AuxSurface::open(
             event_loop,
             "Preferences",
             (960.0, 720.0),
             None,
             None,
             "settings window",
+            Arc::clone(&should_close),
         )
         .map_err(|error| {
             // Typed scaffold failure: surface the tagged native detail here.
@@ -60,12 +61,12 @@ impl SettingsWindowHandle {
         // it to tell "born 0x0, never resized" apart from later traffic.
         log::debug!(
             "settings create: physical={}x{} scale={} bounds={:?}",
-            scaffold.viewport_physical.0,
-            scaffold.viewport_physical.1,
-            scaffold.scale_factor,
-            scaffold.bounds,
+            surface.viewport_physical.0,
+            surface.viewport_physical.1,
+            surface.scale_factor,
+            surface.bounds,
         );
-        let shell = AuxShell::assemble(scaffold, instance, should_close);
+        let shell = AuxShell::assemble(surface, instance);
         Some(Self {
             shell,
             view_invalidated,
@@ -78,38 +79,23 @@ impl SettingsWindowHandle {
     }
 }
 
-impl crate::aux::focus::AuxWindow for SettingsWindowHandle {
+impl crate::aux::focus::AuxShellRef for SettingsWindowHandle {
     fn kind(&self) -> crate::aux::focus::AuxKind {
         crate::aux::focus::AuxKind::Settings
     }
 
-    fn tao_window_id(&self) -> tao::window::WindowId {
-        self.shell.tao_window_id()
+    fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
+        &self.shell
     }
 
-    fn close_requested(&self) -> bool {
-        self.shell.close_requested()
+    fn shell_mut(&mut self) -> &mut dyn crate::aux::shell::AuxShellOps {
+        &mut self.shell
     }
+}
 
-    fn focus_window(&self) {
-        self.shell.focus_window();
-    }
-
-    fn request_redraw(&self) {
-        self.shell.request_redraw();
-    }
-
-    fn handle_common(&mut self, event: &tao::event::WindowEvent) {
-        self.shell.handle_common_event(event);
-    }
-
-    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
-        self.shell.feed_tao_event(event)
-    }
-
-    fn render(&mut self) {
-        let tag = self.kind().log_tag();
-        self.shell.render(tag);
+impl crate::aux::registry::AuxController for SettingsWindowHandle {
+    fn take_pending_settings(&mut self) -> Option<SettingsSnapshot> {
+        self.take_pending_apply()
     }
 }
 
@@ -126,10 +112,8 @@ impl crate::aux::focus::AuxEvents for SettingsWindowHandle {
         } else {
             None
         };
-        let mut messages = Vec::new();
-        let outcome = self.shell.pump_frame(mapped, &mut messages);
-        messages.extend(capture);
-        self.shell.finish(outcome, messages, &self.view_invalidated)
+        self.shell
+            .pump_finish(mapped, capture, &self.view_invalidated)
     }
 }
 #[cfg(test)]

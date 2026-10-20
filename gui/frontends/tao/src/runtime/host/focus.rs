@@ -15,14 +15,15 @@ impl HostState {
     }
 
     /// Execute a still-armed auto-pause at the end of the event burst.
-    pub(crate) fn commit_pending_auto_pause(&mut self) {
+    pub(super) fn tick_focus_sync(&mut self) {
         if self.focus_event(FocusEvent::BurstEnd) != Some(FocusEffect::Pause) {
             return;
         }
         if self.session.tick_metrics().can_pause() {
             self.pause_session();
             self.note_protocol_pause();
-            self.sync_debug_chrome();
+            let ctx = self.frame_ctx();
+            self.sync_debug_chrome(&ctx);
         }
     }
 }

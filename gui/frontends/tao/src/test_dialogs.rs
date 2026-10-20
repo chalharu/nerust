@@ -48,11 +48,14 @@ impl crate::ports::DialogPorts for FakeDialogs {
         crate::aux::bridge::lock_recovered(&self.inner.errors).push(detail.to_string());
     }
 
-    fn show_error(
+    fn show_error_async(
         &self,
         _language: nerust_settings_core::model::language::AppLanguage,
-        detail: &str,
-    ) {
-        crate::aux::bridge::lock_recovered(&self.inner.errors).push(detail.to_string());
+        detail: String,
+    ) -> std::sync::mpsc::Receiver<()> {
+        crate::aux::bridge::lock_recovered(&self.inner.errors).push(detail);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let _ = done_tx.send(());
+        done_rx
     }
 }

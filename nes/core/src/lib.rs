@@ -970,7 +970,7 @@ mod cartridge_tests {
 
 #[cfg(test)]
 mod scheduler_tests {
-    use nerust_input_traits::{Controller, ControllerHub, Port};
+    use nerust_input_traits::{Controller, ControllerHub, Port, StrobeTarget};
 
     use super::*;
     use crate::{
@@ -987,14 +987,16 @@ mod scheduler_tests {
     #[derive(Debug, Default)]
     struct NullController;
 
+    impl StrobeTarget for NullController {
+        fn strobe(&mut self, _value: u8) {}
+    }
+
     impl Controller for NullController {
         fn read(&mut self, _port: &dyn Port) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
         }
 
         fn write(&mut self, _port: &dyn Port, _value: u8) {}
-
-        fn strobe(&mut self, _value: u8) {}
     }
 
     impl ControllerHub for NullController {

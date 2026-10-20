@@ -6,7 +6,7 @@ use tao::{event::WindowEvent, event_loop::ControlFlow};
 use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
-use crate::aux::focus::{AuxKind, FocusEffect, FocusEvent, pump_aux};
+use crate::aux::focus::{AuxKind, FocusEffect, FocusEvent};
 
 /// Map a native window event to a focus-domain event: only `Focused` maps.
 fn focus_event_of(kind: Option<AuxKind>, event: &WindowEvent) -> Option<FocusEvent> {
@@ -43,7 +43,8 @@ impl WindowRuntime {
                 self.host.request_redraw();
                 // Keep the debugger toolbar truthful without
                 // re-hitting the emu thread when nothing moved.
-                self.host.sync_debug_chrome();
+                let ctx = self.host.frame_ctx();
+                self.host.sync_debug_chrome(&ctx);
             }
             WindowEvent::Focused(false) => {
                 // Deferred: the pause lands at MainEventsCleared only if focus truly left.
@@ -51,7 +52,8 @@ impl WindowRuntime {
                 self.host.clear_keys();
                 // Same agreement in the other direction, still
                 // without redundant round-trips.
-                self.host.sync_debug_chrome();
+                let ctx = self.host.frame_ctx();
+                self.host.sync_debug_chrome(&ctx);
             }
             WindowEvent::Resized(_) => {
                 self.host.sync_fullscreen_default_from_window();
@@ -72,12 +74,25 @@ impl WindowRuntime {
         }
     }
 
+    /// Route one aux event by kind. The registry pumps; the host applies the outcome.
+    pub(super) fn on_aux_event(
+        &mut self,
+        kind: AuxKind,
+        event: WindowEvent,
+        opener: &dyn WindowOpener,
+    ) {
+        match kind {
+            AuxKind::Settings => self.on_settings_event(event),
+            AuxKind::Debug => self.on_debug_event(opener, event),
+            AuxKind::Ppu => self.on_ppu_event(event),
+            AuxKind::History => self.host.on_history_event(event),
+        }
+    }
+
     pub(super) fn on_settings_event(&mut self, event: WindowEvent) {
         // External destroy: run the normal close path (pending apply still commits).
         if matches!(event, WindowEvent::Destroyed) {
-            if let Some(handle) = self.host.take_settings_window()
-                && self.host.close_settings_and_maybe_rebuild(handle)
-            {
+            if self.host.settings_open() && self.host.close_settings_and_maybe_rebuild() {
                 self.recreate_renderer();
             }
             return;
@@ -86,17 +101,11 @@ impl WindowRuntime {
         if let Some(focus) = focus_event_of(Some(AuxKind::Settings), &event) {
             let _ = self.host.focus_event(focus);
         }
-        let drained = self
-            .host
-            .with_settings_window(|handle| pump_aux(handle, event));
-        if drained.is_none() {
+        let Some(outcome) = self.host.aux_on_event(AuxKind::Settings, event) else {
             return;
-        }
-        // Coalesced present: the visual paths above already requested a redraw.
-        if self.host.settings_close_requested()
-            && let Some(handle) = self.host.take_settings_window()
-            && self.host.close_settings_and_maybe_rebuild(handle)
-        {
+        };
+        // Coalesced present: the pump above already requested a redraw.
+        if outcome.close && self.host.close_settings_and_maybe_rebuild() {
             self.recreate_renderer();
         }
     }
@@ -123,15 +132,12 @@ impl WindowRuntime {
             self.host.resume_session();
         }
         let focused = matches!(event, WindowEvent::Focused(true));
-        if self
-            .host
-            .with_debug_window(|handle| pump_aux(handle, event))
-            .is_none()
-        {
+        let Some(outcome) = self.host.aux_on_event(AuxKind::Debug, event) else {
             return;
-        }
+        };
         if focused {
-            self.host.sync_debug_chrome();
+            let ctx = self.host.frame_ctx();
+            self.host.sync_debug_chrome(&ctx);
         }
         self.drain_and_maybe_open_ppu(opener);
         // Closing never resumes: resume is always explicit.
@@ -140,7 +146,7 @@ impl WindowRuntime {
             // flagged what changed; one request covers the frame.
             self.host.request_redraw();
         }
-        if self.host.debug_close_requested() {
+        if outcome.close {
             self.host.drop_debug_window();
             self.host.request_redraw();
         }
@@ -148,7 +154,7 @@ impl WindowRuntime {
 
     pub(super) fn on_debug_redrawn(&mut self, opener: &dyn WindowOpener) {
         self.drain_and_maybe_open_ppu(opener);
-        self.host.render_debug_window();
+        self.host.render_aux(AuxKind::Debug);
     }
 
     pub(super) fn on_ppu_event(&mut self, event: WindowEvent) {
@@ -173,14 +179,10 @@ impl WindowRuntime {
         if let WindowEvent::Moved(position) = &event {
             self.host.remember_ppu_window_pos(position.x, position.y);
         }
-        if self
-            .host
-            .with_ppu_window(|handle| pump_aux(handle, event))
-            .is_none()
-        {
+        let Some(outcome) = self.host.aux_on_event(AuxKind::Ppu, event) else {
             return;
-        }
-        if self.host.ppu_close_requested() {
+        };
+        if outcome.close {
             self.host.drop_ppu_window();
             self.host.request_redraw();
         }

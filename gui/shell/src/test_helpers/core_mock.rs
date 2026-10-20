@@ -229,7 +229,7 @@ pub(crate) fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts 
     CoreParts {
         core: Box::new(core),
         audio: Box::new(nerust_core_traits::audio::NullAudio),
-        gui_input,
+        gui_input: Box::new(gui_input),
         field_map: std::collections::HashMap::new(),
         render_profile,
         palette: Box::new([0u32; 256]),

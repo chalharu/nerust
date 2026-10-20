@@ -34,7 +34,13 @@ pub(crate) trait DialogPorts: Send + Sync {
         filters: Vec<(String, Vec<String>)>,
     ) -> Option<PathBuf>;
     fn show_load_error(&self, language: AppLanguage, detail: &str);
-    fn show_error(&self, language: AppLanguage, detail: &str);
+    /// Non-blocking error dialog: spawns the modal, returns its ack channel.
+    /// A dead channel means the spawn failed; the host reaps it as a failed ack.
+    fn show_error_async(
+        &self,
+        language: AppLanguage,
+        detail: String,
+    ) -> std::sync::mpsc::Receiver<()>;
 }
 
 /// Production dialogs over rfd.
@@ -57,13 +63,32 @@ impl DialogPorts for NativeDialogs {
         show_rom_load_error(language, detail);
     }
 
-    fn show_error(&self, language: AppLanguage, detail: &str) {
-        rfd::MessageDialog::new()
-            .set_title(text(language, UiText::Error))
-            .set_description(detail)
-            .set_level(rfd::MessageLevel::Error)
-            .set_buttons(rfd::MessageButtons::Ok)
-            .show();
+    fn show_error_async(
+        &self,
+        language: AppLanguage,
+        detail: String,
+    ) -> std::sync::mpsc::Receiver<()> {
+        // Associated function, not `self`: the thread owns everything it captures.
+        fn show_blocking(language: AppLanguage, detail: &str) {
+            rfd::MessageDialog::new()
+                .set_title(text(language, UiText::Error))
+                .set_description(detail)
+                .set_level(rfd::MessageLevel::Error)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+        }
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        if std::thread::Builder::new()
+            .name("nerust-error-dialog".to_string())
+            .spawn(move || {
+                show_blocking(language, &detail);
+                let _ = done_tx.send(());
+            })
+            .is_err()
+        {
+            log::error!("error dialog thread failed to spawn");
+        }
+        done_rx
     }
 }
 
