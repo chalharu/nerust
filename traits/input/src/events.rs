@@ -168,20 +168,9 @@ pub trait InputStateBuffer: std::fmt::Debug + Send + Downcast {
     /// Reset all fields to the neutral (released) state.
     /// Postcondition: the buffer equals a freshly constructed default.
     fn clear(&mut self);
-    /// Copy absolute state from another buffer of the same concrete type.
-    /// Mismatched types refuse without partially applying state.
+    /// Copy absolute state; mismatched types refuse without partial apply.
+    /// Partial merge is absent: rotation resurrects superseded bytes.
     fn copy_state(&mut self, other: &dyn InputStateBuffer) -> Result<(), BufferError>;
-    /// Copy only listed dirty fields; defaults to full [`Self::copy_state`].
-    fn copy_dirty_from(
-        &mut self,
-        other: &dyn InputStateBuffer,
-        dirty: &[usize],
-    ) -> Result<(), BufferError> {
-        if dirty.is_empty() {
-            return Ok(());
-        }
-        self.copy_state(other)
-    }
 }
 
 downcast_rs::impl_downcast!(InputStateBuffer);
@@ -275,11 +264,9 @@ mod tests {
                 .is_err()
         );
         assert_eq!(FieldId::new(3).index(), 3);
-        // Empty dirty list copies nothing; nonempty defaults to full state.
+        // Full copy propagates staged bits; mismatched buffers refuse.
         let mut other = Bit::default();
-        other.copy_dirty_from(&bit, &[]).unwrap();
-        assert!(!other.pressed);
-        other.copy_dirty_from(&bit, &[0]).unwrap();
+        other.copy_state(&bit).unwrap();
         assert!(other.pressed);
         // Mismatched buffers refuse without partially applying.
         struct Foreign;
@@ -300,7 +287,7 @@ mod tests {
                 })
             }
         }
-        assert!(other.copy_dirty_from(&Foreign, &[0]).is_err());
+        assert!(other.copy_state(&Foreign).is_err());
     }
 
     #[test]
