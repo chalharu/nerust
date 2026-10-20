@@ -41,7 +41,6 @@ impl AndroidSettings {
     }
 
     /// Shared decode core over a key→index lookup for the dialog codec.
-
     fn decode_with(current: &Self, by_key: &dyn Fn(&str) -> Option<usize>) -> Option<Self> {
         let off_on = |key: &str| -> Option<bool> {
             match by_key(key)? {
@@ -166,7 +165,6 @@ impl AndroidSettings {
     }
 
     /// Locked payload builder: `begin_request` already holds the bridge state.
-
     pub(super) fn dialog_payload_from_defs(request_id: u64, defs: &[SettingDef]) -> String {
         let mut sections: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
         for def in defs {
