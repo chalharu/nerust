@@ -176,3 +176,33 @@ mod tests {
         assert_ne!(cache.title(changed), first);
     }
 }
+
+#[cfg(test)]
+mod agreement_tests {
+    use super::*;
+
+    #[test]
+    fn all_title_entries_agree_on_one_source() {
+        let input = TitleInput {
+            paused: true,
+            loaded: true,
+            system_name: Some("Nes"),
+            active_slot: Some(2),
+            slot_count: 3,
+        };
+        let direct = title(input.clone());
+        assert_eq!(direct, window_title(true, true, Some("Nes"), Some(2), 3));
+        assert_eq!(direct, window_title_input(input));
+        let mut cache = TitleCache::new();
+        let owned = cache
+            .title(TitleInput {
+                paused: true,
+                loaded: true,
+                system_name: Some("Nes"),
+                active_slot: Some(2),
+                slot_count: 3,
+            })
+            .to_string();
+        assert_eq!(owned, direct);
+    }
+}

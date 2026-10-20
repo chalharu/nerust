@@ -24,6 +24,30 @@ pub(crate) enum ResumeWant {
     LifecycleRetry,
 }
 
+/// Lifecycle-restore fetch route: document URIs and library ids both
+/// fetch on the worker; the event thread only dispatches the buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RestoreFetch {
+    Document,
+    Library,
+    None,
+}
+
+/// Restore prefers the last document URI, then the library id.
+/// Neither blocks the event thread; both routes publish through the worker.
+pub(crate) fn restore_fetch_route(
+    has_document_reference: bool,
+    has_library_id: bool,
+) -> RestoreFetch {
+    if has_document_reference {
+        RestoreFetch::Document
+    } else if has_library_id {
+        RestoreFetch::Library
+    } else {
+        RestoreFetch::None
+    }
+}
+
 /// Foreground resume gate for the restore path and the window-ready retry.
 /// Suppressed while an error auto-pause holds the paused state.
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +78,15 @@ mod tests {
         assert!(should_resume_after_restore(false, true));
         assert!(should_resume_after_restore(true, true));
         assert!(!should_resume_after_restore(true, false));
+    }
+
+    #[test]
+    fn restore_routes_document_first_then_library() {
+        use super::{RestoreFetch, restore_fetch_route};
+        assert_eq!(restore_fetch_route(true, true), RestoreFetch::Document);
+        assert_eq!(restore_fetch_route(true, false), RestoreFetch::Document);
+        assert_eq!(restore_fetch_route(false, true), RestoreFetch::Library);
+        assert_eq!(restore_fetch_route(false, false), RestoreFetch::None);
     }
 
     #[test]

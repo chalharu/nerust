@@ -9,7 +9,6 @@ mod shader_compiler;
 pub(crate) mod surface_view;
 mod vec2d;
 mod vertex_data;
-pub(crate) mod view;
 
 #[cfg(all(test, unix))]
 mod test_display;

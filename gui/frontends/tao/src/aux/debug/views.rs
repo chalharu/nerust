@@ -9,7 +9,7 @@ use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::DebugMessage;
-use crate::aux::bridge::{DebugBridge, lock_recovered};
+use crate::aux::bridge::DebugBridge;
 
 /// Two-char marker prefix for a disassembly row, kept out of the
 /// view so the width contract stays unit-tested. The PC `>` itself
@@ -52,16 +52,16 @@ pub(super) struct ViewSnapshot {
 /// Lock the bridge once and clone an owned snapshot out of it.
 /// No widget code runs here; see `anchor()` for the anchor rule.
 pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
-    let language = bridge.language;
-    let nav = lock_recovered(&bridge.nav).clone();
-    let display = lock_recovered(&bridge.display).clone_without_images();
-    let bookmarks = lock_recovered(&bridge.bookmarks).clone();
-    let bm_input = lock_recovered(&bridge.bm_input).clone();
-    let watch = *lock_recovered(&bridge.watch);
-    let freeze = *lock_recovered(&bridge.freeze);
-    let freeze_input = lock_recovered(&bridge.freeze_input).clone();
-    let selected = *lock_recovered(&bridge.selected);
-    let edit_input = lock_recovered(&bridge.edit_input).clone();
+    let language = bridge.language();
+    let nav = bridge.read().nav.clone();
+    let display = bridge.read().display.clone_without_images();
+    let bookmarks = bridge.read().bookmarks.clone();
+    let bm_input = bridge.read().bm_input.clone();
+    let watch = bridge.read().watch;
+    let freeze = bridge.read().freeze;
+    let freeze_input = bridge.read().freeze_input.clone();
+    let selected = bridge.read().selected;
+    let edit_input = bridge.read().edit_input.clone();
     let pending = display.pending;
     let selected_name = bridge.selected_name();
     let regs = display.regs;
@@ -79,7 +79,7 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     // would sit blank forever and the toggle would offer Pause
     // against nothing. Read coreless as paused with an explicit
     // "no core" status — the same agreement as the gtk twin.
-    let coreless = bridge.spaces.is_empty();
+    let coreless = bridge.spaces().is_empty();
     let paused = paused || coreless;
     let status = if coreless && matches!(status, vm::StatusMessage::Empty) {
         vm::StatusMessage::NoCore
@@ -93,8 +93,8 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     } else {
         nav.dis_addr().unwrap_or(0)
     };
-    let reg_target = *lock_recovered(&bridge.reg_target);
-    let reg_input = lock_recovered(&bridge.reg_input).clone();
+    let reg_target = bridge.read().reg_target;
+    let reg_input = bridge.read().reg_input.clone();
     ViewSnapshot {
         language,
         mem_input,

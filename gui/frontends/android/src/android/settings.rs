@@ -553,10 +553,10 @@ impl AndroidSettings {
         current: &AndroidSettings,
     ) -> Vec<SettingDef> {
         let hash = current.defs_fingerprint();
-        if let Some((cached_hash, defs)) = &state.defs_cache {
-            if *cached_hash == hash {
-                return defs.clone();
-            }
+        if let Some((cached_hash, defs)) = &state.defs_cache
+            && *cached_hash == hash
+        {
+            return defs.clone();
         }
         let defs = current.setting_defs();
         state.defs_cache = Some((hash, defs.clone()));
@@ -569,9 +569,19 @@ impl AndroidSettings {
         with_state(|state| Self::cached_setting_defs_locked(state, current))
     }
 
+    /// Cache key version: bump when the defs shape changes.
+    /// Stale entries from an older shape never validate.
+    const DEFS_CACHE_VERSION: u64 = 1;
+
     fn defs_fingerprint(&self) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        // FNV-1a over every field `setting_defs` reads; deterministic
+        // across processes, unlike the default SipHash builder.
+        fn push(hash: &mut u64, bytes: &[u8]) {
+            for byte in bytes {
+                *hash ^= u64::from(*byte);
+                *hash = hash.wrapping_mul(0x100_0000_01b3);
+            }
+        }
         fn orientation_value(value: ScreenOrientation) -> u8 {
             match value {
                 ScreenOrientation::Auto => 0,
@@ -614,45 +624,54 @@ impl AndroidSettings {
                 StoragePolicy::CustomDirectory => 2,
             }
         }
-        let mut hasher = DefaultHasher::new();
-        self.audio_muted.hash(&mut hasher);
-        self.master_volume_percent.hash(&mut hasher);
-        self.latency_ms.hash(&mut hasher);
-        self.sample_rate.hash(&mut hasher);
-        self.vsync.hash(&mut hasher);
-        orientation_value(self.screen_orientation).hash(&mut hasher);
-        storage_policy_value(self.storage_policy).hash(&mut hasher);
-        visibility_value(self.overlay_visibility).hash(&mut hasher);
-        self.overlay_opacity_percent.hash(&mut hasher);
-        self.overlay_scale_percent.hash(&mut hasher);
-        self.overlay_vertical_offset_percent.hash(&mut hasher);
-        self.overlay_haptics.hash(&mut hasher);
-        self.motion_enabled.hash(&mut hasher);
-        self.rumble_enabled.hash(&mut hasher);
-        self.rumble_strength_percent.hash(&mut hasher);
-        rumble_target_value(self.rumble_target).hash(&mut hasher);
-        self.notifications_info_enabled.hash(&mut hasher);
-        self.notifications_warning_enabled.hash(&mut hasher);
-        self.notifications_error_enabled.hash(&mut hasher);
-        position_value(self.notifications_position).hash(&mut hasher);
-        area_mode_value(self.notifications_area_mode).hash(&mut hasher);
-        self.status_enabled.hash(&mut hasher);
-        position_value(self.status_position).hash(&mut hasher);
-        area_mode_value(self.status_area_mode).hash(&mut hasher);
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325 ^ Self::DEFS_CACHE_VERSION;
+        push(&mut hash, &[u8::from(self.audio_muted)]);
+        push(
+            &mut hash,
+            self.master_volume_percent.to_le_bytes().as_slice(),
+        );
+        push(&mut hash, self.latency_ms.to_le_bytes().as_slice());
+        push(&mut hash, self.sample_rate.to_le_bytes().as_slice());
+        push(&mut hash, &[u8::from(self.vsync)]);
+        push(&mut hash, &[orientation_value(self.screen_orientation)]);
+        push(&mut hash, &[storage_policy_value(self.storage_policy)]);
+        push(&mut hash, &[visibility_value(self.overlay_visibility)]);
+        push(&mut hash, &[self.overlay_opacity_percent]);
+        push(&mut hash, &[self.overlay_scale_percent]);
+        push(
+            &mut hash,
+            self.overlay_vertical_offset_percent
+                .to_le_bytes()
+                .as_slice(),
+        );
+        push(&mut hash, &[u8::from(self.overlay_haptics)]);
+        push(&mut hash, &[u8::from(self.motion_enabled)]);
+        push(&mut hash, &[u8::from(self.rumble_enabled)]);
+        push(&mut hash, &[self.rumble_strength_percent]);
+        push(&mut hash, &[rumble_target_value(self.rumble_target)]);
+        push(&mut hash, &[u8::from(self.notifications_info_enabled)]);
+        push(&mut hash, &[u8::from(self.notifications_warning_enabled)]);
+        push(&mut hash, &[u8::from(self.notifications_error_enabled)]);
+        push(&mut hash, &[position_value(self.notifications_position)]);
+        push(&mut hash, &[area_mode_value(self.notifications_area_mode)]);
+        push(&mut hash, &[u8::from(self.status_enabled)]);
+        push(&mut hash, &[position_value(self.status_position)]);
+        push(&mut hash, &[area_mode_value(self.status_area_mode)]);
         for choice in &self.system_choices {
-            choice.system_id.to_string().hash(&mut hasher);
-            choice.field_id.as_str().hash(&mut hasher);
-            choice.label.hash(&mut hasher);
-            choice.selected.as_str().hash(&mut hasher);
+            push(&mut hash, choice.system_id.to_string().as_bytes());
+            push(&mut hash, choice.field_id.as_str().as_bytes());
+            push(&mut hash, choice.label.as_bytes());
+            push(&mut hash, choice.selected.as_str().as_bytes());
             for (id, label) in &choice.options {
-                id.as_str().hash(&mut hasher);
-                label.hash(&mut hasher);
+                push(&mut hash, id.as_str().as_bytes());
+                push(&mut hash, label.as_bytes());
             }
         }
-        hasher.finish()
+        hash
     }
-    /// Index N is the choice for `setting_defs()[N]`; positions must
-    /// come from the same defs list. `None` on malformed input.
+    /// Index N is the choice for `setting_defs()[N]`; positions must come from the same defs list.
+    /// `None` on malformed input. Test-only entry: production decodes through `from_keyed_indices`.
+    #[cfg(test)]
     pub(crate) fn from_choice_indices(raw: &str, current: &Self) -> Option<Self> {
         let indices: Vec<usize> = raw
             .split(',')
@@ -670,11 +689,39 @@ impl AndroidSettings {
             .enumerate()
             .map(|(pos, def)| (def.key.as_str(), pos))
             .collect();
-        let by_key = |key: &str| -> Option<usize> {
+        Self::decode_with(current, &|key| {
             index_by_key
                 .get(key)
                 .and_then(|pos| indices.get(*pos).copied())
-        };
+        })
+    }
+
+    /// Decode directly from the keyed dialog result: no CSV round-trip.
+    /// Unknown keys never decode; invisible rows may be absent (kept current).
+    pub(crate) fn from_keyed_indices(
+        values: &BTreeMap<String, usize>,
+        current: &Self,
+    ) -> Option<Self> {
+        // Shared cache entry with `from_choice_indices`.
+        let defs = AndroidSettings::cached_setting_defs(current);
+        if values
+            .keys()
+            .any(|key| !defs.iter().any(|def| def.key.as_str() == key.as_str()))
+        {
+            return None;
+        }
+        if defs
+            .iter()
+            .any(|def| def.visible && !values.contains_key(&def.key))
+        {
+            return None;
+        }
+        Self::decode_with(current, &|key| values.get(key).copied())
+    }
+
+    /// Shared decode core over a key→index lookup; both dialog codecs funnel here.
+    /// A missing `status.area_mode` (invisible same-edge row) keeps the current value.
+    fn decode_with(current: &Self, by_key: &dyn Fn(&str) -> Option<usize>) -> Option<Self> {
         let off_on = |key: &str| -> Option<bool> {
             match by_key(key)? {
                 0 => Some(false),
@@ -753,9 +800,13 @@ impl AndroidSettings {
         let status_position = position("status.position")?;
         // Absent when same-edge (follows the notification mode):
         // keep the current value instead of rejecting the payload.
-        let status_area_mode = match index_by_key.contains_key("status.area_mode") {
-            true => area_mode("status.area_mode")?,
-            false => current.status_area_mode,
+        let status_area_mode = match by_key("status.area_mode") {
+            Some(index) => match index {
+                0 => NotificationAreaMode::Overlay,
+                1 => NotificationAreaMode::Strip,
+                _ => return None,
+            },
+            None => current.status_area_mode,
         };
         let mut system_choices = current.system_choices.clone();
         for choice in system_choices.iter_mut() {
@@ -820,6 +871,7 @@ impl AndroidSettings {
                     "enabled": true,
             });
             if let Some(range) = def.range {
+                field["kind"] = serde_json::json!("range");
                 field["min"] = serde_json::json!(range.min);
                 field["max"] = serde_json::json!(range.max);
                 field["unit"] = serde_json::json!(range.unit);
@@ -832,33 +884,30 @@ impl AndroidSettings {
                 sections.push((section, vec![field]));
             }
         }
-        let sections: Vec<_> = sections
+        let mut sections: Vec<_> = sections
             .into_iter()
-            .map(|(id, fields)| serde_json::json!({ "id": id, "fields": fields }))
+            .map(|(id, fields)| {
+                serde_json::json!({
+                    "id": id,
+                    "label": crate::bridge_events::section_label(&id),
+                    "fields": fields,
+                })
+            })
             .collect();
+        // Canonical order owned by Rust; extras keep discovery order.
+        sections.sort_by_key(|section| {
+            let id = section["id"].as_str().unwrap_or_default();
+            crate::bridge_events::SETTINGS_SECTION_IDS
+                .iter()
+                .position(|known| *known == id)
+                .unwrap_or(usize::MAX)
+        });
         serde_json::json!({
             "schemaVersion": SETTINGS_SCHEMA_VERSION,
             "requestId": request_id,
             "sections": sections,
         })
         .to_string()
-    }
-
-    pub(crate) fn from_keyed_indices(
-        values: &BTreeMap<String, usize>,
-        current: &Self,
-    ) -> Option<Self> {
-        // Shared cache entry with `from_choice_indices`.
-        let defs = AndroidSettings::cached_setting_defs(current);
-        if values.len() != defs.len() || defs.iter().any(|def| !values.contains_key(&def.key)) {
-            return None;
-        }
-        let raw = defs
-            .iter()
-            .map(|def| values.get(&def.key).map(usize::to_string))
-            .collect::<Option<Vec<_>>>()?
-            .join(",");
-        Self::from_choice_indices(&raw, current)
     }
 }
 
@@ -904,7 +953,16 @@ fn with_state<T>(operation: impl FnOnce(&mut SettingsBridgeState) -> T) -> T {
 
 /// Update cached settings so `show_settings_dialog_sync` can present current data.
 pub(crate) fn update_cached_settings(current: &AndroidSettings) {
-    with_state(|state| state.cache = Some(current.clone()));
+    with_state(|state| {
+        state.cache = Some(current.clone());
+        state.defs_cache = None;
+    });
+}
+
+/// Thread the dialog cache instead of rebuilding from the snapshot.
+/// `None` before the first refresh; callers fall back to `from_snapshot`.
+pub(crate) fn cloned_cached_settings() -> Option<AndroidSettings> {
+    with_state(|state| state.cache.clone())
 }
 
 pub(crate) fn apply_screen_orientation(app: &AndroidApp, orientation: ScreenOrientation) {
@@ -1733,6 +1791,113 @@ mod tests {
         let back = AndroidSettings::from_choice_indices(&raw, &android).unwrap();
         assert_eq!(back.status_position, NotificationPosition::BottomRight);
         assert_eq!(back.status_area_mode, NotificationAreaMode::Strip);
+    }
+
+    #[test]
+    fn dialog_payload_sections_carry_rust_owned_labels() {
+        use crate::bridge_events::{SETTINGS_SECTION_IDS, section_label};
+        let registry = registry();
+        let android = android_settings(&default_snapshot(), &registry);
+        let defs = AndroidSettings::cached_setting_defs(&android);
+        let doc: serde_json::Value =
+            serde_json::from_str(&AndroidSettings::dialog_payload_from_defs(7, &defs)).unwrap();
+        let sections = doc["sections"].as_array().unwrap();
+        let ids: Vec<&str> = sections
+            .iter()
+            .map(|section| section["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, SETTINGS_SECTION_IDS);
+        for section in sections {
+            let id = section["id"].as_str().unwrap();
+            assert_eq!(section["label"].as_str().unwrap(), section_label(id));
+        }
+        let fields: Vec<&serde_json::Value> = sections
+            .iter()
+            .flat_map(|section| section["fields"].as_array().unwrap().iter())
+            .collect();
+        let volume = fields
+            .iter()
+            .find(|field| field["key"] == "master_volume")
+            .unwrap();
+        assert_eq!(volume["kind"], "range");
+        assert_eq!(volume["min"], 0);
+        assert_eq!(volume["max"], 100);
+        assert_eq!(volume["unit"], "%");
+        let muted = fields
+            .iter()
+            .find(|field| field["key"] == "audio_muted")
+            .unwrap();
+        assert_eq!(muted["kind"], "choice");
+        assert!(muted.get("min").is_none());
+    }
+
+    #[test]
+    fn keyed_indices_tolerate_absent_invisible_rows() {
+        // Same-edge hides `status.area_mode`; an omitted invisible row
+        // keeps the current value instead of rejecting the payload.
+        let registry = registry();
+        let mut android = android_settings(&default_snapshot(), &registry);
+        android.status_position = NotificationPosition::BottomRight;
+        android.status_area_mode = NotificationAreaMode::Strip;
+        let mut values = current_values(&android);
+        assert!(
+            !android
+                .setting_defs()
+                .iter()
+                .find(|def| def.key == "status.area_mode")
+                .unwrap()
+                .visible
+        );
+        values.remove("status.area_mode");
+        let back = AndroidSettings::from_keyed_indices(&values, &android).unwrap();
+        assert_eq!(back.status_area_mode, NotificationAreaMode::Strip);
+        values.insert("status.area_mode".to_string(), 0);
+        let back = AndroidSettings::from_keyed_indices(&values, &android).unwrap();
+        assert_eq!(back.status_area_mode, NotificationAreaMode::Overlay);
+    }
+
+    #[test]
+    fn keyed_indices_reject_unknown_keys_and_missing_visible_rows() {
+        let registry = registry();
+        let android = android_settings(&default_snapshot(), &registry);
+        let mut values = current_values(&android);
+        values.insert("mystery.key".to_string(), 0);
+        assert!(AndroidSettings::from_keyed_indices(&values, &android).is_none());
+        let mut values = current_values(&android);
+        values.remove("audio_muted");
+        assert!(AndroidSettings::from_keyed_indices(&values, &android).is_none());
+    }
+
+    #[test]
+    fn defs_fingerprint_tracks_every_scalar_field() {
+        // Each scalar flip must change the key, or the cache serves stale defs.
+        let registry = registry();
+        let base = android_settings(&default_snapshot(), &registry);
+        let key = base.defs_fingerprint();
+        let mut flip = base.clone();
+        flip.audio_muted = !flip.audio_muted;
+        assert_ne!(flip.defs_fingerprint(), key);
+        let mut flip = base.clone();
+        flip.master_volume_percent = flip.master_volume_percent.wrapping_add(1);
+        assert_ne!(flip.defs_fingerprint(), key);
+        let mut flip = base.clone();
+        flip.latency_ms = flip.latency_ms.wrapping_add(1);
+        assert_ne!(flip.defs_fingerprint(), key);
+        let mut flip = base.clone();
+        flip.screen_orientation = ScreenOrientation::Landscape;
+        assert_ne!(flip.defs_fingerprint(), key);
+        let mut flip = base.clone();
+        flip.overlay_vertical_offset_percent = flip.overlay_vertical_offset_percent.wrapping_add(1);
+        assert_ne!(flip.defs_fingerprint(), key);
+        let mut flip = base.clone();
+        flip.notifications_position = NotificationPosition::TopRight;
+        assert_ne!(flip.defs_fingerprint(), key);
+        let mut flip = base.clone();
+        flip.status_area_mode = NotificationAreaMode::Strip;
+        assert_ne!(flip.defs_fingerprint(), key);
+        let mut flip = base.clone();
+        flip.rumble_target = RumbleTarget::Controller;
+        assert_ne!(flip.defs_fingerprint(), key);
     }
 
     #[test]

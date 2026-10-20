@@ -34,10 +34,49 @@ chunk_kt="$(grep -oE 'SAF_CHUNK_BYTES = [0-9 ]+\* *[0-9]+' "${KT_DIR}/SafReposit
 [[ "${chunk_rs}" == "${chunk_kt}" ]] \
     || fail "SAF_CHUNK_BYTES rust=${chunk_rs} kotlin=${chunk_kt}"
 
-# Menu action names: every Rust ACTION_* literal must appear in a Kotlin sender.
-while IFS= read -r action; do
-    grep -q "\"${action}\"" "${KT_DIR}/ChromeManager.kt" "${KT_DIR}/MainActivity.kt" \
-        || fail "menu action ${action} missing from Kotlin senders"
-done < <(grep -oE 'ACTION_[A-Z_]+: &str = "[a-z_]+"' "${RUST_DIR}/src/android/menu.rs" | grep -oE '"[a-z_]+"' | tr -d '"')
+# Menu actions: BridgeContract.MenuAction is the single Kotlin source.
+# Every Rust ACTION_* literal must resolve to it; no raw literals elsewhere.
+rust_actions="$( (grep -oE 'ACTION_[A-Z_]+: &str = "[a-z_]+"' "${RUST_DIR}/src/bridge_events.rs" | grep -oE '"[a-z_]+"' | tr -d '"'; echo controller) | sort -u)"
+kt_actions="$(sed -n '/object MenuAction/,/^}/p' "${KT_DIR}/BridgeContract.kt" | grep -oE 'const val [A-Z_]+ = "[a-z_]+"' | grep -oE '"[a-z_]+"' | tr -d '"' | sort -u)"
+[[ "${rust_actions}" == "${kt_actions}" ]] \
+    || fail "menu actions differ rust=[${rust_actions}] kotlin=[${kt_actions}]"
+grep -q "MenuAction\." "${KT_DIR}/ChromeManager.kt" "${KT_DIR}/MainActivity.kt" \
+    || fail "Kotlin senders must resolve menu actions through MenuAction"
+if grep -rn --include='*.kt' -E 'menuEventJson\("|dispatchMenuAction\("' "${KT_DIR}" | grep -q .; then
+    grep -rn --include='*.kt' -E 'menuEventJson\("|dispatchMenuAction\("' "${KT_DIR}" >&2
+    fail "menu senders must resolve actions through MenuAction, never raw literals"
+fi
+
+# Controller keys: Rust table, JSON enum, and Kotlin ControllerKey stay identical.
+rust_keys="$(grep -oE '"(button[1265]|start|select|up|down|left|right)"' "${RUST_DIR}/src/bridge_events.rs" | tr -d '"' | sort -u)"
+json_keys="$(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["definitions"]["menuEvent"]["properties"]["key"]["enum"]))' "${RUST_DIR}/bridge_events.v1.json" | sort -u)"
+kt_keys="$(grep -oE 'const val [A-Z0-9_]+ = "(button[1265]|start|select|up|down|left|right)"' "${KT_DIR}/BridgeContract.kt" | grep -oE '"[a-z0-9_]+"' | tr -d '"' | sort -u)"
+[[ "${rust_keys}" == "${json_keys}" && "${json_keys}" == "${kt_keys}" ]] \
+    || fail "controller keys differ rust=[${rust_keys}] json=[${json_keys}] kotlin=[${kt_keys}]"
+
+# Ranged fields: Rust RangeSpec shape and Kotlin native Slider stay in sync.
+grep -q '"kind": "choice"' "${RUST_DIR}/src/android/settings.rs" \
+    || fail "Rust settings payload must tag choice fields with kind"
+grep -q 'field\["kind"\] = serde_json::json!("range")' "${RUST_DIR}/src/android/settings.rs" \
+    || fail "Rust settings payload must tag ranged fields with kind"
+grep -q 'field\["min"\]' "${RUST_DIR}/src/android/settings.rs" \
+    || fail "Rust settings payload must carry min/max/unit for ranged fields"
+grep -q 'kind == "range"' "${KT_DIR}/MainActivity.kt" \
+    || fail "Kotlin must branch on the pushed field kind"
+grep -q 'field.getInt("min")' "${KT_DIR}/MainActivity.kt" \
+    || fail "Kotlin must read the pushed min/max shape"
+grep -q 'field.getInt("max")' "${KT_DIR}/MainActivity.kt" \
+    || fail "Kotlin must read the pushed min/max shape"
+grep -q 'Slider(' "${KT_DIR}/SettingsDialog.kt" \
+    || fail "Kotlin must render ranged fields natively with a Slider"
+
+# Settings sections: Rust owns id->label; Kotlin renders the pushed label.
+rust_sections="$(sed -n '/pub(crate) const SETTINGS_SECTION_IDS/,/];/p' "${RUST_DIR}/src/bridge_events.rs" | grep -oE '"[a-z.]+"' | tr -d '"' | sort -u)"
+for section in ${rust_sections}; do
+    grep -q "\"${section}\"" "${KT_DIR}/BridgeContract.kt" \
+        || fail "section ${section} missing from Kotlin fallback labels"
+done
+grep -q 'section.optString("label")' "${KT_DIR}/MainActivity.kt" \
+    || fail "Kotlin must render the Rust-pushed section label"
 
 echo "Android bridge contract: OK (bridge v${bridge_rs}, settings v${settings_rs}, chunk ${chunk_rs})"

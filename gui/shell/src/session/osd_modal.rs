@@ -148,20 +148,24 @@ impl ModalBox {
         self.take_batch()
     }
 
-    /// Queue one aggregated error batch for sequential display, capped.
-    /// Drops the oldest on overflow; returns true when a batch was dropped.
-    pub(crate) fn queue_modal(&mut self, detail: String) -> bool {
-        let dropped = self.queue.len() >= Self::MAX_QUEUED;
-        if dropped {
+    /// Single cap enforcement: drop-oldest, count losses.
+    fn enforce_cap(&mut self) -> bool {
+        let mut dropped = false;
+        while self.queue.len() > Self::MAX_QUEUED {
             self.queue.pop_front();
             self.dropped_total += 1;
+            dropped = true;
         }
-        self.queue.push_back(detail);
         dropped
     }
 
+    /// Queue one aggregated error batch for sequential display, capped.
+    pub(crate) fn queue_modal(&mut self, detail: String) -> bool {
+        self.queue.push_back(detail);
+        self.enforce_cap()
+    }
+
     /// Re-queue an interrupted head batch preserving display order.
-    /// Overflow drops the oldest queued batch behind the head.
     pub(crate) fn requeue_front(&mut self, detail: String) -> bool {
         self.queue.push_front(detail);
         let mut dropped = false;

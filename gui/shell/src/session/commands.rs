@@ -126,7 +126,16 @@ impl SessionCommand {
     /// Slot carried for failure messages: explicit-slot commands use their own id.
     /// Active-slot commands resolve to `active`; the rest report `None`.
     pub fn associated_slot(&self, active: Option<u64>) -> Option<u64> {
-        SessionCmd::slot_affinity(self, active)
+        self.slot_affinity(active)
+    }
+
+    /// Single mapping from outcome to notification; all entry points delegate here.
+    pub fn notification_for(
+        &self,
+        outcome: &SessionCommandOutcome,
+        active_slot: Option<u64>,
+    ) -> Option<crate::session::notification::NotificationKind> {
+        self.success_notification(outcome, active_slot)
     }
 }
 
@@ -139,9 +148,17 @@ pub struct SessionCommandOutcome {
     pub slot_failure: Option<SlotOpFailure>,
 }
 
-/// Map a command outcome to its notification, if any.
-/// Success notifies Info; slot failures map to Warning/Error by reason.
+/// Single mapping from command outcome to notification.
 pub fn outcome_notification(
+    command: SessionCommand,
+    outcome: &SessionCommandOutcome,
+    active_slot: Option<u64>,
+) -> Option<crate::session::notification::NotificationKind> {
+    notification_for(command, outcome, active_slot)
+}
+
+/// Single source mapping command outcomes to notifications.
+pub fn notification_for(
     command: SessionCommand,
     outcome: &SessionCommandOutcome,
     active_slot: Option<u64>,
@@ -384,6 +401,54 @@ mod tests {
         assert_eq!(
             outcome_notifications(SessionCommand::SelectActiveSlot(5), &ok, Some(3)),
             [NotificationKind::SelectedSlot(5)]
+        );
+    }
+}
+
+#[cfg(test)]
+mod mapping_tests {
+    use super::*;
+    use crate::emu_core::StateFault;
+    use crate::session::error::SlotOpFailure;
+
+    #[test]
+    fn notification_for_is_the_single_mapping() {
+        let ok = SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+            slot_failure: None,
+        };
+        assert_eq!(
+            notification_for(SessionCommand::Pause, &ok, None),
+            outcome_notification(SessionCommand::Pause, &ok, None)
+        );
+        assert_eq!(
+            SessionCommand::Pause.notification_for(&ok, None),
+            outcome_notification(SessionCommand::Pause, &ok, None)
+        );
+    }
+
+    #[test]
+    fn state_faults_map_to_slot_failures() {
+        assert_eq!(
+            SlotOpFailure::from(StateFault::Transport),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(
+            SlotOpFailure::from(StateFault::Missing),
+            SlotOpFailure::Missing
+        );
+        assert_eq!(
+            SlotOpFailure::from(StateFault::Storage),
+            SlotOpFailure::Storage
+        );
+        assert_eq!(
+            SlotOpFailure::from(StateFault::Corrupt),
+            SlotOpFailure::Corrupt
+        );
+        assert_eq!(
+            SlotOpFailure::from(StateFault::Incompatible),
+            SlotOpFailure::Incompatible
         );
     }
 }

@@ -22,6 +22,7 @@ pub(crate) mod persistence_setup;
 #[cfg(test)]
 mod persistence_test;
 pub mod ports;
+pub mod services;
 pub mod session_query;
 pub(crate) mod settings_apply;
 pub mod title;
@@ -200,30 +201,30 @@ impl EmuCluster {
         }
     }
 
-    /// Shared live core behind the [`LiveCore`] port. Named honestly:
-    /// all core methods take `&self`, so no caller needs `&mut`.
+    /// Single typed access: shared live core.
+    pub(crate) fn require_live(&self) -> Result<&EmuCore, SessionError> {
+        self.core.as_ref().ok_or(SessionError::NoCore)
+    }
+
+    /// Single typed access: exclusive live core.
+    pub(crate) fn require_live_mut(&mut self) -> Result<&mut EmuCore, SessionError> {
+        self.core.as_mut().ok_or(SessionError::NoCore)
+    }
+
+    /// Shared live core behind the [`LiveCore`](crate::emu_core::LiveCore) port.
     pub(crate) fn core(&self) -> Result<&dyn LiveCore, SessionError> {
-        self.core
-            .as_ref()
-            .map(|core| core as &dyn LiveCore)
-            .ok_or(SessionError::NoCore)
+        self.require_live().map(|core| core as &dyn LiveCore)
     }
 
     /// Exclusive live core for swaps and rebuilds.
     pub(crate) fn core_mut(&mut self) -> Result<&mut dyn LiveCore, SessionError> {
-        self.core
-            .as_mut()
+        self.require_live_mut()
             .map(|core| core as &mut dyn LiveCore)
-            .ok_or(SessionError::NoCore)
     }
 
-    /// Persistence port of the live core. Slot I/O goes through this,
-    /// never through the wider [`LiveCore`] surface.
+    /// Persistence port of the live core.
     pub(crate) fn exporter(&self) -> Result<&dyn StateExporter, SessionError> {
-        self.core
-            .as_ref()
-            .map(|core| core as &dyn StateExporter)
-            .ok_or(SessionError::NoCore)
+        self.require_live().map(|core| core as &dyn StateExporter)
     }
 
     /// Paired install: core and input always arrive together from the
@@ -760,7 +761,7 @@ impl SessionHandle {
             &self.settings.snapshot,
             &requested_assignments,
         )
-        .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
+        .map_err(SystemActivationError::from_session)?;
 
         if let Ok(exporter) = self.emu.exporter() {
             self.media

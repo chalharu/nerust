@@ -58,25 +58,17 @@ private data class DrawerAction(
     val action: String,
 )
 
-private const val MENU_ACTION_EXIT = "exit"
-private const val MENU_ACTION_LOAD_STATE = "load_state"
-private const val MENU_ACTION_OPEN_ROM = "open_rom"
-private const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
-private const val MENU_ACTION_RESET = "reset"
-private const val MENU_ACTION_SAVE_STATE = "save_state"
-private const val MENU_ACTION_TOGGLE_PAUSE = "toggle_pause"
-private const val MENU_ACTION_UNLOAD = "unload"
-
+/** Drawer actions resolve to the single-source [MenuAction] contract. */
 private val DRAWER_ACTIONS =
     listOf(
-        DrawerAction("Open ROM", MENU_ACTION_OPEN_ROM),
-        DrawerAction("Settings", MENU_ACTION_OPEN_SETTINGS),
-        DrawerAction("Pause / Resume", MENU_ACTION_TOGGLE_PAUSE),
-        DrawerAction("Save State", MENU_ACTION_SAVE_STATE),
-        DrawerAction("Load State", MENU_ACTION_LOAD_STATE),
-        DrawerAction("Reset", MENU_ACTION_RESET),
-        DrawerAction("Unload ROM", MENU_ACTION_UNLOAD),
-        DrawerAction("Exit", MENU_ACTION_EXIT),
+        DrawerAction("Open ROM", MenuAction.OPEN_ROM),
+        DrawerAction("Settings", MenuAction.OPEN_SETTINGS),
+        DrawerAction("Pause / Resume", MenuAction.TOGGLE_PAUSE),
+        DrawerAction("Save State", MenuAction.SAVE_STATE),
+        DrawerAction("Load State", MenuAction.LOAD_STATE),
+        DrawerAction("Reset", MenuAction.RESET),
+        DrawerAction("Unload ROM", MenuAction.UNLOAD),
+        DrawerAction("Exit", MenuAction.EXIT),
     )
 
 /** Non-dialog chrome: touch overlay, drawer, FPS label, and attach retries.

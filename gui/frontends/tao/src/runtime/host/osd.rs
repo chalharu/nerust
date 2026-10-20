@@ -71,8 +71,14 @@ impl HostState {
             self.sync_history_window(&ctx.frame);
             return;
         }
-        if let Some(handle) = opener.create_history(ctx.frame.language()) {
-            self.set_history_window(handle);
+        if let Some(handle) = opener.create_aux(
+            AuxKind::History,
+            crate::ports::AuxOpenParams::History {
+                language: ctx.frame.language(),
+            },
+        ) {
+            let id = self.aux.insert(handle);
+            debug_assert_eq!(self.aux.route_id(AuxKind::History), Some(id));
             // Fresh window needs full content regardless of cache.
             self.osd.history.sync_key.clear();
             self.sync_history_window(&ctx.frame);
@@ -82,7 +88,7 @@ impl HostState {
     fn sync_history_window(&mut self, frame: &FrameSnapshot) {
         let language = frame.language();
         let key = (self.session.notification_history_seq(), language);
-        // Dirty gate via Memo: row building is skipped unless content or language changed.
+        // Versioned gate: row building is skipped unless content or language changed.
         if !self.osd.history.sync_key.check(&key) {
             return;
         }
@@ -98,9 +104,13 @@ impl HostState {
         }
         // Read-only viewer: arrival only cancels a pending pause, never resumes.
         if let WindowEvent::Focused(focused) = event {
-            self.on_aux_focus(AuxKind::History, focused);
+            let _ = self.focus_event(crate::aux::focus::FocusEvent::Aux(
+                AuxKind::History,
+                focused,
+            ));
         }
-        let Some(outcome) = self.aux_on_event(AuxKind::History, event) else {
+        let domain = crate::aux::native::adapt_event(&event);
+        let Some(outcome) = self.aux_on_event(AuxKind::History, domain) else {
             return;
         };
         if outcome.close {
@@ -124,11 +134,7 @@ impl HostState {
     fn reserved_strip_with(&self, frame: &FrameSnapshot) -> ReservedStrip {
         use nerust_gui_shell::session::osd::OsdChrome;
         let chrome = OsdChrome::from(frame.notifications());
-        let client_h = self
-            .windows
-            .live()
-            .map(|window| window.inner_size().height)
-            .unwrap_or(0);
+        let client_h = self.windows.client_height();
         let (top_rows, bottom_rows) = chrome.reserved_rows();
         ReservedStrip {
             top: strip_pixels(client_h, top_rows, 1.0),
@@ -167,7 +173,7 @@ impl HostState {
             }
             self.osd.modal.flight = None;
             self.osd.modal_closed();
-            if self.osd.modal_queue_len() == 0 {
+            if super::services::OsdServicePort::modal_pending(self) == 0 {
                 self.osd.modal.resume_after_modal = false;
                 if resume_after {
                     self.resume();
@@ -222,7 +228,7 @@ impl HostState {
 
     /// OSD pump for the control-flow pass: drain plus expiry-driven wake.
     pub(super) fn tick_osd_pump(&mut self, ctx: &FrameCtx) -> WakeNeed {
-        self.poll_notifications(ctx);
+        super::services::OsdServicePort::poll_notifications(self, ctx);
         // Post-pump the deadline implies a showing label: one call drives expiry and wait.
         let osd_deadline = self.osd_wakeup();
         if osd_deadline.is_some() {
@@ -263,8 +269,9 @@ impl HostState {
         let chrome = OsdChrome::from(ctx.frame.notifications());
         // Cheap shell-side pre-gate before running the presenter.
         let geometry = (size.width, size.height, chrome);
-        // Peek (no record): the memo records only on a pass below.
-        let geometry_changed = self.osd.layer.last_sync_geometry.get() != Some(&geometry);
+        // Single-op memo: records and reports change atomically, so a
+        // repeated geometry never re-arms the presenter below.
+        let geometry_changed = self.osd.layer.last_sync_geometry.should_sync(geometry);
         if !osd_should_sync(
             &self.osd.layer.presenter,
             &self.osd.modal.manager,
@@ -287,7 +294,10 @@ impl HostState {
                 safe_insets: nerust_gui_shell::session::osd::UiInsets::default(),
             },
         );
-        self.osd.layer.last_sync_geometry.check(&geometry);
+        log::trace!(
+            "osd sync geometry v{}",
+            self.osd.layer.last_sync_geometry.version()
+        );
         match decision {
             OsdSync::Skip => {}
             OsdSync::Clear => {
@@ -374,7 +384,7 @@ mod tests {
     fn sync_gate_covers_all_cheap_inputs() {
         use nerust_gui_shell::session::osd::OsdChrome;
         let support = TestHost::new();
-        let host = support.host;
+        let mut host = support.host;
         let chrome = OsdChrome::from(host.frame_ctx().frame.notifications());
         assert!(!chrome.status_enabled);
         // Idle: same generation, nothing visible, status off, no

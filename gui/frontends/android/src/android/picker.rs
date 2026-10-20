@@ -113,7 +113,7 @@ pub(crate) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, Strin
 
 /// Fetch the picked document off the event-loop thread; the event thread
 /// only dispatches the completed buffer published here.
-pub(crate) fn spawn_document_fetch(app: AndroidApp, uri: String) {
+pub(crate) fn spawn_document_fetch(app: AndroidApp, uri: String, restore_hidden_state: bool) {
     let job = move || {
         let (display_name, extension) = infer_import_metadata(&app, &uri);
         let file_name = if extension.is_empty() {
@@ -131,11 +131,16 @@ pub(crate) fn spawn_document_fetch(app: AndroidApp, uri: String) {
                     file_name,
                     bytes,
                     digest,
+                    restore_hidden_state,
                 })
             }
             Err(error) => {
                 log::error!("{error}");
-                publish_result(RomPickerResult::Failed(error));
+                publish_result(if restore_hidden_state {
+                    RomPickerResult::RestoreDocumentFailed(error)
+                } else {
+                    RomPickerResult::Failed(error)
+                });
             }
         }
     };
@@ -145,6 +150,31 @@ pub(crate) fn spawn_document_fetch(app: AndroidApp, uri: String) {
     {
         publish_result(RomPickerResult::Failed(format!(
             "failed to spawn ROM fetch thread: {error}"
+        )));
+    }
+}
+
+/// Fetch a library ROM off the event-loop thread; same dispatch shape as documents.
+/// Reads through an owned path so the worker never borrows session storage.
+pub(crate) fn spawn_library_fetch(path: std::path::PathBuf, id: String) {
+    let job = move || match std::fs::read(&path) {
+        Ok(bytes) => {
+            let digest: [u8; 32] = Sha256::digest(&bytes).into();
+            publish_result(RomPickerResult::LibraryBytes { id, bytes, digest });
+        }
+        Err(error) => {
+            log::error!("library fetch failed for {id}: {error}");
+            publish_result(RomPickerResult::RestoreLibraryFailed(format!(
+                "failed to load ROM from library: {error}"
+            )));
+        }
+    };
+    if let Err(error) = std::thread::Builder::new()
+        .name("nerust-library-fetch".to_string())
+        .spawn(job)
+    {
+        publish_result(RomPickerResult::RestoreLibraryFailed(format!(
+            "failed to spawn library fetch thread: {error}"
         )));
     }
 }

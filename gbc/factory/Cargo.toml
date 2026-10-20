@@ -7,6 +7,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+log.workspace = true
 clap.workspace = true
 nerust_core_traits.workspace = true
 nerust_gbc_core.workspace = true

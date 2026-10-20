@@ -332,7 +332,17 @@ impl super::focus::AuxShellRef for HistoryWindowHandle {
     }
 }
 
+impl super::registry::DebugDrainPort for HistoryWindowHandle {}
+impl super::registry::LiveImagesPort for HistoryWindowHandle {}
+impl super::registry::SettingsClosePort for HistoryWindowHandle {}
+impl super::registry::BridgeSharePort for HistoryWindowHandle {}
 impl super::registry::AuxController for HistoryWindowHandle {
+    fn sync_view(&mut self) {
+        // History rebuilds from pushed content, not from the bridge.
+    }
+}
+
+impl super::registry::HistorySyncPort for HistoryWindowHandle {
     fn take_history_clear(&mut self) -> bool {
         self.take_clear_request()
     }

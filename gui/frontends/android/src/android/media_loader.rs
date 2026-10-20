@@ -4,52 +4,52 @@
 use jni::{jni_sig, jni_str};
 use nerust_core_traits::factory::load::MediaObject;
 use nerust_gui_shell::session::{access::PauseControl as _, notification::FailureOrigin};
-use sha2::{Digest, Sha256};
 use winit::event_loop::ActiveEventLoop;
 
-use super::{bridge, picker, storage::LastMediaReference};
+use super::{bridge, storage::LastMediaReference};
 
 impl super::AndroidFrontend {
-    pub(super) fn load_from_library_with_autosave(
+    /// Pure apply for a library buffer fetched on a worker thread.
+    /// Records the legacy digest after load for picker-vs-legacy checks.
+    pub(super) fn open_library_from_bytes(
         &mut self,
         event_loop: &ActiveEventLoop,
         id: &str,
-        restore_hidden_state: bool,
+        bytes: Vec<u8>,
+        digest: [u8; 32],
     ) -> Result<(), String> {
         log::info!(
-            "load_from_library_with_autosave: loading id={id} restore_hidden_state={restore_hidden_state}"
+            "open_library_from_bytes: applying id={id} ({} bytes)",
+            bytes.len()
         );
-        let bytes = self
+        let path = self
             .storage
             .rom_library
-            .load_bytes(id)
-            .map_err(|error| format!("failed to load ROM from library: {error}"))?
+            .rom_path(id)
             .ok_or_else(|| format!("ROM {id} was not found in the library"))?;
-        let legacy_digest: [u8; 32] = Sha256::digest(&bytes).into();
-        let path = self.storage.rom_library.rom_path(id);
-        let media = MediaObject::new(path, bytes);
-
-        self.load_media(event_loop, media, None, restore_hidden_state)?;
-        self.pending_legacy_digest = Some(legacy_digest);
+        let media = MediaObject::new(Some(path), bytes);
+        self.load_media(event_loop, media, None, true)?;
+        self.pending_legacy_digest = Some(digest);
+        super::show_toast(
+            &self.app,
+            "Legacy ROM restored; use Open ROM to reconnect its document",
+        );
         Ok(())
     }
 
-    pub(super) fn load_document_uri(
+    /// Pure apply for a document buffer fetched on a worker thread.
+    /// No I/O or hashing here; the event thread only dispatches.
+    pub(super) fn apply_document_bytes(
         &mut self,
         event_loop: &ActiveEventLoop,
         reference: LastMediaReference,
+        media: MediaObject,
         restore_hidden_state: bool,
     ) -> Result<(), String> {
         log::info!(
-            "load_document_uri: loading '{}' from {} restore_hidden_state={restore_hidden_state}",
+            "apply_document_bytes: applying '{}' from {} restore_hidden_state={restore_hidden_state}",
             reference.display_name,
             reference.uri
-        );
-        let bytes = picker::read_uri_bytes(&self.app, &reference.uri)?;
-        let media = MediaObject::from_document_uri(
-            reference.uri.clone(),
-            reference.display_name.clone(),
-            bytes,
         );
         self.load_media(event_loop, media, Some(reference), restore_hidden_state)
     }
@@ -153,8 +153,12 @@ impl super::AndroidFrontend {
         file_name: &str,
         bytes: Vec<u8>,
         digest: [u8; 32],
+        restore_hidden_state: bool,
     ) -> Result<(), String> {
-        log::info!("open_rom_from_bytes: opening {uri} ({} bytes)", bytes.len());
+        log::info!(
+            "open_rom_from_bytes: opening {uri} ({} bytes) restore_hidden_state={restore_hidden_state}",
+            bytes.len()
+        );
         // Carried from the fetch worker: no second hash on this thread.
         if let Some(expected) = self.pending_legacy_digest
             && expected != digest
@@ -172,7 +176,8 @@ impl super::AndroidFrontend {
             .to_string();
         let reference =
             LastMediaReference::new(uri.to_string(), file_name.to_string(), detected_system);
-        self.load_media(event_loop, media, Some(reference), false)?;
+        // Pure apply below: detection done, the event thread only dispatches.
+        self.apply_document_bytes(event_loop, reference, media, restore_hidden_state)?;
         self.pending_legacy_digest = None;
         Ok(())
     }

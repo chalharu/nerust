@@ -1,6 +1,5 @@
-//! Surface memo plus teardown accounting for the GL view.
-//! Owns the resize/viewport memo and the leaked-name ledger; frame and
-//! OSD views borrow the memo instead of issuing per-frame `Get` calls.
+//! Surface memo plus teardown accounting for the GL view. Owns the resize/viewport memo and the
+//! leaked-name ledger; frame and OSD views borrow the memo instead of issuing per-frame `Get` calls.
 
 use nerust_render_traits::ReservedStrip;
 

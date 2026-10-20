@@ -142,7 +142,7 @@ class MainActivity :
         chromeManager.onConfigurationChanged()
         // Tell Rust to rebuild its touch overlay even if no winit Resized event arrives.
         // The Rust re-push converges with the re-attach above.
-        sendMenuAction(menuEventJson("orientation_changed"))
+        sendMenuAction(menuEventJson(MenuAction.ORIENTATION_CHANGED))
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -156,16 +156,16 @@ class MainActivity :
         }
         val key =
             when (event.keyCode) {
-                KeyEvent.KEYCODE_BUTTON_A -> "button1"
-                KeyEvent.KEYCODE_BUTTON_B -> "button2"
-                KeyEvent.KEYCODE_BUTTON_L1 -> "button5"
-                KeyEvent.KEYCODE_BUTTON_R1 -> "button6"
-                KeyEvent.KEYCODE_BUTTON_START -> "start"
-                KeyEvent.KEYCODE_BUTTON_SELECT -> "select"
-                KeyEvent.KEYCODE_DPAD_UP -> "up"
-                KeyEvent.KEYCODE_DPAD_DOWN -> "down"
-                KeyEvent.KEYCODE_DPAD_LEFT -> "left"
-                KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+                KeyEvent.KEYCODE_BUTTON_A -> ControllerKey.BUTTON1
+                KeyEvent.KEYCODE_BUTTON_B -> ControllerKey.BUTTON2
+                KeyEvent.KEYCODE_BUTTON_L1 -> ControllerKey.BUTTON5
+                KeyEvent.KEYCODE_BUTTON_R1 -> ControllerKey.BUTTON6
+                KeyEvent.KEYCODE_BUTTON_START -> ControllerKey.START
+                KeyEvent.KEYCODE_BUTTON_SELECT -> ControllerKey.SELECT
+                KeyEvent.KEYCODE_DPAD_UP -> ControllerKey.UP
+                KeyEvent.KEYCODE_DPAD_DOWN -> ControllerKey.DOWN
+                KeyEvent.KEYCODE_DPAD_LEFT -> ControllerKey.LEFT
+                KeyEvent.KEYCODE_DPAD_RIGHT -> ControllerKey.RIGHT
                 else -> return super.dispatchKeyEvent(event)
             }
         val pressed = event.action == KeyEvent.ACTION_DOWN
@@ -185,10 +185,10 @@ class MainActivity :
         }
         val horizontal = event.getAxisValue(MotionEvent.AXIS_HAT_X)
         val vertical = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
-        updateControllerInput(event.deviceId, "left", horizontal < -CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, "right", horizontal > CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, "up", vertical < -CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, "down", vertical > CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.LEFT, horizontal < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.RIGHT, horizontal > CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.UP, vertical < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.DOWN, vertical > CONTROLLER_AXIS_THRESHOLD)
         return true
     }
 
@@ -469,6 +469,21 @@ class MainActivity :
         relativePath: String,
     ): String = safRepository.listSafFilesWithSizes(treeUri, relativePath)
 
+    /** Streaming SAF read: one server-side stream, sequential chunks. */
+    fun openSafReadSession(
+        treeUri: String,
+        relativePath: String,
+    ): Long = safRepository.openSafReadSession(treeUri, relativePath)
+
+    fun readSafReadSession(
+        sessionId: Long,
+        maxBytes: Int,
+    ): ByteArray = safRepository.readSafReadSession(sessionId, maxBytes)
+
+    fun closeSafReadSession(sessionId: Long) {
+        safRepository.closeSafReadSession(sessionId)
+    }
+
     @Suppress("DEPRECATION")
     override fun onActivityResult(
         requestCode: Int,
@@ -567,24 +582,9 @@ class MainActivity :
         chromeManager.removeDrawerOverlay()
     }
 
-    fun showSettingsDialogForTest(
-        keys: Array<String>,
-        labels: Array<String>,
-        choiceStrings: Array<String>,
-        currentIndices: Array<String>,
-        sections: Array<String> = emptyArray(),
-        visibleFlags: Array<Boolean> = emptyArray(),
-    ) {
+    fun showSettingsDialogForTest(fields: List<SettingsField>) {
         showSettingsDialogInternal(
-            content =
-                SettingsDialogContent(
-                    keys = keys.toList(),
-                    labels = labels.toList(),
-                    choiceStrings = choiceStrings.toList(),
-                    currentIndices = currentIndices.toList(),
-                    sections = sections.toList(),
-                    visibleFlags = visibleFlags.toList(),
-                ),
+            content = SettingsDialogContent(fields = fields),
             requestId = null,
             ownedByTest = true,
         )
@@ -599,48 +599,51 @@ class MainActivity :
         }
         val requestId = document.getLong("requestId")
         val sectionDocuments = document.getJSONArray("sections")
-        val fieldDocuments = mutableListOf<Pair<String, JSONObject>>()
+        val parsed = mutableListOf<SettingsField>()
         for (sectionIndex in 0 until sectionDocuments.length()) {
             val section = sectionDocuments.getJSONObject(sectionIndex)
             val sectionId = section.getString("id")
+            val sectionLabel =
+                section.optString("label").ifBlank {
+                    SettingsSectionFallback.labelFor(sectionId)
+                }
             val fields = section.getJSONArray("fields")
             for (fieldIndex in 0 until fields.length()) {
-                fieldDocuments += sectionId to fields.getJSONObject(fieldIndex)
-            }
-        }
-        val keys = Array(fieldDocuments.size) { fieldDocuments[it].second.getString("key") }
-        val labels = Array(fieldDocuments.size) { fieldDocuments[it].second.getString("label") }
-        val sections = Array(fieldDocuments.size) { fieldDocuments[it].first }
-        val choiceStrings =
-            Array(fieldDocuments.size) { index ->
-                val field = fieldDocuments[index].second
-                if (field.has("options")) {
-                    val options = field.getJSONArray("options")
-                    (0 until options.length()).joinToString("\t") { options.getString(it) }
+                val field = fields.getJSONObject(fieldIndex)
+                val kind = field.optString("kind", "choice")
+                if (kind == "range") {
+                    parsed +=
+                        SettingsField(
+                            key = field.getString("key"),
+                            section = sectionId,
+                            sectionLabel = sectionLabel,
+                            label = field.getString("label"),
+                            kind = kind,
+                            choices = emptyList(),
+                            value = field.getInt("value"),
+                            visible = field.optBoolean("visible", true),
+                            rangeMin = field.getInt("min"),
+                            rangeMax = field.getInt("max"),
+                            unit = field.optString("unit", ""),
+                        )
                 } else {
-                    // Ranged int: expand min..max locally with the unit suffix.
-                    val min = field.getInt("min")
-                    val max = field.getInt("max")
-                    val unit = field.optString("unit", "")
-                    (min..max).joinToString("\t") { "$it$unit" }
+                    val options = field.getJSONArray("options")
+                    parsed +=
+                        SettingsField(
+                            key = field.getString("key"),
+                            section = sectionId,
+                            sectionLabel = sectionLabel,
+                            label = field.getString("label"),
+                            kind = kind,
+                            choices = List(options.length()) { options.getString(it) },
+                            value = field.getInt("value"),
+                            visible = field.optBoolean("visible", true),
+                        )
                 }
             }
-        val currentIndices =
-            Array(fieldDocuments.size) { fieldDocuments[it].second.getInt("value").toString() }
-        val visibleFlags =
-            Array(fieldDocuments.size) { index ->
-                fieldDocuments[index].second.optBoolean("visible", true)
-            }
+        }
         showSettingsDialogInternal(
-            content =
-                SettingsDialogContent(
-                    keys = keys.toList(),
-                    labels = labels.toList(),
-                    choiceStrings = choiceStrings.toList(),
-                    currentIndices = currentIndices.toList(),
-                    sections = sections.toList(),
-                    visibleFlags = visibleFlags.toList(),
-                ),
+            content = SettingsDialogContent(fields = parsed),
             requestId = requestId,
             ownedByTest = false,
         )
@@ -662,38 +665,35 @@ class MainActivity :
         requestId: Long?,
         ownedByTest: Boolean,
     ) {
-        val keys = content.keys
-        val labels = content.labels
-        val choiceStrings = content.choiceStrings
-        val currentIndices = content.currentIndices
-        val sections = content.sections
-        val visibleFlags = content.visibleFlags
         val settings =
-            labels.indices.map { index ->
+            content.fields.map { field ->
+                val maxIndex =
+                    if (field.kind == "range") {
+                        (field.rangeMax - field.rangeMin).coerceAtLeast(0)
+                    } else {
+                        max(0, field.choices.lastIndex)
+                    }
                 AndroidSetting(
-                    key = keys.getOrNull(index) ?: "setting_$index",
-                    section = sections.getOrNull(index) ?: "general",
-                    label = labels[index],
-                    choices =
-                        choiceStrings
-                            .getOrNull(index)
-                            ?.split('\t')
-                            ?.filter(String::isNotEmpty)
-                            ?.ifEmpty { listOf("?") }
-                            ?: listOf("?"),
-                    visible = visibleFlags.getOrElse(index) { true },
-                )
+                    key = field.key,
+                    section = field.section,
+                    sectionLabel = field.sectionLabel,
+                    label = field.label,
+                    kind = field.kind,
+                    choices = field.choices.ifEmpty { listOf("?") },
+                    rangeMin = field.rangeMin,
+                    rangeMax = field.rangeMax,
+                    unit = field.unit,
+                    visible = field.visible,
+                ) to field.value.coerceIn(0, maxIndex)
             }
-        val initialSelections =
-            settings.mapIndexed { index, setting ->
-                val maxIndex = max(0, setting.choices.lastIndex)
-                (currentIndices.getOrNull(index)?.toIntOrNull() ?: 0).coerceIn(0, maxIndex)
-            }
+        val keys = settings.map { it.first.key }
+        val initialSelections = settings.map { it.second }
+        val rows = settings.map { it.first }
         var resultSent = false
 
         dialogManager.show(
             dialogTag = SETTINGS_DIALOG_TAG,
-            contentDescription = settingsContentDescription(settings, initialSelections),
+            contentDescription = settingsContentDescription(rows, initialSelections),
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = ownedByTest,
             onDismiss = {
@@ -710,7 +710,7 @@ class MainActivity :
             },
         ) { dismiss ->
             NerustSettingsDialogCard(
-                settings = settings,
+                settings = rows,
                 initialSelections = initialSelections,
                 onDismissRequest = dismiss,
                 onSave = { selections ->
@@ -731,7 +731,7 @@ class MainActivity :
         }
         dialogManager.rootViewForTag(SETTINGS_DIALOG_TAG)?.setTag(
             R.id.nerust_settings_hierarchy_probe,
-            buildSettingsSections(settings).joinToString("\n") { section ->
+            buildSettingsSections(rows).joinToString("\n") { section ->
                 "${section.label}: ${settingsCountLabel(section.settingIndices.size)}"
             },
         )

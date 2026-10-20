@@ -24,8 +24,6 @@ use tao::event_loop::EventLoopWindowTarget;
 use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
 
 use super::bridge::DebugBridge;
-#[cfg(test)]
-use super::bridge::lock_recovered;
 
 /// Initial debugger window size (verified Xvfb fit).
 pub(crate) const DEBUG_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
@@ -352,7 +350,7 @@ impl super::focus::AuxShellRef for DebugWindowHandle {
     }
 }
 
-impl super::registry::AuxController for DebugWindowHandle {
+impl super::registry::DebugDrainPort for DebugWindowHandle {
     fn take_debug_requests(&mut self) -> Option<(bool, Vec<DebugAction>)> {
         use crate::aux::bridge::BridgeLock;
         Some(self.bridge.take_debug_batch())
@@ -367,7 +365,9 @@ impl super::registry::AuxController for DebugWindowHandle {
     fn apply_drain(&mut self, display: DisplayCache, reselected: Option<(u32, Option<u8>)>) {
         self.apply_drain_display(display, reselected);
     }
+}
 
+impl super::registry::LiveImagesPort for DebugWindowHandle {
     fn apply_live(
         &mut self,
         generation: u64,
@@ -376,17 +376,24 @@ impl super::registry::AuxController for DebugWindowHandle {
     ) -> bool {
         self.apply_live(generation, images, running)
     }
+}
 
-    fn sync_view(&mut self) {
-        self.sync_from_bridge();
-    }
-
+impl super::registry::BridgeSharePort for DebugWindowHandle {
     fn shared_bridge(&self) -> Option<std::sync::Arc<super::bridge::DebugBridge>> {
         Some(std::sync::Arc::clone(self.shared_bridge()))
     }
 
     fn debug_lock_audit(&self) -> Vec<&'static str> {
         self.bridge.try_lock_audit()
+    }
+}
+
+impl super::registry::SettingsClosePort for DebugWindowHandle {}
+impl super::registry::HistorySyncPort for DebugWindowHandle {}
+
+impl super::registry::AuxController for DebugWindowHandle {
+    fn sync_view(&mut self) {
+        self.sync_from_bridge();
     }
 }
 

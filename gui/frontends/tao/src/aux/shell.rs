@@ -46,12 +46,12 @@ pub(crate) fn aux_settings() -> iced::Settings {
 /// Object-safe window-system surface behind every aux handle.
 /// Lets the focus/registry layers route without naming the program type.
 pub(crate) trait AuxShellOps {
-    fn tao_window_id(&self) -> tao::window::WindowId;
+    fn native_id(&self) -> crate::aux::native::NativeWindowId;
     fn close_requested(&self) -> bool;
     fn focus_window(&self);
     fn request_redraw(&self);
-    fn handle_common(&mut self, event: &tao::event::WindowEvent);
-    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event>;
+    fn handle_common(&mut self, event: &crate::aux::native::AuxNativeEvent);
+    fn feed_event(&mut self, event: crate::aux::native::AuxNativeEvent) -> Option<iced::Event>;
     fn render_tagged(&mut self, tag: &'static str);
 }
 
@@ -158,8 +158,8 @@ impl AuxSurface {
     }
 
     /// Native window identity for event routing.
-    fn tao_window_id(&self) -> tao::window::WindowId {
-        self.window.id()
+    fn native_id(&self) -> crate::aux::native::NativeWindowId {
+        crate::aux::native::NativeWindowId::new(self.window.id())
     }
 
     /// Close was requested through the shared flag.
@@ -200,25 +200,24 @@ impl AuxSurface {
         self.window.request_redraw();
     }
 
-    fn set_modifiers(&mut self, modifiers: tao::keyboard::ModifiersState) {
-        self.modifiers = crate::convert::tao_modifiers_to_iced(modifiers);
+    fn set_modifiers(&mut self, modifiers: iced::keyboard::Modifiers) {
+        self.modifiers = modifiers;
     }
 
     /// Shared event prelude (resize/scale/modifiers/close).
     fn handle_common_event(
         &mut self,
-        event: &tao::event::WindowEvent,
+        event: &crate::aux::native::AuxNativeEvent,
         relayout: &mut impl FnMut(Size),
     ) {
+        use crate::aux::native::AuxNativeEvent as E;
         match event {
-            tao::event::WindowEvent::Resized(size) => {
-                self.resize(size.width, size.height, relayout)
+            E::Resized(width, height) => self.resize(*width, *height, relayout),
+            E::ScaleChanged(scale_factor) => {
+                self.set_scale_factor(*scale_factor, relayout);
             }
-            tao::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.set_scale_factor(*scale_factor as f32, relayout);
-            }
-            tao::event::WindowEvent::ModifiersChanged(state) => self.set_modifiers(*state),
-            tao::event::WindowEvent::CloseRequested => {
+            E::ModifiersChanged(modifiers) => self.set_modifiers(*modifiers),
+            E::CloseRequested => {
                 self.should_close
                     .store(true, std::sync::atomic::Ordering::Release);
             }
@@ -226,13 +225,16 @@ impl AuxSurface {
         }
     }
 
-    /// Feed one native event, returning the converted iced event.
-    fn feed_tao_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
-        crate::convert::convert_tao_window_event(
+    /// Feed one domain event, returning the converted iced event.
+    fn feed_domain_event(
+        &mut self,
+        event: crate::aux::native::AuxNativeEvent,
+    ) -> Option<iced::Event> {
+        crate::convert::feed_domain_event(
             event,
             &mut self.cursor,
-            self.scale_factor,
             &mut self.modifiers,
+            self.scale_factor,
             &self.should_close,
         )
     }
@@ -475,8 +477,8 @@ pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>>
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShellOps for AuxShell<P> {
-    fn tao_window_id(&self) -> tao::window::WindowId {
-        self.surface.tao_window_id()
+    fn native_id(&self) -> crate::aux::native::NativeWindowId {
+        self.surface.native_id()
     }
 
     fn close_requested(&self) -> bool {
@@ -491,14 +493,14 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShellOps for AuxSh
         self.surface.request_redraw();
     }
 
-    fn handle_common(&mut self, event: &tao::event::WindowEvent) {
+    fn handle_common(&mut self, event: &crate::aux::native::AuxNativeEvent) {
         let ui_state = &mut self.ui_state;
         self.surface
             .handle_common_event(event, &mut |bounds| ui_state.relayout(bounds));
     }
 
-    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
-        self.surface.feed_tao_event(event)
+    fn feed_event(&mut self, event: crate::aux::native::AuxNativeEvent) -> Option<iced::Event> {
+        self.surface.feed_domain_event(event)
     }
 
     fn render_tagged(&mut self, tag: &'static str) {

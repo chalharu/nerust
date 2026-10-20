@@ -5,7 +5,7 @@ pub mod settings;
 use std::collections::HashMap;
 
 use nerust_input_traits::{
-    AttachmentId, DigitalControlId, InputAssignments, InputSystemFactory, InputValue,
+    AttachmentId, ControlId, DigitalControlId, InputAssignments, InputSystemFactory, InputValue,
 };
 use thiserror::Error;
 
@@ -29,9 +29,8 @@ pub enum FactoryError {
     InvalidSettings,
 }
 
-/// Session-owned GUI input endpoint, behind a port for ISP.
-/// Concrete double-buffering lives in `nerust_emu_thread`; cores and
-/// shells program to this narrow surface only.
+/// Session-owned GUI input endpoint, behind a port for ISP. Concrete double-buffering lives in
+/// `nerust_emu_thread`; cores and shells program to this narrow surface only.
 pub trait GuiInputPort: Send {
     /// Write one absolute field of the staged GUI state.
     fn set(
@@ -39,18 +38,39 @@ pub trait GuiInputPort: Send {
         field: usize,
         value: InputValue,
     ) -> Result<(), nerust_input_traits::BufferError>;
-    /// Must be called every frame. Copies absolute state into shared.
+    /// Publish staged state when dirty; clean calls skip the handoff.
     fn publish(&mut self);
     /// Reset staged state to neutral.
     fn clear(&mut self);
 }
 
+/// Split a unified `(attachment, ControlId)` field map into the legacy digital-only projection,
+/// reporting dropped analog entries. Session input maps still key on `DigitalControlId`; builders log and debug-assert on drops so a future analog device cannot vanish silently.
+pub type DigitalFieldMap = HashMap<(AttachmentId, DigitalControlId), usize>;
+/// Unified `(attachment, ControlId)` entries dropped by the digital projection.
+pub type DroppedAnalogFields = Vec<(AttachmentId, ControlId)>;
+
+pub fn split_digital_field_map(
+    unified: &HashMap<(AttachmentId, ControlId), usize>,
+) -> (DigitalFieldMap, DroppedAnalogFields) {
+    let mut digital = HashMap::with_capacity(unified.len());
+    let mut dropped = Vec::new();
+    for ((attachment, control), field) in unified {
+        match control.as_digital() {
+            Some(id) => {
+                digital.insert((*attachment, id), *field);
+            }
+            None => dropped.push((*attachment, *control)),
+        }
+    }
+    (digital, dropped)
+}
+
 /// Raw parts produced by a system factory before EmuCore wrapping.
 pub struct CoreParts {
     pub core: Box<dyn crate::ConsoleCore>,
-    /// Session-owned audio backend: the emu thread (not the core) pushes
-    /// through the rate-control filter into this. Factories start it;
-    /// cores never see it.
+    /// Session-owned audio backend: the emu thread (not the core) pushes through the rate-control
+    /// filter into this. Factories start it; cores never see it.
     pub audio: Box<dyn crate::audio::AudioBackend>,
     pub gui_input: Box<dyn GuiInputPort>,
     /// (attachment, control) → absolute field index
@@ -60,9 +80,8 @@ pub struct CoreParts {
     pub host_peripherals: crate::peripheral::HostPeripheralHandles,
 }
 
-/// Factory encapsulating all per-system knowledge. Frontends talk to
-/// systems only through this trait; settings arrive via
-/// `FactorySettingsView` (no snapshot dependency).
+/// Factory encapsulating all per-system knowledge. Frontends talk to systems only through this
+/// trait; settings arrive via `FactorySettingsView` (no snapshot dependency).
 pub trait CoreFactory: Send + Sync {
     fn system_id(&self) -> Box<dyn SystemId>;
 
@@ -115,9 +134,8 @@ pub trait CoreFactory: Send + Sync {
         assignments: &InputAssignments,
     ) -> Result<CoreParts, FactoryError>;
 
-    /// Presentation-only delta needing no core rebuild. Returns the
-    /// replacement video assets, or `None` for the full rebuild path.
-    /// Default `None` keeps today's rebuild behavior.
+    /// Presentation-only delta needing no core rebuild. Returns the replacement video assets, or
+    /// `None` for the full rebuild path. Default `None` keeps today's rebuild behavior.
     fn presentation_swap_assets(
         &self,
         _before: &FactorySettingsView,
@@ -129,20 +147,15 @@ pub trait CoreFactory: Send + Sync {
     /// Returns this factory's input system factory for negotiation.
     fn input_system_factory(&self) -> &dyn InputSystemFactory;
 
-    /// Access the [`SystemDefaults`] facet of this factory.
-    ///
-    /// Returns `None` for factories that only provide core creation
-    /// (ISP separation — GUI integration methods live on `SystemDefaults`).
+    /// Access the [`SystemDefaults`] facet of this factory. Returns `None` for factories that only
+    /// provide core creation (ISP separation — GUI integration methods live on `SystemDefaults`).
     fn as_system_defaults(&self) -> Option<&dyn SystemDefaults> {
         None
     }
 }
 
-/// System-specific GUI integration defaults.
-///
-/// Separated from [`CoreFactory`] to respect ISP: factories that only
-/// provide core creation are not forced to implement label resolution,
-/// keyboard binding seeds, or default system settings.
+/// System-specific GUI integration defaults. Separated from [`CoreFactory`] to respect ISP:
+/// factories that only provide core creation are not forced to implement label resolution, keyboard binding seeds, or default system settings.
 pub trait SystemDefaults: Send + Sync {
     /// Default system-specific settings to seed into the shared settings map.
     fn default_system_settings(&self) -> Option<Box<dyn nerust_settings_traits::SystemSettings>> {
@@ -163,5 +176,36 @@ pub trait SystemDefaults: Send + Sync {
     /// Control ID prefix for default keyboard bindings.
     fn default_input_control_prefix(&self) -> Option<&'static str> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nerust_input_traits::AnalogControlId;
+
+    #[test]
+    fn projection_keeps_digital_and_reports_analog() {
+        let digital = DigitalControlId::new("test.a");
+        let analog = AnalogControlId::new("test.x");
+        let attachment = AttachmentId::new("test.pad");
+        let unified = HashMap::from([
+            ((attachment, ControlId::digital(digital)), 0),
+            ((attachment, ControlId::analog(analog)), 1),
+        ]);
+        let (map, dropped) = split_digital_field_map(&unified);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map[&(attachment, digital)], 0);
+        assert_eq!(dropped, vec![(attachment, ControlId::analog(analog))]);
+    }
+
+    #[test]
+    fn projection_passes_digital_only_maps_cleanly() {
+        let digital = DigitalControlId::new("test.b");
+        let attachment = AttachmentId::new("test.pad");
+        let unified = HashMap::from([((attachment, ControlId::digital(digital)), 3)]);
+        let (map, dropped) = split_digital_field_map(&unified);
+        assert!(dropped.is_empty());
+        assert_eq!(map[&(attachment, digital)], 3);
     }
 }

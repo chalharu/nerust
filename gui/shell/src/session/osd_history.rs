@@ -59,9 +59,14 @@ pub struct HistoryLine {
     pub count: u32,
 }
 
-/// Local wall-clock datetime from a `SystemTime`; falls back to UTC when the zone is indeterminate.
+/// Local wall-clock datetime from a `SystemTime`; resolves the zone once here.
 pub fn format_datetime(time: std::time::SystemTime) -> String {
-    format_datetime_in(time, local_utc_offset_secs())
+    format_datetime_with_offset(time, local_utc_offset_secs())
+}
+
+/// Pure datetime with an injected offset; no I/O, deterministic under test.
+pub fn format_datetime_with_offset(time: std::time::SystemTime, offset_secs: i64) -> String {
+    format_datetime_in(time, offset_secs)
 }
 
 /// `SystemTime` as local epoch seconds for [`format_datetime`]: UTC instant plus platform offset.
@@ -229,5 +234,24 @@ mod tests {
         assert_eq!(rows[0].text, "Paused");
         assert!(rows[1].text.ends_with(" ×3"));
         assert_eq!(rows[1].count, 3);
+    }
+}
+
+#[cfg(test)]
+mod pure_tests {
+    use super::*;
+
+    #[test]
+    fn injected_offset_renders_deterministically() {
+        let epoch = std::time::UNIX_EPOCH;
+        assert_eq!(format_datetime_with_offset(epoch, 0), "1970-01-01 00:00:00");
+        assert_eq!(
+            format_datetime_with_offset(epoch, 3600),
+            "1970-01-01 01:00:00"
+        );
+        assert_eq!(
+            format_datetime_with_offset(epoch, -3600),
+            "1969-12-31 23:00:00"
+        );
     }
 }

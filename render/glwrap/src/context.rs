@@ -1,6 +1,5 @@
-//! GL context proof, scope guards, deletion policy, and the object vocabulary.
-//! Every delete goes through [`GlObject`]; every temporary state change
-//! through [`ScopeGuard`] or a dedicated guard that must read state back.
+//! GL context proof, scope guards, deletion policy, and the object vocabulary. Every delete goes
+//! through [`GlObject`]; every temporary state change through [`ScopeGuard`] or a dedicated guard that must read state back.
 
 /// Proof that the GL context is current on this thread.
 /// Build only with [`Current::assert_current`]; destroy takes `Option<Self>`.

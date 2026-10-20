@@ -1,7 +1,7 @@
 //! NTSC kernel simulation: palette-index to RGBA words.
 //! Pure byte math; the renderer only stages the output buffer.
 
-use nerust_render_traits::{VideoRenderProfile, filter::BLACK_PALETTE_INDEX};
+use nerust_render_traits::{VideoRenderProfile, filter::BLACK_PALETTE_INDEX, rgb::RgbaWord};
 
 const NTSC_ROW_OFFSETS: [[usize; 6]; 7] = [
     [0, 19, 31, 7, 26, 38],
@@ -60,7 +60,7 @@ impl Ntsc {
         // panicking the UI thread; valid entries are untouched.
         buf.get(offset..offset.saturating_add(4))
             .and_then(|s| s.try_into().ok())
-            .map(u32::from_be_bytes)
+            .map(|bytes: [u8; 4]| RgbaWord::from_bytes_be(bytes).as_u32())
             .unwrap_or(0)
     }
 

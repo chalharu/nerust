@@ -42,15 +42,14 @@ pub(crate) fn create_core_and_adapter(
     let resources =
         <crate::GbaFactory as InputSystemFactory>::create_split(&crate::GbaFactory, &controllers)
             .map_err(|e| FactoryError::Create(e.to_string()))?;
-    // Project the unified (attachment, ControlId) map onto the legacy
-    // CoreParts digital-only key until CoreParts migrates to ControlId.
-    let field_map = resources
-        .field_map()
-        .iter()
-        .filter_map(|((attachment, control), field)| {
-            control.as_digital().map(|id| ((*attachment, id), *field))
-        })
-        .collect();
+    // Digital-only session projection: analog drops warn and debug-trap
+    // so a future analog device migrates `CoreParts` instead of vanishing.
+    let (field_map, dropped) =
+        nerust_core_traits::factory::split_digital_field_map(resources.field_map());
+    if !dropped.is_empty() {
+        log::warn!("gba input: dropping {} analog field(s)", dropped.len());
+    }
+    debug_assert!(dropped.is_empty(), "analog fields dropped: {dropped:?}");
     let split = nerust_emu_thread::InputSplit::spawn(resources.take_factory());
     let gui_input = split.gui_endpoint();
     let emu_input = split.emu_endpoint();

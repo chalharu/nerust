@@ -159,3 +159,25 @@ mod tests {
         assert!(lines[0].text.contains("一時停止"));
     }
 }
+
+#[cfg(test)]
+mod agreement_tests {
+    use super::*;
+
+    #[test]
+    fn cached_and_vec_histories_agree_on_one_source() {
+        use crate::session::notification::{NotificationKind, NotificationLevel, UiNotification};
+        use nerust_settings_core::model::language::AppLanguage;
+        let events = [UiNotification {
+            level: NotificationLevel::Info,
+            kind: NotificationKind::Paused,
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        }];
+        let direct = super::super::osd::history_lines(events.iter(), AppLanguage::English);
+        let mut view = HistoryView::new();
+        let cached = view.lines(events.iter(), 1, AppLanguage::English).to_vec();
+        assert_eq!(direct, cached);
+    }
+}

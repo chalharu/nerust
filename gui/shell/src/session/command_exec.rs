@@ -30,13 +30,7 @@ enum LoadOp {
     LoadSlot(u64),
 }
 
-/// One table row: stable name plus its handler. Lookup is by name;
-/// [`SessionCommandHandler::handler`] is the sole dispatch point.
-struct CommandEntry {
-    name: &'static str,
-    run: CommandHandler,
-}
-
+/// Stable command names live on [`SessionCmd::cmd_name`]; dispatch matches exhaustively.
 fn run_pause(
     session: &mut SessionHandle,
     _: SessionCommand,
@@ -53,13 +47,14 @@ fn run_resume(
     session.cmd_resume(tick)
 }
 
-/// TogglePause arm: resolves through the decorator, then delegates to the steady handler.
+/// Defensive fallback: dispatch resolves once in `run_command`; this re-resolves identically.
 fn run_toggle(
     session: &mut SessionHandle,
     command: SessionCommand,
     tick: &TickMetrics,
 ) -> Result<SessionCommandOutcome, SessionError> {
     let resolved = TogglePauseDecorator::resolve(command, tick);
+    debug_assert!(!matches!(resolved, SessionCommand::TogglePause));
     resolved.handler()(session, resolved, tick)
 }
 
@@ -122,72 +117,24 @@ fn unreachable_outcome() -> SessionCommandOutcome {
     }
 }
 
-/// Registration table: every command resolves to exactly one handler by stable name.
-static COMMAND_TABLE: &[CommandEntry] = &[
-    CommandEntry {
-        name: "Pause",
-        run: run_pause,
-    },
-    CommandEntry {
-        name: "Resume",
-        run: run_resume,
-    },
-    CommandEntry {
-        name: "TogglePause",
-        run: run_toggle,
-    },
-    CommandEntry {
-        name: "Reset",
-        run: run_reset,
-    },
-    CommandEntry {
-        name: "CreateSlot",
-        run: run_slot_command,
-    },
-    CommandEntry {
-        name: "SaveActiveSlotOrNew",
-        run: run_slot_command,
-    },
-    CommandEntry {
-        name: "LoadActiveSlot",
-        run: run_slot_command,
-    },
-    CommandEntry {
-        name: "SelectActiveSlot",
-        run: run_select_active,
-    },
-    CommandEntry {
-        name: "SaveSlot",
-        run: run_slot_command,
-    },
-    CommandEntry {
-        name: "LoadSlot",
-        run: run_slot_command,
-    },
-    CommandEntry {
-        name: "DeleteSlot",
-        run: run_slot_command,
-    },
-    CommandEntry {
-        name: "SelectNextSlot",
-        run: run_adjacent_next,
-    },
-    CommandEntry {
-        name: "SelectPreviousSlot",
-        run: run_adjacent_previous,
-    },
-];
-
 impl SessionCommandHandler for SessionCommand {
-    /// Handler for this command from the registration table.
-    /// `TogglePause` callers resolve through [`TogglePauseDecorator`] first.
+    /// Exhaustive dispatch: every command maps to exactly one handler.
     fn handler(self) -> CommandHandler {
-        let name = self.cmd_name();
-        COMMAND_TABLE
-            .iter()
-            .find(|entry| entry.name == name)
-            .map(|entry| entry.run)
-            .expect("every SessionCommand registers exactly one handler")
+        match self {
+            SessionCommand::Pause => run_pause,
+            SessionCommand::Resume => run_resume,
+            SessionCommand::TogglePause => run_toggle,
+            SessionCommand::Reset => run_reset,
+            SessionCommand::CreateSlot
+            | SessionCommand::SaveActiveSlotOrNew
+            | SessionCommand::LoadActiveSlot
+            | SessionCommand::SaveSlot(_)
+            | SessionCommand::LoadSlot(_)
+            | SessionCommand::DeleteSlot(_) => run_slot_command,
+            SessionCommand::SelectActiveSlot(_) => run_select_active,
+            SessionCommand::SelectNextSlot => run_adjacent_next,
+            SessionCommand::SelectPreviousSlot => run_adjacent_previous,
+        }
     }
 }
 
@@ -218,22 +165,17 @@ impl SessionHandle {
         &mut self,
         command: SessionCommand,
     ) -> Result<SessionCommandOutcome, SessionError> {
-        // One lock-free tick per command, threaded through the executor and notification.
         let tick = self.tick_metrics();
-        let result = self.run_command_inner(command, &tick);
+        let resolved = TogglePauseDecorator::resolve(command, &tick);
+        let result = self.run_command_inner(resolved, &tick);
         match &result {
             Ok(outcome) => {
                 let active = self.active_slot_id();
-                // Notify the entered state: TogglePause from paused
-                // must read Resumed, not the invoked command name.
-                let notified = TogglePauseDecorator::resolve(command, &tick);
-                if let Some(kind) = outcome_notification(notified, outcome, active) {
+                if let Some(kind) = outcome_notification(resolved, outcome, active) {
                     self.notifications.push(kind);
                 }
             }
             Err(error) => {
-                // Single audit point for transport failures; frontends must not log at call sites.
-                // The typed source chain renders at the boundary, never stringified in.
                 let name = command.cmd_name();
                 log::warn!("run_command {name} failed: {error}");
                 self.notifications.push(
@@ -253,7 +195,6 @@ impl SessionHandle {
         command: SessionCommand,
         tick: &TickMetrics,
     ) -> Result<SessionCommandOutcome, SessionError> {
-        // Single dispatch: the registration table owns the command-to-handler mapping.
         command.handler()(self, command, tick)
     }
 
@@ -261,7 +202,7 @@ impl SessionHandle {
         if tick.paused {
             return Ok(SessionCommandOutcome::default());
         }
-        self.emu.core()?.pause()?;
+        crate::emu_core::LivePlayback::pause(self.emu.require_live()?)?;
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
@@ -273,7 +214,7 @@ impl SessionHandle {
         if !tick.paused {
             return Ok(SessionCommandOutcome::default());
         }
-        self.emu.core()?.resume()?;
+        crate::emu_core::LivePlayback::resume(self.emu.require_live()?)?;
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: tick.loaded,
@@ -282,7 +223,7 @@ impl SessionHandle {
     }
 
     fn cmd_reset(&mut self) -> Result<SessionCommandOutcome, SessionError> {
-        self.emu.core()?.reset()?;
+        crate::emu_core::LivePlayback::reset(self.emu.require_live()?)?;
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
@@ -311,26 +252,42 @@ impl SessionHandle {
         }
     }
 
-    /// Run one save op against the persistence manager and the live core.
-    /// Absent core reads as [`SlotOpFailure::Empty`]; failures ride the outcome, not the error.
+    /// Single live access: `NoCore` maps once here to `Empty`.
     fn run_save_op(&mut self, op: SaveOp) -> SessionCommandOutcome {
-        let exporter = self.emu.exporter().ok();
-        let slot_failure = match exporter {
-            Some(core) => {
-                let persistence = &mut self.media.persistence;
-                let result = match op {
-                    SaveOp::CreateSlot => persistence.create_slot(core),
-                    SaveOp::SaveActiveSlotOrNew => persistence.save_active_slot_or_new(core),
-                    SaveOp::SaveSlot(id) => persistence.save_slot(
-                        id,
-                        core,
-                        crate::session::persistence::SlotActivation::Leave,
-                    ),
-                    SaveOp::DeleteSlot(id) => persistence.delete_slot(id, core),
+        let live = match self.emu.require_live() {
+            Ok(core) => core as &dyn crate::session::ports::StateExporter,
+            Err(SessionError::NoCore) => {
+                return SessionCommandOutcome {
+                    executed: false,
+                    needs_redraw: false,
+                    slot_failure: Some(SlotOpFailure::Empty),
                 };
-                result.err()
             }
-            None => Some(SlotOpFailure::Empty),
+            Err(_) => {
+                return SessionCommandOutcome {
+                    executed: false,
+                    needs_redraw: false,
+                    slot_failure: Some(SlotOpFailure::Unavailable),
+                };
+            }
+        };
+        // Borrow ends before the persistence borrow: copy the dispatch first.
+        let slot_failure = {
+            let persistence = &mut self.media.persistence;
+            let result = match op {
+                SaveOp::CreateSlot => persistence.create_slot(live),
+                SaveOp::SaveActiveSlotOrNew => persistence.save_active_slot_or_new(live),
+                SaveOp::SaveSlot(id) => persistence.save_slot(
+                    id,
+                    live,
+                    crate::session::persistence::SlotActivation::Leave,
+                ),
+                SaveOp::DeleteSlot(id) => persistence.delete_slot(id, live),
+            };
+            if let Err(failure) = &result {
+                log::warn!("slot save failed: {failure:?}");
+            }
+            result.err()
         };
         SessionCommandOutcome {
             executed: slot_failure.is_none(),
@@ -339,21 +296,24 @@ impl SessionHandle {
         }
     }
 
-    /// Load variant of [`run_save_op`](Self::run_save_op): a cleared stale pause needs a redraw.
-    /// One tick per command: the post-load pause re-reads only when a paused load succeeded.
+    /// Single live access: `NoCore` maps once here to `Empty`.
     fn run_load_op(&mut self, op: LoadOp, tick: &TickMetrics) -> SessionCommandOutcome {
-        let exporter = self.emu.exporter().ok();
-        let slot_failure = match exporter {
-            Some(core) => {
+        let slot_failure = match self.emu.require_live() {
+            Ok(core) => {
+                let live = core as &dyn crate::session::ports::StateExporter;
                 let persistence = &mut self.media.persistence;
                 let resolve = crate::state::resolve_state_format;
                 let result = match op {
-                    LoadOp::LoadActiveSlot => persistence.load_active_slot(core, resolve),
-                    LoadOp::LoadSlot(id) => persistence.load_slot(id, core, resolve),
+                    LoadOp::LoadActiveSlot => persistence.load_active_slot(live, resolve),
+                    LoadOp::LoadSlot(id) => persistence.load_slot(id, live, resolve),
                 };
+                if let Err(failure) = &result {
+                    log::warn!("slot load failed: {failure:?}");
+                }
                 result.err()
             }
-            None => Some(SlotOpFailure::Empty),
+            Err(SessionError::NoCore) => Some(SlotOpFailure::Empty),
+            Err(_) => Some(SlotOpFailure::Unavailable),
         };
         let executed = slot_failure.is_none();
         // A successful load that clears a stale pause needs a redraw: re-read pause only then.
@@ -367,5 +327,69 @@ impl SessionHandle {
             needs_redraw: executed && tick.paused && !now_paused,
             slot_failure,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::commands::{SessionCmd, TogglePauseDecorator};
+
+    #[test]
+    fn dispatch_covers_every_command_exhaustively() {
+        use crate::session::commands::SessionCommand as C;
+        for command in [
+            C::Pause,
+            C::Resume,
+            C::TogglePause,
+            C::Reset,
+            C::CreateSlot,
+            C::SaveActiveSlotOrNew,
+            C::LoadActiveSlot,
+            C::SelectActiveSlot(1),
+            C::SaveSlot(1),
+            C::LoadSlot(1),
+            C::DeleteSlot(1),
+            C::SelectNextSlot,
+            C::SelectPreviousSlot,
+        ] {
+            let _ = command.handler();
+            assert!(!command.cmd_name().is_empty());
+        }
+    }
+
+    #[test]
+    fn toggle_resolves_once_before_dispatch() {
+        use crate::session::commands::SessionCommand as C;
+        let tick = TickMetrics {
+            paused: true,
+            ..TickMetrics::default()
+        };
+        assert_eq!(
+            TogglePauseDecorator::resolve(C::TogglePause, &tick),
+            C::Resume
+        );
+        let tick = TickMetrics {
+            paused: false,
+            ..TickMetrics::default()
+        };
+        assert_eq!(
+            TogglePauseDecorator::resolve(C::TogglePause, &tick),
+            C::Pause
+        );
+    }
+
+    #[test]
+    fn coreless_save_and_load_map_to_empty_once() {
+        use crate::session::test_util::test_session;
+        let mut session = test_session();
+        session.emu.core = None;
+        session.emu.input = None;
+        let saved = session.run_save_op(SaveOp::CreateSlot);
+        assert_eq!(saved.slot_failure, Some(SlotOpFailure::Empty));
+        assert!(!saved.executed);
+        let tick = TickMetrics::default();
+        let loaded = session.run_load_op(LoadOp::LoadActiveSlot, &tick);
+        assert_eq!(loaded.slot_failure, Some(SlotOpFailure::Empty));
     }
 }

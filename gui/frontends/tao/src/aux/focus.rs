@@ -1,13 +1,12 @@
 //! Aux-window focus agreement as behavior-carrying types.
 //! Aux handles implement [`AuxWindow`] + [`AuxEvents`]; runtime only drives them.
 
-use tao::event::WindowEvent;
-
+use crate::aux::native::{AuxNativeEvent, NativeWindowId};
 use crate::aux::shell::AuxShellOps;
 
 /// Which aux window changed focus. Interactive viewers may report a resume;
 /// read-only viewers (settings, history) only cancel a pending pause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum AuxKind {
     Debug,
     Ppu,
@@ -128,12 +127,6 @@ impl FocusCoordinator {
         self.state.main_active()
     }
 
-    /// Narrow aux entry used by dispatch: kind-routed, no direct
-    /// access to `arrive_aux`/`cancel_pending`/`take_armed`.
-    pub(crate) fn on_aux(&mut self, kind: AuxKind, focused: bool) -> bool {
-        self.state.on_aux(kind, focused)
-    }
-
     pub(crate) fn on(&mut self, event: FocusEvent) -> Option<FocusEffect> {
         match event {
             FocusEvent::Main(true) => {
@@ -215,7 +208,7 @@ pub(crate) fn on_aux_focus(focus: &mut FocusState, kind: AuxKind, focused: bool)
 pub(crate) trait AuxIdentity {
     fn kind(&self) -> AuxKind;
     /// Native window identity for event routing.
-    fn tao_window_id(&self) -> tao::window::WindowId;
+    fn native_id(&self) -> NativeWindowId;
     /// Close was requested through the shared flag.
     fn close_requested(&self) -> bool;
     /// Bring this viewer to the front.
@@ -227,9 +220,9 @@ pub(crate) trait AuxIdentity {
 /// Render half: event prelude, conversion, and full render.
 pub(crate) trait AuxRender {
     /// Shared event prelude: resize/scale/modifiers/close.
-    fn handle_common(&mut self, event: &WindowEvent);
-    /// Convert one native event for the window's own dispatcher.
-    fn feed_event(&mut self, event: WindowEvent) -> Option<iced::Event>;
+    fn handle_common(&mut self, event: &AuxNativeEvent);
+    /// Convert one domain event for the window's own dispatcher.
+    fn feed_event(&mut self, event: AuxNativeEvent) -> Option<iced::Event>;
     /// Full render through the shared pump; only the log tag differs.
     fn render(&mut self);
 }
@@ -251,8 +244,8 @@ impl<T: AuxShellRef + ?Sized> AuxIdentity for T {
         AuxShellRef::kind(self)
     }
 
-    fn tao_window_id(&self) -> tao::window::WindowId {
-        self.shell().tao_window_id()
+    fn native_id(&self) -> NativeWindowId {
+        self.shell().native_id()
     }
 
     fn close_requested(&self) -> bool {
@@ -269,11 +262,11 @@ impl<T: AuxShellRef + ?Sized> AuxIdentity for T {
 }
 
 impl<T: AuxShellRef + ?Sized> AuxRender for T {
-    fn handle_common(&mut self, event: &WindowEvent) {
+    fn handle_common(&mut self, event: &AuxNativeEvent) {
         self.shell_mut().handle_common(event);
     }
 
-    fn feed_event(&mut self, event: WindowEvent) -> Option<iced::Event> {
+    fn feed_event(&mut self, event: AuxNativeEvent) -> Option<iced::Event> {
         self.shell_mut().feed_event(event)
     }
 
@@ -289,8 +282,8 @@ pub(crate) trait AuxEvents {
     fn handle(&mut self, mapped: iced::Event) -> bool;
 }
 
-/// Feed one native event through the shared prelude + program dispatch + redraw.
-pub(crate) fn pump_aux<W: AuxWindow + AuxEvents + ?Sized>(window: &mut W, event: WindowEvent) {
+/// Feed one domain event through the shared prelude + program dispatch + redraw.
+pub(crate) fn pump_aux<W: AuxWindow + AuxEvents + ?Sized>(window: &mut W, event: AuxNativeEvent) {
     window.handle_common(&event);
     match window.feed_event(event) {
         Some(mapped) => {
@@ -352,14 +345,17 @@ mod tests {
             assert_eq!(coord.on(FocusEvent::Main(false)), None);
             assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
             coord.note_protocol_pause();
-            assert!(coord.on_aux(kind, true));
+            assert_eq!(
+                coord.on(FocusEvent::Aux(kind, true)),
+                Some(FocusEffect::Resume)
+            );
         }
         for kind in [AuxKind::Settings, AuxKind::History] {
             let mut coord = FocusCoordinator::new();
             assert_eq!(coord.on(FocusEvent::Main(false)), None);
             assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
             coord.note_protocol_pause();
-            assert!(!coord.on_aux(kind, true));
+            assert_eq!(coord.on(FocusEvent::Aux(kind, true)), None);
             assert!(coord.state_mut().arrive_main());
         }
     }

@@ -71,3 +71,21 @@ mod tests {
         assert_eq!(osd_anchor(P::BottomRight), A::BottomRight);
     }
 }
+
+#[cfg(test)]
+mod insets_tests {
+    use super::*;
+    use crate::session::osd_presenter::UiInsets;
+
+    #[test]
+    fn safe_insets_convert_losslessly() {
+        let safe = SafeInsets {
+            top: 40,
+            right: 24,
+            bottom: 40,
+            left: 24,
+        };
+        let ui = UiInsets::from(safe);
+        assert_eq!((ui.top, ui.right, ui.bottom, ui.left), (40, 24, 40, 24));
+    }
+}

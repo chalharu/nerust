@@ -6,6 +6,8 @@ use std::time::Instant;
 use nerust_gui_shell::session::access::PauseControl as _;
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 
+use super::picker;
+
 impl super::AndroidFrontend {
     pub(super) fn try_resume_foreground(&mut self, event_loop: &ActiveEventLoop) {
         if !self.is_resumed || !self.lifecycle.resume_pending() {
@@ -69,9 +71,8 @@ impl super::AndroidFrontend {
         log::info!(
             "try_resume_foreground: lifecycle_restore_pending=true; attempting to load last ROM and restore hidden lifecycle state"
         );
-        match self.storage.load_last_media_reference() {
-            Ok(Some(reference)) => self.restore_from_document_uri(event_loop, reference),
-            Ok(None) => self.restore_from_library_id(event_loop),
+        let reference = match self.storage.load_last_media_reference() {
+            Ok(reference) => reference,
             Err(error) => {
                 log::warn!("try_resume_foreground: failed to read last media reference: {error}");
                 self.session.report_external_error(
@@ -79,76 +80,64 @@ impl super::AndroidFrontend {
                     "Previous ROM reference is invalid; open it again".to_string(),
                 );
                 self.discard_restore_state();
+                return;
             }
-        }
-    }
-
-    /// Reconnect a document-tree URI; a missing document keeps the
-    /// hidden snapshot until the user reconnects the tree.
-    fn restore_from_document_uri(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        reference: super::storage::LastMediaReference,
-    ) {
-        match self.load_document_uri(event_loop, reference, true) {
-            Ok(()) => {
-                log::info!("try_resume_foreground: loaded last document URI for lifecycle restore");
+        };
+        // Tiny local marker reads only; ROM bytes and hashes stay on the worker.
+        let library_id = if reference.is_none() {
+            self.storage.load_last_rom_id().unwrap_or_else(|error| {
+                log::warn!("try_resume_foreground: failed to read last ROM id: {error}");
+                None
+            })
+        } else {
+            None
+        };
+        match crate::lifecycle_decision::restore_fetch_route(
+            reference.is_some(),
+            library_id.is_some(),
+        ) {
+            crate::lifecycle_decision::RestoreFetch::Document => {
+                self.restore_from_document_uri(event_loop, reference.expect("routed on Some"))
             }
-            Err(error) => {
-                log::warn!(
-                    "try_resume_foreground: failed to load last document URI for lifecycle restore: {error}"
-                );
-                self.session.report_external_error(
-                    nerust_gui_shell::session::notification::FailureOrigin::Restore,
-                    "Previous ROM is unavailable; open it again".to_string(),
-                );
-                log::info!(
-                    "try_resume_foreground: preserving hidden state until the ROM URI is reconnected"
-                );
+            crate::lifecycle_decision::RestoreFetch::Library => {
+                self.restore_from_library_id(event_loop, library_id.expect("routed on Some"))
             }
-        }
-    }
-
-    /// Reload the last library ROM by id, with hidden-state restore.
-    fn restore_from_library_id(&mut self, event_loop: &ActiveEventLoop) {
-        match self.storage.load_last_rom_id() {
-            Ok(Some(id)) => {
-                if self.storage.rom_library.rom_path(&id).is_none() {
-                    log::warn!("try_resume_foreground: stored ROM id={id} is missing");
-                    self.discard_restore_state();
-                } else {
-                    match self.load_from_library_with_autosave(event_loop, &id, true) {
-                        Ok(()) => {
-                            log::info!(
-                                "try_resume_foreground: loaded last ROM id={id} for lifecycle restore"
-                            );
-                            super::show_toast(
-                                &self.app,
-                                "Legacy ROM restored; use Open ROM to reconnect its document",
-                            );
-                        }
-                        Err(error) => {
-                            log::warn!(
-                                "try_resume_foreground: failed to load last ROM id={id} for lifecycle restore: {error}"
-                            );
-                            self.discard_restore_state();
-                        }
-                    }
-                }
-            }
-            Ok(None) => {
+            crate::lifecycle_decision::RestoreFetch::None => {
                 log::info!("try_resume_foreground: no last ROM recorded");
                 self.discard_restore_state();
             }
-            Err(error) => {
-                log::warn!("try_resume_foreground: failed to read last ROM id: {error}");
-                self.discard_restore_state();
-            }
         }
     }
 
+    /// Reconnect a document-tree URI; a missing document keeps the hidden snapshot until the user
+    /// reconnects the tree. I/O runs on the fetch worker; the event thread only dispatches.
+    fn restore_from_document_uri(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        reference: super::storage::LastMediaReference,
+    ) {
+        log::info!(
+            "try_resume_foreground: fetching last document URI on the worker for lifecycle restore"
+        );
+        picker::spawn_document_fetch(self.app.clone(), reference.uri, true);
+    }
+
+    /// Reload the last library ROM by id, with hidden-state restore.
+    /// I/O runs on the fetch worker; the event thread only dispatches.
+    fn restore_from_library_id(&mut self, _event_loop: &ActiveEventLoop, id: String) {
+        let Some(path) = self.storage.rom_library.rom_path(&id) else {
+            log::warn!("try_resume_foreground: stored ROM id={id} is missing");
+            self.discard_restore_state();
+            return;
+        };
+        log::info!(
+            "try_resume_foreground: fetching last ROM id={id} on the worker for lifecycle restore"
+        );
+        picker::spawn_library_fetch(path, id);
+    }
+
     /// Drop pending restore flags plus the hidden lifecycle snapshot.
-    fn discard_restore_state(&mut self) {
+    pub(super) fn discard_restore_state(&mut self) {
         self.session.clear_hidden_lifecycle_state();
         self.storage.clear_restore_pending();
         self.lifecycle.clear_restore_pending();

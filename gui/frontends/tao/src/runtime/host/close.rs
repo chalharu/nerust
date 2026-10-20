@@ -1,17 +1,17 @@
-//! Window liveness plus close idempotence in one owned guard.
+//! Main-window liveness plus close idempotence in one owned guard.
 
 use std::sync::Arc;
 use tao::window::Window as TaoWindow;
 
-/// Native liveness state. Only `Live` is handle-touchable; `Failed` never becomes `Closed`.
+/// Single liveness truth. Only `Live` is handle-touchable.
 #[derive(Debug, Clone)]
-pub(crate) enum Liveness {
+pub(crate) enum MainLiveness {
     Live,
     Closed,
     Failed(Arc<str>),
 }
 
-impl Liveness {
+impl MainLiveness {
     /// Creation-failure detail, if terminally failed.
     pub(crate) fn failure(&self) -> Option<&str> {
         match self {
@@ -19,26 +19,10 @@ impl Liveness {
             _ => None,
         }
     }
-}
 
-/// Fatal window-creation failure, tracked apart from liveness.
-#[derive(Debug, Default)]
-pub(crate) struct FatalError {
-    detail: Option<Arc<str>>,
-}
-
-impl FatalError {
-    fn set(&mut self, detail: Arc<str>) {
-        self.detail = Some(detail);
-    }
-
-    /// Creation failure, if any.
-    pub(crate) fn message(&self) -> Option<&str> {
-        self.detail.as_deref()
-    }
-
-    fn is_set(&self) -> bool {
-        self.detail.is_some()
+    /// Native handle still usable for redraws and surfaces.
+    pub(crate) fn is_usable(&self) -> bool {
+        matches!(self, Self::Live)
     }
 }
 
@@ -109,14 +93,35 @@ impl LiveWindow {
         self.inner.scale_factor()
     }
 
-    /// Borrow the raw window for surface attach / title / sizing.
-    pub(crate) fn raw(&self) -> &TaoWindow {
-        &self.inner
+    /// Narrow native borrow: surface attach and size queries only.
+    pub(crate) fn with_native<R>(&self, f: impl FnOnce(&TaoWindow) -> R) -> R {
+        f(&self.inner)
     }
 
-    /// Shared ownership for renderer attach paths.
-    pub(crate) fn shared(&self) -> Arc<TaoWindow> {
-        Arc::clone(&self.inner)
+    /// Whether the native window is currently fullscreen.
+    pub(crate) fn is_fullscreen(&self) -> bool {
+        self.inner.fullscreen().is_some()
+    }
+
+    /// Apply a fullscreen transition on the native window.
+    pub(crate) fn set_fullscreen(&self, fullscreen: bool) {
+        use tao::window::Fullscreen;
+        self.inner
+            .set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+    }
+
+    /// Native attach handle plus current surface size, if available.
+    pub(crate) fn attach_handle(
+        &self,
+    ) -> Option<(
+        raw_window_handle::RawWindowHandle,
+        nerust_render_traits::SurfaceSize,
+    )> {
+        use nerust_render_traits::SurfaceSize;
+        use raw_window_handle::HasWindowHandle;
+        let raw = self.inner.window_handle().ok()?.as_raw();
+        let size = self.inner.inner_size();
+        Some((raw, SurfaceSize::new(size.width, size.height)))
     }
 }
 
@@ -124,16 +129,14 @@ impl LiveWindow {
 /// Query liveness only through [`CloseGuard::is_usable`].
 #[derive(Debug)]
 pub(crate) struct CloseGuard {
-    fatal: FatalError,
-    state: Liveness,
+    state: MainLiveness,
     once: CloseOnce,
 }
 
 impl CloseGuard {
     pub(crate) fn new() -> Self {
         Self {
-            fatal: FatalError::default(),
-            state: Liveness::Live,
+            state: MainLiveness::Live,
             once: CloseOnce::new(),
         }
     }
@@ -141,19 +144,17 @@ impl CloseGuard {
     /// Record a window-creation failure and retire liveness.
     /// `Failed` is terminal: the state stays `Failed`, never `Closed`.
     pub(crate) fn fail(&mut self, detail: String) {
-        let detail: Arc<str> = Arc::from(detail);
-        self.fatal.set(Arc::clone(&detail));
-        self.state = Liveness::Failed(detail);
+        self.state = MainLiveness::Failed(Arc::from(detail));
     }
 
     /// Creation failure, if any.
     pub(crate) fn fatal_message(&self) -> Option<&str> {
-        self.fatal.message().or_else(|| self.state.failure())
+        self.state.failure()
     }
 
     /// Native window still usable for redraws and surfaces.
     pub(crate) fn is_usable(&self) -> bool {
-        matches!(self.state, Liveness::Live) && !self.fatal.is_set()
+        self.state.is_usable()
     }
 
     /// Idempotent close entry: true exactly once, retiring `Live` to `Closed`.
@@ -161,8 +162,8 @@ impl CloseGuard {
         if !self.once.arm() {
             return false;
         }
-        if matches!(self.state, Liveness::Live) {
-            self.state = Liveness::Closed;
+        if matches!(self.state, MainLiveness::Live) {
+            self.state = MainLiveness::Closed;
         }
         true
     }
@@ -179,11 +180,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn liveness_truth_is_single() {
+        assert!(MainLiveness::Live.is_usable());
+        assert!(!MainLiveness::Closed.is_usable());
+        let failed = MainLiveness::Failed(Arc::from("no display"));
+        assert!(!failed.is_usable());
+        assert_eq!(failed.failure(), Some("no display"));
+        assert_eq!(MainLiveness::Live.failure(), None);
+        assert_eq!(MainLiveness::Closed.failure(), None);
+    }
+
+    #[test]
     fn close_is_idempotent_and_retires_liveness() {
         let mut guard = CloseGuard::new();
         assert!(guard.is_usable());
         assert!(guard.begin_close());
-        assert!(matches!(guard.state, Liveness::Closed));
+        assert!(matches!(guard.state, MainLiveness::Closed));
         assert!(!guard.is_usable());
         assert!(!guard.begin_close());
         assert!(guard.exited());
@@ -194,11 +206,11 @@ mod tests {
         let mut guard = CloseGuard::new();
         guard.fail("no display".to_string());
         assert_eq!(guard.fatal_message(), Some("no display"));
-        assert!(matches!(guard.state, Liveness::Failed(_)));
+        assert!(matches!(guard.state, MainLiveness::Failed(_)));
         assert!(!guard.is_usable());
         // A later close still runs exactly once; Failed stays Failed.
         assert!(guard.begin_close());
-        assert!(matches!(guard.state, Liveness::Failed(_)));
+        assert!(matches!(guard.state, MainLiveness::Failed(_)));
         assert!(!guard.is_usable());
         assert_eq!(guard.fatal_message(), Some("no display"));
     }

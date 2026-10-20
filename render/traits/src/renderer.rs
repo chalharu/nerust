@@ -211,8 +211,62 @@ pub enum RenderResult {
     Error,
 }
 
-/// Frame presentation: surface lifecycle plus per-frame blit.
-/// Backends implement this without any OSD vocabulary.
+/// Typed attach-path failure shared by every backend. Replaces `OpaqueError(String)` on
+/// context/surface/adapter/device construction so logs name the fault instead of a free-form string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttachError {
+    Context {
+        backend: &'static str,
+        detail: String,
+    },
+    Surface {
+        backend: &'static str,
+        detail: String,
+    },
+    Adapter {
+        backend: &'static str,
+        detail: String,
+    },
+    Device {
+        backend: &'static str,
+        detail: String,
+    },
+    Pipeline {
+        backend: &'static str,
+        detail: String,
+    },
+    NoSurface {
+        op: &'static str,
+    },
+}
+
+impl std::fmt::Display for AttachError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Context { backend, detail } => {
+                write!(f, "{backend} context failed: {detail}")
+            }
+            Self::Surface { backend, detail } => {
+                write!(f, "{backend} surface failed: {detail}")
+            }
+            Self::Adapter { backend, detail } => {
+                write!(f, "{backend} adapter failed: {detail}")
+            }
+            Self::Device { backend, detail } => {
+                write!(f, "{backend} device failed: {detail}")
+            }
+            Self::Pipeline { backend, detail } => {
+                write!(f, "{backend} pipeline failed: {detail}")
+            }
+            Self::NoSurface { op } => write!(f, "{op} without an attached surface"),
+        }
+    }
+}
+
+impl std::error::Error for AttachError {}
+
+/// Frame presentation: surface lifecycle plus per-frame blit. Backends implement this without any
+/// OSD vocabulary. Legacy composite; new code programs to [`SurfaceLifecycle`] plus [`FrameSink`] directly.
 pub trait Present: std::fmt::Debug {
     /// Current output size.
     fn size(&self) -> SurfaceSize;
@@ -244,6 +298,50 @@ pub trait Present: std::fmt::Debug {
 
     /// Render a frame.  attach() must have been called.
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult;
+}
+
+/// Surface ownership: attach/detach/resize without any frame vocabulary.
+/// Split from [`Present`] so lifecycle tests never need a frame.
+pub trait SurfaceLifecycle: std::fmt::Debug {
+    /// Current output size.
+    fn size(&self) -> SurfaceSize;
+
+    /// Attach a native window. Must be called before render().
+    fn attach(
+        &mut self,
+        window_handle: RawWindowHandle,
+        display_handle: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError>;
+
+    /// Detach from the native window (device/pipeline are kept).
+    fn detach(&mut self);
+
+    /// detach + attach (handy for Android surface loss or Wayland).
+    fn reattach(
+        &mut self,
+        window_handle: RawWindowHandle,
+        display_handle: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError> {
+        self.detach();
+        self.attach(window_handle, display_handle, size)
+    }
+
+    /// Resize the output (swapchain for wgpu; stored for GL).
+    fn resize(&mut self, size: SurfaceSize);
+}
+
+/// Per-frame blit without any lifecycle vocabulary.
+pub trait FrameSink: std::fmt::Debug {
+    /// Render a frame. attach() must have been called.
+    fn render(&mut self, frame: &FrameBuffer) -> RenderResult;
+}
+
+/// Render-pipeline switch without any surface vocabulary.
+pub trait ProfileSwitch: std::fmt::Debug {
+    /// Update the render pipeline for a new render profile.
+    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;
 }
 
 /// OSD overlay sink: ownership moves in, never clones out.
@@ -297,19 +395,30 @@ impl OsdUploadPolicy for BoundedUploadPolicy {
     }
 }
 
-/// Grow-only byte staging for texture uploads.
-/// One implementation (`Vec<u8>`) serves every backend; no steady allocs.
-pub trait UploadCache {
-    /// Grow-only staging of at least `need` bytes, zero-filled on growth.
-    fn staging(&mut self, need: usize) -> &mut [u8];
-}
+/// Grow-only byte staging for texture uploads. One concrete buffer serves every backend; no steady
+/// allocs. Ports take `&mut [u8]` slices staged from here, never the buffer itself.
+#[derive(Debug, Default)]
+pub struct StagingBuf(Vec<u8>);
 
-impl UploadCache for Vec<u8> {
-    fn staging(&mut self, need: usize) -> &mut [u8] {
-        if self.len() < need {
-            self.resize(need, 0);
+impl StagingBuf {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Grow-only staging of at least `need` bytes, zero-filled on growth.
+    pub fn staging(&mut self, need: usize) -> &mut [u8] {
+        if self.0.len() < need {
+            self.0.resize(need, 0);
         }
-        &mut self[..need]
+        &mut self.0[..need]
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -331,6 +440,20 @@ pub struct RendererConfig {
 
 /// Default OSD upload attempts. Single source for call-site literals.
 pub const DEFAULT_OSD_UPLOAD_RETRIES: u8 = 3;
+
+impl RendererConfig {
+    /// Boxed upload policy for renderer injection. Single construction
+    /// site so every backend shares one budget type and default.
+    pub fn osd_upload_policy(&self) -> Box<dyn OsdUploadPolicy> {
+        Box::new(BoundedUploadPolicy::new(self.max_osd_upload_retries))
+    }
+
+    /// Factory form for renderers that mint one policy per rebuilt view.
+    pub fn osd_upload_policy_factory(&self) -> Box<dyn Fn() -> Box<dyn OsdUploadPolicy>> {
+        let max = self.max_osd_upload_retries;
+        Box::new(move || Box::new(BoundedUploadPolicy::new(max)) as Box<dyn OsdUploadPolicy>)
+    }
+}
 
 /// Abstract factory: creates a [`GpuRenderer`].
 /// Call `attach()` on the result before rendering.
@@ -382,5 +505,92 @@ mod tests {
         let shared = base.clone();
         assert!(Rc::ptr_eq(&base.rgba, &shared.rgba));
         assert!(base.same_content(Some(&shared)));
+    }
+
+    #[test]
+    fn attach_error_names_backend_and_stage() {
+        let err = AttachError::Surface {
+            backend: "softbuffer",
+            detail: "no display".to_string(),
+        };
+        assert!(err.to_string().contains("softbuffer"));
+        assert!(err.to_string().contains("surface"));
+        let err = AttachError::NoSurface { op: "update" };
+        assert!(err.to_string().contains("update"));
+        assert_eq!(
+            AttachError::Adapter {
+                backend: "wgpu",
+                detail: "x".to_string()
+            },
+            AttachError::Adapter {
+                backend: "wgpu",
+                detail: "x".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn staging_buf_grows_once_and_reuses() {
+        let mut buf = StagingBuf::new();
+        assert!(buf.is_empty());
+        buf.staging(8).fill(0xAB);
+        assert_eq!(buf.len(), 8);
+        let ptr = buf.staging(4).as_ptr();
+        // Smaller need reuses the allocation without shrinking.
+        assert_eq!(buf.staging(4).as_ptr(), ptr);
+        assert_eq!(buf.len(), 8);
+        assert_eq!(&buf.staging(8)[..4], &[0xAB; 4]);
+        // Growth zero-fills the tail.
+        assert_eq!(&buf.staging(10)[8..], &[0, 0]);
+    }
+
+    #[test]
+    fn bounded_policy_pins_single_budget() {
+        let mut policy = BoundedUploadPolicy::new(0);
+        // Zero clamps to one attempt, never drops live layers at once.
+        assert!(policy.record_failure());
+        policy.reset();
+        let mut policy = BoundedUploadPolicy::new(3);
+        assert!(!policy.record_failure());
+        assert!(!policy.record_failure());
+        assert!(policy.record_failure());
+        assert!(policy.record_failure());
+        policy.reset();
+        assert!(!policy.record_failure());
+        // Saturation: hundreds of failures never wrap back to retry.
+        let mut policy = BoundedUploadPolicy::new(3);
+        for _ in 0..300 {
+            policy.record_failure();
+        }
+        assert!(policy.record_failure());
+    }
+
+    #[test]
+    fn config_builds_the_injected_policy() {
+        let config = RendererConfig {
+            render_profile: crate::VideoRenderProfile {
+                source_logical_size: crate::logical::LogicalSize {
+                    width: 64,
+                    height: 64,
+                },
+                logical_size: crate::logical::LogicalSize {
+                    width: 64,
+                    height: 64,
+                },
+                physical_size: crate::physical::PhysicalSize {
+                    width: 64.0,
+                    height: 64.0,
+                },
+                frame_format: crate::VideoFrameFormat::Rgba,
+                ntsc_packed_rgba8: None,
+            },
+            vsync: true,
+            max_osd_upload_retries: 2,
+        };
+        let mut policy = config.osd_upload_policy();
+        assert!(!policy.record_failure());
+        assert!(policy.record_failure());
+        policy.reset();
+        assert!(!policy.record_failure());
     }
 }

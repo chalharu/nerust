@@ -21,8 +21,10 @@ pub struct OsdRow {
 pub(crate) struct OsdItem {
     pub(crate) row: OsdRow,
     pub(crate) level: NotificationLevel,
-    /// Identity for coalescing (text before the `×N` suffix); shared, never re-allocated per merge.
-    pub(crate) key: std::rc::Rc<str>,
+    /// Structured coalescing key: domain message plus count, never formatted text.
+    pub(crate) message: crate::session::notification::Message,
+    /// Rendered base text for the row rebuild; identity lives in `message`.
+    pub(crate) base: std::rc::Rc<str>,
     pub(crate) count: u32,
     /// Display duration, stamped at promotion so a queued label always shows its full duration.
     pub(crate) duration: Duration,
@@ -103,21 +105,25 @@ pub struct TransientPolicy {
 
 impl From<&NotificationSettings> for TransientPolicy {
     fn from(settings: &NotificationSettings) -> Self {
-        Self {
-            info_enabled: settings.info_enabled,
-            warning_enabled: settings.warning_enabled,
-            error_enabled: settings.error_enabled,
-            info_duration_ms: settings.info_duration_ms,
-            warning_duration_ms: settings.warning_duration_ms,
-            info_rgb: settings.info_color.rgb(),
-            warning_rgb: settings.warning_color.rgb(),
-            error_rgb: settings.error_color.rgb(),
-            error_modal: settings.error_modal,
-        }
+        Self::from_view(&crate::session::ports::notification_view(settings))
     }
 }
 
 impl TransientPolicy {
+    /// Plain-args construction from the narrow view; single settings adapter.
+    pub fn from_view(view: &crate::session::ports::NotificationView) -> Self {
+        Self {
+            info_enabled: view.info_enabled,
+            warning_enabled: view.warning_enabled,
+            error_enabled: view.error_enabled,
+            info_duration_ms: view.info_duration_ms,
+            warning_duration_ms: view.warning_duration_ms,
+            info_rgb: view.info_rgb,
+            warning_rgb: view.warning_rgb,
+            error_rgb: view.error_rgb,
+            error_modal: view.error_modal,
+        }
+    }
     /// Whether `level` rows display at all.
     pub(crate) fn enabled(&self, level: NotificationLevel) -> bool {
         match level {
@@ -201,23 +207,22 @@ impl TransientQueue {
             let matches = self
                 .pending
                 .back()
-                .is_some_and(|back| back.level == item.level && back.key == item.key);
+                .is_some_and(|back| back.level == item.level && back.message == item.message);
             if !matches {
                 return None;
             }
-            // The tail was confirmed non-empty above; the `else` only covers the impossible case.
             let back = self.pending.back_mut()?;
             back.count += item.count;
-            back.row = counted_row(&item.key, back.count, item.row.rgb, item.row.tag);
+            back.row = counted_row(&item.base, back.count, item.row.rgb, item.row.tag);
             back.deadline = item.deadline;
             return Some(MergeTarget::Queued);
         }
         let current = self.current.as_mut()?;
-        if current.level != item.level || current.key != item.key {
+        if current.level != item.level || current.message != item.message {
             return None;
         }
         current.count += item.count;
-        current.row = counted_row(&item.key, current.count, item.row.rgb, item.row.tag);
+        current.row = counted_row(&item.base, current.count, item.row.rgb, item.row.tag);
         current.deadline = item.deadline;
         Some(MergeTarget::Showing)
     }
@@ -249,9 +254,9 @@ impl TransientQueue {
 
     /// Grouped rows collapse latest-wins in place instead of queueing.
     /// `Ok` reports whether the showing label changed; `Err` returns the row unhandled.
-    fn replace_grouped(&mut self, item: OsdItem) -> Result<RouteEffect, OsdItem> {
+    fn replace_grouped(&mut self, item: OsdItem) -> Result<RouteEffect, Box<OsdItem>> {
         let Some(group) = item.group else {
-            return Err(item);
+            return Err(Box::new(item));
         };
         if let Some(current) = self.current.as_mut()
             && current.group == Some(group)
@@ -263,7 +268,7 @@ impl TransientQueue {
             *existing = item;
             return Ok(RouteEffect::QueuedBehind);
         }
-        Err(item)
+        Err(Box::new(item))
     }
 
     /// Route one staged row through merge, preempt, and replace policies, queueing what survives.
@@ -279,7 +284,7 @@ impl TransientQueue {
         };
         let item = match self.replace_grouped(item) {
             Ok(effect) => return effect,
-            Err(item) => item,
+            Err(item) => *item,
         };
         self.pending.push_back(item);
         // Full queue drops the lowest severity first; Errors drop
@@ -432,10 +437,21 @@ mod tests {
     }
 
     fn test_item(level: NotificationLevel, key: &str, now: Instant) -> OsdItem {
+        use crate::session::notification::{Message, MessageKey};
+        let message = match key {
+            "a" => Message::unit(MessageKey::Paused),
+            "b" => Message::unit(MessageKey::Resumed),
+            "info" => Message::unit(MessageKey::Reset),
+            other => Message::slot(
+                MessageKey::SlotSaved,
+                Some(other.len() as u64 + other.bytes().fold(0u64, |a, b| a + b as u64)),
+            ),
+        };
         OsdItem {
             row: counted_row(key, 1, (200, 200, 200), "[I]"),
             level,
-            key: key.into(),
+            message,
+            base: key.into(),
             count: 1,
             duration: Duration::from_millis(2_000),
             deadline: now + Duration::from_millis(2_000),
@@ -556,10 +572,10 @@ mod tests {
         pending.push_back(test_item(NotificationLevel::Warning, "w1", now));
         pending.push_back(test_item(NotificationLevel::Error, "e1", now));
         TransientQueue::evict_overflow(&mut pending, VictimEdge::Oldest);
-        assert!(pending.iter().all(|item| item.key.as_ref() != "i1"));
+        assert!(pending.iter().all(|item| item.base.as_ref() != "i1"));
         assert_eq!(pending.len(), 2);
         TransientQueue::evict_overflow(&mut pending, VictimEdge::Newest);
-        assert!(pending.iter().all(|item| item.key.as_ref() != "w1"));
+        assert!(pending.iter().all(|item| item.base.as_ref() != "w1"));
     }
 
     #[test]
@@ -590,5 +606,22 @@ mod tests {
             queue.wakeup_deadline(now),
             Some(now + Duration::from_millis(2_000))
         );
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+
+    #[test]
+    fn from_view_matches_from_settings() {
+        use nerust_settings_core::model::local::NotificationSettings;
+        let settings = NotificationSettings::default();
+        let view = crate::session::ports::notification_view(&settings);
+        let via_from = TransientPolicy::from(&settings);
+        let via_view = TransientPolicy::from_view(&view);
+        assert_eq!(via_from.info_enabled, via_view.info_enabled);
+        assert_eq!(via_from.error_modal, via_view.error_modal);
+        assert_eq!(via_from.info_rgb, via_view.info_rgb);
     }
 }

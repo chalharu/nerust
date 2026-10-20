@@ -487,4 +487,65 @@ mod tests {
         let coords: Vec<f32> = encoded.split(',').map(|c| c.parse().unwrap()).collect();
         assert_eq!(coords.len(), 4);
     }
+
+    /// Canonical pin: every fraction in `touch_geometry.json` equals the
+    /// Rust const; drift on either side fails loudly here.
+    #[test]
+    fn geometry_fractions_match_canonical_json() {
+        let doc: serde_json::Value =
+            serde_json::from_str(include_str!("../../touch_geometry.json"))
+                .expect("touch geometry JSON must parse");
+        let fraction = |key: &str| {
+            doc.get(key)
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or_else(|| panic!("touch_geometry.json is missing {key}"))
+                as f32
+        };
+        for (key, expected) in [
+            ("portrait_control_top", PORTRAIT_CONTROL_TOP),
+            ("dpad_size_of_base", DPAD_SIZE_OF_BASE),
+            ("dpad_radius_of_size", DPAD_RADIUS_OF_SIZE),
+            ("action_size_of_base", ACTION_SIZE_OF_BASE),
+            ("action_gap_of_base", ACTION_GAP_OF_BASE),
+            ("portrait_action_left", PORTRAIT_ACTION_LEFT),
+            (
+                "landscape_action_margin_of_base",
+                LANDSCAPE_ACTION_MARGIN_OF_BASE,
+            ),
+            ("center_width_of_base", CENTER_WIDTH_OF_BASE),
+            ("center_height_of_base", CENTER_HEIGHT_OF_BASE),
+            ("center_gap_of_base", CENTER_GAP_OF_BASE),
+            (
+                "portrait_center_top_of_control",
+                PORTRAIT_CENTER_TOP_OF_CONTROL,
+            ),
+            ("landscape_center_top", LANDSCAPE_CENTER_TOP),
+            (
+                "portrait_dpad_center_of_control",
+                PORTRAIT_DPAD_CENTER_OF_CONTROL,
+            ),
+            ("landscape_dpad_center", LANDSCAPE_DPAD_CENTER),
+            ("shoulder_width_of_base", SHOULDER_WIDTH_OF_BASE),
+            ("shoulder_height_of_base", SHOULDER_HEIGHT_OF_BASE),
+            ("shoulder_margin_x_of_width", SHOULDER_MARGIN_X_OF_WIDTH),
+            ("shoulder_top_nudge_of_base", SHOULDER_TOP_NUDGE_OF_BASE),
+            ("portrait_activation_right", PORTRAIT_ACTIVATION_RIGHT),
+            ("landscape_activation_right", LANDSCAPE_ACTIVATION_RIGHT),
+            ("landscape_activation_top", LANDSCAPE_ACTIVATION_TOP),
+            ("knob_radius_of_base", KNOB_RADIUS_OF_BASE),
+        ] {
+            assert!(
+                (fraction(key) - expected).abs() < 1e-6,
+                "touch_geometry.json {key} drifted from Rust"
+            );
+        }
+        let labels: Vec<&str> = doc["zone_labels"]
+            .as_array()
+            .expect("zone_labels must be an array")
+            .iter()
+            .map(|value| value.as_str().expect("zone labels are strings"))
+            .collect();
+        let expected: Vec<&str> = TOUCH_ZONES.iter().map(|(_, label)| *label).collect();
+        assert_eq!(labels, expected);
+    }
 }

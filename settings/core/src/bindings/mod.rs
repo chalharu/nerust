@@ -7,14 +7,16 @@ use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::InputTopologyDescriptor;
 use nerust_keyboard::Key;
 
-/// Find key binding conflicts within a single system.
-/// Only the implicit keyboard profile is checked; same-key shortcut conflicts included.
+/// Find key binding conflicts within a single system. Only the implicit keyboard profile is
+/// checked; same-key shortcut conflicts included. Bindings are indexed once (attachment, control) → key, so the descriptor walk probes O(1) instead of scanning per descriptor; labels stay interned `&'static str` pairs until the final materialization (no `format!`).
 pub fn conflicting_keys(
     settings: &DesktopSharedSettings,
     topology: &InputTopologyDescriptor,
     system: &dyn SystemId,
 ) -> BTreeMap<Key, Vec<String>> {
-    let mut by_key = BTreeMap::<Key, Vec<String>>::new();
+    use std::collections::HashMap;
+
+    let mut by_key = BTreeMap::<Key, Vec<(&'static str, &'static str)>>::new();
 
     if let Some(profile) = settings
         .input
@@ -22,37 +24,56 @@ pub fn conflicting_keys(
         .get(system)
         .and_then(|s| s.implicit_keyboard_profile())
     {
+        let mut index = HashMap::<(&str, &str), Key>::with_capacity(profile.bindings.len());
+        for binding in &profile.bindings {
+            index
+                .entry((binding.attachment.as_str(), binding.control.as_str()))
+                .or_insert(binding.key);
+        }
         for descriptor in descriptors::keyboard_binding_descriptors(topology, system) {
-            if let Some(binding) = profile.bindings.iter().find(|binding| {
-                binding.attachment.as_str() == descriptor.attachment.as_str()
-                    && binding.control.as_str() == descriptor.control.as_str()
-            }) {
-                by_key.entry(binding.key).or_default().push(format!(
-                    "{} {}",
-                    descriptor.attachment_label, descriptor.control_label
-                ));
+            let query = (descriptor.attachment.as_str(), descriptor.control.as_str());
+            if let Some(key) = index.get(&query) {
+                by_key
+                    .entry(*key)
+                    .or_default()
+                    .push((descriptor.attachment_label, descriptor.control_label));
             }
         }
     }
 
+    let mut shortcut_keys = HashMap::with_capacity(settings.input.shortcuts.keyboard.len());
+    for binding in &settings.input.shortcuts.keyboard {
+        if let Some(key) = binding.key {
+            shortcut_keys.entry(binding.action).or_insert(key);
+        }
+    }
     for descriptor in descriptors::shortcut_descriptors() {
-        if let Some(binding) = settings
-            .input
-            .shortcuts
-            .keyboard
-            .iter()
-            .find(|binding| binding.action == descriptor.action)
-            && let Some(key) = binding.key
-        {
-            by_key
-                .entry(key)
-                .or_default()
-                .push(descriptor.label.to_string());
+        if let Some(key) = shortcut_keys.get(&descriptor.action) {
+            by_key.entry(*key).or_default().push((descriptor.label, ""));
         }
     }
 
     by_key.retain(|_, labels| labels.len() > 1);
     by_key
+        .into_iter()
+        .map(|(key, labels)| {
+            let strings = labels
+                .into_iter()
+                .map(|(first, second)| {
+                    if second.is_empty() {
+                        first.to_string()
+                    } else {
+                        let mut label = String::with_capacity(first.len() + 1 + second.len());
+                        label.push_str(first);
+                        label.push(' ');
+                        label.push_str(second);
+                        label
+                    }
+                })
+                .collect();
+            (key, strings)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -155,5 +176,53 @@ mod tests {
         let conflicts = conflicting_keys(&settings, &single_port_topology(), &TestSysId);
         assert!(!conflicts.contains_key(&Key::KeyZ));
         assert!(!conflicts.contains_key(&Key::KeyX));
+    }
+
+    #[test]
+    fn keyboard_labels_keep_attachment_control_form() {
+        let mut settings = DesktopSharedSettings::default();
+        let mut sys = SystemInputSettings::default();
+        let profile = sys.implicit_keyboard_profile_mut();
+        profile.bindings.push(KeyboardBinding::new(
+            TEST_ATT.to_string(),
+            PersistedControlId::digital("test.ctrl.a".to_string()),
+            Key::KeyZ,
+        ));
+        profile.bindings.push(KeyboardBinding::new(
+            TEST_ATT.to_string(),
+            PersistedControlId::digital("test.ctrl.b".to_string()),
+            Key::KeyZ,
+        ));
+        settings.input.systems.insert(Box::new(TestSysId), sys);
+
+        let conflicts = conflicting_keys(&settings, &single_port_topology(), &TestSysId);
+        let labels = &conflicts[&Key::KeyZ];
+        assert_eq!(labels.len(), 2);
+        assert!(
+            labels.iter().all(|label| label.starts_with("P1 ")),
+            "{labels:?}"
+        );
+    }
+
+    #[test]
+    fn shortcut_conflicts_detected_without_profile() {
+        use crate::model::input::{ShortcutAction, ShortcutBinding};
+        let mut settings = DesktopSharedSettings::default();
+        settings.input.shortcuts.keyboard.clear();
+        settings.input.shortcuts.keyboard.push(ShortcutBinding {
+            action: ShortcutAction::SaveActiveSlot,
+            key: Some(Key::F5),
+        });
+        settings.input.shortcuts.keyboard.push(ShortcutBinding {
+            action: ShortcutAction::Reset,
+            key: Some(Key::F5),
+        });
+        let conflicts = conflicting_keys(&settings, &single_port_topology(), &TestSysId);
+        let labels = &conflicts[&Key::F5];
+        assert!(
+            labels.contains(&"Save Active Slot".to_string()),
+            "{labels:?}"
+        );
+        assert!(labels.contains(&"Reset".to_string()), "{labels:?}");
     }
 }

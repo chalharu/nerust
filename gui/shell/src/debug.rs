@@ -14,7 +14,7 @@ use nerust_core_traits::debugger::{
 use nerust_gui_viewmodel::debugger as debug_vm;
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache};
 
-use crate::{emu_core::EmuCore, session::SessionHandle};
+use crate::{emu_core::EmuCore, emu_core::LiveDebugPort, session::SessionHandle};
 
 /// One debugger action batch. Same variants as the former per-frontend
 /// request enums; frontends only translate widgets into these.
@@ -274,6 +274,11 @@ pub struct DrainCtx {
 impl DrainCtx {
     pub(crate) fn new(core: Option<EmuCore>, txn: Arc<Mutex<vm::WriteTransaction>>) -> Self {
         Self { core, txn }
+    }
+
+    /// Narrow debug port behind the owned core; flights program against this.
+    pub fn core_port(&self) -> Option<&dyn LiveDebugPort> {
+        self.core.as_ref().map(|core| core as &dyn LiveDebugPort)
     }
 
     /// Poison-recovering transaction lock: plain data survives a panicked holder.
@@ -1091,14 +1096,13 @@ impl DrainCtx {
         }
     }
 
-    /// Queue one step without blocking; thread failures surface at reply time instead.
-    /// The `Err` status mirrors the no-core path.
+    /// Queue one step without blocking through the narrow port.
     fn step_send(
         &self,
         unit: StepUnit,
     ) -> Result<Receiver<Result<u64, DebuggerError>>, vm::StatusMessage> {
-        match self.core.as_ref() {
-            Some(core) => core
+        match self.core_port() {
+            Some(port) => port
                 .step_send(unit)
                 .map_err(|error| CoreFailure::from(error).thread_status()),
             None => Err(vm::StatusMessage::NoCore),
@@ -1265,5 +1269,20 @@ mod tests {
             await_reply(&rx, past, Duration::from_secs(5)),
             Awaited::Lost
         ));
+    }
+}
+
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+
+    #[test]
+    fn drain_ctx_exposes_narrow_debug_port() {
+        use crate::session::test_util::test_session;
+        let session = test_session();
+        let ctx = session.drain_ctx();
+        assert!(ctx.core_port().is_some());
+        let empty = DrainCtx::new(None, Arc::new(Mutex::new(vm::WriteTransaction::Empty)));
+        assert!(empty.core_port().is_none());
     }
 }

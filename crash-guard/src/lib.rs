@@ -1,14 +1,12 @@
-//! Outermost crash containment: hook install plus guarded entry.
-//! Hook preserves only the record; dialogs and termination are the host's job.
+//! Outermost crash containment: hook install plus guarded entry. Hook preserves only the record;
+//! dialogs and termination are the host's job. Configuration travels by parameter (`install_with_source`, `run_guarded_with`); no process-global slots remain. Zero-arg `install`/`run_guarded` stay as thin shims for existing hosts.
 
 use std::{
     any::Any,
     panic::{self, PanicHookInfo},
-    sync::Once,
 };
 
-/// Record sink for the panic hook. Set at most once per process; [`install`]
-/// chains the previous hook so host behavior is never swallowed.
+/// Record sink for the panic hook. Passed per install; no global slot.
 pub type RecordSink = fn(&PanicRecord);
 
 fn default_sink(record: &PanicRecord) {
@@ -16,14 +14,6 @@ fn default_sink(record: &PanicRecord) {
         "panic on thread '{}': {}\nbacktrace:\n{}",
         record.thread, record.detail, record.backtrace
     );
-}
-
-static SINK: std::sync::OnceLock<RecordSink> = std::sync::OnceLock::new();
-
-/// Override the record sink (tests, embedders). Returns whether this call
-/// won the process-wide slot.
-pub fn set_record_sink(sink: RecordSink) -> bool {
-    SINK.set(sink).is_ok()
 }
 
 /// Backtrace source: injected so hosts and tests avoid the real capture.
@@ -34,35 +24,46 @@ fn capture_backtrace() -> String {
     std::backtrace::Backtrace::capture().to_string()
 }
 
-static BACKTRACE: std::sync::OnceLock<BacktraceSource> = std::sync::OnceLock::new();
-
-/// Override the backtrace source (tests). Returns whether this call won.
-pub fn set_backtrace_source(source: BacktraceSource) -> bool {
-    BACKTRACE.set(source).is_ok()
+/// RAII panic-hook install. Chains the previous hook on construction and restores it on drop, so
+/// scoped installs never leak into the host. Drops must nest (LIFO); `mem::forget` the guard for a permanent install.
+pub struct HookGuard {
+    chained: std::sync::Arc<dyn Fn(&PanicHookInfo<'_>) + Sync + Send + 'static>,
 }
 
-fn backtrace() -> String {
-    BACKTRACE.get().copied().unwrap_or(capture_backtrace)()
+impl Drop for HookGuard {
+    fn drop(&mut self) {
+        // Best-effort LIFO restore: wrap the chained hook back in place.
+        // A later install dropped out of order keeps its own chain.
+        let chained = std::sync::Arc::clone(&self.chained);
+        panic::set_hook(Box::new(move |info| chained(info)));
+    }
 }
 
-/// Install the process-wide panic hook (idempotent, chains previous).
-/// Best-effort record for pre-guard windows; `run_guarded` is authoritative.
+/// Install the hook with an explicit sink, chaining the previous hook.
+/// Returns a guard: dropping restores the previous hook.
+pub fn install_with(sink: RecordSink) -> HookGuard {
+    install_with_source(sink, capture_backtrace)
+}
+
+/// Install the hook with an explicit sink and backtrace source.
+/// Returns a guard: dropping restores the previous hook.
+pub fn install_with_source(sink: RecordSink, source: BacktraceSource) -> HookGuard {
+    let previous = panic::take_hook();
+    let chained: std::sync::Arc<dyn Fn(&PanicHookInfo<'_>) + Sync + Send + 'static> =
+        std::sync::Arc::from(previous);
+    let for_hook = std::sync::Arc::clone(&chained);
+    panic::set_hook(Box::new(move |info: &PanicHookInfo<'_>| {
+        let record = PanicRecord::capture_with(info.to_string(), source());
+        sink(&record);
+        for_hook(info);
+    }));
+    HookGuard { chained }
+}
+
+/// Install the default hook permanently (idempotent per call site intent).
+/// Legacy shim: new code takes [`install_with`] and owns the [`HookGuard`].
 pub fn install() {
-    install_with(SINK.get().copied().unwrap_or(default_sink));
-}
-
-/// Install the hook with an explicit sink, bypassing the global slot.
-/// Idempotent per process; chains the previous hook either way.
-pub fn install_with(sink: RecordSink) {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let previous = panic::take_hook();
-        panic::set_hook(Box::new(move |info: &PanicHookInfo<'_>| {
-            let record = PanicRecord::capture_with(info.to_string(), backtrace());
-            sink(&record);
-            previous(info);
-        }));
-    });
+    std::mem::forget(install_with(default_sink));
 }
 
 /// Crash exit code for hosts (Rust panic convention: 101).
@@ -89,9 +90,9 @@ impl CrashReport {
         &self.record.detail
     }
 
-    fn from_payload(payload: &(dyn Any + Send)) -> Self {
+    fn from_payload(payload: &(dyn Any + Send), source: BacktraceSource) -> Self {
         Self {
-            record: PanicRecord::capture(payload_message(payload)),
+            record: PanicRecord::capture_with(payload_message(payload), source()),
         }
     }
 }
@@ -133,12 +134,7 @@ impl PanicRecord {
 }
 
 impl PanicRecord {
-    // Release keeps symtab only: names resolve, file:line does not.
-    fn capture(detail: String) -> Self {
-        Self::capture_with(detail, backtrace())
-    }
-
-    /// Capture with an injected backtrace (hook path and tests).
+    /// Capture with an explicit backtrace (hook path and tests inject it).
     /// `Backtrace::capture` respects `RUST_BACKTRACE`: unset/`0` yields a placeholder.
     fn capture_with(detail: String, backtrace: String) -> Self {
         let thread = std::thread::current();
@@ -164,19 +160,46 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
     }
 }
 
-/// Run `main` under the hook; on unwind build the report and return it.
+/// Run `main` under a scoped hook; on unwind build the report and return it.
 /// Silent (the hook already logged); caught state is never resumed or reused.
-pub fn run_guarded<R>(main: impl FnOnce() -> R) -> GuardOutcome<R> {
-    install();
+pub fn run_guarded_with<R>(
+    main: impl FnOnce() -> R,
+    sink: RecordSink,
+    source: BacktraceSource,
+) -> GuardOutcome<R> {
+    let _guard = install_with_source(sink, source);
     match panic::catch_unwind(std::panic::AssertUnwindSafe(main)) {
         Ok(value) => GuardOutcome::Completed(value),
-        Err(payload) => GuardOutcome::Crashed(CrashReport::from_payload(payload.as_ref())),
+        Err(payload) => GuardOutcome::Crashed(CrashReport::from_payload(payload.as_ref(), source)),
     }
+}
+
+/// Run `main` under the default hook; on unwind build the report.
+/// Legacy shim: new code takes [`run_guarded_with`] with sink and source.
+pub fn run_guarded<R>(main: impl FnOnce() -> R) -> GuardOutcome<R> {
+    run_guarded_with(main, default_sink, capture_backtrace)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    /// Serializes hook-mutating tests: the panic hook is process-global.
+    static HOOK_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn stub_source() -> String {
+        "stub backtrace".to_string()
+    }
+
+    static SINK_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn counting_sink(_record: &PanicRecord) {
+        SINK_CALLS.fetch_add(1, Ordering::SeqCst);
+    }
 
     #[test]
     fn payload_message_covers_string_forms() {
@@ -192,7 +215,7 @@ mod tests {
 
     #[test]
     fn report_display_names_thread_and_message() {
-        let report = CrashReport::from_payload(&"boom");
+        let report = CrashReport::from_payload(&"boom", stub_source);
         let text = report.to_string();
         assert!(text.contains("boom"), "{text}");
         assert!(text.contains("crashed on thread"), "{text}");
@@ -202,40 +225,59 @@ mod tests {
 
     #[test]
     fn guard_returns_completed_value() {
-        let outcome = run_guarded(|| 42);
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        let outcome = run_guarded_with(|| 42, counting_sink, stub_source);
         assert!(matches!(outcome, GuardOutcome::Completed(42)));
     }
 
     #[test]
     fn guard_returns_crashed_in_process() {
-        let outcome: GuardOutcome<()> = run_guarded(|| panic!("boom"));
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        let before = SINK_CALLS.load(Ordering::SeqCst);
+        let outcome: GuardOutcome<()> =
+            run_guarded_with(|| panic!("boom"), counting_sink, stub_source);
         match outcome {
             GuardOutcome::Crashed(report) => assert_eq!(report.message(), "boom"),
             GuardOutcome::Completed(()) => panic!("crash must not complete"),
         }
+        assert_eq!(SINK_CALLS.load(Ordering::SeqCst), before + 1);
     }
 
     #[test]
-    fn set_record_sink_return_is_process_global() {
-        // `SINK` is process-wide: exactly one call wins. The return agrees
-        // with whether our sink is live.
-        static PROBE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        fn probe_sink(_record: &PanicRecord) {
-            PROBE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    fn hook_guard_restores_previous_hook_on_drop() {
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        let before = SINK_CALLS.load(Ordering::SeqCst);
+        {
+            let _guard = install_with_source(counting_sink, stub_source);
+            let result = panic::catch_unwind(|| panic!("scoped probe"));
+            assert!(result.is_err());
         }
-        let won = set_record_sink(probe_sink);
-        // Either we won the slot (first setter in this process) or a
-        // sibling test did; the boolean is the only observable contract.
-        let _ = won;
+        assert_eq!(
+            SINK_CALLS.load(Ordering::SeqCst),
+            before + 1,
+            "guard hook fired once"
+        );
+        // Dropped guard restored the previous hook: no more counting calls.
+        let result = panic::catch_unwind(|| panic!("after drop"));
+        assert!(result.is_err());
+        assert_eq!(SINK_CALLS.load(Ordering::SeqCst), before + 1);
     }
 
     #[test]
     fn hook_record_shares_capture_shape() {
-        let record = PanicRecord::capture("explicit panic".to_owned());
+        let record = PanicRecord::capture_with("explicit panic".to_owned(), stub_source());
         assert!(!record.thread.is_empty());
         assert_eq!(record.detail, "explicit panic");
-        // Without `RUST_BACKTRACE` the backtrace is a disabled placeholder;
-        // either way the field must render non-empty.
-        assert!(!record.backtrace.is_empty());
+        assert_eq!(record.backtrace, "stub backtrace");
+    }
+
+    #[test]
+    fn legacy_shims_cover_hosts_unchanged() {
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        install();
+        let outcome = run_guarded(|| 7);
+        assert!(matches!(outcome, GuardOutcome::Completed(7)));
+        let outcome: GuardOutcome<()> = run_guarded(|| panic!("legacy boom"));
+        assert!(matches!(outcome, GuardOutcome::Crashed(_)));
     }
 }

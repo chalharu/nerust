@@ -44,22 +44,102 @@ pub enum SlotActivation {
     Leave,
 }
 
-/// One-bundle backend set for [`PersistenceManager`](super::persistence::PersistenceManager::configure_backends).
-/// Replaces the three-`Box` parameter list, which read as positional noise at every call site.
+/// One-bundle backend set for the persistence manager.
+/// Construct literally at the composition root or in tests.
 pub struct PersistenceBackends {
     pub slot: Box<dyn SlotBackend>,
     pub autosave: Box<dyn AutoSaveBackend>,
     pub mapper: Box<dyn MapperSaveBackend>,
 }
 
-impl PersistenceBackends {
-    /// Desktop filesystem set for all three legs.
-    pub fn filesystem() -> Self {
-        Self {
-            slot: Box::new(super::fs::FsSlotBackend),
-            autosave: Box::new(super::fs::FsSlotBackend),
-            mapper: Box::new(super::fs::FsSlotBackend),
-        }
+/// Loader-facing session ports; load adapter depends on this, never the handle.
+pub trait SessionPorts {
+    /// Default load options for the active system.
+    fn default_load_options(
+        &self,
+    ) -> Option<Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptions>>;
+    /// Current settings snapshot.
+    fn settings_snapshot(&self) -> &nerust_gui_runtime::settings::SettingsSnapshot;
+    /// Load resolved media.
+    fn load_resolved(
+        &mut self,
+        media: nerust_core_traits::factory::load::MediaObject,
+        resolved: nerust_core_traits::factory::load::ResolvedLoadRequest,
+    ) -> Result<(), crate::load::RomLoaderError>;
+    /// Resume after load.
+    fn resume(&mut self);
+    /// Activate a system before load.
+    fn set_active_system(
+        &mut self,
+        system_id: &dyn nerust_core_traits::identity::SystemId,
+    ) -> Result<(), crate::load::SystemActivationError>;
+}
+
+/// Plain-args notification view; single adapter at the settings boundary.
+#[derive(Debug, Clone, Copy)]
+pub struct NotificationView {
+    /// Whether info rows display.
+    pub info_enabled: bool,
+    /// Whether warning rows display.
+    pub warning_enabled: bool,
+    /// Whether error rows display.
+    pub error_enabled: bool,
+    /// Display duration for info rows.
+    pub info_duration_ms: u32,
+    /// Display duration for warning rows.
+    pub warning_duration_ms: u32,
+    /// Display color for info rows.
+    pub info_rgb: (u8, u8, u8),
+    /// Display color for warning rows.
+    pub warning_rgb: (u8, u8, u8),
+    /// Display color for error rows.
+    pub error_rgb: (u8, u8, u8),
+    /// Whether errors also go modal.
+    pub error_modal: bool,
+}
+
+/// Single settings-boundary adapter for notification views.
+pub fn notification_view(
+    settings: &nerust_settings_core::model::local::NotificationSettings,
+) -> NotificationView {
+    NotificationView {
+        info_enabled: settings.info_enabled,
+        warning_enabled: settings.warning_enabled,
+        error_enabled: settings.error_enabled,
+        info_duration_ms: settings.info_duration_ms,
+        warning_duration_ms: settings.warning_duration_ms,
+        info_rgb: settings.info_color.rgb(),
+        warning_rgb: settings.warning_color.rgb(),
+        error_rgb: settings.error_color.rgb(),
+        error_modal: settings.error_modal,
+    }
+}
+
+/// Plain-args chrome view; single adapter at the settings boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChromeView {
+    /// Whether the status pill shows.
+    pub status_enabled: bool,
+    /// Corner for transient rows.
+    pub position: nerust_settings_core::model::local::NotificationPosition,
+    /// Corner for the status pill.
+    pub status_position: nerust_settings_core::model::local::NotificationPosition,
+    /// Layout mode for transient rows.
+    pub area_mode: nerust_settings_core::model::local::NotificationAreaMode,
+    /// Layout mode for the status pill.
+    pub status_area_mode: nerust_settings_core::model::local::NotificationAreaMode,
+}
+
+/// Single settings-boundary adapter for chrome views.
+pub fn chrome_view(
+    settings: &nerust_settings_core::model::local::NotificationSettings,
+) -> ChromeView {
+    ChromeView {
+        status_enabled: settings.status_enabled,
+        position: settings.position,
+        status_position: settings.status_position,
+        area_mode: settings.area_mode,
+        status_area_mode: settings.status_area_mode,
     }
 }
 

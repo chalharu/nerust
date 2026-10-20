@@ -367,3 +367,24 @@ fn setup_failure_pushes_persistence_unavailable() {
         NotificationKind::PersistenceUnavailable
     ));
 }
+
+#[test]
+fn every_wiring_funnels_through_configure_backends() {
+    use crate::session::fs::FsSlotBackend;
+    use crate::session::persistence::PersistenceManager;
+    let mut manager = PersistenceManager::new();
+    manager.with_autosave_backend(Box::new(FsSlotBackend));
+    manager.with_mapper_backend(Box::new(FsSlotBackend));
+    manager.configure_backends(PersistenceBackends {
+        slot: Box::new(FsSlotBackend),
+        autosave: Box::new(FsSlotBackend),
+        mapper: Box::new(FsSlotBackend),
+    });
+    let bundled = PersistenceManager::with_all_backends(
+        Box::new(FsSlotBackend),
+        Box::new(FsSlotBackend),
+        Box::new(FsSlotBackend),
+    );
+    assert!(bundled.slots().is_empty());
+    assert!(manager.slots().is_empty());
+}

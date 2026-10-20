@@ -95,9 +95,12 @@ impl GtkOsd {
     ) {
         use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
         let now = Instant::now();
-        let language = state.settings_snapshot().shared.general.language;
+        // Single snapshot read per frame: the `Arc` gate skips the
+        // full-snapshot clone on steady frames (see `settings_arc`).
+        let snapshot = state.settings_arc();
+        let language = snapshot.shared.general.language;
         let tick = state.session.tick_metrics();
-        let settings = state.settings_snapshot().local.notifications.clone();
+        let settings = snapshot.local.notifications.clone();
         let report = state.session.pump_osd(
             &mut self.manager,
             PushInput {
@@ -270,10 +273,16 @@ impl GtkOsd {
             let count = count.clone();
             let last_sync = Rc::clone(&last_sync);
             move || {
-                let language = state.borrow().settings_snapshot().shared.general.language;
+                // Gate inputs first: a refresh with unchanged inputs
+                // rebuilds nothing instead of re-allocating rows.
+                let (language, seq) = {
+                    let borrowed = state.borrow();
+                    let language = borrowed.settings_snapshot().shared.general.language;
+                    (language, borrowed.notification_history_seq())
+                };
                 let active = filter.active_id();
                 let key = (
-                    state.borrow().notification_history_seq(),
+                    seq,
                     language,
                     active.as_deref().unwrap_or("all").to_string(),
                 );

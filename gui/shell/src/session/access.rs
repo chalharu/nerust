@@ -87,8 +87,8 @@ impl<T: SlotControl + ?Sized> ResetControl for T {
     }
 }
 
-/// Save-slot control: slot CRUD plus reset. Compatibility shim for out-of-crate frontends.
-/// New code implements the narrow [`SlotIo`]/[`SlotNav`]/[`ResetControl`] traits instead.
+/// Legacy fat shim for out-of-crate frontends; new code uses narrow traits.
+/// Kept for compatibility: blanket impls forward narrow calls here.
 pub trait SlotControl {
     fn save_active_slot(&mut self) -> bool;
     fn load_active_slot(&mut self) -> bool;
@@ -164,9 +164,68 @@ where
             let _ = target.load_active_slot();
         }
         ShortcutAction::Reset => target.reset(),
-        // Unreachable by construction (see above): kept exhaustive so
-        // a new action fails to compile until it is routed here.
         ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger => {}
+    }
+}
+
+/// Direct narrow impls for the live session; new code depends on these.
+impl PauseControl for super::SessionHandle {
+    fn pause(&mut self) {
+        let _ = self.run_command(super::commands::SessionCommand::Pause);
+    }
+    fn resume(&mut self) {
+        let _ = self.run_command(super::commands::SessionCommand::Resume);
+    }
+    fn toggle_pause(&mut self) {
+        let _ = self.run_command(super::commands::SessionCommand::TogglePause);
+    }
+}
+
+/// Direct narrow impls for the live session; new code depends on these.
+impl SlotIo for super::SessionHandle {
+    fn load_slot(&mut self, slot_id: u64) -> bool {
+        self.run_command(super::commands::SessionCommand::LoadSlot(slot_id))
+            .map(|outcome| outcome.executed)
+            .unwrap_or(false)
+    }
+    fn save_slot(&mut self, slot_id: u64) {
+        let _ = self.run_command(super::commands::SessionCommand::SaveSlot(slot_id));
+    }
+    fn delete_slot(&mut self, slot_id: u64) {
+        let _ = self.run_command(super::commands::SessionCommand::DeleteSlot(slot_id));
+    }
+    fn save_active_slot(&mut self) -> bool {
+        self.run_command(super::commands::SessionCommand::SaveActiveSlotOrNew)
+            .map(|outcome| outcome.executed)
+            .unwrap_or(false)
+    }
+    fn load_active_slot(&mut self) -> bool {
+        self.run_command(super::commands::SessionCommand::LoadActiveSlot)
+            .map(|outcome| outcome.executed)
+            .unwrap_or(false)
+    }
+}
+
+/// Direct narrow impls for the live session; new code depends on these.
+impl SlotNav for super::SessionHandle {
+    fn select_slot(&mut self, slot_id: u64) {
+        let _ = self.run_command(super::commands::SessionCommand::SelectActiveSlot(slot_id));
+    }
+    fn select_next_slot(&mut self) {
+        let _ = self.run_command(super::commands::SessionCommand::SelectNextSlot);
+    }
+    fn select_previous_slot(&mut self) {
+        let _ = self.run_command(super::commands::SessionCommand::SelectPreviousSlot);
+    }
+    fn create_slot(&mut self) {
+        let _ = self.run_command(super::commands::SessionCommand::CreateSlot);
+    }
+}
+
+/// Direct narrow impl for the live session; new code depends on this.
+impl ResetControl for super::SessionHandle {
+    fn reset(&mut self) {
+        let _ = self.run_command(super::commands::SessionCommand::Reset);
     }
 }
 
@@ -305,5 +364,16 @@ mod tests {
         ] {
             assert!(recorder.calls.contains(&name), "{name}");
         }
+    }
+}
+
+#[cfg(test)]
+mod narrow_tests {
+    use super::{PauseControl, ResetControl, SlotIo, SlotNav};
+
+    #[test]
+    fn session_speaks_narrow_ports_directly() {
+        fn bound<T: PauseControl + SlotIo + SlotNav + ResetControl>() {}
+        bound::<super::super::SessionHandle>();
     }
 }
