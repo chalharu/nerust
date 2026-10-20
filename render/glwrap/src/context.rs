@@ -41,7 +41,6 @@ impl<F: FnMut()> ScopeGuard<F> {
 
     pub fn dismiss(mut self) {
         self.action = None;
-        std::mem::forget(self);
     }
 }
 

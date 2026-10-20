@@ -4,7 +4,16 @@
 use std::{os::raw::c_void, ptr, rc::Rc};
 
 use gl::types::GLint;
-use nerust_glwrap::{CurrentContext, DeletionPolicy, ScopeGuard, Shader, raw::*, vertex::*};
+use nerust_glwrap::{
+    CurrentContext, DeletionPolicy, ScopeGuard, Shader,
+    raw::{
+        active_texture, bind_buffer, check_frame, clear, clear_color, delete_textures, draw_arrays,
+        enable_vertex_attrib_array, gen_textures, get_integer, gl_string, pixel_storei,
+        tex_sub_image_2d, uniform_1i, uniform_2f, uniform_matrix_4fv, vertex_attrib_pointer,
+        viewport,
+    },
+    vertex::{Attrib, VertexArray, VertexBuffer},
+};
 use nerust_render_ntsc::NTSC_TEXTURE_HEIGHT;
 use nerust_render_traits::{ReservedStrip, VideoFrameFormat, VideoRenderProfile};
 
@@ -13,7 +22,12 @@ use crate::shader_compiler::{compile_shader_program, is_gles_context, supports_u
 use crate::surface_view::LeakedName;
 use crate::vec2d::Vec2D;
 use crate::vertex_data::VertexData;
-use crate::{error::ViewError, frame_textures::*};
+use crate::{
+    error::ViewError,
+    frame_textures::{
+        allocate_texture_store, configure_ntsc_texture, upload_texture_bytes, use_texture,
+    },
+};
 
 /// Convert a GL call result into a view error for `?` propagation.
 pub(crate) fn ok_gl<T>(result: Result<T, nerust_glwrap::GlError>) -> Result<T, ViewError> {
