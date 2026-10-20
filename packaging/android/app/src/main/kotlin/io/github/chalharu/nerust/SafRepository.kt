@@ -147,6 +147,57 @@ class SafRepository(private val context: Context) {
         return array.toString()
     }
 
+    /** Server-side streaming session: one `openInputStream`, sequential reads.
+     * Rust pulls chunks until an empty array; the session closes explicitly. */
+    fun openSafReadSession(treeUri: String, relativePath: String): Long {
+        val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return -1L
+        val stream =
+            try {
+                context.contentResolver.openInputStream(file.uri)
+            } catch (error: Exception) {
+                Log.w(TAG, "openSafReadSession: open failed", error)
+                null
+            } ?: return -1L
+        synchronized(readSessions) {
+            val id = nextReadSessionId++
+            readSessions[id] = stream
+            return id
+        }
+    }
+
+    /** One sequential chunk from an open session; empty marks end of stream. */
+    fun readSafReadSession(sessionId: Long, maxBytes: Int): ByteArray {
+        val stream =
+            synchronized(readSessions) { readSessions[sessionId] }
+                ?: return ByteArray(0)
+        val capped = maxBytes.coerceIn(1, SAF_CHUNK_BYTES)
+        return try {
+            val buffer = ByteArray(capped)
+            var filled = 0
+            while (filled < capped) {
+                val read = stream.read(buffer, filled, capped - filled)
+                if (read < 0) break
+                filled += read
+            }
+            buffer.copyOf(filled)
+        } catch (error: Exception) {
+            Log.w(TAG, "readSafReadSession: read failed", error)
+            ByteArray(0)
+        }
+    }
+
+    /** Close a server-side read session; a missing session is a no-op. */
+    fun closeSafReadSession(sessionId: Long) {
+        val stream =
+            synchronized(readSessions) { readSessions.remove(sessionId) }
+                ?: return
+        try {
+            stream.close()
+        } catch (error: Exception) {
+            Log.w(TAG, "closeSafReadSession: close failed", error)
+        }
+    }
+
     private fun resolveSafDocument(
         treeUri: String,
         relativePath: String,
@@ -185,4 +236,7 @@ class SafRepository(private val context: Context) {
         private const val TAG = "Nerust"
         const val SAF_CHUNK_BYTES = 64 * 1024
     }
+
+    private val readSessions = mutableMapOf<Long, java.io.InputStream>()
+    private var nextReadSessionId = 1L
 }

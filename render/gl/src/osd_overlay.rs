@@ -1,15 +1,7 @@
-//! OSD overlay domain: validation, retry, and GL row addressing.
-//! [`OsdOverlay`] owns the retry budget plus the grow-only staging scratches.
+//! OSD overlay domain: validation, retry decisions, and GL row addressing. The retry budget is the
+//! shared `BoundedUploadPolicy`; this module only maps its boolean outcome to the overlay decision.
 
-use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
-
-/// Bounded OSD retry: transient blips survive, dead drivers drop.
-/// Pure counter; the renderer owns warn-once logging.
-#[derive(Debug)]
-pub(crate) struct RetryBudget {
-    pub(crate) max: u8,
-    pub(crate) fails: u8,
-}
+use nerust_render_traits::renderer::OsdLayer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RetryDecision {
@@ -17,37 +9,10 @@ pub(crate) enum RetryDecision {
     DropLayer,
 }
 
-impl OsdUploadPolicy for RetryBudget {
-    fn record_failure(&mut self) -> bool {
-        matches!(self.record_failure(), RetryDecision::DropLayer)
-    }
-
-    fn reset(&mut self) {
-        RetryBudget::reset(self);
-    }
-}
-
-impl RetryBudget {
-    /// Zero would drop live layers on the first transient failure, so
-    /// the floor is one attempt: the constructor clamps, not callers.
-    pub(crate) fn new(max: u8) -> Self {
-        Self {
-            max: max.max(1),
-            fails: 0,
-        }
-    }
-
-    pub(crate) fn record_failure(&mut self) -> RetryDecision {
-        self.fails = self.fails.saturating_add(1);
-        if self.fails >= self.max {
-            RetryDecision::DropLayer
-        } else {
-            RetryDecision::Retry
-        }
-    }
-
-    pub(crate) fn reset(&mut self) {
-        self.fails = 0;
+impl RetryDecision {
+    /// Map one shared-policy outcome: `true` (give up) drops the layer.
+    pub(crate) fn from_policy(drop: bool) -> Self {
+        if drop { Self::DropLayer } else { Self::Retry }
     }
 }
 
@@ -153,11 +118,42 @@ pub(crate) fn checked_clear_need(w: i32, h: i32) -> Result<usize, OsdReject> {
         .ok_or(OsdReject::Empty)
 }
 
-/// Pure policy (`RetryBudget`, `checked_osd_rect`, `osd_gl_y`, `checked_clear_need`).
+/// Pure policy (`RetryDecision`, `checked_osd_rect`, `osd_gl_y`, `checked_clear_need`).
 #[cfg(test)]
 mod tests {
-    use super::{OsdReject, checked_clear_need, checked_osd_gl_y, checked_osd_rect, osd_gl_y};
-    use nerust_render_traits::renderer::OsdLayer;
+    use super::{
+        OsdReject, RetryDecision, checked_clear_need, checked_osd_gl_y, checked_osd_rect, osd_gl_y,
+    };
+    use nerust_render_traits::renderer::{BoundedUploadPolicy, OsdLayer, OsdUploadPolicy};
+
+    #[test]
+    fn decision_maps_shared_policy_outcome() {
+        assert_eq!(RetryDecision::from_policy(false), RetryDecision::Retry);
+        assert_eq!(RetryDecision::from_policy(true), RetryDecision::DropLayer);
+        // End to end through the single budget: two retries, then drop.
+        let mut budget = BoundedUploadPolicy::new(3);
+        assert_eq!(
+            RetryDecision::from_policy(budget.record_failure()),
+            RetryDecision::Retry
+        );
+        assert_eq!(
+            RetryDecision::from_policy(budget.record_failure()),
+            RetryDecision::Retry
+        );
+        assert_eq!(
+            RetryDecision::from_policy(budget.record_failure()),
+            RetryDecision::DropLayer
+        );
+        assert_eq!(
+            RetryDecision::from_policy(budget.record_failure()),
+            RetryDecision::DropLayer
+        );
+        budget.reset();
+        assert_eq!(
+            RetryDecision::from_policy(budget.record_failure()),
+            RetryDecision::Retry
+        );
+    }
 
     #[test]
     fn y_flip_matches_bottom_left_origin() {

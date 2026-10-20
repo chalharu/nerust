@@ -45,6 +45,13 @@ impl RomLoaderError {
     }
 }
 
+impl SystemActivationError {
+    /// Typed constructor from a session error; keeps the chain renderable.
+    pub fn from_session(source: crate::session::SessionError) -> Self {
+        Self::Activation(source.to_string())
+    }
+}
+
 /// Target for a ROM load operation.
 /// Session operations needed by `RomLoader` implementations, for any session type.
 pub trait RomLoadTarget {
@@ -114,5 +121,16 @@ mod tests {
 
         assert_eq!(media.extension.as_deref(), Some("nes"));
         assert_eq!(media.bytes.as_ref(), [1, 2, 3]);
+    }
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use super::*;
+
+    #[test]
+    fn activation_error_constructs_from_session() {
+        let error = SystemActivationError::from_session(crate::session::SessionError::NoCore);
+        assert!(matches!(error, SystemActivationError::Activation(_)));
     }
 }

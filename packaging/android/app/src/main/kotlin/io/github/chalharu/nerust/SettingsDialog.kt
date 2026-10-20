@@ -26,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,13 +42,19 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /** Settings dialog UI: cards, section builders, visibility filtering, and selection state. */
 internal data class AndroidSetting(
     val key: String,
     val section: String,
+    val sectionLabel: String,
     val label: String,
+    val kind: String,
     val choices: List<String>,
+    val rangeMin: Int,
+    val rangeMax: Int,
+    val unit: String,
     val visible: Boolean = true,
 )
 
@@ -57,14 +64,33 @@ internal data class AndroidSettingsSection(
     val settingIndices: List<Int>,
 )
 
+/** One dialog field as pushed by Rust: choices arrive as a JSON array,
+ * ranged ints as min/max/unit with an offset value. No string escaping. */
+internal data class SettingsField(
+    val key: String,
+    val section: String,
+    val sectionLabel: String,
+    val label: String,
+    val kind: String,
+    val choices: List<String>,
+    val value: Int,
+    val visible: Boolean,
+    val rangeMin: Int = 0,
+    val rangeMax: Int = 0,
+    val unit: String = "",
+)
+
+/** Display value for a row: ranged fields render `min+index` with the unit. */
+internal fun settingDisplayValue(setting: AndroidSetting, selection: Int): String =
+    if (setting.kind == "range") {
+        "${setting.rangeMin + selection}${setting.unit}"
+    } else {
+        setting.choices.getOrElse(selection) { "?" }
+    }
+
 /** Keyed dialog content assembled by MainActivity from the Rust payload. */
 internal data class SettingsDialogContent(
-    val keys: List<String>,
-    val labels: List<String>,
-    val choiceStrings: List<String>,
-    val currentIndices: List<String>,
-    val sections: List<String>,
-    val visibleFlags: List<Boolean>,
+    val fields: List<SettingsField>,
 )
 
 @Composable
@@ -151,8 +177,7 @@ internal fun settingsContentDescription(
     buildList {
         add("Settings")
         settings.forEachIndexed { index, setting ->
-            val value = setting.choices.getOrElse(selections.getOrElse(index) { 0 }) { "?" }
-            add("${setting.label}: $value")
+            add("${setting.label}: ${settingDisplayValue(setting, selections.getOrElse(index) { 0 })}")
         }
     }.joinToString("\n")
 
@@ -283,8 +308,7 @@ private fun SettingsCategoryList(
             val summary =
                 visibleIndices.take(2).joinToString(" · ") { settingIndex ->
                     val setting = settings[settingIndex]
-                    val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
-                    "${setting.label}: $value"
+                    "${setting.label}: ${settingDisplayValue(setting, selections[settingIndex])}"
                 }
             SettingsNavigationRow(
                 title = section.label,
@@ -308,7 +332,7 @@ private fun SettingsSectionList(
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         itemsIndexed(section.settingIndices) { index, settingIndex ->
             val setting = settings[settingIndex]
-            val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
+            val value = settingDisplayValue(setting, selections[settingIndex])
             SettingsNavigationRow(
                 title = setting.label,
                 value = value,
@@ -326,6 +350,10 @@ private fun SettingsChoiceList(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
 ) {
+    if (setting.kind == "range") {
+        SettingsSliderRow(setting, selectedIndex, onSelect)
+        return
+    }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         itemsIndexed(setting.choices) { choiceIndex, choiceLabel ->
             DialogChoiceButton(
@@ -372,23 +400,37 @@ internal fun buildSettingsSections(settings: List<AndroidSetting>): List<Android
         .withIndex()
         .groupBy({ it.value.section }, { it.index })
         .map { (id, indices) ->
-            AndroidSettingsSection(id, settingsSectionLabel(id), indices)
+            val label =
+                indices.firstNotNullOfOrNull { settings[it].sectionLabel.ifBlank { null } }
+                    ?: SettingsSectionFallback.labelFor(id)
+            AndroidSettingsSection(id, label, indices)
         }
 
-internal fun settingsSectionLabel(id: String): String =
-    when (id) {
-        "audio" -> "Audio"
-        "video" -> "Video"
-        "controls" -> "Controls"
-        "storage" -> "Storage"
-        "system.nes" -> "Nintendo Entertainment System"
-        "system.gbc" -> "Game Boy Color"
-        "system.gba" -> "Game Boy Advance"
-        "general" -> "General"
-        else -> id.substringAfterLast('.').replace('_', ' ').replaceFirstChar(Char::uppercase)
-    }
-
 internal fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) "setting" else "settings"}"
+
+/** Native ranged row: a Slider over `min..max` with a value label.
+ * Kotlin expands nothing; the index rides back as `value - min`. */
+private fun SettingsSliderRow(
+    setting: AndroidSetting,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+) {
+    val span = (setting.rangeMax - setting.rangeMin).coerceAtLeast(0)
+    val clamped = selectedIndex.coerceIn(0, span)
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 18.dp)) {
+        Text(
+            text = "${setting.rangeMin + clamped}${setting.unit}",
+            style = MaterialTheme.typography.titleLarge,
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Slider(
+            value = clamped.toFloat(),
+            onValueChange = { onSelect(it.roundToInt().coerceIn(0, span)) },
+            valueRange = 0f..span.toFloat(),
+            steps = (span - 1).coerceAtLeast(0),
+        )
+    }
+}
 
 // Visibility is resolved in Rust per field; Kotlin only filters on the flag.
 internal fun visibleSettingIndices(
@@ -403,7 +445,12 @@ internal fun rememberSettingsSelections(
 ) = remember(settings, initialSelections) {
     mutableStateListOf<Int>().apply {
         settings.forEachIndexed { index, setting ->
-            val maxIndex = max(0, setting.choices.lastIndex)
+            val maxIndex =
+                if (setting.kind == "range") {
+                    (setting.rangeMax - setting.rangeMin).coerceAtLeast(0)
+                } else {
+                    max(0, setting.choices.lastIndex)
+                }
             add(initialSelections.getOrElse(index) { 0 }.coerceIn(0, maxIndex))
         }
     }

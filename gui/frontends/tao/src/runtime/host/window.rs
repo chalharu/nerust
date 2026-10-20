@@ -3,7 +3,7 @@
 use super::HostState;
 use super::{
     create_window_builder, default_fit_window_size, logical_size_from_remembered,
-    logical_window_size, window_is_fullscreen, window_surface_size,
+    logical_window_size, window_surface_size,
 };
 use nerust_gui_runtime::shell::NativeShellState;
 use std::path::Path;
@@ -14,7 +14,7 @@ use tao::{dpi::LogicalSize as TaoLogicalSize, event_loop::ControlFlow, window::W
 use nerust_gui_shell::settings::scaling_factor;
 use nerust_render_traits::{SurfaceSize, renderer::RenderResult};
 use nerust_settings_core::model::app_state::RememberedWindowSize;
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use raw_window_handle::RawWindowHandle;
 
 use crate::ports::WindowOpener;
 
@@ -121,10 +121,32 @@ impl WindowCluster {
         Some((handle, size, xid))
     }
 
+    /// Client height in physical pixels for OSD strip math.
+    pub(super) fn client_height(&self) -> u32 {
+        self.window
+            .as_ref()
+            .map(|w| w.inner_size().height)
+            .unwrap_or(0)
+    }
+
     /// Xid the surface is currently attached to (`None` = toplevel fallback).
     pub(super) fn surface_xid(&self) -> Option<u64> {
         let (_, _, xid) = self.attach_target()?;
         xid
+    }
+
+    /// Run `f` on the usable native window, if any.
+    pub(super) fn with_usable<R>(&self, f: impl FnOnce(&tao::window::Window) -> R) -> Option<R> {
+        if !self.close.is_usable() {
+            return None;
+        }
+        self.window.as_ref().map(|w| w.with_native(f))
+    }
+
+    /// Drop the native handle after close teardown: post-loop code
+    /// re-resolves through liveness, never a stale `Arc`.
+    pub(super) fn close_main(&mut self) {
+        self.window.take();
     }
 
     /// Shared attach-target resolution: content area below the menubar, else toplevel.
@@ -136,7 +158,7 @@ impl WindowCluster {
         if let Some((handle, size, xid)) = self.content_target() {
             return Some((handle, size, Some(xid)));
         }
-        let handle = window.raw().window_handle().ok()?.as_raw();
+        let handle = window.attach_handle()?.0;
         Some((handle, window_surface_size(window.inner_size()), None))
     }
 
@@ -178,17 +200,8 @@ impl WindowCluster {
     }
 }
 
-/// Wake inputs for one control-flow pass. Plain data, no tao import:
-/// the host assembles it, [`earliest_wake`] folds it.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct WakeInput {
-    pub live_tick: Option<Instant>,
-    pub flight_pending: bool,
-    pub osd_deadline: Option<Instant>,
-}
-
 /// Per-pump wake contribution. Each `tick_*` pump returns one;
-/// `update_control_flow` folds them into a single [`WakeInput`].
+/// `update_control_flow` folds them into a single [`WakeNeed`].
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct WakeNeed {
     pub live_tick: Option<Instant>,
@@ -222,7 +235,7 @@ pub(crate) fn flight_backstop(now: Instant) -> Instant {
 
 /// Earliest deadline wins; no deadline sleeps. Pure (no tao import);
 /// the runtime maps the result to `ControlFlow`.
-pub(crate) fn earliest_wake(input: WakeInput, now: Instant) -> Option<Instant> {
+pub(crate) fn earliest_wake(input: WakeNeed, now: Instant) -> Option<Instant> {
     [
         input.live_tick,
         input.flight_pending.then(|| flight_backstop(now)),
@@ -241,7 +254,7 @@ pub(crate) fn update_flow(
     tick_paused: bool,
     main_active: bool,
     live_follow: bool,
-    input: WakeInput,
+    input: WakeNeed,
 ) -> (Option<Instant>, bool) {
     let running = tick_loaded && !tick_paused;
     (
@@ -342,11 +355,7 @@ impl HostState {
             tick.paused,
             self.main_active(),
             self.live_follow_active(),
-            WakeInput {
-                live_tick: wake.live_tick,
-                flight_pending: wake.flight_pending,
-                osd_deadline: wake.osd_deadline,
-            },
+            wake,
         );
         *control_flow = deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil);
 
@@ -376,7 +385,7 @@ impl HostState {
         self.windows.request_redraw(&mut self.shell);
     }
     /// Idempotent close teardown: the guard makes flush run exactly once.
-    /// Handles stay alive: dropping them in a destroy handler re-enters the dying window.
+    /// Handles drop here: post-loop code re-resolves through liveness.
     pub(crate) fn prepare_close(&mut self) {
         if !self.windows.begin_close() {
             return;
@@ -388,6 +397,7 @@ impl HostState {
         self.osd.close_all();
         self.aux.close_all();
         self.debug.close_flights();
+        self.windows.close_main();
         self.session.flush_before_exit();
     }
     pub(super) fn startup_window_size(&self) -> TaoLogicalSize<f64> {
@@ -423,7 +433,7 @@ impl HostState {
         let Some(window) = self.windows.live() else {
             return;
         };
-        if window_is_fullscreen(window.raw())
+        if window.is_fullscreen()
             || scaling_factor(self.session.settings_snapshot().local.video.window.scaling).is_some()
         {
             return;
@@ -451,6 +461,17 @@ mod tests {
 
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
+
+    #[test]
+    fn with_usable_stays_total_without_window() {
+        use super::WindowCluster;
+        let mut cluster = WindowCluster::new();
+        assert!(cluster.with_usable(|_| ()).is_none());
+        assert_eq!(cluster.client_height(), 0);
+        cluster.fail("no display".to_string());
+        assert!(cluster.with_usable(|_| ()).is_none());
+        assert!(cluster.fatal_message().is_some());
+    }
 
     #[test]
     fn prepare_close_is_idempotent_and_clears_state() {
@@ -502,14 +523,14 @@ mod tests {
 
     #[test]
     fn wake_policy_folds_to_earliest_deadline() {
-        use super::{WakeInput, earliest_wake, flight_backstop, update_flow};
+        use super::{WakeNeed, earliest_wake, flight_backstop, update_flow};
         let now = Instant::now();
-        let idle = WakeInput::default();
+        let idle = WakeNeed::default();
         assert_eq!(earliest_wake(idle, now), None);
         // Flight poll alone wakes soon (30ms backstop).
-        let flight = WakeInput {
+        let flight = WakeNeed {
             flight_pending: true,
-            ..WakeInput::default()
+            ..WakeNeed::default()
         };
         assert_eq!(
             earliest_wake(flight, now).map(|t| t.duration_since(now)),
@@ -522,7 +543,7 @@ mod tests {
         // Earliest wins across all three sources.
         let tick = now + std::time::Duration::from_millis(250);
         let soon_deadline = now + std::time::Duration::from_millis(10);
-        let raced = WakeInput {
+        let raced = WakeNeed {
             live_tick: Some(tick),
             flight_pending: true,
             osd_deadline: Some(soon_deadline),
@@ -530,7 +551,7 @@ mod tests {
         assert_eq!(earliest_wake(raced, now), Some(soon_deadline));
         // Live tick earlier than the flight backstop survives.
         let early_tick = now + std::time::Duration::from_millis(5);
-        let tick_wins = WakeInput {
+        let tick_wins = WakeNeed {
             live_tick: Some(early_tick),
             flight_pending: true,
             osd_deadline: None,

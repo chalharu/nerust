@@ -180,13 +180,7 @@ impl AutoSaveBackend for FsSlotBackend {
         let quarantined = dir.join(".autosave_slot.quarantined");
         let _ = std::fs::remove_file(&quarantined);
         match std::fs::rename(&path, &quarantined) {
-            Ok(()) => {
-                log::warn!(
-                    "quarantined incompatible hidden lifecycle state to {}",
-                    quarantined.display()
-                );
-                Ok(Some(quarantined))
-            }
+            Ok(()) => Ok(Some(quarantined)),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
         }

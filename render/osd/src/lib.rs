@@ -90,11 +90,17 @@ struct ShapedSpan {
     descent: f32,
 }
 
-/// Cache key for one shaped line: text plus pixel size.
-type ShapeKey = (String, u32);
+/// Cache key for one shaped line: interned text plus pixel size.
+/// `Rc<str>` lookups borrow as `str`, so hits never allocate.
+type ShapeKey = (Rc<str>, u32);
+
+/// Interned gap and empty spans: every pill shares one allocation.
+/// String literals are `'static` constants, so no global map is needed.
+const GAP_STR: &str = " ";
+const EMPTY_STR: &str = "";
 
 /// Bounded line-shape cache: identical OSD lines shape once per size.
-/// Cleared wholesale past the cap; OSD text has a tiny live set.
+/// LRU order evicts the colder half past the cap; OSD text has a tiny live set.
 const SHAPE_CACHE_CAP: usize = 256;
 
 /// Rasterizer backed by cosmic-text shaping. Pixels are device pixels.
@@ -105,7 +111,8 @@ pub struct OsdRaster {
     has_fonts: bool,
     ui_scale: f32,
     safe_insets: SafeInsets,
-    shape_cache: HashMap<ShapeKey, Rc<ShapedSpan>>,
+    shape_cache: HashMap<Rc<str>, HashMap<u32, Rc<ShapedSpan>>>,
+    shape_lru: std::collections::VecDeque<ShapeKey>,
 }
 
 impl OsdRaster {
@@ -134,6 +141,7 @@ impl OsdRaster {
             ui_scale: 1.0,
             safe_insets: SafeInsets::default(),
             shape_cache: HashMap::new(),
+            shape_lru: std::collections::VecDeque::new(),
         }
     }
 
@@ -402,7 +410,7 @@ impl OsdRaster {
             } => {
                 let tag_span = self.shape_cached(tag, font_px);
                 let text_span = self.shape_cached(text, font_px);
-                let gap = self.shape_cached(" ", font_px).width;
+                let gap = self.shape_cached_rc(GAP_STR, font_px).width;
                 let ascent = tag_span.ascent.max(text_span.ascent);
                 let descent = tag_span.descent.min(text_span.descent);
                 let row_h = self.row_height(font_px, ascent, descent);
@@ -438,12 +446,12 @@ impl OsdRaster {
             let row_h = self.row_height(font_px, value.ascent, value.descent);
             let pad_x = self.scaled(PILL_PAD_X);
             let w = value.width.ceil() as u32 + pad_x * 2;
-            let gap = self.shape_cached(" ", font_px).width;
+            let gap = self.shape_cached_rc(GAP_STR, font_px).width;
             return Shaped {
                 anchor,
                 body: RowBody::Line {
                     tag: value.clone(),
-                    text: self.shape_cached("", font_px),
+                    text: self.shape_cached_rc(EMPTY_STR, font_px),
                     gap: gap.ceil() as u32,
                     ascent: value.ascent,
                     descent: value.descent,
@@ -478,17 +486,36 @@ impl OsdRaster {
     }
 
     /// Cached shape: identical lines shape once per pixel size.
-    /// Evicts wholesale past the cap; one key allocation per call at most.
+    /// Borrowed lookup hits without allocating; misses intern one `Rc<str>`.
     fn shape_cached(&mut self, line: &str, font_px: u32) -> Rc<ShapedSpan> {
-        let key = (line.to_string(), font_px);
-        if let Some(hit) = self.shape_cache.get(&key).cloned() {
+        if let Some(hit) = self
+            .shape_cache
+            .get(line)
+            .and_then(|sizes| sizes.get(&font_px))
+            .cloned()
+        {
+            self.touch_lru(line, font_px);
             return hit;
         }
+        let key: Rc<str> = Rc::from(line);
         let span = Rc::new(self.shape_uncached(line, font_px));
-        if self.shape_cache.len() >= SHAPE_CACHE_CAP {
-            self.shape_cache.clear();
+        self.insert_lru(Rc::clone(&key), font_px, Rc::clone(&span));
+        span
+    }
+
+    /// Interned-key variant: gap and empty spans share one allocation.
+    fn shape_cached_rc(&mut self, key: &'static str, font_px: u32) -> Rc<ShapedSpan> {
+        if let Some(hit) = self
+            .shape_cache
+            .get(key)
+            .and_then(|sizes| sizes.get(&font_px))
+            .cloned()
+        {
+            self.touch_lru(key, font_px);
+            return hit;
         }
-        self.shape_cache.insert(key, Rc::clone(&span));
+        let span = Rc::new(self.shape_uncached(key, font_px));
+        self.insert_lru(Rc::from(key), font_px, Rc::clone(&span));
         span
     }
 
@@ -496,6 +523,52 @@ impl OsdRaster {
     #[cfg(test)]
     fn shape_line(&mut self, line: &str, font_px: u32) -> Rc<ShapedSpan> {
         self.shape_cached(line, font_px)
+    }
+
+    /// Mark a hit most-recently-used; linear move, cap is tiny.
+    fn touch_lru(&mut self, line: &str, font_px: u32) {
+        if let Some(pos) = self
+            .shape_lru
+            .iter()
+            .position(|(text, size)| &**text == line && *size == font_px)
+        {
+            let key = self.shape_lru.remove(pos).expect("lru position");
+            self.shape_lru.push_back(key);
+        }
+    }
+
+    /// Record a miss; evict the colder half past the cap.
+    fn insert_lru(&mut self, key: Rc<str>, font_px: u32, span: Rc<ShapedSpan>) {
+        self.shape_cache
+            .entry(Rc::clone(&key))
+            .or_default()
+            .insert(font_px, span);
+        self.shape_lru.push_back((key, font_px));
+        while self.shape_lru.len() > SHAPE_CACHE_CAP {
+            let drop = self.shape_lru.len() - SHAPE_CACHE_CAP + SHAPE_CACHE_CAP / 2;
+            for _ in 0..drop {
+                let Some((text, size)) = self.shape_lru.pop_front() else {
+                    break;
+                };
+                let empty = self
+                    .shape_cache
+                    .get_mut(&text)
+                    .map(|sizes| {
+                        sizes.remove(&size);
+                        sizes.is_empty()
+                    })
+                    .unwrap_or(true);
+                if empty {
+                    self.shape_cache.remove(&text);
+                }
+            }
+        }
+    }
+
+    /// Live entry count across all sizes; eviction keeps this bounded.
+    #[cfg(test)]
+    fn shape_cache_len(&self) -> usize {
+        self.shape_lru.len()
     }
 
     /// Uncached shaping behind [`OsdRaster::shape_cached`].
@@ -1014,5 +1087,52 @@ mod tests {
         assert_eq!(pixel[3], 184);
         blend_over(&mut pixel, 0, 0, 0, 184);
         assert!(pixel[3] > 200);
+    }
+
+    #[test]
+    fn shape_hits_share_one_span_without_realloc() {
+        let mut raster = OsdRaster::new();
+        let first = raster.shape_cached("Paused", 16);
+        let second = raster.shape_cached("Paused", 16);
+        // Borrowed lookup: same `Rc` back, no reshape and no new span.
+        assert!(Rc::ptr_eq(&first, &second));
+        assert_eq!(raster.shape_cache_len(), 1);
+        // Different size is a distinct entry under the same interned text.
+        let big = raster.shape_cached("Paused", 32);
+        assert!(!Rc::ptr_eq(&first, &big));
+        assert_eq!(raster.shape_cache_len(), 2);
+    }
+
+    #[test]
+    fn gap_and_empty_share_interned_spans() {
+        let mut raster = OsdRaster::new();
+        let gap = raster.shape_cached(" ", 16);
+        let gap_again = raster.shape_cached_rc(GAP_STR, 16);
+        assert!(Rc::ptr_eq(&gap, &gap_again));
+        let empty = raster.shape_cached("", 16);
+        let empty_again = raster.shape_cached_rc(EMPTY_STR, 16);
+        assert!(Rc::ptr_eq(&empty, &empty_again));
+        assert!(!Rc::ptr_eq(&gap, &empty));
+    }
+
+    #[test]
+    fn overflow_evicts_cold_half_and_keeps_hot() {
+        let mut raster = OsdRaster::new();
+        let hot = raster.shape_cached("hot", 16);
+        for i in 0..(super::SHAPE_CACHE_CAP + 64) {
+            raster.shape_cached(&format!("line{i:04}"), 16);
+        }
+        // Bounded: never the full insert count, never a wholesale clear.
+        assert!(raster.shape_cache_len() <= super::SHAPE_CACHE_CAP);
+        assert!(raster.shape_cache_len() > super::SHAPE_CACHE_CAP / 2);
+        // Untouched oldest entries evicted; re-touch keeps a survivor hot.
+        let hot_again = raster.shape_cached("hot", 16);
+        assert!(!Rc::ptr_eq(&hot, &hot_again), "cold head must evict");
+        let warm = raster.shape_cached("warm", 16);
+        for i in 0..64 {
+            raster.shape_cached(&format!("fresh{i:04}"), 16);
+            raster.shape_cached("warm", 16);
+        }
+        assert!(Rc::ptr_eq(&warm, &raster.shape_cached("warm", 16)));
     }
 }

@@ -3467,6 +3467,7 @@ version = "0.1.0-dev"
 name = "nerust_emu_thread"
 version = "0.1.0-dev"
 dependencies = [
+ "log",
  "nerust_core_traits",
  "nerust_input_traits",
  "nerust_render_traits",
@@ -3510,6 +3511,7 @@ name = "nerust_gba_factory"
 version = "0.1.0-dev"
 dependencies = [
  "clap",
+ "log",
  "nerust_core_traits",
  "nerust_emu_thread",
  "nerust_gba_core",
@@ -3567,6 +3569,7 @@ name = "nerust_gbc_factory"
 version = "0.1.0-dev"
 dependencies = [
  "clap",
+ "log",
  "nerust_core_traits",
  "nerust_emu_thread",
  "nerust_gbc_core",
@@ -3751,6 +3754,7 @@ name = "nerust_nes_factory"
 version = "0.1.0-dev"
 dependencies = [
  "clap",
+ "log",
  "nerust_core_traits",
  "nerust_emu_thread",
  "nerust_input_traits",

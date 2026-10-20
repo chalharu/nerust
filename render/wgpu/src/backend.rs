@@ -1,8 +1,8 @@
 use nerust_render_traits::{
     FrameBuffer, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
     renderer::{
-        GpuFactory, GpuRenderer, OpaqueError, OsdLayer, OsdSink, Present, RenderResult,
-        RendererConfig, RendererError, StripSink,
+        AttachError, FrameSink, GpuFactory, GpuRenderer, OsdLayer, OsdSink, Present, ProfileSwitch,
+        RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle,
     },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -12,8 +12,7 @@ use crate::{
     surface,
 };
 
-// ---------------------------------------------------------------------------
-// WgpuRenderer
+// WgpuRenderer.
 // ---------------------------------------------------------------------------
 
 /// Wgpu device + pipeline.  Surface is attached/detached dynamically.
@@ -64,7 +63,15 @@ impl WgpuRenderer {
             PresentationOptions { vsync },
             dl,
         ))
-        .map_err(|e| RendererError::new("pipeline", Box::new(OpaqueError(e))))
+        .map_err(|e| {
+            RendererError::new(
+                "pipeline",
+                Box::new(AttachError::Pipeline {
+                    backend: "wgpu",
+                    detail: e.to_string(),
+                }),
+            )
+        })
     }
 }
 
@@ -78,7 +85,7 @@ impl WgpuRenderer {
     }
 }
 
-impl Present for WgpuRenderer {
+impl SurfaceLifecycle for WgpuRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
     }
@@ -90,8 +97,15 @@ impl Present for WgpuRenderer {
         size: SurfaceSize,
     ) -> Result<(), RendererError> {
         self.size = size;
-        let wgpu_surface = surface::create_wgpu_surface(&self.instance, wh, dh)
-            .map_err(|e| RendererError::new("surface", Box::new(OpaqueError(e))))?;
+        let wgpu_surface = surface::create_wgpu_surface(&self.instance, wh, dh).map_err(|e| {
+            RendererError::new(
+                "surface",
+                Box::new(AttachError::Surface {
+                    backend: "wgpu",
+                    detail: e.to_string(),
+                }),
+            )
+        })?;
         let pipeline = Self::build_pipeline(
             &self.instance,
             &wgpu_surface,
@@ -120,7 +134,9 @@ impl Present for WgpuRenderer {
         };
         pipeline.reconfigure_surface(surface, size);
     }
+}
 
+impl FrameSink for WgpuRenderer {
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
         let Some(ref surface) = self.surface else {
             return RenderResult::Skipped;
@@ -158,6 +174,33 @@ impl Present for WgpuRenderer {
     }
 }
 
+impl Present for WgpuRenderer {
+    fn size(&self) -> SurfaceSize {
+        SurfaceLifecycle::size(self)
+    }
+
+    fn attach(
+        &mut self,
+        wh: RawWindowHandle,
+        dh: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError> {
+        SurfaceLifecycle::attach(self, wh, dh, size)
+    }
+
+    fn detach(&mut self) {
+        SurfaceLifecycle::detach(self);
+    }
+
+    fn resize(&mut self, size: SurfaceSize) {
+        SurfaceLifecycle::resize(self, size);
+    }
+
+    fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
+        FrameSink::render(self, frame)
+    }
+}
+
 impl OsdSink for WgpuRenderer {
     fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
         self.osd = layer;
@@ -173,13 +216,10 @@ impl StripSink for WgpuRenderer {
     }
 }
 
-impl GpuRenderer for WgpuRenderer {
+impl ProfileSwitch for WgpuRenderer {
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
         let Some(ref surface) = self.surface else {
-            return Err(RendererError::new(
-                "update: not attached",
-                Box::new(OpaqueError("wgpu renderer has no surface".to_string())),
-            ));
+            return Err(RendererError::not_attached("update"));
         };
         self.pipeline = Some(Self::build_pipeline(
             &self.instance,
@@ -193,8 +233,13 @@ impl GpuRenderer for WgpuRenderer {
     }
 }
 
-// ---------------------------------------------------------------------------
-// WgpuFactory
+impl GpuRenderer for WgpuRenderer {
+    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
+        ProfileSwitch::update_render_profile(self, profile)
+    }
+}
+
+// WgpuFactory.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Default)]
@@ -229,7 +274,15 @@ impl GpuFactory for WgpuFactory {
             force_fallback_adapter: false,
             apply_limit_buckets: false,
         }))
-        .map_err(|e| RendererError::new("request adapter", Box::new(OpaqueError(e.to_string()))))?;
+        .map_err(|e| {
+            RendererError::new(
+                "request adapter",
+                Box::new(AttachError::Adapter {
+                    backend: "wgpu",
+                    detail: e.to_string(),
+                }),
+            )
+        })?;
         let limits = Self::device_limit_profile().required_limits();
         let (_device, _queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -238,7 +291,15 @@ impl GpuFactory for WgpuFactory {
                 required_limits: limits,
                 ..Default::default()
             }))
-            .map_err(|e| RendererError::new("device", Box::new(OpaqueError(e.to_string()))))?;
+            .map_err(|e| {
+                RendererError::new(
+                    "device",
+                    Box::new(AttachError::Device {
+                        backend: "wgpu",
+                        detail: e.to_string(),
+                    }),
+                )
+            })?;
 
         Ok(Box::new(WgpuRenderer {
             instance,
@@ -250,5 +311,35 @@ impl GpuFactory for WgpuFactory {
             osd: None,
             osd_dirty: false,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn lifecycle_split_seams_hold() {
+        use nerust_render_traits::renderer::{
+            FrameSink, GpuRenderer, Present, ProfileSwitch, SurfaceLifecycle,
+        };
+        fn assert_seams<T: SurfaceLifecycle + FrameSink + ProfileSwitch + Present + GpuRenderer>() {
+        }
+        assert_seams::<super::WgpuRenderer>();
+    }
+
+    #[test]
+    fn attach_errors_name_backend_and_stage() {
+        use nerust_render_traits::renderer::AttachError;
+        let err = AttachError::Adapter {
+            backend: "wgpu",
+            detail: "no adapter".to_string(),
+        };
+        assert!(err.to_string().contains("wgpu"));
+        assert!(err.to_string().contains("adapter"));
+        let err = AttachError::Pipeline {
+            backend: "wgpu",
+            detail: "compile failed".to_string(),
+        };
+        assert!(err.to_string().contains("pipeline"));
+        assert!(err.to_string().contains("compile failed"));
     }
 }

@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::{rc::Rc, sync::Arc};
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
-    event::{ElementState, WindowEvent},
+    event::ElementState,
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
 
@@ -23,7 +23,7 @@ use crate::menu::MenuSink;
 use super::debug_windows::DebugWindows;
 use crate::aux::focus::{AuxKind, FocusCoordinator, FocusEffect, FocusEvent};
 use crate::aux::registry::AuxRegistry;
-use crate::util::Dirty;
+use crate::util::Versioned;
 
 pub(crate) mod close;
 mod commands;
@@ -31,6 +31,7 @@ mod focus;
 mod osd;
 use osd::{FrameSnapshot, ModalFlight};
 mod presentation;
+pub(crate) mod services;
 mod settings;
 mod window;
 
@@ -172,14 +173,14 @@ pub(super) struct ChromeScalars {
 #[derive(Debug, Default)]
 pub(super) struct ChromeSync {
     last_menu_sig: Option<MenuSig>,
-    last_title: Dirty<String>,
+    last_title: Versioned<String>,
 }
 
 impl ChromeSync {
     fn new() -> Self {
         Self {
             last_menu_sig: None,
-            last_title: Dirty::new(),
+            last_title: Versioned::new(),
         }
     }
 
@@ -263,13 +264,13 @@ pub(super) struct OsdLayerSync {
     pub(super) raster: nerust_render_osd::OsdRaster,
     pub(super) presenter: nerust_gui_shell::session::osd::OsdPresenter,
     pub(super) layer_live: bool,
-    pub(super) last_strip: Dirty<nerust_render_traits::ReservedStrip>,
-    pub(super) last_sync_geometry: Dirty<(u32, u32, nerust_gui_shell::session::osd::OsdChrome)>,
+    pub(super) last_strip: Versioned<nerust_render_traits::ReservedStrip>,
+    pub(super) last_sync_geometry: Versioned<(u32, u32, nerust_gui_shell::session::osd::OsdChrome)>,
 }
 
 /// History viewer sync: content key only. The window lives in the registry.
 pub(super) struct HistoryViewer {
-    pub(super) sync_key: Dirty<(u64, nerust_settings_core::model::language::AppLanguage)>,
+    pub(super) sync_key: Versioned<(u64, nerust_settings_core::model::language::AppLanguage)>,
 }
 
 /// Modal queue: error batches plus the in-flight dialog.
@@ -346,11 +347,11 @@ impl OsdService {
                 raster: nerust_render_osd::OsdRaster::new(),
                 presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
                 layer_live: false,
-                last_strip: Dirty::new(),
-                last_sync_geometry: Dirty::new(),
+                last_strip: Versioned::new(),
+                last_sync_geometry: Versioned::new(),
             },
             history: HistoryViewer {
-                sync_key: Dirty::new(),
+                sync_key: Versioned::new(),
             },
             modal: ModalQueue {
                 manager: OsdManager::new(),
@@ -362,8 +363,9 @@ impl OsdService {
 }
 
 /// One capture per entry point: settings, tick, slots, shortcuts, plus the OSD frame.
-/// Built once, threaded by reference through the whole pass.
+/// Shared by `Arc`: hot passes reuse the cached capture, never re-clone.
 pub(crate) struct FrameCtx {
+    pub(super) generation: u64,
     pub(super) settings: nerust_gui_runtime::settings::SettingsSnapshot,
     pub(super) tick: nerust_gui_shell::session::osd::TickMetrics,
     pub(super) slots: Arc<[nerust_persistence::model::StateSlotSummary]>,
@@ -371,8 +373,84 @@ pub(crate) struct FrameCtx {
     pub(super) frame: FrameSnapshot,
 }
 
+/// Cheap content key for the frame cache: scalars plus allocation-free
+/// content hashes. A hit reuses the cached `Arc`; only a miss clones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FrameCacheKey {
+    loaded: bool,
+    paused: bool,
+    frame_counter: u64,
+    active_slot: Option<u64>,
+    slots_hash: u64,
+    shortcuts_hash: u64,
+    language: nerust_settings_core::model::language::AppLanguage,
+    fullscreen_default: bool,
+    scaling: nerust_settings_core::model::local::ScalingMode,
+    notifications_hash: u64,
+}
+
+impl FrameCacheKey {
+    fn capture(session: &SessionHandle) -> Self {
+        use std::hash::{Hash, Hasher};
+        struct Fnv(u64);
+        impl Hasher for Fnv {
+            fn write(&mut self, bytes: &[u8]) {
+                for byte in bytes {
+                    self.0 ^= u64::from(*byte);
+                    self.0 = self.0.wrapping_mul(0x100000001b3);
+                }
+            }
+            fn finish(&self) -> u64 {
+                self.0
+            }
+        }
+        let tick = session.tick_metrics();
+        let mut slots = Fnv(0xcbf29ce484222325);
+        for slot in session.slots() {
+            slot.slot_id.hash(&mut slots);
+            if let Ok(age) = slot.saved_at.duration_since(std::time::UNIX_EPOCH) {
+                age.as_secs().hash(&mut slots);
+            }
+        }
+        let snapshot = session.settings_snapshot();
+        let mut shortcuts = Fnv(0xcbf29ce484222325);
+        for binding in snapshot.shared.input.shortcuts.keyboard.iter() {
+            binding.action.hash(&mut shortcuts);
+            binding.key.hash(&mut shortcuts);
+        }
+        let mut notifications = Fnv(0xcbf29ce484222325);
+        snapshot
+            .local
+            .notifications
+            .status_enabled
+            .hash(&mut notifications);
+        snapshot
+            .local
+            .notifications
+            .info_enabled
+            .hash(&mut notifications);
+        snapshot
+            .local
+            .notifications
+            .error_modal
+            .hash(&mut notifications);
+        Self {
+            loaded: tick.loaded,
+            paused: tick.paused,
+            frame_counter: tick.frame_counter,
+            active_slot: session.active_slot_id(),
+            slots_hash: slots.finish(),
+            shortcuts_hash: shortcuts.finish(),
+            language: snapshot.shared.general.language,
+            fullscreen_default: snapshot.local.video.window.fullscreen_default,
+            scaling: snapshot.local.video.window.scaling,
+            notifications_hash: notifications.finish(),
+        }
+    }
+}
+
 impl FrameCtx {
-    pub(super) fn capture(session: &SessionHandle) -> Self {
+    fn capture(generation: u64, session: &SessionHandle) -> Self {
         let settings = session.settings_snapshot().clone();
         let tick = session.tick_metrics();
         let slots: Arc<[nerust_persistence::model::StateSlotSummary]> =
@@ -381,6 +459,7 @@ impl FrameCtx {
             settings.shared.input.shortcuts.keyboard.clone().into();
         let frame = FrameSnapshot::capture(session);
         Self {
+            generation,
             settings,
             tick,
             slots,
@@ -467,6 +546,10 @@ pub(crate) struct HostState {
     osd: OsdService,
     /// Last pushed menu signature plus window title, each with its own gate.
     chrome: ChromeSync,
+    /// Versioned frame cache: hot passes reuse the cached `Arc`.
+    frame_cache: Option<(FrameCacheKey, Arc<FrameCtx>)>,
+    /// Frame generation: bumped once per cache miss.
+    frame_generation: u64,
 }
 
 impl HostState {
@@ -514,12 +597,25 @@ impl HostState {
             debug: DebugOrchestrator::new(),
             osd: OsdService::new(),
             chrome: ChromeSync::new(),
+            frame_cache: None,
+            frame_generation: 0,
         })
     }
 
-    /// One capture for the whole pass: built once per entry point, threaded by `&`.
-    pub(crate) fn frame_ctx(&self) -> FrameCtx {
-        FrameCtx::capture(&self.session)
+    /// One capture per pass, versioned: hot passes reuse the cached
+    /// `Arc`, so per-frame clones happen only on content change.
+    pub(crate) fn frame_ctx(&mut self) -> Arc<FrameCtx> {
+        let key = FrameCacheKey::capture(&self.session);
+        if let Some((cached_key, cached)) = self.frame_cache.as_ref()
+            && *cached_key == key
+        {
+            return Arc::clone(cached);
+        }
+        self.frame_generation += 1;
+        let fresh = Arc::new(FrameCtx::capture(self.frame_generation, &self.session));
+        log::trace!("frame cache miss: generation {}", fresh.generation);
+        self.frame_cache = Some((key, Arc::clone(&fresh)));
+        fresh
     }
 
     pub(crate) fn gpu_factory(&self) -> &Rc<dyn GpuFactory> {
@@ -540,8 +636,8 @@ impl HostState {
     }
 
     /// Shared native window for renderer attach paths.
-    pub(crate) fn window_arc(&self) -> Option<Arc<TaoWindow>> {
-        self.windows.live().map(|w| w.shared())
+    pub(crate) fn with_main_window<R>(&self, f: impl FnOnce(&TaoWindow) -> R) -> Option<R> {
+        self.windows.with_usable(f)
     }
 
     /// Narrow orchestrator access for the `runtime` drain router.
@@ -558,11 +654,6 @@ impl HostState {
     /// Record a protocol-driven pause (user pauses never set this).
     pub(super) fn note_protocol_pause(&mut self) {
         self.focus.note_protocol_pause();
-    }
-
-    /// Report an aux-window focus change. Returns whether a system-paused session should resume.
-    pub(super) fn on_aux_focus(&mut self, kind: AuxKind, focused: bool) -> bool {
-        self.focus.on_aux(kind, focused)
     }
 
     /// Main window gained focus: activate and report a pending resume.
@@ -587,22 +678,17 @@ impl HostState {
 
     /// Kind of the aux window behind this id, if registered.
     pub(super) fn aux_kind_of(&self, id: WindowId) -> Option<AuxKind> {
-        self.aux.kind_of(id)
+        self.aux
+            .kind_of(crate::aux::native::NativeWindowId::new(id))
     }
 
-    /// Pump one native event through the matching aux entry.
+    /// Pump one domain event through the matching aux entry.
     pub(super) fn aux_on_event(
         &mut self,
         kind: AuxKind,
-        event: WindowEvent,
+        event: crate::aux::native::AuxNativeEvent,
     ) -> Option<crate::aux::registry::AuxOutcome> {
-        let id = self.aux_id(kind)?;
-        self.aux.on_event(id, event)
-    }
-
-    /// Native id of the open window of this kind, if any.
-    fn aux_id(&self, kind: AuxKind) -> Option<WindowId> {
-        self.aux.id_of(kind)
+        self.aux.on_event(kind, event)
     }
 
     /// Render the aux window of this kind, if open.
@@ -674,31 +760,6 @@ impl HostState {
         self.debug.windows_mut().request_ppu_open();
     }
 
-    pub(super) fn set_debug_window(&mut self, handle: crate::aux::debug::DebugWindowHandle) {
-        self.aux.insert(Box::new(handle));
-    }
-
-    pub(super) fn set_ppu_window(&mut self, handle: crate::aux::ppu::PpuWindowHandle) {
-        self.aux.insert(Box::new(handle));
-    }
-
-    pub(super) fn set_history_window(&mut self, handle: crate::aux::osd::HistoryWindowHandle) {
-        self.aux.insert(Box::new(handle));
-    }
-
-    pub(super) fn set_settings_window(
-        &mut self,
-        handle: crate::aux::settings::window::SettingsWindowHandle,
-    ) {
-        self.aux.insert(Box::new(handle));
-    }
-
-    pub(super) fn take_debug_batch(
-        &mut self,
-    ) -> Option<(bool, Vec<nerust_gui_shell::debug::DebugAction>)> {
-        self.aux.debug_take_requests()
-    }
-
     pub(super) fn last_drain_paused(&self) -> Option<bool> {
         self.debug.windows().last_drain_paused()
     }
@@ -712,8 +773,13 @@ impl HostState {
     }
 
     /// Live-tick interest handle for the tick thread (parks when clear).
-    pub(super) fn live_tick_wanted(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
-        self.debug.windows().live_wanted()
+    pub(super) fn live_tick_armed(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.debug.windows().live_armed()
+    }
+
+    /// Register the parked tick thread for arm wakeups.
+    pub(super) fn register_tick_thread(&self, thread: std::thread::Thread) {
+        self.debug.windows().register_tick_thread(thread);
     }
 
     pub(super) fn next_live_tick(&self) -> Option<std::time::Instant> {
@@ -749,14 +815,6 @@ fn create_window_builder(
         .with_title(title)
         .with_inner_size(size)
         .with_fullscreen(fullscreen_mode(fullscreen))
-}
-
-fn window_is_fullscreen(window: &TaoWindow) -> bool {
-    window.fullscreen().is_some()
-}
-
-fn set_window_fullscreen(window: &TaoWindow, fullscreen: bool) {
-    window.set_fullscreen(fullscreen_mode(fullscreen));
 }
 
 fn fullscreen_mode(fullscreen: bool) -> Option<Fullscreen> {

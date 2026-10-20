@@ -3,6 +3,7 @@
 use nerust_gui_shell::registry::SystemRegistry;
 
 use super::HostState;
+use super::services::{ChromeService, DebugOrchestratorService, SettingsService};
 use super::{HostAction, element_state_to_pressed};
 use tao::event::KeyEvent;
 
@@ -23,7 +24,7 @@ impl HostState {
         command: MenuCommand,
         opener: &dyn WindowOpener,
     ) -> HostAction {
-        if self.settings_open() {
+        if SettingsService::settings_open(self) {
             return match command {
                 MenuCommand::Quit => {
                     self.prepare_close();
@@ -45,11 +46,11 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Settings => {
-                self.open_settings_window(opener);
+                SettingsService::open_settings(self, opener);
                 HostAction::None
             }
             MenuCommand::Debugger => {
-                self.open_debug_windows(opener, false);
+                DebugOrchestratorService::open_debug_windows(self, opener, false);
                 HostAction::None
             }
             MenuCommand::NotificationHistory => {
@@ -59,7 +60,7 @@ impl HostState {
             MenuCommand::Session(command) => {
                 let _ = self.session.run_command(command);
                 let ctx = self.frame_ctx();
-                self.sync_chrome(&ctx, false);
+                ChromeService::sync_chrome(self, &ctx, false);
                 HostAction::None
             }
             MenuCommand::Quit => {
@@ -118,7 +119,7 @@ impl HostState {
     fn close_rom(&mut self) {
         SessionControl::unload(self);
         let ctx = self.frame_ctx();
-        self.sync_chrome(&ctx, true);
+        ChromeService::sync_chrome(self, &ctx, true);
     }
 
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {

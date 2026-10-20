@@ -98,16 +98,30 @@ impl WindowRuntime {
             return;
         }
         // Same-app focus moves cancel a pending pause; leaving anywhere arms it.
-        if let Some(focus) = focus_event_of(Some(AuxKind::Settings), &event) {
-            let _ = self.host.focus_event(focus);
-        }
-        let Some(outcome) = self.host.aux_on_event(AuxKind::Settings, event) else {
+        let _ = self.drive_focus(AuxKind::Settings, &event);
+        let domain = crate::aux::native::adapt_event(&event);
+        let Some(outcome) = self.host.aux_on_event(AuxKind::Settings, domain) else {
             return;
         };
         // Coalesced present: the pump above already requested a redraw.
         if outcome.close && self.host.close_settings_and_maybe_rebuild() {
             self.recreate_renderer();
         }
+    }
+
+    /// Focus-only drive shared by every aux path: maps `Focused` to
+    /// the domain event, resumes on `Resume`, and reports arrival.
+    fn drive_focus(&mut self, kind: AuxKind, event: &WindowEvent) -> bool {
+        let mut resume = false;
+        if let Some(focus) = focus_event_of(Some(kind), event)
+            && let Some(effect) = self.host.focus_event(focus)
+        {
+            resume = effect == FocusEffect::Resume;
+        }
+        if resume {
+            self.host.resume_session();
+        }
+        matches!(event, WindowEvent::Focused(true))
     }
 
     pub(super) fn on_debug_event(&mut self, opener: &dyn WindowOpener, event: WindowEvent) {
@@ -120,19 +134,9 @@ impl WindowRuntime {
             self.host.request_redraw();
             return;
         }
-        // Focus-only drive: other events never touch the pause protocol.
-        // System-paused sessions resume like on main focus; explicit pauses stay paused.
-        let mut resume = false;
-        if let Some(focus) = focus_event_of(Some(AuxKind::Debug), &event)
-            && let Some(effect) = self.host.focus_event(focus)
-        {
-            resume = effect == FocusEffect::Resume;
-        }
-        if resume {
-            self.host.resume_session();
-        }
-        let focused = matches!(event, WindowEvent::Focused(true));
-        let Some(outcome) = self.host.aux_on_event(AuxKind::Debug, event) else {
+        let focused = self.drive_focus(AuxKind::Debug, &event);
+        let domain = crate::aux::native::adapt_event(&event);
+        let Some(outcome) = self.host.aux_on_event(AuxKind::Debug, domain) else {
             return;
         };
         if focused {
@@ -165,21 +169,12 @@ impl WindowRuntime {
             self.host.request_redraw();
             return;
         }
-        // Focus-only drive: other events never touch the pause protocol.
-        // System-paused sessions resume like on main focus; explicit pauses stay paused.
-        let mut resume = false;
-        if let Some(focus) = focus_event_of(Some(AuxKind::Ppu), &event)
-            && let Some(effect) = self.host.focus_event(focus)
-        {
-            resume = effect == FocusEffect::Resume;
-        }
-        if resume {
-            self.host.resume_session();
-        }
+        let _ = self.drive_focus(AuxKind::Ppu, &event);
         if let WindowEvent::Moved(position) = &event {
             self.host.remember_ppu_window_pos(position.x, position.y);
         }
-        let Some(outcome) = self.host.aux_on_event(AuxKind::Ppu, event) else {
+        let domain = crate::aux::native::adapt_event(&event);
+        let Some(outcome) = self.host.aux_on_event(AuxKind::Ppu, domain) else {
             return;
         };
         if outcome.close {
@@ -307,7 +302,9 @@ mod tests {
         runtime.on_settings_event(WindowEvent::Focused(false));
         assert!(runtime.host.main_active());
         assert!(menu.updates().is_empty());
-        runtime.host.on_aux_focus(AuxKind::Settings, true);
+        let _ = runtime
+            .host
+            .focus_event(crate::aux::focus::FocusEvent::Aux(AuxKind::Settings, true));
     }
 
     #[test]
@@ -354,8 +351,11 @@ mod tests {
     }
 
     #[test]
-    fn ppu_focused_without_window_returns_early() {
+    fn ppu_arrival_after_departure_drives_focus() {
+        // Departure arms the pause; aux arrival cancels it through
+        // the shared drive, even with no handle open.
         let (mut runtime, menu) = test_runtime();
+        runtime.host.note_main_departure();
         runtime.on_ppu_event(WindowEvent::Focused(true));
         runtime.on_ppu_event(WindowEvent::Focused(false));
         assert!(menu.updates().is_empty());

@@ -209,12 +209,19 @@ impl OsdChrome {
 }
 impl From<&NotificationSettings> for OsdChrome {
     fn from(settings: &NotificationSettings) -> Self {
+        Self::from_view(&crate::session::ports::chrome_view(settings))
+    }
+}
+
+impl OsdChrome {
+    /// Plain-args construction from the narrow view; single settings adapter.
+    pub fn from_view(view: &crate::session::ports::ChromeView) -> Self {
         Self {
-            status_enabled: settings.status_enabled,
-            position: settings.position,
-            status_position: settings.status_position,
-            area_mode: settings.area_mode,
-            status_area_mode: settings.status_area_mode,
+            status_enabled: view.status_enabled,
+            position: view.position,
+            status_position: view.status_position,
+            area_mode: view.area_mode,
+            status_area_mode: view.status_area_mode,
         }
     }
 }
@@ -249,12 +256,11 @@ pub trait OsdState {
     fn rows(&self) -> &[OsdRow];
 }
 
-/// Status half of the sync fingerprint: label/value pair instead of a positional tuple.
-/// The sync borrow-compares before allocating, so steady skipped frames never format or box.
+/// Status half of the sync fingerprint; `Rc` shares the pair without per-render clones.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StatusFingerprint {
-    label: Box<str>,
-    value: Box<str>,
+    label: std::rc::Rc<str>,
+    value: std::rc::Rc<str>,
     position: NotificationPosition,
     status_position: NotificationPosition,
     area_mode: NotificationAreaMode,
@@ -405,14 +411,10 @@ impl OsdPresenter {
             return OsdSync::Skip;
         }
         self.active = true;
-        // The render path clones the stored fingerprint: steady frames
-        // skip above, so this allocation only happens on a real change.
-        let (label_value, position, status_position) = match self.last_status.clone() {
+        // Borrowed fingerprint: `Rc` clones share; rows reuse the buffer.
+        let (label_value, position, status_position) = match self.last_status.as_ref() {
             Some(fingerprint) => (
-                Some((
-                    fingerprint.label.into_string(),
-                    fingerprint.value.into_string(),
-                )),
+                Some((fingerprint.label.to_string(), fingerprint.value.to_string())),
                 fingerprint.position,
                 fingerprint.status_position,
             ),
@@ -1036,5 +1038,28 @@ mod tests {
             plan.status.as_ref().map(|(l, v)| (l.as_str(), v.as_str())),
             Some(("", "61.0 fps"))
         );
+    }
+}
+
+#[cfg(test)]
+mod borrow_tests {
+    #[test]
+    fn fingerprint_shares_through_rc() {
+        let left = std::rc::Rc::<str>::from("Paused");
+        let right = left.clone();
+        assert!(std::rc::Rc::ptr_eq(&left, &right));
+    }
+}
+
+#[cfg(test)]
+mod chrome_tests {
+    use super::*;
+
+    #[test]
+    fn chrome_from_view_matches_from_settings() {
+        use nerust_settings_core::model::local::NotificationSettings;
+        let settings = NotificationSettings::default();
+        let view = crate::session::ports::chrome_view(&settings);
+        assert_eq!(OsdChrome::from(&settings), OsdChrome::from_view(&view));
     }
 }

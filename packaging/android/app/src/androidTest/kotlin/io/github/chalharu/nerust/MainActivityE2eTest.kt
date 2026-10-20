@@ -68,7 +68,7 @@ class MainActivityE2eTest {
 
         val stateFilesBefore = stateSlotFiles()
         runOnActivityThread(activity) {
-            activity.dispatchMenuActionForTest("save_state")
+            activity.dispatchMenuActionForTest(MenuAction.SAVE_STATE)
         }
         assertTrue(
             "GBC Save State should create a state archive",
@@ -125,11 +125,28 @@ class MainActivityE2eTest {
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
             activity.showSettingsDialogForTest(
-                arrayOf("video_filter", "touch_overlay"),
-                arrayOf("Video Filter", "Touch Overlay"),
-                arrayOf("CRT\tLCD", "On\tOff"),
-                arrayOf("1", "0"),
-                arrayOf("video", "controls"),
+                listOf(
+                    SettingsField(
+                        key = "video_filter",
+                        section = "video",
+                        sectionLabel = "Video",
+                        label = "Video Filter",
+                        kind = "choice",
+                        choices = listOf("CRT", "LCD"),
+                        value = 1,
+                        visible = true,
+                    ),
+                    SettingsField(
+                        key = "touch_overlay",
+                        section = "controls",
+                        sectionLabel = "Controls",
+                        label = "Touch Overlay",
+                        kind = "choice",
+                        choices = listOf("On", "Off"),
+                        value = 0,
+                        visible = true,
+                    ),
+                ),
             )
         }
 
@@ -165,7 +182,7 @@ class MainActivityE2eTest {
         }
         exerciseMenuAction(
             activity,
-            MENU_ACTION_OPEN_SETTINGS,
+            MenuAction.OPEN_SETTINGS,
             SETTINGS_DIALOG_TAG,
             "Settings dialog should be attached after dispatching open_settings",
         )
@@ -210,7 +227,7 @@ class MainActivityE2eTest {
     fun exitTerminatesApplicationProcess() {
         val activity = launchActivity()
         runOnActivityThread(activity) {
-            activity.dispatchMenuActionForTest("exit")
+            activity.dispatchMenuActionForTest(MenuAction.EXIT)
         }
         SystemClock.sleep(STARTUP_TIMEOUT_MS)
         fail("Exit should terminate the application process")
@@ -399,7 +416,6 @@ class MainActivityE2eTest {
         const val DRAWER_TIMEOUT_MS = 5_000L
         const val EXPECTED_DRAWER_CONTENT =
             "Nerust\nOpen ROM\nSettings\nPause / Resume\nSave State\nLoad State\nReset\nUnload ROM\nExit"
-        const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
         const val LIFECYCLE_SAVE_DELAY_MS = 1_000L
         const val POLL_INTERVAL_MS = 50L

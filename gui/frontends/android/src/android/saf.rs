@@ -57,6 +57,14 @@ impl AndroidStorageBackend {
 
     fn read(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, PersistenceError> {
         Self::validate_relative_path(relative)?;
+        // Streamed session first: one openInputStream, sequential server-side
+        // reads. Chunked and whole-file paths stay for old APKs.
+        match self.read_streamed(uri, relative) {
+            Ok(bytes) => return Ok(bytes),
+            Err(error) => {
+                log::debug!("SAF streamed read unavailable, falling back to chunked: {error}");
+            }
+        }
         // Chunked path bounds every JNI crossing to 64KB.
         // Legacy whole-file read is the fallback for old APKs.
         match self.read_chunked(uri, relative) {
@@ -207,6 +215,98 @@ impl AndroidStorageBackend {
         Ok(Some(bytes))
     }
 
+    /// Streaming session read: one `openInputStream`, sequential server-side
+    /// chunks in a single pass. Absence (old APK) surfaces as `Err`.
+    fn read_streamed(
+        &self,
+        uri: &str,
+        relative: &str,
+    ) -> Result<Option<Vec<u8>>, PersistenceError> {
+        let session = self.call_open_read_session(uri, relative)?;
+        if session < 0 {
+            return Ok(None);
+        }
+        let mut bytes = Vec::new();
+        let result = (|| {
+            loop {
+                match self.call_read_session_chunk(session)? {
+                    Some(chunk) if !chunk.is_empty() => bytes.extend_from_slice(&chunk),
+                    _ => break,
+                }
+            }
+            Ok::<(), PersistenceError>(())
+        })();
+        let close_result = self.call_close_read_session(session);
+        result?;
+        close_result?;
+        Ok(Some(bytes))
+    }
+
+    /// Open a server-side read session; negative means the document is missing.
+    fn call_open_read_session(&self, uri: &str, relative: &str) -> Result<i64, PersistenceError> {
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        super::bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let uri = JString::from_str(env, uri)?;
+            let relative = JString::from_str(env, relative)?;
+            let session = env
+                .call_method(
+                    activity.as_ref(),
+                    jni_str!("openSafReadSession"),
+                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;)J"),
+                    &[
+                        JValue::Object(uri.as_ref()),
+                        JValue::Object(relative.as_ref()),
+                    ],
+                )?
+                .j()?;
+            Ok::<_, jni::errors::Error>(session)
+        })
+        .map_err(Self::io_error)
+    }
+
+    /// One sequential chunk from an open session; empty marks end of stream.
+    fn call_read_session_chunk(&self, session: i64) -> Result<Option<Vec<u8>>, PersistenceError> {
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        super::bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let object = env
+                .call_method(
+                    activity.as_ref(),
+                    jni_str!("readSafReadSession"),
+                    jni_sig!("(JI)[B"),
+                    &[JValue::Long(session), JValue::Int(SAF_CHUNK_BYTES as i32)],
+                )?
+                .l()?;
+            if object.is_null() {
+                Ok(None)
+            } else {
+                let array = env.cast_local::<jni::objects::JByteArray>(object)?;
+                Ok(Some(env.convert_byte_array(&array)?))
+            }
+        })
+        .map_err(Self::io_error)
+    }
+
+    /// Close a server-side read session; a missing session is a no-op.
+    fn call_close_read_session(&self, session: i64) -> Result<(), PersistenceError> {
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        super::bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            env.call_method(
+                activity.as_ref(),
+                jni_str!("closeSafReadSession"),
+                jni_sig!("(J)V"),
+                &[JValue::Long(session)],
+            )?;
+            Ok::<_, jni::errors::Error>(())
+        })
+        .map_err(Self::io_error)
+    }
+
     fn write(&self, uri: &str, relative: &str, bytes: &[u8]) -> Result<(), PersistenceError> {
         Self::validate_relative_path(relative)?;
         // Chunked path streams 64KB Base64 appends; legacy whole-file write
@@ -342,19 +442,6 @@ impl AndroidStorageBackend {
         }
     }
 
-    fn list(&self, uri: &str, relative: &str) -> Result<Vec<String>, PersistenceError> {
-        Self::validate_relative_path(relative)?;
-        // Sized batch avoids the scan N+1; the name-only list is the fallback.
-        // Covers APKs predating `listSafFilesWithSizes`.
-        if let Ok(entries) = self.list_with_sizes(uri, relative) {
-            return Ok(entries.into_iter().map(|(name, _)| name).collect());
-        }
-        let value = self
-            .call_list(uri, relative)?
-            .unwrap_or_else(|| "[]".to_string());
-        serde_json::from_str(&value).map_err(Self::io_error)
-    }
-
     /// Batched listing: one JNI crossing per directory; negatives mean unknown.
     fn list_with_sizes(
         &self,
@@ -372,6 +459,24 @@ impl AndroidStorageBackend {
                 (entry.name, size)
             })
             .collect())
+    }
+
+    /// One batched listing shared by `scan` and `allocate_next_id`.
+    /// Sized batch first; names-only list is the old-APK fallback.
+    fn sized_listing(
+        &self,
+        uri: &str,
+        relative: &str,
+    ) -> Result<Vec<(String, Option<i64>)>, PersistenceError> {
+        if let Ok(entries) = self.list_with_sizes(uri, relative) {
+            return Ok(entries);
+        }
+        let value = self
+            .call_list(uri, relative)?
+            .unwrap_or_else(|| "[]".to_string());
+        serde_json::from_str::<Vec<String>>(&value)
+            .map_err(Self::io_error)
+            .map(|names| names.into_iter().map(|name| (name, None)).collect())
     }
 
     /// Whole-file read (legacy bridge for old APKs).
@@ -634,20 +739,7 @@ impl SlotBackend for AndroidStorageBackend {
         let Some((uri, relative)) = Self::decode(dir) else {
             return FsSlotBackend.scan(dir, identity);
         };
-        let entries: Vec<(String, Option<i64>)> = match self.list_with_sizes(&uri, &relative) {
-            Ok(entries) => entries,
-            Err(_) => {
-                // Old APK without the sized batch: names only, sizes unknown.
-                let value = self
-                    .call_list(&uri, &relative)?
-                    .unwrap_or_else(|| "[]".to_string());
-                serde_json::from_str::<Vec<String>>(&value)
-                    .map_err(Self::io_error)?
-                    .into_iter()
-                    .map(|name| (name, None))
-                    .collect()
-            }
-        };
+        let entries: Vec<(String, Option<i64>)> = self.sized_listing(&uri, &relative)?;
         let mut result = Vec::new();
         for (name, size) in entries
             .into_iter()
@@ -679,9 +771,9 @@ impl SlotBackend for AndroidStorageBackend {
             return FsSlotBackend.allocate_next_id(dir);
         };
         Ok(self
-            .list(&uri, &relative)?
+            .sized_listing(&uri, &relative)?
             .iter()
-            .filter_map(|name| name.strip_suffix(".state")?.parse::<u64>().ok())
+            .filter_map(|(name, _)| name.strip_suffix(".state")?.parse::<u64>().ok())
             .max()
             .unwrap_or(0)
             .saturating_add(1)

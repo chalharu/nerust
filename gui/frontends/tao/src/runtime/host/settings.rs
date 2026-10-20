@@ -1,6 +1,7 @@
 //! Settings dialog lifecycle: open/close plus applying snapshots.
 //! Owned by `HostState`; the iced side lives in `crate::aux::settings`.
 use super::HostState;
+use super::services::{ChromeService, SettingsService};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
     SessionError,
@@ -22,12 +23,12 @@ impl HostState {
             self.update_window_size_for_scaling();
         }
         let ctx = self.frame_ctx();
-        self.sync_chrome(&ctx, true);
+        ChromeService::sync_chrome(self, &ctx, true);
         Ok(result)
     }
 
     pub(crate) fn on_settings_closed(&mut self) {
-        if !self.settings_open() {
+        if !SettingsService::settings_open(self) {
             return;
         }
         let should_resume = self.settings.take_resume_after();
@@ -36,7 +37,7 @@ impl HostState {
             self.resume();
         } else {
             let ctx = self.frame_ctx();
-            self.sync_chrome(&ctx, false);
+            ChromeService::sync_chrome(self, &ctx, false);
         }
     }
 
@@ -54,12 +55,21 @@ impl HostState {
             self.sync_menu_state(&ctx);
         }
 
-        match opener.create_settings(
-            self.session.settings_snapshot().clone(),
-            self.ctx.registry.clone(),
-            self.ctx.audio_registry.clone(),
+        match opener.create_aux(
+            crate::aux::focus::AuxKind::Settings,
+            crate::ports::AuxOpenParams::Settings {
+                snapshot: self.session.settings_snapshot().clone(),
+                registry: self.ctx.registry.clone(),
+                audio: self.ctx.audio_registry.clone(),
+            },
         ) {
-            Some(handle) => self.set_settings_window(handle),
+            Some(handle) => {
+                let id = self.aux.insert(handle);
+                debug_assert_eq!(
+                    self.aux.route_id(crate::aux::focus::AuxKind::Settings),
+                    Some(id)
+                );
+            }
             None => {
                 log::error!("failed to open settings window");
                 self.settings.close_all();

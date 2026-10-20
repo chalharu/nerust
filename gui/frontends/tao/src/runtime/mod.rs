@@ -18,6 +18,7 @@ use tao::{
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
 
+use self::host::services::{MainWindowService, SettingsService};
 use self::host::{HostAction, HostState};
 use crate::event::UserEvent;
 use crate::menu::imp::AppMenu;
@@ -53,17 +54,13 @@ impl WindowRuntime {
         })
     }
 
-    fn build_renderer_and_surface(&mut self, window: &tao::window::Window) -> Option<()> {
-        let (raw_window_handle, size, xid) = self.host.surface_target()?;
+    fn build_renderer_and_surface(
+        &mut self,
+        raw_display_handle: raw_window_handle::RawDisplayHandle,
+    ) -> Option<()> {
+        let (raw_window_handle, size, xid) = MainWindowService::surface_target(&self.host)?;
         let session = self.host.session();
         let vsync = session.settings_snapshot().local.video.presentation.vsync;
-        let raw_display_handle = match window.display_handle() {
-            Ok(handle) => handle.as_raw(),
-            Err(e) => {
-                log::error!("failed to get display handle: {e}");
-                return None;
-            }
-        };
         let render_profile = session.render_profile().cloned()?;
         let config = RendererConfig {
             render_profile,
@@ -128,23 +125,28 @@ impl WindowRuntime {
             .take()
             .expect("WindowRuntime::run() called more than once");
 
-        // Live-follow pulse: parked (1s cadence, no wakeups) unless a
-        // viewer wants live ticks; the host sets interest every pass.
+        // Live-follow pulse: parked with no wakeups unless a viewer
+        // wants live ticks; arming wakes it, disarming re-parks it.
         let tick_proxy = event_loop.create_proxy();
-        let tick_wanted = self.host.live_tick_wanted();
+        let tick_armed = self.host.live_tick_armed();
+        let (thread_tx, thread_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
+            let _ = thread_tx.send(std::thread::current());
             use std::sync::atomic::Ordering;
             loop {
-                if tick_wanted.load(Ordering::Acquire) {
+                if tick_armed.load(Ordering::Acquire) {
                     std::thread::sleep(std::time::Duration::from_millis(250));
                     if tick_proxy.send_event(UserEvent::LiveTick).is_err() {
                         break;
                     }
                 } else {
-                    std::thread::sleep(std::time::Duration::from_millis(1000));
+                    std::thread::park();
                 }
             }
         });
+        if let Ok(thread) = thread_rx.recv() {
+            self.host.register_tick_thread(thread);
+        }
 
         event_loop.run(move |event, event_loop, control_flow| match event {
             Event::NewEvents(StartCause::Init) => {
@@ -184,7 +186,7 @@ impl WindowRuntime {
                 UserEvent::LiveTick => self.host.live_tick(),
                 UserEvent::Menu(command) => {
                     let opener = TaoWindowOpener::new(event_loop);
-                    let action = self.host.on_menu_command(command, &opener);
+                    let action = SettingsService::on_menu_command(&mut self.host, command, &opener);
                     match action {
                         HostAction::None => (),
                         HostAction::RomLoaded => self.recreate_renderer(),
@@ -208,9 +210,7 @@ impl WindowRuntime {
         // Keep the output sized to the current target: target change needs a full recreate.
         let current_xid = self.host.surface_xid();
         if self.surface_xid != current_xid {
-            if let Some(window) = self.host.window_arc() {
-                self.build_renderer_and_surface(&window);
-            }
+            self.recreate_renderer();
             return;
         }
         if renderer.size() != window_size {
@@ -232,8 +232,14 @@ impl WindowRuntime {
 
     fn recreate_renderer(&mut self) {
         self.renderer = None;
-        if let Some(window) = self.host.window_arc() {
-            self.build_renderer_and_surface(&window);
+        // Owned display handle out; the attach below only borrows the host.
+        let display = MainWindowService::with_main_window(&self.host, |window| {
+            window.display_handle().ok().map(|handle| handle.as_raw())
+        });
+        if let Some(Some(raw_display)) = display {
+            self.build_renderer_and_surface(raw_display);
+        } else if display.is_some() {
+            log::error!("failed to get display handle");
         }
     }
 }

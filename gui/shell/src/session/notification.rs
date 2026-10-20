@@ -840,3 +840,28 @@ mod tests {
         assert_eq!(drained[0].count, history[0].count);
     }
 }
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    #[test]
+    fn queue_keys_on_message_not_text() {
+        let a = NotificationKind::SavedSlot(1).message();
+        let b = NotificationKind::SavedSlot(1).message();
+        let c = NotificationKind::SavedSlot(2).message();
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(a.key, MessageKey::SlotSaved);
+        assert_eq!(a.slot, Some(1));
+    }
+
+    #[test]
+    fn renderer_is_the_single_format_point() {
+        let renderer = NotificationRenderer {
+            language: AppLanguage::English,
+        };
+        assert_eq!(renderer.render(&NotificationKind::Paused), "Paused");
+        assert!(!renderer.render(&NotificationKind::SavedSlot(7)).is_empty());
+    }
+}

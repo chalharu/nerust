@@ -14,6 +14,11 @@ mod import_metadata;
 #[cfg(any(target_os = "android", test))]
 mod lifecycle_decision;
 
+#[cfg(any(target_os = "android", test))]
+// Initializer is already const; the lint misfires on the macro span.
+#[allow(clippy::missing_const_for_thread_local)]
+mod reentrancy;
+
 #[cfg(target_os = "android")]
 mod android;
 
@@ -131,7 +136,7 @@ pub fn android_main(app: AndroidApp) {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 /// Called by the JVM when the native library is loaded.
-/// # Safety: `vm` must be a valid `JavaVM` pointer from the runtime.
+/// # Safety: `vm` is a valid `JavaVM` pointer from the runtime.
 pub unsafe extern "system" fn JNI_OnLoad(
     vm: *mut jni::sys::JavaVM,
     _reserved: *mut c_void,

@@ -93,7 +93,13 @@ impl crate::aux::focus::AuxShellRef for SettingsWindowHandle {
     }
 }
 
-impl crate::aux::registry::AuxController for SettingsWindowHandle {
+impl crate::aux::registry::DebugDrainPort for SettingsWindowHandle {}
+impl crate::aux::registry::LiveImagesPort for SettingsWindowHandle {}
+impl crate::aux::registry::HistorySyncPort for SettingsWindowHandle {}
+impl crate::aux::registry::BridgeSharePort for SettingsWindowHandle {}
+impl crate::aux::registry::AuxController for SettingsWindowHandle {}
+
+impl crate::aux::registry::SettingsClosePort for SettingsWindowHandle {
     fn take_pending_settings(&mut self) -> Option<SettingsSnapshot> {
         self.take_pending_apply()
     }
@@ -122,10 +128,20 @@ mod tests {
     use tao::{dpi::PhysicalPosition, event::WindowEvent};
 
     use super::*;
-    use crate::convert::convert_tao_window_event;
+    use crate::aux::native::adapt_event;
+    use crate::convert::feed_domain_event;
 
     fn initial_cursor() -> mouse::Cursor {
         mouse::Cursor::Available(Point::new(0.0, 0.0))
+    }
+
+    fn feed(
+        event: WindowEvent,
+        cursor: &mut mouse::Cursor,
+        modifiers: &mut keyboard::Modifiers,
+        should_close: &AtomicBool,
+    ) -> Option<Event> {
+        feed_domain_event(adapt_event(&event), cursor, modifiers, 1.0, should_close)
     }
 
     // Helper: Tao's MouseInput/CursorMoved/etc require a deprecated modifiers field.
@@ -149,8 +165,7 @@ mod tests {
             position: PhysicalPosition::new(200.0, 300.0),
             modifiers: dummy_mods(),
         };
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_some());
         assert!(matches!(
             result.unwrap(),
@@ -167,8 +182,7 @@ mod tests {
         let event = WindowEvent::CursorLeft {
             device_id: dummy_dev(),
         };
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_none());
         assert!(matches!(cursor, mouse::Cursor::Unavailable));
     }
@@ -179,8 +193,7 @@ mod tests {
         let mut modifiers = keyboard::Modifiers::default();
         let should_close = AtomicBool::new(false);
         let event = WindowEvent::CloseRequested;
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_none());
         assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
     }
@@ -196,8 +209,7 @@ mod tests {
             button: tao::event::MouseButton::Left,
             modifiers: dummy_mods(),
         };
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_some());
         assert!(matches!(
             result.unwrap(),
@@ -216,8 +228,7 @@ mod tests {
             button: tao::event::MouseButton::Other(5),
             modifiers: dummy_mods(),
         };
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_none());
     }
 
@@ -226,10 +237,9 @@ mod tests {
         let mut cursor = initial_cursor();
         let mut modifiers = keyboard::Modifiers::default();
         let should_close = AtomicBool::new(false);
-        // Focused is not handled by settings UI (falls through to _ => None)
+        // Focused is not handled by settings UI (falls through to _ => None).
         let event = WindowEvent::Focused(true);
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_none());
     }
 }

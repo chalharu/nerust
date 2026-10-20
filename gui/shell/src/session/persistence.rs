@@ -12,12 +12,48 @@ use nerust_persistence::{
 };
 
 use super::error::SlotOpFailure;
+use crate::emu_core::{EmuCore, LivePersistPort};
 
 pub use super::fs::{FailingSlotBackend, FsSlotBackend};
 pub use super::ports::{
     AutoSaveBackend, MapperSaveBackend, PersistenceBackends, SlotActivation, SlotBackend,
     StateExporter,
 };
+
+/// Session-side adapter: narrow persist port plus fault mapping.
+impl StateExporter for EmuCore {
+    fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
+        LivePersistPort::save_state_raw(self).map_err(|error| SlotOpFailure::from(error.fault()))
+    }
+
+    fn import_state(&self, data: Vec<u8>) -> Result<(), SlotOpFailure> {
+        LivePersistPort::load_state_raw(self, data)
+            .map_err(|error| SlotOpFailure::from(error.fault()))
+    }
+
+    fn export_preview(&self) -> Option<nerust_persistence::thumbnail::ThumbnailSource> {
+        LivePersistPort::generate_preview(self).map(|frame| {
+            nerust_persistence::thumbnail::ThumbnailSource {
+                width: frame.width,
+                height: frame.height,
+                rgba: frame.rgba,
+            }
+        })
+    }
+
+    fn export_identity(&self) -> Option<SystemIdentity> {
+        LivePersistPort::canonical_media_identity(self)
+    }
+
+    fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
+        LivePersistPort::save_mapper_raw(self).map_err(|error| SlotOpFailure::from(error.fault()))
+    }
+
+    fn import_mapper(&self, bytes: Vec<u8>) -> Result<(), SlotOpFailure> {
+        LivePersistPort::load_mapper_raw(self, bytes)
+            .map_err(|error| SlotOpFailure::from(error.fault()))
+    }
+}
 
 /// Classify a persistence-layer failure for user-facing messages.
 /// Single conversion point; see [`SlotOpFailure`].
@@ -58,12 +94,8 @@ impl Default for PersistenceManager {
 
 impl PersistenceManager {
     pub fn new() -> Self {
-        Self::with_backend(Box::new(FsSlotBackend))
-    }
-
-    pub fn with_backend(backend: Box<dyn SlotBackend>) -> Self {
         Self {
-            slot_backend: backend,
+            slot_backend: Box::new(FsSlotBackend),
             autosave_backend: Box::new(FsSlotBackend),
             mapper_backend: Box::new(FsSlotBackend),
             states_dir: None,
@@ -75,8 +107,13 @@ impl PersistenceManager {
         }
     }
 
-    /// Bundle form of the backend swap: one struct instead of three
-    /// positional boxes. Keeps the configured paths and slot index.
+    pub fn with_backend(backend: Box<dyn SlotBackend>) -> Self {
+        let mut manager = Self::new();
+        manager.slot_backend = backend;
+        manager
+    }
+
+    /// Single wiring path: every constructor funnels through here.
     pub fn configure_backends(&mut self, backends: PersistenceBackends) {
         self.slot_backend = backends.slot;
         self.autosave_backend = backends.autosave;
@@ -88,17 +125,13 @@ impl PersistenceManager {
         autosave_backend: Box<dyn AutoSaveBackend>,
         mapper_backend: Box<dyn MapperSaveBackend>,
     ) -> Self {
-        Self {
-            slot_backend,
-            autosave_backend,
-            mapper_backend,
-            states_dir: None,
-            mapper_save_path: None,
-            mapper_save_flush_allowed: true,
-            mapper_save_recovery_written: false,
-            slots: Vec::new(),
-            active_slot_id: None,
-        }
+        let mut manager = Self::new();
+        manager.configure_backends(PersistenceBackends {
+            slot: slot_backend,
+            autosave: autosave_backend,
+            mapper: mapper_backend,
+        });
+        manager
     }
 
     pub fn with_autosave_backend(&mut self, backend: Box<dyn AutoSaveBackend>) {
@@ -142,20 +175,13 @@ impl PersistenceManager {
         activation: SlotActivation,
     ) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("save_slot: no states_dir configured; cannot save slot {slot_id}");
             return Err(SlotOpFailure::Unavailable);
         };
         let Some(identity) = emu.export_identity() else {
-            log::warn!("save_slot: no persistence identity available; cannot save slot {slot_id}");
             return Err(SlotOpFailure::Unavailable);
         };
-        log::info!(
-            "save_slot: writing slot {slot_id} (activation={activation:?}) to {}",
-            dir.display()
-        );
-        let core_bytes = emu.export_state().inspect_err(|failure| {
-            log::warn!("state export failed: {failure:?}");
-        })?;
+
+        let core_bytes = emu.export_state()?;
         let state_blob = save_state_with_header(core_bytes);
         let preview = emu.export_preview();
         match self
@@ -167,13 +193,10 @@ impl PersistenceManager {
                     self.active_slot_id = Some(slot_id);
                 }
                 self.refresh_slots_inner(Some(&identity));
-                log::info!("save_slot: saved slot {slot_id}");
+
                 Ok(())
             }
-            Err(error) => {
-                log::warn!("saving state slot failed: {error}");
-                Err(classify(&error))
-            }
+            Err(error) => Err(classify(&error)),
         }
     }
 
@@ -182,7 +205,6 @@ impl PersistenceManager {
         emu: &dyn StateExporter,
     ) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("save_active_slot_or_new: no states_dir configured; cannot save state");
             return Err(SlotOpFailure::Unavailable);
         };
         let slot_id = match self.active_slot_id {
@@ -190,26 +212,21 @@ impl PersistenceManager {
             None => match self.slot_backend.allocate_next_id(dir) {
                 Ok(slot_id) => slot_id,
                 Err(error) => {
-                    log::warn!("allocating state slot failed: {error}");
                     return Err(classify(&error));
                 }
             },
         };
-        log::info!("save_active_slot_or_new: saving to slot {slot_id}");
+
         self.save_slot(slot_id, emu, SlotActivation::Activate)
     }
 
     pub fn create_slot(&mut self, emu: &dyn StateExporter) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("create_slot: no states_dir configured; cannot create slot");
             return Err(SlotOpFailure::Unavailable);
         };
         match self.slot_backend.allocate_next_id(dir) {
             Ok(slot_id) => self.save_slot(slot_id, emu, SlotActivation::Activate),
-            Err(error) => {
-                log::warn!("allocating state slot failed: {error}");
-                Err(classify(&error))
-            }
+            Err(error) => Err(classify(&error)),
         }
     }
 
@@ -222,13 +239,11 @@ impl PersistenceManager {
         resolve: fn(&[u8]) -> Vec<u8>,
     ) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("load_slot: no states_dir configured; cannot load slot {slot_id}");
             return Err(SlotOpFailure::Unavailable);
         };
         match self.slot_backend.read_slot(dir, slot_id) {
             Ok(Some(slot)) => {
                 if let Err(failure) = emu.import_state(resolve(&slot.machine_state)) {
-                    log::warn!("state import failed: {failure:?}");
                     Err(failure)
                 } else {
                     self.active_slot_id = Some(slot_id);
@@ -237,14 +252,8 @@ impl PersistenceManager {
                     Ok(())
                 }
             }
-            Ok(None) => {
-                log::warn!("load_slot: slot {slot_id} not found in {}", dir.display());
-                Err(SlotOpFailure::Missing)
-            }
-            Err(error) => {
-                log::warn!("loading state slot failed: {error}");
-                Err(classify(&error))
-            }
+            Ok(None) => Err(SlotOpFailure::Missing),
+            Err(error) => Err(classify(&error)),
         }
     }
 
@@ -255,10 +264,7 @@ impl PersistenceManager {
     ) -> Result<(), SlotOpFailure> {
         match self.active_slot_id {
             Some(slot_id) => self.load_slot(slot_id, emu, resolve),
-            None => {
-                log::debug!("load_active_slot: no active slot");
-                Err(SlotOpFailure::Empty)
-            }
+            None => Err(SlotOpFailure::Empty),
         }
     }
 
@@ -268,7 +274,6 @@ impl PersistenceManager {
         emu: &dyn StateExporter,
     ) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("delete_slot: no states_dir configured; cannot delete slot {slot_id}");
             return Err(SlotOpFailure::Unavailable);
         };
         match self.slot_backend.delete_slot(dir, slot_id) {
@@ -280,10 +285,7 @@ impl PersistenceManager {
                 self.refresh_slots_inner(identity.as_ref());
                 Ok(())
             }
-            Err(error) => {
-                log::warn!("deleting state slot failed: {error}");
-                Err(classify(&error))
-            }
+            Err(error) => Err(classify(&error)),
         }
     }
 
@@ -304,15 +306,8 @@ impl PersistenceManager {
 
     fn refresh_slots_inner(&mut self, identity: Option<&SystemIdentity>) {
         self.slots = if let (Some(dir), Some(identity)) = (self.states_dir.as_ref(), identity) {
-            match self.slot_backend.scan(dir, identity) {
-                Ok(slots) => slots,
-                Err(error) => {
-                    log::warn!("slot scan failed: {error}");
-                    Vec::new()
-                }
-            }
+            self.slot_backend.scan(dir, identity).unwrap_or_default()
         } else {
-            log::warn!("states_dir not configured, slot list unavailable");
             Vec::new()
         };
         if self
@@ -355,22 +350,12 @@ impl PersistenceManager {
             if self.mapper_save_recovery_written {
                 return Ok(MapperFlush::DegradedRecoveryWritten);
             }
-            if let Some(bytes) = emu
-                .export_mapper()
-                .inspect_err(|failure| {
-                    log::warn!("mapper save failed: {failure:?}");
-                })
-                .ok()
-                .flatten()
-            {
-                let recovery_path = self
+            if let Some(bytes) = emu.export_mapper().ok().flatten() {
+                let _recovery_path = self
                     .mapper_backend
                     .write_recovery_mapper_save(path, &bytes)?;
                 self.mapper_save_recovery_written = true;
-                log::warn!(
-                    "mapper save auto-load failed earlier; wrote recovery save to {}",
-                    recovery_path.display()
-                );
+
                 return Ok(MapperFlush::DegradedRecoveryWritten);
             }
             return Ok(MapperFlush::SkippedNoPath);
@@ -385,7 +370,7 @@ impl PersistenceManager {
                 // Fail loudly: callers propagate this to the UI instead
                 // of silently dropping the in-core battery save.
                 let error = PersistenceError::Export(format!("{failure:?}"));
-                log::warn!("{error}");
+
                 return Err(error);
             }
         };
@@ -401,15 +386,13 @@ impl PersistenceManager {
         };
         match self.mapper_backend.read_mapper_save(path) {
             Ok(Some(bytes)) => {
-                if let Err(failure) = emu.import_mapper(bytes) {
-                    log::warn!("mapper save load failed: {failure:?}");
-                }
+                let _ = emu.import_mapper(bytes);
                 Ok(())
             }
             Ok(None) => Ok(()),
-            Err(error) => {
+            Err(_) => {
                 self.mapper_save_flush_allowed = false;
-                log::warn!("mapper save auto-load failed: {error}");
+
                 Ok(())
             }
         }
@@ -417,7 +400,6 @@ impl PersistenceManager {
 
     pub fn save_hidden(&self, emu: &dyn StateExporter) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("save_hidden: no states_dir configured; cannot save hidden lifecycle state");
             return false;
         };
         let Some(identity) = emu.export_identity() else {
@@ -426,21 +408,11 @@ impl PersistenceManager {
         match emu.export_state() {
             Ok(core_bytes) => {
                 let state_blob = save_state_with_header(core_bytes);
-                match self
-                    .autosave_backend
+                self.autosave_backend
                     .write_autosave(dir, &state_blob, &identity)
-                {
-                    Ok(_) => true,
-                    Err(error) => {
-                        log::warn!("saving hidden lifecycle state failed: {error}");
-                        false
-                    }
-                }
+                    .is_ok()
             }
-            Err(failure) => {
-                log::warn!("hidden lifecycle state export failed: {failure:?}");
-                false
-            }
+            Err(_) => false,
         }
     }
 
@@ -448,7 +420,6 @@ impl PersistenceManager {
     /// core through `resolve` (see [`load_slot`](Self::load_slot)).
     pub fn load_hidden(&self, emu: &dyn StateExporter, resolve: fn(&[u8]) -> Vec<u8>) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("load_hidden: no states_dir configured; cannot load hidden lifecycle state");
             return false;
         };
         let Some(identity) = emu.canonical_media_identity() else {
@@ -459,17 +430,11 @@ impl PersistenceManager {
                 if state_header_version(&slot.machine_state)
                     != Some(SaveStateHeader::new(&[]).version)
                 {
-                    log::warn!("ignoring hidden lifecycle state with unsupported state version");
-                    if let Err(error) = self.autosave_backend.quarantine_autosave(dir) {
-                        log::warn!("failed to quarantine hidden lifecycle state: {error}");
-                    }
+                    let _ = self.autosave_backend.quarantine_autosave(dir);
                     return false;
                 }
-                if let Err(failure) = emu.import_state(resolve(&slot.machine_state)) {
-                    log::warn!("hidden lifecycle state import failed: {failure:?}");
-                    if let Err(error) = self.autosave_backend.quarantine_autosave(dir) {
-                        log::warn!("failed to quarantine hidden lifecycle state: {error}");
-                    }
+                if emu.import_state(resolve(&slot.machine_state)).is_err() {
+                    let _ = self.autosave_backend.quarantine_autosave(dir);
                     false
                 } else {
                     true
@@ -480,8 +445,7 @@ impl PersistenceManager {
                 false
             }
             Err(PersistenceError::Io(error)) if error.kind() == ErrorKind::NotFound => false,
-            Err(error) => {
-                log::warn!("loading hidden lifecycle state failed: {error}");
+            Err(_) => {
                 let _ = self.autosave_backend.delete_autosave(dir);
                 false
             }
@@ -490,9 +454,6 @@ impl PersistenceManager {
 
     pub fn clear_hidden(&mut self) {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!(
-                "clear_hidden: no states_dir configured; cannot clear hidden lifecycle state"
-            );
             return;
         };
         let _ = self.autosave_backend.delete_autosave(dir);

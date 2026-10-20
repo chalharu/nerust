@@ -404,9 +404,9 @@ impl SessionHandle {
             core_bytes: tick
                 .loaded
                 .then(|| {
-                    use crate::emu_core::CorePersistence;
+                    use crate::emu_core::LivePersistPort;
                     let core = self.emu.core().ok().ok_or(SessionError::NoCore)?;
-                    CorePersistence::save_state_raw(core)
+                    LivePersistPort::save_state_raw(core)
                         .map_err(nerust_persistence::error::PersistenceError::from)
                         .map_err(SessionError::from)
                 })

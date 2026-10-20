@@ -1,6 +1,5 @@
-//! Topology adapter: build the input descriptor from slot assignments.
-//! Moved from `settings-core`: settings stores persisted string pairs only;
-//! profile-to-descriptor projection lives here, next to the view models.
+//! Topology adapter: build the input descriptor from slot assignments. Moved from `settings-core`:
+//! settings stores persisted string pairs only; profile-to-descriptor projection lives here, next to the view models.
 
 use std::{collections::HashSet, rc::Rc};
 

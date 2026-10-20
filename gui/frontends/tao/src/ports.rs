@@ -1,7 +1,5 @@
-//! Headless seams for native surfaces: dialogs and window creation.
-//! Tao-local leaf (only inner crates, aux handles, and tao types), so
-//! both production implementors and headless fakes depend downward.
-//! Production impls live here; fakes live in `crate::test_*`.
+//! Headless seams for native surfaces: dialogs and window creation. Tao-local leaf (only inner
+//! crates, aux handles, and tao types), so both production implementors and headless fakes depend downward. Production impls live here; fakes live in `crate::test_*`.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -21,12 +19,12 @@ use nerust_settings_core::{
 use rfd::FileDialog;
 
 use crate::aux::bridge::DebugBridge;
+use crate::aux::focus::AuxKind;
+use crate::aux::registry::AuxController;
 use crate::event::UserEvent;
 
-/// Native file/error dialogs, seamed for headless tests. Production
-/// talks to rfd; fakes return canned picks and record errors.
-/// `Send + Sync`: error dialogs run on a short-lived thread so the
-/// event loop never stalls behind a modal (see `ModalFlight`).
+/// Native file/error dialogs, seamed for headless tests. Production talks to rfd; fakes return
+/// canned picks and record errors. `Send + Sync`: error dialogs run on a short-lived thread so the event loop never stalls behind a modal (see `ModalFlight`).
 pub(crate) trait DialogPorts: Send + Sync {
     fn pick_rom_file(
         &self,
@@ -104,31 +102,35 @@ pub(crate) fn show_rom_load_error(language: AppLanguage, detail: &str) {
         .show();
 }
 
-/// Window creation surface. Every method fails closed (`None`/`Err`)
-/// on headless fakes; production forwards to the handle constructors.
-pub(crate) trait WindowOpener {
-    fn create_main(&self, builder: WindowBuilder) -> Result<Arc<TaoWindow>, String>;
-    fn create_settings(
-        &self,
+/// Aux-window open parameters: one variant per capability.
+pub(crate) enum AuxOpenParams {
+    Settings {
         snapshot: SettingsSnapshot,
         registry: Arc<SystemRegistry>,
         audio: Arc<AudioBackendRegistry>,
-    ) -> Option<crate::aux::settings::window::SettingsWindowHandle>;
-    fn create_debug(
-        &self,
+    },
+    Debug {
         display: DisplayCache,
         spaces: Vec<(SpaceId, String, u32)>,
         mem_addr: u32,
         language: AppLanguage,
         position: Option<(i32, i32)>,
-    ) -> Option<crate::aux::debug::DebugWindowHandle>;
-    fn create_ppu(
-        &self,
-        bridge: &Arc<DebugBridge>,
+    },
+    Ppu {
+        bridge: Arc<DebugBridge>,
         position: Option<(i32, i32)>,
-    ) -> Option<crate::aux::ppu::PpuWindowHandle>;
-    fn create_history(&self, language: AppLanguage)
-    -> Option<crate::aux::osd::HistoryWindowHandle>;
+    },
+    History {
+        language: AppLanguage,
+    },
+}
+
+/// Window creation surface: main plus one capability-routed aux entry.
+/// Every method fails closed (`None`/`Err`) on headless fakes.
+pub(crate) trait WindowOpener {
+    fn create_main(&self, builder: WindowBuilder) -> Result<Arc<TaoWindow>, String>;
+    /// Capability-routed aux creation: kind selects the port, params carry the inputs.
+    fn create_aux(&self, kind: AuxKind, params: AuxOpenParams) -> Option<Box<dyn AuxController>>;
 }
 
 /// Production opener: real tao windows on the live event loop.
@@ -150,6 +152,48 @@ impl WindowOpener for TaoWindowOpener<'_> {
             .map_err(|e| e.to_string())
     }
 
+    fn create_aux(&self, kind: AuxKind, params: AuxOpenParams) -> Option<Box<dyn AuxController>> {
+        match (kind, params) {
+            (
+                AuxKind::Settings,
+                AuxOpenParams::Settings {
+                    snapshot,
+                    registry,
+                    audio,
+                },
+            ) => self.create_settings(snapshot, registry, audio).map(aux_box),
+            (
+                AuxKind::Debug,
+                AuxOpenParams::Debug {
+                    display,
+                    spaces,
+                    mem_addr,
+                    language,
+                    position,
+                },
+            ) => self
+                .create_debug(display, spaces, mem_addr, language, position)
+                .map(aux_box),
+            (AuxKind::Ppu, AuxOpenParams::Ppu { bridge, position }) => {
+                self.create_ppu(&bridge, position).map(aux_box)
+            }
+            (AuxKind::History, AuxOpenParams::History { language }) => {
+                self.create_history(language).map(aux_box)
+            }
+            _ => {
+                log::error!("aux open kind/params mismatch");
+                None
+            }
+        }
+    }
+}
+
+/// Box a concrete aux handle behind its capability ports.
+fn aux_box<T: AuxController + 'static>(handle: T) -> Box<dyn AuxController> {
+    Box::new(handle)
+}
+
+impl TaoWindowOpener<'_> {
     fn create_settings(
         &self,
         snapshot: SettingsSnapshot,

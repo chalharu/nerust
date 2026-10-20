@@ -12,7 +12,6 @@ pub(super) struct AndroidBridgeState {
     /// burst so a modal gate release never waits behind menu taps.
     priority_events: VecDeque<FrontendEvent>,
     normal_events: VecDeque<FrontendEvent>,
-    accelerometer: Option<AccelerometerInputHandle>,
     exit_requested: bool,
     /// Last UI-thread insets push, [top, right, bottom, left] in physical px.
     /// The render thread reads the cache only and never blocks on JNI.
@@ -25,7 +24,6 @@ impl AndroidBridgeState {
             event_loop_proxy: None,
             priority_events: VecDeque::new(),
             normal_events: VecDeque::new(),
-            accelerometer: None,
             exit_requested: false,
             insets_cache: None,
         }
@@ -33,6 +31,17 @@ impl AndroidBridgeState {
 }
 
 static ANDROID_BRIDGE: Mutex<AndroidBridgeState> = Mutex::new(AndroidBridgeState::empty());
+
+/// Accelerometer handle on its own lock: per-sample sensor pushes
+/// never contend with the event-queue mutex, which stays queue-only.
+static ACCEL_HANDLE: Mutex<Option<AccelerometerInputHandle>> = Mutex::new(None);
+
+fn lock_accel() -> std::sync::MutexGuard<'static, Option<AccelerometerInputHandle>> {
+    ACCEL_HANDLE.lock().unwrap_or_else(|poison| {
+        log::error!("accelerometer handle mutex poisoned; recovering state");
+        poison.into_inner()
+    })
+}
 
 pub(super) fn bind_event_loop(event_loop_proxy: EventLoopProxy<()>) {
     with_state(|state| {
@@ -47,12 +56,12 @@ pub(super) fn reset_transient() {
     with_state(|state| {
         state.priority_events.clear();
         state.normal_events.clear();
-        state.accelerometer = None;
     });
+    *lock_accel() = None;
 }
 
 pub(super) fn bind_accelerometer(handle: Option<AccelerometerInputHandle>) {
-    with_state(|state| state.accelerometer = handle);
+    *lock_accel() = handle;
 }
 
 pub(super) fn request_exit() {
@@ -75,37 +84,9 @@ pub(super) fn with_state<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T
     operation(&mut guard)
 }
 
-/// Debug re-entrancy guard for the three bridge mutexes.
-/// `with_state` must never nest; debug builds fail loudly on nesting.
-pub(super) fn lock_reentrancy_guard() -> ReentrancyGuard {
-    ReentrancyGuard::new()
-}
-
-pub(super) struct ReentrancyGuard;
-
-impl ReentrancyGuard {
-    fn new() -> Self {
-        BRIDGE_REENTRANCY.with(|held| {
-            let depth = held.get();
-            debug_assert_eq!(
-                depth, 0,
-                "nested Android bridge with_state: reorder to avoid nesting",
-            );
-            held.set(depth + 1);
-        });
-        Self
-    }
-}
-
-impl Drop for ReentrancyGuard {
-    fn drop(&mut self) {
-        BRIDGE_REENTRANCY.with(|held| held.set(held.get().saturating_sub(1)));
-    }
-}
-
-thread_local! {
-    static BRIDGE_REENTRANCY: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
+/// Re-entrancy guard for the three bridge mutexes.
+/// `with_state` must never nest; every profile panics, never silently nests.
+pub(super) use crate::reentrancy::lock_reentrancy_guard;
 
 pub(super) fn wake() {
     let event_loop_proxy = with_state(|state| state.event_loop_proxy.clone());
@@ -259,7 +240,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onCartridgeAc
     x_g: jni::sys::jfloat,
     y_g: jni::sys::jfloat,
 ) {
-    let handle = with_state(|state| state.accelerometer.clone());
+    let handle = lock_accel().clone();
     if let Some(handle) = handle {
         handle.publish(AccelerationSample::new(x_g, y_g));
     }

@@ -15,7 +15,9 @@ use nerust_glwrap::{
     vertex::{Attrib, VertexArray, VertexBuffer},
 };
 use nerust_render_ntsc::NTSC_TEXTURE_HEIGHT;
-use nerust_render_traits::{ReservedStrip, VideoFrameFormat, VideoRenderProfile};
+use nerust_render_traits::{
+    ReservedStrip, VideoFrameFormat, VideoRenderProfile, renderer::StagingBuf,
+};
 
 use crate::mat4::Mat4;
 use crate::shader_compiler::{compile_shader_program, is_gles_context, supports_unpack_row_length};
@@ -66,7 +68,7 @@ pub(crate) struct FrameView {
     pub(crate) logical_width: i32,
     pub(crate) logical_height: i32,
     /// Separate staging for the NTSC kernel upload (load-time only).
-    pub(crate) ntsc_scratch: Vec<u8>,
+    pub(crate) ntsc_scratch: StagingBuf,
     pub(crate) uniforms: GameUniforms,
     pub(crate) last_matrix: Option<[f32; 16]>,
     pub(crate) current_program: Option<u32>,

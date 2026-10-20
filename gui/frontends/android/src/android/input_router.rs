@@ -190,7 +190,7 @@ impl InputRouter {
                 )
             })
             .unwrap_or_default();
-        configure_controls_overlay(app, overlay_settings, &zones, &joystick);
+        configure_controls_overlay(app, overlay_settings, zones, joystick);
     }
 
     /// Single touch action dispatch: the old `Vec<TouchOverlayAction>`
@@ -400,8 +400,8 @@ impl InputRouter {
 pub(super) fn configure_controls_overlay(
     app: &AndroidApp,
     settings: &nerust_settings_core::model::local::TouchOverlaySettings,
-    zones: &str,
-    joystick: &str,
+    zones: String,
+    joystick: String,
 ) {
     let visibility = match settings.visibility {
         nerust_settings_core::model::local::TouchOverlayVisibility::Always => "always",
@@ -411,8 +411,7 @@ pub(super) fn configure_controls_overlay(
     .to_string();
     let opacity = i32::from(settings.opacity_percent);
     let haptics = settings.haptics;
-    let zones = zones.to_string();
-    let joystick = joystick.to_string();
+    // Owned buffers move into the closure; the JNI hop copies nothing twice.
     bridge::call_on_activity(
         app,
         "configure Android controls overlay",

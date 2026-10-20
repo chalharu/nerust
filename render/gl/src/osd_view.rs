@@ -13,14 +13,14 @@ use nerust_glwrap::{
         viewport,
     },
 };
-use nerust_render_traits::renderer::{OsdLayer, UploadCache};
+use nerust_render_traits::renderer::{BoundedUploadPolicy, OsdLayer, OsdUploadPolicy, StagingBuf};
 
 use crate::error::ViewError;
 use crate::frame_textures::use_texture;
 use crate::frame_view::{FrameView, ok_gl};
 use crate::mat4::Mat4;
 use crate::osd_overlay::{
-    OSDRect, RetryBudget, RetryDecision, checked_clear_need, checked_osd_gl_y, checked_osd_rect,
+    OSDRect, RetryDecision, checked_clear_need, checked_osd_gl_y, checked_osd_rect,
 };
 use crate::surface_view::LeakedName;
 
@@ -208,14 +208,14 @@ pub(crate) struct OsdView {
     pub(crate) osd_size: (i32, i32),
     pub(crate) osd_prev: Option<(i32, i32, i32, i32)>,
     pub(crate) osd_dirty: bool,
-    /// Bounded retry for the staged layer (see `RetryBudget`).
-    pub(crate) osd_retry: RetryBudget,
+    /// Bounded retry for the staged layer (shared `BoundedUploadPolicy`).
+    pub(crate) osd_retry: Box<dyn OsdUploadPolicy>,
     pub(crate) osd_shader: Option<Shader>,
     pub(crate) osd_layer: Option<OsdLayer>,
     /// Grow-only staging reused across OSD uploads (no steady allocs).
-    pub(crate) osd_upload_scratch: Vec<u8>,
+    pub(crate) osd_upload_scratch: StagingBuf,
     /// Grow-only zeros reused for OSD clears (no steady allocs).
-    pub(crate) osd_clear_scratch: Vec<u8>,
+    pub(crate) osd_clear_scratch: StagingBuf,
     pub(crate) osd_matrix: Option<GLint>,
     pub(crate) last_osd_matrix: Option<[f32; 16]>,
     /// Sampler uniform resolved once in `init_osd` (not per frame).
@@ -232,11 +232,11 @@ impl Default for OsdView {
             osd_size: (0, 0),
             osd_prev: None,
             osd_dirty: false,
-            osd_retry: RetryBudget::new(MAX_OSD_UPLOAD_RETRIES),
+            osd_retry: Box::new(BoundedUploadPolicy::new(MAX_OSD_UPLOAD_RETRIES)),
             osd_shader: None,
             osd_layer: None,
-            osd_upload_scratch: Vec::new(),
-            osd_clear_scratch: Vec::new(),
+            osd_upload_scratch: StagingBuf::new(),
+            osd_clear_scratch: StagingBuf::new(),
             osd_matrix: None,
             last_osd_matrix: None,
             osd_texture_loc: None,
@@ -250,9 +250,9 @@ impl OsdView {
         Self::default()
     }
 
-    /// new content resets the failure budget.
-    pub fn set_osd_retry_max(&mut self, max: u8) {
-        self.osd_retry = RetryBudget::new(max);
+    /// Inject an upload policy (tests, custom backoff); replaces the budget.
+    pub fn set_osd_policy(&mut self, policy: Box<dyn OsdUploadPolicy>) {
+        self.osd_retry = policy;
     }
 
     pub fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
@@ -363,7 +363,7 @@ impl OsdView {
         let Some(_) = self.osd_layer.as_ref() else {
             return RetryDecision::Retry;
         };
-        match self.osd_retry.record_failure() {
+        match RetryDecision::from_policy(self.osd_retry.record_failure()) {
             RetryDecision::Retry => RetryDecision::Retry,
             RetryDecision::DropLayer => {
                 // No ghost composite, and the next identical push
@@ -441,7 +441,6 @@ impl OsdView {
             }
             self.osd_prev = Some(rect);
         }
-        self.osd_upload_scratch.staging(need);
         let Some(layer) = self.osd_layer.as_ref() else {
             return Ok(());
         };
@@ -458,7 +457,7 @@ impl OsdView {
             }
         }
         // Re-borrow after the staging fill: the scratch grew at most once above.
-        let staged: &[u8] = &self.osd_upload_scratch[..need];
+        let staged: &[u8] = self.osd_upload_scratch.staging(need);
         Self::blit_bytes(texture, surface_h, lx, ly, lw, lh, staged)?;
         Ok(())
     }
@@ -493,7 +492,7 @@ impl OsdView {
                 h,
                 gl::RGBA,
                 gl::UNSIGNED_BYTE,
-                self.osd_clear_scratch.as_ptr().cast(),
+                self.osd_clear_scratch.staging(need).as_ptr().cast(),
             ),
             rect,
             "clear",
@@ -613,5 +612,101 @@ impl OsdView {
             leaked.push(LeakedName::Program(0));
         }
         leaked
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OsdOutcome, OsdView, RetryDecision};
+    use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
+
+    fn staged_view() -> OsdView {
+        let mut view = OsdView::default();
+        view.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
+        view
+    }
+
+    /// Test policy: drops on the first failure (proves injection works).
+    #[derive(Debug)]
+    struct AlwaysDrop;
+
+    impl OsdUploadPolicy for AlwaysDrop {
+        fn record_failure(&mut self) -> bool {
+            true
+        }
+
+        fn reset(&mut self) {}
+    }
+
+    #[test]
+    fn set_osd_layer_skips_equal_upload() {
+        let mut view = OsdView::default();
+        let layer = OsdLayer::new(0, 0, 2, 1, vec![255; 8]);
+        view.set_osd_layer(Some(layer.clone()));
+        assert!(view.osd_dirty);
+        view.osd_dirty = false;
+        view.set_osd_layer(Some(layer));
+        assert!(!view.osd_dirty);
+        view.set_osd_layer(None);
+        assert!(view.osd_dirty);
+    }
+
+    #[test]
+    fn upload_failures_retry_then_drop_layer() {
+        let mut view = staged_view();
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
+        assert!(view.osd_layer.is_some());
+        assert!(view.osd_dirty);
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
+        assert!(view.osd_layer.is_some());
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
+        assert!(view.osd_layer.is_none());
+        assert!(!view.osd_dirty);
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
+        assert!(view.osd_layer.is_none());
+        assert!(!view.osd_dirty);
+    }
+
+    #[test]
+    fn injected_policy_drives_drop_decision() {
+        let mut view = staged_view();
+        view.set_osd_policy(Box::new(AlwaysDrop));
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
+        assert!(view.osd_layer.is_none());
+        assert!(!view.osd_dirty);
+    }
+
+    #[test]
+    fn retry_budget_uses_single_shared_policy() {
+        use nerust_render_traits::renderer::BoundedUploadPolicy;
+        // Rebuilt shared budget: two failures then drop.
+        let mut view = staged_view();
+        view.set_osd_policy(Box::new(BoundedUploadPolicy::new(3)));
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
+        // Zero clamps to one attempt, never drops live layers at once.
+        let mut view = staged_view();
+        view.set_osd_policy(Box::new(BoundedUploadPolicy::new(0)));
+        assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
+    }
+
+    #[test]
+    fn dropped_outcome_is_copyable_fact() {
+        let outcome = super::OsdOutcome::Dropped;
+        assert_eq!(outcome, OsdOutcome::Dropped);
+        assert_ne!(outcome, OsdOutcome::Presented);
+    }
+
+    #[test]
+    fn close_report_without_context_counts_names() {
+        use nerust_glwrap::CurrentContext;
+        let mut view = OsdView {
+            osd_texture: 7,
+            ..OsdView::default()
+        };
+        let leaked = view.close(CurrentContext::assert_current(false));
+        assert_eq!(leaked.len(), 1);
+        assert_eq!(view.osd_texture, 0);
     }
 }

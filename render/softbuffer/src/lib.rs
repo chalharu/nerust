@@ -4,8 +4,8 @@ use log::warn;
 use nerust_render_traits::{
     FrameBuffer, PixelFormat, SurfaceSize, VideoRenderProfile,
     renderer::{
-        GpuFactory, GpuRenderer, OpaqueError, OsdSink, Present, RenderResult, RendererConfig,
-        RendererError, StripSink,
+        AttachError, FrameSink, GpuFactory, GpuRenderer, OsdSink, Present, ProfileSwitch,
+        RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle,
     },
 };
 use raw_window_handle::{
@@ -240,9 +240,9 @@ impl SoftbufferRenderer {
                     let src_index = src_y_index + *i as usize;
                     let src_val = indexer.pixel(src_index);
                     let w = *w;
-                    acc[0] = acc[0].saturating_add((src_val[2] as u16 * w + 0x80) >> 8);
+                    acc[0] = acc[0].saturating_add((src_val[0] as u16 * w + 0x80) >> 8);
                     acc[1] = acc[1].saturating_add((src_val[1] as u16 * w + 0x80) >> 8);
-                    acc[2] = acc[2].saturating_add((src_val[0] as u16 * w + 0x80) >> 8);
+                    acc[2] = acc[2].saturating_add((src_val[2] as u16 * w + 0x80) >> 8);
                     acc[3] = acc[3].saturating_add((src_val[3] as u16 * w + 0x80) >> 8);
                     touched = true;
                 }
@@ -419,7 +419,7 @@ impl SoftbufferRenderer {
     }
 }
 
-impl Present for SoftbufferRenderer {
+impl SurfaceLifecycle for SoftbufferRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
     }
@@ -435,15 +435,27 @@ impl Present for SoftbufferRenderer {
             display: display_handle,
         };
         let ctx = Context::new(pair.clone()).map_err(|e| {
-            RendererError::new("softbuffer context", Box::new(OpaqueError(e.to_string())))
+            RendererError::new(
+                "softbuffer context",
+                Box::new(AttachError::Context {
+                    backend: "softbuffer",
+                    detail: e.to_string(),
+                }),
+            )
         })?;
         let surface = Surface::new(&ctx, pair).map_err(|e| {
-            RendererError::new("softbuffer surface", Box::new(OpaqueError(e.to_string())))
+            RendererError::new(
+                "softbuffer surface",
+                Box::new(AttachError::Surface {
+                    backend: "softbuffer",
+                    detail: e.to_string(),
+                }),
+            )
         })?;
         self.ctx = Some(ctx);
         self.surface = Some(surface);
         self.size = size;
-        self.resize(size);
+        SurfaceLifecycle::resize(self, size);
         Ok(())
     }
 
@@ -464,7 +476,9 @@ impl Present for SoftbufferRenderer {
         }
         self.resize_lut();
     }
+}
 
+impl FrameSink for SoftbufferRenderer {
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
         let Some(valid) = self.validate_frame(frame) else {
             return RenderResult::Skipped;
@@ -607,6 +621,33 @@ impl Present for SoftbufferRenderer {
     }
 }
 
+impl Present for SoftbufferRenderer {
+    fn size(&self) -> SurfaceSize {
+        SurfaceLifecycle::size(self)
+    }
+
+    fn attach(
+        &mut self,
+        window_handle: RawWindowHandle,
+        display_handle: RawDisplayHandle,
+        size: SurfaceSize,
+    ) -> Result<(), RendererError> {
+        SurfaceLifecycle::attach(self, window_handle, display_handle, size)
+    }
+
+    fn detach(&mut self) {
+        SurfaceLifecycle::detach(self);
+    }
+
+    fn resize(&mut self, size: SurfaceSize) {
+        SurfaceLifecycle::resize(self, size);
+    }
+
+    fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
+        FrameSink::render(self, frame)
+    }
+}
+
 impl OsdSink for SoftbufferRenderer {
     fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
         use nerust_render_traits::renderer::OsdLayer;
@@ -624,11 +665,17 @@ impl StripSink for SoftbufferRenderer {
     }
 }
 
-impl GpuRenderer for SoftbufferRenderer {
+impl ProfileSwitch for SoftbufferRenderer {
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
         self.render_profile = profile.clone();
         self.resize_lut();
         Ok(())
+    }
+}
+
+impl GpuRenderer for SoftbufferRenderer {
+    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
+        ProfileSwitch::update_render_profile(self, profile)
     }
 }
 
@@ -711,7 +758,10 @@ mod tests {
         // above all must not panic on the UI thread.
         let mut frame = FrameBuffer::with_capacity(240, 160, PixelFormat::Rgba);
         frame.resize(240, 160);
-        assert_eq!(renderer.render(&frame), RenderResult::Skipped);
+        assert_eq!(
+            Present::render(&mut renderer, &frame),
+            RenderResult::Skipped
+        );
     }
 
     #[test]
@@ -720,7 +770,10 @@ mod tests {
         let mut renderer = SoftbufferRenderer::new(&test_profile());
         let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
         frame.resize(256, 240);
-        assert_eq!(renderer.render(&frame), RenderResult::Skipped);
+        assert_eq!(
+            Present::render(&mut renderer, &frame),
+            RenderResult::Skipped
+        );
     }
 
     #[test]
@@ -890,7 +943,10 @@ mod tests {
         // No surface attached: must skip even with a valid tap key.
         let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
         frame.resize(256, 240);
-        assert_eq!(renderer.render(&frame), RenderResult::Skipped);
+        assert_eq!(
+            Present::render(&mut renderer, &frame),
+            RenderResult::Skipped
+        );
     }
 
     #[test]
@@ -969,5 +1025,19 @@ mod tests {
         let indexer = PixelIndexer::Rgba { src: &short };
         assert_eq!(indexer.pixel(0), [0, 0, 0, 255]);
         assert_eq!(indexer.pixel(99), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn lifecycle_split_seams_are_object_safe() {
+        use nerust_render_traits::renderer::{
+            FrameSink, GpuRenderer, Present, ProfileSwitch, SurfaceLifecycle,
+        };
+        fn assert_seams<T: SurfaceLifecycle + FrameSink + ProfileSwitch + Present + GpuRenderer>() {
+        }
+        assert_seams::<SoftbufferRenderer>();
+        // Split seams compose as trait objects for lifecycle-only callers.
+        fn lifecycle_only(_: &mut dyn SurfaceLifecycle) {}
+        fn sink_only(_: &mut dyn FrameSink) {}
+        let _ = (lifecycle_only, sink_only);
     }
 }

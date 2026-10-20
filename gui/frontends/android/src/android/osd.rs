@@ -39,6 +39,7 @@ pub(super) struct AndroidOsd {
     last_strip: ReservedStrip,
     last_system_size: SurfaceSize,
     last_system_scale_key: u32,
+    last_pushed: Option<[i32; 4]>,
     last_system: SafeInsets,
 }
 
@@ -65,6 +66,7 @@ impl AndroidOsd {
             last_strip: ReservedStrip::default(),
             last_system_size: SurfaceSize::new(0, 0),
             last_system_scale_key: u32::MAX,
+            last_pushed: None,
             last_system: SafeInsets::default(),
         }
     }
@@ -88,6 +90,7 @@ impl AndroidOsd {
     pub(super) fn invalidate_system_insets(&mut self) {
         self.last_system_size = SurfaceSize::new(0, 0);
         self.last_system_scale_key = u32::MAX;
+        self.last_pushed = None;
     }
 
     // Frontend-owned modal flow lives in `DialogCoordinator`; `with_modal`
@@ -176,9 +179,15 @@ impl AndroidOsd {
         scale: f32,
     ) -> SafeInsets {
         let scale_key = crate::density::density_key(scale);
-        if size != self.last_system_size || scale_key != self.last_system_scale_key {
+        // Push-gated: a changed Kotlin push refreshes without a blind invalidate.
+        let pushed = super::bridge::cached_system_insets();
+        if size != self.last_system_size
+            || scale_key != self.last_system_scale_key
+            || pushed != self.last_pushed
+        {
             self.last_system_size = size;
             self.last_system_scale_key = scale_key;
+            self.last_pushed = pushed;
             self.last_system = Self::cached_or_queried(app);
         }
         self.last_system

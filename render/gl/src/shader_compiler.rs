@@ -1,5 +1,5 @@
 //! Game-pipeline shader compilation: pure candidate assembly plus the link step.
-//! [`super::view::GlView`] coordinates uploads through the returned program.
+//! Compiles the GL shader sources with an optional preamble.
 
 use nerust_glwrap::Shader;
 

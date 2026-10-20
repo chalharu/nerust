@@ -369,27 +369,57 @@ impl AndroidFrontend {
                 log::info!("handle_picker_result: picker returned URI; fetching off-thread");
                 // Document/SAF I/O blocks: fetch on a worker thread and
                 // dispatch the completed buffer when it publishes RomBytes.
-                picker::spawn_document_fetch(self.app.clone(), uri);
+                picker::spawn_document_fetch(self.app.clone(), uri, false);
             }
             RomPickerResult::RomBytes {
                 uri,
                 file_name,
                 bytes,
                 digest,
+                restore_hidden_state,
             } => {
                 log::info!(
                     "handle_picker_result: worker delivered {} bytes for {uri}",
                     bytes.len()
                 );
-                if let Err(error) =
-                    self.open_rom_from_bytes(event_loop, &uri, &file_name, bytes, digest)
-                {
+                if let Err(error) = self.open_rom_from_bytes(
+                    event_loop,
+                    &uri,
+                    &file_name,
+                    bytes,
+                    digest,
+                    restore_hidden_state,
+                ) {
                     log::error!("{error}");
                     self.session.report_external_error(
                         nerust_gui_shell::session::notification::FailureOrigin::Picker,
                         error,
                     );
                 }
+            }
+            RomPickerResult::LibraryBytes { id, bytes, digest } => {
+                log::info!(
+                    "handle_picker_result: worker delivered {} bytes for library id={id}",
+                    bytes.len()
+                );
+                if let Err(error) = self.open_library_from_bytes(event_loop, &id, bytes, digest) {
+                    log::error!("{error}");
+                    self.discard_restore_state();
+                }
+            }
+            RomPickerResult::RestoreDocumentFailed(error) => {
+                log::warn!("handle_picker_result: lifecycle document fetch failed: {error}");
+                self.session.report_external_error(
+                    nerust_gui_shell::session::notification::FailureOrigin::Restore,
+                    "Previous ROM is unavailable; open it again".to_string(),
+                );
+                log::info!(
+                    "handle_picker_result: preserving hidden state until the ROM URI is reconnected"
+                );
+            }
+            RomPickerResult::RestoreLibraryFailed(error) => {
+                log::warn!("handle_picker_result: lifecycle library fetch failed: {error}");
+                self.discard_restore_state();
             }
             RomPickerResult::Failed(error) => {
                 log::error!("{error}");
@@ -423,9 +453,6 @@ impl AndroidFrontend {
                 log::info!("handle_picker_result: picker dismissed");
             }
         }
-        // Transient UI summons IME and system bars: the cached insets
-        // key (size+density) cannot see those, so re-query next frame.
-        self.osd.invalidate_system_insets();
     }
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult, tick: TickMetrics) {
@@ -464,10 +491,14 @@ impl AndroidFrontend {
             return;
         };
         log::info!("handle_settings_result: applying Android settings");
-        let mut current = AndroidSettings::from_snapshot(
-            self.session.settings_snapshot(),
-            self.session.registry(),
-        );
+        // Thread the dialog cache instead of rebuilding from the
+        // snapshot; refresh paths keep it current.
+        let mut current = settings::cloned_cached_settings().unwrap_or_else(|| {
+            AndroidSettings::from_snapshot(
+                self.session.settings_snapshot(),
+                self.session.registry(),
+            )
+        });
         current.prioritize_system(self.session.active_system_id());
         // Pure plan step; the frontend only executes the outcome.
         let plan = SettingsApplier::plan(
@@ -599,10 +630,12 @@ impl AndroidFrontend {
     }
 
     fn request_settings_dialog(&mut self) {
-        let mut current = AndroidSettings::from_snapshot(
-            self.session.settings_snapshot(),
-            self.session.registry(),
-        );
+        let mut current = settings::cloned_cached_settings().unwrap_or_else(|| {
+            AndroidSettings::from_snapshot(
+                self.session.settings_snapshot(),
+                self.session.registry(),
+            )
+        });
         current.prioritize_system(self.session.active_system_id());
         match settings::request_show_settings_dialog(&self.app, &current) {
             Ok(true) => {}
@@ -948,8 +981,6 @@ impl ApplicationHandler for AndroidFrontend {
         }
         if let Some(result) = settings::take_result() {
             self.handle_settings_result(result, tick);
-            // Same transient-UI reason as the picker path above.
-            self.osd.invalidate_system_insets();
         }
         bridge::take_events_into(&mut self.event_scratch);
         // Two-lane queue, no sort: priority acks (dialog dismissals)

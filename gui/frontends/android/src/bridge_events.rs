@@ -42,6 +42,58 @@ pub(crate) const ACTION_SAVE_STATE: &str = "save_state";
 pub(crate) const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
 pub(crate) const ACTION_UNLOAD: &str = "unload";
 
+/// Canonical controller key table: the single source for the decoder, the JSON schema enum, and the
+/// Kotlin `KEY_*` constants. A new key fails loudly in all three pins, never as a silent drop.
+pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, AbstractKey)] = &[
+    ("button1", AbstractKey::Button1),
+    ("button2", AbstractKey::Button2),
+    ("button5", AbstractKey::Button5),
+    ("button6", AbstractKey::Button6),
+    ("start", AbstractKey::Start),
+    ("select", AbstractKey::Select),
+    ("up", AbstractKey::DpadUp),
+    ("down", AbstractKey::DpadDown),
+    ("left", AbstractKey::DpadLeft),
+    ("right", AbstractKey::DpadRight),
+];
+
+/// Canonical settings section ids in payload order; Rust owns the
+/// id→label mapping and pushes the label per section.
+pub(crate) const SETTINGS_SECTION_IDS: &[&str] = &[
+    "audio",
+    "video",
+    "controls",
+    "storage",
+    "notifications",
+    "system.nes",
+    "system.gbc",
+    "system.gba",
+];
+
+/// Canonical section id→label table, owned by Rust and pushed per
+/// section; Kotlin renders the pushed label and keeps its map as fallback.
+pub(crate) fn section_label(id: &str) -> String {
+    match id {
+        "audio" => "Audio".to_string(),
+        "video" => "Video".to_string(),
+        "controls" => "Controls".to_string(),
+        "storage" => "Storage".to_string(),
+        "notifications" => "Notifications".to_string(),
+        "general" => "General".to_string(),
+        "system.nes" => "Nintendo Entertainment System".to_string(),
+        "system.gbc" => "Game Boy Color".to_string(),
+        "system.gba" => "Game Boy Advance".to_string(),
+        other => {
+            let base = other.rsplit('.').next().unwrap_or(other).replace('_', " ");
+            let mut chars = base.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        }
+    }
+}
+
 /// Versioned bridge event envelope: v1 JSON only; anything else is `None`.
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -119,21 +171,13 @@ fn decode_json_menu_action(
 }
 
 fn decode_controller_parts(device_id: i32, key: &str, pressed: bool) -> Option<MenuAction> {
-    let key = match key {
-        "button1" => AbstractKey::Button1,
-        "button2" => AbstractKey::Button2,
-        "button5" => AbstractKey::Button5,
-        "button6" => AbstractKey::Button6,
-        "start" => AbstractKey::Start,
-        "select" => AbstractKey::Select,
-        "up" => AbstractKey::DpadUp,
-        "down" => AbstractKey::DpadDown,
-        "left" => AbstractKey::DpadLeft,
-        "right" => AbstractKey::DpadRight,
-        unknown => {
-            log::warn!("ignoring unknown Android controller key: {unknown}");
-            return None;
-        }
+    let Some(key) = CONTROLLER_KEY_TABLE
+        .iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, key)| *key)
+    else {
+        log::warn!("ignoring unknown Android controller key: {key}");
+        return None;
     };
     Some(MenuAction::ControllerInput {
         device_id,
@@ -270,5 +314,63 @@ mod tests {
         ] {
             assert!(names.contains(&action), "schema is missing action {action}");
         }
+    }
+
+    /// Key parity: the decoder table and the schema key enum list
+    /// exactly the same keys; Kotlin `KEY_*` pins the same set in CI.
+    #[test]
+    fn controller_key_table_matches_schema() {
+        use super::{CONTROLLER_KEY_TABLE, decode_frontend_event};
+        let doc: serde_json::Value = serde_json::from_str(include_str!("../bridge_events.v1.json"))
+            .expect("bridge schema must parse");
+        let keys = doc["definitions"]["menuEvent"]["properties"]["key"]["enum"]
+            .as_array()
+            .expect("key enum must list every controller key");
+        let schema_keys: Vec<&str> = keys
+            .iter()
+            .map(|value| value.as_str().expect("key enum entries are strings"))
+            .collect();
+        assert_eq!(schema_keys.len(), CONTROLLER_KEY_TABLE.len());
+        for (name, key) in CONTROLLER_KEY_TABLE {
+            assert!(
+                schema_keys.contains(name),
+                "schema is missing controller key {name}"
+            );
+            let raw = format!(
+                r#"{{"v":1,"type":"menu","action":"controller","device_id":3,"key":"{name}","pressed":true}}"#
+            );
+            assert_eq!(
+                decode_frontend_event(&raw),
+                Some(FrontendEvent::Menu(MenuAction::ControllerInput {
+                    device_id: 3,
+                    key: *key,
+                    pressed: true,
+                })),
+                "key {name} must round-trip"
+            );
+        }
+        assert_eq!(
+            decode_frontend_event(
+                r#"{"v":1,"type":"menu","action":"controller","device_id":3,"key":"mystery","pressed":true}"#
+            ),
+            None
+        );
+    }
+
+    /// Section taxonomy: ids stay unique and every id owns a label.
+    /// Kotlin renders the pushed label; its map is a fallback only.
+    #[test]
+    fn section_ids_own_labels() {
+        use super::{SETTINGS_SECTION_IDS, section_label};
+        let mut seen = std::collections::BTreeSet::new();
+        for id in SETTINGS_SECTION_IDS {
+            assert!(seen.insert(*id), "duplicate section id {id}");
+            assert!(!section_label(id).is_empty(), "section {id} needs a label");
+        }
+        assert_eq!(section_label("audio"), "Audio");
+        assert_eq!(section_label("notifications"), "Notifications");
+        assert_eq!(section_label("system.gbc"), "Game Boy Color");
+        assert_eq!(section_label("system.unknown"), "Unknown");
+        assert_eq!(section_label("foo_bar"), "Foo bar");
     }
 }

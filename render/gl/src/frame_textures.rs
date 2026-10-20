@@ -1,8 +1,9 @@
 //! Frame texture domain: allocation-free initial uploads plus the NTSC kernel path.
-//! This module owns the TexImage calls; [`super::view::GlView`] coordinates.
+//! This module owns the TexImage calls; the renderer coordinates the views.
 
 use gl::types::{GLenum, GLint};
 use nerust_glwrap::raw::{active_texture, bind_texture, tex_image_2d, tex_parameteri};
+use nerust_render_traits::{renderer::StagingBuf, rgb::RgbaWord};
 
 use crate::error::ViewError;
 
@@ -74,12 +75,12 @@ pub(crate) fn allocate_texture_store(
 }
 
 /// NTSC kernel texture (RGBA8) upload path: verbatim big-endian byte copy.
-/// Pure pack step, no GL; returns `(actual_height, need)`.
+/// Pure pack step through [`RgbaWord`]; returns `(actual_height, need)`.
 pub(crate) fn pack_ntsc_bytes(
     width: usize,
     height: usize,
     be_data: &[u8],
-    scratch: &mut Vec<u8>,
+    scratch: &mut StagingBuf,
 ) -> Result<(usize, usize), ViewError> {
     // Row stride, then total bytes: each step checked so a corrupt
     // kernel header refuses instead of wrapping the scratch.
@@ -95,18 +96,15 @@ pub(crate) fn pack_ntsc_bytes(
             have: be_data.len(),
         },
     ))?;
-    if scratch.len() < need {
-        scratch.resize(need, 0);
-    }
-    let rgba = &mut scratch[..need];
+    let rgba = scratch.staging(need);
     for row in 0..actual_height {
         for col in 0..width {
             let offset = (row * width + col) * 4;
-            if offset + 4 <= be_data.len() {
-                rgba[offset..offset + 4].copy_from_slice(&be_data[offset..offset + 4]);
-            } else {
-                rgba[offset..offset + 4].copy_from_slice(&[0, 0, 0, 0]);
-            }
+            let word = match be_data.get(offset..offset + 4) {
+                Some(bytes) => RgbaWord::from_bytes_be(bytes.try_into().expect("4-byte word")),
+                None => RgbaWord::from_rgba(0, 0, 0, 0),
+            };
+            rgba[offset..offset + 4].copy_from_slice(&word.to_bytes_be());
         }
     }
     Ok((actual_height, need))
@@ -118,7 +116,7 @@ pub(crate) fn configure_ntsc_texture(
     width: usize,
     height: usize,
     be_data: &[u8],
-    scratch: &mut Vec<u8>,
+    scratch: &mut StagingBuf,
 ) -> Result<(), ViewError> {
     let (actual_height, need) = pack_ntsc_bytes(width, height, be_data, scratch)?;
     upload_texture_bytes(
@@ -128,7 +126,7 @@ pub(crate) fn configure_ntsc_texture(
         actual_height,
         gl::RGBA as GLint,
         gl::RGBA,
-        &scratch[..need],
+        &scratch.staging(need)[..need],
     )?;
     Ok(())
 }
@@ -161,18 +159,19 @@ pub(crate) fn upload_texture_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::pack_ntsc_bytes;
+    use super::{StagingBuf, pack_ntsc_bytes};
 
     #[test]
     fn ntsc_pack_copies_bytes_verbatim_with_zero_pad() {
         // Three full words: verbatim copy, tail zero-padded. A short
         // trailing partial word never copies (offset guard).
         let be: Vec<u8> = (1u8..=12).collect();
-        let mut scratch = Vec::new();
+        let mut scratch = StagingBuf::new();
         let (height, need) = pack_ntsc_bytes(2, 2, &be, &mut scratch).unwrap();
         assert_eq!((height, need), (2, 16));
-        assert_eq!(&scratch[..12], &(1u8..=12).collect::<Vec<_>>()[..]);
-        assert_eq!(&scratch[12..16], &[0, 0, 0, 0]);
+        let staged = scratch.staging(need);
+        assert_eq!(&staged[..12], &(1u8..=12).collect::<Vec<_>>()[..]);
+        assert_eq!(&staged[12..16], &[0, 0, 0, 0]);
     }
 
     #[test]
@@ -182,17 +181,32 @@ mod tests {
         let word = u32::from_be_bytes([0x11, 0x22, 0x33, 0x44]);
         assert_eq!(word.to_be_bytes(), [0x11, 0x22, 0x33, 0x44]);
         let be = word.to_be_bytes();
-        let mut scratch = Vec::new();
+        let mut scratch = StagingBuf::new();
         let (_, need) = pack_ntsc_bytes(1, 1, &be, &mut scratch).unwrap();
         assert_eq!(need, 4);
-        assert_eq!(&scratch[..need], &be);
-        assert_eq!(u32::from_be_bytes(scratch[..4].try_into().unwrap()), word);
+        assert_eq!(&scratch.staging(need)[..need], &be);
+        assert_eq!(
+            u32::from_be_bytes(scratch.staging(need)[..4].try_into().unwrap()),
+            word
+        );
     }
 
     #[test]
     fn ntsc_pack_rejects_overflow() {
-        let mut scratch = Vec::new();
+        let mut scratch = StagingBuf::new();
         let err = pack_ntsc_bytes(usize::MAX, usize::MAX, &[0; 4], &mut scratch).unwrap_err();
         assert!(err.to_string().contains("overflow"));
+    }
+
+    #[test]
+    fn ntsc_pack_routes_words_through_rgba_word() {
+        // Big-endian words decode to RGBA channels; the packed scratch
+        // holds the same bytes the CPU indexer reads.
+        use nerust_render_traits::rgb::RgbaWord;
+        let be = [0x11u8, 0x22, 0x33, 0x44];
+        let mut scratch = StagingBuf::new();
+        let (_, need) = pack_ntsc_bytes(1, 1, &be, &mut scratch).unwrap();
+        let staged: [u8; 4] = scratch.staging(need)[..4].try_into().unwrap();
+        assert_eq!(RgbaWord::from_bytes_be(staged).as_u32(), 0x1122_3344);
     }
 }

@@ -121,7 +121,7 @@ impl Program for PpuProgram {
         let bridge = &state.bridge;
         match message {
             PpuMessage::Hovered(line) => {
-                *lock_recovered(&bridge.ppu_hover) = line.clone();
+                bridge.write().ppu_hover = line.clone();
                 let current = Arc::clone(&lock_recovered(&state.snapshot));
                 // Hover swaps only the hover line; the scaled `Arc` is cloned.
                 *lock_recovered(&state.snapshot) = Arc::new(PpuSnapshot {
@@ -136,11 +136,11 @@ impl Program for PpuProgram {
                 // Clone the source under the lock, then scale lock-free:
                 // the 2x derivation must never hold the display guard.
                 let (images, generation, panels) = {
-                    let display = lock_recovered(&bridge.display);
+                    let state = bridge.read();
                     (
-                        display.images.clone(),
-                        display.images_gen,
-                        nerust_gui_viewmodel::debugger::format_panels(&display.panels),
+                        state.display.images.clone(),
+                        state.display.images_gen,
+                        nerust_gui_viewmodel::debugger::format_panels(&state.display.panels),
                     )
                 };
                 let current = Arc::clone(&lock_recovered(&state.snapshot));
@@ -182,19 +182,19 @@ impl Program for PpuProgram {
         use nerust_settings_core::i18n::{UiText, text as ui_text};
         // Single coherent capture: one lock, one `Arc`; scaled bytes
         // come from the Sync cache, never re-derived here.
-        let language = state.bridge.language;
+        let language = state.bridge.language();
         let snapshot = Arc::clone(&lock_recovered(&state.snapshot));
-        // Borrow the scaled `Arc` (handles clone per row, cheap Arc);
-        // cold text copies out as owned strings for the widgets.
+        // Borrow the scaled `Arc` (handles clone per row, cheap Arc). Cold text borrows first:
+        // owned copies materialize only for shown sections, never for hidden or empty ones.
         let scaled = &snapshot.scaled;
-        let panels = snapshot.panels.to_string();
-        let hover = snapshot.hover.to_string();
+        let hover_text: &Arc<str> = &snapshot.hover;
+        let panels_text: &Arc<str> = &snapshot.panels;
         let mut content = column![
             text(ui_text(language, UiText::PpuViewer)).size(18),
-            text(if hover.is_empty() {
+            text(if hover_text.is_empty() {
                 ui_text(language, UiText::HoverTile).to_string()
             } else {
-                hover
+                hover_text.to_string()
             })
             .size(14)
             .width(Length::Fill),
@@ -224,9 +224,13 @@ impl Program for PpuProgram {
         }
         // Systems without observation tables (GBA/GBC) show no
         // Panels section at all instead of a puzzling marker.
-        if nerust_gui_viewmodel::debugger::panels_visible(&panels) {
+        if nerust_gui_viewmodel::debugger::panels_visible(panels_text) {
             content = content.push(text(ui_text(language, UiText::Panels)).size(16));
-            content = content.push(text(panels).size(14).font(iced::Font::MONOSPACE));
+            content = content.push(
+                text(panels_text.to_string())
+                    .size(14)
+                    .font(iced::Font::MONOSPACE),
+            );
         }
         scrollable(content)
             .width(Length::Fill)
@@ -247,7 +251,7 @@ impl PpuWindowHandle {
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
         use nerust_settings_core::i18n::{UiText, text as ui_text};
-        let language = bridge.language;
+        let language = bridge.language();
         let title = ui_text(language, UiText::PpuViewer).to_string();
         let surface = AuxSurface::open(
             event_loop,
@@ -299,6 +303,11 @@ impl AuxShellRef for PpuWindowHandle {
     }
 }
 
+impl super::registry::DebugDrainPort for PpuWindowHandle {}
+impl super::registry::LiveImagesPort for PpuWindowHandle {}
+impl super::registry::SettingsClosePort for PpuWindowHandle {}
+impl super::registry::HistorySyncPort for PpuWindowHandle {}
+impl super::registry::BridgeSharePort for PpuWindowHandle {}
 impl AuxController for PpuWindowHandle {
     fn sync_view(&mut self) {
         self.sync_from_bridge();

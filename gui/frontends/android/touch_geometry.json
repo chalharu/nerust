@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "nerust Android touch geometry fractions v1",
-  "description": "Informational record of the touch-overlay fractions owned by Rust (gui/frontends/android/src/android/touch_layout.rs). Kotlin draws pushed zones only and keeps no copy; nothing parses this file. Kept so reviewers can compare the pushed geometry against a readable reference.",
+  "description": "Informational record of the touch-overlay fractions owned by Rust (gui/frontends/android/src/android/touch_layout.rs). Kotlin draws pushed zones only and keeps no copy; geometry_fractions_match_canonical_json pins every fraction.",
   "portrait_control_top": 0.54,
   "dpad_size_of_base": 0.28,
   "dpad_radius_of_size": 0.42,

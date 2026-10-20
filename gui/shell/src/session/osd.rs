@@ -8,7 +8,8 @@ use nerust_settings_core::model::language::AppLanguage;
 use super::notification::UiNotification;
 
 pub use super::osd_history::{
-    HistoryLine, format_datetime, format_time, history_lines, level_label, level_name, level_tag,
+    HistoryLine, format_datetime, format_datetime_with_offset, format_time, history_lines,
+    level_label, level_name, level_tag,
 };
 
 pub use crate::session::osd_modal::{ModalSink, ModalSource};
@@ -81,11 +82,13 @@ impl OsdManager {
                 }
                 ModalRoute::Transient => {}
             }
-            let base: std::rc::Rc<str> = n.kind.text(language).into();
+            let renderer = super::notification::NotificationRenderer { language };
+            let base: std::rc::Rc<str> = renderer.render(&n.kind).into();
             let item = OsdItem {
                 row: counted_row(&base, n.count, policy.color(n.level), level_tag(n.level)),
                 level: n.level,
-                key: base,
+                message: n.kind.message(),
+                base,
                 count: n.count,
                 duration: policy.duration(n.level),
                 deadline: now + policy.duration(n.level),

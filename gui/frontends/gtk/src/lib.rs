@@ -10,7 +10,7 @@ mod surface;
 pub(crate) mod test_support;
 mod window;
 
-use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
+use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use gtk::{
     gio, glib,
@@ -46,6 +46,27 @@ pub(crate) struct State {
     session: SessionHandle,
     ctx: FrontendContext,
     renderer_reload_pending: bool,
+    snapshot_cache: SnapshotCache,
+}
+
+/// Eq-gated snapshot share: clones the session snapshot only when it
+/// changed since the last frame; steady frames reuse one `Arc`.
+#[derive(Debug, Default)]
+pub(crate) struct SnapshotCache {
+    last: Option<Arc<SettingsSnapshot>>,
+}
+
+impl SnapshotCache {
+    pub(crate) fn get(&mut self, current: &SettingsSnapshot) -> Arc<SettingsSnapshot> {
+        if let Some(last) = &self.last
+            && last.as_ref() == current
+        {
+            return Arc::clone(last);
+        }
+        let fresh = Arc::new(current.clone());
+        self.last = Some(Arc::clone(&fresh));
+        fresh
+    }
 }
 
 impl State {
@@ -72,6 +93,7 @@ impl State {
             session,
             ctx,
             renderer_reload_pending: false,
+            snapshot_cache: SnapshotCache::default(),
         }
     }
 
@@ -253,6 +275,17 @@ impl State {
 
     pub(crate) fn settings_snapshot(&self) -> &SettingsSnapshot {
         self.session.settings_snapshot()
+    }
+
+    /// Eq-gated snapshot share for per-frame readers: steady frames skip
+    /// the full-snapshot clone behind one `Arc`.
+    pub(crate) fn settings_arc(&mut self) -> Arc<SettingsSnapshot> {
+        let Self {
+            session,
+            snapshot_cache,
+            ..
+        } = self;
+        snapshot_cache.get(session.settings_snapshot())
     }
 }
 
@@ -566,5 +599,43 @@ mod tests {
         assert!(labels.iter().any(|label| label == "Save Active Slot (F2)"));
         assert!(labels.iter().any(|label| label == "Open Debugger"));
         assert!(!labels.iter().any(|label| label.contains("(F4)")));
+    }
+
+    fn test_snapshot() -> SettingsSnapshot {
+        SettingsSnapshot {
+            shared: nerust_settings_core::model::shared::DesktopSharedSettings::default(),
+            local: nerust_settings_core::model::local::HostBackendLocalSettings::default(),
+            app_state: nerust_settings_core::model::app_state::DesktopAppState::default(),
+        }
+    }
+
+    #[test]
+    fn snapshot_cache_reuses_arc_on_steady_frames() {
+        let mut cache = SnapshotCache::default();
+        let snapshot = test_snapshot();
+        let first = cache.get(&snapshot);
+        let second = cache.get(&snapshot);
+        // Generation gate: no clone, same allocation shared.
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+        assert_eq!(std::sync::Arc::strong_count(&first), 3);
+    }
+
+    #[test]
+    fn snapshot_cache_reclones_on_change() {
+        let mut cache = SnapshotCache::default();
+        let snapshot = test_snapshot();
+        let first = cache.get(&snapshot);
+        let mut changed = snapshot.clone();
+        // Force a real change through the notification toggle.
+        changed.local.notifications.status_enabled = !snapshot.local.notifications.status_enabled;
+        let second = cache.get(&changed);
+        assert!(!std::sync::Arc::ptr_eq(&first, &second));
+        assert_eq!(
+            second.local.notifications.status_enabled,
+            changed.local.notifications.status_enabled
+        );
+        // Steady again: gate re-arms on the new generation.
+        let third = cache.get(&changed);
+        assert!(std::sync::Arc::ptr_eq(&second, &third));
     }
 }

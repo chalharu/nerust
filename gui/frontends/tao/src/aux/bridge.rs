@@ -1,8 +1,8 @@
 //! Shared bridge between the iced programs and the host drain.
-//! Lock order: `nav` before `display` before small field mutexes.
+//! One `RwLock` over the whole state: readers share, writers exclude.
 
 use std::sync::{
-    Mutex, MutexGuard,
+    Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -16,6 +16,22 @@ use nerust_settings_core::model::language::AppLanguage;
 pub(crate) fn lock_recovered<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| {
         log::warn!("mutex recovered after poisoning; state may be stale");
+        e.into_inner()
+    })
+}
+
+/// Poison-safe read lock over the bridge state.
+fn read_recovered(m: &RwLock<BridgeState>) -> RwLockReadGuard<'_, BridgeState> {
+    m.read().unwrap_or_else(|e| {
+        log::warn!("bridge read recovered after poisoning; state may be stale");
+        e.into_inner()
+    })
+}
+
+/// Poison-safe write lock over the bridge state.
+fn write_recovered(m: &RwLock<BridgeState>) -> RwLockWriteGuard<'_, BridgeState> {
+    m.write().unwrap_or_else(|e| {
+        log::warn!("bridge write recovered after poisoning; state may be stale");
         e.into_inner()
     })
 }
@@ -34,26 +50,35 @@ pub(crate) struct DrainSnapshot {
     pub ppu_open: bool,
 }
 
-pub(crate) struct DebugBridge {
-    pub(crate) nav: Mutex<NavState>,
-    pub(crate) display: Mutex<DisplayCache>,
-    pub(crate) spaces: Vec<(SpaceId, String, u32)>,
-    /// UI language snapshot at open time.
-    pub(crate) language: AppLanguage,
-    pub(crate) bookmarks: Mutex<Vec<(u32, String)>>,
-    pub(crate) bm_input: Mutex<String>,
-    pub(crate) watch: Mutex<Option<u32>>,
-    pub(crate) freeze: Mutex<Option<(u32, u8)>>,
-    pub(crate) freeze_input: Mutex<String>,
-    pub(crate) selected: Mutex<Option<(u32, Option<u8>)>>,
+/// All mutable bridge state under one lock: readers share it.
+pub(crate) struct BridgeState {
+    pub nav: NavState,
+    pub display: DisplayCache,
+    pub bookmarks: Vec<(u32, String)>,
+    pub bm_input: String,
+    pub watch: Option<u32>,
+    pub freeze: Option<(u32, u8)>,
+    pub freeze_input: String,
+    pub selected: Option<(u32, Option<u8>)>,
     /// New-value input for the two-phase write (Phase E).
-    pub(crate) edit_input: Mutex<String>,
+    pub edit_input: String,
     /// Register write target (kernel name) plus hex input. Mirrors
     /// the memory edit row: pick a register, type a value, Set.
-    pub(crate) reg_target: Mutex<Option<&'static str>>,
-    pub(crate) reg_input: Mutex<String>,
-    pub(crate) ppu_hover: Mutex<String>,
-    pub(crate) outbox: Mutex<Vec<DebugAction>>,
+    pub reg_target: Option<&'static str>,
+    pub reg_input: String,
+    pub ppu_hover: String,
+}
+
+/// Immutable bridge metadata: fixed at open time, lock-free.
+struct BridgeMeta {
+    spaces: Vec<(SpaceId, String, u32)>,
+    language: AppLanguage,
+}
+
+pub(crate) struct DebugBridge {
+    state: RwLock<BridgeState>,
+    meta: BridgeMeta,
+    outbox: Mutex<Vec<DebugAction>>,
     pub(crate) view_invalidated: AtomicBool,
     pub(crate) ppu_invalidated: AtomicBool,
     /// Toolbar PPU-viewer request: host-owned window, so the iced
@@ -69,20 +94,21 @@ impl DebugBridge {
         language: AppLanguage,
     ) -> Self {
         Self {
-            nav: Mutex::new(NavState::new(spaces.len(), mem_addr)),
-            display: Mutex::new(display),
-            spaces,
-            language,
-            bookmarks: Mutex::new(Vec::new()),
-            bm_input: Mutex::new(String::new()),
-            watch: Mutex::new(None),
-            freeze: Mutex::new(None),
-            freeze_input: Mutex::new(String::new()),
-            selected: Mutex::new(None),
-            edit_input: Mutex::new(String::new()),
-            reg_target: Mutex::new(None),
-            reg_input: Mutex::new(String::new()),
-            ppu_hover: Mutex::new(String::new()),
+            state: RwLock::new(BridgeState {
+                nav: NavState::new(spaces.len(), mem_addr),
+                display,
+                bookmarks: Vec::new(),
+                bm_input: String::new(),
+                watch: None,
+                freeze: None,
+                freeze_input: String::new(),
+                selected: None,
+                edit_input: String::new(),
+                reg_target: None,
+                reg_input: String::new(),
+                ppu_hover: String::new(),
+            }),
+            meta: BridgeMeta { spaces, language },
             outbox: Mutex::new(Vec::new()),
             view_invalidated: AtomicBool::new(false),
             ppu_invalidated: AtomicBool::new(false),
@@ -90,31 +116,42 @@ impl DebugBridge {
         }
     }
 
-    /// Lock nav-then-display in one place. Every dual access must
-    /// go through here so the order never inverts and deadlocks.
-    pub(crate) fn nav_display(&self) -> (MutexGuard<'_, NavState>, MutexGuard<'_, DisplayCache>) {
-        (lock_recovered(&self.nav), lock_recovered(&self.display))
+    /// Shared read access over the whole state.
+    pub(crate) fn read(&self) -> RwLockReadGuard<'_, BridgeState> {
+        read_recovered(&self.state)
     }
 
-    /// Narrow drain snapshot: one nav lock section, then one small field at a time.
+    /// Exclusive write access over the whole state.
+    pub(crate) fn write(&self) -> RwLockWriteGuard<'_, BridgeState> {
+        write_recovered(&self.state)
+    }
+
+    /// UI language snapshot at open time.
+    pub(crate) fn language(&self) -> AppLanguage {
+        self.meta.language
+    }
+
+    /// Address spaces for viewer creation.
+    pub(crate) fn spaces(&self) -> &[(SpaceId, String, u32)] {
+        &self.meta.spaces
+    }
+
+    /// Narrow drain snapshot: one shared read, then small field copies.
     pub(crate) fn drain_snapshot(&self, ppu_open: bool) -> DrainSnapshot {
-        let (space_idx, mem_addr, dis_addr) = {
-            let nav = lock_recovered(&self.nav);
-            (nav.space_idx(), nav.mem_addr(), nav.dis_addr())
-        };
-        let space = self.spaces.get(space_idx).map(|(id, _, _)| *id);
-        let prev: std::sync::Arc<[HexRow]> = lock_recovered(&self.display).dump_rows.clone().into();
-        let watch = *lock_recovered(&self.watch);
-        let freeze = *lock_recovered(&self.freeze);
-        let reg_target = *lock_recovered(&self.reg_target);
+        let state = self.read();
+        let space = self
+            .meta
+            .spaces
+            .get(state.nav.space_idx())
+            .map(|(id, _, _)| *id);
         DrainSnapshot {
             space,
-            mem_addr,
-            dis_addr,
-            watch,
-            freeze,
-            reg_target,
-            prev_rows: prev,
+            mem_addr: state.nav.mem_addr(),
+            dis_addr: state.nav.dis_addr(),
+            watch: state.watch,
+            freeze: state.freeze,
+            reg_target: state.reg_target,
+            prev_rows: state.display.dump_rows.clone().into(),
             ppu_open,
         }
     }
@@ -127,15 +164,15 @@ impl DebugBridge {
         images: Vec<(String, u32, u32, Vec<u8>)>,
         running: bool,
     ) -> bool {
-        let mut display = lock_recovered(&self.display);
-        if display.images_gen == generation {
+        let mut state = self.write();
+        if state.display.images_gen == generation {
             return false;
         }
-        display.images = images;
-        display.images_gen = generation;
+        state.display.images = images;
+        state.display.images_gen = generation;
         if running {
-            display.paused = false;
-            display.status = nerust_gui_viewmodel::debugger::StatusMessage::Running;
+            state.display.paused = false;
+            state.display.status = nerust_gui_viewmodel::debugger::StatusMessage::Running;
         }
         true
     }
@@ -146,33 +183,20 @@ impl DebugBridge {
         mut display: DisplayCache,
         reselected: Option<(u32, Option<u8>)>,
     ) {
+        let mut state = self.write();
         if let Some(selected) = reselected {
-            *lock_recovered(&self.selected) = Some(selected);
+            state.selected = Some(selected);
         }
-        {
-            let old = lock_recovered(&self.display).clone_without_images();
-            display.restore_paused_sections(&old);
-        }
-        *lock_recovered(&self.display) = display;
+        let old = state.display.clone_without_images();
+        display.restore_paused_sections(&old);
+        state.display = display;
     }
 
     /// Non-blocking contention audit: names of contended locks (empty when healthy).
     pub(crate) fn try_lock_audit(&self) -> Vec<&'static str> {
         let mut contended = Vec::new();
-        if self.nav.try_lock().is_err() {
-            contended.push("nav");
-        }
-        if self.display.try_lock().is_err() {
-            contended.push("display");
-        }
-        if self.watch.try_lock().is_err() {
-            contended.push("watch");
-        }
-        if self.freeze.try_lock().is_err() {
-            contended.push("freeze");
-        }
-        if self.selected.try_lock().is_err() {
-            contended.push("selected");
+        if self.state.try_read().is_err() {
+            contended.push("state");
         }
         if self.outbox.try_lock().is_err() {
             contended.push("outbox");
@@ -181,18 +205,27 @@ impl DebugBridge {
     }
 
     pub(crate) fn selected_name(&self) -> Option<String> {
-        let idx = lock_recovered(&self.nav).space_idx();
-        self.spaces.get(idx).map(|(_, name, _)| name.clone())
+        let state = self.read();
+        self.meta
+            .spaces
+            .get(state.nav.space_idx())
+            .map(|(_, name, _)| name.clone())
     }
 
     pub(crate) fn set_status(&self, status: String) {
         // Frontend-local wording only: drain outcomes never pass through here.
-        lock_recovered(&self.display).status = StatusMessage::Local(status);
+        self.write().display.status = StatusMessage::Local(status);
         self.view_invalidated.store(true, Ordering::Release);
     }
 
     pub(crate) fn take_requests(&self) -> Vec<DebugAction> {
         std::mem::take(&mut *lock_recovered(&self.outbox))
+    }
+
+    /// Queued request depth without draining (test read).
+    #[cfg(test)]
+    pub(crate) fn outbox_len(&self) -> usize {
+        lock_recovered(&self.outbox).len()
     }
 
     pub(crate) fn push(&self, request: DebugAction) {
@@ -203,17 +236,16 @@ impl DebugBridge {
     /// Displayed disassembly anchor: first visible line in follow-PC
     /// mode (the stored pin is stale there), else the pin.
     pub(crate) fn anchor(&self) -> u32 {
-        // Nav-then-display order via `nav_display`; never nest a
-        // display guard under a nav guard elsewhere.
-        let (nav, display) = self.nav_display();
-        if nav.follow_pc() {
-            display
+        let state = self.read();
+        if state.nav.follow_pc() {
+            state
+                .display
                 .disasm_lines
                 .first()
                 .map(|line| line.addr)
                 .unwrap_or(0)
         } else {
-            nav.dis_addr().unwrap_or(0)
+            state.nav.dis_addr().unwrap_or(0)
         }
     }
 }
@@ -252,6 +284,22 @@ mod tests {
     }
 
     #[test]
+    fn single_lock_covers_all_state() {
+        let bridge = test_bridge();
+        // One shared read sees nav, display, and inputs coherently.
+        let state = bridge.read();
+        assert!(state.bookmarks.is_empty());
+        assert!(state.watch.is_none());
+        drop(state);
+        // One exclusive write mutates several fields atomically.
+        let mut state = bridge.write();
+        state.watch = Some(0x100);
+        state.bm_input = "mark".to_string();
+        drop(state);
+        assert_eq!(bridge.read().watch, Some(0x100));
+    }
+
+    #[test]
     fn try_lock_audit_is_empty_when_uncontended() {
         let bridge = test_bridge();
         assert!(bridge.try_lock_audit().is_empty());
@@ -276,6 +324,17 @@ mod tests {
     }
 
     #[test]
+    fn state_recovers_value_after_poison() {
+        let bridge = test_bridge();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = bridge.state.write().unwrap();
+            panic!("intentional poison");
+        }));
+        assert!(bridge.state.is_poisoned());
+        assert!(bridge.read().bookmarks.is_empty());
+    }
+
+    #[test]
     fn outbox_push_and_take_round_trip() {
         let bridge = test_bridge();
         assert!(bridge.take_requests().is_empty());
@@ -292,7 +351,7 @@ mod tests {
         let bridge = test_bridge();
         bridge.set_status("parse failed: zz".to_string());
         assert!(matches!(
-            lock_recovered(&bridge.display).status,
+            bridge.read().display.status,
             StatusMessage::Local(_)
         ));
         assert!(bridge.view_invalidated.load(Ordering::Acquire));
@@ -322,7 +381,7 @@ mod tests {
         let bridge = DebugBridge::new(display, vec![], 0, AppLanguage::English);
         // Pinning an address leaves follow mode: the stored pin wins
         // over the first visible line.
-        lock_recovered(&bridge.nav).navigate(0x1234, 0x0300);
+        bridge.write().nav.navigate(0x1234, 0x0300);
         assert_eq!(bridge.anchor(), 0x0300);
     }
 
@@ -341,7 +400,7 @@ mod tests {
             ..DisplayCache::default()
         };
         let bridge = DebugBridge::new(display, vec![], 0, AppLanguage::English);
-        lock_recovered(&bridge.nav).follow();
+        bridge.write().nav.follow();
         assert_eq!(bridge.anchor(), 0x0800_27D2);
     }
 }

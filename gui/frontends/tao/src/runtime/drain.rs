@@ -6,6 +6,7 @@ use std::time::Instant;
 use nerust_gui_shell::{debug::DebugDrainOutput, session::LiveImages};
 use nerust_gui_viewmodel::debugger as debug_vm;
 
+use super::host::services::{ChromeService, DebugOrchestratorService};
 use super::host::{HostState, WakeNeed};
 use crate::aux::focus::AuxKind;
 use crate::aux::registry::debug_spaces;
@@ -95,7 +96,7 @@ impl HostState {
     /// Closing never resumes; `focus_ppu` opens-or-focuses the viewer.
     pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         use nerust_gui_shell::debug::DebugAction;
-        if !self.is_debug_open() {
+        if !DebugOrchestratorService::is_aux_open(self, AuxKind::Debug) {
             let spaces = debug_spaces(self.session());
             if spaces.is_empty() {
                 log::warn!("debugger: no spaces (no core)");
@@ -103,15 +104,19 @@ impl HostState {
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
             let position = self.debug_window_pos();
             let language = self.session().settings_snapshot().shared.general.language;
-            match opener.create_debug(
-                debug_vm::DisplayCache::default(),
-                spaces,
-                mem_addr,
-                language,
-                position,
+            match opener.create_aux(
+                AuxKind::Debug,
+                crate::ports::AuxOpenParams::Debug {
+                    display: debug_vm::DisplayCache::default(),
+                    spaces,
+                    mem_addr,
+                    language,
+                    position,
+                },
             ) {
                 Some(handle) => {
-                    self.set_debug_window(handle);
+                    let id = self.aux.insert(handle);
+                    debug_assert_eq!(self.aux.route_id(AuxKind::Debug), Some(id));
                     self.run_debug_drain(&[DebugAction::Pause, DebugAction::Refresh]);
                 }
                 None => log::error!("failed to open debugger window"),
@@ -120,9 +125,13 @@ impl HostState {
         if focus_ppu && !self.is_ppu_open() {
             if let Some(bridge) = self.debug_bridge_for_ppu() {
                 let position = self.ppu_window_pos();
-                match opener.create_ppu(&bridge, position) {
+                match opener.create_aux(
+                    AuxKind::Ppu,
+                    crate::ports::AuxOpenParams::Ppu { bridge, position },
+                ) {
                     Some(handle) => {
-                        self.set_ppu_window(handle);
+                        let id = self.aux.insert(handle);
+                        debug_assert_eq!(self.aux.route_id(AuxKind::Ppu), Some(id));
                         // Populate the image cache immediately: the viewer derives on Sync.
                         self.aux.ppu_sync();
                         // The viewer is open now, so re-read with images:
@@ -142,7 +151,7 @@ impl HostState {
     /// Drain debugger requests and push one batched snapshot back.
     pub(crate) fn drain_debug_requests(&mut self) {
         self.poll_debug_flight();
-        let Some((open_ppu, requests)) = self.take_debug_batch() else {
+        let Some((open_ppu, requests)) = DebugOrchestratorService::take_debug_batch(self) else {
             return;
         };
         if open_ppu {
@@ -218,8 +227,7 @@ impl HostState {
         self.aux.debug_apply(display, reselected);
         // The drain is the single pause-truth agreement point: menu and title sync here.
         let ctx = self.frame_ctx();
-        self.sync_menu_state(&ctx);
-        self.refresh_window_title(&ctx.tick);
+        ChromeService::sync_chrome(self, &ctx, false);
         // Post-drain truth: focus flips compare against this to skip redundant round-trips.
         self.set_last_drain_paused(self.session().tick_metrics().paused);
     }

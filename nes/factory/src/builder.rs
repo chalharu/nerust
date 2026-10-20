@@ -41,17 +41,17 @@ pub(crate) fn create_core_and_adapter_with_assignments(
     let resources = input_factory
         .create_split(&controller_collection)
         .map_err(|e| FactoryError::Create(e.to_string()))?;
-    let field_map_projection = resources
-        .field_map()
-        .iter()
-        .filter_map(|((attachment, control), field)| {
-            control.as_digital().map(|id| ((*attachment, id), *field))
-        })
-        .collect();
+    // Digital-only session projection: analog drops warn and debug-trap
+    // so a future analog device migrates `CoreParts` instead of vanishing.
+    let (field_map, dropped) =
+        nerust_core_traits::factory::split_digital_field_map(resources.field_map());
+    if !dropped.is_empty() {
+        log::warn!("nes input: dropping {} analog field(s)", dropped.len());
+    }
+    debug_assert!(dropped.is_empty(), "analog fields dropped: {dropped:?}");
     let split = nerust_emu_thread::InputSplit::spawn(resources.take_factory());
     let gui_input = split.gui_endpoint();
     let emu_input = split.emu_endpoint();
-    let field_map = field_map_projection;
     create_core_and_adapter(
         view,
         speaker,

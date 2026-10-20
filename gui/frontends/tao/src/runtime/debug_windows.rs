@@ -2,7 +2,7 @@
 //! Handles live in the aux registry; `HostState` orchestrates.
 
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::{Duration, Instant};
@@ -21,6 +21,8 @@ pub(super) struct DebugWindows {
     last_drain_paused: Option<bool>,
     /// Live-tick interest: set every pass; the tick thread parks when clear.
     live_wanted: Arc<AtomicBool>,
+    /// Parked tick thread: unparked on the next arm.
+    tick_thread: Mutex<Option<std::thread::Thread>>,
 }
 
 impl DebugWindows {
@@ -33,17 +35,30 @@ impl DebugWindows {
             last_ppu_live: None,
             last_drain_paused: None,
             live_wanted: Arc::new(AtomicBool::new(false)),
+            tick_thread: Mutex::new(None),
         }
     }
 
-    /// Live-tick interest handle for the tick thread.
-    pub(super) fn live_wanted(&self) -> Arc<AtomicBool> {
+    /// Live-tick interest handle for the tick thread (parks when clear).
+    pub(super) fn live_armed(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.live_wanted)
     }
 
-    /// Record whether any open viewer wants live ticks now.
+    /// Register the parked tick thread for arm wakeups.
+    pub(super) fn register_tick_thread(&self, thread: std::thread::Thread) {
+        *crate::aux::bridge::lock_recovered(&self.tick_thread) = Some(thread);
+    }
+
+    /// Record whether any open viewer wants live ticks now. Arming
+    /// unparks the tick thread; clearing leaves it parked.
     pub(super) fn set_live_wanted(&self, wanted: bool) {
-        self.live_wanted.store(wanted, Ordering::Release);
+        let was = self.live_wanted.swap(wanted, Ordering::Release);
+        if wanted
+            && !was
+            && let Some(thread) = crate::aux::bridge::lock_recovered(&self.tick_thread).as_ref()
+        {
+            thread.unpark();
+        }
     }
 
     pub(crate) fn request_debug_open(&mut self) {
@@ -147,11 +162,21 @@ mod tests {
     #[test]
     fn live_wanted_tracks_follow_interest() {
         let windows = DebugWindows::new();
-        let wanted = windows.live_wanted();
+        let wanted = windows.live_armed();
         assert!(!wanted.load(Ordering::Acquire));
         windows.set_live_wanted(true);
         assert!(wanted.load(Ordering::Acquire));
         windows.set_live_wanted(false);
         assert!(!wanted.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn arming_unparks_registered_thread() {
+        let windows = DebugWindows::new();
+        windows.register_tick_thread(std::thread::current());
+        // No parking here: unparking a running thread only sets its
+        // token, so arming stays total without a sleeper.
+        windows.set_live_wanted(true);
+        assert!(windows.live_armed().load(Ordering::Acquire));
     }
 }

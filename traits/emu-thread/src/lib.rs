@@ -65,11 +65,8 @@ impl fmt::Debug for EmuThread {
 }
 
 impl EmuThread {
-    /// `shared_fb` swaps with the internal buffer after each render;
-    /// `frame_ready` signals ConsoleVideo. `frame_slot` (the core's
-    /// render target) comes from the factory profile, never per-system
-    /// constants, so all three buffers agree before the first swap.
-    /// `audio` is session-owned; cores never see the backend.
+    /// `shared_fb` swaps with the internal buffer after each render; `frame_ready` signals
+    /// ConsoleVideo. `frame_slot` (the core's render target) comes from the factory profile, never per-system constants, so all three buffers agree before the first swap. `audio` is session-owned; cores never see the backend.
     pub fn spawn(
         mut core: Box<dyn ConsoleCore + Send + 'static>,
         shared_fb: Arc<Mutex<FrameBuffer>>,
@@ -89,9 +86,8 @@ impl EmuThread {
         let thread = thread::spawn(move || {
             let mut frame_slot = frame_slot;
 
-            // Session-owned audio transport: core-produced nominal samples
-            // collect here, then stretch through the rate-control filter
-            // into the backend (both reused every frame, no allocation).
+            // Session-owned audio transport: core-produced nominal samples collect here, then
+            // stretch through the rate-control filter into the backend (both reused every frame, no allocation).
             let mut filter = DynamicRateFilter::new();
             let mut audio_scratch: Vec<nerust_core_traits::audio::StereoSample> = Vec::new();
             let mut nominal_tap: Option<Arc<Mutex<Vec<nerust_core_traits::audio::StereoSample>>>> =
@@ -168,9 +164,8 @@ impl EmuThread {
                     continue;
                 }
 
-                // Park while paused with nothing pending: no pacing gate
-                // (stepped frames run flat-out), no hot-spin. Disconnect
-                // exits, like the idle path.
+                // Park while paused with nothing pending: no pacing gate (stepped frames run
+                // flat-out), no hot-spin. Disconnect exits, like the idle path.
                 if core.paused() && pending.is_none() {
                     match cmd_rx.recv() {
                         Ok(cmd) => pending = Some(cmd),
@@ -240,9 +235,8 @@ impl EmuThread {
                             let _ = reply.send(result);
                         }
                         EmuCommand::Step { unit, reply } => {
-                            // Barrier: one reply per executed step; callers
-                            // pause first. Frame steps render inline;
-                            // instruction steps delegate.
+                            // Barrier: one reply per executed step; callers pause first. Frame
+                            // steps render inline; instruction steps delegate.
                             let result = if !loaded {
                                 Err(DebuggerError::Unsupported)
                             } else {
@@ -301,10 +295,8 @@ impl EmuThread {
                             let _ = reply.send(result);
                         }
                         EmuCommand::DebuggerSnapshot { req, reply } => {
-                            // One crossing for inspect + anchor +
-                            // disassembly (see the type docs for the
-                            // preserved failure semantics): callers
-                            // hold pause for frame-consistent rows.
+                            // One crossing for inspect + anchor + disassembly (see the type docs
+                            // for the preserved failure semantics): callers hold pause for frame-consistent rows.
                             let frame = fc.load(Ordering::Relaxed);
                             let result = match inspect_memory(&*core, &req.inspect, frame) {
                                 Err(error) => Ok(SnapshotResult {
@@ -399,10 +391,8 @@ impl EmuThread {
                         fr: &fr,
                         fc: &fc,
                     });
-                    // Pacing is a free-run concern only. Paused
-                    // iterations park above, so stepped frames are never
-                    // real-time-gated. fps freezes while paused (no frames
-                    // render); the metrics `paused` flag is authoritative.
+                    // Pacing is a free-run concern only. Paused iterations park above, so stepped
+                    // frames are never real-time-gated. fps freezes while paused (no frames render); the metrics `paused` flag is authoritative.
                     timer.wait();
                     fps_c.store(timer.as_fps().to_bits(), Ordering::Relaxed);
                 }
@@ -451,10 +441,8 @@ impl Drop for EmuThread {
     }
 }
 
-/// Shared Load handling for the idle and running command loops:/// stamps the authoritative device rate (the core needs it as data —
-/// resamplers, save-state validation — never the backend), loads the
-/// ROM and restarts the rate filter. Returns whether a ROM is loaded.
-/// Reply send failure (receiver dropped) is expected during teardown.
+/// Shared Load handling for the idle and running command loops: stamps the authoritative device
+/// rate (the core needs it as data — resamplers, save-state validation — never the backend), loads the ROM and restarts the rate filter. Returns whether a ROM is loaded. Reply send failure (receiver dropped) is expected during teardown.
 fn handle_load(
     core: &mut dyn ConsoleCore,
     audio: &mut dyn AudioBackend,
@@ -472,9 +460,8 @@ fn handle_load(
     loaded
 }
 
-/// Live audio-backend swap between frames (no pause: commands drain
-/// only between frames). Old backend quiets first, core re-basis its
-/// rate, filter drops stale observations.
+/// Live audio-backend swap between frames (no pause: commands drain only between frames). Old
+/// backend quiets first, core re-basis its rate, filter drops stale observations.
 fn handle_swap_audio(
     core: &mut dyn ConsoleCore,
     audio: &mut Box<dyn AudioBackend + Send + 'static>,
@@ -491,20 +478,16 @@ fn handle_swap_audio(
     let _ = cmd.reply.send(());
 }
 
-/// Live render-target swap between frames. Wholesale replacement keeps
-/// the slot, the shared buffer, and the display buffer on one format:
-/// the session swaps its own buffers only after this reply lands, and
-/// (for the visual path) only while paused, so no frame straddles the
-/// two swaps.
+/// Live render-target swap between frames. Wholesale replacement keeps the slot, the shared buffer,
+/// and the display buffer on one format: the session swaps its own buffers only after this reply lands, and (for the visual path) only while paused, so no frame straddles the two swaps.
 fn handle_swap_frame_slot(frame_slot: &mut FrameBuffer, cmd: SwapFrameSlotCommand) {
     *frame_slot = cmd.slot;
     // reply send failure: receiver dropped (timeout/abort) — expected
     let _ = cmd.reply.send(());
 }
 
-/// Overwrite a nominal-audio tap with one frame's samples, when a tap
-/// is installed and the frame produced any. The tap always holds the
-/// latest frame only; accumulation is the reader's job.
+/// Overwrite a nominal-audio tap with one frame's samples, when a tap is installed and the frame
+/// produced any. The tap always holds the latest frame only; accumulation is the reader's job.
 fn push_nominal_tap(tap: &Option<Arc<Mutex<Vec<StereoSample>>>>, samples: Vec<StereoSample>) {
     if samples.is_empty() {
         return;
@@ -517,10 +500,8 @@ fn push_nominal_tap(tap: &Option<Arc<Mutex<Vec<StereoSample>>>>, samples: Vec<St
     }
 }
 
-/// Overwrite one channel tap with a frame's fresh bytes, when the
-/// frame produced any. The tap always holds the latest frame's delta
-/// only; accumulation is the reader's job — mirroring the
-/// nominal-audio tap.
+/// Overwrite one channel tap with a frame's fresh bytes, when the frame produced any. The tap
+/// always holds the latest frame's delta only; accumulation is the reader's job — mirroring the nominal-audio tap.
 fn push_serial_tap(tap: &Arc<Mutex<Vec<u8>>>, bytes: Vec<u8>) {
     if bytes.is_empty() {
         return;
@@ -546,11 +527,8 @@ struct FrameCtx<'a> {
     fc: &'a Arc<AtomicU64>,
 }
 
-/// Run one frame through the standard path: render, audio transport,
-/// nominal tap, shared-buffer publish, and counter advance.
-///
-/// Free-run iterations and `Step(Frame)` share this so stepped frames
-/// are indistinguishable from free ones.
+/// Run one frame through the standard path: render, audio transport, nominal tap, shared-buffer
+/// publish, and counter advance. Free-run iterations and `Step(Frame)` share this so stepped frames are indistinguishable from free ones.
 fn render_one_frame(ctx: FrameCtx<'_>) {
     let FrameCtx {
         core,
@@ -585,11 +563,8 @@ fn render_one_frame(ctx: FrameCtx<'_>) {
     }
 }
 
-/// Serve one inspect request against a paused core.
-///
-/// Pause is enforced here (infrastructure guard): reading while running
-/// cannot guarantee the values match any single frame. Unmapped holes
-/// inside the range end the dump; the final row may be short.
+/// Serve one inspect request against a paused core. Pause is enforced here (infrastructure guard):
+/// reading while running cannot guarantee the values match any single frame. Unmapped holes inside the range end the dump; the final row may be short.
 fn inspect_memory(
     core: &dyn ConsoleCore,
     req: &InspectRequest,
@@ -675,9 +650,8 @@ mod tests {
         }
     }
 
-    /// Backend with a scripted rate that records `start()`: proves a
-    /// swap actually installs the new transport instead of just
-    /// replying.
+    /// Backend with a scripted rate that records `start()`: proves a swap actually installs the new
+    /// transport instead of just replying.
     struct ProbeBackend {
         rate: u32,
         started: Arc<AtomicBool>,
@@ -1049,9 +1023,8 @@ mod tests {
         let thread = spawn_loaded();
         thread.send(EmuCommand::Pause).expect("pause send");
 
-        // Marker-filled slot: FakeCore never touches pixels, so the
-        // next stepped frame publishes the slot verbatim — proving the
-        // thread parked on the replacement.
+        // Marker-filled slot: FakeCore never touches pixels, so the next stepped frame publishes
+        // the slot verbatim — proving the thread parked on the replacement.
         let mut slot = FrameBuffer::with_capacity(
             256,
             240,

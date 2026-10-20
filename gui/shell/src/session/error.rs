@@ -43,6 +43,33 @@ impl From<StateCodecError> for SlotOpFailure {
     }
 }
 
+impl From<crate::emu_core::StateFault> for SlotOpFailure {
+    fn from(fault: crate::emu_core::StateFault) -> Self {
+        use crate::emu_core::StateFault as F;
+        match fault {
+            F::Transport => Self::Unavailable,
+            F::Storage => Self::Storage,
+            F::Missing => Self::Missing,
+            F::Corrupt => Self::Corrupt,
+            F::Incompatible => Self::Incompatible,
+            F::Other(_) => Self::Corrupt,
+        }
+    }
+}
+
+impl From<crate::emu_core::CorePersistenceError> for SlotOpFailure {
+    fn from(error: crate::emu_core::CorePersistenceError) -> Self {
+        SlotOpFailure::from(error.fault())
+    }
+}
+
+impl crate::emu_core::CorePersistenceError {
+    /// Compat shim: single mapping via [`StateFault`](crate::emu_core::StateFault).
+    pub fn slot_failure(&self) -> SlotOpFailure {
+        SlotOpFailure::from(self.fault())
+    }
+}
+
 impl From<&PersistenceError> for SlotOpFailure {
     fn from(error: &PersistenceError) -> Self {
         StateCodecError::from(error).into()
