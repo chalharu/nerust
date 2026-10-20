@@ -34,7 +34,7 @@ impl super::AndroidFrontend {
             &mut self.osd,
             &mut self.shell,
         ) {
-            Ok(()) => self.finish_foreground_attempt(),
+            Ok(()) => self.finish_foreground_attempt(event_loop),
             Err(error) => {
                 let attempt = self.lifecycle.attempt_index();
                 log::warn!("try_resume_foreground: attempt {attempt} failed: {error}");
@@ -49,7 +49,7 @@ impl super::AndroidFrontend {
 
     /// Window is ready: restore lifecycle media, resume own auto-pause,
     /// and re-acquire audio. Error auto-pauses are never resumed here.
-    fn finish_foreground_attempt(&mut self) {
+    fn finish_foreground_attempt(&mut self, event_loop: &ActiveEventLoop) {
         let attempt = self.lifecycle.attempt_index();
         self.lifecycle.record_success();
         if self.lifecycle.restore_pending() {
@@ -91,7 +91,11 @@ impl super::AndroidFrontend {
 
     /// Reconnect a document-tree URI; a missing document keeps the
     /// hidden snapshot until the user reconnects the tree.
-    fn restore_from_document_uri(&mut self, event_loop: &ActiveEventLoop, reference: String) {
+    fn restore_from_document_uri(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        reference: super::storage::LastMediaReference,
+    ) {
         match self.load_document_uri(event_loop, reference, true) {
             Ok(()) => {
                 log::info!("try_resume_foreground: loaded last document URI for lifecycle restore");
