@@ -1406,7 +1406,7 @@ fn report_external_error_truncates_and_labels_source() {
 
     let mut session = test_session();
     let long = "x".repeat(MAX_EXTERNAL_DETAIL + 100);
-    session.report_external_error(FailureOrigin::Bridge, long);
+    session.report_external_error(FailureOrigin::Host, long);
     let notes = session.drain_notifications();
     assert_eq!(notes.len(), 1);
     match &notes[0].kind {
@@ -1415,7 +1415,7 @@ fn report_external_error_truncates_and_labels_source() {
             detail,
             ..
         } => {
-            assert_eq!(*source, FailureOrigin::Bridge);
+            assert_eq!(*source, FailureOrigin::Host);
             assert_eq!(detail.len(), MAX_EXTERNAL_DETAIL);
         }
         other => panic!("unexpected kind: {other:?}"),

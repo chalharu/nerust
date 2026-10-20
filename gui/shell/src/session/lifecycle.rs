@@ -33,7 +33,7 @@ impl SessionHandle {
                 log::warn!("mapper-save flush before load failed: {error}");
                 self.notifications.push(
                     crate::session::notification::NotificationKind::command_failure_from(
-                        crate::session::notification::FailureOrigin::Bridge,
+                        crate::session::notification::FailureOrigin::Host,
                         "mapper-flush",
                         &error,
                     ),
@@ -170,10 +170,7 @@ mod lifecycle_cov_tests {
                 .is_err()
         );
         assert!(session.unload().is_ok());
-        session.report_external_error(
-            super::super::notification::FailureOrigin::Bridge,
-            "x".into(),
-        );
+        session.report_external_error(super::super::notification::FailureOrigin::Host, "x".into());
         assert_eq!(session.drain_notifications().len(), 1);
         // Hard invariant holds in all builds: `Command` origin is rejected, not recorded.
         session.report_external_error(

@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         mpsc,
     },
 };
@@ -477,8 +477,6 @@ impl EmuCore {
             metrics: Arc::clone(&self.metrics),
             tick_paused: Arc::clone(&self.tick_paused),
             tick_loaded: Arc::clone(&self.tick_loaded),
-            tick_frames: Arc::clone(&self.tick_frames),
-            tick_fps_bits: Arc::clone(&self.tick_fps_bits),
             image_cache: Arc::clone(&self.image_cache),
         }
     }
@@ -509,8 +507,6 @@ pub struct EmuCore {
     /// Every mutex write below also stamps these; `metrics()` refreshes them on read.
     tick_paused: Arc<AtomicBool>,
     tick_loaded: Arc<AtomicBool>,
-    tick_frames: Arc<AtomicU64>,
-    tick_fps_bits: Arc<AtomicU32>,
     image_cache: Arc<Mutex<CachedImages>>,
 }
 
@@ -536,8 +532,6 @@ impl EmuCore {
             metrics,
             tick_paused: Arc::new(AtomicBool::new(true)),
             tick_loaded: Arc::new(AtomicBool::new(false)),
-            tick_frames: Arc::new(AtomicU64::new(0)),
-            tick_fps_bits: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             image_cache: Arc::new(Mutex::new(CachedImages {
                 dirty: true,
                 generation: 0,
@@ -579,8 +573,6 @@ impl EmuCore {
                 })),
                 tick_paused: Arc::new(AtomicBool::new(true)),
                 tick_loaded: Arc::new(AtomicBool::new(false)),
-                tick_frames: Arc::new(AtomicU64::new(0)),
-                tick_fps_bits: Arc::new(AtomicU32::new(0.0f32.to_bits())),
                 image_cache: Arc::new(Mutex::new(CachedImages {
                     dirty: true,
                     generation: 0,
@@ -606,8 +598,6 @@ impl EmuCore {
         {
             std::mem::swap(&mut *guard, &mut self.disp_fb);
         }
-        let frames = self.emu.frame_count();
-        self.tick_frames.store(frames, Ordering::Relaxed);
     }
 
     pub fn frame_buffer(&self) -> &FrameBuffer {
@@ -640,10 +630,6 @@ impl EmuCore {
     fn stamp_tick(&self, metrics: &ConsoleMetrics) {
         self.tick_paused.store(metrics.paused, Ordering::Relaxed);
         self.tick_loaded.store(metrics.loaded, Ordering::Relaxed);
-        self.tick_frames
-            .store(metrics.frame_counter, Ordering::Relaxed);
-        self.tick_fps_bits
-            .store(metrics.emulation_fps.to_bits(), Ordering::Relaxed);
     }
 
     /// Lock-free pause flag: stamped atomics, no mutex.

@@ -9,79 +9,29 @@ use nerust_settings_core::model::local::NotificationSettings;
 
 use super::{State, renderer::GtkRenderer};
 
-/// Raster backend behind the GTK OSD sync: one method, mockable in tests.
-pub(crate) trait Rasterize {
-    /// Rasterize rows plus status into a cropped layer; `None` when empty.
-    fn rasterize(
-        &mut self,
-        content: &nerust_render_osd::OsdContent,
-        width: u32,
-        height: u32,
-    ) -> Option<nerust_render_traits::renderer::OsdLayer>;
-}
-
-impl Rasterize for nerust_render_osd::OsdRaster {
-    fn rasterize(
-        &mut self,
-        content: &nerust_render_osd::OsdContent,
-        width: u32,
-        height: u32,
-    ) -> Option<nerust_render_traits::renderer::OsdLayer> {
-        nerust_render_osd::OsdRaster::rasterize(self, content, width, height)
-    }
-}
-
-/// Sync-decision backend behind the GTK OSD: plan only, no raster vocabulary.
-/// Lets the sync gate vary without touching the struct wiring.
-pub(crate) trait PresentPlan {
-    /// Decide skip/clear/render for one frame; owns the sync fingerprint.
-    fn sync_plan(
-        &mut self,
-        state: &dyn nerust_gui_shell::session::osd::OsdState,
-        input: nerust_gui_shell::session::osd::OsdSyncInput,
-    ) -> nerust_gui_shell::session::osd::OsdSync;
-
-    /// Forget sync state after a renderer rebuild: the next sync re-pushes.
-    fn invalidate_plan(&mut self);
-}
-
-impl PresentPlan for nerust_gui_shell::session::osd::OsdPresenter {
-    fn sync_plan(
-        &mut self,
-        state: &dyn nerust_gui_shell::session::osd::OsdState,
-        input: nerust_gui_shell::session::osd::OsdSyncInput,
-    ) -> nerust_gui_shell::session::osd::OsdSync {
-        nerust_gui_shell::session::osd::OsdPresenter::sync(self, state, input)
-    }
-
-    fn invalidate_plan(&mut self) {
-        nerust_gui_shell::session::osd::OsdPresenter::invalidate(self);
-    }
-}
-
 pub(crate) struct GtkOsd {
     manager: OsdManager,
-    raster: Box<dyn Rasterize>,
+    raster: nerust_render_osd::OsdRaster,
     last_strip: nerust_render_traits::ReservedStrip,
     /// Owns the whole sync fingerprint. Shared decision procedure with
     /// the tao frontend; this struct only rasterizes.
-    presenter: Box<dyn PresentPlan>,
+    presenter: nerust_gui_shell::session::osd::OsdPresenter,
 }
 
 impl GtkOsd {
     pub(crate) fn new() -> Self {
         Self {
             manager: OsdManager::new(),
-            raster: Box::new(nerust_render_osd::OsdRaster::new()),
+            raster: nerust_render_osd::OsdRaster::new(),
             last_strip: nerust_render_traits::ReservedStrip::default(),
-            presenter: Box::new(nerust_gui_shell::session::osd::OsdPresenter::new()),
+            presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
         }
     }
 
     /// Forget sync state after a renderer rebuild: the new object
     /// holds no layer, so the next sync must re-push instead of skip.
     pub(crate) fn invalidate(&mut self) {
-        self.presenter.invalidate_plan();
+        self.presenter.invalidate();
     }
 
     /// Drain the session queue, show modals, and sync the OSD layer.
@@ -173,23 +123,28 @@ impl GtkOsd {
         let w = window.width().max(0) as u32 * scale;
         let h = window.height().max(0) as u32 * scale;
         let chrome = nerust_gui_shell::session::osd::OsdChrome::from(settings);
-        let decision = self.presenter.sync_plan(
-            &self.manager,
-            OsdSyncInput {
-                tick: nerust_gui_shell::session::osd::TickMetrics {
-                    fps,
-                    paused,
-                    ..nerust_gui_shell::session::osd::TickMetrics::default()
+        let decision = {
+            let GtkOsd {
+                presenter, manager, ..
+            } = self;
+            presenter.sync(
+                &*manager,
+                OsdSyncInput {
+                    tick: nerust_gui_shell::session::osd::TickMetrics {
+                        fps,
+                        paused,
+                        ..nerust_gui_shell::session::osd::TickMetrics::default()
+                    },
+                    chrome,
+                    language,
+                    now: Instant::now(),
+                    width: w,
+                    height: h,
+                    ui_scale: 1.0,
+                    safe_insets: nerust_gui_shell::session::osd::ViewInsets::default(),
                 },
-                chrome,
-                language,
-                now: Instant::now(),
-                width: w,
-                height: h,
-                ui_scale: 1.0,
-                safe_insets: nerust_gui_shell::session::osd::UiInsets::default(),
-            },
-        );
+            )
+        };
         match decision {
             OsdSync::Skip => {}
             OsdSync::Clear => renderer.borrow_mut().set_osd_layer(None),
@@ -454,9 +409,9 @@ impl GtkOsd {
 
 #[cfg(test)]
 mod tests {
-    use super::{GtkOsd, PresentPlan, Rasterize};
+    use super::GtkOsd;
     use nerust_gui_shell::session::osd::{
-        OsdChrome, OsdRow, OsdState, OsdSync, OsdSyncInput, TickMetrics, UiInsets,
+        OsdChrome, OsdRow, OsdState, OsdSync, OsdSyncInput, TickMetrics, ViewInsets,
     };
     use nerust_settings_core::model::local::NotificationSettings;
 
@@ -489,7 +444,7 @@ mod tests {
             width,
             height,
             ui_scale: 1.0,
-            safe_insets: UiInsets::default(),
+            safe_insets: ViewInsets::default(),
         }
     }
 
@@ -518,19 +473,19 @@ mod tests {
         let settings = NotificationSettings::default();
         let chrome = OsdChrome::from(&settings);
         let state = row_state();
-        let mut plan: Box<dyn PresentPlan> = Box::new(OsdPresenter::new());
+        let mut plan = OsdPresenter::new();
         assert!(matches!(
-            plan.sync_plan(&state, sync_input(chrome, 320, 240)),
+            plan.sync(&state, sync_input(chrome, 320, 240)),
             OsdSync::Render(_)
         ));
         assert!(matches!(
-            plan.sync_plan(&state, sync_input(chrome, 320, 240)),
+            plan.sync(&state, sync_input(chrome, 320, 240)),
             OsdSync::Skip
         ));
         // Rebuilds re-push: the gate forgets the fingerprint.
-        plan.invalidate_plan();
+        plan.invalidate();
         assert!(matches!(
-            plan.sync_plan(&state, sync_input(chrome, 320, 240)),
+            plan.sync(&state, sync_input(chrome, 320, 240)),
             OsdSync::Render(_)
         ));
     }
@@ -544,14 +499,14 @@ mod tests {
             generation: 7,
             rows: Vec::new(),
         };
-        let mut plan: Box<dyn PresentPlan> = Box::new(OsdPresenter::new());
+        let mut plan = OsdPresenter::new();
         // Idle steady state skips; a zero-size frame clears instead.
         assert!(matches!(
-            plan.sync_plan(&idle, sync_input(chrome, 320, 240)),
+            plan.sync(&idle, sync_input(chrome, 320, 240)),
             OsdSync::Skip
         ));
         assert!(matches!(
-            plan.sync_plan(&idle, sync_input(chrome, 0, 0)),
+            plan.sync(&idle, sync_input(chrome, 0, 0)),
             OsdSync::Clear | OsdSync::Skip
         ));
     }
@@ -569,8 +524,8 @@ mod tests {
         };
         // Zero extent refuses before touching font state.
         // Fully-qualified call covers the GTK raster backend seam.
-        assert!(Rasterize::rasterize(&mut raster, &content, 0, 240).is_none());
-        assert!(Rasterize::rasterize(&mut raster, &content, 320, 0).is_none());
+        assert!(raster.rasterize(&content, 0, 240).is_none());
+        assert!(raster.rasterize(&content, 320, 0).is_none());
     }
 
     #[test]

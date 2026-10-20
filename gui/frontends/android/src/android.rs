@@ -444,7 +444,7 @@ impl AndroidFrontend {
                 ) {
                     log::error!("{error}");
                     self.core.session.report_external_error(
-                        nerust_gui_shell::session::notification::FailureOrigin::Picker,
+                        nerust_gui_shell::session::notification::FailureOrigin::Selection,
                         error,
                     );
                 }
@@ -476,7 +476,7 @@ impl AndroidFrontend {
             RomPickerResult::Failed(error) => {
                 log::error!("{error}");
                 self.core.session.report_external_error(
-                    nerust_gui_shell::session::notification::FailureOrigin::Picker,
+                    nerust_gui_shell::session::notification::FailureOrigin::Selection,
                     error,
                 );
             }
@@ -494,7 +494,7 @@ impl AndroidFrontend {
                     Err(error) => {
                         log::error!("failed to apply Android storage directory: {error}");
                         self.core.session.report_external_error(
-                            nerust_gui_shell::session::notification::FailureOrigin::Picker,
+                            nerust_gui_shell::session::notification::FailureOrigin::Selection,
                             "Selected directory could not be used".to_string(),
                         );
                     }
@@ -568,7 +568,7 @@ impl AndroidFrontend {
                 log::error!("{reason}");
                 self.core
                     .session
-                    .report_external_error(FailureOrigin::Bridge, reason);
+                    .report_external_error(FailureOrigin::Host, reason);
             }
             SettingsPlan::NeedDocumentTree { next } => {
                 self.pending_storage_settings = Some(next);
@@ -583,7 +583,7 @@ impl AndroidFrontend {
                         log::error!("{error}");
                         self.core
                             .session
-                            .report_external_error(FailureOrigin::Bridge, error);
+                            .report_external_error(FailureOrigin::Host, error);
                     }
                 }
             }
@@ -628,7 +628,7 @@ impl AndroidFrontend {
                 log::error!("{detail}");
                 self.core
                     .session
-                    .report_external_error(FailureOrigin::Bridge, detail);
+                    .report_external_error(FailureOrigin::Host, detail);
             }
         }
     }
@@ -722,7 +722,7 @@ impl AndroidFrontend {
                 // not just logcat: mobile has no stderr to inspect.
                 self.core
                     .session
-                    .report_external_error(FailureOrigin::Bridge, error);
+                    .report_external_error(FailureOrigin::Host, error);
             }
         }
     }

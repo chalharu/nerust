@@ -64,9 +64,9 @@ pub enum NotificationKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureOrigin {
     Command,
-    Picker,
+    Selection,
     Restore,
-    Bridge,
+    Host,
 }
 
 /// Longest kept detail suffix: a pathological message must not wedge the capped modal queue.
@@ -245,12 +245,12 @@ fn command_failed_text(
                 format!("{id} failed: {detail}")
             };
         }
-        (FailureOrigin::Picker, AppLanguage::Japanese) => "選択",
-        (FailureOrigin::Picker, _) => "Picker",
+        (FailureOrigin::Selection, AppLanguage::Japanese) => "選択",
+        (FailureOrigin::Selection, _) => "Picker",
         (FailureOrigin::Restore, AppLanguage::Japanese) => "復元",
         (FailureOrigin::Restore, _) => "Restore",
-        (FailureOrigin::Bridge, AppLanguage::Japanese) => "通知",
-        (FailureOrigin::Bridge, _) => "Bridge",
+        (FailureOrigin::Host, AppLanguage::Japanese) => "通知",
+        (FailureOrigin::Host, _) => "Bridge",
     };
     if detail.is_empty() {
         prefix.to_string()
@@ -766,7 +766,7 @@ mod tests {
                 detail: String::new(),
             },
             NotificationKind::CommandFailure {
-                origin: FailureOrigin::Picker,
+                origin: FailureOrigin::Selection,
                 id: "",
                 detail: "boom".to_string(),
             },
@@ -841,7 +841,7 @@ mod tests {
                 detail: String::new(),
             },
             NotificationKind::CommandFailure {
-                origin: FailureOrigin::Bridge,
+                origin: FailureOrigin::Host,
                 id: "",
                 detail: "x".to_string(),
             },
@@ -944,7 +944,7 @@ mod message_key_tests {
         for kind in [
             NotificationKind::Paused,
             NotificationKind::CommandFailure {
-                origin: FailureOrigin::Bridge,
+                origin: FailureOrigin::Host,
                 id: "x",
                 detail: "boom".to_string(),
             },
@@ -1026,7 +1026,7 @@ mod notification_cov_tests {
     #[test]
     fn failure_detail_truncates_at_cap() {
         let long = "y".repeat(MAX_EXTERNAL_DETAIL + 50);
-        let kind = NotificationKind::command_failure(FailureOrigin::Bridge, "id", long);
+        let kind = NotificationKind::command_failure(FailureOrigin::Host, "id", long);
         match kind {
             NotificationKind::CommandFailure { detail, .. } => {
                 assert_eq!(detail.chars().count(), MAX_EXTERNAL_DETAIL);

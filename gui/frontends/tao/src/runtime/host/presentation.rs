@@ -95,10 +95,13 @@ impl HostState {
 
     /// Title-only gate over the cached session title: one format per change.
     pub(crate) fn refresh_window_title(&mut self, tick: &TickMetrics) {
-        let title = self.session.window_title_cached(tick).to_owned();
-        if self.chrome.title_same(&title) {
+        if self
+            .chrome
+            .title_same(self.session.window_title_cached(tick))
+        {
             return;
         }
+        let title = self.session.window_title_cached(tick).to_owned();
         self.chrome.push_title(title.clone());
         self.push_title(&title);
     }
