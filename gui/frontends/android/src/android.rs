@@ -951,7 +951,7 @@ impl ApplicationHandler for AndroidFrontend {
             // Same transient-UI reason as the picker path above.
             self.osd.invalidate_system_insets();
         }
-        menu::take_events_into(&mut self.event_scratch);
+        bridge::take_events_into(&mut self.event_scratch);
         // Two-lane queue, no sort: priority acks (dialog dismissals)
         // drain first in arrival order, then the menu lane.
         let mut pending = std::mem::take(&mut self.event_scratch);
