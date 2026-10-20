@@ -1,6 +1,5 @@
 //! Headless session pieces: failing GPU factory, canned ROM loader,
-//! and a `FrontendContext` builder on temp settings paths.
-//! Production code never touches this module.
+//! and a `FrontendContext` builder. Production never touches this module.
 
 use std::{
     path::{Path, PathBuf},
@@ -23,8 +22,7 @@ fn unique_test_dir() -> PathBuf {
 }
 
 /// `RomLoader` with a canned result, recording every attempted path.
-/// Clone shares the same innards, so the copy inside `FrontendContext`
-/// and the test's handle observe each other.
+/// Clone shares innards, so the context copy and test handle observe each other.
 #[derive(Debug, Clone)]
 pub(crate) struct FakeRomLoader {
     inner: Arc<FakeRomLoaderInner>,
@@ -52,9 +50,11 @@ impl FakeRomLoader {
         Self::default()
     }
 
-    pub(crate) fn failing(detail: &str) -> Self {
+    pub(crate) fn failing(_detail: &str) -> Self {
         let loader = Self::default();
-        *crate::aux::bridge::lock_recovered(&loader.inner.result) = Err(detail.to_string());
+        // Typed failure path: the detail only arms the failure, the text comes from the source chain.
+        *crate::aux::bridge::lock_recovered(&loader.inner.result) =
+            Err("typed failure".to_string());
         loader
     }
 
@@ -72,7 +72,11 @@ impl RomLoader for FakeRomLoader {
         crate::aux::bridge::lock_recovered(&self.inner.attempted).push(path.to_path_buf());
         crate::aux::bridge::lock_recovered(&self.inner.result)
             .clone()
-            .map_err(nerust_gui_shell::load::RomLoaderError::Load)
+            .map_err(|_| {
+                nerust_gui_shell::load::RomLoaderError::from_session(
+                    nerust_gui_shell::session::SessionError::NoCore,
+                )
+            })
     }
 }
 

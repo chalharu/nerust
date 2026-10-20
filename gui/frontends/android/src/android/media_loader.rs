@@ -61,8 +61,7 @@ impl super::AndroidFrontend {
             let f = self
                 .core
                 .session
-                .registry()
-                .detect(&media)
+                .detect_factory(&media)
                 .map_err(|e| format!("failed to detect ROM system: {e}"))?
                 .ok_or_else(|| "unsupported ROM format".to_string())?;
             let id = f.system_id();
@@ -165,8 +164,7 @@ impl super::AndroidFrontend {
         let detected_system = self
             .core
             .session
-            .registry()
-            .detect(&media)
+            .detect_factory(&media)
             .map_err(|error| format!("failed to detect ROM system: {error}"))?
             .ok_or_else(|| "unsupported ROM format".to_string())?
             .system_id()

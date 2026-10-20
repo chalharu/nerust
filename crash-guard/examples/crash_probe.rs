@@ -24,7 +24,7 @@ fn main() {
         nerust_crash_guard::GuardOutcome::Completed(()) => {}
         nerust_crash_guard::GuardOutcome::Crashed(report) => {
             eprintln!("probe dialog would show: {}", report.message());
-            std::process::exit(nerust_crash_guard::CRASH_EXIT_CODE);
+            std::process::exit(101); // Rust panic convention: a crash never exits 0.
         }
     }
 }

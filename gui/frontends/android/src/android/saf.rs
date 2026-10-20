@@ -14,7 +14,7 @@ use jni::{
 use nerust_core_traits::identity::SystemIdentity;
 use nerust_gui_runtime::settings::persistence::decode_document_tree_path;
 use nerust_gui_shell::session::persistence::{
-    AutoSaveBackend, FsSlotBackend, MapperSaveBackend, SlotBackend,
+    AutoSaveBackend, FsAutosave, FsMapper, FsSlots, MapperSaveBackend, SlotBackend,
 };
 use nerust_persistence::{
     error::PersistenceError,
@@ -793,7 +793,7 @@ impl SlotBackend for AndroidStorageBackend {
         identity: &SystemIdentity,
     ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
         let Some((uri, relative)) = Self::decode(dir) else {
-            return FsSlotBackend.scan(dir, identity);
+            return FsSlots.scan(dir, identity);
         };
         let entries: Vec<(String, Option<i64>)> = self.sized_listing(&uri, &relative)?;
         let mut result = Vec::new();
@@ -824,7 +824,7 @@ impl SlotBackend for AndroidStorageBackend {
 
     fn allocate_next_id(&self, dir: &Path) -> Result<u64, PersistenceError> {
         let Some((uri, relative)) = Self::decode(dir) else {
-            return FsSlotBackend.allocate_next_id(dir);
+            return FsSlots.allocate_next_id(dir);
         };
         Ok(self
             .sized_listing(&uri, &relative)?
@@ -845,7 +845,7 @@ impl SlotBackend for AndroidStorageBackend {
         thumbnail: Option<&ThumbnailSource>,
     ) -> Result<StateSlotSummary, PersistenceError> {
         let Some((uri, relative)) = Self::decode(dir) else {
-            return FsSlotBackend.write_slot(dir, slot_id, data, identity, thumbnail);
+            return FsSlots.write_slot(dir, slot_id, data, identity, thumbnail);
         };
         let path = Self::state_path(dir, slot_id);
         let (bytes, summary) = build_state_slot_bytes(path, slot_id, data, identity, thumbnail)?;
@@ -859,7 +859,7 @@ impl SlotBackend for AndroidStorageBackend {
         slot_id: u64,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
         let Some((uri, relative)) = Self::decode(dir) else {
-            return FsSlotBackend.read_slot(dir, slot_id);
+            return FsSlots.read_slot(dir, slot_id);
         };
         let path = Self::state_path(dir, slot_id);
         let Some(bytes) = self.read(&uri, &format!("{relative}/{slot_id}.state"))? else {
@@ -870,7 +870,7 @@ impl SlotBackend for AndroidStorageBackend {
 
     fn delete_slot(&self, dir: &Path, slot_id: u64) -> Result<(), PersistenceError> {
         let Some((uri, relative)) = Self::decode(dir) else {
-            return FsSlotBackend.delete_slot(dir, slot_id);
+            return FsSlots.delete_slot(dir, slot_id);
         };
         self.delete(&uri, &format!("{relative}/{slot_id}.state"))
     }
@@ -884,7 +884,7 @@ impl AutoSaveBackend for AndroidStorageBackend {
         identity: &SystemIdentity,
     ) -> Result<StateSlotSummary, PersistenceError> {
         let Some((uri, relative)) = Self::decode(dir) else {
-            return FsSlotBackend.write_autosave(dir, data, identity);
+            return FsAutosave.write_autosave(dir, data, identity);
         };
         let path = dir.join(".autosave_slot");
         let (bytes, summary) = build_state_slot_bytes(path, 0, data, identity, None)?;
@@ -898,7 +898,7 @@ impl AutoSaveBackend for AndroidStorageBackend {
         identity: &SystemIdentity,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
         let Some((uri, relative)) = Self::decode(dir) else {
-            return FsSlotBackend.read_autosave(dir, identity);
+            return FsAutosave.read_autosave(dir, identity);
         };
         let path = dir.join(".autosave_slot");
         let Some(bytes) = self.read(&uri, &format!("{relative}/.autosave_slot"))? else {
@@ -909,7 +909,7 @@ impl AutoSaveBackend for AndroidStorageBackend {
 
     fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError> {
         let Some((uri, relative)) = Self::decode(dir) else {
-            return FsSlotBackend.delete_autosave(dir);
+            return FsAutosave.delete_autosave(dir);
         };
         self.delete(&uri, &format!("{relative}/.autosave_slot"))
     }
@@ -918,14 +918,14 @@ impl AutoSaveBackend for AndroidStorageBackend {
 impl MapperSaveBackend for AndroidStorageBackend {
     fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
         let Some((uri, relative)) = Self::decode(path) else {
-            return FsSlotBackend.read_mapper_save(path);
+            return FsMapper.read_mapper_save(path);
         };
         self.read(&uri, &relative)
     }
 
     fn write_mapper_save(&self, path: &Path, data: &[u8]) -> Result<(), PersistenceError> {
         let Some((uri, relative)) = Self::decode(path) else {
-            return FsSlotBackend.write_mapper_save(path, data);
+            return FsMapper.write_mapper_save(path, data);
         };
         self.write(&uri, &relative, data)
     }
@@ -936,7 +936,7 @@ impl MapperSaveBackend for AndroidStorageBackend {
         data: &[u8],
     ) -> Result<PathBuf, PersistenceError> {
         let Some((uri, relative)) = Self::decode(path) else {
-            return FsSlotBackend.write_recovery_mapper_save(path, data);
+            return FsMapper.write_recovery_mapper_save(path, data);
         };
         let recovery = format!("{relative}.recovery");
         self.write(&uri, &recovery, data)?;

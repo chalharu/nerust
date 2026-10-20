@@ -2,11 +2,9 @@ pub mod descriptor;
 pub mod load;
 pub mod settings;
 
-use std::collections::HashMap;
-
 use nerust_input_traits::{
-    AttachmentId, ControlId, DigitalControlId, FieldId, InputAssignments, InputSystemFactory,
-    InputValue, UnifiedFieldMap,
+    AttachmentId, ControlId, FieldId, InputAssignments, InputSystemFactory, InputValue,
+    UnifiedFieldMap,
 };
 use thiserror::Error;
 
@@ -53,37 +51,13 @@ pub trait GuiInputPort: Send {
     fn clear(&mut self);
 }
 
-/// Split a unified `(attachment, ControlId)` field map into the legacy digital-only projection,
-/// reporting dropped analog entries. Session input maps still key on `DigitalControlId`; builders log and debug-assert on drops so a future analog device cannot vanish silently.
-pub type DigitalFieldMap = HashMap<(AttachmentId, DigitalControlId), usize>;
-/// Unified `(attachment, ControlId)` entries dropped by the digital projection.
-pub type DroppedAnalogFields = Vec<(AttachmentId, ControlId)>;
-
-/// Lossless lookup over the unified map: the end-to-end (attachment, control)
-/// path that never passes through the lossy digital projection.
+/// Lossless lookup over the unified map.
 pub fn resolve_unified_field(
     map: &UnifiedFieldMap,
     attachment: AttachmentId,
     control: impl Into<ControlId>,
 ) -> Option<usize> {
     map.get(&(attachment, control.into())).copied()
-}
-
-#[must_use]
-pub fn split_digital_field_map(
-    unified: &UnifiedFieldMap,
-) -> (DigitalFieldMap, DroppedAnalogFields) {
-    let mut digital = HashMap::with_capacity(unified.len());
-    let mut dropped = Vec::new();
-    for ((attachment, control), field) in unified {
-        match control.as_digital() {
-            Some(id) => {
-                digital.insert((*attachment, id), *field);
-            }
-            None => dropped.push((*attachment, *control)),
-        }
-    }
-    (digital, dropped)
 }
 
 /// Raw parts produced by a system factory before EmuCore wrapping.
@@ -94,7 +68,7 @@ pub struct CoreParts {
     pub audio: Box<dyn crate::audio::AudioBackend>,
     pub gui_input: Box<dyn GuiInputPort>,
     /// (attachment, control) → absolute field index
-    pub field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
+    pub field_map: UnifiedFieldMap,
     pub render_profile: nerust_render_traits::VideoRenderProfile,
     pub palette: Box<[u32]>,
     pub host_peripherals: crate::peripheral::HostPeripheralHandles,
@@ -201,12 +175,13 @@ pub trait SystemDefaults: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
-    use nerust_input_traits::AnalogControlId;
+    use nerust_input_traits::{AnalogControlId, DigitalControlId};
 
     #[test]
-    fn unified_lookup_never_passes_the_lossy_projection() {
-        use nerust_input_traits::AnalogControlId;
+    fn unified_lookup_resolves_both_sides() {
         let digital = DigitalControlId::new("test.a");
         let analog = AnalogControlId::new("test.x");
         let attachment = AttachmentId::new("test.pad");
@@ -223,44 +198,6 @@ mod tests {
             resolve_unified_field(&unified, attachment, DigitalControlId::new("test.z")),
             None
         );
-    }
-
-    #[test]
-    fn projection_keeps_digital_and_reports_analog() {
-        let digital = DigitalControlId::new("test.a");
-        let analog = AnalogControlId::new("test.x");
-        let attachment = AttachmentId::new("test.pad");
-        let unified = HashMap::from([
-            ((attachment, ControlId::digital(digital)), 0),
-            ((attachment, ControlId::analog(analog)), 1),
-        ]);
-        let (map, dropped) = split_digital_field_map(&unified);
-        assert_eq!(map.len(), 1);
-        assert_eq!(map[&(attachment, digital)], 0);
-        assert_eq!(dropped, vec![(attachment, ControlId::analog(analog))]);
-    }
-
-    #[test]
-    fn projection_passes_digital_only_maps_cleanly() {
-        let digital = DigitalControlId::new("test.b");
-        let attachment = AttachmentId::new("test.pad");
-        let unified = HashMap::from([((attachment, ControlId::digital(digital)), 3)]);
-        let (map, dropped) = split_digital_field_map(&unified);
-        assert!(dropped.is_empty());
-        assert_eq!(map[&(attachment, digital)], 3);
-    }
-
-    #[test]
-    fn projection_handles_empty_and_analog_only_maps() {
-        let unified: HashMap<(AttachmentId, ControlId), usize> = HashMap::new();
-        let (map, dropped) = split_digital_field_map(&unified);
-        assert!(map.is_empty() && dropped.is_empty());
-        let analog = ControlId::analog(AnalogControlId::new("test.x"));
-        let attachment = AttachmentId::new("test.pad");
-        let unified = HashMap::from([((attachment, analog), 5)]);
-        let (map, dropped) = split_digital_field_map(&unified);
-        assert!(map.is_empty());
-        assert_eq!(dropped, vec![(attachment, analog)]);
     }
 
     #[test]

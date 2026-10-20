@@ -28,9 +28,17 @@ pub struct InputSplit {
 }
 
 impl InputSplit {
-    /// Legacy init-time constructor for erased factories; prefer [`Self::from_resources`].
-    /// One factory still mints every buffer, so endpoints never disagree on type.
-    pub fn spawn(new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>) -> Self {
+    /// Typed init-time constructor: the concrete buffer type is fixed at
+    /// compile time, so a factory/endpoint mismatch cannot be expressed.
+    pub fn spawn_typed<B>(make: impl Fn() -> B + Send + Sync + 'static) -> Self
+    where
+        B: InputStateBuffer + 'static,
+    {
+        let new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync> =
+            Box::new(move || {
+                let buffer: Box<dyn InputStateBuffer> = Box::new(make());
+                buffer
+            });
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> = Arc::new(Mutex::new((new_buffer)()));
         Self {
             shared,
@@ -39,23 +47,19 @@ impl InputSplit {
         }
     }
 
-    /// Typed init-time constructor: the concrete buffer type is fixed at
-    /// compile time, so a factory/endpoint mismatch cannot be expressed.
-    pub fn spawn_typed<B>(make: impl Fn() -> B + Send + Sync + 'static) -> Self
-    where
-        B: InputStateBuffer + 'static,
-    {
-        Self::spawn(Box::new(move || {
-            let buffer: Box<dyn InputStateBuffer> = Box::new(make());
-            buffer
-        }))
-    }
-
     /// Single move-out from factory resources: the unified field map plus
     /// the shared endpoints travel out together, never separately.
     pub fn from_resources(resources: InputResources) -> (Self, UnifiedFieldMap) {
         let (field_map, factory) = resources.into_parts();
-        (Self::spawn(factory), field_map)
+        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> = Arc::new(Mutex::new((factory)()));
+        (
+            Self {
+                shared,
+                flag: Arc::new(AtomicBool::new(false)),
+                new_buffer: factory,
+            },
+            field_map,
+        )
     }
 }
 

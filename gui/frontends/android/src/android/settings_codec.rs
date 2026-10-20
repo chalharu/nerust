@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use nerust_core_traits::factory::CoreFactory;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::model::{
     local::{
         NotificationAreaMode, NotificationPosition, RumbleTarget, ScreenOrientation,
@@ -248,7 +248,7 @@ impl SettingsApplier {
         current: &AndroidSettings,
         defs: &[SettingDef],
         snapshot: SettingsSnapshot,
-        registry: &SystemRegistry,
+        factories: &[std::sync::Arc<dyn CoreFactory>],
     ) -> SettingsPlan {
         let Some(android_settings) = AndroidSettings::from_keyed_indices(values, current, defs)
         else {
@@ -258,7 +258,7 @@ impl SettingsApplier {
         };
         let previous_storage_policy = snapshot.shared.persistence.storage_policy;
         let mut next = snapshot;
-        if let Err(error) = android_settings.apply_to_snapshot(&mut next, registry) {
+        if let Err(error) = android_settings.apply_to_snapshot(&mut next, factories) {
             return SettingsPlan::Invalid {
                 reason: format!("failed to update Android system settings: {error}"),
             };
@@ -287,6 +287,7 @@ mod tests {
     use nerust_gbc_factory::GbcFactory;
     use nerust_gbc_settings::GbcSettings;
     use nerust_gui_runtime::settings::SettingsSnapshot;
+    use nerust_gui_shell::registry::SystemRegistry;
     use nerust_nes_factory::NesFactory;
     use nerust_nes_settings::{NesSettings, NesVideoFilter};
     use nerust_settings_core::model::{
@@ -325,7 +326,7 @@ mod tests {
     }
 
     fn android_settings(snapshot: &SettingsSnapshot, registry: &SystemRegistry) -> AndroidSettings {
-        AndroidSettings::from_snapshot(snapshot, registry)
+        AndroidSettings::from_snapshot(snapshot, registry.all())
     }
 
     fn set_system_choice(settings: &mut AndroidSettings, field_id: &str, choice_id: &str) {
@@ -361,7 +362,7 @@ mod tests {
         let registry = registry();
         let android = android_settings(&snapshot, &registry);
         let mut out = default_snapshot();
-        android.apply_to_snapshot(&mut out, &registry).unwrap();
+        android.apply_to_snapshot(&mut out, registry.all()).unwrap();
         // The round-trip should not change anything when starting from defaults.
         assert_eq!(out.local.audio.muted, snapshot.local.audio.muted);
         assert_eq!(
@@ -421,7 +422,9 @@ mod tests {
         android.status_position = NotificationPosition::BottomRight;
         android.status_area_mode = NotificationAreaMode::Strip;
         set_system_choice(&mut android, "video.filter", "ntsc_rgb");
-        android.apply_to_snapshot(&mut snapshot, &registry).unwrap();
+        android
+            .apply_to_snapshot(&mut snapshot, registry.all())
+            .unwrap();
 
         assert!(snapshot.local.audio.muted);
         assert_eq!(snapshot.local.audio.master_volume_percent, 50);
@@ -511,7 +514,7 @@ mod tests {
         original.rumble_target = RumbleTarget::Handset;
         set_system_choice(&mut original, "video.filter", "ntsc_svideo");
         original
-            .apply_to_snapshot(&mut snapshot, &registry)
+            .apply_to_snapshot(&mut snapshot, registry.all())
             .unwrap();
         let recovered = android_settings(&snapshot, &registry);
         let parsed = AndroidSettings::from_keyed_indices(
@@ -962,7 +965,7 @@ mod tests {
             &current,
             &current.setting_defs(),
             snapshot.clone(),
-            &registry,
+            registry.all(),
         ) {
             SettingsPlan::Apply { next } => {
                 assert_eq!(
@@ -993,7 +996,7 @@ mod tests {
             &current,
             &current.setting_defs(),
             snapshot.clone(),
-            &registry,
+            registry.all(),
         ) {
             SettingsPlan::NeedDocumentTree { next } => {
                 assert_eq!(
@@ -1018,7 +1021,7 @@ mod tests {
             &current,
             &current.setting_defs(),
             snapshot.clone(),
-            &registry,
+            registry.all(),
         ) {
             SettingsPlan::Invalid { .. } => {}
             _ => panic!("empty values must be invalid"),

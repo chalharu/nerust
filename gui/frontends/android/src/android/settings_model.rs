@@ -5,14 +5,13 @@ use std::sync::Arc;
 
 use nerust_core_traits::{
     factory::{
-        FactoryError,
+        CoreFactory, FactoryError,
         descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsFieldKind},
     },
     identity::SystemId,
 };
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 
 use nerust_settings_core::model::{
@@ -128,10 +127,12 @@ impl AndroidSettings {
             .sort_by_key(|choice| choice.system_id.as_ref() != active);
     }
 
-    pub(super) fn from_snapshot(snapshot: &SettingsSnapshot, registry: &SystemRegistry) -> Self {
+    pub(super) fn from_snapshot(
+        snapshot: &SettingsSnapshot,
+        factories: &[Arc<dyn CoreFactory>],
+    ) -> Self {
         let language = snapshot.shared.general.language;
-        let system_choices = registry
-            .all()
+        let system_choices = factories
             .iter()
             .flat_map(|factory| {
                 let system_id = factory.system_id();
@@ -195,7 +196,7 @@ impl AndroidSettings {
     pub(super) fn apply_to_snapshot(
         &self,
         snapshot: &mut SettingsSnapshot,
-        registry: &SystemRegistry,
+        factories: &[Arc<dyn CoreFactory>],
     ) -> Result<(), FactoryError> {
         snapshot.local.audio.muted = self.audio_muted;
         snapshot.local.audio.master_volume_percent = self.master_volume_percent;
@@ -223,8 +224,9 @@ impl AndroidSettings {
         snapshot.local.notifications.status_area_mode = self.status_area_mode;
 
         for choice in &self.system_choices {
-            let factory = registry
-                .find_by_id(choice.system_id.as_ref())
+            let factory = factories
+                .iter()
+                .find(|factory| factory.system_id() == choice.system_id)
                 .ok_or(FactoryError::InvalidSettings)?;
             apply_settings_choice(
                 factory.as_ref(),

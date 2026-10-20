@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use nerust_input_traits::{AttachmentId, DigitalControlId};
+use nerust_input_traits::{AttachmentId, ControlId};
 use nerust_keyboard::Key;
 use nerust_settings_core::model::input::{KeyboardBinding, PersistedControlId};
 
@@ -18,7 +18,7 @@ pub(crate) struct DuplicateBinding {
 /// Rebuild the keyboard map in one pass: index digital bindings, probe each field once.
 /// Runs only on settings/assignment change, never per key event.
 pub(crate) fn rebuild_input_map(
-    field_map: &HashMap<(AttachmentId, DigitalControlId), usize>,
+    field_map: &HashMap<(AttachmentId, ControlId), usize>,
     bindings: &[KeyboardBinding],
     target: &mut HashMap<Key, usize>,
 ) -> Result<(), DuplicateBinding> {
@@ -43,6 +43,9 @@ pub(crate) fn rebuild_input_map(
         by_control.insert(key, binding);
     }
     for ((attachment, control), &field) in field_map {
+        let Some(control) = control.as_digital() else {
+            continue;
+        };
         if let Some(binding) = by_control.get(&(attachment.as_str(), control.as_str())) {
             target.insert(binding.key, field);
         }

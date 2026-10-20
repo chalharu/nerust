@@ -34,7 +34,7 @@ impl From<SafeInsets> for UiInsets {
 
 impl OsdPlan {
     /// Single construction shared by every frontend: rows plus the status pill.
-    /// Takes ownership; row tags ride through as static markers with no per-frame allocation.
+    /// Takes ownership; row tags ride through as shared handles with no per-frame allocation.
     pub fn into_content(self) -> OsdContent {
         OsdContent {
             rows: self
@@ -121,7 +121,7 @@ mod render_cov_tests {
             rows: vec![OsdRow {
                 text: "Paused".to_string(),
                 rgb: (1, 2, 3),
-                tag: "[INFO]",
+                tag: "[INFO]".into(),
             }],
             status: None,
             position: P::TopLeft,

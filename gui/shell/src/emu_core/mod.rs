@@ -19,7 +19,7 @@ use nerust_core_traits::{
     identity::SystemIdentity,
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
-use nerust_input_traits::{AttachmentId, DigitalControlId};
+use nerust_input_traits::{AttachmentId, ControlId};
 use nerust_render_traits::{FrameBuffer, PixelFormat, VideoFrameFormat, VideoRenderProfile};
 
 pub(crate) mod images;
@@ -432,9 +432,6 @@ fn recv_debug_reply<T>(reply_rx: std::sync::mpsc::Receiver<T>) -> Result<T, Oper
         OperationError::NoReply
     })
 }
-/// Legacy alias for the persist leg; new code bounds on [`LivePersistPort`].
-pub trait CorePersistence: LivePersistPort {}
-
 /// Thread-transport port behind [`EmuCore`]: application code
 /// programs against this seam, tests plug scripted transports.
 pub trait EmuThreadPort: Send + std::fmt::Debug {
@@ -492,7 +489,7 @@ impl EmuCore {
 pub type CoreSpawnParts = (
     EmuCore,
     Box<dyn nerust_core_traits::factory::GuiInputPort>,
-    std::collections::HashMap<(AttachmentId, DigitalControlId), usize>,
+    std::collections::HashMap<(AttachmentId, ControlId), usize>,
     nerust_core_traits::peripheral::HostPeripheralHandles,
 );
 
@@ -1285,8 +1282,6 @@ impl LivePersistPort for EmuCore {
     }
 }
 
-impl CorePersistence for EmuCore {}
-
 impl LivePlayback for EmuCore {
     fn pause(&self) -> Result<(), OperationError> {
         self.pause()
@@ -1913,7 +1908,7 @@ mod port_tests {
         assert!(LivePersistPort::canonical_media_identity(&core).is_some());
         let _ = LivePersistPort::generate_preview(&core);
         let _ = LiveCore::drain_handle(&core);
-        fn bound<T: CorePersistence>() {}
+        fn bound<T: LivePersistPort>() {}
         bound::<EmuCore>();
     }
 }

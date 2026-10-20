@@ -59,10 +59,6 @@ pub trait SnapshotPort {
     fn settings_snapshot(&self) -> &nerust_gui_runtime::settings::SettingsSnapshot;
 }
 
-/// Loader-facing session ports: load plus snapshot legs.
-/// Callers needing one leg bound on it directly; this union stays for compat.
-pub trait SessionPorts: LoadPorts + SnapshotPort {}
-
 /// Plain-args notification view; single adapter at the settings boundary.
 #[derive(Debug, Clone, Copy)]
 pub struct NotificationView {

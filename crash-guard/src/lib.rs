@@ -86,10 +86,6 @@ pub fn install_default() -> HookGuard {
     install_with(default_sink)
 }
 
-/// Crash exit code for hosts (Rust panic convention: 101).
-/// Kept for frozen host call sites; hosts map [`GuardOutcome`] to process policy.
-pub const CRASH_EXIT_CODE: i32 = 101;
-
 /// Guard result: normal completion or an unwound crash. `#[must_use]`
 /// keeps a crash from silently passing as a clean exit.
 #[must_use]
@@ -354,11 +350,6 @@ mod tests {
         let outcome: GuardOutcome<()> =
             run_guarded_with(|| panic!("legacy boom"), default_sink, stub_source);
         assert!(matches!(outcome, GuardOutcome::Crashed(_)));
-    }
-
-    #[test]
-    fn crash_exit_code_matches_rust_panic_convention() {
-        assert_eq!(super::CRASH_EXIT_CODE, 101);
     }
 
     #[test]

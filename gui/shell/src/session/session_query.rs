@@ -1,8 +1,6 @@
 //! Read-only session queries for frontends: metrics, titles, slots, and history views.
 //! Callers fetch one `TickMetrics` and thread it through instead of combining predicates.
 
-use nerust_emu_thread::ConsoleMetrics;
-
 use crate::session::{SessionHandle, osd::TickMetrics, title::TitleInput};
 
 /// Window size in logical pixels for frontend surface setup.
@@ -43,16 +41,6 @@ impl HistoryView {
 }
 
 impl SessionHandle {
-    /// Infra escape hatch: raw console metrics; new code threads one `TickMetrics` per pass.
-    /// Kept as a shim: removing it breaks the out-of-crate frontend.
-    pub fn metrics(&self) -> ConsoleMetrics {
-        self.emu
-            .core()
-            .ok()
-            .map(|c| c.metrics())
-            .unwrap_or_default()
-    }
-
     pub fn tick_metrics(&self) -> TickMetrics {
         // Single lock-free snapshot per pass: pause/load truth rides the
         // stamped atomics, counters read the thread side directly.
@@ -197,8 +185,6 @@ mod query_cov_tests {
         let session = super::super::SessionHandle::new_ephemeral(caps, registry, audio);
         let tick = session.tick_metrics();
         assert!(!tick.loaded);
-        let metrics = session.metrics();
-        assert!(!metrics.loaded);
         let size = session.window_size();
         assert_eq!((size.width, size.height), (0.0, 0.0));
         assert!(session.window_title(&tick).contains("No ROM"));

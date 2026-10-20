@@ -36,10 +36,11 @@ use nerust_gui_shell::{
     registry::SystemRegistry,
     session::{
         SessionError, SessionHandle,
-        access::{PauseControl, SessionControl, SettingsResult, SlotControl},
+        access::{PauseControl, ResetControl, SessionControl, SettingsResult, SlotIo, SlotNav},
         commands::{SessionCommand, SessionCommandOutcome},
         notification::FailureOrigin,
         osd::TickMetrics,
+        persistence::PersistenceBackends,
     },
 };
 use nerust_render_traits::{SurfaceSize, renderer::GpuFactory};
@@ -298,11 +299,11 @@ impl AndroidFrontend {
             &audio_registry,
             settings_paths,
         )?;
-        session.set_persistence_backends(
-            Box::new(saf::AndroidStorageBackend::new(app.clone())),
-            Box::new(saf::AndroidStorageBackend::new(app.clone())),
-            Box::new(saf::AndroidStorageBackend::new(app.clone())),
-        );
+        session.configure_persistence_backends(PersistenceBackends {
+            slot: Box::new(saf::AndroidStorageBackend::new(app.clone())),
+            autosave: Box::new(saf::AndroidStorageBackend::new(app.clone())),
+            mapper: Box::new(saf::AndroidStorageBackend::new(app.clone())),
+        });
         if !storage.storage_policy_migration_completed() {
             let mut next = session.settings_snapshot().clone();
             if next.shared.persistence.storage_policy == StoragePolicy::Sidecar {
@@ -407,7 +408,7 @@ impl AndroidFrontend {
     fn refresh_dialog_caches(&self) {
         let mut current = AndroidSettings::from_snapshot(
             self.core.session.settings_snapshot(),
-            self.core.session.registry(),
+            self.core.session.factories(),
         );
         current.prioritize_system(self.core.session.active_system_id());
         settings::update_cached_settings(&current);
@@ -548,7 +549,7 @@ impl AndroidFrontend {
         let mut current = settings::cloned_cached_settings().unwrap_or_else(|| {
             AndroidSettings::from_snapshot(
                 self.core.session.settings_snapshot(),
-                self.core.session.registry(),
+                self.core.session.factories(),
             )
         });
         current.prioritize_system(self.core.session.active_system_id());
@@ -560,7 +561,7 @@ impl AndroidFrontend {
             &current,
             &defs,
             self.core.session.settings_snapshot().clone(),
-            self.core.session.registry(),
+            self.core.session.factories(),
         );
         match plan {
             SettingsPlan::Invalid { reason } => {
@@ -730,7 +731,7 @@ impl AndroidFrontend {
         let mut current = settings::cloned_cached_settings().unwrap_or_else(|| {
             AndroidSettings::from_snapshot(
                 self.core.session.settings_snapshot(),
-                self.core.session.registry(),
+                self.core.session.factories(),
             )
         });
         current.prioritize_system(self.core.session.active_system_id());
@@ -904,7 +905,7 @@ impl PauseControl for AndroidFrontend {
     }
 }
 
-impl SlotControl for AndroidFrontend {
+impl SlotIo for AndroidFrontend {
     fn save_active_slot(&mut self) -> bool {
         self.exec(SessionCommand::SaveActiveSlotOrNew)
             .unwrap_or_default()
@@ -915,14 +916,6 @@ impl SlotControl for AndroidFrontend {
         self.exec(SessionCommand::LoadActiveSlot)
             .unwrap_or_default()
             .executed
-    }
-
-    fn select_next_slot(&mut self) {
-        self.exec(SessionCommand::SelectNextSlot);
-    }
-
-    fn select_previous_slot(&mut self) {
-        self.exec(SessionCommand::SelectPreviousSlot);
     }
 
     fn load_slot(&mut self, slot_id: u64) -> bool {
@@ -938,6 +931,16 @@ impl SlotControl for AndroidFrontend {
     fn delete_slot(&mut self, slot_id: u64) {
         self.exec(SessionCommand::DeleteSlot(slot_id));
     }
+}
+
+impl SlotNav for AndroidFrontend {
+    fn select_next_slot(&mut self) {
+        self.exec(SessionCommand::SelectNextSlot);
+    }
+
+    fn select_previous_slot(&mut self) {
+        self.exec(SessionCommand::SelectPreviousSlot);
+    }
 
     fn select_slot(&mut self, slot_id: u64) {
         self.exec(SessionCommand::SelectActiveSlot(slot_id));
@@ -946,7 +949,9 @@ impl SlotControl for AndroidFrontend {
     fn create_slot(&mut self) {
         self.exec(SessionCommand::CreateSlot);
     }
+}
 
+impl ResetControl for AndroidFrontend {
     fn reset(&mut self) {
         self.exec(SessionCommand::Reset);
     }

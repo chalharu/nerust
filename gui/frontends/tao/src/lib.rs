@@ -31,7 +31,7 @@ pub(crate) mod aux;
 pub(crate) mod runtime;
 pub(crate) mod util;
 
-use nerust_crash_guard::{CRASH_EXIT_CODE, GuardOutcome};
+use nerust_crash_guard::GuardOutcome;
 use nerust_gui_shell::context::FrontendContext;
 use nerust_run_options::RunOptions;
 
@@ -55,7 +55,7 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
                 .set_level(rfd::MessageLevel::Error)
                 .set_buttons(rfd::MessageButtons::Ok)
                 .show();
-            std::process::exit(CRASH_EXIT_CODE);
+            std::process::exit(101); // Rust panic convention: a crash never exits 0.
         }
     }
 }

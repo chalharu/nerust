@@ -37,96 +37,6 @@ pub trait ResetControl {
     fn reset(&mut self);
 }
 
-/// Blanket narrow ports over the legacy fat trait; new code depends on narrow traits.
-impl<T: SlotControl + ?Sized> SlotIo for T {
-    fn load_slot(&mut self, slot_id: u64) -> bool {
-        SlotControl::load_slot(self, slot_id)
-    }
-    fn save_slot(&mut self, slot_id: u64) {
-        SlotControl::save_slot(self, slot_id)
-    }
-    fn delete_slot(&mut self, slot_id: u64) {
-        SlotControl::delete_slot(self, slot_id)
-    }
-    fn save_active_slot(&mut self) -> bool {
-        SlotControl::save_active_slot(self)
-    }
-    fn load_active_slot(&mut self) -> bool {
-        SlotControl::load_active_slot(self)
-    }
-}
-
-impl<T: SlotControl + ?Sized> SlotNav for T {
-    fn select_slot(&mut self, slot_id: u64) {
-        SlotControl::select_slot(self, slot_id)
-    }
-    fn select_next_slot(&mut self) {
-        SlotControl::select_next_slot(self)
-    }
-    fn select_previous_slot(&mut self) {
-        SlotControl::select_previous_slot(self)
-    }
-    fn create_slot(&mut self) {
-        SlotControl::create_slot(self)
-    }
-}
-
-impl<T: SlotControl + ?Sized> ResetControl for T {
-    fn reset(&mut self) {
-        SlotControl::reset(self)
-    }
-}
-
-/// Legacy fat shim for out-of-crate frontends; new code uses narrow traits.
-/// Kept for compatibility: blanket impls forward narrow calls here.
-pub trait SlotControl {
-    fn save_active_slot(&mut self) -> bool;
-    fn load_active_slot(&mut self) -> bool;
-    fn select_next_slot(&mut self);
-    fn select_previous_slot(&mut self);
-    fn load_slot(&mut self, slot_id: u64) -> bool;
-    fn save_slot(&mut self, slot_id: u64);
-    fn delete_slot(&mut self, slot_id: u64);
-    fn select_slot(&mut self, slot_id: u64);
-    fn create_slot(&mut self);
-    fn reset(&mut self);
-}
-
-/// Reference forwarding: `&mut T` speaks `SlotControl` whenever `T`
-/// does, so adapters compose without consuming the recorder.
-impl<T: SlotControl> SlotControl for &mut T {
-    fn load_slot(&mut self, slot_id: u64) -> bool {
-        T::load_slot(self, slot_id)
-    }
-    fn save_slot(&mut self, slot_id: u64) {
-        T::save_slot(self, slot_id)
-    }
-    fn delete_slot(&mut self, slot_id: u64) {
-        T::delete_slot(self, slot_id)
-    }
-    fn save_active_slot(&mut self) -> bool {
-        T::save_active_slot(self)
-    }
-    fn load_active_slot(&mut self) -> bool {
-        T::load_active_slot(self)
-    }
-    fn select_slot(&mut self, slot_id: u64) {
-        T::select_slot(self, slot_id)
-    }
-    fn select_next_slot(&mut self) {
-        T::select_next_slot(self)
-    }
-    fn select_previous_slot(&mut self) {
-        T::select_previous_slot(self)
-    }
-    fn create_slot(&mut self) {
-        T::create_slot(self)
-    }
-    fn reset(&mut self) {
-        T::reset(self)
-    }
-}
-
 /// Session-level operations: teardown and settings application.
 pub trait SessionControl {
     /// Unload the current ROM, flushing mapper saves.
@@ -251,7 +161,7 @@ mod tests {
         }
     }
 
-    impl SlotControl for Recorder {
+    impl SlotIo for Recorder {
         fn save_active_slot(&mut self) -> bool {
             self.calls.push("save_active_slot");
             true
@@ -259,12 +169,6 @@ mod tests {
         fn load_active_slot(&mut self) -> bool {
             self.calls.push("load_active_slot");
             true
-        }
-        fn select_next_slot(&mut self) {
-            self.calls.push("select_next_slot");
-        }
-        fn select_previous_slot(&mut self) {
-            self.calls.push("select_previous_slot");
         }
         fn load_slot(&mut self, _slot_id: u64) -> bool {
             self.calls.push("load_slot");
@@ -276,12 +180,24 @@ mod tests {
         fn delete_slot(&mut self, _slot_id: u64) {
             self.calls.push("delete_slot");
         }
+    }
+
+    impl SlotNav for Recorder {
+        fn select_next_slot(&mut self) {
+            self.calls.push("select_next_slot");
+        }
+        fn select_previous_slot(&mut self) {
+            self.calls.push("select_previous_slot");
+        }
         fn select_slot(&mut self, _slot_id: u64) {
             self.calls.push("select_slot");
         }
         fn create_slot(&mut self) {
             self.calls.push("create_slot");
         }
+    }
+
+    impl ResetControl for Recorder {
         fn reset(&mut self) {
             self.calls.push("reset");
         }
@@ -337,8 +253,7 @@ mod tests {
 
     #[test]
     fn recorder_pins_each_slot_and_lifecycle_call() {
-        // Narrow ports reach the recorder through the blanket impls:
-        // no adapter stands between the fat trait and its halves.
+        // Direct narrow impls: no adapter stands between the recorder and its ports.
         let mut recorder = Recorder::default();
         recorder.pause();
         recorder.resume();
@@ -443,11 +358,11 @@ mod access_cov_tests {
     }
 
     #[test]
-    fn ref_forwarding_composes_without_recorder() {
+    fn narrow_impls_compose_without_adapter() {
         struct Probe {
             calls: Vec<&'static str>,
         }
-        impl SlotControl for Probe {
+        impl SlotIo for Probe {
             fn save_active_slot(&mut self) -> bool {
                 self.calls.push("save_active_slot");
                 true
@@ -455,12 +370,6 @@ mod access_cov_tests {
             fn load_active_slot(&mut self) -> bool {
                 self.calls.push("load_active_slot");
                 true
-            }
-            fn select_next_slot(&mut self) {
-                self.calls.push("select_next_slot");
-            }
-            fn select_previous_slot(&mut self) {
-                self.calls.push("select_previous_slot");
             }
             fn load_slot(&mut self, _: u64) -> bool {
                 self.calls.push("load_slot");
@@ -472,20 +381,29 @@ mod access_cov_tests {
             fn delete_slot(&mut self, _: u64) {
                 self.calls.push("delete_slot");
             }
+        }
+        impl SlotNav for Probe {
+            fn select_next_slot(&mut self) {
+                self.calls.push("select_next_slot");
+            }
+            fn select_previous_slot(&mut self) {
+                self.calls.push("select_previous_slot");
+            }
             fn select_slot(&mut self, _: u64) {
                 self.calls.push("select_slot");
             }
             fn create_slot(&mut self) {
                 self.calls.push("create_slot");
             }
+        }
+        impl ResetControl for Probe {
             fn reset(&mut self) {
                 self.calls.push("reset");
             }
         }
         let mut probe = Probe { calls: vec![] };
         {
-            let mut borrowed = &mut probe;
-            let narrow: &mut dyn SlotIo = &mut borrowed;
+            let narrow: &mut dyn SlotIo = &mut probe;
             narrow.save_slot(9);
             assert!(narrow.load_slot(9));
             assert!(narrow.save_active_slot());
@@ -493,16 +411,14 @@ mod access_cov_tests {
             narrow.delete_slot(9);
         }
         {
-            let mut borrowed = &mut probe;
-            let narrow: &mut dyn SlotNav = &mut borrowed;
+            let narrow: &mut dyn SlotNav = &mut probe;
             narrow.select_slot(9);
             narrow.select_next_slot();
             narrow.select_previous_slot();
             narrow.create_slot();
         }
         {
-            let mut borrowed = &mut probe;
-            let narrow: &mut dyn ResetControl = &mut borrowed;
+            let narrow: &mut dyn ResetControl = &mut probe;
             narrow.reset();
         }
         for name in [

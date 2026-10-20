@@ -13,7 +13,7 @@ use nerust_persistence::{
 
 use super::error::SlotOpFailure;
 
-pub use super::fs::{FailingSlotBackend, FsAutosave, FsMapper, FsSlotBackend, FsSlots};
+pub use super::fs::{FailingSlotBackend, FsAutosave, FsMapper, FsSlots};
 pub use super::ports::{
     AutoSaveBackend, MapperSaveBackend, PersistenceBackends, SlotActivation, SlotBackend,
     StateExporter,
@@ -629,13 +629,13 @@ mod persistence_cov_tests {
 
     #[test]
     fn mapper_flush_covers_degraded_and_skipped() {
-        use crate::session::fs::FsSlotBackend;
+        use crate::session::fs::FsMapper;
         let dir = std::env::temp_dir().join("nerust-persist-cov-mapper");
         std::fs::create_dir_all(&dir).ok();
         let mut manager = PersistenceManager::with_all_backends(
             Box::new(FailingSlotBackend),
             Box::new(FailingSlotBackend),
-            Box::new(FsSlotBackend),
+            Box::new(FsMapper),
         );
         manager.configure(dir.clone(), dir.join("g.sav"));
         manager.mapper_save_flush_allowed = false;

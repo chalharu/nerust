@@ -8,7 +8,7 @@ use gtk::{
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionError,
-    access::{PauseControl, SessionControl, SlotControl},
+    access::{PauseControl, ResetControl, SessionControl, SlotIo, SlotNav},
 };
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::renderer::GpuFactory;
@@ -149,7 +149,7 @@ fn key_event_pressed(event: KeyEventState) -> bool {
 
 fn load_active_slot(state: &RefCell<State>) -> bool {
     let active_slot_id = state.borrow().active_slot_id();
-    active_slot_id.is_some_and(|slot_id| SlotControl::load_slot(&mut *state.borrow_mut(), slot_id))
+    active_slot_id.is_some_and(|slot_id| SlotIo::load_slot(&mut *state.borrow_mut(), slot_id))
 }
 
 impl WindowExtend for Window {
@@ -433,7 +433,7 @@ impl WindowExtend for Window {
             Some("_Open"),
             Some("_Cancel"),
         );
-        for factory in self.state().borrow().session.registry().all() {
+        for factory in self.state().borrow().session.factories() {
             let extensions = factory.supported_extensions();
             if extensions.is_empty() {
                 continue;
@@ -494,7 +494,6 @@ impl WindowExtend for Window {
             let _ = state
                 .borrow()
                 .session
-                .settings_manager()
                 .update_window_size(w as u32, h as u32);
         }
         self.application().quit();

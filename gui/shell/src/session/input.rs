@@ -1,5 +1,5 @@
 use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
-use nerust_input_traits::{AbstractKey, DigitalInputEvent, InputValue};
+use nerust_input_traits::{AbstractKey, ControlId, DigitalInputEvent, InputValue};
 use nerust_keyboard::Key;
 use nerust_settings_core::model::input::ShortcutAction;
 
@@ -86,7 +86,10 @@ fn build_touch_overlay(
 impl SessionHandle {
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
-        if let Some(&field) = self.input.field_map.get(&(event.attachment, event.control))
+        if let Some(&field) = self
+            .input
+            .field_map
+            .get(&(event.attachment, ControlId::from(event.control)))
             && let Some(gui_input) = self.emu.input_mut()
         {
             let _ = gui_input.set(field, InputValue::Digital(event.is_pressed()));
@@ -305,7 +308,7 @@ mod tests {
     #[test]
     fn rebuild_input_map_maps_matching_keyboard_binding() {
         let attachment = AttachmentId::new("test.topology.slot");
-        let control = DigitalControlId::new("test.topology.a");
+        let control = ControlId::digital(DigitalControlId::new("test.topology.a"));
         let field_map = HashMap::from([((attachment, control), 7)]);
         let bindings = [KeyboardBinding::new(
             attachment.as_str(),
@@ -323,7 +326,7 @@ mod tests {
     fn rebuild_input_map_reports_first_duplicate_for_caller_to_log() {
         use crate::session::input_map::DuplicateBinding;
         let attachment = AttachmentId::new("test.topology.slot");
-        let control = DigitalControlId::new("test.topology.a");
+        let control = ControlId::digital(DigitalControlId::new("test.topology.a"));
         let field_map = HashMap::from([((attachment, control), 7)]);
         let bindings = [
             KeyboardBinding::new(

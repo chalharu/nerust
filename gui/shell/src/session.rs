@@ -46,7 +46,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_viewmodel::debugger as debug_vm;
-use nerust_input_traits::{AttachmentId, DigitalControlId, InputAssignments};
+use nerust_input_traits::{AttachmentId, ControlId, InputAssignments};
 use nerust_keyboard::Key;
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
@@ -66,7 +66,7 @@ pub use crate::emu_core::images::LiveImages;
 struct CoreRuntime {
     emu_core: EmuCore,
     gui_input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
-    field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
+    field_map: HashMap<(AttachmentId, ControlId), usize>,
     host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
 }
 
@@ -105,7 +105,7 @@ pub enum KeyboardShortcut {
 /// for the input domain so `SessionHandle` stays a facade.
 struct InputDept {
     current_assignments: InputAssignments,
-    field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
+    field_map: HashMap<(AttachmentId, ControlId), usize>,
     host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_keyboard::Key, usize>,
@@ -119,7 +119,7 @@ impl InputDept {
     /// Department constructor: the facade builds departments, never bare field lists.
     fn new(
         current_assignments: InputAssignments,
-        field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
+        field_map: HashMap<(AttachmentId, ControlId), usize>,
         host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
     ) -> Self {
         Self {
@@ -560,14 +560,7 @@ impl SessionHandle {
         }
     }
 
-    /// Borrow the display buffer for one render call without leaking the render type.
-    /// Prefer this over [`frame_buffer`](Self::frame_buffer).
-    pub fn with_frame_buffer<R>(&self, render: impl FnOnce(&FrameBuffer) -> R) -> Option<R> {
-        self.emu.core().ok().map(|c| render(c.frame_buffer()))
-    }
-
-    /// Infra escape hatch: raw display buffer.
-    /// New code prefers [`with_frame_buffer`](Self::with_frame_buffer); kept as a shim.
+    /// Raw display buffer for one render call; `None` without a live core.
     pub fn frame_buffer(&self) -> Option<&FrameBuffer> {
         self.emu.core().ok().map(|c| c.frame_buffer())
     }
@@ -607,31 +600,15 @@ impl SessionHandle {
         &self.input.current_assignments
     }
 
-    /// Infra escape hatch: full settings manager; new code uses narrow readers and writers.
-    /// Kept as a shim: removing it breaks out-of-crate frontends.
-    pub fn settings_manager(&self) -> &SettingsManager {
-        &self.settings.manager
+    /// Narrow settings write: remembers the window size for the next launch.
+    pub fn update_window_size(&self, width: u32, height: u32) -> Result<(), SettingsError> {
+        self.settings.manager.update_window_size(width, height)
     }
 
     /// Bundle form of the backend swap: one struct instead of three
     /// positional boxes. Test and Android backends enter here.
     pub fn configure_persistence_backends(&mut self, backends: PersistenceBackends) {
         self.media.persistence.configure_backends(backends);
-    }
-
-    /// Infra escape hatch: three positional backend boxes.
-    /// New code prefers [`configure_persistence_backends`](Self::configure_persistence_backends).
-    pub fn set_persistence_backends(
-        &mut self,
-        slot_backend: Box<dyn persistence::SlotBackend>,
-        autosave_backend: Box<dyn persistence::AutoSaveBackend>,
-        mapper_backend: Box<dyn persistence::MapperSaveBackend>,
-    ) {
-        self.configure_persistence_backends(PersistenceBackends {
-            slot: slot_backend,
-            autosave: autosave_backend,
-            mapper: mapper_backend,
-        });
     }
 
     /// Port for building live speakers: session code depends on this seam, never the registry.
@@ -671,24 +648,17 @@ impl SessionHandle {
         self.active_system_id.as_ref().map(|id| id.clone_box())
     }
 
-    /// Infra escape hatch: live factory behind the registry.
-    /// Same-crate code uses [`active_factory_cloned`](Self::active_factory_cloned) instead.
-    pub fn active_factory(&self) -> Option<&Arc<dyn CoreFactory>> {
-        self.active_system_id
-            .as_ref()
-            .and_then(|id| self.registry.find_by_id(id.as_ref()))
+    /// Narrow factory query: all registered factories for media detection and settings pages.
+    pub fn factories(&self) -> &[Arc<dyn CoreFactory>] {
+        self.registry.all()
     }
 
-    /// Infra escape hatch: full system registry; new code uses narrow `active_system_*` queries.
-    pub fn registry(&self) -> &SystemRegistry {
-        &self.registry
-    }
-
-    pub fn factory(&self) -> Option<&dyn CoreFactory> {
-        self.active_system_id
-            .as_ref()
-            .and_then(|id| self.registry.find_by_id(id.as_ref()))
-            .map(|a| &**a)
+    /// Narrow media-detection query: clone the matching factory without exposing the registry.
+    pub fn detect_factory(
+        &self,
+        media: &MediaObject,
+    ) -> Result<Option<Arc<dyn CoreFactory>>, crate::registry::RegistryError> {
+        self.registry.detect(media).map(|found| found.cloned())
     }
 
     pub fn active_system_id(&self) -> Option<&dyn SystemId> {
@@ -789,7 +759,7 @@ impl SessionHandle {
             self.media
                 .persistence
                 .flush_mapper_save(exporter)
-                .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
+                .map_err(|e| SystemActivationError::from_session(e.into()))?;
         }
 
         self.active_system_id = Some(system_id.clone_box());
@@ -889,7 +859,10 @@ pub(crate) mod test_util {
     }
 
     pub(crate) fn test_view(session: &SessionHandle) -> FactorySettingsView {
-        let system_id = session.factory().expect("no active system").system_id();
+        let system_id = session
+            .active_factory_cloned()
+            .expect("no active system")
+            .system_id();
         let snapshot = session.settings_snapshot();
         let language = match snapshot.shared.general.language {
             nerust_settings_core::model::language::AppLanguage::Japanese => {
@@ -920,7 +893,6 @@ mod session_cov_tests {
         assert!(session.render_profile().is_some());
         let _ = session.swap_frame_buffer_tick();
         session.swap_frame_buffer();
-        assert!(session.with_frame_buffer(|_| ()).is_some());
         assert!(session.frame_buffer().is_some());
         session.clear_display();
         let _ = session.settings_snapshot();
@@ -930,24 +902,22 @@ mod session_cov_tests {
         let _ = session.host_peripherals();
         let _ = session.current_assignments();
         let _ = session.current_assignments_pairs();
-        let _ = session.settings_manager();
+        let _ = session.update_window_size(800, 600);
         let _ = session.speaker_factory();
         assert!(session.active_factory_cloned().is_some());
         assert!(session.with_active_factory(|_| 7).is_some());
         assert!(session.active_system_display_name().is_some());
         assert!(session.active_system_id_box().is_some());
-        assert!(session.active_factory().is_some());
-        assert!(!session.registry().all().is_empty());
-        assert!(session.factory().is_some());
+        assert!(!session.factories().is_empty());
         assert!(session.active_system_id().is_some());
         assert!(session.default_load_options().is_some());
-        let id = session.factory().unwrap().system_id();
+        let id = session.active_factory_cloned().unwrap().system_id();
         assert!(session.set_active_system(id.as_ref()).is_ok());
-        session.set_persistence_backends(
-            Box::new(super::fs::FsSlotBackend),
-            Box::new(super::fs::FsSlotBackend),
-            Box::new(super::fs::FsSlotBackend),
-        );
+        session.configure_persistence_backends(crate::session::persistence::PersistenceBackends {
+            slot: Box::new(super::fs::FsSlots),
+            autosave: Box::new(super::fs::FsAutosave),
+            mapper: Box::new(super::fs::FsMapper),
+        });
         let tick = session.tick_metrics();
         let _ = session.window_title_cached(&tick).to_string();
         let _ = session
@@ -963,7 +933,6 @@ mod session_cov_tests {
         let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let mut session = super::SessionHandle::new_ephemeral(caps, registry, audio);
         assert!(session.render_profile().is_none());
-        assert!(session.with_frame_buffer(|_| ()).is_none());
         assert!(session.frame_buffer().is_none());
         session.clear_display();
         session.swap_frame_buffer();
@@ -971,8 +940,6 @@ mod session_cov_tests {
         assert!(session.with_active_factory(|_| 7).is_none());
         assert!(session.active_system_display_name().is_none());
         assert!(session.active_system_id_box().is_none());
-        assert!(session.active_factory().is_none());
-        assert!(session.factory().is_none());
         assert!(session.active_system_id().is_none());
         assert!(session.default_load_options().is_none());
         let _ = session.current_assignments_pairs();

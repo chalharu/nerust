@@ -149,11 +149,14 @@ mod lifecycle_cov_tests {
         use std::sync::Arc;
         let probe = test_session();
         let resolved = probe
-            .factory()
+            .active_factory_cloned()
             .unwrap()
             .resolve_load_request(
                 &crate::session::test_util::test_view(&probe),
-                probe.factory().unwrap().default_load_options(),
+                probe
+                    .active_factory_cloned()
+                    .unwrap()
+                    .default_load_options(),
             )
             .unwrap();
         let caps = probe.capabilities;

@@ -194,11 +194,11 @@ fn assemble_test_system(
 }
 
 /// Pad buttons resolve through the slot profiles to buffer fields.
-/// Present but unmapped is loud drift; digital-only controls pass through.
+/// Present but unmapped is loud drift; digital controls resolve directly.
 fn resolve_pad_buttons(
     case_id: &str,
     assignments: &InputAssignments,
-    field_map: &nerust_core_traits::factory::DigitalFieldMap,
+    field_map: &nerust_input_traits::UnifiedFieldMap,
 ) -> Result<Vec<Vec<(&'static str, usize)>>, RomTestError> {
     let mut pad_buttons = Vec::with_capacity(assignments.slots().len());
     for (pad, (attachment, profile)) in assignments.slots().iter().enumerate() {
@@ -214,15 +214,17 @@ fn resolve_pad_buttons(
             let Some(control_id) = info.id.as_digital() else {
                 continue;
             };
-            let field = field_map
-                .get(&(*attachment, control_id))
-                .copied()
-                .ok_or_else(|| {
-                    construction(
-                        case_id,
-                        format!("test input field missing: {attachment}/{control_id}"),
-                    )
-                })?;
+            let field = nerust_core_traits::factory::resolve_unified_field(
+                field_map,
+                *attachment,
+                control_id,
+            )
+            .ok_or_else(|| {
+                construction(
+                    case_id,
+                    format!("test input field missing: {attachment}/{control_id}"),
+                )
+            })?;
             buttons.push((control_id.as_str(), field));
         }
         pad_buttons.push(buttons);

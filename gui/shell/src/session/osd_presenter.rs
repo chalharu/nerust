@@ -485,7 +485,7 @@ mod tests {
             row: Some(OsdRow {
                 text: text.to_string(),
                 rgb: (255, 255, 255),
-                tag: "[I]",
+                tag: "[I]".into(),
             }),
         }
     }
