@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
 import kotlin.math.max
 import kotlin.math.min

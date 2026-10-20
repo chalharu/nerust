@@ -133,7 +133,7 @@ class SafRepository(private val context: Context) {
         length: Long,
     ): ByteArray? {
         val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return null
-        contentResolver.openInputStream(file.uri)?.use { input ->
+        context.contentResolver.openInputStream(file.uri)?.use { input ->
             var remaining = offset.coerceAtLeast(0L)
             while (remaining > 0) {
                 val skipped = input.skip(remaining)
@@ -165,7 +165,7 @@ class SafRepository(private val context: Context) {
     ): String {
         val file = resolveSafDocument(treeUri, relativePath, create = true) ?: return "error"
         val mode = if (append) "wa" else "rwt"
-        contentResolver.openOutputStream(file.uri, mode)?.use { it.write(bytes) }
+        context.contentResolver.openOutputStream(file.uri, mode)?.use { it.write(bytes) }
             ?: return "error"
         return "ok"
     }
