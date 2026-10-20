@@ -1,6 +1,5 @@
-//! Debugger message dispatch: one family per function plus the
-//! shared action helpers. Pure bridge manipulation; the host drain
-//! owns the emulator side.
+//! Debugger message dispatch: one family per function plus the shared action helpers. Pure bridge
+//! manipulation; the host drain owns the emulator side.
 
 use std::sync::atomic::Ordering;
 
@@ -15,10 +14,8 @@ use crate::aux::bridge::DebugBridge;
 /// Bookmark cap (window-local, no file yet).
 const BOOKMARK_CAP: usize = 8;
 
-/// First handler wins; the chain only routes. Messages travel by
-/// value so payloads move without cloning; an unhandled variant is a
-/// programmer error (every family ends in `Err`), surfaced as a
-/// warning instead of a silent drop.
+/// First handler wins; the chain only routes. Messages travel by value so payloads move without
+/// cloning; an unhandled variant is a programmer error (every family ends in `Err`), surfaced as a warning instead of a silent drop.
 pub(super) fn update_message(bridge: &DebugBridge, message: DebugMessage) {
     let message = match update_toolbar(bridge, message) {
         Ok(()) => return,
@@ -50,9 +47,8 @@ pub(super) fn update_message(bridge: &DebugBridge, message: DebugMessage) {
     log::warn!("unhandled debugger message: {unhandled:?}");
 }
 
-/// Message dispatch, one family per function so `update` stays a
-/// flat router. Each returns whether it handled the message; bodies
-/// are moved verbatim from the old monolithic match.
+/// Message dispatch, one family per function so `update` stays a flat router. Each returns whether
+/// it handled the message; bodies are moved verbatim from the old monolithic match.
 fn update_toolbar(bridge: &DebugBridge, message: DebugMessage) -> Result<(), DebugMessage> {
     match message {
         DebugMessage::RefreshPressed => bridge.push(DebugAction::Refresh),
@@ -188,9 +184,8 @@ fn update_registers(bridge: &DebugBridge, message: DebugMessage) -> Result<(), D
     Ok(())
 }
 
-/// Shared freeze staging: selection plus a hex byte. The top
-/// Freeze row and the edit-row Freeze button differ only in which
-/// input they read; the rules live here, not in the widgets.
+/// Shared freeze staging: selection plus a hex byte. The top Freeze row and the edit-row Freeze
+/// button differ only in which input they read; the rules live here, not in the widgets.
 fn apply_freeze(bridge: &DebugBridge, input: &str) {
     let language = bridge.language();
     let selected = bridge.write().selected.map(|(addr, _)| addr);
@@ -204,9 +199,8 @@ fn apply_freeze(bridge: &DebugBridge, input: &str) {
     }
 }
 
-// Space stepper (not a dropdown): overlay menus are undrivable on
-// headless Xvfb, and fixed spaces suit Prev/Next cycling. The
-// dropdown decision is revisited with evidence in the design notes.
+// Space stepper (not a dropdown): overlay menus are undrivable on headless Xvfb, and fixed spaces
+// suit Prev/Next cycling. The dropdown decision is revisited with evidence in the design notes.
 fn cycle_space(bridge: &DebugBridge, delta: i32) {
     let mut state = bridge.write();
     if let Some(idx) = state.nav.cycle_space(delta) {
@@ -266,10 +260,8 @@ fn dis_back(bridge: &DebugBridge) {
 
 fn bookmark_add(bridge: &DebugBridge) {
     let label = bridge.write().bm_input.trim().to_string();
-    // Anchor on the PC row when following, else the pin. The PC
-    // row is snapshotted first and the guard dropped before
-    // `anchor()` runs: it locks nav→display, so nesting it under
-    // the display guard would invert the order and risk deadlock.
+    // Anchor on the PC row when following, else the pin. The PC row is snapshotted first and the
+    // guard dropped before `anchor()` runs: it locks nav→display, so nesting it under the display guard would invert the order and risk deadlock.
     let pc_addr = {
         bridge
             .write()
@@ -326,10 +318,8 @@ fn edit_write(bridge: &DebugBridge) {
         vm::parse_hex_addr(&input).filter(|value| *value <= 0xFF),
     ) {
         (Some((addr, _)), Some(value)) => {
-            // Re-select first: the drain stages fresh state, so Write
-            // also works after a cancel empties the transaction.
-            // The confirm row comes back from the drain, never
-            // optimistically from here.
+            // Re-select first: the drain stages fresh state, so Write also works after a cancel
+            // empties the transaction. The confirm row comes back from the drain, never optimistically from here.
             bridge.push(DebugAction::SelectRow(addr));
             bridge.push(DebugAction::EditStage(value as u64));
         }
@@ -340,9 +330,8 @@ fn edit_write(bridge: &DebugBridge) {
     }
 }
 
-/// Register write: the target rides in bridge state (picked by row
-/// click), the value parses as a full-width hex number; the backend
-/// masks to the register width.
+/// Register write: the target rides in bridge state (picked by row click), the value parses as a
+/// full-width hex number; the backend masks to the register width.
 fn reg_set(bridge: &DebugBridge) {
     let input = bridge.write().reg_input.trim().to_string();
     let target = bridge.write().reg_target;

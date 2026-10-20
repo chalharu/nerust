@@ -1,5 +1,5 @@
 //! Outermost crash containment: hook install plus guarded entry. Hook preserves only the record;
-//! dialogs and termination are the host's job. Configuration travels by parameter (`install_with_source`, `run_guarded_with`); no process-global slots remain. Zero-arg `install`/`run_guarded` stay as thin shims for existing hosts.
+//! dialogs and termination are the host's job. Configuration travels by parameter, never globals.
 
 use std::{
     any::Any,
@@ -9,7 +9,8 @@ use std::{
 /// Record sink for the panic hook. Passed per install; no global slot.
 pub type RecordSink = fn(&PanicRecord);
 
-fn default_sink(record: &PanicRecord) {
+/// Default sink: stderr log line for the crash record.
+pub fn default_sink(record: &PanicRecord) {
     eprintln!(
         "panic on thread '{}': {}\nbacktrace:\n{}",
         record.thread, record.detail, record.backtrace
@@ -20,7 +21,8 @@ fn default_sink(record: &PanicRecord) {
 /// Production passes [`capture_backtrace`]; tests pass a fixed string.
 pub type BacktraceSource = fn() -> String;
 
-fn capture_backtrace() -> String {
+/// Real backtrace capture for production installs.
+pub fn capture_backtrace() -> String {
     std::backtrace::Backtrace::capture().to_string()
 }
 
@@ -60,10 +62,10 @@ pub fn install_with_source(sink: RecordSink, source: BacktraceSource) -> HookGua
     HookGuard { chained }
 }
 
-/// Install the default hook permanently (idempotent per call site intent).
-/// Legacy shim: new code takes [`install_with`] and owns the [`HookGuard`].
-pub fn install() {
-    std::mem::forget(install_with(default_sink));
+/// Install the default hook for the process lifetime. The host owns the guard;
+/// dropping it restores the previous hook, so hosts keep it in a `static`.
+pub fn install_default() -> HookGuard {
+    install_with(default_sink)
 }
 
 /// Crash exit code for hosts (Rust panic convention: 101).
@@ -174,12 +176,6 @@ pub fn run_guarded_with<R>(
     }
 }
 
-/// Run `main` under the default hook; on unwind build the report.
-/// Legacy shim: new code takes [`run_guarded_with`] with sink and source.
-pub fn run_guarded<R>(main: impl FnOnce() -> R) -> GuardOutcome<R> {
-    run_guarded_with(main, default_sink, capture_backtrace)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,12 +268,13 @@ mod tests {
     }
 
     #[test]
-    fn legacy_shims_cover_hosts_unchanged() {
+    fn default_install_covers_hosts_unchanged() {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
-        install();
-        let outcome = run_guarded(|| 7);
+        let _guard = install_default();
+        let outcome = run_guarded_with(|| 7, default_sink, stub_source);
         assert!(matches!(outcome, GuardOutcome::Completed(7)));
-        let outcome: GuardOutcome<()> = run_guarded(|| panic!("legacy boom"));
+        let outcome: GuardOutcome<()> =
+            run_guarded_with(|| panic!("legacy boom"), default_sink, stub_source);
         assert!(matches!(outcome, GuardOutcome::Crashed(_)));
     }
 }

@@ -37,7 +37,11 @@ use nerust_settings_core::model::language::AppLanguage;
 pub fn run(ctx: FrontendContext, options: RunOptions) {
     // A crash must never look like a clean exit; the dialog runs first.
     // Exhaustive: a future outcome must not silently pass through.
-    match nerust_crash_guard::run_guarded(|| run_inner(ctx, options)) {
+    match nerust_crash_guard::run_guarded_with(
+        || run_inner(ctx, options),
+        nerust_crash_guard::default_sink,
+        nerust_crash_guard::capture_backtrace,
+    ) {
         GuardOutcome::Completed(()) => {}
         GuardOutcome::Crashed(report) => {
             // External portal dialog; stderr stays the log home. Inline literals only.

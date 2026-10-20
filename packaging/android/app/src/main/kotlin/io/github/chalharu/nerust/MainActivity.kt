@@ -582,7 +582,7 @@ class MainActivity :
         chromeManager.removeDrawerOverlay()
     }
 
-    fun showSettingsDialogForTest(fields: List<SettingsField>) {
+    internal fun showSettingsDialogForTest(fields: List<SettingsField>) {
         showSettingsDialogInternal(
             content = SettingsDialogContent(fields = fields),
             requestId = null,
