@@ -59,3 +59,60 @@ impl InputStateBuffer for NesInputBuffer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::NesInputBuffer;
+    use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
+
+    #[test]
+    fn p1_and_p2_fields_set_and_clear_bits() {
+        let mut buf = NesInputBuffer::default();
+        buf.set(0, InputValue::Digital(true)).unwrap();
+        buf.set(9, InputValue::Digital(true)).unwrap();
+        assert_eq!(buf.0, [0x01, 0x02, 0]);
+        buf.set(0, InputValue::Digital(false)).unwrap();
+        assert_eq!(buf.0[0], 0);
+        buf.set(16, InputValue::Digital(true)).unwrap();
+        assert_eq!(buf.0[2], 1);
+        buf.clear();
+        assert_eq!(buf, NesInputBuffer::default());
+    }
+
+    #[test]
+    fn rejects_bad_field_and_bad_value() {
+        let mut buf = NesInputBuffer::default();
+        assert!(matches!(
+            buf.set(17, InputValue::Digital(true)),
+            Err(BufferError::FieldNotFound { field: 17 })
+        ));
+        assert!(matches!(
+            buf.set(0, InputValue::Analog(1.0)),
+            Err(BufferError::UnsupportedFieldType { .. })
+        ));
+        assert!(matches!(
+            buf.set(0, InputValue::Position { x: 0.0, y: 0.0 }),
+            Err(BufferError::UnsupportedFieldType { .. })
+        ));
+    }
+
+    #[test]
+    fn copy_state_moves_bytes_or_refuses_foreign() {
+        #[derive(Debug, Default)]
+        struct Foreign;
+        impl InputStateBuffer for Foreign {
+            fn set(&mut self, _: usize, _: InputValue) -> Result<(), BufferError> {
+                Ok(())
+            }
+            fn clear(&mut self) {}
+            fn copy_state(&mut self, _: &dyn InputStateBuffer) -> Result<(), BufferError> {
+                Ok(())
+            }
+        }
+        let mut dst = NesInputBuffer::default();
+        let src = NesInputBuffer([0xAA, 0x55, 1]);
+        dst.copy_state(&src).unwrap();
+        assert_eq!(dst.0, [0xAA, 0x55, 1]);
+        assert!(dst.copy_state(&Foreign).is_err());
+    }
+}

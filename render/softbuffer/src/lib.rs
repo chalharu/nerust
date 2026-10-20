@@ -1040,4 +1040,135 @@ mod tests {
         fn sink_only(_: &mut dyn FrameSink) {}
         let _ = (lifecycle_only, sink_only);
     }
+
+    #[test]
+    fn palette_indexer_decodes_words_and_oob_is_black() {
+        let palette = [0x1234_56FFu32, 0xAABB_CCDD];
+        let src = [0u8, 1, 9];
+        let indexer = PixelIndexer::Palette {
+            src: &src,
+            palette: &palette,
+        };
+        assert_eq!(indexer.pixel(0), [0x12, 0x34, 0x56, 0xFF]);
+        assert_eq!(indexer.pixel(1), [0xAA, 0xBB, 0xCC, 0xDD]);
+        assert_eq!(indexer.pixel(2), [0, 0, 0, 0]);
+        assert_eq!(indexer.pixel(99), indexer.pixel(0));
+    }
+
+    #[test]
+    fn ntsc_indexer_decodes_words_and_oob_is_black() {
+        let buf = [0xFF00_00FFu32];
+        let indexer = PixelIndexer::Ntsc { buf: &buf };
+        assert_eq!(indexer.pixel(0), [0xFF, 0x00, 0x00, 0xFF]);
+        assert_eq!(indexer.pixel(7), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn tap_key_fingerprint_changes_with_any_field() {
+        let base = TapKey {
+            dst_w: 8,
+            avail_h: 8,
+            src_w: 256,
+            src_h: 240,
+            src_stride: 1024,
+            tap_stride: 256,
+            resize_len: 64,
+            ntsc_writes: 0,
+            ntsc_len: 0,
+            lut_rev: 1,
+            kernel_bilinear: true,
+            reserved_top: 0,
+            reserved_bottom: 0,
+        };
+        let fp = base.fingerprint();
+        let mut varied = base;
+        varied.dst_w = 9;
+        assert_ne!(varied.fingerprint(), fp);
+        let mut varied = base;
+        varied.lut_rev = 2;
+        assert_ne!(varied.fingerprint(), fp);
+        let mut varied = base;
+        varied.kernel_bilinear = false;
+        assert_ne!(varied.fingerprint(), fp);
+        let mut varied = base;
+        varied.reserved_bottom = 3;
+        assert_ne!(varied.fingerprint(), fp);
+        assert_eq!(base, base);
+    }
+
+    #[test]
+    fn horizontal_pass_skips_resize_overflow_and_blacks_edges() {
+        let mut lut = LutEntry::new();
+        lut.resize_lut(
+            SurfaceSize {
+                width: 2,
+                height: 2,
+            },
+            1.0,
+            SurfaceSize {
+                width: 2,
+                height: 2,
+            },
+        );
+        let src = vec![0xFFu8; 2 * 2 * 4];
+        let indexer = PixelIndexer::Rgba { src: &src };
+        let mut tiny = vec![0u32; 1];
+        SoftbufferRenderer::horizontal_pass(2, 2, 2, &indexer, &lut, 2, &mut tiny);
+        let mut full = vec![0u32; 4];
+        SoftbufferRenderer::horizontal_pass(2, 2, 2, &indexer, &lut, 2, &mut full);
+        assert!(full.iter().all(|&w| w != 0));
+    }
+
+    #[test]
+    fn vertical_pass_skips_dst_overflow() {
+        let mut lut = LutEntry::new();
+        lut.resize_lut(
+            SurfaceSize {
+                width: 2,
+                height: 2,
+            },
+            1.0,
+            SurfaceSize {
+                width: 2,
+                height: 2,
+            },
+        );
+        let resize = vec![0xFFFF_0000u32; 4];
+        let mut tiny = vec![0u32; 1];
+        SoftbufferRenderer::vertical_pass(&mut tiny, 2, 2, &lut, 2, &resize);
+        let mut full = vec![0u32; 4];
+        SoftbufferRenderer::vertical_pass(&mut full, 2, 2, &lut, 2, &resize);
+        assert!(full.iter().all(|&w| w != 0));
+    }
+
+    #[test]
+    fn validate_rejects_dimension_mismatch() {
+        use nerust_render_traits::{FrameBuffer, PixelFormat};
+        let renderer = SoftbufferRenderer::new(&test_profile());
+        let mut frame = FrameBuffer::with_capacity(240, 160, PixelFormat::Rgba);
+        frame.resize(240, 160);
+        assert!(renderer.validate_frame(&frame).is_none());
+    }
+
+    #[test]
+    fn validate_rejects_zero_surface() {
+        use nerust_render_traits::{FrameBuffer, PixelFormat};
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        renderer.size = SurfaceSize::new(0, 0);
+        let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
+        frame.resize(256, 240);
+        assert!(renderer.validate_frame(&frame).is_none());
+    }
+
+    #[test]
+    fn validate_accepts_matching_frame() {
+        use nerust_render_traits::{FrameBuffer, PixelFormat};
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        renderer.size = SurfaceSize::new(8, 8);
+        renderer.resize_lut();
+        // No surface attached: geometry passes but attach gate refuses.
+        let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
+        frame.resize(256, 240);
+        assert!(renderer.validate_frame(&frame).is_none());
+    }
 }

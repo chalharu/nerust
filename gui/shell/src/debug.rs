@@ -1274,7 +1274,7 @@ mod tests {
 
 #[cfg(test)]
 mod port_tests {
-    use super::*;
+    use crate::debug::*;
 
     #[test]
     fn drain_ctx_exposes_narrow_debug_port() {
@@ -1284,5 +1284,94 @@ mod port_tests {
         assert!(ctx.core_port().is_some());
         let empty = DrainCtx::new(None, Arc::new(Mutex::new(vm::WriteTransaction::Empty)));
         assert!(empty.core_port().is_none());
+    }
+}
+
+#[cfg(test)]
+mod debug_cov_tests {
+    use crate::debug::*;
+
+    #[test]
+    fn need_and_traffic_convert_from_bool() {
+        assert_eq!(ImageNeed::from(true), ImageNeed::Fetch);
+        assert_eq!(ImageNeed::from(false), ImageNeed::Skip);
+        assert_eq!(TrafficKind::from(true), TrafficKind::StateChanging);
+        assert_eq!(TrafficKind::from(false), TrafficKind::Transactional);
+        assert_eq!(ImageNeed::default(), ImageNeed::Skip);
+    }
+
+    #[test]
+    fn core_failure_maps_every_variant() {
+        use nerust_gui_viewmodel::debugger::StatusMessage as S;
+        assert!(matches!(CoreFailure::no_core().thread_status(), S::NoCore));
+        assert!(matches!(
+            CoreFailure::no_core().register_status(),
+            S::NoCore
+        ));
+        assert!(matches!(CoreFailure::no_core().write_status(), S::NoCore));
+        assert!(matches!(CoreFailure::no_core().step_status(), S::NoCore));
+        assert!(matches!(
+            CoreFailure::no_core().pause_status(true),
+            S::NoCore
+        ));
+        for failure in [
+            CoreFailure::TransportGone,
+            CoreFailure::Refused("boom".to_string()),
+        ] {
+            let status = failure.thread_status();
+            assert!(matches!(status, S::ThreadFailed(_)));
+        }
+        assert!(matches!(
+            CoreFailure::TransportGone.step_status(),
+            S::ThreadFailed(_)
+        ));
+        assert!(matches!(
+            CoreFailure::Refused("boom".to_string()).step_status(),
+            S::StepFailed(_)
+        ));
+        assert!(matches!(
+            CoreFailure::TransportGone.pause_status(true),
+            S::ThreadFailed(_)
+        ));
+        assert!(matches!(
+            CoreFailure::Refused("x".to_string()).pause_status(true),
+            S::PauseFailed(_)
+        ));
+        assert!(matches!(
+            CoreFailure::Refused("x".to_string()).pause_status(false),
+            S::ResumeFailed(_)
+        ));
+        assert!(matches!(
+            CoreFailure::Refused(String::new()).register_status(),
+            S::RegisterRefused(_)
+        ));
+        assert!(matches!(
+            CoreFailure::Refused("r".to_string()).register_status(),
+            S::RegisterRefused(_)
+        ));
+        assert!(matches!(
+            CoreFailure::Refused("w".to_string()).write_status(),
+            S::WriteRefused(_)
+        ));
+        for error in [
+            nerust_emu_thread::OperationError::WorkerUnavailable,
+            nerust_emu_thread::OperationError::NoReply,
+            nerust_emu_thread::OperationError::Reply("denied".to_string()),
+        ] {
+            let _ = CoreFailure::from(error).thread_status();
+        }
+    }
+
+    #[test]
+    fn drain_ctx_recovers_and_images_skip_resolves() {
+        use crate::session::test_util::test_session;
+        let session = test_session();
+        let ctx = session.drain_ctx();
+        let _guard = ctx.lock_txn();
+        let mut flight = LiveImagesFlight::begin(None, ImageNeed::Skip, DEBUG_DRAIN_TIMEOUT);
+        assert!(matches!(flight.poll(), LiveImagesPoll::Done(None)));
+        let mut flight =
+            LiveImagesFlight::begin(ctx.core.clone(), ImageNeed::Skip, DEBUG_DRAIN_TIMEOUT);
+        assert!(matches!(flight.poll(), LiveImagesPoll::Done(_)));
     }
 }

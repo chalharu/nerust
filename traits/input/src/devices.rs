@@ -158,3 +158,107 @@ impl ControllerHub for ControllerCollection {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Controller, ControllerCollection, ControllerHub, FieldEntry, Port, SimplePort, StrobeTarget,
+    };
+    use crate::{AttachmentId, ControlId, DigitalControlId, OpenBusReadResult};
+
+    #[derive(Debug, Default)]
+    struct ProbePad {
+        strobe: u8,
+        synced: Vec<u8>,
+    }
+
+    impl StrobeTarget for ProbePad {
+        fn strobe(&mut self, value: u8) {
+            self.strobe = value;
+        }
+    }
+
+    impl Controller for ProbePad {
+        fn read(&mut self, port: &dyn Port) -> OpenBusReadResult {
+            OpenBusReadResult::new(port.index() as u8, 0x1F)
+        }
+        fn write(&mut self, _port: &dyn Port, value: u8) {
+            self.strobe = value;
+        }
+        fn sync_input(&mut self, state: &[u8]) {
+            self.synced = state.to_vec();
+        }
+        fn field_map(&self, port: &dyn Port, out: &mut Vec<FieldEntry>) {
+            out.push(FieldEntry::new(
+                port.attachment_id(),
+                ControlId::digital(DigitalControlId::new("test.a")),
+                port.index(),
+            ));
+        }
+    }
+
+    #[test]
+    fn simple_port_derives_typed_ids() {
+        let port = SimplePort::new(2, "test.p3");
+        assert_eq!(port.index(), 2);
+        assert_eq!(port.id(), "test.p3");
+        assert_eq!(port.port_id().as_str(), "test.p3");
+        assert_eq!(port.attachment_id(), AttachmentId::new("test.p3"));
+    }
+
+    #[test]
+    fn field_entry_carries_attachment_control_and_index() {
+        let entry = FieldEntry::new(
+            AttachmentId::new("test.p1"),
+            ControlId::digital(DigitalControlId::new("test.a")),
+            4,
+        );
+        assert_eq!(entry.field, 4);
+        assert_eq!(entry.control.as_str(), "test.a");
+        assert_eq!(entry, FieldEntry::new(entry.attachment, entry.control, 4));
+    }
+
+    #[test]
+    fn collection_routes_reads_and_fans_strobe() {
+        let mut hubs = ControllerCollection::new(vec![
+            Box::new(ProbePad::default()),
+            Box::new(ProbePad::default()),
+        ]);
+        assert_eq!(hubs.len(), 2);
+        assert!(!hubs.is_empty());
+        assert!(hubs.get(9).is_none());
+        assert!(hubs.get(0).is_some());
+        let first = SimplePort::new(0, "test.p1");
+        let missing = SimplePort::new(7, "test.px");
+        assert_eq!(hubs.read_port(&first).data, 0);
+        assert_eq!(hubs.read_port(&missing), OpenBusReadResult::new(0, 0));
+        hubs.write_strobe(1);
+        hubs.sync_input(&[0xAA]);
+        for pad in hubs.iter_mut() {
+            let _ = pad.read(&first);
+        }
+        let empty = ControllerCollection::new(vec![]);
+        assert!(empty.is_empty());
+        assert_eq!(empty.len(), 0);
+    }
+
+    #[test]
+    fn controller_field_entries_default_to_empty() {
+        #[derive(Debug)]
+        struct Bare;
+        impl StrobeTarget for Bare {
+            fn strobe(&mut self, _value: u8) {}
+        }
+        impl Controller for Bare {
+            fn read(&mut self, _port: &dyn Port) -> OpenBusReadResult {
+                OpenBusReadResult::new(0, 0)
+            }
+            fn write(&mut self, _port: &dyn Port, _value: u8) {}
+        }
+        let bare = Bare;
+        let port = SimplePort::new(0, "test.p1");
+        assert!(bare.field_entries(&port).is_empty());
+        let probe = ProbePad::default();
+        assert_eq!(probe.field_entries(&port).len(), 1);
+    }
+}

@@ -341,5 +341,149 @@ mod tests {
         };
         assert!(err.to_string().contains("pipeline"));
         assert!(err.to_string().contains("compile failed"));
+        let err = AttachError::Surface {
+            backend: "wgpu",
+            detail: "bad surface".to_string(),
+        };
+        assert!(err.to_string().contains("surface"));
+        let err = AttachError::Device {
+            backend: "wgpu",
+            detail: "lost".to_string(),
+        };
+        assert!(err.to_string().contains("device"));
+        let err = AttachError::Context {
+            backend: "wgpu",
+            detail: "gone".to_string(),
+        };
+        assert!(err.to_string().contains("context"));
+    }
+
+    fn detached_renderer() -> super::WgpuRenderer {
+        super::WgpuRenderer {
+            instance: crate::surface::default_instance(),
+            render_profile: test_profile(),
+            pipeline: None,
+            surface: None,
+            size: nerust_render_traits::SurfaceSize::new(0, 0),
+            last_render_error: None,
+            osd: None,
+            osd_dirty: false,
+        }
+    }
+
+    fn test_profile() -> nerust_render_traits::VideoRenderProfile {
+        use nerust_render_traits::{logical::LogicalSize, physical::PhysicalSize};
+        nerust_render_traits::VideoRenderProfile {
+            frame_format: nerust_render_traits::VideoFrameFormat::Rgba,
+            source_logical_size: LogicalSize {
+                width: 64,
+                height: 64,
+            },
+            logical_size: LogicalSize {
+                width: 64,
+                height: 64,
+            },
+            physical_size: PhysicalSize {
+                width: 64.0,
+                height: 64.0,
+            },
+            ntsc_packed_rgba8: None,
+        }
+    }
+
+    #[test]
+    fn detached_renderer_skips_and_refuses_profile_switch() {
+        use nerust_render_traits::renderer::{
+            FrameSink, OsdLayer, OsdSink, ProfileSwitch, StripSink, SurfaceLifecycle,
+        };
+        let mut renderer = detached_renderer();
+        assert_eq!(
+            renderer.size(),
+            nerust_render_traits::SurfaceSize::new(0, 0)
+        );
+        // No pipeline: strip and layer stage without touching the device.
+        renderer.set_reserved_strip(nerust_render_traits::ReservedStrip::default());
+        renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
+        assert!(renderer.osd_dirty);
+        let frame = nerust_render_traits::FrameBuffer::with_capacity(
+            64,
+            64,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
+        assert_eq!(
+            renderer.render(&frame),
+            nerust_render_traits::renderer::RenderResult::Skipped
+        );
+        // OSD stays staged: the skip consumed nothing.
+        assert!(renderer.osd_dirty);
+        // Profile switch without a surface names the missing attach.
+        let profile = test_profile();
+        let err = renderer.update_render_profile(&profile).unwrap_err();
+        assert!(err.to_string().contains("not attached"), "{err}");
+        // Resize and detach on a detached renderer are pure state ops.
+        renderer.resize(nerust_render_traits::SurfaceSize::new(64, 64));
+        assert_eq!(
+            renderer.size(),
+            nerust_render_traits::SurfaceSize::new(64, 64)
+        );
+        renderer.detach();
+        assert!(renderer.pipeline.is_none());
+    }
+
+    #[test]
+    fn error_dedup_arms_cover_all_attach_stages() {
+        use nerust_render_traits::renderer::{AttachError, RendererError};
+        for (stage, err) in [
+            (
+                "request adapter",
+                AttachError::Adapter {
+                    backend: "wgpu",
+                    detail: "x".to_string(),
+                },
+            ),
+            (
+                "device",
+                AttachError::Device {
+                    backend: "wgpu",
+                    detail: "x".to_string(),
+                },
+            ),
+            (
+                "surface",
+                AttachError::Surface {
+                    backend: "wgpu",
+                    detail: "x".to_string(),
+                },
+            ),
+            (
+                "pipeline",
+                AttachError::Pipeline {
+                    backend: "wgpu",
+                    detail: "x".to_string(),
+                },
+            ),
+        ] {
+            let wrapped = RendererError::new(stage, Box::new(err));
+            assert!(wrapped.to_string().contains(stage), "{wrapped}");
+        }
+        assert!(
+            RendererError::not_attached("update")
+                .to_string()
+                .contains("update")
+        );
+    }
+
+    #[test]
+    fn device_limit_profile_defaults_off_android() {
+        #[cfg(target_os = "android")]
+        assert!(matches!(
+            super::WgpuFactory::device_limit_profile(),
+            crate::renderer::DeviceLimitProfile::DownlevelWebGl2
+        ));
+        #[cfg(not(target_os = "android"))]
+        assert!(matches!(
+            super::WgpuFactory::device_limit_profile(),
+            crate::renderer::DeviceLimitProfile::Default
+        ));
     }
 }

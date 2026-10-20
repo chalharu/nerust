@@ -325,3 +325,45 @@ impl super::context::GlObject for IndexBuffer {
         IndexBuffer::destroy_if_current(self, current)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::context::GlObject;
+    use super::{Attrib, IndexBuffer, VertexBuffer};
+
+    #[test]
+    fn attrib_is_a_transparent_id() {
+        let attr = Attrib { id: 7 };
+        assert_eq!(attr.id, 7);
+        let copy = attr;
+        assert_eq!(copy.id, 7);
+    }
+
+    #[test]
+    fn buffer_teardown_without_context_marks_leak() {
+        let vbo = VertexBuffer {
+            id: 11,
+            deleted: std::cell::Cell::new(false),
+        };
+        assert!(vbo.destroy_if_current(None));
+        assert!(!vbo.destroy_if_current(None));
+        let ibo = IndexBuffer {
+            id: 13,
+            data_type: gl::UNSIGNED_SHORT,
+            deleted: std::cell::Cell::new(false),
+        };
+        assert!(ibo.destroy_if_current(None));
+        assert!(!ibo.destroy_if_current(None));
+        let mut vbo = VertexBuffer {
+            id: 17,
+            deleted: std::cell::Cell::new(false),
+        };
+        assert!(GlObject::destroy_if_current(&mut vbo, None));
+        let mut ibo = IndexBuffer {
+            id: 19,
+            data_type: gl::UNSIGNED_SHORT,
+            deleted: std::cell::Cell::new(false),
+        };
+        assert!(GlObject::destroy_if_current(&mut ibo, None));
+    }
+}

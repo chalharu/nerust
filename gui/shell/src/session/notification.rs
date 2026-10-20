@@ -843,7 +843,7 @@ mod tests {
 
 #[cfg(test)]
 mod key_tests {
-    use super::*;
+    use crate::session::notification::*;
 
     #[test]
     fn queue_keys_on_message_not_text() {
@@ -863,5 +863,59 @@ mod key_tests {
         };
         assert_eq!(renderer.render(&NotificationKind::Paused), "Paused");
         assert!(!renderer.render(&NotificationKind::SavedSlot(7)).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod notification_cov_tests {
+    use crate::session::notification::*;
+
+    #[test]
+    fn pending_queue_reports_emptiness() {
+        let mut queue = PendingQueue::default();
+        assert!(queue.is_empty());
+        assert_eq!(queue.len(), 0);
+        queue.offer(UiNotification {
+            level: NotificationLevel::Info,
+            kind: NotificationKind::Paused,
+            count: 1,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        });
+        assert!(!queue.is_empty());
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.drain().len(), 1);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn failure_detail_truncates_at_cap() {
+        let long = "y".repeat(MAX_EXTERNAL_DETAIL + 50);
+        let kind = NotificationKind::command_failure(FailureOrigin::Bridge, "id", long);
+        match kind {
+            NotificationKind::CommandFailure { detail, .. } => {
+                assert_eq!(detail.chars().count(), MAX_EXTERNAL_DETAIL);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn message_slot_none_and_level_names() {
+        let message = Message::slot(MessageKey::SlotSaved, None);
+        assert_eq!(message.slot, None);
+        assert_eq!(message.key, MessageKey::SlotSaved);
+        let renderer = NotificationRenderer {
+            language: AppLanguage::Japanese,
+        };
+        assert!(!renderer.level_name(NotificationLevel::Warning).is_empty());
+        assert_eq!(append_count("a".to_string(), 1), "a");
+        let _ = SystemClock::now_system();
+        let mut log = EventLog::default();
+        let _ = log.record(NotificationKind::Paused, std::time::UNIX_EPOCH);
+        assert_eq!(log.history_seq(), 1);
+        log.clear();
+        assert_eq!(log.history_seq(), 2);
+        assert_eq!(log.history().count(), 0);
     }
 }

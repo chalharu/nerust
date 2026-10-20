@@ -388,3 +388,32 @@ fn every_wiring_funnels_through_configure_backends() {
     assert!(bundled.slots().is_empty());
     assert!(manager.slots().is_empty());
 }
+
+#[test]
+fn delete_slot_clears_active_and_selects_neighbours() {
+    use crate::session::commands::{SessionCommand, SessionCommandOutcome};
+    use crate::session::persistence::SlotDirection;
+    let temp_dir = unique_temp_dir("delete-select");
+    let mut session = test_session();
+    load_test_rom(&mut session, temp_dir.join("test.nes"));
+    let saved = session
+        .run_command(SessionCommand::SaveActiveSlotOrNew)
+        .unwrap();
+    assert!(saved.executed);
+    let active = session.active_slot_id().expect("save selects a slot");
+    let deleted: SessionCommandOutcome = session
+        .run_command(SessionCommand::DeleteSlot(active))
+        .unwrap();
+    assert!(deleted.executed);
+    assert_eq!(session.active_slot_id(), None);
+    assert_eq!(
+        session
+            .media
+            .persistence
+            .select_adjacent_slot(SlotDirection::Next),
+        None
+    );
+    session.media.persistence.select_active_slot(active);
+    assert_eq!(session.active_slot_id(), Some(active));
+    let _ = fs::remove_dir_all(temp_dir);
+}

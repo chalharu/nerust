@@ -611,7 +611,7 @@ mod tests {
 
 #[cfg(test)]
 mod view_tests {
-    use super::*;
+    use crate::session::osd_transient::*;
 
     #[test]
     fn from_view_matches_from_settings() {
@@ -623,5 +623,47 @@ mod view_tests {
         assert_eq!(via_from.info_enabled, via_view.info_enabled);
         assert_eq!(via_from.error_modal, via_view.error_modal);
         assert_eq!(via_from.info_rgb, via_view.info_rgb);
+    }
+}
+
+#[cfg(test)]
+mod transient_cov_tests {
+    use crate::session::osd_transient::*;
+
+    #[test]
+    fn policy_gates_levels_durations_and_colors() {
+        let policy = TransientPolicy::from(
+            &nerust_settings_core::model::local::NotificationSettings::default(),
+        );
+        for level in [
+            NotificationLevel::Info,
+            NotificationLevel::Warning,
+            NotificationLevel::Error,
+        ] {
+            let _ = policy.enabled(level);
+            assert!(policy.duration(level) >= Duration::from_millis(500));
+            let _ = policy.color(level);
+        }
+        assert_eq!(counted_row("a", 1, (1, 2, 3), "[INFO]").text, "a");
+        assert_eq!(counted_row("a", 2, (1, 2, 3), "[INFO]").text, "a ×2");
+    }
+
+    #[test]
+    fn modal_fallback_routes_by_channel() {
+        use crate::session::notification::NotificationKind;
+        let policy = TransientPolicy::from(
+            &nerust_settings_core::model::local::NotificationSettings::default(),
+        );
+        assert!(falls_back_to_modal(
+            &NotificationKind::PersistenceUnavailable,
+            &policy,
+            FrameChannel::Unpresented
+        ));
+        assert!(!falls_back_to_modal(
+            &NotificationKind::Paused,
+            &policy,
+            FrameChannel::Unpresented
+        ));
+        let _ = falls_back_to_modal(&NotificationKind::Paused, &policy, FrameChannel::Composited);
     }
 }

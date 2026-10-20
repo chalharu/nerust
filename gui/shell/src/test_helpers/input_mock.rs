@@ -86,3 +86,45 @@ impl InputSystemFactory for MockInputFactory {
         ))
     }
 }
+
+#[cfg(test)]
+mod input_mock_cov_tests {
+    use crate::test_helpers::input_mock::*;
+
+    #[test]
+    fn buffer_copies_matching_and_rejects_foreign() {
+        let mut buf = TestInputBuffer([1, 2]);
+        buf.clear();
+        assert_eq!(buf.0, [0, 0]);
+        let src = TestInputBuffer([7, 8]);
+        buf.copy_state(&src).expect("matching copies");
+        assert_eq!(buf.0, [7, 8]);
+        assert!(buf.set(0, InputValue::Digital(true)).is_ok());
+        #[derive(Debug)]
+        struct Foreign;
+        impl InputStateBuffer for Foreign {
+            fn set(&mut self, _: usize, _: InputValue) -> Result<(), BufferError> {
+                Ok(())
+            }
+            fn clear(&mut self) {}
+            fn copy_state(&mut self, _: &dyn InputStateBuffer) -> Result<(), BufferError> {
+                Ok(())
+            }
+        }
+        assert!(buf.copy_state(&Foreign).is_err());
+    }
+
+    #[test]
+    fn factory_reports_slots_controllers_and_split() {
+        let factory = MockInputFactory;
+        assert_eq!(factory.slots().len(), 1);
+        assert_eq!(factory.controllers().count(), 1);
+        assert_eq!(factory.default_assignments().slots().len(), 1);
+        let collection = ControllerCollection::new(vec![]);
+        assert!(factory.create_split(&collection).is_ok());
+        let _ = test_input_resources();
+        assert_eq!(MockSlotProfile.profile_id().as_str(), "test.profile.p1");
+        assert_eq!(MockSlotProfile.label(), "Test P1");
+        assert!(!MockSlotProfile.port_sets().is_empty());
+    }
+}

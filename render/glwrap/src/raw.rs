@@ -321,3 +321,35 @@ pub fn gl_string(name: u32) -> Option<String> {
             .into_owned(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::error::{Error, ErrorKind};
+
+    #[test]
+    fn error_kind_maps_known_codes() {
+        assert_eq!(ErrorKind::from(gl::INVALID_ENUM), ErrorKind::InvalidEnum);
+        assert_eq!(ErrorKind::from(gl::INVALID_VALUE), ErrorKind::InvalidValue);
+        assert_eq!(
+            ErrorKind::from(gl::INVALID_OPERATION),
+            ErrorKind::InvalidOperation
+        );
+        assert_eq!(
+            ErrorKind::from(gl::INVALID_FRAMEBUFFER_OPERATION),
+            ErrorKind::InvalidFramebufferOperation
+        );
+        assert_eq!(ErrorKind::from(0xDEAD), ErrorKind::Unexpected(0xDEAD));
+    }
+
+    #[test]
+    fn error_display_joins_kinds_with_newlines() {
+        let err = Error::new(vec![ErrorKind::InvalidValue, ErrorKind::OutOfMemory]);
+        let text = err.to_string();
+        assert!(text.contains('\n'));
+        assert!(text.contains("legal value"));
+        let empty = Error::new(vec![]);
+        assert_eq!(empty.to_string(), "");
+        let round: Error = vec![ErrorKind::ContextLost].into();
+        assert!(round.to_string().contains("lost"));
+    }
+}

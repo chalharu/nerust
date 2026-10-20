@@ -422,3 +422,58 @@ mod tests {
         assert_eq!(kind.as_str(), "test.standard");
     }
 }
+
+#[cfg(test)]
+mod input_cov_tests {
+    use crate::session::input::*;
+    use crate::session::test_util::test_session;
+
+    #[test]
+    fn touch_role_maps_every_direction() {
+        for (key, role) in [
+            (AbstractKey::DpadUp, TouchControlRole::DpadUp),
+            (AbstractKey::DpadDown, TouchControlRole::DpadDown),
+            (AbstractKey::DpadLeft, TouchControlRole::DpadLeft),
+            (AbstractKey::DpadRight, TouchControlRole::DpadRight),
+            (AbstractKey::Button2, TouchControlRole::FaceButton2),
+            (AbstractKey::Start, TouchControlRole::Start),
+            (AbstractKey::Select, TouchControlRole::Select),
+        ] {
+            assert_eq!(touch_role_for_abstract_key(key), Some(role));
+        }
+        assert_eq!(touch_role_for_abstract_key(AbstractKey::Guide), None);
+    }
+
+    #[test]
+    fn keyboard_press_release_tracks_first_press() {
+        let mut session = test_session();
+        let first = session.handle_keyboard_key(Key::KeyA, true);
+        let _ = first;
+        let repeat = session.handle_keyboard_key(Key::KeyA, true);
+        assert!(repeat.is_none());
+        let released = session.handle_keyboard_key(Key::KeyA, false);
+        assert!(released.is_none());
+        session.clear_input();
+    }
+
+    #[test]
+    fn apply_input_event_without_mapping_is_noop() {
+        use nerust_input_traits::{AttachmentId, DigitalInputEvent};
+        let mut session = test_session();
+        session.apply_input_event(DigitalInputEvent::pressed(
+            AttachmentId::new("nope.slot"),
+            nerust_input_traits::DigitalControlId::new("nope.btn"),
+        ));
+        session.clear_input();
+        session.rebuild_key_field_map();
+    }
+
+    #[test]
+    fn overlay_cache_serves_stored_model() {
+        let mut session = test_session();
+        let model = session.touch_overlay_model_cached(11).clone();
+        assert_eq!(model.revision, 11);
+        assert_eq!(session.touch_overlay_model_cached(11).revision, 11);
+        assert_eq!(session.touch_overlay_model_cached(12).revision, 12);
+    }
+}

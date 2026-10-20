@@ -1339,3 +1339,49 @@ mod tests {
         assert_eq!(manager.take_modal_batch(), None);
     }
 }
+
+#[cfg(test)]
+mod osd_cov_tests {
+    use crate::session::osd::*;
+
+    #[test]
+    fn status_parts_split_label_and_value() {
+        let (label, value) = OsdManager::status_parts(60.0, true, AppLanguage::English);
+        assert_eq!(label, "Paused");
+        assert_eq!(value, "60.0 fps");
+        let (label, _) = OsdManager::status_parts(0.0, false, AppLanguage::Japanese);
+        assert!(label.is_empty());
+    }
+
+    #[test]
+    fn empty_manager_reports_idle() {
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        assert!(!manager.has_visible());
+        assert!(manager.wakeup_deadline(now).is_none());
+        assert!(!manager.pump_modal());
+        assert_eq!(manager.overflow_dropped(), 0);
+        assert!(manager.visible_row().is_none());
+        manager.requeue_front("head".to_string());
+        assert_eq!(manager.take_modal_batch().as_deref(), Some("head"));
+        manager.modal_closed();
+    }
+
+    #[test]
+    fn pump_target_delegates_to_manager() {
+        use super::PumpTarget as _;
+        let mut manager = OsdManager::new();
+        let now = Instant::now();
+        manager.push_notifications(
+            vec![],
+            &TransientPolicy::from(
+                &nerust_settings_core::model::local::NotificationSettings::default(),
+            ),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        manager.poll_queue(now);
+        assert!(!manager.pump_modal_queue());
+    }
+}

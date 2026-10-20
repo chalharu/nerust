@@ -226,3 +226,65 @@ pub(crate) fn supports_unpack_row_length(version: Option<&str>) -> bool {
     }
     value.contains("OpenGL ES 3")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{compose_glsl_source, is_gles_context, supports_unpack_row_length};
+
+    #[test]
+    fn gles_detection_matches_es_marker_only() {
+        assert!(is_gles_context(Some("OpenGL ES 3.0")));
+        assert!(is_gles_context(Some("OpenGL ES 2.0 build 1.17")));
+        assert!(!is_gles_context(Some("4.6 Mesa")));
+        assert!(!is_gles_context(Some("")));
+        assert!(!is_gles_context(None));
+    }
+
+    #[test]
+    fn unpack_support_tracks_gles_major() {
+        assert!(supports_unpack_row_length(Some("OpenGL ES 3.0")));
+        assert!(!supports_unpack_row_length(Some("OpenGL ES 2.0")));
+        assert!(supports_unpack_row_length(Some("3.3 NVIDIA")));
+        assert!(!supports_unpack_row_length(None));
+    }
+
+    #[test]
+    fn compose_handles_empty_parts() {
+        assert_eq!(
+            compose_glsl_source("#version 150", &[], &[]),
+            "#version 150\n"
+        );
+        assert_eq!(
+            compose_glsl_source("#version 150", &[], &["void f();"]),
+            "#version 150\nvoid f();\n"
+        );
+    }
+
+    /// Candidate selection on a real context (Xvfb + llvmpipe in CI).
+    /// Skips without a display so headless runs stay green.
+    #[cfg(unix)]
+    #[test]
+    fn compile_pipelines_on_real_context() {
+        use glutin::display::GlDisplay as _;
+        let _serial = crate::test_display::lock_display();
+        let Some(display) = crate::test_display::TestDisplay::connect() else {
+            eprintln!("SKIP GL context tests: no GL display");
+            return;
+        };
+        let Some(_current) = display.make_pbuffer_current(16, 16) else {
+            eprintln!("SKIP GL context tests: no GL context");
+            return;
+        };
+        let loader = |name: &'static str| {
+            std::ffi::CString::new(name)
+                .ok()
+                .map(|owned| display.display.get_proc_address(&owned))
+                .unwrap_or(std::ptr::null())
+        };
+        gl::load_with(loader);
+        let version = nerust_glwrap::raw::gl_string(gl::VERSION);
+        let is_gles = is_gles_context(version.as_deref());
+        assert!(super::compile_shader_program(false, is_gles).is_ok());
+        assert!(super::compile_osd_program(is_gles).is_some());
+    }
+}

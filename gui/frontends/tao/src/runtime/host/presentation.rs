@@ -179,3 +179,78 @@ impl HostState {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::runtime::host::TestHost;
+
+    #[test]
+    fn menu_sync_pushes_once_per_content() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let ctx = host.frame_ctx();
+        host.sync_menu_state(&ctx);
+        assert_eq!(support.menu.updates().len(), 1);
+        // Same capture: cheap gate plus fingerprint both hold.
+        let ctx = host.frame_ctx();
+        host.sync_menu_state(&ctx);
+        assert_eq!(support.menu.updates().len(), 1);
+    }
+
+    #[test]
+    fn title_gate_pushes_once_per_change() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let ctx = host.frame_ctx();
+        let title = host.session_mut().window_title_cached(&ctx.tick).to_owned();
+        assert!(!host.chrome.title_same(&title));
+        host.refresh_window_title(&ctx.tick);
+        assert!(host.chrome.title_same(&title));
+        host.refresh_window_title(&ctx.tick);
+        assert!(host.chrome.title_same(&title));
+    }
+
+    #[test]
+    fn chrome_choke_point_syncs_menu_and_title() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let ctx = host.frame_ctx();
+        host.sync_chrome(&ctx, true);
+        assert_eq!(support.menu.updates().len(), 1);
+        let title = host.session_mut().window_title_cached(&ctx.tick).to_owned();
+        assert!(host.chrome.title_same(&title));
+    }
+
+    #[test]
+    fn fullscreen_helpers_stay_total_headless() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.sync_fullscreen_from_settings();
+        assert!(host.windows.pending_fullscreen_sync().is_none());
+        host.sync_fullscreen_default_from_window();
+        host.toggle_fullscreen();
+        assert!(host.windows.pending_fullscreen_sync().is_none());
+    }
+
+    #[test]
+    fn rom_load_refresh_routes_through_chrome() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let ctx = host.frame_ctx();
+        host.after_rom_load(&ctx);
+        assert_eq!(support.menu.updates().len(), 1);
+    }
+
+    #[test]
+    fn title_throttle_blocks_back_to_back_refresh() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let now = std::time::Instant::now();
+        let ctx = host.frame_ctx();
+        // Fresh shell just stamped the title clock, so an immediate
+        // refresh stays gated until the interval elapses.
+        host.maybe_refresh_window_title(&ctx, now);
+        let title = host.session_mut().window_title_cached(&ctx.tick).to_owned();
+        assert!(!host.chrome.title_same(&title));
+    }
+}

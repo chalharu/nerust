@@ -433,6 +433,45 @@ mod tests {
     }
 
     #[test]
+    fn filter_defaults_to_all_and_rejects_foreign_labels() {
+        assert_eq!(HistoryFilter::default(), HistoryFilter::All);
+        // English labels never resolve in Japanese and vice versa.
+        assert_eq!(HistoryFilter::from_label("All", ja()), None);
+        assert_eq!(HistoryFilter::from_label("すべて", en()), None);
+        // Warning threshold still admits errors only.
+        assert!(HistoryFilter::Warning.matches(NotificationLevel::Error));
+        assert!(!HistoryFilter::Warning.matches(NotificationLevel::Info));
+    }
+
+    #[test]
+    fn short_module_keeps_two_segment_paths_whole() {
+        assert_eq!(short_module("crate::module"), "crate::module");
+        assert_eq!(short_module(""), "");
+    }
+
+    #[test]
+    fn history_view_builds_empty_and_filtered() {
+        // Empty content shows the placeholder, never an empty grid.
+        let program = HistoryProgram {
+            language: en(),
+            clear_requested: Default::default(),
+        };
+        let (state, _) = program.boot();
+        drop(program.view(&state, iced::window::Id::unique()));
+        // Filtered-out rows collapse to the same placeholder.
+        let (mut state, _) = program.boot();
+        let _ = program.update(
+            &mut state,
+            HistoryMessage::Sync {
+                lines: std::sync::Arc::from([line(NotificationLevel::Info, "Paused")]),
+                language: en(),
+            },
+        );
+        let _ = program.update(&mut state, HistoryMessage::SetFilter(HistoryFilter::Error));
+        drop(program.view(&state, iced::window::Id::unique()));
+    }
+
+    #[test]
     fn history_sync_sets_lines_and_language() {
         let program = HistoryProgram {
             language: en(),

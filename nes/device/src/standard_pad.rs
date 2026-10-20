@@ -291,4 +291,17 @@ mod tests {
         assert_eq!(profile.port_groups().len(), 1);
         assert_eq!(profile.port_groups()[0].len(), 8);
     }
+
+    #[test]
+    fn strobe_target_trait_latches_like_write() {
+        use nerust_input_traits::StrobeTarget;
+        let mut pad = StandardPad::new(0x1B);
+        pad.sync_input(&[0b0000_0001, 0]);
+        let port = player1();
+        StrobeTarget::strobe(&mut pad, 1);
+        assert_eq!(pad.read(&port).data & 1, 1);
+        assert_eq!(pad.read(&port).mask, 0x1B);
+        StrobeTarget::strobe(&mut pad, 0);
+        assert_eq!(pad.read(&port).data & 1, 1);
+    }
 }

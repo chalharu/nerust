@@ -208,4 +208,32 @@ mod tests {
         assert!(dropped.is_empty());
         assert_eq!(map[&(attachment, digital)], 3);
     }
+
+    #[test]
+    fn projection_handles_empty_and_analog_only_maps() {
+        let unified: HashMap<(AttachmentId, ControlId), usize> = HashMap::new();
+        let (map, dropped) = split_digital_field_map(&unified);
+        assert!(map.is_empty() && dropped.is_empty());
+        let analog = ControlId::analog(AnalogControlId::new("test.x"));
+        let attachment = AttachmentId::new("test.pad");
+        let unified = HashMap::from([((attachment, analog), 5)]);
+        let (map, dropped) = split_digital_field_map(&unified);
+        assert!(map.is_empty());
+        assert_eq!(dropped, vec![(attachment, analog)]);
+    }
+
+    #[test]
+    fn factory_error_display_names_kind() {
+        assert!(
+            FactoryError::Create("x".to_string())
+                .to_string()
+                .contains('x')
+        );
+        assert!(
+            FactoryError::InvalidChoice("y".to_string())
+                .to_string()
+                .contains('y')
+        );
+        assert!(!FactoryError::InvalidSettings.to_string().is_empty());
+    }
 }

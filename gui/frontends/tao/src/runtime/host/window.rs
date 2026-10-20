@@ -601,4 +601,80 @@ mod tests {
         assert!(host.startup_window_size().width > 0.0);
         assert!(support.menu.updates().is_empty());
     }
+
+    #[test]
+    fn fullscreen_sync_target_round_trips() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        assert!(host.windows.pending_fullscreen_sync().is_none());
+        host.windows.set_pending_fullscreen_sync(Some(true));
+        assert_eq!(host.windows.pending_fullscreen_sync(), Some(true));
+        host.windows.set_pending_fullscreen_sync(None);
+        assert!(host.windows.pending_fullscreen_sync().is_none());
+        host.windows.close_main();
+        assert!(!host.windows.is_some());
+    }
+
+    #[test]
+    fn cluster_close_arms_exactly_once() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        assert!(host.windows.begin_close());
+        assert!(!host.windows.begin_close());
+        assert!(host.windows.close_exited());
+    }
+
+    #[test]
+    fn redraw_flag_sets_without_native_window() {
+        use nerust_render_traits::renderer::RenderResult;
+        let support = TestHost::new();
+        let mut host = support.host;
+        // Presented clears the flag; the headless redraw re-arms it.
+        host.on_render_result(RenderResult::Presented);
+        assert!(!host.shell.needs_redraw);
+        host.request_redraw();
+        assert!(host.shell.needs_redraw);
+    }
+
+    #[test]
+    fn flow_decision_repaints_on_any_live_source() {
+        use super::{WakeNeed, update_flow};
+        let now = std::time::Instant::now();
+        let idle = WakeNeed::default();
+        // Focused main window repaints even while paused.
+        let (_, redraw) = update_flow(now, true, true, true, false, idle);
+        assert!(redraw);
+        // PPU follow repaints while running unfocused.
+        let (_, redraw) = update_flow(now, true, false, false, true, idle);
+        assert!(redraw);
+        // Loaded paused unfocused sleeps.
+        let (_, redraw) = update_flow(now, true, true, false, false, idle);
+        assert!(!redraw);
+    }
+
+    #[test]
+    fn wake_fold_keeps_earliest_per_source() {
+        use super::WakeNeed;
+        let now = std::time::Instant::now();
+        let early = now + std::time::Duration::from_millis(5);
+        let late = now + std::time::Duration::from_millis(50);
+        let folded = WakeNeed {
+            live_tick: Some(late),
+            ..WakeNeed::default()
+        }
+        .fold(WakeNeed {
+            live_tick: Some(early),
+            osd_deadline: Some(late),
+            ..WakeNeed::default()
+        });
+        assert_eq!(folded.live_tick, Some(early));
+        assert_eq!(folded.osd_deadline, Some(late));
+        assert!(!folded.flight_pending);
+        let pending = WakeNeed {
+            flight_pending: true,
+            ..WakeNeed::default()
+        }
+        .fold(WakeNeed::default());
+        assert!(pending.flight_pending);
+    }
 }

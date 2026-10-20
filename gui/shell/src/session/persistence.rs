@@ -500,3 +500,248 @@ pub fn adjacent_slot_id(
     };
     Some(slots[next_index].slot_id)
 }
+
+#[cfg(test)]
+mod persistence_cov_tests {
+    use crate::session::persistence::*;
+
+    struct OkExporter {
+        identity: Option<SystemIdentity>,
+        state: Result<Vec<u8>, SlotOpFailure>,
+        mapper: Result<Option<Vec<u8>>, SlotOpFailure>,
+    }
+
+    impl StateExporter for OkExporter {
+        fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
+            self.state.clone()
+        }
+        fn import_state(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+            self.state.clone().map(|_| ())
+        }
+        fn export_preview(&self) -> Option<nerust_persistence::thumbnail::ThumbnailSource> {
+            None
+        }
+        fn export_identity(&self) -> Option<SystemIdentity> {
+            self.identity.clone()
+        }
+        fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
+            self.mapper.clone()
+        }
+        fn import_mapper(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+            Ok(())
+        }
+    }
+
+    fn identity() -> SystemIdentity {
+        SystemIdentity::new(Box::new(crate::test_helpers::DummySystemId), vec![9, 9])
+    }
+
+    fn failing_manager() -> PersistenceManager {
+        PersistenceManager::with_all_backends(
+            Box::new(FailingSlotBackend),
+            Box::new(FailingSlotBackend),
+            Box::new(FailingSlotBackend),
+        )
+    }
+
+    fn exporter_ok() -> OkExporter {
+        OkExporter {
+            identity: Some(identity()),
+            state: Ok(vec![1, 2, 3]),
+            mapper: Ok(Some(vec![4])),
+        }
+    }
+
+    #[test]
+    fn unconfigured_manager_reports_unavailable() {
+        let mut manager = PersistenceManager::new();
+        let exporter = exporter_ok();
+        assert_eq!(
+            manager
+                .save_slot(1, &exporter, SlotActivation::Activate)
+                .unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(
+            manager.save_active_slot_or_new(&exporter).unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(
+            manager.create_slot(&exporter).unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(
+            manager
+                .load_slot(1, &exporter, crate::state::resolve_state_format)
+                .unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(
+            manager
+                .load_active_slot(&exporter, crate::state::resolve_state_format)
+                .unwrap_err(),
+            SlotOpFailure::Empty
+        );
+        assert_eq!(
+            manager.delete_slot(1, &exporter).unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::SkippedNoPath
+        );
+        assert!(manager.load_mapper_save_if_needed(&exporter).is_ok());
+        assert!(!manager.save_hidden(&exporter));
+        assert!(!manager.load_hidden(&exporter, crate::state::resolve_state_format));
+        manager.clear_hidden();
+    }
+
+    #[test]
+    fn no_identity_reports_unavailable_when_configured() {
+        let dir = std::env::temp_dir().join("nerust-persist-cov-noid");
+        std::fs::create_dir_all(&dir).ok();
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone(), dir.join("g.sav"));
+        let exporter = OkExporter {
+            identity: None,
+            state: Ok(vec![1]),
+            mapper: Ok(None),
+        };
+        assert_eq!(
+            manager
+                .save_slot(1, &exporter, SlotActivation::Leave)
+                .unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert!(!manager.save_hidden(&exporter));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_failure_short_circuits_before_backend() {
+        let dir = std::env::temp_dir().join("nerust-persist-cov-export");
+        std::fs::create_dir_all(&dir).ok();
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone(), dir.join("g.sav"));
+        let exporter = OkExporter {
+            identity: Some(identity()),
+            state: Err(SlotOpFailure::Corrupt),
+            mapper: Ok(None),
+        };
+        assert_eq!(
+            manager
+                .save_slot(1, &exporter, SlotActivation::Activate)
+                .unwrap_err(),
+            SlotOpFailure::Corrupt
+        );
+        assert!(!manager.save_hidden(&exporter));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mapper_flush_covers_degraded_and_skipped() {
+        use crate::session::fs::FsSlotBackend;
+        let dir = std::env::temp_dir().join("nerust-persist-cov-mapper");
+        std::fs::create_dir_all(&dir).ok();
+        let mut manager = PersistenceManager::with_all_backends(
+            Box::new(FailingSlotBackend),
+            Box::new(FailingSlotBackend),
+            Box::new(FsSlotBackend),
+        );
+        manager.configure(dir.clone(), dir.join("g.sav"));
+        manager.mapper_save_flush_allowed = false;
+        let exporter = exporter_ok();
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::DegradedRecoveryWritten
+        );
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::DegradedRecoveryWritten
+        );
+        let none_mapper = OkExporter {
+            identity: Some(identity()),
+            state: Ok(vec![1]),
+            mapper: Ok(None),
+        };
+        let mut fresh = failing_manager();
+        fresh.configure(dir.clone(), dir.join("h.sav"));
+        fresh.mapper_save_flush_allowed = false;
+        assert_eq!(
+            fresh.flush_mapper_save(&none_mapper).unwrap(),
+            MapperFlush::SkippedNoPath
+        );
+        assert!(fresh.load_mapper_save_if_needed(&exporter).is_ok());
+        assert!(!fresh.mapper_save_flush_allowed);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn adjacent_slot_id_covers_empty_wrap_and_step() {
+        use nerust_persistence::model::StateSlotSummary as S;
+        assert_eq!(adjacent_slot_id(&[], None, SlotDirection::Next), None);
+        let mk = |id: u64| S {
+            schema_version: 1,
+            slot_id: id,
+            path: std::path::PathBuf::from("/tmp/x"),
+            saved_at: std::time::UNIX_EPOCH,
+            has_thumbnail: false,
+            emulator_version: String::new(),
+        };
+        let slots = vec![mk(1), mk(2), mk(3)];
+        assert_eq!(adjacent_slot_id(&slots, None, SlotDirection::Next), Some(1));
+        assert_eq!(
+            adjacent_slot_id(&slots, None, SlotDirection::Previous),
+            Some(3)
+        );
+        assert_eq!(
+            adjacent_slot_id(&slots, Some(2), SlotDirection::Next),
+            Some(3)
+        );
+        assert_eq!(
+            adjacent_slot_id(&slots, Some(1), SlotDirection::Previous),
+            Some(3)
+        );
+        assert_eq!(
+            adjacent_slot_id(&slots, Some(99), SlotDirection::Next),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn header_version_rejects_short_and_preheader_blobs() {
+        assert_eq!(state_header_version(&[]), None);
+        assert_eq!(state_header_version(&[0u8; 5]), None);
+        assert_eq!(state_header_version(&[0xFF; 12]), None);
+    }
+
+    #[test]
+    fn with_backend_replaces_only_slot_leg() {
+        let mut manager = PersistenceManager::with_backend(Box::new(FailingSlotBackend));
+        assert!(manager.slots().is_empty());
+        assert_eq!(manager.active_slot_id(), None);
+        assert_eq!(manager.configured_sidecars(), None);
+        manager.configure(
+            std::path::PathBuf::from("/tmp/a"),
+            std::path::PathBuf::from("/tmp/b"),
+        );
+        assert!(manager.configured_sidecars().is_some());
+        manager.reset();
+        assert!(manager.configured_sidecars().is_none());
+        let mut selected = PersistenceManager::new();
+        selected.select_active_slot(5);
+        assert_eq!(selected.active_slot_id(), Some(5));
+        assert_eq!(selected.select_adjacent_slot(SlotDirection::Next), None);
+    }
+
+    #[test]
+    fn refresh_and_select_prune_missing_active() {
+        let mut manager = PersistenceManager::new();
+        let exporter = exporter_ok();
+        manager.refresh_slots(&exporter);
+        assert!(manager.slots().is_empty());
+        manager.select_active_slot(9);
+        manager.refresh_slots(&exporter);
+        assert_eq!(manager.active_slot_id(), None);
+    }
+}

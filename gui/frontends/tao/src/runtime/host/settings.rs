@@ -157,4 +157,90 @@ mod tests {
         assert!(host.settings.take_resume_after());
         assert!(support.menu.updates().is_empty());
     }
+
+    struct OpenAux {
+        kind: crate::aux::focus::AuxKind,
+    }
+
+    impl crate::aux::focus::AuxIdentity for OpenAux {
+        fn kind(&self) -> crate::aux::focus::AuxKind {
+            self.kind
+        }
+        fn native_id(&self) -> crate::aux::native::NativeWindowId {
+            crate::aux::native::NativeWindowId::dummy()
+        }
+        fn close_requested(&self) -> bool {
+            false
+        }
+        fn focus_window(&self) {}
+        fn request_redraw(&self) {}
+    }
+
+    impl crate::aux::focus::AuxRender for OpenAux {
+        fn handle_common(&mut self, _event: &crate::aux::native::AuxNativeEvent) {}
+        fn feed_event(
+            &mut self,
+            _event: crate::aux::native::AuxNativeEvent,
+        ) -> Option<iced::Event> {
+            None
+        }
+        fn render(&mut self) {}
+    }
+
+    impl crate::aux::focus::AuxEvents for OpenAux {
+        fn handle(&mut self, _mapped: iced::Event) -> bool {
+            false
+        }
+    }
+
+    impl crate::aux::registry::DebugDrainPort for OpenAux {}
+    impl crate::aux::registry::LiveImagesPort for OpenAux {}
+    impl crate::aux::registry::SettingsClosePort for OpenAux {}
+    impl crate::aux::registry::HistorySyncPort for OpenAux {}
+    impl crate::aux::registry::BridgeSharePort for OpenAux {}
+    impl crate::aux::registry::AuxController for OpenAux {}
+
+    #[test]
+    fn settings_close_with_open_window_syncs_chrome() {
+        use crate::aux::focus::AuxKind;
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.aux.insert(Box::new(OpenAux {
+            kind: AuxKind::Settings,
+        }));
+        assert!(host.settings_open());
+        // Registry removal is the caller's job; close teardown only
+        // clears the resume flag and syncs chrome while still open.
+        host.on_settings_closed();
+        assert!(host.settings_open());
+        assert!(!host.settings.take_resume_after());
+        assert_eq!(support.menu.updates().len(), 1);
+    }
+
+    #[test]
+    fn settings_close_with_resume_flag_resumes() {
+        use crate::aux::focus::AuxKind;
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.aux.insert(Box::new(OpenAux {
+            kind: AuxKind::Settings,
+        }));
+        host.settings.set_resume_after(true);
+        host.on_settings_closed();
+        assert!(host.settings_open());
+        assert!(!host.settings.take_resume_after());
+        assert!(support.menu.updates().is_empty());
+    }
+
+    #[test]
+    fn close_settings_window_applies_pending_snapshot() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        assert!(host.close_settings_window(None).is_none());
+        let snapshot = host.session().settings_snapshot().clone();
+        let plan = host
+            .close_settings_window(Some(snapshot))
+            .expect("identical snapshot applies cleanly");
+        assert!(!plan.renderer_needs_rebuild);
+    }
 }

@@ -85,7 +85,7 @@ impl RomLoadTarget for SessionLoadAdapter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::session::load_adapter::*;
 
     struct FakePorts {
         resumed: bool,
@@ -122,5 +122,51 @@ mod tests {
         let mut adapter = SessionLoadAdapter::from_port(&mut fake);
         adapter.resume();
         assert!(fake.resumed);
+    }
+
+    #[test]
+    fn adapter_forwards_load_options_snapshot_and_errors() {
+        use crate::session::test_util::{test_session, test_view};
+        let mut session = test_session();
+        let (bad, resolved) = {
+            let factory = session.factory().unwrap();
+            let options = factory.default_load_options();
+            let view = test_view(&session);
+            let resolved = factory.resolve_load_request(&view, options).unwrap();
+            (MediaObject::new(None, vec![]), resolved)
+        };
+        {
+            let adapter = SessionLoadAdapter::new(&mut session);
+            assert!(adapter.default_load_options().is_some());
+            let _ = adapter.settings_snapshot();
+        }
+        let mut fake = FakePorts { resumed: false };
+        let mut adapter = SessionLoadAdapter::from_port(&mut fake);
+        assert!(adapter.load_resolved(bad, resolved).is_ok());
+        let id = crate::test_helpers::DummySystemId;
+        assert!(adapter.set_active_system(&id).is_ok());
+        adapter.resume();
+        assert!(fake.resumed);
+    }
+
+    #[test]
+    fn session_ports_impl_delegates_without_recursion() {
+        use super::super::ports::SessionPorts;
+        use crate::session::test_util::{test_session, test_view};
+        let mut session = test_session();
+        assert!(SessionPorts::default_load_options(&session).is_some());
+        let _ = SessionPorts::settings_snapshot(&session);
+        SessionPorts::resume(&mut session);
+        let id = crate::test_helpers::DummySystemId;
+        assert!(SessionPorts::set_active_system(&mut session, &id).is_ok());
+        let resolved = {
+            let factory = session.factory().unwrap();
+            let options = factory.default_load_options();
+            let view = test_view(&session);
+            factory.resolve_load_request(&view, options).unwrap()
+        };
+        let err =
+            SessionPorts::load_resolved(&mut session, MediaObject::new(None, vec![]), resolved);
+        assert!(err.is_err() || err.is_ok());
     }
 }

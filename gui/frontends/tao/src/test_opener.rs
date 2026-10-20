@@ -104,4 +104,59 @@ mod tests {
         assert!(opener.create_main(builder).is_err());
         assert_eq!(opener.calls(), [OpenerCall::Main]);
     }
+
+    #[test]
+    fn fake_opener_records_remaining_aux_kinds() {
+        use crate::aux::bridge::DebugBridge;
+        use nerust_gui_viewmodel::debugger::DisplayCache;
+        let opener = FakeOpener::failing("no display");
+        let snapshot = nerust_settings_core::model::snapshot::SettingsSnapshot {
+            shared: Default::default(),
+            local: Default::default(),
+            app_state: Default::default(),
+        };
+        assert!(
+            opener
+                .create_aux(
+                    AuxKind::Settings,
+                    AuxOpenParams::Settings {
+                        snapshot,
+                        registry: std::sync::Arc::new(
+                            nerust_gui_shell::registry::SystemRegistry::new(Vec::new())
+                        ),
+                        audio: std::sync::Arc::new(
+                            nerust_core_traits::audio::AudioBackendRegistry::new()
+                        ),
+                    }
+                )
+                .is_none()
+        );
+        let bridge = std::sync::Arc::new(DebugBridge::new(
+            DisplayCache::default(),
+            Vec::new(),
+            0,
+            AppLanguage::English,
+        ));
+        assert!(
+            opener
+                .create_aux(
+                    AuxKind::Ppu,
+                    AuxOpenParams::Ppu {
+                        bridge,
+                        position: None
+                    }
+                )
+                .is_none()
+        );
+        assert_eq!(opener.calls(), [OpenerCall::Settings, OpenerCall::Ppu]);
+    }
+
+    #[test]
+    fn fake_main_surfaces_the_failing_detail() {
+        use crate::ports::WindowOpener as _;
+        let opener = FakeOpener::failing("headless has no display");
+        let builder = tao::window::WindowBuilder::new().with_title("test");
+        let error = opener.create_main(builder).expect_err("fails closed");
+        assert_eq!(error, "headless has no display");
+    }
 }

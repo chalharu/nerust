@@ -190,3 +190,90 @@ impl LutEntry {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{LutEntry, ResizeKernel};
+    use nerust_render_traits::SurfaceSize;
+
+    #[test]
+    fn nearest_and_bilinear_cover_every_dst_pixel() {
+        let mut lut = LutEntry::new();
+        lut.resize_lut_nearest_neighbor(4, 4, 4, 4, (1.0, 1.0));
+        assert_eq!(lut.x_lut.len(), 4);
+        lut.resize_lut_bilinear(4, 4, 4, 4, (1.0, 1.0));
+        assert_eq!(lut.x_lut.len(), 8);
+        assert_eq!(lut.lut_pixel_size(), 2);
+        assert_eq!(lut.y_lut.len(), 8);
+    }
+
+    #[test]
+    fn outside_taps_emit_none_not_wrapped_indices() {
+        let mut lut = LutEntry::new();
+        lut.resize_lut_nearest_neighbor(8, 1, 2, 1, (4.0, 1.0));
+        assert!(lut.x_lut.iter().any(|t| t.is_none()));
+        assert!(lut.x_lut.iter().flatten().all(|&(i, _)| i < 2));
+    }
+
+    #[test]
+    fn centered_src_pins_middle_pixel() {
+        assert_eq!(LutEntry::centered_src(1, 2, 1.0, 2), 1.5);
+    }
+
+    #[test]
+    fn tap_pair_splits_unit_weight() {
+        let (floor, ceil) = LutEntry::tap_pair(1.5, 4);
+        let (f, wf) = floor.expect("floor tap");
+        let (c, wc) = ceil.expect("ceil tap");
+        assert_eq!((f, c), (1, 2));
+        assert_eq!(wf as u32 + wc as u32, 256);
+        let (floor, ceil) = LutEntry::tap_pair(1.0, 4);
+        assert!(floor.is_some() && ceil.is_none());
+    }
+
+    #[test]
+    fn inv_scale_letterboxes_wide_windows() {
+        let (sx, sy) = LutEntry::inv_scale(
+            SurfaceSize {
+                width: 256,
+                height: 240,
+            },
+            4.0 / 3.0,
+            SurfaceSize {
+                width: 1920,
+                height: 1080,
+            },
+        );
+        assert!(sx > 0.0 && sy > 0.0);
+        let narrow = LutEntry::inv_scale(
+            SurfaceSize {
+                width: 256,
+                height: 240,
+            },
+            4.0 / 3.0,
+            SurfaceSize {
+                width: 600,
+                height: 1080,
+            },
+        );
+        assert!(narrow.0 > 0.0 && narrow.1 > 0.0);
+    }
+
+    #[test]
+    fn resize_lut_dispatches_on_kernel() {
+        let mut lut = LutEntry::new();
+        lut.kernel = ResizeKernel::Bilinear;
+        lut.resize_lut(
+            SurfaceSize {
+                width: 2,
+                height: 2,
+            },
+            1.0,
+            SurfaceSize {
+                width: 4,
+                height: 4,
+            },
+        );
+        assert_eq!(lut.x_lut.len(), 8);
+    }
+}

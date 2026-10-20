@@ -169,4 +169,50 @@ mod tests {
             DigitalInputState::Released
         );
     }
+
+    #[test]
+    fn general_event_round_trips_digital() {
+        use super::{ControlId, InputEvent, InputValue};
+        use crate::AnalogControlId;
+        let attachment = AttachmentId::new("test.pad1");
+        let digital = DigitalControlId::new("test.a");
+        let pressed = DigitalInputEvent::pressed(attachment, digital);
+        let general = pressed.to_general();
+        assert_eq!(general.value, InputValue::Digital(true));
+        let back = general.as_digital().expect("digital round-trip");
+        assert_eq!(back, pressed);
+        let analog = InputEvent::new(
+            attachment,
+            ControlId::analog(AnalogControlId::new("test.x")),
+            InputValue::Analog(0.5),
+        );
+        assert!(analog.as_digital().is_none());
+        let foreign = InputEvent::new(
+            attachment,
+            ControlId::analog(AnalogControlId::new("test.x")),
+            InputValue::Digital(true),
+        );
+        assert!(foreign.as_digital().is_none());
+        let from: InputEvent = pressed.into();
+        assert_eq!(from, general);
+    }
+
+    #[test]
+    fn buffer_error_display_names_fields() {
+        use super::BufferError;
+        let missing = BufferError::MismatchedBuffer {
+            expected: "A",
+            actual: "B",
+        };
+        assert!(missing.to_string().contains('A'));
+        let unsupported = BufferError::UnsupportedFieldType {
+            field: 3,
+            expected: "digital",
+        };
+        assert!(unsupported.to_string().contains('3'));
+        let absent = BufferError::FieldNotFound { field: 9 };
+        assert!(absent.to_string().contains('9'));
+        let result = super::OpenBusReadResult::new(1, 2);
+        assert_eq!((result.data, result.mask), (1, 2));
+    }
 }

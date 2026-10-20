@@ -199,4 +199,29 @@ mod tests {
         assert_eq!(huge, 18_446_744_056_529_682_436usize);
         assert!(checked_clear_need(2, 1).unwrap() == 8);
     }
+
+    #[test]
+    fn checked_rect_rejects_negative_and_zero_geometry() {
+        use nerust_render_traits::renderer::OsdLayer;
+        // Negative origin refuses instead of wrapping.
+        assert_eq!(
+            checked_osd_rect(&OsdLayer::new(0, 0, 0, 1, vec![]), 64, 64),
+            Err(OsdReject::Empty)
+        );
+        // Layer past the surface edge refuses.
+        assert_eq!(
+            checked_osd_rect(&OsdLayer::new(63, 63, 2, 2, vec![0; 16]), 64, 64),
+            Err(OsdReject::OutOfBounds)
+        );
+        assert_eq!(
+            checked_osd_rect(&OsdLayer::new(0, 0, 2, 1, vec![0; 8]), 1, 64),
+            Err(OsdReject::OutOfBounds)
+        );
+    }
+
+    #[test]
+    fn checked_flip_rejects_empty_surface() {
+        assert_eq!(checked_osd_gl_y(0, 0, 1), Err(OsdReject::OutOfBounds));
+        assert_eq!(checked_osd_gl_y(64, 0, 0), Err(OsdReject::OutOfBounds));
+    }
 }

@@ -617,3 +617,91 @@ impl FrameView {
         leaked
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FrameView;
+    use crate::error::ViewError;
+
+    #[test]
+    fn program_binding_without_shader_names_game() {
+        let mut view = FrameView::new();
+        assert!(matches!(
+            view.on_update(&[0; 4], 1),
+            Err(ViewError::NoProgram { program: "game" })
+        ));
+        assert!(matches!(view.restore_game_binding(), Ok(())));
+    }
+
+    #[test]
+    fn palette_upload_skips_rgba_frames() {
+        let view = FrameView::new();
+        assert!(view.update_palette_texture(&[0; 256]).is_ok());
+    }
+
+    #[test]
+    fn geometry_binding_names_missing_pipeline() {
+        // Default build skips the VAO: missing VBO names the buffer.
+        let view = FrameView::new();
+        assert!(matches!(
+            view.bind_geometry(),
+            Err(ViewError::NoVertexBuffer { pipeline: "game" })
+        ));
+        let mut vao = FrameView::new();
+        vao.set_use_vao(true);
+        assert!(matches!(
+            vao.bind_geometry(),
+            Err(ViewError::NoVertexArray { pipeline: "game" })
+        ));
+    }
+
+    #[test]
+    fn matrix_cache_hit_skips_upload() {
+        // Identical matrix returns before any GL call.
+        let mut view = FrameView::new();
+        let mat = crate::mat4::Mat4::identity().as_array();
+        view.last_matrix = Some(mat);
+        assert!(view.set_game_matrix(&mat).is_ok());
+        // Stale cache with no program fails typed, not with `-1`.
+        let mut fresh = FrameView::new();
+        assert!(matches!(
+            fresh.set_game_matrix(&mat),
+            Err(ViewError::NoProgram { program: "game" })
+        ));
+    }
+
+    #[test]
+    fn current_program_tracks_explicit_marks() {
+        let mut view = FrameView::new();
+        assert_eq!(view.current_program(), None);
+        view.set_current_program(Some(7));
+        assert_eq!(view.current_program(), Some(7));
+        view.set_current_program(None);
+        assert_eq!(view.current_program(), None);
+    }
+
+    #[test]
+    fn close_without_context_leaks_live_names() {
+        use nerust_glwrap::CurrentContext;
+        let mut view = FrameView::new();
+        assert!(view.close(CurrentContext::assert_current(false)).is_empty());
+        let mut live = FrameView::new();
+        live.frame_texture = 7;
+        live.palette_texture = 8;
+        let leaked = live.close(CurrentContext::assert_current(false));
+        assert_eq!(leaked.len(), 2);
+        assert_eq!(live.frame_texture, 0);
+    }
+
+    #[test]
+    fn viewport_rejects_degenerate_content_before_gl() {
+        use nerust_render_traits::ReservedStrip;
+        let mut view = FrameView::new();
+        view.logical_width = 0;
+        view.logical_height = 0;
+        assert!(
+            view.apply_viewport(64, 64, ReservedStrip::default())
+                .is_err()
+        );
+    }
+}

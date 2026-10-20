@@ -407,8 +407,8 @@ mod tests {
 
 #[cfg(test)]
 mod mapping_tests {
-    use super::*;
     use crate::emu_core::StateFault;
+    use crate::session::commands::*;
     use crate::session::error::SlotOpFailure;
 
     #[test]

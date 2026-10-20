@@ -105,4 +105,21 @@ mod tests {
         buf.clear();
         assert_eq!(buf.0, 0x03FF);
     }
+
+    #[test]
+    fn copy_state_refuses_foreign_type() {
+        #[derive(Debug, Default)]
+        struct Foreign;
+        impl InputStateBuffer for Foreign {
+            fn set(&mut self, _: usize, _: InputValue) -> Result<(), BufferError> {
+                Ok(())
+            }
+            fn clear(&mut self) {}
+            fn copy_state(&mut self, _: &dyn InputStateBuffer) -> Result<(), BufferError> {
+                Ok(())
+            }
+        }
+        let mut buf = GbaInputBuffer::default();
+        assert!(buf.copy_state(&Foreign).is_err());
+    }
 }

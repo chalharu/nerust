@@ -162,7 +162,7 @@ mod tests {
 
 #[cfg(test)]
 mod agreement_tests {
-    use super::*;
+    use crate::session::session_query::*;
 
     #[test]
     fn cached_and_vec_histories_agree_on_one_source() {
@@ -179,5 +179,57 @@ mod agreement_tests {
         let mut view = HistoryView::new();
         let cached = view.lines(events.iter(), 1, AppLanguage::English).to_vec();
         assert_eq!(direct, cached);
+    }
+}
+
+#[cfg(test)]
+mod query_cov_tests {
+    use crate::session::session_query::*;
+
+    #[test]
+    fn coreless_queries_report_empty_defaults() {
+        use std::sync::Arc;
+        let caps = crate::session::test_util::test_session().capabilities;
+        let registry = Arc::new(crate::registry::SystemRegistry::new(vec![]));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let session = super::super::SessionHandle::new_ephemeral(caps, registry, audio);
+        let tick = session.tick_metrics();
+        assert!(!tick.loaded);
+        let metrics = session.metrics();
+        assert!(!metrics.loaded);
+        let size = session.window_size();
+        assert_eq!((size.width, size.height), (0.0, 0.0));
+        assert!(session.window_title(&tick).contains("No ROM"));
+        assert!(session.slots().is_empty());
+        assert_eq!(session.active_slot_id(), None);
+        assert_eq!(session.notification_history_seq(), 0);
+        assert_eq!(session.notification_history().count(), 0);
+        assert!(
+            session
+                .notification_history_lines(Default::default())
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn loaded_queries_report_core_values() {
+        let session = crate::session::test_util::test_session();
+        let tick = session.tick_metrics();
+        let size = session.window_size();
+        assert!(size.width > 0.0 && size.height > 0.0);
+        let _ = session.window_title(&tick);
+        let _ = session.notification_history_seq();
+        let _ = session.notification_history_lines(Default::default());
+    }
+
+    #[test]
+    fn window_size_defaults_are_zero() {
+        assert_eq!(
+            WindowSize::default(),
+            WindowSize {
+                width: 0.0,
+                height: 0.0
+            }
+        );
     }
 }

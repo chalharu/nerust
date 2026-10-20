@@ -85,4 +85,38 @@ mod tests {
         assert_eq!(scaling_factor(ScalingMode::FitToWindow), None);
         assert_eq!(scaling_factor(ScalingMode::X4), Some(4));
     }
+
+    #[test]
+    fn scaling_factor_covers_every_mode() {
+        for (mode, expected) in [
+            (ScalingMode::X1, Some(1)),
+            (ScalingMode::X2, Some(2)),
+            (ScalingMode::X3, Some(3)),
+            (ScalingMode::X5, Some(5)),
+        ] {
+            assert_eq!(scaling_factor(mode), expected);
+        }
+    }
+
+    #[test]
+    fn speaker_factory_builds_gain_wrapped_backend() {
+        use nerust_core_traits::audio::AudioBackendRegistry;
+        let registry = AudioBackendRegistry::new();
+        let settings = crate::session::test_util::test_session()
+            .settings_snapshot()
+            .local
+            .clone();
+        let speaker = super::build_speaker(&registry, &settings);
+        assert!(speaker.sample_rate() > 0);
+        let via_trait = <AudioBackendRegistry as super::AudioSpeakerFactory>::build_speaker(
+            &registry, &settings,
+        );
+        assert_eq!(via_trait.sample_rate(), speaker.sample_rate());
+        let mut muted = settings.clone();
+        muted.audio.muted = true;
+        let _ = super::build_speaker(&registry, &muted);
+        let mut zero_rate = settings;
+        zero_rate.audio.sample_rate = 0;
+        let _ = super::build_speaker(&registry, &zero_rate);
+    }
 }

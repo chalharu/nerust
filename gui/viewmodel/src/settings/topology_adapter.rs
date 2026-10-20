@@ -178,4 +178,42 @@ mod tests {
         assert_eq!(topology.ports().len(), 1);
         assert_eq!(topology.devices().len(), 1);
     }
+
+    #[test]
+    fn unassigned_slots_and_unknown_labels_are_skipped() {
+        let assignments = vec![(P1, None)];
+        let slots = vec![nerust_input_traits::SlotInfo {
+            id: P1,
+            label: "P1",
+        }];
+        assert!(build_topology(&assignments, &slots).ports().is_empty());
+        let assignments = vec![(
+            P1,
+            Some(Rc::new(SinglePortProfile) as Rc<dyn ControllerProfile>),
+        )];
+        let topology = build_topology(&assignments, &[]);
+        assert_eq!(topology.ports().len(), 1);
+        assert_eq!(topology.ports()[0].label(), "");
+    }
+
+    #[test]
+    fn repeated_assignments_share_one_device() {
+        let assignments = vec![
+            (
+                P1,
+                Some(Rc::new(SinglePortProfile) as Rc<dyn ControllerProfile>),
+            ),
+            (
+                P1,
+                Some(Rc::new(SinglePortProfile) as Rc<dyn ControllerProfile>),
+            ),
+        ];
+        let slots = vec![nerust_input_traits::SlotInfo {
+            id: P1,
+            label: "P1",
+        }];
+        let topology = build_topology(&assignments, &slots);
+        assert_eq!(topology.ports().len(), 1);
+        assert_eq!(topology.devices().len(), 1);
+    }
 }

@@ -179,7 +179,7 @@ mod tests {
 
 #[cfg(test)]
 mod agreement_tests {
-    use super::*;
+    use crate::session::title::*;
 
     #[test]
     fn all_title_entries_agree_on_one_source() {
@@ -204,5 +204,38 @@ mod agreement_tests {
             })
             .to_string();
         assert_eq!(owned, direct);
+    }
+}
+
+#[cfg(test)]
+mod title_cov_tests {
+    use crate::session::title::*;
+
+    #[test]
+    fn state_key_covers_all_quadrants() {
+        assert_eq!(title_state_key(true, true), "paused-loaded");
+        assert_eq!(title_state_key(true, false), "paused-unloaded");
+        assert_eq!(title_state_key(false, true), "running-loaded");
+        assert_eq!(title_state_key(false, false), "running-unloaded");
+    }
+
+    #[test]
+    fn cache_serves_same_borrow_without_rebuild() {
+        let mut cache = TitleCache::new();
+        let input = || TitleInput {
+            paused: false,
+            loaded: true,
+            system_name: Some("Nes"),
+            active_slot: None,
+            slot_count: 0,
+        };
+        let first = cache.title(input()).to_string();
+        assert_eq!(cache.title(input()), first);
+        assert!(!first.contains("No ROM"));
+        let unloaded = TitleInput {
+            loaded: false,
+            ..input()
+        };
+        assert!(cache.title(unloaded).contains("No ROM"));
     }
 }

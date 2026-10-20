@@ -593,4 +593,52 @@ mod tests {
         policy.reset();
         assert!(!policy.record_failure());
     }
+
+    #[test]
+    fn anchor_edges_classify_corners() {
+        assert!(OsdAnchor::TopLeft.is_top() && OsdAnchor::TopLeft.is_left());
+        assert!(OsdAnchor::TopRight.is_top() && !OsdAnchor::TopRight.is_left());
+        assert!(!OsdAnchor::BottomLeft.is_top() && OsdAnchor::BottomLeft.is_left());
+        assert!(!OsdAnchor::BottomRight.is_top() && !OsdAnchor::BottomRight.is_left());
+        assert!(OsdAnchor::TopLeft.same_edge(OsdAnchor::TopRight));
+        assert!(OsdAnchor::BottomLeft.same_edge(OsdAnchor::BottomRight));
+        assert!(!OsdAnchor::TopLeft.same_edge(OsdAnchor::BottomLeft));
+        assert_eq!(OsdAnchor::default(), OsdAnchor::BottomLeft);
+    }
+
+    #[test]
+    fn font_and_error_helpers_cover_edges() {
+        assert_eq!(osd_font_px(0, 1.0), 0);
+        assert_eq!(osd_font_px(720, 1.0), 16);
+        let err = RendererError::not_attached("attach");
+        assert!(err.to_string().contains("attach"));
+        let err = RendererError::not_current("present");
+        assert!(err.to_string().contains("present"));
+        assert_eq!(
+            RendererErrorKind::NotAttached.to_string(),
+            "renderer not attached"
+        );
+        assert_eq!(RendererErrorKind::NoConfig.to_string(), "no GL config");
+        for attach in [
+            AttachError::Context {
+                backend: "b",
+                detail: "d".to_string(),
+            },
+            AttachError::Adapter {
+                backend: "b",
+                detail: "d".to_string(),
+            },
+            AttachError::Device {
+                backend: "b",
+                detail: "d".to_string(),
+            },
+            AttachError::Pipeline {
+                backend: "b",
+                detail: "d".to_string(),
+            },
+        ] {
+            assert!(attach.to_string().contains('b'));
+        }
+        assert_eq!(DEFAULT_OSD_UPLOAD_RETRIES, 3);
+    }
 }

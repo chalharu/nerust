@@ -27,3 +27,40 @@ impl HostState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::runtime::host::TestHost;
+
+    #[test]
+    fn session_verbs_stay_total_headless() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        // No loaded core: pause and resume run commands that fail
+        // closed without touching the menu.
+        host.pause_session();
+        host.resume_session();
+        assert!(support.menu.updates().is_empty());
+    }
+
+    #[test]
+    fn unarmed_burst_end_commits_nothing() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.tick_focus_sync();
+        assert!(support.menu.updates().is_empty());
+        assert!(!host.note_main_arrival());
+    }
+
+    #[test]
+    fn armed_burst_end_without_core_stays_paused_off() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.note_main_departure();
+        // Coreless tick cannot pause, so no protocol flag is set
+        // and the arrival reports no resume.
+        host.tick_focus_sync();
+        assert!(!host.note_main_arrival());
+        assert!(support.menu.updates().is_empty());
+    }
+}

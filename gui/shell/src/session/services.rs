@@ -95,7 +95,7 @@ impl NotificationService for SessionHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::session::services::*;
     use crate::session::test_util::test_session;
 
     #[test]
@@ -130,5 +130,26 @@ mod tests {
         let mut session = test_session();
         session.push(crate::session::notification::NotificationKind::Paused);
         assert_eq!(session.pending_len(), 1);
+    }
+
+    #[test]
+    fn emu_service_maps_coreless_once() {
+        use std::sync::Arc;
+        let caps = test_session().capabilities;
+        let registry = Arc::new(crate::registry::SystemRegistry::new(vec![]));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let mut session = super::super::SessionHandle::new_ephemeral(caps, registry, audio);
+        assert!(session.require_live().is_err());
+        assert!(session.require_live_mut().is_err());
+        assert!(session.with_live(|_| ()).is_err());
+        assert!(test_session().require_live_mut().is_ok());
+    }
+
+    #[test]
+    fn media_service_clears_runtime() {
+        let mut session = test_session();
+        assert!(!session.has_loaded_media());
+        session.clear_runtime();
+        assert!(!session.has_loaded_media());
     }
 }

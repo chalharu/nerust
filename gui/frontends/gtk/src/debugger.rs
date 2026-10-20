@@ -1910,4 +1910,37 @@ mod tests {
         // section); closing runs the callback without applying.
         super::super::preferences::present_preferences_dialog(&main, state, || {});
     }
+
+    #[test]
+    fn rebuild_scope_defaults_to_full_refresh() {
+        assert_eq!(super::RebuildScope::default(), super::RebuildScope::All);
+        assert_eq!(super::BOOKMARK_CAP, 8);
+    }
+
+    #[test]
+    fn write_input_trims_and_rejects_empty() {
+        use nerust_settings_core::model::language::AppLanguage;
+        assert_eq!(
+            super::resolve_write_input(AppLanguage::English, Some((0x10, None)), "  AB  "),
+            Ok((0x10, 0xAB))
+        );
+        assert_eq!(
+            super::resolve_write_input(AppLanguage::English, Some((0x10, None)), ""),
+            Err("parse failed: ".to_string())
+        );
+        // Uppercase hex and boundary byte both pass.
+        assert_eq!(
+            super::resolve_write_input(AppLanguage::English, Some((0x10, None)), "FF"),
+            Ok((0x10, 0xFF))
+        );
+    }
+
+    #[test]
+    fn freeze_input_trims_whitespace() {
+        use nerust_settings_core::model::language::AppLanguage;
+        assert_eq!(
+            super::resolve_freeze_input(AppLanguage::English, Some((0x10, Some(0x00))), " 0a "),
+            Ok((0x10, 0x0A))
+        );
+    }
 }

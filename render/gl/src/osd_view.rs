@@ -709,4 +709,44 @@ mod tests {
         assert_eq!(leaked.len(), 1);
         assert_eq!(view.osd_texture, 0);
     }
+
+    #[test]
+    fn program_gate_fails_typed_without_shader() {
+        let mut view = OsdView::default();
+        let mut frame = crate::frame_view::FrameView::new();
+        assert!(matches!(
+            view.draw_osd(64, 64, &mut frame, None),
+            Ok((OsdOutcome::Skipped, None))
+        ));
+        // Shader-less program use fails typed before any GL call.
+        assert!(matches!(
+            view.use_osd_program(&mut frame),
+            Err(crate::error::ViewError::NoProgram { program: "osd" })
+        ));
+    }
+
+    #[test]
+    fn invalid_layer_drops_without_gl_when_size_matches() {
+        // Size already matches: no realloc, so the corrupt rect drops
+        // before any GL call.
+        let mut view = OsdView {
+            osd_texture: 1,
+            osd_size: (64, 64),
+            ..OsdView::default()
+        };
+        view.set_osd_layer(Some(OsdLayer::new(63, 63, 2, 2, vec![0; 16])));
+        assert!(view.sync_osd_texture(64, 64).is_ok());
+        assert!(view.osd_layer.is_none());
+        assert!(!view.osd_dirty);
+    }
+
+    #[test]
+    fn clear_path_with_no_layer_is_noop() {
+        let mut view = OsdView::default();
+        assert!(view.sync_osd_texture(64, 64).is_ok());
+        // Texture-less stage with a live layer skips before GL.
+        view.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
+        assert!(view.sync_osd_texture(64, 64).is_ok());
+        assert!(view.osd_layer.is_some());
+    }
 }

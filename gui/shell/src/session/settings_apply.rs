@@ -498,3 +498,111 @@ fn build_core_for_settings(
     let parts = factory.create_core_and_adapter_with_assignments(&view, speaker, assignments)?;
     Ok(super::CoreRuntime::from_factory_parts(parts))
 }
+
+#[cfg(test)]
+mod settings_apply_cov_tests {
+    use crate::session::settings_apply::*;
+    use crate::session::test_util::test_session;
+
+    #[test]
+    fn rollback_report_keeps_first_error() {
+        let mut report = RollbackReport::default();
+        report.fail(SessionError::NoCore);
+        report.fail(SessionError::NoCore);
+        assert!(report.error.is_some());
+        assert!(!report.restored_rebuild);
+        assert!(!report.restored_presentation);
+        assert!(!report.restored_audio);
+    }
+
+    #[test]
+    fn undo_stack_push_pop_discipline() {
+        let mut stack = ApplyUndoStack::default();
+        assert!(stack.pop_revert().is_none());
+        stack.push_revert(ApplyRevert {
+            strategy: LiveStrategy::Idle,
+            previous: None,
+            previous_assignments: None,
+            presentation_assets: None,
+            audio: None,
+        });
+        assert!(stack.pop_revert().is_some());
+        assert!(stack.pop_revert().is_none());
+    }
+
+    #[test]
+    fn idle_revert_restores_nothing_without_error() {
+        let mut session = test_session();
+        let report = ApplyRevert {
+            strategy: LiveStrategy::Idle,
+            previous: None,
+            previous_assignments: None,
+            presentation_assets: None,
+            audio: None,
+        }
+        .revert(&mut session);
+        assert!(report.error.is_none());
+        assert!(!report.restored_rebuild);
+        assert!(!report.restored_presentation);
+        assert!(!report.restored_audio);
+    }
+
+    #[test]
+    fn rebuild_revert_without_token_reports_clean() {
+        let mut session = test_session();
+        let report = ApplyRevert {
+            strategy: LiveStrategy::Rebuild,
+            previous: None,
+            previous_assignments: None,
+            presentation_assets: None,
+            audio: None,
+        }
+        .revert(&mut session);
+        assert!(report.error.is_none());
+        assert!(!report.restored_rebuild);
+    }
+
+    #[test]
+    fn presentation_audio_reverts_without_assets_restore_nothing() {
+        let mut session = test_session();
+        for strategy in [LiveStrategy::PresentationSwap, LiveStrategy::AudioSwap] {
+            let report = ApplyRevert {
+                strategy,
+                previous: None,
+                previous_assignments: None,
+                presentation_assets: None,
+                audio: None,
+            }
+            .revert(&mut session);
+            assert!(report.error.is_none());
+        }
+    }
+
+    #[test]
+    fn fullscreen_default_noop_when_unchanged() {
+        let mut session = test_session();
+        let current = session
+            .settings_snapshot()
+            .local
+            .video
+            .window
+            .fullscreen_default;
+        let plan = session.set_fullscreen_default(current).unwrap();
+        assert_eq!(plan, SettingsApplyPlan::default());
+    }
+
+    #[test]
+    fn remember_directory_ignores_none() {
+        let mut session = test_session();
+        session.remember_last_successful_rom_directory(None);
+    }
+
+    #[test]
+    fn derive_apply_reports_idle_without_changes() {
+        let session = test_session();
+        let snapshot = session.settings_snapshot().clone();
+        let derived = session.derive_apply(&snapshot);
+        assert_eq!(derived.strategy, LiveStrategy::Idle);
+        assert!(!derived.assignments_changed);
+    }
+}

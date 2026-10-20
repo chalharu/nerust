@@ -305,3 +305,53 @@ impl ControllerProfile for FamicomSetProfile {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Controller, FamicomPadP1, FamicomPadP2, FamicomSetProfile, StrobeTarget as _};
+    use nerust_input_traits::{ControllerProfile, ProfileId, SimplePort};
+
+    fn p1() -> SimplePort {
+        SimplePort::new(0, "nes.attachment.player1")
+    }
+
+    #[test]
+    fn p1_reports_mic_bit_on_d2() {
+        let mut pad = FamicomPadP1::default();
+        pad.sync_input(&[0, 0, 1]);
+        let port = p1();
+        pad.strobe(1);
+        assert_eq!(pad.read(&port).data & 4, 4);
+        assert_eq!(pad.read(&port).mask, 7);
+        pad.sync_input(&[0, 0, 0]);
+        pad.strobe(1);
+        assert_eq!(pad.read(&port).data & 4, 0);
+    }
+
+    #[test]
+    fn p2_masks_select_start_and_shifts_six() {
+        let mut pad = FamicomPadP2::default();
+        pad.sync_input(&[0xFF, 0xFF]);
+        let port = SimplePort::new(1, "nes.attachment.player2");
+        pad.write(&port, 1);
+        pad.write(&port, 0);
+        let bits: Vec<u8> = (0..8).map(|_| pad.read(&port).data & 1).collect();
+        assert_eq!(&bits[2..4], &[0, 0]);
+        assert_eq!(pad.read(&port).mask, 0x1F);
+        pad.reset_runtime();
+        pad.write(&port, 1);
+        assert_eq!(pad.read(&port).data & 1, 1);
+    }
+
+    #[test]
+    fn profile_splits_mic_into_own_group() {
+        let profile = FamicomSetProfile;
+        assert_eq!(profile.profile_id(), ProfileId::new("nes.famicom"));
+        assert_eq!(profile.port_sets().len(), 1);
+        assert_eq!(profile.port_groups().len(), 2);
+        assert_eq!(profile.device_kind_for_group(1).as_str(), "nes.famicom_p2");
+        assert_eq!(profile.device_kind_for_group(0).as_str(), "nes.famicom");
+        let pad1 = FamicomPadP1::default();
+        assert_eq!(pad1.field_entries(&p1()).len(), 9);
+    }
+}

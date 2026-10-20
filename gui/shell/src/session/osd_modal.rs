@@ -279,3 +279,41 @@ mod tests {
         assert_eq!(modal.modal_pending(), 8);
     }
 }
+
+#[cfg(test)]
+mod modal_cov_tests {
+    use crate::session::osd_modal::*;
+
+    #[test]
+    fn overflow_flag_arms_and_rearms() {
+        let mut center = ModalCenter::default();
+        assert!(!center.overflow_already_reported());
+        center.note_overflow_reported();
+        assert!(center.overflow_already_reported());
+        center.push_text("x".to_string());
+        assert_eq!(
+            center.pump(Some("x".to_string())),
+            ModalPump::Queued { dropped: false }
+        );
+        assert_eq!(center.take_batch().as_deref(), Some("x"));
+        center.closed();
+        assert!(!center.overflow_already_reported());
+    }
+
+    #[test]
+    fn direct_queue_reports_overflow() {
+        let mut center = ModalCenter::default();
+        for i in 0..8 {
+            assert!(!center.queue_direct(format!("b{i}")));
+        }
+        assert!(center.queue_direct("overflow".to_string()));
+        assert!(!center.requeue_direct("head".to_string()) || center.pending() <= 8);
+        assert_eq!(center.pending(), 8);
+    }
+
+    #[test]
+    fn limits_match_documented_caps() {
+        assert_eq!(OsdLimits::MAX_TRANSIENT_QUEUED, 2);
+        assert_eq!(OsdLimits::MAX_MODAL_QUEUED, 8);
+    }
+}
