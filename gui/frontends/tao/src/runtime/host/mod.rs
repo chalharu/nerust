@@ -48,8 +48,6 @@ const DEFAULT_FIT_WINDOW_WIDTH: f64 = 960.0;
 const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 
 /// Headless `HostState`: temp settings paths, recording menu.
-/// Lives here (not in `test_*`) so the fake modules never
-/// depend back on `host` (see `crate::ports` for the seam split).
 #[cfg(test)]
 pub(crate) struct TestHost {
     pub(crate) host: HostState,
@@ -105,13 +103,8 @@ fn backend_capabilities() -> HostBackendCapabilities {
     }
 }
 
-/// Menu signature for the chrome dirty gate. Slots and shortcuts
-/// ride `Arc` slices: the capture clones `Arc`s instead of deep
-/// clones, and the comparison stays an exact slice compare.
-/// `generation` is a cheap content fingerprint checked before the
-/// slice compare so steady state skips it. The window title lives apart
-/// (see [`ChromeSync`]) with its own gate, so title-only moves never
-/// touch the menu path.
+/// Menu signature for the chrome dirty gate; `generation` fingerprints content.
+/// The window title keeps its own gate, so title-only moves never touch the menu path.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct MenuSig {
     pub(super) loaded: bool,
@@ -125,9 +118,7 @@ pub(super) struct MenuSig {
 }
 
 impl MenuSig {
-    /// Cheap content fingerprint: FNV-1a over slot ids/timestamps and
-    /// shortcut codes. Same-length content edits change the sig even
-    /// when the cheap scalar gate passes.
+    /// Cheap content fingerprint: FNV-1a over slot ids/timestamps and shortcut codes.
     pub(super) fn fingerprint(
         slots: &[nerust_persistence::model::StateSlotSummary],
         shortcuts: &[nerust_settings_core::model::input::ShortcutBinding],
@@ -172,9 +163,7 @@ pub(super) struct ChromeScalars<'a> {
     pub(super) title: &'a str,
 }
 
-/// Chrome sync state: last pushed menu signature plus last pushed
-/// window title, each with its own gate. Single owner for the
-/// menu/title dirty protocol; presentation syncs through here.
+/// Chrome sync state: last pushed menu signature plus last pushed window title.
 #[derive(Debug, Default)]
 pub(super) struct ChromeSync {
     last_menu_sig: Option<MenuSig>,
@@ -294,41 +283,25 @@ impl SettingsHost {
     }
 }
 
-/// OSD service: shell display state, raster, presenter, layer memo,
-/// modal flight, and history viewer. One owner for the overlay
-/// domain. `commands.rs` routes through the ports below, never the
-/// fields; the per-frame sync internals stay in `host::osd`.
+/// OSD service: one owner for the overlay domain.
+/// `commands.rs` routes through the ports below, never the fields.
 pub(super) struct OsdService {
     pub(super) manager: OsdManager,
     pub(super) raster: nerust_render_osd::OsdRaster,
-    /// Owns the whole OSD sync fingerprint. The per-frame decision
-    /// procedure lives in shell `OsdPresenter`; this host only
-    /// rasterizes the resulting plan.
+    /// Owns the whole OSD sync fingerprint; this host only rasterizes the plan.
     pub(super) presenter: nerust_gui_shell::session::osd::OsdPresenter,
-    /// Last sync left a layer on the renderer. Memo of the action
-    /// this host took: `Clear` needs it to know a layer exists.
-    /// Deliberately not a pre-gate input (a live but steady layer
-    /// must Skip without running the presenter).
+    /// Last sync left a layer on the renderer; `Clear` needs it to know a layer exists.
     pub(super) layer_live: bool,
-    /// Last applied edge strip. The reservation only changes with
-    /// settings or surface size, so unchanged strips skip the
-    /// renderer call (same gate pattern as the gtk frontend).
-    /// Rides a [`Memo`](crate::aux::focus::Memo) instead of a manual
-    /// `!=` gate.
+    /// Last applied edge strip; unchanged strips skip the renderer call.
     pub(super) last_strip: crate::aux::focus::Memo<nerust_render_traits::ReservedStrip>,
     pub(super) history_window: Option<HistoryWindowHandle>,
     /// In-flight async error dialog plus resume bookkeeping.
     pub(super) modal_flight: Option<ModalFlight>,
     pub(super) resume_after_modal: bool,
-    /// Last synced history content: sequence plus language. The sync
-    /// runs on every loop pass while the viewer is open; unchanged
-    /// content skips the full row rebuild (gated via [`Memo`]).
-    /// Construction is already seq-gated by the caller.
+    /// Last synced history content: sequence plus language (gated via [`Memo`]).
     pub(super) history_sync_key:
         crate::aux::focus::Memo<(u64, nerust_settings_core::model::language::AppLanguage)>,
     /// Last geometry the presenter ran with: surface size plus chrome.
-    /// The pre-gate passes on change so resizes and corner flips
-    /// re-rasterize without a generation bump.
     pub(super) last_sync_geometry:
         crate::aux::focus::Memo<(u32, u32, nerust_gui_shell::session::osd::OsdChrome)>,
 }
@@ -341,9 +314,7 @@ impl OsdService {
         self.history_window.as_mut()
     }
 
-    /// Close teardown: drop the history viewer, its sync memo, any
-    /// in-flight error dialog, and the modal resume flag, so none
-    /// leaks past window close.
+    /// Close teardown: drop the history viewer, sync memo, dialog, and resume flag.
     pub(super) fn close_all(&mut self) {
         self.history_window.take();
         self.history_sync_key.clear();
@@ -413,12 +384,8 @@ impl OsdService {
     }
 }
 
-/// Debug orchestrator: owns the aux-window cluster plus the in-flight
-/// async flights (debug drain, live images). `HostState` delegates so
-/// `drain.rs` routes through these narrow methods instead of
-/// reaching through `host.debug` fields or locking
-/// `handle.bridge.display` directly (bridge reads go through
-/// [`crate::aux::bridge::BridgeLock`]).
+/// Debug orchestrator: owns the aux-window cluster plus the in-flight async flights.
+/// `drain.rs` routes through these narrow methods, never through `host.debug` fields.
 pub(super) struct DebugOrchestrator {
     windows: DebugWindows,
     drain_flight: Option<DrainFlight>,
@@ -488,14 +455,9 @@ pub(crate) struct HostState {
     shell: NativeShellState,
     settings: SettingsHost,
     pending_fullscreen_sync: Option<bool>,
-    /// Focus truth plus the deferred auto-pause protocol. Only
-    /// reachable through [`HostState::focus_event`] and the narrow
-    /// `on_aux_focus`/`main_active` reads; the burst protocol must not
-    /// be poked field by field.
+    /// Focus truth plus the deferred auto-pause protocol; never poked field by field.
     focus: FocusCoordinator,
-    /// Aux-window cluster plus in-flight async flights (debug drain,
-    /// live images). Private: `runtime` routes through the narrow
-    /// orchestrator methods below, never the fields.
+    /// Aux-window cluster plus in-flight async flights.
     debug: DebugOrchestrator,
     /// OSD overlay domain. Private: `commands.rs` routes through the
     /// [`OsdService`] ports; the per-frame sync stays in `host::osd`.
@@ -504,8 +466,6 @@ pub(crate) struct HostState {
     /// own gate. Private: presentation syncs through [`ChromeSync`].
     chrome: ChromeSync,
     /// Linux render target below the muda menubar (`None` elsewhere).
-    /// When it yields no native target (Wayland, pre-layout) the
-    /// toplevel fallback applies and the menu stays occluded.
     #[cfg(any(
         target_os = "linux",
         target_os = "dragonfly",
@@ -611,16 +571,12 @@ impl HostState {
         self.focus.note_protocol_pause();
     }
 
-    /// Report an aux-window focus change. Returns whether a
-    /// system-paused session should resume; the resume-vs-quiet
-    /// protocol decision lives in [`crate::aux::focus`].
+    /// Report an aux-window focus change. Returns whether a system-paused session should resume.
     pub(super) fn on_aux_focus(&mut self, kind: AuxKind, focused: bool) -> bool {
         self.focus.on_aux(kind, focused)
     }
 
     /// Main window gained focus: activate and report a pending resume.
-    /// Thin wrapper over the coordinator for headless tests; dispatch
-    /// maps through [`HostState::focus_event`] instead.
     #[cfg(test)]
     pub(super) fn note_main_arrival(&mut self) -> bool {
         matches!(
@@ -630,8 +586,6 @@ impl HostState {
     }
 
     /// Main window lost focus: deactivate and arm the deferred pause.
-    /// Thin wrapper over the coordinator for headless tests; dispatch
-    /// maps through [`HostState::focus_event`] instead.
     #[cfg(test)]
     pub(super) fn note_main_departure(&mut self) {
         let _ = self.focus.on(FocusEvent::Main(false));
@@ -666,9 +620,7 @@ impl HostState {
             .is_some_and(|handle| handle.close_requested())
     }
 
-    /// Run `f` against the settings window, if one is open. Narrow
-    /// port: the borrow never escapes, so dispatch cannot hold the
-    /// handle across chrome syncs.
+    /// Run `f` against the settings window, if one is open. The borrow never escapes.
     pub(super) fn with_settings_window<R>(
         &mut self,
         f: impl FnOnce(&mut crate::aux::settings::window::SettingsWindowHandle) -> R,
@@ -726,9 +678,7 @@ impl HostState {
         }
     }
 
-    /// Close the settings window and rebuild the renderer when the
-    /// applied settings change the render target. Single home for the
-    /// Destroyed and close-requested paths.
+    /// Close the settings window and rebuild the renderer when the render target changed.
     pub(super) fn close_settings_and_maybe_rebuild(
         &mut self,
         handle: crate::aux::settings::window::SettingsWindowHandle,
@@ -747,9 +697,7 @@ impl HostState {
     }
 }
 
-/// `HostState` orchestration over the [`DebugOrchestrator`]: same-
-/// crate callers route through here instead of reaching through
-/// `host.debug` fields, so the cluster stays free to reorganize.
+/// `HostState` orchestration over the [`DebugOrchestrator`].
 impl HostState {
     pub(crate) fn is_debug_window(&self, window_id: WindowId) -> bool {
         self.debug.windows().is_debug_window(window_id)
@@ -767,9 +715,7 @@ impl HostState {
         self.debug.windows().is_ppu_open()
     }
 
-    /// Narrow shared bridge for PPU-viewer creation (the viewer
-    /// renders the same live images). Cloned `Arc`, never a lock;
-    /// all drain traffic routes through the handle narrow methods.
+    /// Narrow shared bridge for PPU-viewer creation. Cloned `Arc`, never a lock.
     pub(super) fn debug_bridge_for_ppu(
         &self,
     ) -> Option<std::sync::Arc<crate::aux::bridge::DebugBridge>> {

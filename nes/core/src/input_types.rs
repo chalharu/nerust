@@ -1,11 +1,7 @@
 use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 
 /// NES 入力バッファ。P1(1byte) + P2(1byte) + mic(1byte) の 3 bytes。
-///
-/// Field layout:
-///   0-7:   P1 (A, B, Select, Start, Up, Down, Left, Right)
-///   8-15:  P2 (A, B, Select, Start, Up, Down, Left, Right)
-///   16:    Microphone
+/// Field 0-7: P1、8-15: P2（A/B/Select/Start/Up/Down/Left/Right）、16: mic。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct NesInputBuffer(pub [u8; 3]);
 

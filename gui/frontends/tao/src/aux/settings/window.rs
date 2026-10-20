@@ -10,10 +10,8 @@ use super::program::{Message, SettingsAppProgram, find_duplicate_system_id};
 use crate::aux::bridge::lock_recovered;
 use crate::aux::shell::{AuxShell, WindowScaffold};
 
-/// Settings dialog: the shared [`AuxShell`] host plus the
-/// settings-only pieces (pending-apply staging and the external
-/// view-invalidation flag shared with the program). Matches the
-/// debugger/PPU shape so the three aux windows cannot drift apart.
+/// Settings dialog: shared [`AuxShell`] host plus pending-apply staging.
+/// Matches the debugger/PPU shape.
 pub(crate) struct SettingsWindowHandle {
     shell: AuxShell<SettingsAppProgram>,
     view_invalidated: Arc<AtomicBool>,
@@ -53,9 +51,7 @@ impl SettingsWindowHandle {
             "settings window",
         )
         .map_err(|error| {
-            // Typed scaffold failures carry the window tag plus the
-            // native detail; surface them here since the opener seam
-            // is Option-based.
+            // Typed scaffold failure: surface the tagged native detail here.
             log::error!("{error}");
             error
         })

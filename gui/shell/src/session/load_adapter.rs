@@ -1,8 +1,5 @@
 //! [`RomLoadTarget`] adapter over [`SessionHandle`].
-//!
-//! `SessionHandle` exposes its load surface as inherent methods (used
-//! directly by frontends); this adapter implements the loader-facing
-//! trait so `RomLoader`s stay decoupled from the session type.
+//! Implements the loader-facing trait so `RomLoader`s stay decoupled from the session type.
 
 use nerust_core_traits::{
     factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},

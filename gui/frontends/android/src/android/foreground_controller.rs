@@ -1,10 +1,5 @@
 //! ForegroundController: window-ready retry owned by one module.
-//!
-//! Split out of the `AndroidFrontend` god object. Owns the foreground
-//! resume flow (`try_resume`): it drives `Lifecycle` (retry state),
-//! `RenderSync` (window/renderer), and `Storage` (last-media restore).
-//! The frontend keeps wiring (event loop, session) and executes the
-//! decisions only.
+//! Drives `Lifecycle`, `RenderSync`, and `Storage`; the frontend executes.
 
 use std::time::Instant;
 
@@ -69,8 +64,7 @@ impl super::AndroidFrontend {
     }
 
     /// Reload the last media reference after a lifecycle restore.
-    /// Failures clear the hidden state so a missing ROM never wedges
-    /// the next foreground; restore errors route to the error dialog.
+    /// Failures clear hidden state; restore errors route to the error dialog.
     fn restore_lifecycle_media(&mut self, event_loop: &ActiveEventLoop) {
         log::info!(
             "try_resume_foreground: lifecycle_restore_pending=true; attempting to load last ROM and restore hidden lifecycle state"

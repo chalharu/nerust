@@ -24,10 +24,8 @@ use crate::{
 
 pub(crate) use crate::error::ViewError;
 
-/// Outcome of one OSD draw. Transient upload failures propagate as
-/// `Err` (retried next frame); only the give-up transition reports
-/// `Dropped`, so the renderer logs the demotion exactly once.
-/// `Skipped` means no layer was staged: nothing drew, nothing failed.
+/// Outcome of one OSD draw. Transient failures propagate as `Err` (retried);
+/// only the give-up transition reports `Dropped`; `Skipped` means nothing staged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OsdOutcome {
     Presented,
@@ -54,13 +52,8 @@ fn ok_osd_gl<T>(
     })
 }
 
-/// RAII reset for `UNPACK_ROW_LENGTH` and `UNPACK_ALIGNMENT`: the
-/// padded upload sets global pixel-store state, and every `?` below
-/// would otherwise leak it into the next frame's stride
-/// interpretation. Drop restores both best-effort; construction
-/// failure leaves state untouched. The loader owns alignment `1`, so
-/// a foreign value trips the debug ownership assert instead of
-/// silently mis-striding the upload.
+/// RAII reset for `UNPACK_ROW_LENGTH` and `UNPACK_ALIGNMENT`.
+/// Drop restores both best-effort; construction failure leaves state untouched.
 struct PixelStoreGuard {
     alignment: i32,
     row_length: i32,
@@ -118,9 +111,8 @@ impl ViewportGuard {
         Ok(Self { saved: read })
     }
 
-    /// Assume a memoized game viewport: skip the synchronous
-    /// `GetIntegerv` and restore this box on drop. Only correct when
-    /// the caller memoized the live box (see `CompositeGuard`).
+    /// Assume a memoized game viewport: skip `GetIntegerv`, restore on drop.
+    /// Only correct when the caller memoized the live box.
     fn assume(saved: [i32; 4], surface_w: i32, surface_h: i32) -> Result<Self, ViewError> {
         ok_gl(viewport(0, 0, surface_w, surface_h))?;
         Ok(Self { saved })
@@ -172,10 +164,8 @@ impl BlendGuard {
 
 impl Drop for BlendGuard {
     fn drop(&mut self) {
-        // Restore factors first, then the enable flag: a pre-enabled
-        // BLEND must survive, a pre-disabled one must not leak on.
-        // No raw `gl::` calls: the wrapper drains and the GL error
-        // chain lands in the debug log instead of stalling the drop.
+        // Restore factors first, then the enable flag: pre-enabled BLEND
+        // survives, pre-disabled never leaks on. Errors land in the debug log.
         if let Err(e) =
             blend_func_separate(self.src_rgb, self.dst_rgb, self.src_alpha, self.dst_alpha)
         {
@@ -225,10 +215,8 @@ impl Drop for ProgramGuard {
     }
 }
 
-/// RAII viewport + blend + program guard for the OSD composite: the
-/// game viewport is global GL state, and the composite runs fullscreen
-/// with blending. Drop restores all best-effort so a failed draw
-/// never leaks them into the next game frame.
+/// RAII viewport + blend + program guard for the OSD composite.
+/// Drop restores all best-effort so a failed draw never leaks into the next frame.
 struct CompositeGuard {
     viewport: ViewportGuard,
     _blend: BlendGuard,
@@ -241,9 +229,8 @@ impl CompositeGuard {
         surface_h: i32,
         saved: Option<[i32; 4]>,
     ) -> Result<Self, ViewError> {
-        // `Some` skips the synchronous `GetIntegerv`: the caller
-        // memoized the game viewport and the guard restores it on
-        // drop. `None` (cold cache) reads once inside the guard.
+        // `Some` skips `GetIntegerv` (caller memoized); `None` reads once
+        // inside the guard. The guard restores on drop.
         let viewport = match saved {
             Some(memo) => ViewportGuard::assume(memo, surface_w, surface_h)?,
             None => ViewportGuard::fullscreen(surface_w, surface_h)?,
@@ -261,13 +248,11 @@ impl CompositeGuard {
 }
 
 /// Fallback upload attempts before a failing OSD layer drops.
-/// Production views take the max from `RendererConfig`; tests and
-/// `Default` use this when no config is in reach.
+/// Production views take the max from `RendererConfig`.
 pub const MAX_OSD_UPLOAD_RETRIES: u8 = 3;
 
-/// Cached uniform locations for the game pipeline: resolved once at
-/// `on_load` so the per-frame path skips the `HashMap<String, GLint>`
-/// lookup. `last_matrix` skips redundant matrix uploads.
+/// Cached uniform locations for the game pipeline: resolved once at `on_load`.
+/// `last_matrix` skips redundant matrix uploads.
 #[derive(Debug, Default)]
 struct GameUniforms {
     matrix: Option<GLint>,
@@ -330,8 +315,7 @@ struct OsdResources {
 }
 
 /// Surface memo: last resize inputs plus the applied game viewport.
-/// The resize memo skips redundant GL state writes; the viewport memo
-/// lets the OSD composite skip a synchronous `GetIntegerv` per frame.
+/// Skips redundant GL state writes and the per-frame `GetIntegerv`.
 #[derive(Debug, Default)]
 struct SurfaceState {
     last_resize: Option<(i32, i32, ReservedStrip)>,
@@ -358,9 +342,8 @@ impl Default for OsdResources {
     }
 }
 
-/// One failed-delete bucket per GL name kind. Best-effort teardown:
-/// a failed delete warns but never fails the rebuild that called it.
-/// The GL error chain is preserved via `log::debug!` at each site.
+/// One failed-delete bucket per GL name kind. Best-effort teardown: a failed
+/// delete warns but never fails the rebuild that called it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CloseReport {
     pub failed_textures: u32,
@@ -393,10 +376,8 @@ pub struct GlView {
     surface: SurfaceState,
 }
 
-/// Required uniform location. Structurally-needed names (matrices,
-/// frame samplers) fail typed instead of `-1`: an optimized-out name
-/// there is a broken program. Samplers GL may legally drop (the OSD
-/// overlay) use `uniform_opt` directly at the call site and skip.
+/// Required uniform location. Structurally-needed names fail typed instead of `-1`.
+/// Samplers GL may legally drop use `uniform_opt` directly and skip.
 fn required_uniform(
     shader: &nerust_glwrap::Shader,
     program: &'static str,
@@ -423,9 +404,6 @@ impl Default for GlView {
     }
 }
 
-// ---------------------------------------------------------------------------
-// GlContext owner: load/teardown plus geometry setup.
-// ---------------------------------------------------------------------------
 impl GlView {
     pub fn new() -> Self {
         Self {
@@ -470,9 +448,7 @@ impl GlView {
     }
 
     /// Frame upload target plus the placeholder palette texture.
-    /// NTSC kernels and vertex geometry load separately below.
-    /// Store is allocated with null data (no host memset); rows
-    /// arrive via `TexSubImage` updates on the render path.
+    /// Store allocates null data; rows arrive via `TexSubImage`.
     fn load_frame_textures(
         &mut self,
         render_profile: &VideoRenderProfile,
@@ -750,10 +726,8 @@ impl GlView {
             return;
         };
         self.osd.osd_matrix = shader.uniform_opt("unif_matrix");
-        // Optional sampler: resolved once here (not per frame). A
-        // dropped `osd_texture` defaults to unit 0, which is exactly
-        // where the layer binds below, so the composite skips the
-        // upload instead of failing.
+        // Optional sampler resolved once here: a dropped `osd_texture`
+        // defaults to unit 0, so the composite skips the upload instead of failing.
         self.osd.osd_texture_loc = shader.uniform_opt("osd_texture");
         self.osd.last_osd_matrix = None;
         self.osd.last_osd_sampler = None;
@@ -761,14 +735,9 @@ impl GlView {
     }
 }
 
-// ---------------------------------------------------------------------------
-// RenderOrchestration: OSD staging, frame upload, resize, teardown.
-// ---------------------------------------------------------------------------
 impl GlView {
-    /// Stage an OSD layer for the next present. `None` clears.
-    /// Equal layers skip; new content resets the failure budget.
-    /// Override the upload retry budget (from `RendererConfig`).
-    /// The floor of one attempt lives in `RetryBudget::new`, not here.
+    /// Override the upload retry budget. Equal layers skip staging;
+    /// new content resets the failure budget.
     pub fn set_osd_retry_max(&mut self, max: u8) {
         self.osd.osd_retry = RetryBudget::new(max);
     }
@@ -783,8 +752,7 @@ impl GlView {
     }
 
     /// Use the OSD program, skipping the GL call when already current.
-    /// OSD shares `current_program` with the game pipeline: exactly one
-    /// program is current at a time, and the guard restores it after.
+    /// Exactly one program is current at a time; the guard restores it after.
     fn use_osd_program(&mut self) -> Result<(), ViewError> {
         let Some(shader) = self.osd.osd_shader.as_ref() else {
             return Err(ViewError::NoProgram { program: "osd" });
@@ -845,10 +813,8 @@ impl GlView {
                 }
             }
         }
-        // Optional sampler, resolved once in `init_osd`: a dropped
-        // `osd_texture` defaults to unit 0, which is exactly where the
-        // layer binds below, so skip the upload instead of failing.
-        // The unit never changes, so only the first composite uploads.
+        // Optional sampler resolved once in `init_osd`: dropped means unit 0,
+        // so skip the upload instead of failing; only the first composite uploads.
         if let Some(sampler) = self.osd.osd_texture_loc
             && self.osd.last_osd_sampler != Some(0)
         {
@@ -867,10 +833,8 @@ impl GlView {
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
-        // Fullscreen composite under the guard: viewport, blend, program,
-        // active texture, and VAO restore on drop even when the draw fails.
-        // The memoized viewport skips the per-frame `GetIntegerv`; a cold
-        // cache reads once inside the guard and stores.
+        // Fullscreen composite under the guard: all state restores on drop.
+        // The memoized viewport skips the per-frame `GetIntegerv`.
         let _composite =
             CompositeGuard::fullscreen(surface_w, surface_h, self.surface.game_viewport)?;
         self.surface.game_viewport = Some(_composite.saved_viewport());
@@ -879,10 +843,8 @@ impl GlView {
         // the next game upload re-binds explicitly.
         drop(_composite);
         self.frame.current_program = None;
-        // Explicit restore: unit 0 + frame texture + game program. The
-        // guard already restored the program binding, but the texture
-        // unit still points at the OSD texture; rebind the game one so
-        // the next frame never samples the overlay.
+        // Explicit restore: rebind the game texture so the next frame
+        // never samples the overlay.
         if self.frame.frame_texture != 0 {
             use_texture(0, self.frame.frame_texture)?;
         }
@@ -1179,8 +1141,7 @@ impl GlView {
     }
 
     /// Fit the game into the surface minus reserved OSD strips.
-    /// GL viewports start at the bottom-left, so the drawable rect
-    /// sits `strip.bottom` above the surface base.
+    /// GL viewports start at the bottom-left.
     pub fn on_resize_with_strip(
         &mut self,
         viewport_width: i32,
@@ -1735,9 +1696,8 @@ mod tests {
             out.as_mut_ptr().cast(),
         )
         .unwrap();
-        // GetTexImage returns GL row 0 (bottom) first: the flip put the
-        // OSD-bottom row (green) at row 0 and the OSD-top row (red) at
-        // row 1. Without the flip both rows would sit swapped.
+        // GL row 0 is bottom-first: the flip put OSD-bottom (green) at row 0;
+        // without it both rows would sit swapped.
         assert_eq!(&out[..8], &green);
         assert_eq!(&out[8..], &red);
         // Checked math agrees with the upload sites above.

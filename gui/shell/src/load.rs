@@ -24,10 +24,8 @@ pub enum RomLoaderError {
     Resolve(String),
     #[error("ROM load failed: {0}")]
     Load(String),
-    /// Typed load failure: the session error chain renders once, at
-    /// this boundary. Shaping stays identical to [`Load`](Self::Load)
-    /// so persisted logs and frontend wording do not change; the
-    /// `#[source]` chain keeps the cause for diagnostics.
+    /// Typed load failure: renders once at this boundary, keeping the `source` chain.
+    /// Shaping matches [`Load`](Self::Load) so persisted logs and wording do not change.
     #[error("ROM load failed: {detail}")]
     LoadFailed {
         detail: String,
@@ -48,9 +46,7 @@ impl RomLoaderError {
 }
 
 /// Target for a ROM load operation.
-///
-/// Abstracts the session operations needed by `RomLoader` implementations,
-/// allowing them to work with any type (not just `SessionHandle`).
+/// Session operations needed by `RomLoader` implementations, for any session type.
 pub trait RomLoadTarget {
     fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>>;
     fn settings_snapshot(&self) -> &SettingsSnapshot;
@@ -63,7 +59,6 @@ pub trait RomLoadTarget {
 
     /// Notifies the target of the detected system for the ROM being loaded.
     /// Returns `Err` if the system is not recognised or activation fails.
-    /// Default implementation accepts any system (no-op).
     fn set_active_system(
         &mut self,
         _system_id: &dyn SystemId,
@@ -72,9 +67,8 @@ pub trait RomLoadTarget {
     }
 }
 
-/// Loads a ROM file into a [`RomLoadTarget`] and resumes. Implementors
-/// read the disk file, build the `MediaObject`, resolve options, load,
-/// then resume.
+/// Loads a ROM file into a [`RomLoadTarget`] and resumes.
+/// Implementors read the disk file, build the `MediaObject`, resolve options, and load.
 pub trait RomLoader {
     fn load_rom(
         &mut self,

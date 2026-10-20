@@ -3,9 +3,7 @@ use super::{
 };
 
 /// Complete settings state for the current host.
-///
-/// This is a pure data type. Serialization/deserialization, persistence,
-/// and apply-plan derivation are handled in `nerust_gui_runtime::settings`.
+/// Pure data; persistence and apply plans live in `nerust_gui_runtime::settings`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SettingsSnapshot {
     pub shared: DesktopSharedSettings,
@@ -14,10 +12,7 @@ pub struct SettingsSnapshot {
 }
 
 /// How the session absorbs a settings delta without (or with) a rebuild.
-///
-/// Derived from [`SettingsApplyPlan`] plus session state, so every
-/// caller (apply, rollback, tests) names the same strategy instead of
-/// re-deriving it from raw flags.
+/// Derived from [`SettingsApplyPlan`] plus session state, so all callers name one strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveStrategy {
     /// No runtime state to move: volume-only or nothing.
@@ -32,13 +27,10 @@ pub enum LiveStrategy {
 
 impl SettingsApplyPlan {
     /// Fold the plan flags into one strategy. `assignments_changed`
-    /// forces reconstruction (field maps are build-time); `has_core`
-    /// gates the live paths (nothing to swap without a core).
+    /// forces reconstruction; `has_core` gates the live paths.
     pub fn live_strategy(&self, assignments_changed: bool, has_core: bool) -> LiveStrategy {
-        // `session_rebuild_required` folds the rate/latency and visual
-        // reasons; the live paths below absorb the audio-only delta,
-        // leaving only core behavior changes (and reassignments) on
-        // the rebuild path.
+        // `session_rebuild_required` folds the rate/latency and visual reasons;
+        // the live paths below absorb the audio-only delta.
         let visual_changed = self.session_rebuild_required && !self.audio_backend_changed;
         if self.audio_backend_changed && !visual_changed && !assignments_changed && has_core {
             // Audio-only delta: the swap absorbs the rebuild entirely
@@ -57,8 +49,6 @@ impl SettingsApplyPlan {
 }
 
 /// Flags describing what changed between two snapshots.
-///
-/// Returned by `derive_apply_plan()` in `nerust_gui_runtime::settings::apply`.
 /// Frontends use these flags to decide which subsystems to refresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SettingsApplyPlan {

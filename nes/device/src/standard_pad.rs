@@ -9,9 +9,8 @@ pub struct StandardPad {
     pub(crate) cached: [u8; 2],
     pub(crate) result: [u8; 2],
     pub(crate) strobe: bool,
-    /// Open bus mask for this port
-    /// NES-001 & NES-004: 0x1F
-    /// NES-101 & NES-039: 0x1B,0x1F (D2: OpenBus)
+    /// Open bus mask for this port: 0x1F (NES-001/004),
+    /// 0x1B or 0x1F by D2 line (NES-101/039).
     open_bus_mask: u8,
 }
 

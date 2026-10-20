@@ -1,7 +1,5 @@
 //! OSD overlay domain: validation, retry, and GL row addressing.
-//! Pure geometry lives here so the corrupt-layer policy stays
-//! unit-testable; [`OsdOverlay`] owns the retry budget plus the
-//! grow-only staging scratches.
+//! [`OsdOverlay`] owns the retry budget plus the grow-only staging scratches.
 
 use nerust_render_traits::renderer::OsdLayer;
 
@@ -112,10 +110,8 @@ pub(crate) fn checked_osd_rect(
     })
 }
 
-/// GL textures start at the bottom-left; OSD layers start at the
-/// top-left. Flip once at the upload edge so blit and clear agree.
-/// Test-only geometry reference: production uploads go through the
-/// checked [`checked_osd_gl_y`] below.
+/// Test-only unchecked row flip. Production uploads go through
+/// the checked [`checked_osd_gl_y`] below.
 #[cfg(test)]
 pub(crate) fn osd_gl_y(surface_h: i32, ly: i32, lh: i32) -> i32 {
     surface_h - ly - lh
@@ -123,8 +119,6 @@ pub(crate) fn osd_gl_y(surface_h: i32, ly: i32, lh: i32) -> i32 {
 
 /// Checked row flip: refuses negative geometry, overflow, and rows
 /// past the surface instead of wrapping the `TexSubImage` offset.
-/// Upload sites use this; the unchecked `osd_gl_y` stays for tested
-/// pure geometry only.
 pub(crate) fn checked_osd_gl_y(surface_h: i32, ly: i32, lh: i32) -> Result<i32, OsdReject> {
     if surface_h <= 0 || ly < 0 || lh <= 0 {
         return Err(OsdReject::OutOfBounds);
@@ -136,9 +130,8 @@ pub(crate) fn checked_osd_gl_y(surface_h: i32, ly: i32, lh: i32) -> Result<i32, 
     surface_h.checked_sub(bottom).ok_or(OsdReject::OutOfBounds)
 }
 
-/// Checked OSD scratch need: `w > 0 && h > 0`, then checked
-/// `w * h * 4`. Rejects before any scratch resize so a corrupt
-/// rect never OOMs the renderer thread.
+/// Checked OSD scratch need: `w > 0 && h > 0`, then checked `w * h * 4`.
+/// Rejects before any scratch resize so a corrupt rect never OOMs the thread.
 pub(crate) fn checked_clear_need(w: i32, h: i32) -> Result<usize, OsdReject> {
     if w <= 0 || h <= 0 {
         return Err(OsdReject::Empty);
@@ -150,11 +143,7 @@ pub(crate) fn checked_clear_need(w: i32, h: i32) -> Result<usize, OsdReject> {
         .ok_or(OsdReject::Empty)
 }
 
-/// Overlay staging domain note: the live owner is `OsdResources`
-/// in `view.rs` (retry budget + both grow-only scratches + last
-/// rect); this module owns the pure policy (`RetryBudget`,
-/// `checked_osd_rect`, `osd_gl_y`, `checked_clear_need`) so `GlView`
-/// only coordinates uploads.
+/// Pure policy (`RetryBudget`, `checked_osd_rect`, `osd_gl_y`, `checked_clear_need`).
 #[cfg(test)]
 mod tests {
     use super::{OsdReject, checked_clear_need, checked_osd_gl_y, checked_osd_rect, osd_gl_y};
@@ -210,10 +199,8 @@ mod tests {
         // clear need rejects zero and overflow.
         assert_eq!(checked_clear_need(0, 4), Err(OsdReject::Empty));
         assert_eq!(checked_clear_need(-1, 4), Err(OsdReject::Empty));
-        // i32::MAX dimensions fit `usize` on 64-bit (no wrap to small):
-        // the checked chain returns the huge need instead of wrapping.
-        // Callers only reach here with surface-bounded rects, so no
-        // 18 EiB scratch ever allocates; the check proves no truncation.
+        // `i32::MAX` fits `usize` on 64-bit: the checked chain returns the
+        // huge need instead of wrapping; the check proves no truncation.
         let huge = checked_clear_need(i32::MAX, i32::MAX).unwrap();
         assert_eq!(huge, 18_446_744_056_529_682_436usize);
         assert!(checked_clear_need(2, 1).unwrap() == 8);

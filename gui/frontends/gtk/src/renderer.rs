@@ -11,9 +11,8 @@ pub(crate) struct GtkRenderer {
     factory: Rc<dyn GpuFactory>,
     renderer: Option<Box<dyn GpuRenderer>>,
     last_size: SurfaceSize,
-    /// Set only by a successful attach. Rendering without an attached
-    /// surface segfaults in native code (Xvfb has no working backend),
-    /// so `render` must check this instead of `renderer.is_some()`.
+    /// Set only by a successful attach. `render` must check this instead of
+    /// `renderer.is_some()`: rendering unattached segfaults in native code.
     attached: bool,
 }
 

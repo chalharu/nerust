@@ -15,9 +15,7 @@ pub(crate) fn tao_modifiers_to_iced(m: TaoModifiers) -> keyboard::Modifiers {
     out
 }
 
-/// Convert a Tao physical key code to the shared [`Key`].
-/// Total over the codes the app handles; anything else is `None`
-/// (callers fall back to `Backquote`, as before).
+/// Convert a Tao physical key code to the shared [`Key`]: `None` for unhandled codes.
 pub(crate) fn keycode_to_key(code: tao::keyboard::KeyCode) -> Option<Key> {
     Some(match code {
         KeyCode::KeyA => Key::KeyA,
@@ -239,13 +237,8 @@ pub(crate) fn tao_key_to_iced_key(key: &tao::keyboard::Key) -> keyboard::Key {
     }
 }
 
-/// Default font for auxiliary windows. CJK must resolve to a
-/// complete sans face on every OS: the shaper falls back per glyph
-/// through a hardcoded family list, so a bare SansSerif can mix
-/// serif faces into CJK text on machines without Noto CJK.
-/// Language-specific needs live in
-/// `nerust_settings_core::i18n::font_family`; this stays the
-/// language-agnostic window default (it also covers Latin).
+/// Default font for auxiliary windows: CJK resolves to a complete sans face.
+/// Language-specific needs live in `nerust_settings_core::i18n::font_family`.
 pub(crate) fn default_font() -> Font {
     #[cfg(target_os = "windows")]
     {
@@ -261,9 +254,7 @@ pub(crate) fn default_font() -> Font {
     }
 }
 
-/// Convert a Tao window event to an iced event, tracking cursor,
-/// modifiers, and close requests. Shared by the settings and debugger
-/// windows.
+/// Convert a Tao window event to an iced event, tracking cursor, modifiers, close.
 pub(crate) fn convert_tao_window_event(
     event: tao::event::WindowEvent,
     cursor: &mut mouse::Cursor,
@@ -610,10 +601,7 @@ mod tests {
                 convert($event, &mut cursor, &mut modifiers, &should_close)
             };
         }
-        // SAFETY: test-only `DeviceId::dummy()` (no transmute in
-        // production; see the matching note in
-        // `aux::settings::window` tests). No `mem::transmute` remains
-        // outside these two test dummies.
+        // SAFETY: test-only `DeviceId::dummy()`; no transmute in production.
         let device = unsafe { DeviceId::dummy() };
         // Cursor movement tracks the pointer.
         let moved = feed!(WindowEvent::CursorMoved {

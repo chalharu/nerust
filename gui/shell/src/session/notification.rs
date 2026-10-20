@@ -43,17 +43,15 @@ pub enum NotificationKind {
     DeletedSlot(u64),
     CreatedSlot,
     SelectedSlot(u64),
-    /// Persistence paths could not be resolved: the game runs, but
-    /// saves have nowhere to go. Pushed once at setup time instead of
-    /// failing every later flush.
+    /// Persistence paths could not be resolved: the game runs, but saves have nowhere to go.
+    /// Pushed once at setup time instead of failing every later flush.
     PersistenceUnavailable,
     SlotFailed {
         slot: Option<u64>,
         reason: SlotOpFailure,
     },
-    /// Command and out-of-band frontend failures share one shape: a
-    /// stable id plus an optional bounded detail. The modal queue is
-    /// capped in count but not in bytes, so detail stays truncated.
+    /// Command and out-of-band frontend failures share one shape: a stable id plus detail.
+    /// The modal queue is capped in count but not in bytes, so detail stays truncated.
     CommandFailure {
         origin: FailureOrigin,
         id: &'static str,
@@ -71,9 +69,7 @@ pub enum FailureOrigin {
     Bridge,
 }
 
-/// Longest kept detail suffix. A pathological multi-megabyte message
-/// must not wedge the capped modal queue; history still records the
-/// head of the message for grep.
+/// Longest kept detail suffix: a pathological message must not wedge the capped modal queue.
 pub const MAX_EXTERNAL_DETAIL: usize = 512;
 
 /// Pick the language side. Splitting this out (instead of inline
@@ -96,9 +92,8 @@ pub enum ReplaceGroup {
 }
 
 impl NotificationKind {
-    /// Single truncation point for failure details. Both command
-    /// and external paths funnel here so a pathological message
-    /// cannot wedge the count-capped modal queue.
+    /// Single truncation point for failure details; both paths funnel here.
+    /// A pathological message cannot wedge the count-capped modal queue.
     pub fn command_failure(origin: FailureOrigin, id: &'static str, detail: String) -> Self {
         Self::CommandFailure {
             origin,
@@ -107,9 +102,7 @@ impl NotificationKind {
         }
     }
 
-    /// Typed failure entry: the source chain renders to text once, at
-    /// this boundary. Callers pass the typed error; no
-    /// `error.to_string()` escapes into notification construction.
+    /// Typed failure entry: the source chain renders to text once, at this boundary.
     /// Truncation and shaping stay in [`command_failure`](Self::command_failure).
     pub fn command_failure_from<E: std::fmt::Display + ?Sized>(
         origin: FailureOrigin,
@@ -157,10 +150,8 @@ impl NotificationKind {
         !matches!(self.level(), NotificationLevel::Info)
     }
 
-    /// Channel policy: the log line for this kind, or `None` when the
-    /// kind is screen-only (history still records every event). New
-    /// kinds declare their channel here instead of editing `push`.
-    /// Exhaustive: a new kind must choose log or screen-only here.
+    /// Channel policy: the log line for this kind, or `None` when the kind is screen-only.
+    /// New kinds declare their channel here instead of editing `push`.
     pub fn log_level(&self) -> Option<NotificationLevel> {
         match self {
             NotificationKind::SelectedSlot(_) => None,
@@ -300,10 +291,8 @@ pub struct NotificationCenter {
     pending: VecDeque<UiNotification>,
     history: VecDeque<UiNotification>,
     next_seq: u64,
-    /// History version: advanced on every push and clear so hosts
-    /// can skip grid rebuilds while nothing changed. The history
-    /// sync runs on every loop pass when the viewer is open; without
-    /// this gate each pass reformats all rows for nothing.
+    /// History version: advanced on every push and clear.
+    /// Hosts skip grid rebuilds while it is unchanged.
     history_seq: u64,
 }
 
@@ -312,10 +301,8 @@ impl NotificationCenter {
         Self::default()
     }
 
-    /// Push one event. History records every event; the pending queue
-    /// coalesces identical neighbours (`×N`) and drops the oldest
-    /// past [`MAX_PENDING`]. Logs record every event eagerly except
-    /// screen-only kinds (see [`NotificationKind::log_level`]).
+    /// Push one event: history records every event; the pending queue coalesces neighbours.
+    /// Screen-only kinds skip the log line (see [`NotificationKind::log_level`]).
     pub fn push(&mut self, kind: NotificationKind) {
         self.push_at(kind, SystemClock::now_system());
     }
@@ -333,9 +320,7 @@ impl NotificationCenter {
             seq,
             at,
         };
-        // Channel policy lives on the kind: screen-only kinds skip
-        // the log line (history still records every event). Gated so
-        // steady-state pushes don't format when the level is off.
+        // Screen-only kinds skip the log line; steady-state pushes skip formatting when gated.
         if let Some(emit) = event.kind.log_level() {
             let text;
             match emit {
@@ -415,10 +400,8 @@ pub fn append_count(base: String, count: u32) -> String {
     }
 }
 
-/// Log module emitting `notification:` lines; history rows map 1:1
-/// to those records so the module column greps the logs.
-/// Stable history module column. A literal, not `module_path!`: refactors
-/// must not ripple into persisted history views or grep filters.
+/// Log module emitting `notification:` lines; history rows map 1:1 to those records.
+/// Stable history module column: a literal, not `module_path!`.
 pub const LOG_MODULE: &str = "notifications";
 
 fn kind_text(event: &UiNotification) -> String {

@@ -1,20 +1,5 @@
 //! Shared bridge between the iced programs and the host drain.
-//! Used by both [`super::debug`] and [`super::ppu`] so the viewers stay
-//! siblings instead of one depending on the other.
-//!
-//! # Lock order
-//!
-//! `nav` before `display` before any small field mutex (`selected`,
-//! `watch`, `freeze`, `reg_target`, `ppu_hover`, `outbox`). Dual
-//! access goes through [`DebugBridge::nav_display`]; single-field
-//! access uses [`lock_recovered`]. No path may hold a `display` guard
-//! while acquiring `nav`, and no path may hold two small-field guards
-//! at once. The host drain only touches the bridge through
-//! [`BridgeLock`], so the order is enforced at one seam.
-//! Blocking `lock()` is never used: [`lock_recovered`] recovers from
-//! poison and `try_lock` audits below assert no contention path can
-//! wedge the UI thread (all bridge critical sections are short field
-//! copies).
+//! Lock order: `nav` before `display` before small field mutexes.
 
 use std::sync::{
     Mutex, MutexGuard,
@@ -26,9 +11,8 @@ use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::model::language::AppLanguage;
 
-/// Poison-safe mutex lock: recovers the inner value after a panic
-/// instead of propagating the poison. Recovered state may be stale;
-/// the next drain refresh overwrites it.
+/// Poison-safe mutex lock: recovers the inner value after a panic.
+/// Recovered state may be stale until the next drain refresh.
 pub(crate) fn lock_recovered<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| {
         log::warn!("mutex recovered after poisoning; state may be stale");
@@ -36,13 +20,8 @@ pub(crate) fn lock_recovered<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     })
 }
 
-/// Shared bridge between the iced program and the host drain.
-/// Movement state and display cache are owned separately; user lists
-/// (bookmarks, watch, freeze, selection) are presentation state.
-/// Snapshot returned by [`DebugBridge::drain_snapshot`]: nav space,
-/// dump/disassembly anchors, watch/freeze/reg-target, previous rows,
-/// and the PPU-open flag. Named so the 8-tuple does not sprawl at
-/// every signature.
+/// Snapshot returned by [`DebugBridge::drain_snapshot`]: nav, anchors,
+/// watch/freeze/reg-target, previous rows, and the PPU-open flag.
 pub(crate) type DrainSnapshot = (
     Option<SpaceId>,
     u32,
@@ -121,11 +100,8 @@ impl DebugBridge {
         self.spaces.get(idx).map(|(id, _, _)| *id)
     }
 
-    /// Narrow drain snapshot: nav (space/mem/dis) plus the small
-    /// watch/freeze/reg-target fields plus the previous dump rows for
-    /// the diff gate. Single method so `drain.rs` never locks
-    /// `handle.bridge.*` directly. Lock order inside: nav, then
-    /// display (rows), then one small field at a time.
+    /// Narrow drain snapshot: nav plus small fields plus previous dump rows.
+    /// Lock order inside: nav, then display, then one small field at a time.
     pub(crate) fn drain_snapshot(&self, ppu_open: bool) -> DrainSnapshot {
         let nav = lock_recovered(&self.nav);
         let mem_addr = nav.mem_addr();
@@ -142,9 +118,8 @@ impl DebugBridge {
         )
     }
 
-    /// Apply a finished live-images fetch: replaces images when newer
-    /// regardless of pause; running chrome only applies while still
-    /// running. Returns whether the viewer needs a rebuild.
+    /// Apply a finished live-images fetch: images land when newer, chrome only while running.
+    /// Returns whether the viewer needs a rebuild.
     pub(crate) fn apply_live_images(
         &self,
         generation: u64,
@@ -164,9 +139,7 @@ impl DebugBridge {
         true
     }
 
-    /// Apply a finished drain display: selection write plus the
-    /// paused-section restore live here so the host never holds a
-    /// `display` guard itself.
+    /// Apply a finished drain display: selection write plus paused-section restore.
     pub(crate) fn apply_drain_display(
         &self,
         mut display: DisplayCache,
@@ -182,11 +155,7 @@ impl DebugBridge {
         *lock_recovered(&self.display) = display;
     }
 
-    /// Non-blocking contention audit: every bridge mutex must be
-    /// immediately available on the UI thread. Returns the names of
-    /// contended locks (empty when healthy). All critical sections
-    /// are short field copies, so contention indicates a bug. The
-    /// host drain asserts this before snapshotting.
+    /// Non-blocking contention audit: names of contended locks (empty when healthy).
     pub(crate) fn try_lock_audit(&self) -> Vec<&'static str> {
         let mut contended = Vec::new();
         if self.nav.try_lock().is_err() {
@@ -216,9 +185,7 @@ impl DebugBridge {
     }
 
     pub(crate) fn set_status(&self, status: String) {
-        // Frontend-local wording (parse errors, prompts): stored
-        // verbatim. Drain outcomes arrive structured and never pass
-        // through here.
+        // Frontend-local wording only: drain outcomes never pass through here.
         lock_recovered(&self.display).status = StatusMessage::Local(status);
         self.view_invalidated.store(true, Ordering::Release);
     }

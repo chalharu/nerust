@@ -1,16 +1,12 @@
-//! Debugger and PPU-viewer window state: aux handles, positions,
-//! open-request flags, and the live-follow throttle. `HostState`
-//! orchestrates; this struct owns.
+//! Debugger and PPU-viewer window state: handles, positions, open flags, throttle.
+//! `HostState` orchestrates; this struct owns.
 
 use std::time::{Duration, Instant};
 
 use crate::aux::focus::AuxWindow;
 use tao::window::WindowId;
 
-/// Live PPU cadence while the core runs: the viewer follows the
-/// running picture instead of freezing on the open-time frame.
-/// Ticks are images-only empty batches (never kill staged
-/// transactions).
+/// Live PPU cadence while the core runs: images-only ticks, never full drains.
 pub(super) const PPU_LIVE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(super) struct DebugWindows {
@@ -117,9 +113,7 @@ impl DebugWindows {
         self.last_drain_paused = Some(paused);
     }
 
-    /// Drain one batch from the debugger window: queued requests plus
-    /// the toolbar PPU-open flag. `None` with no debugger open. Routes
-    /// through the handle narrow port, never `bridge` fields directly.
+    /// Drain one batch from the debugger window (`None` when closed).
     pub(super) fn take_debug_batch(
         &mut self,
     ) -> Option<(bool, Vec<nerust_gui_shell::debug::DebugAction>)> {
@@ -148,9 +142,7 @@ impl DebugWindows {
         self.ppu_window.take();
     }
 
-    /// Throttle gate for the live follow: true at most once per
-    /// [`PPU_LIVE_INTERVAL`], recording the stamp. Pure state, no
-    /// session involved, so the cadence is unit-testable.
+    /// Throttle gate for the live follow: true at most once per [`PPU_LIVE_INTERVAL`].
     pub(crate) fn live_due(&mut self, now: Instant) -> bool {
         if self
             .last_ppu_live

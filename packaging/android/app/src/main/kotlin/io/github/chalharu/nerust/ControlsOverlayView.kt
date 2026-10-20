@@ -13,14 +13,8 @@ import android.view.View
 import kotlin.math.max
 import kotlin.math.min
 
-/**
- * Touch-overlay chrome extracted from MainActivity. Geometry (hit zones)
- * is owned by Rust (`touch_layout.rs` TOUCH_ZONES, canonical pin
- * `gui/frontends/android/touch_geometry.json`): the pushed zones travel
- * via `configureControlsOverlay(..., zones)` and this view only falls back
- * to its local `controlsLayout()` copy when the payload is absent or
- * malformed. Keep the fractions in sync.
- */
+/** Touch-overlay chrome. Geometry is owned by Rust; this view draws pushed zones,
+ * falling back to its local `controlsLayout()` copy when the payload is absent or malformed. */
 internal data class OverlayZoneSpec(
     val x: Float,
     val y: Float,
@@ -38,11 +32,7 @@ internal data class FloatingJoystickSpec(
 )
 
 @SuppressLint("ViewConstructor")
-/**
- * One touch zone pushed from Rust, in relative (0.0..1.0) surface
- * coordinates. Geometry is owned by Rust (`touch_layout.rs` TOUCH_ZONES);
- * Kotlin only draws the pushed payload.
- */
+/** One touch zone pushed from Rust, in relative (0.0..1.0) surface coordinates. */
 internal data class PushedOverlayZone(
     val x: Float,
     val y: Float,
@@ -127,10 +117,8 @@ internal class ControlsOverlayView(
 
         val joystick = floatingJoystickLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent)
         drawFloatingJoystick(canvas, joystick)
-        // Geometry is pushed from Rust via configureControlsOverlay: prefer
-        // the pushed zones so both sides render from one source of truth.
-        // The local controlsLayout() copy is the fallback when no payload
-        // arrived (or it failed to parse); keep the fractions in sync.
+        // Prefer the pushed zones; the local controlsLayout() copy is the fallback.
+        // Both sides render from one source of truth.
         val zones =
             pushedZones.takeIf(List<PushedOverlayZone>::isNotEmpty)?.map { zone ->
                 OverlayZoneSpec(
@@ -190,10 +178,8 @@ internal fun controlsLayout(
     verticalOffsetPercent: Int = 0,
     shouldersVisible: Boolean = true,
 ): List<OverlayZoneSpec> {
-    // Local fallback copy: geometry is owned and pushed by Rust
-    // (touch_layout.rs TOUCH_ZONES via configureControlsOverlay) and the
-    // overlay view prefers the pushed zones. This computation only draws
-    // when no payload arrived; keep the fractions in sync.
+    // Local fallback copy; only draws when no payload arrived.
+    // Geometry is owned and pushed by Rust.
     val portrait = height >= width
     val base = min(width, height)
     val scale = scalePercent.coerceIn(50, 150) / 100f
@@ -313,12 +299,8 @@ internal fun floatingJoystickLayout(
     )
 }
 
-/**
- * Parse the Rust-pushed zone payload (`LABEL:x,y,w,h;...`, relative
- * coordinates). Malformed entries are dropped with a warning log (never a
- * silent `mapNotNull`): a bad entry means the Rust/Kotlin geometry
- * contract drifted and must be visible in logcat.
- */
+/** Parse the Rust-pushed zone payload (`LABEL:x,y,w,h;...`, relative coordinates).
+ * Malformed entries are dropped with a warning log. */
 internal fun parsePushedZones(payload: String): List<PushedOverlayZone> {
     if (payload.isBlank()) return emptyList()
     val zones = mutableListOf<PushedOverlayZone>()

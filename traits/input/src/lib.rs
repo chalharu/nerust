@@ -1,9 +1,5 @@
 //! Input vocabulary shared by cores, factories, and frontends.
-//!
-//! Split by responsibility: `ids` (static identifiers), `topology`
-//! (port/device descriptors), `events` (runtime events and buffers),
-//! `devices` (physical controllers and hubs), `profile` (controller
-//! profiles, assignments, and the GUI/emu split runtime).
+//! Split by responsibility: `ids`, `topology`, `events`, `devices`, `profile`.
 
 mod devices;
 mod events;

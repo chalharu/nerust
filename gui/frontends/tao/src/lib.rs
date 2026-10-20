@@ -1,7 +1,5 @@
-//! tao frontend: native window + iced (tiny-skia) UI. Modules,
-//! inner -> outer: [`event`] loop events, [`convert`] tao<->iced values,
-//! [`menu`] native menu, [`aux`] iced aux windows, [`runtime`] event loop,
-//! [`app`] facade. [`gtk_embed`] is the Linux/BSD render target.
+//! tao frontend: native window + iced (tiny-skia) UI.
+//! [`event`] loop events, [`convert`] values, [`menu`], [`aux`], [`runtime`], [`app`].
 
 mod app;
 mod convert;
@@ -41,10 +39,7 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
     match nerust_crash_guard::run_guarded(|| run_inner(ctx, options)) {
         GuardOutcome::Completed(()) => {}
         GuardOutcome::Crashed(report) => {
-            // rfd spawns an external portal process, so it can still
-            // show after the event loop died. stderr stays the log home.
-            // Inline literals, never the i18n catalog: the crash itself
-            // may be a settings/i18n corruption.
+            // External portal dialog; stderr stays the log home. Inline literals only.
             let language = AppLanguage::SystemDefault;
             rfd::MessageDialog::new()
                 .set_title(crash_title())
@@ -57,17 +52,13 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
     }
 }
 
-/// Crash dialog copy: what happened plus where details live.
-/// Inline literals, never the catalog (see above). Pinned by test in
-/// both languages (file-free stderr pointer).
+/// Crash dialog copy: inline literals, never the catalog.
 fn crash_title() -> &'static str {
     "nerust"
 }
 
 fn crash_dialog_text(language: AppLanguage, message: &str) -> String {
-    // English default (including SystemDefault): resolving the system
-    // locale would touch the same settings/i18n stack that may have
-    // crashed. Japanese only when explicitly selected.
+    // English default; Japanese only when explicitly selected.
     let (body, details) = if matches!(language, AppLanguage::Japanese) {
         (
             "アプリケーションがクラッシュしました",

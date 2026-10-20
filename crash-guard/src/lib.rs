@@ -8,19 +8,8 @@ use std::{
     sync::Once,
 };
 
-/// Record sink for the panic hook. Production logs; tests capture.
-///
-/// Process-global [`std::sync::OnceLock`] semantics: the slot can be set
-/// at most once per process. `set_record_sink` reports whether the current
-/// call won the slot; tests that need distinct sinks must run in separate
-/// processes (see `tests/hook_probe.rs`) or be serialised within one
-/// process so only the first `set` takes effect.
-///
-/// Dual-sink intent: [`emit`] delivers each [`PanicRecord`] to the current
-/// sink (default: `log::error!`), while [`install`] chains the previous
-/// panic hook afterwards. The leaf therefore logs exactly once through the
-/// sink, and any host-installed hook (dialogs, telemetry, abort policy)
-/// still runs — the guard never swallows host behavior.
+/// Record sink for the panic hook. Set at most once per process; [`install`]
+/// chains the previous hook so host behavior is never swallowed.
 type RecordSink = fn(&PanicRecord);
 
 fn default_sink(record: &PanicRecord) {
@@ -34,9 +23,8 @@ fn default_sink(record: &PanicRecord) {
 
 static SINK: std::sync::OnceLock<RecordSink> = std::sync::OnceLock::new();
 
-/// Override the record sink (tests, embedders). Returns whether this
-/// call won: a `false` return means a previous test already claimed the
-/// process-wide slot, so the caller must not assume its sink is live.
+/// Override the record sink (tests, embedders). Returns whether this call
+/// won the process-wide slot.
 pub fn set_record_sink(sink: RecordSink) -> bool {
     SINK.set(sink).is_ok()
 }
@@ -101,11 +89,7 @@ impl std::fmt::Display for CrashReport {
 }
 
 /// Thread, detail, and backtrace captured once for hook and report.
-/// Public so embedders can implement `set_record_sink`.
-///
-/// `Debug` deliberately leaks the same fields the getters expose; that is
-/// acceptable because the record exists only to be logged. Callers that
-/// need a redacted shape must project through the getters (never `Debug`).
+/// `Debug` exposes the same fields as the getters.
 #[derive(Debug, Clone)]
 pub struct PanicRecord {
     thread: String,
@@ -133,10 +117,8 @@ impl PanicRecord {
 impl PanicRecord {
     // Release keeps symtab only: names resolve, file:line does not.
     fn capture(detail: String) -> Self {
-        // Symbolication runs even for caught panics: acceptable, as a
-        // panic already unwinds (no hot path captures here).
-        // `Backtrace::capture` respects `RUST_BACKTRACE`: unset/`0` yields
-        // a disabled (short placeholder) backtrace, `1`/full captures frames.
+        // Symbolication cost is acceptable: panics never run on a hot path.
+        // `Backtrace::capture` respects `RUST_BACKTRACE`: unset/`0` yields a placeholder.
         let thread = std::thread::current();
         Self {
             thread: thread.name().unwrap_or("unnamed").to_owned(),
@@ -161,20 +143,7 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
 }
 
 /// Run `main` under the hook; on unwind build the report and return it.
-///
-/// The panic hook already logged the crash, so this path stays silent and
-/// lets the host decide how to surface `CrashReport`. Nothing is reused
-/// after a catch.
-///
-/// `AssertUnwindSafe` is documented rather than assumed: `main` typically
-/// owns the whole frontend setup closure, and a panic discards that state
-/// instead of resuming it, so unwind-safety of captured references does not
-/// need to hold across the catch boundary.
-///
-/// SAFETY: wrapping `main` in `AssertUnwindSafe` is sound here only because
-/// the caught payload is converted into a `CrashReport` and the guarded
-/// state is never resumed or reused. Do not reuse this wrapper to catch
-/// a panic and continue using the same borrowed state.
+/// Silent (the hook already logged); caught state is never resumed or reused.
 pub fn run_guarded<R>(main: impl FnOnce() -> R) -> GuardOutcome<R> {
     install();
     match panic::catch_unwind(std::panic::AssertUnwindSafe(main)) {
@@ -226,10 +195,8 @@ mod tests {
 
     #[test]
     fn set_record_sink_return_is_process_global() {
-        // `SINK` is a process-wide `OnceLock`: exactly one call per process
-        // wins. This test documents the contract without assuming it wins:
-        // both outcomes are valid depending on test execution order, but the
-        // return must agree with whether our sink is live.
+        // `SINK` is process-wide: exactly one call wins. The return agrees
+        // with whether our sink is live.
         static PROBE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         fn probe_sink(_record: &PanicRecord) {
             PROBE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -245,9 +212,8 @@ mod tests {
         let record = PanicRecord::capture("explicit panic".to_owned());
         assert!(!record.thread.is_empty());
         assert_eq!(record.detail, "explicit panic");
-        // `Backtrace::capture` respects `RUST_BACKTRACE`: without it the
-        // backtrace is a disabled placeholder, with `1` it holds frames.
-        // Either way the field must render non-empty so reports stay shaped.
+        // Without `RUST_BACKTRACE` the backtrace is a disabled placeholder;
+        // either way the field must render non-empty.
         assert!(!record.backtrace.is_empty());
     }
 }

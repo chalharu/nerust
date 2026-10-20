@@ -14,9 +14,8 @@ pub(super) struct AndroidBridgeState {
     normal_events: VecDeque<FrontendEvent>,
     accelerometer: Option<AccelerometerInputHandle>,
     exit_requested: bool,
-    /// Last UI-thread insets push in physical px, [top, right, bottom,
-    /// left]. The render thread reads the cache only and never blocks on
-    /// JNI; the direct query covers the first frame.
+    /// Last UI-thread insets push, [top, right, bottom, left] in physical px.
+    /// The render thread reads the cache only and never blocks on JNI.
     insets_cache: Option<[i32; 4]>,
 }
 
@@ -66,13 +65,8 @@ pub(super) fn take_exit_request() -> bool {
 }
 
 pub(super) fn with_state<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T) -> T {
-    // Lock order for the three bridge mutexes (bridge, settings, picker):
-    // never nest `with_state` calls, wake the looper after releasing. The
-    // debug re-entrancy guard below turns the comment into a check: a
-    // nested `with_state` on the same thread panics in debug builds
-    // instead of deadlocking in release. A panicking JNI callback must
-    // not wedge the process on the next lock: recover the state and keep
-    // serving events.
+    // Lock order for the three bridge mutexes: never nest `with_state`;
+    // wake the looper after releasing. Poison recovers state, never wedges.
     let _guard = lock_reentrancy_guard();
     let mut guard = ANDROID_BRIDGE.lock().unwrap_or_else(|poison| {
         log::error!("Android bridge mutex poisoned; recovering state");
@@ -81,10 +75,8 @@ pub(super) fn with_state<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T
     operation(&mut guard)
 }
 
-/// Debug re-entrancy guard shared by the three bridge mutexes (bridge,
-/// settings, picker). `with_state` must never nest: nesting would
-/// deadlock on the second lock (or mask a lock-order inversion), so debug
-/// builds fail loudly while release builds keep the poison-recovery path.
+/// Debug re-entrancy guard for the three bridge mutexes.
+/// `with_state` must never nest; debug builds fail loudly on nesting.
 pub(super) fn lock_reentrancy_guard() -> ReentrancyGuard {
     ReentrancyGuard::new()
 }
@@ -122,10 +114,8 @@ pub(super) fn wake() {
     }
 }
 
-/// Batch publish: one wake per JNI batch, not per event. Bursts from
-/// rapid menu taps share the wakeup instead of spamming the looper.
-/// Dialog dismissals take the priority lane so a modal gate release never
-/// waits behind an input burst; everything else keeps arrival order.
+/// Batch publish: one wake per JNI batch, not per event.
+/// Dialog dismissals take the priority lane; everything else keeps arrival order.
 pub(super) fn publish_all(events: &[FrontendEvent]) {
     if events.is_empty() {
         return;
@@ -142,9 +132,8 @@ pub(super) fn publish_all(events: &[FrontendEvent]) {
     wake();
 }
 
-/// Drain into a caller-owned buffer: priority lane first, then the normal
-/// lane. Idle ticks reuse capacity instead of allocating per pass, and the
-/// two-lane order removes the old per-tick stable sort.
+/// Drain into a caller-owned buffer: priority lane first, then the normal lane.
+/// Idle ticks reuse capacity instead of allocating per pass.
 pub(super) fn take_events_into(out: &mut Vec<FrontendEvent>) {
     with_state(|state| {
         out.extend(state.priority_events.drain(..));
@@ -152,9 +141,8 @@ pub(super) fn take_events_into(out: &mut Vec<FrontendEvent>) {
     });
 }
 
-/// UI-thread insets push, invoked from the Kotlin layout listener via
-/// `onSystemInsetsChanged`. The render thread reads the cached value
-/// without another JNI round-trip.
+/// UI-thread insets push from the Kotlin layout listener.
+/// The render thread reads the cached value without another JNI round-trip.
 pub(super) fn push_system_insets(values: [i32; 4]) {
     with_state(|state| {
         state.insets_cache = Some(values);
@@ -166,13 +154,7 @@ pub(super) fn cached_system_insets() -> Option<[i32; 4]> {
 }
 
 /// Run a JNI closure, always clearing a pending Java exception.
-///
-/// Without this, a `NoSuchMethodError` (e.g. after a Kotlin rename)
-/// stays pending on the thread and poisons every later JNI call; the
-/// Rust `Err` alone never clears it. The check runs on success too: a
-/// JVM-thrown exception with a Rust `Ok` still leaves garbage (often
-/// null) in the return value, so a pending exception always forces
-/// an error.
+/// A pending exception always forces an error, even on Rust `Ok`.
 pub(super) fn with_java_env<T>(
     vm: &jni::JavaVM,
     operation: impl FnOnce(&mut jni::Env<'_>) -> jni::errors::Result<T>,
@@ -182,21 +164,16 @@ pub(super) fn with_java_env<T>(
         if env.exception_check() {
             env.exception_clear();
             log::debug!("cleared pending Java exception after JNI call");
-            // A pending exception means the JVM already failed the call,
-            // even when the Rust closure reported Ok: the return value is
-            // garbage (often null), so always force an error here.
+            // The JVM already failed the call; the return value is garbage.
+            // Always force an error here.
             return Err(result.err().unwrap_or(jni::errors::Error::JavaException));
         }
         result
     })
 }
 
-/// Run a JNI callback with the same exception-clear semantics as
-/// [`with_java_env`], for native callbacks that already own an `Env`.
-/// Every native callback (`onMenuAction`, `onSystemInsetsChanged`,
-/// picker results, settings results) routes through here so a
-/// `NoSuchMethodError` (e.g. after a Kotlin rename) can never wedge the
-/// thread with a pending exception.
+/// Run a JNI callback with the same exception-clear semantics as [`with_java_env`].
+/// Every native callback routes through here; a pending exception never wedges the thread.
 pub(super) fn with_callback_env<T>(
     env: &mut jni::EnvUnowned<'_>,
     operation: impl FnOnce(&mut jni::Env<'_>) -> jni::errors::Result<T>,
@@ -217,10 +194,8 @@ pub(super) fn with_callback_env<T>(
     outcome
 }
 
-/// Marshals to the Java main thread, resolves the activity, runs the
-/// operation, and logs failures with the call-site label. JNI failures
-/// are reported to the session by the caller (it owns the session);
-/// this helper only guarantees the label in logcat.
+/// Marshal to the Java main thread, run the operation, log failures with the label.
+/// JNI failures are reported to the session by the caller.
 pub(super) fn call_on_activity(
     app: &AndroidApp,
     label: &'static str,
@@ -243,9 +218,8 @@ pub(super) fn call_on_activity(
     }));
 }
 
-/// Fallible variant: `on_failure` runs on the Java main thread when the
-/// JNI call fails (e.g. synthesize a dialog dismiss so a dead bridge
-/// cannot wedge the gate). Logging matches `call_on_activity`.
+/// Fallible variant: `on_failure` runs on the Java main thread on JNI failure.
+/// Logging matches `call_on_activity`.
 pub(super) fn call_on_activity_or(
     app: &AndroidApp,
     label: &'static str,
@@ -291,9 +265,8 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onCartridgeAc
     }
 }
 
-/// UI-thread push for the insets cache: the Kotlin layout listener calls
-/// this on every layout pass so the render thread can read the cache
-/// without a blocking JNI query.
+/// UI-thread push for the insets cache, called on every layout pass.
+/// The render thread reads the cache without a blocking JNI query.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSystemInsetsChanged(
     mut env: jni::EnvUnowned<'_>,

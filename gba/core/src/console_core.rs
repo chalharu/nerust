@@ -32,9 +32,8 @@ pub struct GbaConsoleCore {
     loaded: Option<LoadedGba>,
     emu_input: EmuInput,
     paused: bool,
-    /// Device sample rate for the APU resampler, stamped from
-    /// `CoreConfig::audio_sample_rate` at load (the core never sees the
-    /// backend; it only needs the rate as data).
+    /// Device sample rate for the APU resampler, stamped at load.
+    /// Data only; the core never sees the backend.
     sample_rate: u32,
 }
 
@@ -74,10 +73,7 @@ impl GbaConsoleCore {
     }
 
     /// Advance one frame, reporting the cycles the bus counted.
-    ///
-    /// Same path as the [`ConsoleCore::render_frame`] implementation;
-    /// the count that path discards is returned here for debugger
-    /// stepping.
+    /// Same path as the [`ConsoleCore::render_frame`] implementation.
     pub(crate) fn render_frame_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
@@ -199,9 +195,8 @@ impl ConsoleCore for GbaConsoleCore {
     }
 
     fn set_audio_sample_rate(&mut self, sample_rate: u32) {
-        // The APU drain reads this rate every frame
-        // (`drain_resampled_into`), so a field write re-basis live
-        // production with no DSP cache to invalidate.
+        // The APU drain reads this rate every frame, so a field write
+        // re-basis live production with no DSP cache to invalidate.
         self.sample_rate = sample_rate;
     }
 
@@ -288,10 +283,8 @@ impl ConsoleCore for GbaConsoleCore {
     }
 
     fn take_channel_bytes(&mut self, channel: &str) -> Vec<u8> {
-        // Single tested implementation of the commit protocol lives
-        // in the bus (buffer/NUL/enable): flatten committed lines to
-        // newline-delimited bytes. Levels never matched anything
-        // (legacy matched text only), so they stay behind.
+        // Only the bus commit protocol is flattened here (buffer/NUL/enable).
+        // Levels never matched anything, so they stay behind.
         #[cfg(feature = "mgba-debug-log")]
         if channel == "mgba-log"
             && let Some(loaded) = self.loaded.as_mut()
@@ -308,14 +301,8 @@ impl ConsoleCore for GbaConsoleCore {
     }
 }
 
-/// GBA execution control.
-///
-/// Holds the console: frame stepping reuses the exact `render_frame`
-/// path and reports the cycles it counted. The scratch buffer is
-/// display-irrelevant; stepped frames are not published to any shared
-/// framebuffer here. Debugger pokes travel the CPU store path, so
-/// mirrors, VRAM/OAM byte rules, SRAM/flash, and I/O side effects
-/// behave like CPU stores; BIOS and ROM refuse as `ReadOnlySpace`.
+/// GBA execution control and memory editing.
+/// Holds the console: frame stepping reuses the exact `render_frame` path.
 pub struct GbaDebugControl<'a> {
     console: &'a mut GbaConsoleCore,
     frame_slot: FrameBuffer,
@@ -365,11 +352,8 @@ impl DebugControl for GbaDebugControl<'_> {
             .loaded
             .as_mut()
             .ok_or(DebuggerError::Unsupported)?;
-        // Byte-wise through the CPU store path: mirrors, VRAM/OAM
-        // byte rules, SRAM/flash, and I/O side effects all behave
-        // like CPU stores. Gap lanes vanish like hardware open bus.
-        // Wait-cycle charging is timing-model only; it perturbs the
-        // next frame by a few cycles, never function.
+        // Byte-wise through the CPU store path (gap lanes vanish as open bus).
+        // Wait-cycle charging is timing-model only, never function.
         for i in 0..width as u32 {
             loaded.system.bus.write8(addr + i, (value >> (8 * i)) as u8);
         }
@@ -580,9 +564,7 @@ mod tests {
         assert!(core.load_state(&[0xDE, 0xAD, 0xBE, 0xEF]).is_err());
         assert!(core.load_state(&before[..before.len() / 2]).is_err());
         let mut wrong_version = before.clone();
-        // Corrupt the schema version field deep inside the payload is
-        // fragile; flipping the first byte breaks the map header instead,
-        // which must still decode as an error, not a panic.
+        // Flip the first byte: it must decode as an error, not a panic.
         wrong_version[0] ^= 0xFF;
         assert!(core.load_state(&wrong_version).is_err());
         assert_eq!(core.save_state().unwrap(), before);
@@ -653,9 +635,8 @@ mod tests {
             nerust_render_traits::PixelFormat::Rgba,
         );
         core.render_frame(&mut frame, &mut Vec::new()).unwrap();
-        // Battery RAM, GPIO attachment and solar level are set pre-reset.
-        // The solar level comes from options (the only production source);
-        // reset must not clobber the options-applied level.
+        // Battery RAM, GPIO and solar level are set pre-reset and survive it.
+        // The solar level comes from options, the only production source.
         core.loaded
             .as_mut()
             .unwrap()
@@ -841,10 +822,8 @@ mod tests {
             .write8(0x0E000123, 0x00);
         core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         core.load_state(&saved).unwrap();
-        // NOTE: no bus reads before the re-export below. `bus.read8` is
-        // not side-effect-free: it accumulates wait cycles and advances
-        // the N/S trackers, so any read would legitimately perturb the
-        // exported bytes.
+        // No bus reads before the re-export: `bus.read8` accumulates wait
+        // cycles, so any read would legitimately perturb the exported bytes.
         assert_eq!(core.save_state().unwrap(), saved);
         let loaded = core.loaded.as_mut().unwrap();
         assert_eq!(loaded.system.bus.read8(0x0E000123), 0x5A);

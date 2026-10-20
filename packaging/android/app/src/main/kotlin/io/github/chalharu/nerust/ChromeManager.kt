@@ -79,14 +79,8 @@ private val DRAWER_ACTIONS =
         DrawerAction("Exit", MENU_ACTION_EXIT),
     )
 
-/**
- * Non-dialog chrome: touch overlay, drawer, FPS label, and attach retries.
- *
- * Extracted from MainActivity. Owns all `PopupWindow` chrome plus the
- * touch-overlay configuration pushed from Rust. The activity forwards
- * lifecycle calls and keeps the test probes; JNI entry points on the
- * activity delegate here.
- */
+/** Non-dialog chrome: touch overlay, drawer, FPS label, and attach retries.
+ * Owns all `PopupWindow` chrome plus the touch-overlay configuration pushed from Rust. */
 class ChromeManager(private val activity: MainActivity) {
     private val ensureChromeAttachedRunnable = Runnable { ensureChromeAttached() }
     private val restoreControllerOverlayRunnable =
@@ -135,12 +129,7 @@ class ChromeManager(private val activity: MainActivity) {
         dismissChromePopups()
     }
 
-    /**
-     * Destroy path: like [onStop] but also disables re-attachment so no
-     * posted runnable can resurrect chrome after the window is gone.
-     * Callers (and tests via [hasLiveChromeForTest]) assert nothing
-     * survives this.
-     */
+    /** Destroy path: like [onStop] but also disables re-attachment. No chrome survives this. */
     fun onDestroy() {
         chromeAttachEnabled = false
         activity.window.decorView.removeCallbacks(ensureChromeAttachedRunnable)

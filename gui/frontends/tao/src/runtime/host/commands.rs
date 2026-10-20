@@ -97,9 +97,7 @@ impl HostState {
         true
     }
 
-    /// ROM-picker filters from the registered cores, extracted pure
-    /// so the dialog wiring stays unit-testable. Cores without
-    /// extensions never reach the picker.
+    /// ROM-picker filters from the registered cores; cores without extensions never reach.
     fn rom_dialog_filters(registry: &SystemRegistry) -> Vec<(String, Vec<String>)> {
         registry
             .all()
@@ -124,10 +122,7 @@ impl HostState {
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
         use nerust_gui_shell::session::access::dispatch_session_action;
         match shortcut {
-            // The debugger open rides the same schema as every other
-            // shortcut (default F4, rebindable in Settings): it only
-            // sets the flag here because opening needs the event loop,
-            // which the runtime arm owns.
+            // Only sets the flag here; opening needs the event loop the runtime arm owns.
             KeyboardShortcut::OpenDebugger => {
                 self.request_debug_open();
                 return;
@@ -209,9 +204,7 @@ impl SessionControl for HostState {
     ) -> Result<SettingsResult, SessionError> {
         let plan = self.session.apply_settings(settings)?;
         Ok(SettingsResult {
-            // The renderer follows presentation, not the session: a
-            // live filter swap rebuilds no core but still needs the new
-            // GPU assets (same rule as the android twin).
+            // The renderer follows presentation, not the session.
             renderer_needs_rebuild: plan.renderer_rebuild_required
                 || plan.session_rebuild_required
                 || plan.window_settings_changed,
@@ -432,9 +425,7 @@ mod tests {
         let _ = host.session.run_command(SessionCommand::TogglePause);
         let frame = host.frame_snapshot();
         host.poll_notifications(&frame);
-        // Bounded wait for the background ack. The loop itself never
-        // blocked: rfd runs on its own thread (see `ModalFlight`).
-        // FakeDialogs answers instantly, so this exits on an early pass.
+        // Bounded wait for the background ack; FakeDialogs answers instantly.
         let mut tries = 0;
         while support.dialogs.errors().is_empty() || host.osd.modal_pending() != 0 {
             let frame = host.frame_snapshot();

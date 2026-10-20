@@ -13,9 +13,7 @@ use crate::session::{
     osd_transient::{FrameChannel, OsdRow, TransientPolicy, falls_back_to_modal},
 };
 
-/// One metrics read per tick. `metrics()` locks and queries the emu
-/// thread; tick paths fetch once and thread this through instead of
-/// calling `loaded`/`paused`/`can_pause` separately.
+/// One metrics read per tick: `metrics()` locks and queries the emu thread.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TickMetrics {
     pub fps: f32,
@@ -44,9 +42,7 @@ impl TickMetrics {
     }
 }
 
-/// Stable status key for the readout. The presenter translates the
-/// key to display text at the language boundary below, so the sync
-/// fingerprint keys on `"paused"`/`""` instead of localized text.
+/// Stable status key for the readout; the sync fingerprint keys on it, not on localized text.
 pub(crate) fn status_key(paused: bool) -> &'static str {
     if paused { "paused" } else { "" }
 }
@@ -61,9 +57,8 @@ pub(crate) fn status_text(key: &str, language: AppLanguage) -> &'static str {
     }
 }
 
-/// Push-side routing: transient row, modal batch, or drop. The
-/// channel-to-modal policy lives here (not in the queue), so the
-/// push site renders only what the router selects.
+/// Push-side routing: transient row, modal batch, or drop.
+/// The channel-to-modal policy lives here, not in the queue.
 pub(crate) enum ModalRoute {
     Transient,
     Modal,
@@ -95,22 +90,16 @@ impl ModalRouter<'_> {
     }
 }
 
-/// Minimum gap between fps-digit refreshes of the status readout.
-/// Pause flips pass through immediately (events); the ticking digits
-/// refresh at 2Hz so the readout stays calm and the layer is not
-/// re-rasterized every frame on timer jitter.
+/// Minimum gap between fps-digit refreshes of the status readout; pause flips pass through.
 pub const STATUS_FPS_MIN_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Single source for the status fps text. The gate and the OSD
-/// readout both format through here, so the digits cannot drift
-/// apart between the two call sites.
+/// Single source for the status fps text, shared by the gate and the OSD readout.
 pub fn format_status_value(fps: f32) -> String {
     format!("{fps:.1} fps")
 }
 
-/// Gates the status value: label changes pass through, fps digits at
-/// most every [`STATUS_FPS_MIN_INTERVAL`]. Frontends fold the gated
-/// pair into their raster fingerprint alongside the settings.
+/// Gates the status value: label changes pass through, fps digits throttled.
+/// Frontends fold the gated pair into their raster fingerprint alongside the settings.
 #[derive(Debug, Default)]
 pub struct StatusGate {
     last_label: Option<String>,
@@ -123,8 +112,7 @@ impl StatusGate {
         Self::default()
     }
 
-    /// Gated value, computing `fresh` only on a label flip, throttle
-    /// expiry, or empty cache. Steady frames skip float formatting.
+    /// Gated value, computing `fresh` only on a label flip, throttle expiry, or empty cache.
     /// Borrows the cached pair: callers clone out only on change.
     pub fn gate_or_cached(
         &mut self,
@@ -149,10 +137,7 @@ impl StatusGate {
     }
 }
 
-/// Display insets in settings-owned vocabulary. The render crate
-/// defines an identical shape; conversion lives in the render adapter
-/// ([`osd_render`](crate::session::osd_render)) so this decision
-/// module never names render types.
+/// Display insets in settings-owned vocabulary; converted to render types at the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct UiInsets {
     pub top: u32,
@@ -161,9 +146,8 @@ pub struct UiInsets {
     pub left: u32,
 }
 
-/// Raster-ready frame decided by [`OsdPresenter`]: rows plus the
-/// gated status text, with corners in settings vocabulary. The render
-/// adapter maps them once at the boundary (see `osd_render`).
+/// Raster-ready frame decided by [`OsdPresenter`]: rows plus the gated status text.
+/// Corners stay in settings vocabulary; the render adapter maps them at the boundary.
 #[derive(Debug, Clone)]
 pub struct OsdPlan {
     pub rows: Vec<OsdRow>,
@@ -174,8 +158,7 @@ pub struct OsdPlan {
     pub height: u32,
 }
 
-/// Narrow chrome view for [`OsdPresenter::sync`]. Only the fields
-/// the layer decision reads; a new settings field cannot ripple in.
+/// Narrow chrome view for [`OsdPresenter::sync`]: only the fields the layer decision reads.
 /// Adapted once per frame at the settings boundary via `From`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OsdChrome {
@@ -187,17 +170,8 @@ pub struct OsdChrome {
 }
 
 impl OsdChrome {
-    /// Reserved strip rows per edge for the current chrome. Pure row
-    /// policy shared by every frontend; pixel conversion stays in the
-    /// render adapter (`strip_pixels`), so this core never names
-    /// render types.
-    ///
-    /// Same edge, different sides share one strip; same corner stacks
-    /// two. Each readout reserves only under its own area mode. When
-    /// both readouts share one horizontal band (both top or both
-    /// bottom), the transient area mode governs the edge: the status
-    /// picker follows it in the UI, so an overlay status never dangles
-    /// half inside a strip the transient reserved.
+    /// Reserved strip rows per edge for the current chrome; shared by every frontend.
+    /// Same edge shares one strip; each readout reserves only under its own area mode.
     pub fn reserved_rows(&self) -> (u32, u32) {
         let status_mode = if self.status_enabled && self.position.same_edge(self.status_position) {
             self.area_mode
@@ -245,10 +219,8 @@ impl From<&NotificationSettings> for OsdChrome {
     }
 }
 
-/// Per-frame inputs for [`OsdPresenter::sync`]. Bundled so the
-/// decision signature stays narrow as inputs evolve. The tick is the
-/// single metrics read for the pass: fps and pause ride it instead of
-/// separate scalars.
+/// Per-frame inputs for [`OsdPresenter::sync`], bundled so the decision signature stays narrow.
+/// The tick is the single metrics read for the pass: fps and pause ride it.
 pub struct OsdSyncInput {
     pub tick: TickMetrics,
     pub chrome: OsdChrome,
@@ -256,9 +228,7 @@ pub struct OsdSyncInput {
     pub now: Instant,
     pub width: u32,
     pub height: u32,
-    /// Raster scale and safe insets: they move boxes without
-    /// touching settings, so the fingerprint must see them or the
-    /// gate would suppress the re-render.
+    /// Raster scale and safe insets: the fingerprint must see them or re-render is suppressed.
     pub ui_scale: f32,
     pub safe_insets: UiInsets,
 }
@@ -272,20 +242,15 @@ pub enum OsdSync {
     Render(OsdPlan),
 }
 
-/// Narrow view of display state for [`OsdPresenter::sync`]. The manager
-/// implements this; the presenter never names the manager type, so the
-/// decision stays decoupled from the orchestration.
+/// Narrow view of display state for [`OsdPresenter::sync`], decoupled from the orchestration.
 pub trait OsdState {
     fn generation(&self) -> u64;
     fn visible_row(&self) -> Option<&OsdRow>;
     fn rows(&self) -> &[OsdRow];
 }
 
-/// Status half of the sync fingerprint. One struct instead of a
-/// positional tuple, so adding a field cannot silently misalign the
-/// comparison. Boxed strings: the sync borrow-compares label/value
-/// (`&str`) before allocating, so steady frames that skip never
-/// format or box.
+/// Status half of the sync fingerprint: label/value pair instead of a positional tuple.
+/// The sync borrow-compares before allocating, so steady skipped frames never format or box.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StatusFingerprint {
     label: Box<str>,
@@ -296,20 +261,16 @@ struct StatusFingerprint {
     status_area_mode: NotificationAreaMode,
 }
 
-/// Owns the whole sync fingerprint (transient dirty flag, status
-/// gate, surface size, layer liveness) so tao/gtk/android share one
-/// decision procedure instead of reimplementing it per frontend.
-/// Frontends only rasterize the [`OsdPlan`] and hand it to the
-/// renderer; all policy lives here and is headless-testable.
+/// Owns the whole sync fingerprint so all frontends share one decision procedure.
+/// Frontends only rasterize the [`OsdPlan`] and hand it to the renderer.
 #[derive(Debug, Default)]
 pub struct OsdPresenter {
     last_seen: u64,
     gate: StatusGate,
     last_status: Option<StatusFingerprint>,
     last_size: Option<(u32, u32)>,
-    /// Last layer geometry (position, area mode, status corner). The
-    /// status tuple only exists while enabled, so a position flip with
-    /// status off needs its own fingerprint or the Skip gate sticks.
+    /// Last layer geometry; the status tuple exists only while enabled.
+    /// A position flip with status off needs its own fingerprint or the Skip gate sticks.
     last_chrome: Option<OsdChrome>,
     last_raster: Option<(UiInsets, u32)>,
     active: bool,
@@ -320,9 +281,8 @@ impl OsdPresenter {
         Self::default()
     }
 
-    /// Forget all sync state so the next pass re-pushes the layer
-    /// from scratch. Call after the renderer is replaced: the new
-    /// object holds no layer for the gate to skip against.
+    /// Forget all sync state so the next pass re-pushes the layer from scratch.
+    /// Call after the renderer is replaced: the new object holds no layer to skip against.
     pub fn invalidate(&mut self) {
         *self = Self::default();
     }
@@ -333,14 +293,8 @@ impl OsdPresenter {
         self.last_seen
     }
 
-    /// Decide the layer action for this frame. The generation check
-    /// replaces the old peek-then-take flag: inequality against the
-    /// last synced generation means re-render. Status rides outside
-    /// that flag: pause flips and settings toggles re-render
-    /// immediately, fps digits refresh at 2Hz through the gate. The
-    /// gate computes fresh text lazily, so steady frames skip float
-    /// formatting. Untouched while disabled: no per-frame formatting,
-    /// and the stale gate passes the first fresh value on re-enable.
+    /// Decide the layer action for this frame: generation inequality means re-render.
+    /// Status rides outside that flag: pause flips and toggles re-render, fps digits at 2Hz.
     pub fn sync(&mut self, state: &impl OsdState, input: OsdSyncInput) -> OsdSync {
         let OsdSyncInput {
             tick,
@@ -352,11 +306,7 @@ impl OsdPresenter {
             ui_scale,
             safe_insets,
         } = input;
-        // Generation check replaces the old peek-then-take flag:
-        // inequality against the last synced generation means
-        // re-render. Recorded only after the size decision below: a
-        // generation bump on a zero-size frame must not be swallowed,
-        // or the next sized frame would wrongly skip.
+        // Recorded only after the size decision, so a zero-size bump is never swallowed.
         let changed = state.generation() != self.last_seen;
         if width == 0 || height == 0 {
             if self.active {
@@ -366,15 +316,10 @@ impl OsdPresenter {
             return OsdSync::Skip;
         }
         self.last_seen = state.generation();
-        // Non-finite scales never reach the fingerprint: NaN payloads
-        // would defeat `to_bits` equality and re-render every frame.
-        // Debug-loud, release-total (identity scale keeps layout sane).
+        // Non-finite scales never reach the fingerprint: NaN would defeat `to_bits` equality.
         debug_assert!(ui_scale.is_finite(), "non-finite OSD scale");
         let ui_scale = if ui_scale.is_finite() { ui_scale } else { 1.0 };
-        // Borrow-compare before allocating: the label is a static
-        // word and the value borrows the gate cache, so a steady
-        // frame that ends in `Skip` boxes nothing and formats nothing.
-        // Only a real change builds the owned fingerprint below.
+        // Borrow-compare before allocating: steady frames that end in `Skip` never format or box.
         let mut status_fingerprint: Option<StatusFingerprint> = None;
         let status_changed = if chrome.status_enabled {
             let key = status_key(tick.paused);

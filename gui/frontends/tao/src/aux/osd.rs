@@ -13,8 +13,6 @@ use tao::event_loop::EventLoopWindowTarget;
 
 use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 
-// ── History viewer ─────────────────────────────────────────────
-
 #[derive(Debug, Clone)]
 pub(crate) enum HistoryMessage {
     Sync {
@@ -34,9 +32,7 @@ pub(crate) enum HistoryFilter {
     Error,
 }
 
-/// Short module for the grid: last two segments keep the
-/// informative tail within the fixed column (full path stays
-/// in the data and in GTK's middle-ellipsis cell).
+/// Short module for the grid: last two segments keep the informative tail.
 fn short_module(module: &str) -> &str {
     let mut parts = module.rsplit("::");
     let (last, prev) = (parts.next(), parts.next());
@@ -71,9 +67,7 @@ impl HistoryFilter {
         }
     }
 
-    /// Inverse of [`HistoryFilter::label`]: dropdown options are
-    /// localized strings, mapped back on select. Total over our own
-    /// four labels in either language.
+    /// Inverse of [`HistoryFilter::label`]: localized strings mapped back on select.
     fn from_label(label: &str, language: AppLanguage) -> Option<HistoryFilter> {
         [
             HistoryFilter::All,
@@ -227,11 +221,7 @@ impl Program for HistoryProgram {
             // `HistoryLine.text` already carries the `×N` suffix when
             // merged (see `history_lines`); use it as-is.
             let message = line.text.clone();
-            // Cells wrap inside their column: overlong values wrap
-            // instead of bleeding into the neighbour (HIG). No clip
-            // containers: a clipped cell exactly at the scrollable
-            // edge produces a sub-pixel clip rect, which tiny-skia
-            // can only skip with a warning.
+            // Cells wrap inside their column; no clip containers.
             items = items.push(
                 row![
                     text(line.datetime.clone())
@@ -286,9 +276,7 @@ impl HistoryWindowHandle {
             "history window",
         )
         .map_err(|error| {
-            // Typed scaffold failures carry the window tag plus the
-            // native detail; surface them here since the opener seam
-            // is Option-based.
+            // Typed scaffold failure: surface the tagged native detail here.
             log::error!("{error}");
             error
         })
@@ -468,9 +456,7 @@ mod tests {
 
     #[test]
     fn history_view_builds_without_a_window() {
-        // Element construction is pure (no drawing): the toolbar,
-        // headers, rows, empty state, and filter variants all build
-        // headless, covering the view fn without a display.
+        // View builds headless: construction needs no display.
         let program = HistoryProgram {
             language: en(),
             clear_requested: Default::default(),

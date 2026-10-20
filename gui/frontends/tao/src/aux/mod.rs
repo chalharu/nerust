@@ -1,6 +1,5 @@
-//! iced-based auxiliary windows on [`shell::AuxShell`]: [`shell`]
-//! scaffold, [`bridge`] shared state, [`debug`], [`ppu`], [`settings`],
-//! plus the [`focus`] agreement every aux window honors.
+//! iced-based auxiliary windows on [`shell::AuxShell`].
+//! [`bridge`] state plus [`debug`], [`ppu`], [`settings`], [`focus`] windows.
 
 pub(crate) mod bridge;
 pub(crate) mod debug;

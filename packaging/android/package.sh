@@ -128,9 +128,8 @@ mkdir -p "${STAGE_JNI_LIBS}"
 
 prepare_signing_keystore
 
-# AGP's strip task silently skips without a resolved NDK ("Unable to
-# strip ... packaging them as they are" -> 156MB APK incident). Resolve
-# the same side-by-side NDK cargo-ndk uses and fail loudly when absent.
+# AGP's strip task silently skips without a resolved NDK. Resolve the cargo-ndk NDK side-by-side and fail loudly.
+# An unresolved NDK once shipped a 156MB APK.
 if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
     sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
     if [[ -n "${sdk_root}" && -d "${sdk_root}/ndk" ]]; then
@@ -155,16 +154,8 @@ cargo ndk \
     -o "${STAGE_JNI_LIBS}" \
     build -p nerust_android --release
 
-# Loud gate against silent native bloat: DWARF must be gone and each
-# release .so must stay within its per-ABI budget (thin-LTO DWARF
-# incident: 133MB). Resolves llvm-readelf from the NDK first, then PATH;
-# warns and skips the gate when no reader exists off CI, fails hard when
-# CI needs it. Gates the *staged* tree; the in-tree jniLibs update only
-# after every .so passes.
-# Per-ABI native library budget in bytes. Only arm64-v8a ships today;
-# extend the table (not the gate logic) when new ABIs land.
-# BUDGET_BYTES override: only ever lowers the budget (a raise is ignored
-# with a warning) so CI cannot silently ratchet past bloat.
+# Native bloat gate: no DWARF, each release .so within its per-ABI budget. Gates the staged tree.
+# BUDGET_BYTES only ever lowers the budget; extend the table (not the gate logic) for new ABIs.
 NATIVE_BUDGET_DEFAULT_BYTES=41943040
 native_budget_bytes() {
     local requested="${BUDGET_BYTES:-${NATIVE_BUDGET_DEFAULT_BYTES}}"
@@ -178,9 +169,7 @@ native_budget_bytes() {
     fi
 }
 readelf_bin=""
-# Quoted array expansion keeps NDK paths with spaces intact; an unquoted
-# expansion would word-split them. The length guard keeps `set -u`
-# happy when nullglob matches nothing.
+# Quoted array expansion keeps NDK paths with spaces intact. The length guard keeps `set -u` happy.
 shopt -s nullglob
 ndk_readelfs=("${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf)
 shopt -u nullglob
@@ -198,9 +187,7 @@ fi
 if [[ -z "${readelf_bin}" ]] && command -v readelf >/dev/null 2>&1; then
     readelf_bin="readelf"
 fi
-# Fail-closed: SKIP_NATIVE_GATE no longer bypasses the gate. The gate
-# exists because of the 156MB incident; a missing reader or a bloated
-# .so is a hard failure everywhere, never a warning.
+# Fail-closed: SKIP_NATIVE_GATE no longer bypasses the gate. Missing reader or bloated .so fails hard.
 if [[ -n "${SKIP_NATIVE_GATE:-}" ]]; then
     echo "SKIP_NATIVE_GATE is no longer honored: the native DWARF/size gate always runs" >&2
     exit 1
@@ -230,9 +217,8 @@ else
         echo "${abi}/libmain.so: ${so_size} bytes, no DWARF"
     done
 fi
-# Gate passed: publish the staged libs.
-# Swap via a temp dir so an interrupted copy never leaves a
-# half-populated jniLibs tree behind.
+# Gate passed: publish the staged libs via a temp-dir swap.
+# An interrupted copy never leaves a half-populated jniLibs tree.
 stage_publish_tmp="${JNI_LIBS_DIR}.new"
 rm -rf "${stage_publish_tmp}"
 mkdir -p "${stage_publish_tmp}"
@@ -246,8 +232,7 @@ mv "${stage_publish_tmp}" "${JNI_LIBS_DIR}"
 )
 
 # Verify the release signature when tooling and a signature exist.
-# CI builds unsigned release APKs, so a missing apksigner or an
-# unsigned artifact only warns; a present-but-invalid signature fails.
+# A missing apksigner or unsigned artifact only warns; an invalid signature fails.
 if command -v apksigner >/dev/null 2>&1; then
     if ! apksigner verify --print-certs "${APK_SRC}"; then
         echo "release signature invalid" >&2

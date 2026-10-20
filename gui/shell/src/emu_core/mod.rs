@@ -42,8 +42,7 @@ pub enum CorePersistenceError {
 
 impl CorePersistenceError {
     /// Best-effort UX classification of a state import/export failure.
-    /// Only drives the user-facing message; the full detail stays in
-    /// the error itself (and the logs).
+    /// Only drives the user-facing message; the full detail stays in the error itself.
     pub fn slot_failure(&self) -> SlotOpFailure {
         match self {
             Self::WorkerUnavailable | Self::NoReply => SlotOpFailure::Unavailable,
@@ -62,9 +61,8 @@ impl CorePersistenceError {
     }
 }
 
-/// Bound for debugger query round-trips. Interactive drains never wait
-/// on it (async flights degrade per-await instead); it only bounds the
-/// blocking wrappers for tests, headless drivers, and non-drain callers.
+/// Bound for debugger query round-trips; interactive drains never wait on it.
+/// It bounds only the blocking wrappers for tests, headless drivers, and non-drain callers.
 const DEBUG_REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn recv_debug_reply<T>(reply_rx: std::sync::mpsc::Receiver<T>) -> Result<T, OperationError> {
@@ -88,14 +86,8 @@ pub trait CorePersistence {
     fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError>;
 }
 
-/// Live view of the running core behind the session facade. The
-/// cluster hands out `&dyn LiveCore` instead of the concrete
-/// [`EmuCore`], so session code programs against this port and the
-/// transport (`EmuThreadPort`) stays the only concrete seam. Combines
-/// the persistence ports with the pause/reset/load/metrics surface
-/// every per-tick path needs; anything requiring owned buffers or
-/// thread sends keeps the concrete [`EmuCore`] handle explicitly
-/// (see [`drain_handle`](LiveCore::drain_handle)).
+/// Live view of the running core behind the session facade.
+/// Session code programs against this port; the transport stays the only concrete seam.
 pub trait LiveCore: CorePersistence + crate::session::persistence::StateExporter {
     fn pause(&self) -> Result<(), OperationError>;
     fn resume(&self) -> Result<(), OperationError>;
@@ -136,9 +128,7 @@ pub trait LiveCore: CorePersistence + crate::session::persistence::StateExporter
     fn output_channels(&self) -> Result<Vec<String>, OperationError>;
     fn debug_images(&self)
     -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError>;
-    /// Owned handle for the async debug drain: shares the transport,
-    /// metrics, and image cache through `Arc`s. The drain is the only
-    /// session-adjacent consumer of the concrete type.
+    /// Owned handle for the async debug drain, sharing transport, metrics, and image cache.
     fn drain_handle(&self) -> EmuCore;
     fn write_memory(
         &self,
@@ -178,9 +168,7 @@ impl EmuThreadPort for EmuThread {
     }
 }
 
-/// Clone shares the transport, metrics, frame slot, and image cache
-/// (`Arc`s); the display framebuffer is reset to empty instead of
-/// copied (drain flights never touch it).
+/// Clone shares transport, metrics, frame slot, and image cache; the framebuffer resets empty.
 impl Clone for EmuCore {
     fn clone(&self) -> Self {
         Self {
@@ -315,9 +303,8 @@ impl EmuCore {
         self.frame_ready.store(false, Ordering::Release);
     }
 
-    // metrics() のみ into_inner() で回復する理由: レンダリングパスで毎フレーム呼ばれ、
-    // 常に最新の metrics を返す必要がある。他のメソッド(swap, pause, load 等)の metrics
-    // 更新は副次的な副作用であり、poison 時に諦めても動作に影響しない。
+    // metrics() のみ into_inner() で回復する: 毎フレーム呼ばれ、常に最新の値を返す必要がある。
+    // 他メソッドの metrics 更新は副次的副作用であり、poison 時に諦めても動作に影響しない。
     pub fn metrics(&self) -> ConsoleMetrics {
         let mut guard = self.metrics.lock().unwrap_or_else(|e| {
             log::warn!("metrics mutex poisoned, recovering");
@@ -342,9 +329,8 @@ impl EmuCore {
             .map_err(|_| OperationError::WorkerUnavailable)
     }
 
-    /// Shareable clone for the async debug drain: owns a clone and
-    /// polls across UI ticks. Shared `Arc`s see the same pause truth
-    /// and image generation; `disp_fb` stays empty (unused).
+    /// Shareable clone for the async debug drain: owns a clone and polls across UI ticks.
+    /// Shares pause truth and image generation through `Arc`s; the framebuffer stays empty.
     pub(crate) fn drain_core(&self) -> EmuCore {
         self.clone()
     }
@@ -367,9 +353,8 @@ impl EmuCore {
         recv_debug_reply(reply_rx)
     }
 
-    /// Live presentation swap for filter-only changes: pause if running,
-    /// swap behind the reply barrier, resume if paused. No ROM reload,
-    /// no state round-trip; dirties the debugger image cache.
+    /// Live presentation swap for filter-only changes, pausing around the reply barrier.
+    /// No ROM reload, no state round-trip; dirties the debugger image cache.
     pub fn apply_presentation(
         &mut self,
         profile: VideoRenderProfile,
@@ -411,10 +396,7 @@ impl EmuCore {
     }
 
     /// Exchange the thread-owned render target behind a reply barrier.
-    /// The caller swaps the session-side buffers only after this
-    /// returns (and only while paused), so no frame straddles the two
-    /// swaps. Kept private: session code goes through
-    /// [`EmuCore::apply_presentation`], which owns the choreography.
+    /// The caller swaps the session-side buffers only after this returns, while paused.
     fn swap_frame_slot(&self, slot: FrameBuffer) -> Result<(), OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
@@ -456,9 +438,8 @@ impl EmuCore {
         self.load_inner(media, core_options, false)
     }
 
-    /// Load and start paused: no free-run frame executes before the
-    /// first command. Headless drivers use this for deterministic
-    /// frame zero; interactive loads keep free-running.
+    /// Load and start paused: no free-run frame executes before the first command.
+    /// Headless drivers use this for deterministic frame zero.
     pub fn load_paused(
         &self,
         media: &MediaObject,
@@ -496,9 +477,8 @@ impl EmuCore {
             .map_err(|e| OperationError::Reply(e.to_string()));
         if result.is_ok() {
             match self.metrics.lock() {
-                // Mirror the requested state, not "paused": stamping
-                // true unconditionally turns the load-then-resume flow
-                // into a bogus Resumed notice on every ROM open.
+                // Stamp the requested state, not unconditionally paused: a forced stamp
+                // would turn every load-then-resume into a bogus Resumed notice.
                 Ok(mut guard) => {
                     guard.loaded = true;
                     guard.paused = start_paused;
@@ -579,9 +559,8 @@ impl EmuCore {
         generate_preview_frame(&*self.emu)
     }
 
-    /// Advance execution by one unit. The reply is the barrier: it arrives
-    /// after exactly one step. Returns thread errors outer, domain step
-    /// errors inner.
+    /// Advance execution by one unit; the reply is the barrier: it arrives after exactly one step.
+    /// Returns thread errors outer, domain step errors inner.
     pub fn step(&self, unit: StepUnit) -> Result<Result<u64, DebuggerError>, OperationError> {
         let reply_rx = self.step_send(unit)?;
         let result = recv_debug_reply(reply_rx);
@@ -591,10 +570,8 @@ impl EmuCore {
         result
     }
 
-    /// Send half of [`EmuCore::step`]: the command queues without
-    /// blocking, and the caller polls the receiver on its own tick.
-    /// The async debug drain pairs this with `mark_images_dirty` on
-    /// success, mirroring the blocking body above.
+    /// Send half of [`EmuCore::step`]: the command queues without blocking for the caller tick.
+    /// The async debug drain pairs this with `mark_images_dirty`, mirroring the blocking body.
     pub(crate) fn step_send(
         &self,
         unit: StepUnit,
@@ -634,10 +611,8 @@ impl EmuCore {
         Ok(reply_rx)
     }
 
-    /// Batched debugger snapshot (inspect + anchor + disassembly)
-    /// in one thread crossing. Same per-part contracts as the
-    /// individual calls; prefer wherever the caller needs the whole
-    /// set (debugger drains) over three sequential timeouts.
+    /// Batched debugger snapshot (inspect + anchor + disassembly) in one thread crossing.
+    /// Same per-part contracts as the individual calls; prefer here when the whole set is needed.
     pub fn debug_snapshot_batch(
         &self,
         req: nerust_core_traits::debugger::SnapshotRequest,
@@ -707,9 +682,7 @@ impl EmuCore {
         result
     }
 
-    /// Send half of [`EmuCore::write_memory`]: queues without blocking.
-    /// The async debug drain pairs this with `mark_images_dirty` on
-    /// success, mirroring the blocking body above.
+    /// Send half of [`EmuCore::write_memory`]: queues without blocking for the caller tick.
     pub(crate) fn write_memory_send(
         &self,
         req: MemoryWrite,
@@ -772,9 +745,8 @@ impl EmuCore {
         reply_rx.recv().map_err(|_| OperationError::NoReply)
     }
 
-    /// Install a guest-output tap for one channel: every rendered
-    /// frame moves the core's freshly produced bytes for that channel
-    /// into `tap`. Headless capture only.
+    /// Install a guest-output tap for one channel: rendered frames move fresh bytes into `tap`.
+    /// Headless capture only.
     pub fn tap_serial_output(
         &self,
         channel: &str,
@@ -791,9 +763,8 @@ impl EmuCore {
         reply_rx.recv().map_err(|_| OperationError::NoReply)
     }
 
-    /// Memory-space table snapshot through the emu thread. Empty when
-    /// idle or when the core exposes no debugger. Static metadata:
-    /// no pause gating required.
+    /// Memory-space table snapshot through the emu thread; empty when idle or debugger-less.
+    /// Static metadata: no pause gating required.
     pub fn memory_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
@@ -1056,18 +1027,14 @@ fn op_to_persistence(e: OperationError) -> CorePersistenceError {
     }
 }
 
-/// Core export failures surface through `PersistenceError` so flush
-/// callers propagate them with `?`. The message carries the source
-/// detail verbatim; no information is invented here.
+/// Core export failures surface through `PersistenceError` so flush callers propagate with `?`.
 impl From<CorePersistenceError> for PersistenceError {
     fn from(error: CorePersistenceError) -> Self {
         PersistenceError::Export(error.to_string())
     }
 }
 
-/// Fresh render target for one profile + palette pair. Single
-/// construction path for core spawn and live presentation swaps, so a
-/// swapped filter can never disagree with a rebuilt one on geometry.
+/// Fresh render target for one profile + palette pair, shared by spawn and live swaps.
 fn fresh_frame_buffer(profile: &VideoRenderProfile, palette: &[u32]) -> FrameBuffer {
     let pixel_format = match profile.frame_format {
         VideoFrameFormat::Palette => PixelFormat::PaletteIndex {
@@ -1158,9 +1125,8 @@ mod tests {
         core
     }
 
-    /// Scripted transport: answers one query, refuses the rest. Proves
-    /// `EmuCore` programs against the port, never thread internals —
-    /// no thread spawns here.
+    /// Scripted transport: answers one query, refuses the rest.
+    /// Proves `EmuCore` programs against the port, never thread internals.
     #[derive(Debug)]
     struct FakePort {
         spaces: Vec<SpaceInfo>,
@@ -1264,9 +1230,7 @@ mod tests {
         })
         .expect("thread")
         .expect("writable");
-        // The mock decode never changes, so the refetch serves the
-        // same pixels under the served generation: viewers skip
-        // re-deriving instead of churning on a bump.
+        // The mock decode never changes: refetches serve the served generation with no payload.
         let (gen2, images2) = core.debug_images().expect("thread").expect("images");
         assert_eq!(images2.len(), 1);
         assert_eq!(gen2, gen1, "identical content keeps the served generation");

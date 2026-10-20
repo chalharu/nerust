@@ -1,8 +1,5 @@
 //! Foreground lifecycle: window-ready retry plus auto-pause bookkeeping.
-//!
-//! Split out of the `AndroidFrontend` god object. Owns the resume-retry
-//! state machine and the suspend/resume helpers; the frontend keeps wiring
-//! (event loop, session, storage) and executes the decisions.
+//! Owns the retry state machine and the suspend/resume helpers.
 
 use std::time::{Duration, Instant};
 
@@ -18,9 +15,8 @@ const FOREGROUND_RETRY_MAX_ATTEMPTS: u32 = 20;
 /// table stays explicit (`250ms, 500ms, 1s, 2s, 2s, ...`).
 const BACKOFF_STEPS: u32 = 3;
 
-/// Auto-pause + restore + foreground-retry state. The retry loop exists
-/// because the Android surface may not be ready on the first `resumed`
-/// tick; attempts back off and give up loudly after the cap.
+/// Auto-pause + restore + foreground-retry state.
+/// Attempts back off and give up after the cap.
 pub(super) struct Lifecycle {
     auto_paused: bool,
     restore_pending: bool,
@@ -90,9 +86,7 @@ impl Lifecycle {
             return false;
         }
 
-        // `checked_shl` instead of `1 << attempts`: a future bump of the
-        // cap can never wrap the shift into a zero delay (which would
-        // busy-spin the event loop).
+        // Saturating shift: the delay can never wrap to zero and busy-spin.
         let shift = self.retry_attempts.min(BACKOFF_STEPS);
         let multiplier = 1_u32.checked_shl(shift).unwrap_or(1 << BACKOFF_STEPS);
         let delay = FOREGROUND_RETRY_BASE_DELAY
@@ -125,9 +119,8 @@ impl Lifecycle {
         self.retry_at = None;
     }
 
-    /// Resume gate for a fresh ROM load: always resume, never across an
-    /// error auto-pause (its dismiss owns that); a manual pause predates
-    /// the suspend and must survive it.
+    /// Fresh-load resume gate: always resumes except across an error auto-pause.
+    /// Manual pauses survive.
     pub(super) fn resume_want_after_restore(
         &self,
         restore_hidden_state: bool,
@@ -152,10 +145,8 @@ impl Lifecycle {
         })
     }
 
-    /// Auto-pause only with a pausable session; the predicate pins the
-    /// contract (host-tested in `lifecycle_decision`). The caller executes
-    /// the pause through `PauseControl` and records it via
-    /// `set_auto_paused`, so this type never touches command execution.
+    /// Auto-pause only with a pausable session. The caller executes the pause;
+    /// this type never touches command execution.
     pub(super) fn should_auto_pause(&self, session: &SessionHandle) -> bool {
         lifecycle_decision::should_lifecycle_pause(
             self.auto_paused,
@@ -174,9 +165,8 @@ impl Lifecycle {
             self.auto_paused,
             self.restore_pending
         );
-        // Auto-pause is decided and executed by the caller
-        // (`should_auto_pause` + `PauseControl`) before this runs, so the
-        // pause flag here only reflects already-recorded state.
+        // The caller already decided and executed auto-pause; the flag here
+        // only reflects recorded state.
         session.clear_input();
         self.restore_pending = session.save_hidden_lifecycle_state();
         if !self.restore_pending {

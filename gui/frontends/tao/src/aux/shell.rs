@@ -1,6 +1,5 @@
-//! Shared iced-on-tao auxiliary-window shell: the debugger and PPU
-//! viewer run the same tiny-skia lifecycle over different programs,
-//! keeping the twins from drifting.
+//! Shared iced-on-tao auxiliary-window shell: debugger and PPU viewer
+//! run the same tiny-skia lifecycle over different programs.
 
 use std::sync::{
     Arc,
@@ -44,9 +43,8 @@ pub(crate) fn aux_settings() -> iced::Settings {
     }
 }
 
-/// Window creation scaffolding both auxiliary windows share: title,
-/// size, optional minimum, position, compositor, renderer, surface,
-/// and initial bounds. Programs and UI instances stay per-window.
+/// Window creation scaffolding both auxiliary windows share.
+/// Programs and UI instances stay per-window.
 pub(crate) struct WindowScaffold {
     pub(crate) window: Arc<TaoWindow>,
     pub(crate) window_id: iced::window::Id,
@@ -58,9 +56,7 @@ pub(crate) struct WindowScaffold {
     pub(crate) surface: Surface,
 }
 
-/// Why an aux window failed to open. Carries which window and the
-/// native error so headless/CI failures name the lost window instead
-/// of collapsing to a unit variant.
+/// Why an aux window failed to open: which window plus the native error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ScaffoldError {
     BuildWindow { tag: &'static str, detail: String },
@@ -138,8 +134,6 @@ impl WindowScaffold {
 }
 
 /// Logical layout bounds for a physical viewport and scale factor.
-/// One helper so every resize/scale path rebuilds with identical
-/// math instead of drifting copies.
 pub(crate) fn logical_bounds(viewport_physical: (u32, u32), scale_factor: f32) -> Size {
     Viewport::with_physical_size(
         Size::new(viewport_physical.0, viewport_physical.1),
@@ -181,12 +175,8 @@ impl ShellRenderer {
     }
 }
 
-/// Owned program instance plus its widget cache and geometry. The
-/// iced `UserInterface` borrows the instance, so it is built
-/// transiently per pump/draw pass and folded back into `cache`
-/// immediately afterwards: no self-reference, no `unsafe`, and a
-/// panic drops only the transient interface while the cache stays
-/// whole for the next pass.
+/// Owned program instance plus its widget cache and geometry.
+/// The iced `UserInterface` is built transiently per pass: no self-reference, no `unsafe`.
 pub(crate) struct ViewTree<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     instance: Box<program::Instance<P>>,
     cache: Cache,
@@ -194,9 +184,7 @@ pub(crate) struct ViewTree<P: Program<Theme = iced::Theme, Renderer = Renderer>>
     bounds: Size,
 }
 
-/// Queued program messages. Drained by `process_messages` under the
-/// update-then-rebuild sequence, so `instance` is never mutated while
-/// a transient interface borrows it.
+/// Queued program messages, drained under the update-then-rebuild sequence.
 pub(crate) struct MessageQueue<M> {
     pending: Vec<M>,
 }
@@ -208,9 +196,7 @@ impl<M> MessageQueue<M> {
         }
     }
 
-    /// Queued plus inline messages for one rebuild pass. Accepts any
-    /// message source without a call-site alloc; buffers reuse via the
-    /// caller's pass-through.
+    /// Queued plus inline messages for one rebuild pass.
     fn drain(&mut self, extra: impl IntoIterator<Item = M>) -> Vec<M> {
         let mut all = std::mem::take(&mut self.pending);
         all.extend(extra);
@@ -218,9 +204,8 @@ impl<M> MessageQueue<M> {
     }
 }
 
-/// Program UI shell: [`ViewTree`] (owned instance plus cache) with a
-/// [`MessageQueue`] on the side. No interface is retained across
-/// calls, so there is no lifetime to launder and no orphans to track.
+/// Program UI shell: [`ViewTree`] plus a [`MessageQueue`] on the side.
+/// No interface is retained across calls.
 pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     tree: ViewTree<P>,
     queue: MessageQueue<P::Message>,
@@ -235,9 +220,7 @@ pub(crate) enum PumpOutcome {
     Rebuild,
 }
 
-/// Pump policy as a free function: map iced's update result onto
-/// [`PumpOutcome`]. Pure so the message-less paths (wheel scroll
-/// especially) stay covered by tests.
+/// Pump policy: map iced's update result onto [`PumpOutcome`]. Pure, so tests cover it.
 pub(crate) fn pump_outcome(state: &State) -> PumpOutcome {
     match state {
         State::Outdated => PumpOutcome::Rebuild,
@@ -248,10 +231,7 @@ pub(crate) fn pump_outcome(state: &State) -> PumpOutcome {
     }
 }
 
-/// Relayout is infallible: the transient-UI shell rebuilds from the
-/// retained cache every pass, so recording new bounds is a plain
-/// store (kept as a named method for the swap-only-on-success
-/// contract if layout ever grows fallible).
+/// Relayout is infallible: recording new bounds is a plain store.
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     pub(crate) fn new(
         instance: program::Instance<P>,
@@ -269,9 +249,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         }
     }
 
-    /// Record new layout bounds. Infallible: the next pump builds
-    /// against them, so there is no old interface to keep or orphan
-    /// on failure.
+    /// Record new layout bounds. Infallible: the next pump builds against them.
     pub(crate) fn relayout(&mut self, bounds: Size) {
         self.tree.bounds = bounds;
     }
@@ -282,23 +260,15 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         self.relayout(bounds);
     }
 
-    /// Queue one program message for the next `process_messages`
-    /// pass (Sync-style refresh entry point shared by both viewers).
-    /// Queued, never applied inline: only the
-    /// update-then-rebuild sequence in `process_messages` may mutate
-    /// the instance. Test-only seam: production passes messages
-    /// through `process_messages` directly.
+    /// Queue one program message for the next `process_messages` pass.
+    /// Queued, never applied inline: only `process_messages` may mutate the instance.
     #[cfg(test)]
     pub(crate) fn push_message(&mut self, message: P::Message) {
         self.queue.pending.push(message);
     }
 
-    /// Build the transient interface for one pump pass. The cache is
-    /// taken out, the view is rebuilt from the instance, and the
-    /// surviving widget state is folded back afterwards. The returned
-    /// interface borrows the instance (through its view); the cache
-    /// slot and the renderer are used transiently, so callers pass
-    /// disjoint tree fields and keep no whole-tree borrow alive.
+    /// Build the transient interface for one pump pass.
+    /// The returned interface borrows the instance; callers pass disjoint tree fields.
     fn build_transient<'a>(
         instance: &'a program::Instance<P>,
         window_id: iced::window::Id,
@@ -318,10 +288,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         *cache = ui.into_cache();
     }
 
-    /// What a pumped event needs after `update`: nothing, a repaint
-    /// (wheel/drag/hover/caret move widget state but emit no
-    /// messages), or a view rebuild (`State::Outdated`: the tree must
-    /// be re-rendered from program state).
+    /// What a pumped event needs after `update`: nothing, a repaint, or a view rebuild.
     /// Reuses the caller's `out` buffer (no per-event alloc).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pump(
@@ -348,10 +315,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         outcome
     }
 
-    /// Runs pending messages, rebuilding once. Reports whether a
-    /// rebuild happened so the shell redraws only on real change.
-    /// Accepts any message source without allocating a `Vec` at the
-    /// call site; the queue joins this pass.
+    /// Runs pending messages, rebuilding once. Reports whether a rebuild happened.
     pub(crate) fn process_messages(
         &mut self,
         messages: impl IntoIterator<Item = P::Message>,
@@ -364,9 +328,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         if all.is_empty() && !invalidated.load(Ordering::Acquire) {
             return false;
         }
-        // Run the messages against the instance (no interface alive),
-        // then rebuild once so the retained cache reflects the new
-        // program state for the next pump.
+        // Run the messages against the instance, then rebuild once.
         for msg in all.drain(..) {
             let _task = self.tree.instance.update(msg);
         }
@@ -383,9 +345,8 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     }
 }
 
-/// Window-system half shared by the debugger and PPU viewer
-/// (twins by design): native window, viewport, input state, renderer,
-/// and UI shell. Program-specific halves stay in the handles.
+/// Window-system half shared by the debugger and PPU viewer.
+/// Program-specific halves stay in the handles.
 pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     window: Arc<TaoWindow>,
     ui_state: UiShell<P>,
@@ -422,9 +383,8 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         self.window.set_focus();
     }
 
-    /// Pump one converted event through the retained tree. Repaints
-    /// redraw immediately; rebuilds report for the caller, which owns
-    /// its invalidation flag. Reuses `out` to avoid a per-event alloc.
+    /// Pump one converted event through the retained tree.
+    /// Reuses `out` to avoid a per-event alloc.
     pub(crate) fn pump_frame(
         &mut self,
         mapped: iced::Event,
@@ -443,10 +403,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         outcome
     }
 
-    /// Shared pump finish for the four aux windows (debugger, PPU,
-    /// history, settings): repaint bookkeeping, rebuild invalidation,
-    /// and the conditional process pass. Single home so the twins
-    /// cannot drift apart.
+    /// Shared pump finish for the four aux windows: repaint, rebuild, conditional process.
     pub(crate) fn finish(
         &mut self,
         outcome: PumpOutcome,
@@ -465,15 +422,8 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         repainted || rebuilt
     }
 
-    /// Run pending messages against the retained cache, redrawing only
-    /// on a real rebuild. Quiet batches (no messages, no flag) skip
-    /// the frame: the trailing redraw in the aux pump stays the safety
-    /// net for paths that bypass `process`.
-    ///
-    /// The flag is a plain `&AtomicBool`: each handle owns its domain
-    /// flag next to its bridge (`view_invalidated`, `ppu_invalidated`,
-    /// `view_invalidated`), so the pairing is visible at the call
-    /// site without a wrapper type.
+    /// Run pending messages against the retained cache, redrawing only on a real rebuild.
+    /// Quiet batches (no messages, no flag) skip the frame.
     pub(crate) fn process(
         &mut self,
         messages: impl IntoIterator<Item = P::Message>,
@@ -492,9 +442,8 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
-    /// Assemble from a scaffold plus a program instance. The close
-    /// flag is a parameter (not minted here) so sharing programs
-    /// observe the same flag.
+    /// Assemble from a scaffold plus a program instance.
+    /// The close flag is a parameter so sharing programs observe the same flag.
     pub(crate) fn assemble(
         scaffold: WindowScaffold,
         instance: program::Instance<P>,
@@ -531,10 +480,8 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         }
     }
 
-    /// Resize the raster and record fresh bounds against the retained
-    /// cache (no view rebuild). The surface realloc is deferred to
-    /// `render` (one configure per presented frame); same-size events
-    /// skip everything.
+    /// Resize the raster and record fresh bounds (no view rebuild).
+    /// The surface realloc is deferred to `render`; same-size events skip everything.
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         if self.viewport_physical == (width, height) {
             return;
@@ -562,9 +509,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         self.modifiers = crate::convert::tao_modifiers_to_iced(modifiers);
     }
 
-    /// Shared event prelude for both twins (resize/scale/
-    /// modifiers/close): byte-identical in the debugger and the PPU
-    /// viewer, so it lives here instead of twice inline.
+    /// Shared event prelude for both twins (resize/scale/modifiers/close).
     pub(crate) fn handle_common_event(&mut self, event: &tao::event::WindowEvent) {
         match event {
             tao::event::WindowEvent::Resized(size) => self.resize(size.width, size.height),
@@ -580,10 +525,8 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         }
     }
 
-    /// Feed one native event, returning the converted iced event
-    /// for the window's own dispatcher (debugger paging vs PPU
-    /// hover). Returns the event instead of taking a closure so
-    /// callers never double-borrow the shell.
+    /// Feed one native event, returning the converted iced event.
+    /// Returns the event instead of taking a closure so callers never double-borrow.
     pub(crate) fn feed_tao_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
         crate::convert::convert_tao_window_event(
             event,
@@ -600,9 +543,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     }
     /// Full render through the shared pump; only the log tag differs.
     pub(crate) fn render(&mut self, log_tag: &'static str) {
-        // Self-healing scale: re-query the live factor and relayout
-        // on drift (missed/late ScaleFactorChanged), so layout and
-        // surface re-converge on the next frame.
+        // Self-healing scale: re-query the live factor and relayout on drift.
         let live_scale = self.window.scale_factor() as f32;
         if live_scale != self.scale_factor {
             log::debug!(
@@ -614,9 +555,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
             let bounds = logical_bounds(self.viewport_physical, self.scale_factor);
             self.ui_state.relayout(bounds);
         }
-        // Deferred surface configure (see `resize`): resize storms
-        // only relayout per event; the realloc lands here, at most
-        // once per presented frame.
+        // Deferred surface configure: the realloc lands here, at most once per frame.
         if self.surface_size != self.viewport_physical {
             self.renderer
                 .resize(self.viewport_physical.0, self.viewport_physical.1);
@@ -626,9 +565,6 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     }
 
     /// Shared full render: Light theme, redraw pump, draw, present.
-    /// Method on the shell so viewers never destructure it. The
-    /// transient interface is built from the retained cache, pumped
-    /// with a redraw event, drawn, and folded back.
     fn render_ui(&mut self, log_tag: &'static str) {
         // Nothing to draw into yet (minimize/dock transient):
         // presenting a zero-size surface panics in pixel-map creation.

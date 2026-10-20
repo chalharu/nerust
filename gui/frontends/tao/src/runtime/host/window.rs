@@ -45,13 +45,8 @@ pub(crate) fn earliest_wake(input: WakeInput, now: Instant) -> Option<Instant> {
     .min()
 }
 
-/// Pure control-flow decision with injected clock: returns the wake
-/// deadline plus whether the loop must repaint. The runtime maps the
-/// deadline to `ControlFlow::{Wait, WaitUntil}`.
-///
-/// Repaint while focused, while the PPU follows a running core, or
-/// while the session runs (a bare WaitUntil alone would not reliably
-/// wake the loop, at the cost of one running frame render).
+/// Pure control-flow decision with injected clock: wake deadline plus repaint flag.
+/// Repaint while focused, while the PPU follows a running core, or while the session runs.
 pub(crate) fn update_flow(
     now: Instant,
     tick_loaded: bool,
@@ -128,27 +123,20 @@ impl HostState {
         self.surface_target().map(|(_, size, _)| size)
     }
 
-    /// Native attach target for the game renderer: the content area
-    /// below the menubar when available, else the toplevel. The xid
-    /// tags the target so a target change recreates the surface.
-    /// Single helper: the content-area target or the toplevel
-    /// fallback, so `surface_target` and `surface_xid` cannot drift.
+    /// Native attach target for the game renderer: content area below the menubar, else toplevel.
+    /// The xid tags the target so a target change recreates the surface.
     pub(crate) fn surface_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
         let (handle, size, xid) = self.attach_target()?;
         Some((handle, size, xid))
     }
 
-    /// Xid the surface is currently attached to (`None` = toplevel
-    /// fallback). Mirrors [`HostState::surface_target`] without
-    /// rebuilding handles, for the runtime's recreate check.
+    /// Xid the surface is currently attached to (`None` = toplevel fallback).
     pub(crate) fn surface_xid(&self) -> Option<u64> {
         let (_, _, xid) = self.attach_target()?;
         xid
     }
 
-    /// Shared attach-target resolution: content area below the menubar
-    /// when it yields a native target (Wayland/pre-layout yields
-    /// nothing), else the toplevel window with no xid.
+    /// Shared attach-target resolution: content area below the menubar, else toplevel.
     fn attach_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
         if !self.close.is_usable() {
             return None;
@@ -161,8 +149,7 @@ impl HostState {
         Some((handle, window_surface_size(window.inner_size()), None))
     }
 
-    /// Content-area target below the menubar (`None` where unsupported
-    /// or not yet laid out). Linux/BSD only; elsewhere always `None`.
+    /// Content-area target below the menubar (`None` where unsupported or not yet laid out).
     #[cfg(any(
         target_os = "linux",
         target_os = "dragonfly",
@@ -174,8 +161,7 @@ impl HostState {
         self.content_area.as_ref()?.target()
     }
 
-    /// Content-area target below the menubar (`None` where unsupported
-    /// or not yet laid out). Linux/BSD only; elsewhere always `None`.
+    /// Content-area target below the menubar (`None` where unsupported or not yet laid out).
     #[cfg(not(any(
         target_os = "linux",
         target_os = "dragonfly",
@@ -187,9 +173,7 @@ impl HostState {
         None
     }
 
-    /// Load a ROM, syncing menu/title/redraw on success. Returns
-    /// the failure detail on error; presenting it (dialog) is the
-    /// caller's job so the file-dialog and startup paths can differ.
+    /// Load a ROM, syncing menu/title/redraw on success. Returns the failure detail on error.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
         let mut target =
             nerust_gui_shell::session::load_adapter::SessionLoadAdapter::new(&mut self.session);
@@ -218,35 +202,22 @@ impl HostState {
         self.sync_fullscreen_default_from_window();
         self.maybe_refresh_window_title(Instant::now());
         self.maybe_live_ppu();
-        // Poll a pending drain flight (non-blocking): the reply lands
-        // on a normal event without a dedicated wake in the common
-        // case, and the backstop below bounds the latency when the
-        // loop would otherwise sleep.
+        // Poll a pending drain flight (non-blocking); the backstop bounds the latency.
         let drain_pending = self.poll_debug_flight();
-        // While the PPU follows a running core, wake for the next
-        // tick: plain Wait sleeps until the next input event, which
-        // would collapse the live cadence to zero whenever the aux
-        // windows (not the main one) hold focus.
+        // While the PPU follows a running core, wake for the next tick.
         let live_follow = self.live_follow_active();
         let live_tick = if live_follow {
             self.next_live_tick()
         } else {
             None
         };
-        // While a drain or live flight is pending, wake soon to poll
-        // it: the reply applies within ~30ms instead of waiting for
-        // the next input event.
+        // While a flight is pending, wake soon to poll it (~30ms backstop).
         let flight_pending = drain_pending || self.live_flight_pending();
 
-        // Drain notifications here, not only in on_update: a paused
-        // unfocused loop schedules no redraws, which is exactly when
-        // pause/error notices must still land and expire. One capture
-        // for the whole pass, threaded through.
+        // Drain notifications here, not only in on_update: paused unfocused loops need them.
         let frame = self.frame_snapshot();
         self.poll_notifications(&frame);
-        // Post-pump the deadline implies a showing label (promotion
-        // is eager), so one call drives the expiry redraw and the
-        // wait: plain Wait would leave a stale label up otherwise.
+        // Post-pump the deadline implies a showing label: one call drives expiry and wait.
         let osd_deadline = self.osd_wakeup();
         if osd_deadline.is_some() {
             // Redraw while labels show so expiry applies even paused.
@@ -268,10 +239,7 @@ impl HostState {
         );
         *control_flow = deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil);
 
-        // Inactive loop sleeps; repaint a running session even
-        // unfocused (e.g. operating the debugger while the game runs):
-        // frames keep coming and must show. Paused, unfocused, and
-        // unfollowed sleeps.
+        // Inactive loop sleeps; a running session repaints even unfocused.
         if wants_redraw {
             self.request_redraw();
         }
@@ -304,12 +272,8 @@ impl HostState {
             window.request_redraw();
         }
     }
-    /// Idempotent close teardown: the guard makes flush run exactly
-    /// once across CloseRequested + Destroyed. Handles stay alive:
-    /// dropping tao/GTK objects inside a destroy handler re-enters
-    /// the dying native window (BadWindow, exit 1); natural teardown
-    /// after loop exit already reclaims them (exit 0). Liveness is
-    /// tracked separately so no dead handle is ever touched.
+    /// Idempotent close teardown: the guard makes flush run exactly once.
+    /// Handles stay alive: dropping them in a destroy handler re-enters the dying window.
     pub(crate) fn prepare_close(&mut self) {
         if !self.close.begin_close() {
             return;
@@ -469,9 +433,7 @@ mod tests {
             osd_deadline: None,
         };
         assert_eq!(earliest_wake(tick_wins, now), Some(early_tick));
-        // Pure flow decision with injected clock: any live source
-        // repaints; quiet sleeps. The runtime maps the deadline to
-        // ControlFlow.
+        // Pure flow decision: any live source repaints; quiet sleeps.
         let (deadline, redraw) = update_flow(now, true, false, false, false, idle);
         assert_eq!(deadline, None);
         assert!(redraw);

@@ -1,9 +1,5 @@
 //! PeripheralSync: cartridge peripheral JNI pushes owned by one struct.
-//!
-//! Split out of the `AndroidFrontend` god object. Owns the last-pushed
-//! motion/rumble config + intensity and the generation dirty flag; the
-//! frontend keeps wiring (session, app) and passes them per call so
-//! ownership stays obvious.
+//! Owns last-pushed config/intensity and the generation dirty flag.
 
 use nerust_gui_shell::session::SessionHandle;
 use nerust_settings_core::model::local::RumbleTarget;
@@ -11,11 +7,8 @@ use winit::platform::android::activity::AndroidApp;
 
 use super::bridge;
 
-/// Last-pushed peripheral state plus a generation dirty flag. The full
-/// JNI push path (motion config + rumble intensity) runs only when the
-/// generation changed or the cached push differs; while suspended with
-/// settled all-off state the sync early-outs before touching
-/// `host_peripherals()` at all.
+/// Last-pushed peripheral state plus a generation dirty flag.
+/// Pushes only on change; suspended all-off state skips `host_peripherals()`.
 pub(super) struct PeripheralSync {
     last_config: Option<(bool, bool, u8, RumbleTarget)>,
     last_intensity: Option<u8>,
@@ -38,10 +31,8 @@ impl PeripheralSync {
     }
 
     pub(super) fn sync(&mut self, app: &AndroidApp, session: &mut SessionHandle, is_resumed: bool) {
-        // Generation dirty gate: suspended + settled all-off + clean
-        // generation means nothing can have changed (no session tick
-        // advances the rumble state while paused), so return before the
-        // `host_peripherals()` access.
+        // Suspended all-off with a clean generation cannot have changed:
+        // return before the `host_peripherals()` access.
         if !is_resumed
             && !self.config_dirty
             && self.last_config == Some((false, false, 0, RumbleTarget::Auto))

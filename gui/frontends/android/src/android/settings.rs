@@ -1,10 +1,7 @@
 use std::{collections::BTreeMap, sync::Mutex};
 
 /// Android-relevant settings subset and JNI dialog bridge.
-///
-/// Only the fields that make sense on a mobile/touch device are exposed.
-/// All persistence and validation remain on the Rust side; Kotlin merely
-/// presents the choices and returns the user's selections.
+/// Only mobile/touch-sensible fields are exposed; Kotlin merely presents and returns.
 use jni::objects::{JObject, JString, JValue};
 use jni::{jni_sig, jni_str};
 use nerust_core_traits::{
@@ -28,9 +25,7 @@ use winit::platform::android::activity::AndroidApp;
 
 use super::{bridge, messages::SettingsDialogResult};
 
-// ---------------------------------------------------------------------------
-// Choice constants
-// ---------------------------------------------------------------------------
+// Choice constants.
 
 const VOLUME_MIN: u8 = 0;
 const VOLUME_MAX: u8 = 100;
@@ -43,15 +38,10 @@ const OVERLAY_OFFSET_MIN: i8 = -30;
 const OVERLAY_OFFSET_MAX: i8 = 30;
 const SETTINGS_SCHEMA_VERSION: u32 = 1;
 
-// ---------------------------------------------------------------------------
-// Data model
-// ---------------------------------------------------------------------------
+// Data model.
 
 /// The Android-relevant subset of the full settings snapshot.
-///
-/// Derived from [`SettingsSnapshot`] on the way in; applied back via
-/// [`AndroidSettings::apply_to_snapshot`] on the way out.
-///
+/// Derived from [`SettingsSnapshot`] on the way in; applied back on the way out.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AndroidSettings {
     pub audio_muted: bool,
@@ -90,25 +80,21 @@ struct AndroidSystemChoice {
     options: Vec<(SystemSettingsChoiceId, String)>,
 }
 
-/// One settings-dialog row: stable key, label, offered choices and
-/// current choice index travel together. Every dialog array and codec
-/// derives from [`AndroidSettings::setting_defs`], so a row can never
-/// drift apart from its own choices again.
+/// One settings-dialog row: key, label, choices, and current index travel together.
+/// All arrays and codecs derive from `setting_defs`; rows cannot drift from choices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SettingDef {
     pub key: String,
     pub label: String,
     pub choices: Vec<String>,
     pub current: usize,
-    /// Edge class per choice ("top"/"bottom") for position pickers.
-    /// The dialog hides same-edge followers from these labels, so the
-    /// index→edge mapping lives in Rust alone. Empty for other rows.
+    /// Edge class per choice ("top"/"bottom") for position pickers. Empty for other rows.
+    /// The index→edge mapping lives in Rust alone.
     pub edges: Vec<String>,
 }
 
 /// Canonical corner order shared by labels, indices, and edges.
-/// Every position picker follows this sequence; nothing else may
-/// assume an index→corner mapping.
+/// Every position picker follows this sequence; nothing else assumes the mapping.
 const CORNERS: [NotificationPosition; 4] = [
     NotificationPosition::BottomLeft,
     NotificationPosition::BottomRight,
@@ -212,7 +198,6 @@ impl AndroidSettings {
     }
 
     /// Write the Android-relevant fields back into a full settings snapshot.
-    ///
     /// Fields not exposed by the Android UI are left untouched.
     pub(crate) fn apply_to_snapshot(
         &self,
@@ -258,13 +243,10 @@ impl AndroidSettings {
         Ok(())
     }
 
-    // -----------------------------------------------------------------------
-    // Dialog encoding
-    // -----------------------------------------------------------------------
+    // Dialog encoding.
 
-    /// One settings row: key, label, choices, and current index in one
-    /// struct. Sole source of truth; codecs index this same list, so
-    /// rows can never drift from their choices.
+    /// One settings row: key, label, choices, and current index in one struct.
+    /// Sole source of truth; codecs index this same list.
     pub(crate) fn setting_defs(&self) -> Vec<SettingDef> {
         let off_on = || vec!["Off".to_string(), "On".to_string()];
         let percent = |range: std::ops::RangeInclusive<u8>| {
@@ -500,9 +482,8 @@ impl AndroidSettings {
                 edges: Vec::new(),
             },
         ];
-        // Same-edge follow is handled live in the dialog UI (the
-        // status row hides when it shares the notification edge);
-        // the codec stays key-driven so order never matters.
+        // Same-edge follow is handled live in the dialog UI.
+        // The codec stays key-driven so order never matters.
         defs.extend(self.system_choices.iter().map(|choice| {
             SettingDef {
                 key: format!("system.{}.{}", choice.system_id, choice.field_id.as_str()),
@@ -523,12 +504,8 @@ impl AndroidSettings {
         defs
     }
 
-    /// Cached [`Self::setting_defs`]: rebuilding the full defs vector on
-    /// every decode is O(n) allocations per dialog, and the old `by_key`
-    /// linear scan made decode O(n²). The cache is keyed by a fingerprint
-    /// of every field `setting_defs` reads; a fingerprint hit returns a
-    /// clone, a miss rebuilds once. Callers additionally build one
-    /// `HashMap` key→index per decode so field lookup is O(1).
+    /// Cached [`Self::setting_defs`], keyed by a fingerprint of every field it reads.
+    /// Callers build one `HashMap` key→index per decode so field lookup is O(1).
     pub(crate) fn cached_setting_defs(&self) -> Vec<SettingDef> {
         let hash = self.defs_fingerprint();
         if let Some(defs) = defs_cache_get(hash) {
@@ -629,11 +606,8 @@ impl AndroidSettings {
             .map(|s| s.trim().parse::<usize>().ok())
             .collect::<Option<_>>()?;
 
-        // Key-driven: field order never affects decoding, and a
-        // row missing from the payload keeps its current value.
-        // Cached defs (one build per settings fingerprint) plus a single
-        // key→index map per decode: field lookup is O(1), not the old
-        // O(n) linear scan per key (O(n²) per dialog).
+        // Key-driven: field order never affects decoding; missing rows keep current values.
+        // One key→index map per decode keeps field lookup O(1).
         let defs = current.cached_setting_defs();
         if indices.len() != defs.len() {
             return None;
@@ -835,11 +809,8 @@ impl AndroidSettings {
 static DEFS_CACHE: Mutex<Option<(u64, Vec<SettingDef>)>> = Mutex::new(None);
 
 fn defs_cache_get(hash: u64) -> Option<Vec<SettingDef>> {
-    // No re-entrancy guard here: this leaf cache is read while the
-    // settings `with_state` lock is held (`begin_request` builds the
-    // dialog payload under the lock), and it never calls back into any
-    // `with_state`, so nesting is safe by construction. The guard covers
-    // the three bridge mutexes only.
+    // No re-entrancy guard here: this leaf never calls back into any `with_state`.
+    // The guard covers the three bridge mutexes only.
     let guard = DEFS_CACHE.lock().unwrap_or_else(|poison| {
         log::error!("settings defs cache mutex poisoned; recovering state");
         poison.into_inner()
@@ -869,9 +840,7 @@ struct SettingsResultPayload {
     values: BTreeMap<String, usize>,
 }
 
-// ---------------------------------------------------------------------------
-// State machine (mirrors the library / picker pattern)
-// ---------------------------------------------------------------------------
+// State machine (mirrors the library / picker pattern).
 
 struct SettingsBridgeState {
     result: Option<SettingsDialogResult>,
@@ -888,10 +857,8 @@ static SETTINGS_STATE: Mutex<SettingsBridgeState> = Mutex::new(SettingsBridgeSta
 });
 
 fn with_state<T>(operation: impl FnOnce(&mut SettingsBridgeState) -> T) -> T {
-    // Same lock-order contract as the bridge mutex (see
-    // `bridge::lock_reentrancy_guard`): never nest, wake after release.
-    // A panicking JNI callback must not wedge the process on the next
-    // lock, so a poisoned mutex recovers its state and logs.
+    // Same lock-order contract as the bridge mutex: never nest, wake after release.
+    // A poisoned mutex recovers its state and logs.
     let _guard = bridge::lock_reentrancy_guard();
     let mut guard = SETTINGS_STATE.lock().unwrap_or_else(|poison| {
         log::error!("settings bridge mutex poisoned; recovering state");
@@ -979,8 +946,7 @@ pub(crate) fn reset_transient() {
 }
 
 /// Request that the Android side show the settings dialog.
-///
-/// Returns `Ok(false)` when a dialog is already in flight (idempotent guard).
+/// Returns `Ok(false)` when a dialog is already in flight.
 pub(crate) fn request_show_settings_dialog(
     app: &AndroidApp,
     current: &AndroidSettings,
@@ -1051,14 +1017,8 @@ fn publish_result(request_id: u64, result: SettingsDialogResult) {
     bridge::wake();
 }
 
-/// Unusable result: the dialog closed but the payload cannot be
-/// trusted (bad schema, unparseable, undecodable). Resolve the single
-/// flight as dismissed so the open flag, the error-queue flush, and an
-/// orphaned auto-pause all release through the normal dismiss path
-/// instead of wedging on a stale pending id. Single-flight makes a
-/// newer request impossible while one is pending; a stale callback
-/// racing a suspend-then-rerequest can still drop that newer flight,
-/// exactly like the pre-existing decode-failure clears below.
+/// Unusable result: the dialog closed but the payload cannot be trusted.
+/// Resolve the single flight as dismissed through the normal dismiss path.
 fn resolve_pending_as_dismissed() {
     with_state(|state| {
         state.result = Some(SettingsDialogResult::Dismissed);
@@ -1067,12 +1027,8 @@ fn resolve_pending_as_dismissed() {
     bridge::wake();
 }
 
-/// Id-conditional variant for callbacks that parsed far enough to
-/// trust the request id (e.g. schema mismatch): a stale callback
-/// racing a suspend-then-rerequest must not clear the live flight.
-/// Production dismissals always carry an id (Kotlin synthesizes
-/// dismissed JSON with the request id); only id-less paths (null
-/// test hooks, undecodable payloads) use the unconditional form.
+/// Id-conditional variant: a stale callback must not clear the live flight.
+/// Only id-less paths use the unconditional form.
 fn resolve_pending_as_dismissed_for(request_id: u64) {
     let cleared = with_state(|state| {
         if state.pending_request_id != Some(request_id) {
@@ -1144,11 +1100,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
     }
 }
 
-// ---------------------------------------------------------------------------
-// Settings apply plan: the ~100-line `handle_settings_result` body split
-// into a pure decision (here) and execution (the frontend). The frontend
-// matches on the plan; no settings branching lives at the call site.
-// ---------------------------------------------------------------------------
+// Settings apply plan: pure decision here, execution in the frontend.
 
 /// Outcome of decoding + validating a settings dialog result.
 pub(crate) enum SettingsPlan {
@@ -1161,10 +1113,7 @@ pub(crate) enum SettingsPlan {
     Invalid { reason: String },
 }
 
-/// Pure plan step for `handle_settings_result`. Takes the dialog values,
-/// the pre-dialog `AndroidSettings` (codec context), and the live snapshot
-/// **by value** (the plan owns the working copy; the caller passes
-/// `session.settings_snapshot().clone()` and executes the outcome).
+/// Pure plan step for `handle_settings_result`; owns its working copy by value.
 /// Returns what the frontend must execute.
 pub(crate) struct SettingsApplier;
 
@@ -1200,9 +1149,7 @@ impl SettingsApplier {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+// Tests.
 
 #[cfg(test)]
 mod tests {
@@ -1389,10 +1336,8 @@ mod tests {
         let registry = registry();
         let android = android_settings(&snapshot, &registry);
         let indices = def_currents(&android);
-        // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
-        // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1.
-        // Notifications: info/warning/error on → 1; position BottomLeft → 0;
-        // areas Overlay → 0; status off → 0; status position TopLeft → 2.
+        // Default indices: unmuted 0, volume 100, latency 40, rate 1, vsync 1.
+        // Notifications on, BottomLeft, Overlay; status off, TopLeft.
         assert_eq!(
             &indices[..24],
             [
@@ -1520,9 +1465,7 @@ mod tests {
 
     #[test]
     fn setting_defs_are_internally_consistent() {
-        // Structural replacement for the old parallel-arrays length check:
-        // every row must offer at least one choice, point at a valid one,
-        // and carry a unique key.
+        // Every row must offer a choice, point at a valid one, and carry a unique key.
         let snapshot = default_snapshot();
         let registry = registry();
         let android = android_settings(&snapshot, &registry);
@@ -1543,10 +1486,8 @@ mod tests {
 
     #[test]
     fn dialog_choices_align_with_keys() {
-        // Regression test: the choice list attached to each key must be
-        // that setting's own. A past misalignment showed percentages on
-        // the visibility row and words on the opacity row, silently
-        // rejecting every save outside 0..=2.
+        // Regression test: each key must carry its own setting's choice list.
+        // A past misalignment silently rejected valid saves.
         use std::collections::BTreeMap;
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
@@ -1692,9 +1633,8 @@ mod tests {
         let mut android = android_settings(&default_snapshot(), &registry);
         android.status_position = NotificationPosition::BottomRight;
         android.status_area_mode = NotificationAreaMode::Strip;
-        // Same edge as the default BottomLeft notification: the row
-        // stays (the dialog UI hides it live), so the value follows
-        // the notification mode at render time regardless.
+        // Same edge as the default BottomLeft notification: the row stays.
+        // The value follows the notification mode at render time.
         let defs = android.setting_defs();
         assert_eq!(defs.len(), 29);
         assert!(defs.iter().any(|def| def.key == "status.area_mode"));
@@ -1710,9 +1650,8 @@ mod tests {
 
     #[test]
     fn malformed_result_resolves_pending_as_dismissed() {
-        // A dialog that closed with garbage must not wedge the open
-        // flag: the single flight resolves as dismissed, the next
-        // take delivers it, and the bridge reports closed.
+        // A garbage close must not wedge the open flag.
+        // The flight resolves as dismissed; the bridge reports closed.
         with_state(|state| state.pending_request_id = Some(7));
         assert!(is_dialog_open());
         resolve_pending_as_dismissed();

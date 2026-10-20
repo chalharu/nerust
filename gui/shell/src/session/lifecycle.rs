@@ -1,7 +1,5 @@
-//! Session lifecycle orchestration: load/unload/flush plus the per-tick
-//! pump. Domain work lives in sibling modules (`settings_apply`,
-//! `command_exec`, `session_query`, `persistence`); this file only
-//! sequences construction, persistence, and notification flow.
+//! Session lifecycle orchestration: load/unload/flush plus the per-tick pump.
+//! Domain work lives in sibling modules; this file only sequences the flow.
 
 use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest};
 
@@ -29,9 +27,8 @@ impl SessionHandle {
             let Some(exporter) = self.emu.exporter().ok() else {
                 return Err(SessionError::NoCore);
             };
-            // Best-effort: a stale battery-save write failure must
-            // never veto opening a new ROM. The typed chain renders
-            // at the notification boundary.
+            // Best-effort: a stale battery-save write failure never vetoes opening a new ROM.
+            // The typed chain renders at the notification boundary.
             if let Err(error) = self.media.persistence.flush_mapper_save(exporter) {
                 log::warn!("mapper-save flush before load failed: {error}");
                 self.notifications.push(
@@ -75,9 +72,8 @@ impl SessionHandle {
         {
             log::warn!("mapper save flush before close failed: {error}");
         }
-        // Persist the latest settings to disk.  Reload from the manager first
-        // so that any pending changes (e.g. window size from
-        // remember_fit_window_size) are not overwritten by a stale snapshot.
+        // Reload from the manager before persisting, so pending changes
+        // are not overwritten by a stale snapshot.
         match self.settings.manager.reload() {
             Ok(snapshot) => {
                 self.settings.snapshot = snapshot;

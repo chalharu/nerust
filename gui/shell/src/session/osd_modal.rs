@@ -1,9 +1,7 @@
 //! Modal error batches: sequential display pumping.
 //! The shell pump and the owning frontend adapter are the only writers.
 
-/// Queue caps for the OSD subsystem. One home so burst-cap tuning
-/// stays grep-able instead of scattering literals across the queue
-/// and modal boxes.
+/// Queue caps for the OSD subsystem, in one home instead of scattered literals.
 pub(crate) struct OsdLimits;
 
 impl OsdLimits {
@@ -13,9 +11,7 @@ impl OsdLimits {
     pub(crate) const MAX_MODAL_QUEUED: usize = 8;
 }
 
-/// Pure outcome of one modal pump step. Data only: the caller
-/// formats the aggregated batch and logs overflow, so this box never
-/// touches `format!` or the log.
+/// Pure outcome of one modal pump step: data only, never touching `format!` or the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ModalPump {
     /// Nothing queued.
@@ -27,10 +23,7 @@ pub(crate) enum ModalPump {
     },
 }
 
-/// Modal half of [`OsdManager`](crate::session::osd::OsdManager):
-/// aggregation plus the sequential display queue. Pure queue logic;
-/// bullet formatting and overflow logging live at the render boundary
-/// (the manager's `pump_modal`), never here.
+/// Modal half of [`OsdManager`](crate::session::osd::OsdManager): aggregation plus display queue.
 #[derive(Debug, Default)]
 pub(crate) struct ModalCenter {
     modal_box: ModalBox,
@@ -42,8 +35,6 @@ pub(crate) struct ModalCenter {
 impl ModalCenter {
     /// Move the aggregated batch into the sequential queue, capped.
     /// Pure: returns the outcome for the caller to format and log.
-    /// `detailed` is the pre-formatted batch text supplied by the
-    /// caller; the box only stores it.
     pub(crate) fn pump(&mut self, detailed: Option<String>) -> ModalPump {
         match detailed {
             None => ModalPump::Idle,
@@ -54,9 +45,7 @@ impl ModalCenter {
         }
     }
 
-    /// Record that one overflow episode was reported. Called by the
-    /// render boundary after it logs, so repeats stay quiet until the
-    /// queue fully drains and re-arms.
+    /// Record that one overflow episode was reported; repeats stay quiet until the queue drains.
     pub(crate) fn note_overflow_reported(&mut self) {
         self.warned_full = true;
     }
@@ -154,18 +143,13 @@ impl ModalBox {
         std::mem::take(&mut self.batch)
     }
 
-    /// Take pending error lines as one display batch. Returns the raw
-    /// lines: bullet formatting happens at the render boundary
-    /// (`pump_modal`), so queued content stays plain data.
+    /// Take pending error lines as one display batch, as raw lines for the boundary to format.
     pub(crate) fn take_modal_text(&mut self) -> Vec<String> {
         self.take_batch()
     }
 
-    /// Queue one aggregated error batch for sequential display.
-    /// Capped: a stuck-open dialog plus a per-tick error flood must
-    /// not grow memory without bound. Drops the oldest, like the OSD
-    /// pending cap (history keeps every event). Returns true when a
-    /// batch was dropped.
+    /// Queue one aggregated error batch for sequential display, capped.
+    /// Drops the oldest on overflow; returns true when a batch was dropped.
     pub(crate) fn queue_modal(&mut self, detail: String) -> bool {
         let dropped = self.queue.len() >= Self::MAX_QUEUED;
         if dropped {
@@ -189,9 +173,7 @@ impl ModalBox {
         dropped
     }
 
-    /// Take the next batch only when no dialog is showing: frontends
-    /// present one dialog at a time and ack via the modal source, so
-    /// errors never stack.
+    /// Take the next batch only when no dialog is showing, so errors never stack.
     pub(crate) fn take_modal_batch(&mut self) -> Option<String> {
         if self.open {
             return None;

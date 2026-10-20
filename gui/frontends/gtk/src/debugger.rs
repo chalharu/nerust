@@ -1,7 +1,5 @@
-//! GTK debugger window: same semantics, shell APIs, and view-model
-//! formatters as the tao twin. Action batches run as async shell-drain
-//! flights polled on the GTK tick; paused pull-only, opens paused,
-//! closing keeps the pause.
+//! GTK debugger window: same semantics, shell APIs, and view-model formatters as the tao twin.
+//! Action batches run as async shell-drain flights polled on the GTK tick.
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -20,8 +18,7 @@ use super::State;
 const BOOKMARK_CAP: usize = 8;
 
 /// Rebuild granularity for [`DebuggerWindowCore::rebuild_partial`].
-/// Handlers pick the smallest scope covering their data change;
-/// drain completions carry it from `act_scoped`.
+/// Handlers pick the smallest scope covering their data change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum RebuildScope {
     /// Everything (execution, memory writes, full refreshes).
@@ -41,9 +38,8 @@ enum RebuildScope {
     Header,
 }
 
-/// Pure write-input resolution: selection plus a hex byte. Widget
-/// callbacks stay thin; the rules are unit-tested below (and the
-/// drain owns the transaction, never the widgets).
+/// Pure write-input resolution: selection plus a hex byte. Widget callbacks
+/// stay thin; the rules are unit-tested below.
 fn resolve_write_input(
     language: AppLanguage,
     selected: Option<(u32, Option<u8>)>,
@@ -145,10 +141,8 @@ pub(crate) struct DebuggerWindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
     data: DebuggerData,
-    /// In-flight async drain with its rebuild scope: `act_scoped`
-    /// starts it, the tick poller (plus a short poller while pending)
-    /// finishes it. A newer batch supersedes the stored one; orphaned
-    /// replies are ignored.
+    /// In-flight async drain with its rebuild scope: `act_scoped` starts it,
+    /// the tick poller finishes it. A newer batch supersedes the stored one.
     flight: Option<(DrainFlight, RebuildScope)>,
     /// In-flight async live-images fetch, same pattern for the 250ms
     /// PPU follow tick. At most one; a newer tick supersedes.
@@ -214,9 +208,8 @@ fn left_align(button: &gtk::Button) {
 fn entry(placeholder: Option<&str>) -> gtk::Entry {
     let entry = gtk::Entry::new();
     entry.set_placeholder_text(placeholder);
-    // Floor for hex inputs: sibling labels with hexpand (freeze row)
-    // would otherwise squeeze the entry below its placeholder in
-    // either language ("hex byte" / "16進バイト").
+    // Floor for hex inputs: sibling labels with hexpand would otherwise
+    // squeeze the entry below its placeholder in either language.
     entry.set_width_chars(10);
     entry
 }
@@ -226,14 +219,11 @@ fn action_button(label: &str) -> gtk::Button {
 }
 
 impl DebuggerWindowCore {
-    /// Open the debugger: build widgets, then pause and refresh
-    /// through the shared drain. Closing keeps the pause; resume
-    /// stays explicit.
+    /// Open the debugger: build widgets, then pause and refresh through the drain.
+    /// Closing keeps the pause; resume stays explicit.
     pub(crate) fn open(
         app: &gtk::Application,
-        // Independent toplevel like the tao twin: no transient-for
-        // parenting, so the main window keeps its own focus and
-        // position instead of dragging the debugger along with it.
+        // Independent toplevel like the tao twin: no transient-for parenting.
         // True dialogs (preferences, file/error) stay transient.
         _main_window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
@@ -269,10 +259,8 @@ impl DebuggerWindowCore {
         let confirm_label = gtk::Label::new(None);
         confirm_label.set_xalign(0.0);
         confirm_label.set_hexpand(true);
-        // Registers flow into two clickable columns like the tao
-        // viewer so tall lists (GBA: 17) cost half the height. Pure
-        // text split, no system branches. Row click picks the write
-        // target; the Set row below writes through the drain.
+        // Registers flow into two clickable columns, halving tall-list height.
+        // Pure text split, no system branches. Row click picks the write target.
         let regs_left = gtk::ListBox::new();
         regs_left.set_selection_mode(gtk::SelectionMode::None);
         let regs_right = gtk::ListBox::new();
@@ -368,17 +356,15 @@ impl DebuggerWindowCore {
 
         let dis_scroll = gtk::ScrolledWindow::new();
         dis_scroll.set_vexpand(true);
-        // Minimum one full page: the right column's lists
-        // start empty (zero natural height), so without a floor the
-        // panes minimum collapses and the list would show a stub.
+        // Minimum one full page: the right column's lists start empty, so
+        // without a floor the panes minimum collapses to a stub.
         dis_scroll.set_size_request(-1, 260);
         // Classic scrollbars: overlay indicators hide whether the
         // disassembly, dump, and right column scroll.
         dis_scroll.set_overlay_scrolling(false);
         dis_scroll.set_child(Some(&disasm_list));
-        // The drain fetches a 32-row scroll window, so the wheel
-        // scrolls the viewport natively; paging stays on Prev/Next,
-        // cursor keys, and Go.
+        // The drain fetches a 32-row scroll window, so the wheel scrolls natively;
+        // paging stays on Prev/Next, cursor keys, and Go.
 
         let left_col = gtk::Box::new(gtk::Orientation::Vertical, 12);
         left_col.set_hexpand(true);
@@ -452,9 +438,8 @@ impl DebuggerWindowCore {
         right_scroll.set_child(Some(&right_col));
         panes.append(&right_scroll);
 
-        // Memory section: full width below the panes. It stretches
-        // with the window together with the panes, so resizing
-        // grows the viewports instead of stranding dead space.
+        // Memory section: full width below the panes. It stretches with the
+        // window, so resizing grows viewports instead of stranding dead space.
         let memory = gtk::Box::new(gtk::Orientation::Vertical, 8);
         memory.set_vexpand(true);
         memory.append(&section(text(language, UiText::Memory)));
@@ -491,9 +476,8 @@ impl DebuggerWindowCore {
         dump_scroll.set_vexpand(true);
         dump_scroll.set_overlay_scrolling(false);
         dump_scroll.set_child(Some(&dump_list));
-        // The drain fetches a 32-row scroll window, so the wheel
-        // scrolls the viewport natively; paging stays on Prev/Next,
-        // cursor keys, and Go.
+        // The drain fetches a 32-row scroll window, so the wheel scrolls natively;
+        // paging stays on Prev/Next, cursor keys, and Go.
         memory.append(&dump_scroll);
 
         // Edit row + confirm row + Refresh.
@@ -548,18 +532,15 @@ impl DebuggerWindowCore {
             glib::Propagation::Stop
         });
         Self::act(&result, &[DebugAction::Pause, DebugAction::Refresh]);
-        // Live PPU follow while the core runs (tao twin: `maybe_live_ppu`).
-        // Images-only, never a full drain: the paused-gated inspect
-        // refuses while running and would blank the dump/registers.
-        // The tick dies with the window.
+        // Live PPU follow while the core runs. Images-only, never a full drain:
+        // the paused-gated inspect refuses while running and would blank the lists.
         let weak = Rc::downgrade(&result);
         glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
             let Some(win) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
-            // Backstop for drain flights (the short poller in `act`
-            // normally finishes them first): poll here too so a
-            // missed watcher can never strand a pending display.
+            // Backstop for drain flights: poll here too so a missed watcher
+            // can never strand a pending display.
             Self::poll_flight(&win);
             let live = win.borrow().window.is_visible() && win.borrow().ppu_window.is_some() && {
                 let state = win.borrow().state.clone();
@@ -577,9 +558,8 @@ impl DebuggerWindowCore {
         result
     }
 
-    /// Live-tick body: settle the in-flight fetch, then start a new
-    /// one when following a running core. Patches images and pause
-    /// chrome only; never rebuilds debugger widgets (scroll survives).
+    /// Live-tick body: settle the in-flight fetch, then start a new one when following.
+    /// Patches images and pause chrome only; never rebuilds widgets (scroll survives).
     fn live_tick(win: &DebuggerWindow) {
         if Self::poll_live_flight(win) {
             // A fetch is still crossing: wait for its poller instead
@@ -605,9 +585,8 @@ impl DebuggerWindowCore {
         }
     }
 
-    /// Short poller while a live fetch is pending, mirroring
-    /// `watch_flight`: applies within ~30ms of the reply instead of
-    /// waiting for the 250ms tick.
+    /// Short poller while a live fetch is pending, mirroring `watch_flight`.
+    /// Applies within ~30ms of the reply instead of waiting for the 250ms tick.
     fn watch_live_flight(win: &DebuggerWindow) {
         let weak = Rc::downgrade(win);
         glib::timeout_add_local(std::time::Duration::from_millis(30), move || {
@@ -622,10 +601,8 @@ impl DebuggerWindowCore {
         });
     }
 
-    /// Poll the stored live fetch once. Returns whether one is still
-    /// pending; on completion the images patch in like a synchronous
-    /// tick. Orphaned flights (paused or closed mid-fetch) settle
-    /// harmlessly: the generation guard skips stale data.
+    /// Poll the stored live fetch once. Returns whether one is still pending.
+    /// Orphaned flights settle harmlessly: the generation guard skips stale data.
     fn poll_live_flight(win: &DebuggerWindow) -> bool {
         let mut flight = match win.borrow_mut().live_flight.take() {
             Some(flight) => flight,
@@ -643,10 +620,8 @@ impl DebuggerWindowCore {
         }
     }
 
-    /// Patch finished live images into the display. Images apply when
-    /// newer regardless of pause (a paused frame is honest data); the
-    /// running chrome only applies while still running, so a
-    /// pause-in-flight never flips the status back to Running.
+    /// Patch finished live images into the display. Images apply when newer
+    /// regardless of pause; running chrome only applies while still running.
     fn apply_live_images(win: &DebuggerWindow, live: nerust_gui_shell::session::LiveImages) {
         let Some((generation, images)) = live else {
             return;
@@ -815,18 +790,14 @@ impl DebuggerWindowCore {
         Self::act(win, &[DebugAction::Refresh]);
     }
 
-    /// Run actions through an async drain flight, then rebuild from the
-    /// new display. Inputs are copied out first so the window borrow
-    /// never spans the round-trip; the flight only sends, the tick
-    /// poller applies.
+    /// Run actions through an async drain flight, then rebuild from the new display.
+    /// Inputs are copied out first so the window borrow never spans the round-trip.
     fn act(win: &DebuggerWindow, actions: &[DebugAction]) {
         Self::act_scoped(win, actions, RebuildScope::All);
     }
 
-    /// [`DebuggerWindowCore::act`] with a rebuild scope: the finished
-    /// drain refreshes only the sections its data moved (see
-    /// [`RebuildScope`]), so navigation and highlight gestures skip
-    /// the ~700-widget full rebuild.
+    /// [`DebuggerWindowCore::act`] with a rebuild scope: the finished drain
+    /// refreshes only the sections its data moved.
     fn act_scoped(win: &DebuggerWindow, actions: &[DebugAction], scope: RebuildScope) {
         let (
             state,
@@ -876,10 +847,8 @@ impl DebuggerWindowCore {
         }
     }
 
-    /// Short poller while a flight is pending: applies the display
-    /// within ~30ms of the reply instead of waiting for the 250ms
-    /// live tick. Dies with the window; extra pollers from rapid
-    /// batches see no flight and stop.
+    /// Short poller while a flight is pending: applies the display within ~30ms.
+    /// Dies with the window; extra pollers from rapid batches see no flight and stop.
     fn watch_flight(win: &DebuggerWindow) {
         let weak = Rc::downgrade(win);
         glib::timeout_add_local(std::time::Duration::from_millis(30), move || {
@@ -894,9 +863,8 @@ impl DebuggerWindowCore {
         });
     }
 
-    /// Poll the stored flight once. Returns whether one is still
-    /// pending: on completion the display applies and the scoped
-    /// widgets rebuild, exactly like a synchronous drain.
+    /// Poll the stored flight once. Returns whether one is still pending: on
+    /// completion the display applies, exactly like a synchronous drain.
     fn poll_flight(win: &DebuggerWindow) -> bool {
         let (mut flight, scope) = match win.borrow_mut().flight.take() {
             Some(stored) => stored,
@@ -923,9 +891,8 @@ impl DebuggerWindowCore {
     ) {
         {
             let mut this = win.borrow_mut();
-            // Running drains come back section-degenerate (paused
-            // gate): restore the last paused rows so Resume keeps the
-            // inspectable state instead of blanking it.
+            // Running drains come back section-degenerate (paused gate): restore
+            // the last paused rows so Resume keeps inspectable state.
             let mut display = output.display;
             display.restore_paused_sections(&this.data.display);
             this.data.display = display;
@@ -936,9 +903,8 @@ impl DebuggerWindowCore {
         Self::rebuild_partial(win, scope);
     }
 
-    /// Status-line-only refresh: parse errors and prompts never touch
-    /// the lists, so only the header (labels, no widget creation)
-    /// rebuilds.
+    /// Status-line-only refresh: parse errors and prompts never touch the lists,
+    /// so only the header rebuilds.
     fn set_status(win: &DebuggerWindow, status: String) {
         // Frontend-local wording: stored verbatim, like the tao twin.
         win.borrow_mut().data.display.status = StatusMessage::Local(status);
@@ -967,9 +933,8 @@ impl DebuggerWindowCore {
             &app, &main, state, images, images_gen, panels, language,
         );
         win.borrow_mut().ppu_window = Some(ppu);
-        // The PPU opens with whatever the last drain fetched (empty
-        // before any PPU was open), so refresh once with the viewer
-        // present: images and panels populate immediately.
+        // The PPU opens with whatever the last drain fetched, so refresh once
+        // with the viewer present: images and panels populate immediately.
         Self::act(win, &[DebugAction::Refresh]);
     }
 
@@ -1081,11 +1046,8 @@ impl DebuggerWindowCore {
     }
 
     fn reg_selected(win: &DebuggerWindow, name: &'static str) {
-        // Highlight-only: the target feeds the next Set action and
-        // the register highlight, neither of which needs fresh emu
-        // data, so rebuild without a drain (a full drain here would
-        // stall the main thread on up to five timeout round-trips
-        // just to move a highlight).
+        // Highlight-only: no fresh emu data needed, so rebuild without a drain
+        // (a full drain would stall the main thread on timeout round-trips).
         win.borrow_mut().data.reg_target = Some(name);
         Self::rebuild_partial(win, RebuildScope::State);
     }
@@ -1149,9 +1111,8 @@ impl DebuggerWindowCore {
         Self::freeze_stage(win, &input);
     }
 
-    /// Edit-row Freeze: reads the edit row's own input, so each of
-    /// the row's three buttons reads what sits next to it (Write and
-    /// Watch already do; Freeze used to reach up to the top input).
+    /// Edit-row Freeze: reads the edit row's own input, so each of the row's
+    /// three buttons reads what sits next to it.
     fn edit_freeze_set(win: &DebuggerWindow) {
         let (language, selected, input) = {
             let this = win.borrow();
@@ -1201,10 +1162,8 @@ impl DebuggerWindowCore {
         };
         match resolve_write_input(language, selected, &input) {
             Ok((addr, value)) => {
-                // Re-select first: the batch prepares fresh state
-                // before staging, so Write also works after a cancel.
-                // The confirm row and the moved dump highlight render
-                // on completion; the lists are untouched.
+                // Re-select first: the batch prepares fresh state before staging.
+                // The confirm row and moved dump highlight render on completion.
                 Self::act_scoped(
                     win,
                     &[DebugAction::SelectRow(addr), DebugAction::EditStage(value)],
@@ -1226,10 +1185,8 @@ impl DebuggerWindowCore {
         Self::act_scoped(win, &[DebugAction::EditCancel], RebuildScope::Edit);
     }
 
-    /// Rebuild slice by slice. The header (labels only, no widget
-    /// creation) always refreshes; heavy lists rebuild only when
-    /// their data moved, so highlight-only gestures skip ~700 widget
-    /// creates. Drain completions pick the scope at `act_scoped`.
+    /// Rebuild slice by slice. The header always refreshes; heavy lists rebuild
+    /// only when their data moved, so highlight-only gestures skip ~700 creates.
     fn rebuild_partial(win: &DebuggerWindow, scope: RebuildScope) {
         let this = win.borrow();
         Self::rebuild_header(&this);
@@ -1315,9 +1272,8 @@ impl DebuggerWindowCore {
     fn rebuild_disasm(win: &DebuggerWindow, this: &DebuggerWindowCore) {
         let display = &this.data.display;
         let language = this.data.language;
-        // Pinned anchor rows carry `@` like the tao viewer so a line
-        // click reads back visibly even off-PC. Nothing is pinned in
-        // follow-PC mode.
+        // Pinned anchor rows carry `@` like the tao viewer so a line click
+        // reads back visibly even off-PC. Nothing pinned in follow-PC mode.
         let pinned = if this.data.nav.follow_pc() {
             None
         } else {
@@ -1376,9 +1332,8 @@ impl DebuggerWindowCore {
     fn rebuild_dump(win: &DebuggerWindow, this: &DebuggerWindowCore) {
         let display = &this.data.display;
         clear_list(&this.dump_list);
-        // Byte-precise selection like the tao viewer: every byte is
-        // its own button, so the write target reads exactly (the
-        // address head keeps the old row-base pick).
+        // Byte-precise selection like the tao viewer: every byte is its own
+        // button, so the write target reads exactly.
         for hex_row in &display.dump_rows {
             let selected_addr = this.data.selected.map(|(a, _)| a);
             // Containing-row match: a mid-row pick still lights its row.
@@ -1451,10 +1406,8 @@ impl DebuggerWindowCore {
     fn rebuild_state(win: &DebuggerWindow, this: &DebuggerWindowCore) {
         let display = &this.data.display;
         let language = this.data.language;
-        // Registers flow into two clickable columns like the tao
-        // viewer: the kernel order is kept, the view only halves
-        // the list. Row click picks the write target; lines are
-        // formatted here from the structured snapshot.
+        // Registers flow into two clickable columns: the kernel order is kept,
+        // the view only halves the list. Lines format here from the snapshot.
         let regs = &display.regs;
         let mid = regs.len().div_ceil(2).min(regs.len());
         Self::fill_reg_list(win, &this.regs_left, &regs[..mid], this.data.reg_target);
@@ -1526,9 +1479,8 @@ impl DebuggerWindowCore {
     }
 }
 
-/// Window-scoped key mapping: F6/F7/F9 execution, Up/Down dump
-/// paging. Left/Right stay with the widgets (caret movement).
-/// Pure mapping shared by the controller and the tests below.
+/// Window-scoped key mapping: F6/F7/F9 execution, Up/Down dump paging.
+/// Left/Right stay with the widgets; pure mapping shared by controller and tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DebuggerKey {
     StepFrame,
@@ -1739,10 +1691,8 @@ mod tests {
         }
     }
 
-    /// Open a debugger window for widget tests. Each test uses its
-    /// own application: a second Application fights the first for
-    /// GApplication registration. The caller binds and holds the
-    /// whole tuple so nothing drops mid-test.
+    /// Open a debugger window for widget tests. Each test uses its own
+    /// application: a second Application fights the first for registration.
     fn open_test_window() -> Option<(gtk::Application, gtk::ApplicationWindow, DebuggerWindow)> {
         let (app, main, state) = harness()?;
         let win = DebuggerWindowCore::open(&app, &main, state);
@@ -1768,9 +1718,8 @@ mod tests {
         assert!(win.borrow().data.selected_space().is_none());
         assert_eq!(win.borrow().data.selected_name(), "");
         assert_eq!(win.borrow().data.anchor(), 0);
-        // Independent toplevel like the tao twin: no transient-for
-        // parenting, so the main window keeps its own focus and
-        // position instead of dragging the debugger along with it.
+        // Independent toplevel like the tao twin: no transient-for parenting,
+        // so the debugger never drags along with the main window.
         assert!(win.borrow().window.transient_for().is_none());
     }
 
@@ -1892,10 +1841,8 @@ mod tests {
             eprintln!("SKIP: debugger widget test needs a display");
             return;
         };
-        // A real window-manager close drives delete-event (not an
-        // external X destroy): the handler hides the window and the
-        // idempotent reopen path re-presents it. Both must survive
-        // without touching a dead drawable.
+        // A real window-manager close drives delete-event (not external X destroy):
+        // the handler hides and the idempotent reopen re-presents it.
         win.borrow().window.close();
         assert!(!win.borrow().window.is_visible());
         win.borrow().present();

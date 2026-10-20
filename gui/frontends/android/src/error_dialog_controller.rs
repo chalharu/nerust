@@ -1,8 +1,5 @@
 //! Single-owner error-dialog state machine (host-testable).
-//!
-//! The shell `ModalBox` stays the only queue gate; this controller owns
-//! the frontend side (`showing`/`current`/`auto_paused`) so every JNI
-//! call site is a thin adapter around it.
+//! The shell `ModalBox` stays the only queue gate.
 use nerust_gui_shell::session::osd::{ModalSink, ModalSource};
 
 /// JNI handoff for a dialog that should be presented now.
@@ -28,9 +25,8 @@ pub(crate) enum SettingsClosedTransition {
     Idle,
 }
 
-/// Screen ownership for a dialog decision. Invalid combos are
-/// unrepresentable: suspended and settings-owned are exclusive, and
-/// only the foreground carries pausability.
+/// Screen ownership for a dialog decision; invalid combos are unrepresentable.
+/// Only the foreground carries pausability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Screen {
     Suspended,
@@ -74,9 +70,8 @@ impl ErrorDialogController {
         self.auto_paused
     }
 
-    /// Take the next queued batch for display, unless suspended, already
-    /// showing, or settings owns the screen. Moves the batch into the
-    /// controller; the JNI adapter reads it via `current_detail`.
+    /// Take the next queued batch for display, unless suspended, showing,
+    /// or settings owns the screen. Moves the batch into the controller.
     pub(crate) fn poll_show(
         &mut self,
         queue: &mut impl ModalSource,
@@ -99,10 +94,8 @@ impl ErrorDialogController {
         })
     }
 
-    /// Dismiss hook from the dialog. Resumes only our own auto-pause,
-    /// then asks for the next batch. A stale duplicate (suspend already
-    /// requeued, or a doubled failure synthesis) is a no-op: the shell
-    /// gate release is idempotent and state is untouched.
+    /// Dismiss hook: resumes only our own auto-pause, then asks for the next batch.
+    /// Stale duplicates are no-ops.
     pub(crate) fn on_dismissed(
         &mut self,
         queue: &mut (impl ModalSink + ModalSource),
@@ -124,9 +117,8 @@ impl ErrorDialogController {
             return IDLE;
         }
         self.current = None;
-        // A dismiss racing suspend resumes nothing: the resume path
-        // replays from the preserved pause flag and queue instead, and
-        // suspend owns the requeue (see `on_suspended`).
+        // A dismiss racing suspend resumes nothing; suspend owns the requeue.
+        // The resume path replays from the preserved pause flag and queue.
         if screen == Screen::Suspended {
             return IDLE;
         }
@@ -314,9 +306,8 @@ mod tests {
 
     #[test]
     fn dismiss_racing_suspend_resumes_nothing_and_keeps_queue() {
-        // Suspend has not run yet but the activity is already gone:
-        // dropping here is safe because suspend owns the requeue, and a
-        // suspend that already ran leaves no current to drop.
+        // Suspend has not run yet but the activity is already gone.
+        // Dropping here is safe: suspend owns the requeue.
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("racing");
         controller

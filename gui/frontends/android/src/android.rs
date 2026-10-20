@@ -125,10 +125,8 @@ pub(crate) fn run(
     audio_registry: Arc<AudioBackendRegistry>,
     gpu_factory: Rc<dyn GpuFactory>,
 ) -> Result<(), String> {
-    // Best-effort re-registration from the native thread.  The primary
-    // registration happens in JNI_OnLoad (called by System.loadLibrary on the
-    // main thread with the app classloader).  This fallback may fail because
-    // the native thread's attached env uses the system classloader.
+    // Best-effort re-registration from the native thread; the system classloader
+    // may fail it. Primary registration happens in JNI_OnLoad.
     let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
     if let Err(error) = vm.attach_current_thread(register_main_activity_natives) {
         log::warn!("native re-registration skipped (expected on native thread): {error:?}");
@@ -162,10 +160,8 @@ pub(crate) fn run(
     ) {
         Ok(state) => state,
         Err(error) => {
-            // No event loop exists yet, so there is no error-dialog queue
-            // to drain: surface the cause with a toast, then finish the
-            // activity instead of aborting the process (cdylib abort used
-            // to take down the whole app with no message).
+            // No event loop exists yet, so no error-dialog queue to drain.
+            // Toast the cause, then finish the activity instead of aborting.
             log::error!("android::run: frontend init failed: {error}");
             let message = format!("Startup failed: {error}");
             show_toast(&init_fail_app, &message);
@@ -187,9 +183,8 @@ pub(crate) fn run(
 }
 
 fn show_toast(app: &AndroidApp, message: &str) {
-    // Toast must be created/shown on the Java main thread; this function
-    // is called from the winit event-loop thread where it would otherwise
-    // fail silently (no Looper) and hide save/load failures from the user.
+    // Toasts need the Java main thread; the event-loop thread has no Looper.
+    // A silent failure would hide save/load failures from the user.
     let message = message.to_string();
     bridge::call_on_activity(app, "show Android toast", move |env, activity| {
         let toast_class = env.find_class(jni_str!("android/widget/Toast"))?;
@@ -229,11 +224,8 @@ struct AndroidFrontend {
 }
 
 impl AndroidFrontend {
-    /// Fallible constructor: session creation used to `abort()` the cdylib
-    /// on settings I/O corruption. A dead process shows no message; this
-    /// returns the error so `run()` can toast + finish the activity.
-    /// Corrupted settings files are quarantined (renamed) and replaced
-    /// with defaults instead of wedging every future launch.
+    /// Fallible constructor: returns the error so `run()` can toast + finish the activity.
+    /// Corrupted settings files are quarantined and replaced with defaults.
     fn try_new(
         app: AndroidApp,
         storage: AndroidStorage,
@@ -309,10 +301,8 @@ impl AndroidFrontend {
         Ok(frontend)
     }
 
-    /// Session creation with corrupted-settings recovery. A parse failure
-    /// quarantines the settings file (`settings.yaml.corrupted-<nanos>`)
-    /// and retries once with defaults, so one bad write cannot wedge
-    /// every future launch.
+    /// Session creation with corrupted-settings recovery: quarantine and retry once with defaults.
+    /// One bad write cannot wedge every future launch.
     fn create_session_with_recovery(
         capabilities: HostBackendCapabilities,
         system_registry: &Arc<SystemRegistry>,
@@ -436,24 +426,18 @@ impl AndroidFrontend {
     }
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult, tick: TickMetrics) {
-        // Settings closed (applied or dismissed): flush the error queue
-        // and resume an orphaned pause. The gate reads DialogOwnership
-        // (bridge truth); no cached flag exists to go stale.
+        // Settings closed: flush the error queue and resume an orphaned pause.
+        // The gate reads DialogOwnership; no cached flag exists to go stale.
         let is_applied = matches!(result, SettingsDialogResult::Applied(_));
         if self.dialogs.is_settings_open() && !is_applied {
-            // Stale synthesized dismiss racing a suspend-then-rerequest:
-            // the dialog is visually up, so this result belongs to a
-            // dead flight. Ignore it; the live flight's result arrives
-            // with its own request id.
+            // Stale synthesized dismiss racing a suspend-then-rerequest: ignore it.
+            // The live flight's result arrives with its own request id.
             log::debug!("handle_settings_result: stale result while dialog open; ignoring");
             return;
         }
         if self.dialogs.is_settings_open() {
-            // Applied racing a live re-request (suspend cleared the
-            // old pending, the rerequest minted a new one before this
-            // ran): the values are real user input, so apply them even
-            // though the new dialog shows pre-apply content. Error
-            // flush stays shielded below; the user re-saves if needed.
+            // Applied racing a live re-request: the values are real user input, so apply them.
+            // Error flush stays shielded below; the user re-saves if needed.
             log::warn!("handle_settings_result: applying settings while a newer dialog is open");
         } else {
             match self.osd.with_modal(|queue| {
@@ -533,10 +517,8 @@ impl AndroidFrontend {
                         );
                     }
                 }
-                // Push touch-overlay (and FPS-label) settings to the live
-                // chrome: without this the saved snapshot and the visible
-                // overlay diverge, so a changed opacity/scale/visibility
-                // looks "ignored" until the next ROM load or resize.
+                // Push overlay and FPS-label settings to the live chrome.
+                // Otherwise saved and visible settings diverge until the next load or resize.
                 self.input.rebuild_overlay(
                     &self.session,
                     &self.app,
@@ -628,17 +610,14 @@ impl AndroidFrontend {
                 log::error!("{error}");
             }
         }
-        // Bridge truth, not the request outcome: the sync show path
-        // leaves this dialog up while the request reports "already".
-        // No cached flag: every gate queries DialogOwnership instead.
+        // Bridge truth, not the request outcome: the sync show path may leave this dialog up.
+        // Every gate queries DialogOwnership instead.
     }
 
     fn handle_menu_action(&mut self, event: FrontendEvent, tick: TickMetrics) {
         log::info!("AndroidFrontend::handle_menu_action: {:?}", event);
-        // Exhaustive over the event: a new FrontendEvent variant fails
-        // to compile here instead of silently becoming a dialog dismiss.
-        // `tick` is threaded through from the single per-pass metrics
-        // lock; handlers must not re-lock for their own gates.
+        // Exhaustive over the event: a new variant fails to compile here.
+        // Handlers must not re-lock; `tick` comes from the single per-pass lock.
         match event {
             FrontendEvent::Menu(action) => match action {
                 MenuAction::ControllerInput {
@@ -692,9 +671,8 @@ impl AndroidFrontend {
                 MenuAction::OpenRom => self.request_open_rom(),
                 MenuAction::OpenSettings => self.request_settings_dialog(),
                 MenuAction::OrientationChanged => {
-                    // Screen rotation: rebuild the touch overlay (hit zones)
-                    // for the new window size even if winit did not deliver
-                    // a Resized event. Idempotent with the Resized path.
+                    // Rotation: rebuild the touch overlay even without a Resized event.
+                    // Idempotent with the Resized path.
                     self.input.rebuild_overlay(
                         &self.session,
                         &self.app,
@@ -712,13 +690,8 @@ impl AndroidFrontend {
         }
     }
 
-    /// Show the oldest queued error unless suspended, already showing,
-    /// or settings owns the screen. Bridge truth via DialogOwnership:
-    /// the sync JNI path shows the settings dialog before the event
-    /// loop drains the open event, and Kotlin also refuses the eviction;
-    /// both layers guard the same race.
-    /// Takes the pass tick so the caller pays one metrics lock, not
-    /// one per dialog gate.
+    /// Show the oldest queued error unless suspended, showing, or settings owns the screen.
+    /// Takes the pass tick (one metrics lock per pass).
     fn maybe_show_error_dialog(&mut self, tick: TickMetrics) {
         let request = self
             .osd
@@ -737,11 +710,8 @@ impl AndroidFrontend {
         }
     }
 
-    /// Dismiss hook from the Kotlin dialog. Resumes only our own
-    /// auto-pause, then shows the next queued error, if any.
-    /// `tick` is the pass tick: this handler must not take a second
-    /// metrics lock (the old re-lock broke the single-lock-per-pass
-    /// contract in `about_to_wait`).
+    /// Dismiss hook: resumes only our own auto-pause, then shows the next queued error.
+    /// `tick` is the pass tick; this handler must not take a second metrics lock.
     fn handle_error_dialog_dismissed(&mut self, tick: TickMetrics) {
         // Bridge truth here: a settings dialog may have opened over the
         // error since the last event.
@@ -785,9 +755,8 @@ impl AndroidFrontend {
                 Some(o)
             }
             Err(error) => {
-                // Mobile has no stderr: a silent None looks like
-                // success. The shell already pushed a modal batch;
-                // the warn keeps the transport cause in logcat.
+                // Mobile has no stderr: a silent None looks like success.
+                // The warn keeps the transport cause in logcat.
                 log::warn!("Android exec {cmd:?} failed: {error}");
                 None
             }
@@ -902,9 +871,8 @@ impl ApplicationHandler for AndroidFrontend {
         bridge::reset_transient();
         picker::reset_transient();
         settings::reset_transient();
-        // Transient UI dies with the activity: the coordinator releases
-        // the gate and requeues the unacked head; the settings bridge
-        // pending id dies with the dialog it tracked.
+        // Transient UI dies with the activity: release the gate, requeue the head.
+        // The settings bridge pending id dies with its dialog.
         self.osd
             .with_modal(|queue| self.dialogs.on_suspended(queue));
         self.release_window_resources();

@@ -1,9 +1,5 @@
 //! Single seam to system construction and session-layer driving.
-//!
-//! The generic validation harness drives [`TestSystem`], which owns the
-//! session execution engine ([`EmuCore`]) built from factory parts.
-//! System addressing resolves through pre-existing maps only
-//! (CLI options schema, debugger space table, input field map).
+//! System addressing resolves through pre-existing maps only.
 
 use std::{
     collections::HashMap,
@@ -40,10 +36,8 @@ pub(crate) struct TestSystem {
     system: &'static str,
 }
 
-/// Single construction site: every harness mode (validation,
-/// measure) opens its session here, so case-to-system plumbing
-/// (`options`, sample rate) cannot drift between modes. Driving
-/// stays unified in `drive_case`; construction stays unified here.
+/// Single construction site: every harness mode opens its session here, so
+/// case-to-system plumbing cannot drift between modes.
 pub(crate) fn open_case_system(
     factories: &[Box<dyn CoreFactory>],
     case: &RomCase,
@@ -58,15 +52,8 @@ pub(crate) fn open_case_system(
     )
 }
 
-/// Build a loaded system through `CoreFactory` and wrap it in the
-/// session execution engine.
-///
-/// The system is selected by ROM judgment: the first factory whose
-/// `probe_media` accepts the bytes wins. No match is eligibility, not
-/// failure — [`RomTestError::NoMatchingSystem`], mapped to an ignored
-/// outcome upstream. Settings are factory defaults plus English;
-/// both player slots get the P1 profile; audio taps nominal samples
-/// per stepped frame; load is paused so power-on survives to frame zero.
+/// Build a loaded system through `CoreFactory` and wrap it in the session engine.
+/// ROM judgment selects the system; no match is eligibility, not failure.
 pub(crate) fn open_headless_system(
     factories: &[Box<dyn CoreFactory>],
     case_id: &str,
@@ -88,11 +75,8 @@ pub(crate) fn open_headless_system(
         })?;
 
     let view = headless_view(factory, case_id)?;
-    // Case options pass straight through to the factory CLI schema
-    // as argv (single-sourced flag spelling and value validation;
-    // clap rejects typos loudly). Explicit options keep beating saved
-    // settings inside `resolve_load_request`, as with real
-    // command-line usage.
+    // Case options pass straight through to the factory CLI schema as argv.
+    // Explicit options keep beating saved settings inside `resolve_load_request`.
     let mut argv = Vec::with_capacity(options.len() + 1);
     argv.push("headless".to_string());
     argv.extend(options);
@@ -132,15 +116,13 @@ pub(crate) fn open_headless_system(
     emu.load_paused(&media, config.core_options)
         .map_err(|error| construction(format!("load: {error:?}")))?;
 
-    // Resolve test ids through the injected map: space roles against
-    // the thread's table snapshot, pad bits against the field map.
-    // Ids always come from live system state, never from positions.
+    // Resolve test ids through the injected map, never from positions.
+    // Space roles against the table snapshot, pad bits against the field map.
     let spaces = emu
         .memory_spaces()
         .map_err(|error| construction(format!("memory spaces: {error:?}")))?;
     // Pad buttons resolve through the slot profiles to buffer fields.
-    // Absent from the group means no such hardware (silent no-op);
-    // present but unmapped is loud drift.
+    // Absent from the group is a silent no-op; present but unmapped is loud drift.
     let mut pad_buttons = Vec::with_capacity(assignments.slots().len());
     for (pad, (attachment, profile)) in assignments.slots().iter().enumerate() {
         let profile = profile
@@ -171,9 +153,8 @@ pub(crate) fn open_headless_system(
     let tap = Arc::new(Mutex::new(Vec::new()));
     emu.tap_nominal_audio(Arc::clone(&tap))
         .map_err(|error| construction(format!("tap: {error:?}")))?;
-    // Core-driven taps: one per channel the core lists, installed
-    // without reading case data (open loads ROMs, never validates
-    // tests). Unknown yaml channels fail at read time, never here.
+    // Core-driven taps: one per channel the core lists. Unknown yaml
+    // channels fail at read time, never here.
     let channels = emu
         .output_channels()
         .map_err(|error| construction(format!("channels: {error:?}")))?;
@@ -197,9 +178,8 @@ pub(crate) fn open_headless_system(
     })
 }
 
-/// Deterministic settings view: factory defaults plus English,
-/// independent of GUI/user state. Test tooling, not production
-/// interface — fails loudly when the factory exposes no defaults.
+/// Deterministic settings view: factory defaults plus English.
+/// Test tooling, not production interface; fails loudly without defaults.
 fn headless_view(
     factory: &dyn CoreFactory,
     case_id: &str,
@@ -217,9 +197,8 @@ fn headless_view(
     })
 }
 
-/// Clone the P1 profile onto P2. The suite drives both pads (88 pad2
-/// events) plus the microphone, so the factory default of an unassigned
-/// P2 is insufficient here.
+/// Clone the P1 profile onto P2. The suite drives both pads plus the
+/// microphone, so an unassigned P2 is insufficient here.
 fn duplicate_p1_to_p2(base: &InputAssignments) -> Option<InputAssignments> {
     let p1 = base.slots().first()?.1.clone()?;
     let mut slots = base.slots().to_vec();
@@ -229,9 +208,8 @@ fn duplicate_p1_to_p2(base: &InputAssignments) -> Option<InputAssignments> {
     Some(InputAssignments::new(slots))
 }
 
-/// One address read through the Spaces table: a mapped value, an
-/// open (floating) bus on covered-but-unreadable addresses, or an
-/// unmapped address covered by no space.
+/// One address read through the Spaces table: mapped value, open bus on
+/// covered-but-unreadable addresses, or unmapped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MemoryRead {
     Mapped(u8),
@@ -247,10 +225,7 @@ impl TestSystem {
     }
 
     /// Driving capability: stepping, input, reset. Sees neither taps,
-    /// spaces, nor channels — enforced by construction (only these
-    /// fields cross the boundary). Control and observe views each
-    /// need `&mut` (input publish, framebuffer swap), so they are
-    /// sequential, never simultaneous; inspection is fully shared.
+    /// spaces, nor channels — enforced by construction.
     pub(crate) fn control(&mut self) -> SystemControl<'_> {
         SystemControl {
             emu: &self.emu,
@@ -270,10 +245,8 @@ impl TestSystem {
         }
     }
 
-    /// Point inspection: memory and registers through the paused
-    /// thread. Fully shared — inspection never mutates session state,
-    /// so holders can coexist with each other (but not with a live
-    /// control/observe borrow).
+    /// Point inspection through the paused thread. Fully shared; inspection
+    /// never mutates session state.
     pub(crate) fn inspect(&self) -> SystemInspector<'_> {
         SystemInspector {
             emu: &self.emu,
@@ -282,9 +255,8 @@ impl TestSystem {
     }
 }
 
-/// Driving capability: stepping, input, reset. Owns no session state
-/// beyond its three fields; in particular it cannot read taps, spaces,
-/// or channels, so driving code provably cannot observe.
+/// Driving capability: stepping, input, reset. Owns no session state beyond
+/// its three fields; driving code provably cannot observe.
 pub(crate) struct SystemControl<'a> {
     emu: &'a EmuCore,
     gui_input: &'a mut GuiInput,
@@ -292,10 +264,8 @@ pub(crate) struct SystemControl<'a> {
 }
 
 impl SystemControl<'_> {
-    /// Drive one button for the next frame, addressed by the control
-    /// id string the slot profile exposes. Unknown to every pad is a
-    /// loud typo error; known but absent from this pad is a silent
-    /// no-op (no such hardware); field failures are always loud.
+    /// Drive one button for the next frame, addressed by the slot profile's id.
+    /// Unknown to every pad is loud; absent from this pad is a silent no-op.
     pub fn set_button(
         &mut self,
         pad: usize,
@@ -349,9 +319,8 @@ impl SystemControl<'_> {
     }
 }
 
-/// Per-frame observation: screen, audio, channel taps. Cannot drive
-/// input or reset, and cannot resolve spaces — observation code
-/// provably cannot steer the session it measures.
+/// Per-frame observation: screen, audio, channel taps. Cannot drive input
+/// or reset, and cannot resolve spaces.
 pub(crate) struct FrameObserve<'a> {
     emu: &'a mut EmuCore,
     tap: &'a Mutex<Vec<StereoSample>>,
@@ -361,9 +330,7 @@ pub(crate) struct FrameObserve<'a> {
 
 impl FrameObserve<'_> {
     /// Latest published frame, read from the shared display buffer.
-    /// Swaps first: stepped frames land in the shared buffer, and only
-    /// the swap moves them to the display side. Valid after a step: the
-    /// thread is paused, so no frame can overwrite it concurrently.
+    /// Swaps first; valid after a step (the thread is paused).
     pub fn screen_buffer(&mut self) -> &FrameBuffer {
         self.emu.swap_frame_buffer();
         self.emu.frame_buffer()
@@ -384,10 +351,7 @@ impl FrameObserve<'_> {
     }
 
     /// Drain one channel tap (this frame's fresh bytes only).
-    /// Accumulation is the caller's job: the tap holds the latest
-    /// frame's delta, mirroring the audio tap. Unknown channels fail
-    /// loudly here (read-time validation, like registers/spaces) —
-    /// never silently empty.
+    /// Accumulation is the caller's job; unknown channels fail loudly here.
     pub fn drain_channel(&self, channel: &str) -> Result<Vec<u8>, RomTestError> {
         let tap = self.serial_taps.get(channel).ok_or_else(|| {
             RomTestError::EmuThread(format!(
@@ -409,10 +373,8 @@ pub(crate) struct SystemInspector<'a> {
 }
 
 impl SystemInspector<'_> {
-    /// Read one byte through the thread inspect path, resolved by
-    /// address against the table snapshot (tables forbid overlap, so
-    /// the home is unique). Covered-but-unreadable means open bus;
-    /// uncovered means unmapped — distinguished here, never guessed.
+    /// Read one byte through the thread inspect path, resolved against the table.
+    /// Covered-but-unreadable means open bus; uncovered means unmapped.
     pub fn read_memory_byte(&self, addr: u32) -> Result<MemoryRead, RomTestError> {
         let Some(space) = self
             .spaces
@@ -441,9 +403,7 @@ impl SystemInspector<'_> {
     }
 
     /// Read the live register list through the thread inspect path.
-    /// Same paused moment as a memory dump: the caller stepped first,
-    /// so names and values are frame-addressed. Empty rows keep the
-    /// response to registers only.
+    /// Same paused moment as a memory dump; empty rows stay registers-only.
     pub fn read_registers(&self) -> Result<Vec<(&'static str, u64)>, RomTestError> {
         let inner = self
             .emu
@@ -458,9 +418,8 @@ impl SystemInspector<'_> {
     }
 }
 
-/// Silent audio backend stamped at the case rate. The thread stamps the
-/// backend rate into the console resampler, so the null backend carries
-/// the case rate and nominal samples stay comparable to expectations.
+/// Silent audio backend stamped at the case rate. Nominal samples stay
+/// comparable to expectations.
 struct NullAudioBackend(u32);
 
 impl AudioBackend for NullAudioBackend {

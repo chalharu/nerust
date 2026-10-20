@@ -1,6 +1,5 @@
-//! Command execution: dispatch plus per-command executors. Colocated
-//! with the command vocabulary it feeds (`commands::outcome_notifications`);
-//! orchestration only, the mapping itself stays in `commands`.
+//! Command execution: dispatch plus per-command executors.
+//! Orchestration only; the outcome mapping stays in `commands`.
 
 use crate::session::{
     SessionError, SessionHandle,
@@ -12,10 +11,8 @@ use crate::session::{
     persistence::SlotDirection,
 };
 
-/// Save-side persistence operation behind a slot command. Split from
-/// [`LoadOp`] so the `unreachable!` legs disappear: the executor
-/// matches on the half it runs, and a new op fails to compile until
-/// it picks a side.
+/// Save-side persistence operation behind a slot command, split from [`LoadOp`].
+/// A new op fails to compile until it picks a side.
 #[derive(Debug, Clone, Copy)]
 enum SaveOp {
     CreateSlot,
@@ -24,9 +21,8 @@ enum SaveOp {
     DeleteSlot(u64),
 }
 
-/// Load-side persistence operation behind a slot command. Loads run
-/// through [`run_load_op`](SessionHandle::run_load_op), which takes
-/// the post-load tick for the redraw decision.
+/// Load-side persistence operation behind a slot command.
+/// Loads run through `run_load_op`, which takes the post-load tick for the redraw decision.
 #[derive(Debug, Clone, Copy)]
 enum LoadOp {
     LoadActiveSlot,
@@ -60,11 +56,8 @@ impl SessionHandle {
         &mut self,
         command: SessionCommand,
     ) -> Result<SessionCommandOutcome, SessionError> {
-        // One metrics lock per command: the tick threads through the
-        // executor and the notification below, so steady frames pay
-        // exactly one lock. Loads fetch once more on success for the
-        // redraw decision (see `run_load_op`): the executor takes
-        // that post tick as a parameter instead of re-locking.
+        // One metrics lock per command: the tick threads through the executor and notification.
+        // Loads fetch once more on success for the redraw decision.
         let tick = self.tick_metrics();
         let result = self.run_command_inner(command, &tick);
         match &result {
@@ -81,11 +74,8 @@ impl SessionHandle {
                 }
             }
             Err(error) => {
-                // Single audit point for transport failures: frontends
-                // must not log these at their call sites. The push
-                // below logs the UX wording; this line keeps the cause.
-                // The typed source chain renders at the boundary, so no
-                // `error.to_string()` escapes into the notification.
+                // Single audit point for transport failures; frontends must not log at call sites.
+                // The typed source chain renders at the boundary, never stringified in.
                 let name = command.cmd_name();
                 log::warn!("run_command {name} failed: {error}");
                 self.notifications.push(
@@ -111,9 +101,7 @@ impl SessionHandle {
             return Ok(self.run_save_op(op));
         }
         if let Some(op) = command.as_load_op() {
-            // The redraw decision needs the post-load pause state, so
-            // the caller fetches once and threads it in: the runner
-            // itself never re-locks.
+            // The redraw decision needs the post-load pause state, threaded in by the caller.
             let post_tick = self.tick_metrics();
             return Ok(self.run_load_op(op, tick, &post_tick));
         }
@@ -127,10 +115,8 @@ impl SessionHandle {
             SessionCommand::SelectPreviousSlot => {
                 Ok(self.cmd_adjacent_slot(SlotDirection::Previous))
             }
-            // Save/load arms return above; reaching one here means the
-            // halves disagree with the command set. The assert pins
-            // the invariant with a real condition; the fallback keeps
-            // the command total even in release.
+            // Save/load arms return above; reaching here means the halves disagree.
+            // The assert pins the invariant; the fallback keeps the command total in release.
             SessionCommand::CreateSlot
             | SessionCommand::SaveActiveSlotOrNew
             | SessionCommand::SaveSlot(_)
@@ -215,9 +201,8 @@ impl SessionHandle {
         }
     }
 
-    /// Run one save op against the persistence manager and the live
-    /// core. Absent core reads as [`SlotOpFailure::Empty`]; failures
-    /// ride the outcome instead of erroring the command.
+    /// Run one save op against the persistence manager and the live core.
+    /// Absent core reads as [`SlotOpFailure::Empty`]; failures ride the outcome, not the error.
     fn run_save_op(&mut self, op: SaveOp) -> SessionCommandOutcome {
         let exporter = self.emu.exporter().ok();
         let slot_failure = match exporter {
@@ -244,10 +229,8 @@ impl SessionHandle {
         }
     }
 
-    /// Load variant of [`run_save_op`](Self::run_save_op): a successful
-    /// load that clears a stale pause needs a redraw. The pause
-    /// comparison uses the caller-threaded `post_tick`, so this runner
-    /// itself never re-locks.
+    /// Load variant of [`run_save_op`](Self::run_save_op): a cleared stale pause needs a redraw.
+    /// The comparison uses the caller-threaded `post_tick`, so this runner never re-locks.
     fn run_load_op(
         &mut self,
         op: LoadOp,
@@ -268,9 +251,7 @@ impl SessionHandle {
             None => Some(SlotOpFailure::Empty),
         };
         let executed = slot_failure.is_none();
-        // A successful load that clears a stale pause needs a redraw:
-        // compare against the caller-threaded post tick instead of
-        // re-locking here.
+        // A successful load that clears a stale pause needs a redraw: compare against post tick.
         let now_paused = if executed {
             post_tick.paused
         } else {

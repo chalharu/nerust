@@ -1,6 +1,5 @@
-//! Game-pipeline shader compilation. Pure candidate assembly plus
-//! the link step; [`super::view::GlView`] coordinates uploads through
-//! the returned program.
+//! Game-pipeline shader compilation: pure candidate assembly plus the link step.
+//! [`super::view::GlView`] coordinates uploads through the returned program.
 
 use nerust_glwrap::Shader;
 

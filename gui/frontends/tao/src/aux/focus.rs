@@ -1,14 +1,10 @@
-//! Aux-window focus agreement as behavior-carrying types. Leafward
-//! home for the deferred auto-pause protocol: aux handles implement
-//! [`AuxWindow`] + [`AuxEvents`], runtime only drives them. No runtime imports.
+//! Aux-window focus agreement as behavior-carrying types.
+//! Aux handles implement [`AuxWindow`] + [`AuxEvents`]; runtime only drives them.
 
 use tao::event::WindowEvent;
 
-/// Which aux window changed focus. The deferred auto-pause protocol
-/// decision lives here (not at the dispatch call sites): interactive
-/// viewers (debugger, PPU) may report a resume, while read-only
-/// viewers (settings, history) only cancel a pending pause and never
-/// resume anything.
+/// Which aux window changed focus. Interactive viewers may report a resume;
+/// read-only viewers (settings, history) only cancel a pending pause.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuxKind {
     Debug,
@@ -30,9 +26,7 @@ impl AuxKind {
     }
 }
 
-/// Ad-hoc memo gate: remembers the last pushed value and reports
-/// whether a new value differs. Replaces the six inline
-/// `last_* != new` gates with one named type.
+/// Ad-hoc memo gate: remembers the last pushed value and reports whether it differs.
 #[derive(Debug, Default)]
 pub(crate) struct Memo<T: PartialEq> {
     last: Option<T>,
@@ -63,10 +57,7 @@ impl<T: PartialEq + Clone> Memo<T> {
 }
 
 /// Main-window focus truth plus the deferred auto-pause protocol.
-/// Invariants: a pause lands only via the burst-end commit after
-/// arming (`leave_main`/`leave_aux`) without an intervening cancel;
-/// arrival reports a resume at most once per armed pause. Explicit
-/// user pauses never set the flag.
+/// Pauses land only via burst-end commit; arrivals report a resume at most once.
 pub(crate) struct FocusState {
     /// Main window holds focus.
     main_active: bool,
@@ -89,10 +80,8 @@ impl FocusState {
         self.main_active
     }
 
-    /// Aux-window focus change with the resume protocol chosen by
-    /// kind. Public narrow entry: interactive viewers may report a
-    /// resume, read-only viewers only cancel a pending pause. Returns
-    /// whether a system-paused session should resume.
+    /// Aux-window focus change with the resume protocol chosen by kind.
+    /// Returns whether a system-paused session should resume.
     pub(crate) fn on_aux(&mut self, kind: AuxKind, focused: bool) -> bool {
         on_aux_focus(self, kind, focused)
     }
@@ -135,8 +124,7 @@ impl FocusState {
 }
 
 /// Focus-domain event: the only inputs the coordinator accepts.
-/// Dispatch maps `WindowEvent::Focused` to these; nothing else may
-/// arm or cancel the deferred pause.
+/// Only `WindowEvent::Focused` maps to these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FocusEvent {
     Main(bool),
@@ -151,10 +139,8 @@ pub(crate) enum FocusEffect {
     Resume,
 }
 
-/// Focus coordinator: owns a [`FocusState`] and maps [`FocusEvent`]
-/// to an optional [`FocusEffect`]. `Main(false)`/`Aux(_, false)`
-/// only arm; `BurstEnd` commits a still-armed pause; arrivals report
-/// a resume. No bools leak out.
+/// Focus coordinator: maps [`FocusEvent`] to an optional [`FocusEffect`].
+/// Departures only arm; `BurstEnd` commits a still-armed pause.
 pub(crate) struct FocusCoordinator {
     state: FocusState,
 }
@@ -198,9 +184,7 @@ impl FocusCoordinator {
             }
             FocusEvent::BurstEnd => {
                 if self.state.take_armed() {
-                    // Armed and uncancelled: the caller commits the
-                    // pause (checking `can_pause`) and marks the
-                    // protocol flag via `note_protocol_pause`.
+                    // Armed and uncancelled: the caller commits the pause.
                     Some(FocusEffect::Pause)
                 } else {
                     None
@@ -231,10 +215,8 @@ fn aux_focus_step(focus: &mut FocusState, focused: bool) -> bool {
     }
 }
 
-/// Quiet aux-focus step for windows that must never resume: arrival
-/// only cancels a pending pause (the auto-pause flag stays intact),
-/// leaving arms the deferred pause. Settings uses this; debug/PPU/
-/// history use [`aux_focus_step`], which may report a resume.
+/// Quiet aux-focus step for windows that must never resume: arrival only cancels.
+/// Settings uses this; debug/PPU/history use [`aux_focus_step`].
 fn aux_focus_step_quiet(focus: &mut FocusState, focused: bool) {
     if focused {
         // Cancel only: unlike `arrive_aux`, the auto-pause flag is
@@ -278,15 +260,12 @@ pub(crate) trait AuxWindow {
 }
 
 /// Uniform aux-window event handling: one converted event in.
-/// Returns whether this pass already requested a redraw, so the pump
-/// can skip its trailing request.
+/// Returns whether this pass already requested a redraw.
 pub(crate) trait AuxEvents {
     fn handle(&mut self, mapped: iced::Event) -> bool;
 }
 
-/// Feed one native event through the shared prelude + program
-/// dispatch + redraw request. Free function so the four aux windows
-/// share one pump instead of copying it per window.
+/// Feed one native event through the shared prelude + program dispatch + redraw.
 pub(crate) fn pump_aux<W: AuxWindow + AuxEvents>(window: &mut W, event: WindowEvent) {
     window.handle_common(&event);
     match window.feed_event(event) {

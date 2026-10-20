@@ -1,5 +1,4 @@
-//! Real-GL drive harness for unit tests. Needs an X display with
-//! software GL (Xvfb + llvmpipe in CI); without `DISPLAY` the callers
+//! Real-GL drive harness for unit tests. Without `DISPLAY` the callers
 //! skip gracefully so headless runs stay green.
 
 use std::num::NonZeroU32;

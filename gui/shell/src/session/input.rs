@@ -28,8 +28,7 @@ fn touch_role_for_abstract_key(key: AbstractKey) -> Option<TouchControlRole> {
 
 impl SessionHandle {
     /// Last served touch overlay, keyed by the caller's revision.
-    /// Rebuilds only when the revision changes; otherwise serves the
-    /// stored model without re-walking assignments.
+    /// Rebuilds only when the revision changes; otherwise serves the stored model.
     pub fn touch_overlay_model_cached(&mut self, revision: u64) -> &TouchOverlayModel {
         let stale = self
             .input
@@ -65,17 +64,15 @@ impl SessionHandle {
 }
 
 /// Cached touch overlay: revision plus the model served for it.
-/// Stored on the input department; see
-/// [`SessionHandle::touch_overlay_model_cached`].
+/// Stored on the input department; see [`SessionHandle::touch_overlay_model_cached`].
 #[derive(Debug)]
 pub(crate) struct TouchCache {
     pub(crate) rev: u64,
     pub(crate) model: TouchOverlayModel,
 }
 
-/// Pure overlay builder: assignments in, model out. Both the
-/// per-call and the cached session methods delegate here, so the
-/// control mapping lives in exactly one place.
+/// Pure overlay builder: assignments in, model out.
+/// Both session entry points delegate here; the mapping lives in one place.
 fn build_touch_overlay(
     revision: u64,
     assignments: &nerust_input_traits::InputAssignments,

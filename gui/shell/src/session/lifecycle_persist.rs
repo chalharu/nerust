@@ -1,7 +1,5 @@
-//! Hidden lifecycle-state commands: save/load/clear the autosave
-//! slot across suspend/resume. Mutating session commands (one
-//! persistence round-trip each); pure slot getters stay in
-//! [`session_query`](crate::session::session_query).
+//! Hidden lifecycle-state commands: save/load/clear the autosave slot across suspend/resume.
+//! Mutating session commands; pure slot getters stay in `session_query`.
 
 use crate::session::SessionHandle;
 

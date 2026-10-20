@@ -28,9 +28,7 @@ fn drive(bridge: &Arc<DebugBridge>, message: DebugMessage) {
 
 #[test]
 fn input_echo_never_queues_drain_traffic() {
-    // Typing must stay on the UI thread: input-echo messages
-    // re-render locally and never queue emu-thread round-trips
-    // (a drain would block typing on the thread reply).
+    // Input-echo messages re-render locally; never queue emu-thread round-trips.
     let bridge = full_bridge();
     for message in [
         DebugMessage::MemInputChanged("0x100".to_string()),
@@ -396,10 +394,8 @@ fn shortcut_and_cursor_keys_map_physical_codes() {
     assert!(cursor_page(&Physical::Code(Code::ArrowLeft)).is_none());
 }
 
-/// Headless UI-shell lifecycle test (build/pump/rebuild/relayout/
-/// draw). Software rasterization only, so it runs without a display
-/// and never contacts the emulator. Lives here to keep `shell`
-/// free of aux-window imports.
+/// Headless UI-shell lifecycle test (build/pump/rebuild/relayout/draw).
+/// Software rasterization only: no display, no emulator contact.
 #[test]
 fn uishell_headless_build_pump_relayout_draw() {
     use std::sync::atomic::AtomicBool;

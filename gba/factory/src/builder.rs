@@ -76,9 +76,7 @@ pub(crate) fn create_core_and_adapter_with_inputs(
         width: 240,
         height: 160,
     };
-    // The audio backend only emits pushed samples after `start`
-    // (CPAL/cubeb hold the stream silent until then); the emu thread
-    // owns it from here (transport separation).
+    // The backend stays silent until `start`; the emu thread owns it after.
     speaker.start();
     let core = GbaConsoleCore::new(emu_input);
     Ok(CoreParts {

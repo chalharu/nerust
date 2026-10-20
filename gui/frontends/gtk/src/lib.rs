@@ -88,8 +88,7 @@ impl State {
     }
 
     /// Load a ROM, flagging a renderer rebuild on success.
-    /// Returns the failure detail on error; presenting it (dialog)
-    /// is the caller's job so no error state is stashed here.
+    /// Returns the failure detail; presenting it is the caller's job.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
         let mut target =
             nerust_gui_shell::session::load_adapter::SessionLoadAdapter::new(&mut self.session);
@@ -346,10 +345,8 @@ fn build_window(
     )
 }
 
-/// Menu label with the action's *current* shortcut hint, or the
-/// bare label when unbound. Binding-driven (tao twin:
-/// `shortcut_hint`) so Settings rebinding never leaves a stale
-/// hardcoded key in the menu.
+/// Menu label with the action's *current* shortcut hint, or the bare label.
+/// Binding-driven, so Settings rebinding never leaves a stale hardcoded key.
 fn shortcut_hint(base: &str, shortcuts: &[ShortcutBinding], action: ShortcutAction) -> String {
     match shortcut_key_label(shortcuts, action) {
         Some(key) => menu_label_with_shortcut(base, key),
@@ -401,9 +398,8 @@ pub(crate) fn build_menu_model(
     file_menu.append(Some(text(language, UiText::Settings)), Some("win.settings"));
     file_menu.append(Some(text(language, UiText::Quit)), Some("app.quit"));
 
-    // Order mirrors the tao frontend: Pause, Resume, Reset, Save
-    // States, Debugger. The debugger label carries its live
-    // shortcut like tao so both shells advertise the same keys.
+    // Order mirrors the tao frontend: Pause, Resume, Reset, Save States,
+    // Debugger. The debugger label carries its live shortcut like tao.
     let emulation_menu = gio::Menu::new();
     emulation_menu.append(Some(text(language, UiText::Pause)), Some("win.pause"));
     emulation_menu.append(Some(text(language, UiText::Resume)), Some("win.resume"));

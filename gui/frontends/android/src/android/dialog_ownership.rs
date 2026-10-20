@@ -1,17 +1,10 @@
 //! Single DialogOwnership service for dialog gates.
-//!
-//! Previously two sources disagreed: a cached `settings_open` bool on the
-//! frontend (updated on events) and the settings bridge's pending-request
-//! truth. The sync JNI show path left the cache stale (dialog up while the
-//! cache read `false`), so the error dialog could evict just-opened
-//! settings. Every gate now queries this service, which reads the bridge
-//! pending id directly. There is no cached bool anymore.
+//! Gates read the settings bridge pending id; there is no cached bool.
 
 use super::settings;
 
-/// Sole owner of "is a dialog up" answers. Stateless by design: the
-/// settings bridge pending-request id is the truth, so a query can never
-/// go stale between the event tick and the gate.
+/// Sole owner of "is a dialog up" answers. Reads the bridge
+/// pending-request id, so a query can never go stale.
 #[derive(Debug, Default, Clone, Copy)]
 pub(super) struct DialogOwnership;
 

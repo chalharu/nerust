@@ -28,8 +28,6 @@ pub(crate) struct WindowRuntime {
     host: HostState,
     renderer: Option<Box<dyn GpuRenderer>>,
     /// Native target the surface is attached to (`None` = toplevel).
-    /// The attach binds a drawable, so a target change needs a
-    /// recreate, not a resize.
     surface_xid: Option<u64>,
 }
 
@@ -72,9 +70,7 @@ impl WindowRuntime {
             vsync,
             max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
         };
-        // Drop the old renderer before the new attach makes its own
-        // context current: GL object names die with their context, and
-        // a fresh context reuses the same ids.
+        // Drop the old renderer before the new attach makes its own context current.
         self.renderer = None;
         let mut renderer = match self
             .host
@@ -110,9 +106,7 @@ impl WindowRuntime {
                 true
             }
             Err(detail) => {
-                // Startup runs before the main window exists, so the
-                // standalone dialog is the only explanation for a bad
-                // `--rom` path.
+                // Startup runs before the main window exists: standalone dialog only.
                 crate::ports::show_rom_load_error(
                     self.host
                         .session()
@@ -134,9 +128,7 @@ impl WindowRuntime {
             .take()
             .expect("WindowRuntime::run() called more than once");
 
-        // Live-follow pulse: nudges the loop each interval so the PPU
-        // viewer tracks a running core with no input events. Throttled;
-        // exits when the loop is gone.
+        // Live-follow pulse: nudges the loop each interval. Throttled; exits with the loop.
         let tick_proxy = event_loop.create_proxy();
         std::thread::spawn(move || {
             loop {
@@ -221,10 +213,7 @@ impl WindowRuntime {
             return;
         };
 
-        // Keep the output sized to the current target. A size change
-        // resizes in place, but a target change (toplevel fallback to
-        // content area once laid out) rebinds a drawable and needs a
-        // full recreate.
+        // Keep the output sized to the current target: target change needs a full recreate.
         let current_xid = self.host.surface_xid();
         if self.surface_xid != current_xid {
             if let Some(window) = self.host.window_arc() {
@@ -236,10 +225,8 @@ impl WindowRuntime {
             renderer.resize(window_size);
         }
 
-        // No notification drain here: `update_control_flow` drains
-        // every pass (also paused/unfocused ones with no redraw).
-        // One capture for the whole redraw: strips and the layer sync
-        // share the frame instead of cloning the snapshot twice.
+        // No notification drain here: `update_control_flow` drains every pass.
+        // One capture for the whole redraw: strips and layer sync share the frame.
         let frame = self.host.frame_snapshot();
         self.host
             .render_osd_frame(renderer.as_mut(), window_size, &frame);

@@ -11,14 +11,11 @@ use nerust_emu_thread::OperationError;
 
 use super::{EmuCore, recv_debug_reply};
 
-/// Live PPU image batch: generation plus one `(label, width, height,
-/// rgba)` tuple per image. Aliased so the fetch signature stays
-/// readable (clippy `type_complexity`).
+/// Live PPU image batch: generation plus one `(label, width, height, rgba)` tuple per image.
 pub type LiveImages = Option<(u64, Vec<(String, u32, u32, Vec<u8>)>)>;
 
-/// Cached system images for the debugger PPU viewer. Anything
-/// advancing or replacing memory marks dirty; viewers compare
-/// `generation` instead of hashing.
+/// Cached system images for the debugger PPU viewer; viewers compare `generation`.
+/// Anything advancing or replacing memory marks dirty.
 #[derive(Debug, Clone)]
 pub(crate) struct CachedImages {
     pub(crate) dirty: bool,
@@ -30,9 +27,7 @@ pub(crate) struct CachedImages {
     pub(crate) served_generation: u64,
 }
 
-/// One stored image decode: the source generation, the pixels, and
-/// whether the content changed since the last serve. Unchanged
-/// refetches carry the served generation so viewers skip re-deriving.
+/// One stored image decode: the source generation, the pixels, and content-change state.
 pub(crate) struct StoredImages {
     pub(crate) generation: u64,
     pub(crate) images: Vec<DebugImage>,
@@ -63,11 +58,7 @@ fn hash_debug_images(images: &[DebugImage]) -> u64 {
 }
 
 impl EmuCore {
-    /// Mark cached system images stale. Called by every path that
-    /// advances or replaces memory; the next `debug_images` refetches.
-    /// The generation bumps so viewers can compare generations.
-    /// `pub(crate)`: the async debug drain shares the same cache
-    /// through its cloned handles, so it marks through this too.
+    /// Mark cached system images stale; the next `debug_images` refetches and bumps generation.
     pub(crate) fn mark_images_dirty(&self) {
         if let Ok(mut cache) = self.image_cache.lock() {
             cache.dirty = true;
@@ -75,9 +66,8 @@ impl EmuCore {
         }
     }
 
-    /// On-demand system images through the emu thread, cached while
-    /// paused; a running core always refetches. Returns the source
-    /// generation so viewers skip re-deriving known generations.
+    /// On-demand system images through the emu thread, cached while paused.
+    /// Returns the source generation so viewers skip re-deriving known generations.
     pub fn debug_images(
         &self,
     ) -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError> {
@@ -97,10 +87,8 @@ impl EmuCore {
         Ok(Ok((stored.generation, stored.images)))
     }
 
-    /// Paused-cache lookup for [`EmuCore::debug_images`]: a fresh hit
-    /// serves without touching the emu thread. Pure query, no side
-    /// effects: callers mark dirty explicitly when memory may have
-    /// advanced (a running core always refetches).
+    /// Paused-cache lookup for [`EmuCore::debug_images`]: a fresh hit skips the emu thread.
+    /// Pure query with no side effects; callers mark dirty explicitly when memory may advance.
     pub(crate) fn images_cache_lookup(&self) -> Option<(u64, Vec<DebugImage>)> {
         self.image_cache
             .lock()
@@ -121,9 +109,8 @@ impl EmuCore {
         Ok(reply_rx)
     }
 
-    /// Store a fetched decode and report freshness. Content-identical
-    /// refetches report the *served* generation so viewers skip
-    /// re-deriving; a poisoned cache still serves instead of failing.
+    /// Store a fetched decode and report freshness; a poisoned cache still serves.
+    /// Content-identical refetches report the *served* generation so viewers skip re-deriving.
     pub(crate) fn images_store(&self, images: Vec<DebugImage>) -> StoredImages {
         let hash = hash_debug_images(&images);
         let mut cache = self.image_cache.lock().unwrap_or_else(|e| {
@@ -133,11 +120,8 @@ impl EmuCore {
         cache.images.clone_from(&images);
         cache.dirty = false;
         if cache.served_hash == Some(hash) {
-            // Identical content: collapse the dirty bump back to the
-            // served generation so cache hits agree with stores —
-            // otherwise viewers would flap between two generations of
-            // the same pixels. Same pixels, same generation, zero UI
-            // work, forever.
+            // Identical content collapses the dirty bump back to the served generation.
+            // Same pixels, same generation: viewers skip re-deriving instead of flapping.
             cache.generation = cache.served_generation;
             StoredImages {
                 generation: cache.served_generation,

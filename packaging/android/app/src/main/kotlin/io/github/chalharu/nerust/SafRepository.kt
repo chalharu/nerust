@@ -8,22 +8,8 @@ import androidx.documentfile.provider.DocumentFile
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-/**
- * SAF document I/O behind the JNI bridge.
- *
- * Extracted from MainActivity. All methods are synchronous and run on the
- * calling thread: the Rust bridge invokes them from session/persistence
- * threads, never the UI thread. The [ioExecutor] backs the `*Async`
- * variants for any future UI-thread caller; the sync JNI path stays
- * synchronous because JNI requires synchronous returns.
- *
- * Large files never cross JNI whole: [readSafFileChunkBytes]/[writeSafFileChunkBytes]
- * bound every crossing to 64KB of raw `byte[]` (see `SAF_CHUNK_BYTES` on the
- * Rust side; the Base64 chunk methods stay for APKs predating the `byte[]`
- * bridge). The legacy whole-file methods stay for even older APKs; the Rust
- * side prefers `byte[]`, then Base64 chunks, then whole-file, falling back
- * on `NoSuchMethodError`.
- */
+/** SAF document I/O behind the JNI bridge. All methods run synchronously on the calling thread.
+ * Large files cross in 64KB `byte[]` chunks; legacy whole-file and Base64 methods stay for old APKs. */
 class SafRepository(private val context: Context) {
 
     private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -55,20 +41,13 @@ class SafRepository(private val context: Context) {
         return org.json.JSONArray(directory.listFiles().mapNotNull(DocumentFile::getName)).toString()
     }
 
-    /**
-     * Size probe for the chunked read: bytes, or -1 when the document does
-     * not exist. New bridge (v2); the Rust side falls back to whole-file
-     * I/O when this method is absent.
-     */
+    /** Size probe for the chunked read: bytes, or -1 when the document does not exist. */
     fun getSafFileSize(treeUri: String, relativePath: String): Long {
         val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return -1L
         return file.length().takeIf { it >= 0 } ?: -1L
     }
 
-    /**
-     * One chunk read at [offset] ([length] bytes max), Base64-encoded, or
-     * null when the document does not exist.
-     */
+    /** One Base64 chunk read at [offset] ([length] bytes max); null when the document is missing. */
     fun readSafFileChunk(
         treeUri: String,
         relativePath: String,
@@ -96,11 +75,7 @@ class SafRepository(private val context: Context) {
         return null
     }
 
-    /**
-     * One chunk write. [append] selects `"wa"` (append) over `"rwt"`
-     * (overwrite for the first chunk). Returns "ok" or "error" like the
-     * legacy whole-file method.
-     */
+    /** One chunk write; [append] selects append over overwrite. Returns "ok" or "error". */
     fun writeSafFileChunk(
         treeUri: String,
         relativePath: String,
@@ -120,12 +95,7 @@ class SafRepository(private val context: Context) {
         return "ok"
     }
 
-    /**
-     * One chunk read at [offset] ([length] bytes max) as a raw `byte[]`,
-     * or null when the document does not exist. No Base64 anywhere: this
-     * is the preferred chunk bridge (v3); the Base64 variant stays for
-     * older Rust builds.
-     */
+    /** One chunk read at [offset] ([length] bytes max) as raw `byte[]`; null when missing. */
     fun readSafFileChunkBytes(
         treeUri: String,
         relativePath: String,
@@ -153,10 +123,7 @@ class SafRepository(private val context: Context) {
         return null
     }
 
-    /**
-     * One chunk write of raw [bytes]. [append] selects `"wa"` (append) over
-     * `"rwt"` (overwrite for the first chunk). Preferred chunk bridge (v3).
-     */
+    /** One chunk write of raw [bytes]; [append] selects append over overwrite. */
     fun writeSafFileChunkBytes(
         treeUri: String,
         relativePath: String,
@@ -170,12 +137,7 @@ class SafRepository(private val context: Context) {
         return "ok"
     }
 
-    /**
-     * Batched name+size listing (`[{"name": "...", "size": 123}]`) so the
-     * Rust `scan` needs no per-entry size probe (no N+1). Sizes are
-     * best-effort (`length()` may return -1); unknown sizes encode as -1
-     * and Rust treats them as absent.
-     */
+    /** Batched name+size listing so Rust `scan` needs no per-entry probe. Unknown sizes encode as -1. */
     fun listSafFilesWithSizes(treeUri: String, relativePath: String): String {
         val directory =
             resolveSafDirectory(treeUri, relativePath, create = false)

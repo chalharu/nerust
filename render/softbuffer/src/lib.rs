@@ -47,15 +47,8 @@ pub struct SoftbufferRenderer {
     scan_counter: u64,
 }
 
-/// Tap-coverage inputs for one frame shape. Caches negative verdicts
-/// too: the key carries buffer lengths plus `lut_rev`, so transient
-/// LUT/buffer growth during `resize_lut` changes the key and the stale
-/// `false` never survives the resize that fixes it. `src` geometry,
-/// byte stride, `avail_h`, kernel, and reserved strips are part of the
-/// key so a stale `true` cannot survive a profile/strip change.
-/// `dst_h` is deliberately *not* stored: it always equals
-/// `avail_h + height_loss` (asserted at the call site), so storing it
-/// would only admit inconsistent keys.
+/// Tap-coverage inputs for one frame shape. Caches negative verdicts too.
+/// `dst_h` is deliberately *not* stored: it always equals `avail_h + height_loss`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TapKey {
     dst_w: usize,
@@ -63,9 +56,7 @@ struct TapKey {
     src_w: usize,
     src_h: usize,
     /// Byte stride of the source frame. Distinct from `tap_stride`
-    /// (which is pixels or indices): two strides can share a
-    /// `tap_stride` under integer division yet feed the indexer
-    /// different rows (e.g. byte strides 256 vs 258 at bpp 4).
+    /// (pixels or indices): one `tap_stride` can feed different rows.
     src_stride: usize,
     tap_stride: usize,
     resize_len: usize,
@@ -79,9 +70,8 @@ struct TapKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResizeKernel {
-    // No selection knob yet: Bilinear is hardcoded in `LutEntry::new`.
-    // Kept (not deleted) so the nearest path stays compilable beside
-    // the bilinear one; arms dispatch on `self.kernel` as usual.
+    // No selection knob yet: Bilinear is hardcoded; kept so the nearest
+    // path stays compilable beside the bilinear one.
     #[expect(unused)]
     NearestNeighbor,
     Bilinear,
@@ -379,11 +369,8 @@ impl SoftbufferRenderer {
         Self::vertical_pass(dst, dst_w, dst_h, lut, px, resize_buffer);
     }
 
-    /// Horizontal two-tap loop with consistent LE packing. Canonical
-    /// order: the `src_f` indexer returns `[R, G, B, A]` bytes and the
-    /// buffer word is `0xAARRGGBB` little-endian (byte 0 = blue).
-    /// Weights sum to one in the interior; edges go black where taps
-    /// fall outside.
+    /// Horizontal two-tap loop with consistent LE packing.
+    /// Weights sum to one in the interior; edges go black where taps fall outside.
     fn horizontal_pass<F: Fn(usize) -> [u8; 4]>(
         src_stride: usize,
         src_h: usize,
@@ -433,8 +420,7 @@ impl SoftbufferRenderer {
     }
 
     /// Vertical pass over the horizontal result. Taps are at most 2.
-    /// Reads buffer words (`0xAARRGGBB` LE) back with `to_le_bytes`,
-    /// the exact inverse of the horizontal pack above.
+    /// Reads buffer words back with `to_le_bytes`, the inverse of the horizontal pack.
     fn vertical_pass(
         dst: &mut [u32],
         dst_w: usize,
@@ -493,8 +479,7 @@ impl SoftbufferRenderer {
     }
 
     /// Tap coverage for one frame: every touched LUT entry must exist and
-    /// point inside its target; mismatch refuses the frame instead of panicking.
-    /// Pure in its inputs so LUT fixtures test it without a renderer.
+    /// point inside its target; mismatch refuses instead of panicking.
     fn taps_cover(
         lut: &LutEntry,
         resize_len: usize,
@@ -526,12 +511,8 @@ impl SoftbufferRenderer {
         ntsc_writes <= ntsc_len
     }
 
-    /// Cached [`Self::taps_cover`]: geometry rarely changes, so a key
-    /// match skips the per-frame LUT scan. The key carries `src`
-    /// geometry, `avail_h`, kernel, and strips, so a stale `true`
-    /// cannot survive a shape change. Every 256th hit forces a full
-    /// rescan (`debug_assert` verifies the cache); release keeps the
-    /// cached verdict for speed.
+    /// Cached [`Self::taps_cover`]: a key match skips the per-frame LUT scan.
+    /// Every 256th hit forces a full rescan; release keeps the cached verdict.
     fn taps_covered(
         &mut self,
         dst_w: usize,
@@ -669,9 +650,8 @@ impl SoftbufferRenderer {
     }
 }
 
-/// Validated frame geometry shared by the blit path. Computed once:
-/// dimensions, tap coverage, and strides feed both the guards and
-/// the indexer setup without a second scan.
+/// Validated frame geometry shared by the blit path. Computed once, so the
+/// guards and indexer setup share a single scan.
 struct ValidatedFrame {
     dst_w: usize,
     dst_h: usize,
@@ -683,11 +663,8 @@ struct ValidatedFrame {
 }
 
 impl SoftbufferRenderer {
-    /// Validate dimensions without touching the surface or the tap
-    /// cache. Pure read: tap coverage (which memoizes) runs separately
-    /// at the call site, so this half stays `&self`. Also
-    /// pre-validates `stride >= width * bpp` so the fallible indexers
-    /// below never read out of bounds on the UI thread.
+    /// Validate dimensions without touching the surface or the tap cache.
+    /// Pre-validates `stride >= width * bpp` so indexers never read out of bounds.
     fn validate_frame(&self, frame: &FrameBuffer) -> Option<ValidatedFrame> {
         if frame.width() != self.render_profile.source_logical_size.width
             || frame.height() != self.render_profile.source_logical_size.height
@@ -876,9 +853,8 @@ impl GpuRenderer for SoftbufferRenderer {
             tap_stride,
             ntsc_writes,
         } = valid;
-        // `dst_h` is `avail_h + strips` by construction; `TapKey`
-        // stores only `avail_h` (plus the strips), so lock the
-        // identity here instead of keying a redundant field.
+        // `dst_h` is `avail_h + strips` by construction; lock the identity
+        // here instead of keying a redundant field.
         debug_assert_eq!(
             dst_h,
             avail_h.saturating_add(self.reserved.height_loss(self.size.height) as usize)
@@ -926,9 +902,8 @@ impl GpuRenderer for SoftbufferRenderer {
         let game_rows = top.saturating_mul(dst_w);
         let game_len = avail_h.saturating_mul(dst_w);
         let dst = &mut buffer.as_mut()[game_rows..game_rows.saturating_add(game_len)];
-        // let src_w = self.render_profile.source_logical_size.width;
-        // Short source images would panic every indexer below (the
-        // profile match above only pins dimensions, not length).
+        // Short source images would panic every indexer below; the profile
+        // match above only pins dimensions, not length.
         if src.len() < src_stride.saturating_mul(src_h) {
             warn!(
                 "softbuffer source too small: have {}, need stride {}x{}",
@@ -1104,9 +1079,8 @@ mod tests {
 
     #[test]
     fn rgba_render_survives_byte_stride() {
-        // Regression: the Rgba indexer counts pixels while `stride()`
-        // is bytes; a 256-byte-aligned stride once overran the source
-        // and panicked the UI thread (GBA-sized Rgba frames).
+        // Regression: the Rgba indexer counts pixels while `stride()` is bytes;
+        // a 256-byte-aligned stride once overran and panicked the UI thread.
         let mut lut = LutEntry::new();
         lut.resize_lut(
             SurfaceSize {

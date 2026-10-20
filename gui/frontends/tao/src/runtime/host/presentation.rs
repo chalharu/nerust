@@ -1,6 +1,4 @@
 //! Session presentation sync: menu, title, and fullscreen state.
-//! Window sizing helpers live in `window`; the settings dialog in
-//! `settings`.
 use super::HostState;
 use super::{
     ChromeScalars, MenuSig, derive_native_fullscreen_sync, set_window_fullscreen,
@@ -49,10 +47,7 @@ impl HostState {
         let title = self.session.window_title(&tick);
         let slots = self.session.slots();
         let shortcuts = &snapshot.shared.input.shortcuts.keyboard;
-        // Cheap gate first: scalars plus lengths, no `Arc` clones. A
-        // mismatch here proves change; a match falls through to the
-        // exact fingerprint/slice comparison below (same-len content
-        // edits must still reach the menu).
+        // Cheap gate first: scalars plus lengths, no `Arc` clones.
         if self.chrome.cheap_same(&ChromeScalars {
             loaded: tick.loaded,
             paused: tick.paused,
@@ -140,9 +135,7 @@ impl HostState {
         self.sync_chrome(true);
     }
 
-    /// Single chrome-sync choke point: menu, title, and optionally a
-    /// frame. Call sites that re-derived the triad in varying order
-    /// converge here; omitting the redraw stays explicit at the call.
+    /// Single chrome-sync choke point: menu, title, and optionally a frame.
     pub(crate) fn sync_chrome(&mut self, redraw: bool) {
         self.sync_menu_state();
         self.refresh_window_title();

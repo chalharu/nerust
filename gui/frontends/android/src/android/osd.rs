@@ -1,8 +1,5 @@
-//! In-frame notification OSD sync. Session outcomes already land in
-//! the shell `NotificationCenter` via `run_command`; this module drains
-//! them into `OsdManager`, rasterizes the layer, and hands it to the
-//! renderer. Error batches surface as a modal dialog (frontend-driven
-//! via `take_modal_batch`); the loop never blocks, so no auto-pause.
+//! In-frame notification OSD sync: drain, rasterize, hand to the renderer.
+//! Error batches surface as a modal dialog; the loop never blocks.
 
 use std::time::Instant;
 
@@ -29,15 +26,12 @@ const ANDROID_FONT_DIRS: [&str; 2] = ["/system/fonts", "/product/fonts"];
 /// clip surface-corner pills, so every side steps inward by this.
 const EDGE_SAFE_DP: f32 = 24.0;
 
-/// Extra inset along the letterbox axis (top/bottom in portrait,
-/// left/right in landscape), in dp. That axis has dead bar space,
-/// so the shift stays readable while clearing notches and corners.
+/// Extra inset along the letterbox axis, in dp.
+/// That axis has dead bar space, so the shift stays readable.
 const BAR_AXIS_EXTRA_DP: f32 = 16.0;
 
-/// OSD display state plus the sync fingerprint. One field on the
-/// frontend; everything OSD lives here. Error-dialog flow lives in
-/// `DialogCoordinator` (frontend-owned); this struct keeps raster, strip,
-/// insets, and the notification manager only.
+/// OSD display state plus the sync fingerprint. One field on the frontend.
+/// Keeps raster, strip, insets, and the notification manager only.
 pub(super) struct AndroidOsd {
     manager: OsdManager,
     raster: nerust_render_osd::OsdRaster,
@@ -48,9 +42,8 @@ pub(super) struct AndroidOsd {
     last_system: SafeInsets,
 }
 
-/// Per-frame sync context. Bundled so the rasterizer handoff
-/// stays narrow as new dimensions (insets, scale) arrive. `now` is
-/// injected by the caller so render and poll share one clock read.
+/// Per-frame sync context for the rasterizer handoff.
+/// `now` is caller-injected so render and poll share one clock read.
 pub(super) struct OsdSyncCtx<'a> {
     pub tick: nerust_gui_shell::session::osd::TickMetrics,
     pub settings: &'a NotificationSettings,
@@ -76,18 +69,14 @@ impl AndroidOsd {
         }
     }
 
-    /// Borrow the notification queue for the frontend-owned dialog
-    /// coordinator. The closure receives `&mut OsdManager`, which
-    /// implements the narrow `ModalSink + ModalSource` capability the
-    /// coordinator bounds on; the borrow ends when the closure returns.
-    /// The old `manager_mut() -> &mut OsdManager` escape hatch is gone.
+    /// Borrow the notification queue for the frontend-owned dialog coordinator.
+    /// The borrow ends when the closure returns.
     pub(super) fn with_modal<R>(&mut self, operation: impl FnOnce(&mut OsdManager) -> R) -> R {
         operation(&mut self.manager)
     }
 
-    /// Forget sync state after a renderer rebuild: the new object
-    /// holds no layer or strip to skip against. Fonts and scale
-    /// survive; insets re-query on the next frame via cleared key.
+    /// Forget sync state after a renderer rebuild.
+    /// Fonts and scale survive; insets re-query on the next frame.
     pub(super) fn reset(&mut self) {
         self.presenter.invalidate();
         self.last_strip = ReservedStrip::default();
@@ -101,9 +90,8 @@ impl AndroidOsd {
         self.last_system_scale_key = u32::MAX;
     }
 
-    // Frontend-owned modal flow lives in `DialogCoordinator`; the only
-    // `&mut` path to the shell queue besides the shell pump is
-    // `with_modal` above, so the one-dialog invariant keeps one owner.
+    // Frontend-owned modal flow lives in `DialogCoordinator`; `with_modal`
+    // is the only `&mut` path to the shell queue besides the shell pump.
 
     /// Drain shell notifications into display state. Error batches join
     /// the shell modal queue; the dialog shows one at a time.
@@ -144,10 +132,7 @@ impl AndroidOsd {
     }
 
     /// Safe-area insets for rounded corners and the letterbox axis.
-    /// dp-based corner base plus measured OS insets: physical
-    /// clearance is density-independent, and the bar axis (dead
-    /// space) takes the extra shift. `system` comes from the Java
-    /// window-insets cache; zeros when the bridge is unavailable.
+    /// `system` comes from the Java window-insets cache; zeros when unavailable.
     pub(super) fn safe_insets(
         scale_factor: f32,
         content: Option<PhysicalSize>,
@@ -157,9 +142,8 @@ impl AndroidOsd {
         let density = scale_factor.max(0.5);
         let base = (EDGE_SAFE_DP * density).round() as u32;
         let extra = (BAR_AXIS_EXTRA_DP * density).round() as u32;
-        // Surface relatively taller than the game: bars sit top and
-        // bottom, so the vertical shift has room. Without a loaded
-        // ROM fall back to surface orientation.
+        // Bars sit top and bottom when the surface is taller than the game.
+        // Without a loaded ROM fall back to surface orientation.
         let taller = match content {
             Some(content) if content.width > 0.0 && content.height > 0.0 => {
                 size.height as f32 * content.width > size.width as f32 * content.height
@@ -184,10 +168,7 @@ impl AndroidOsd {
     }
 
     /// Java window insets, re-queried only on size/density change.
-    /// Per-frame JNI is the cost; IME-without-resize stays a known gap.
-    /// Prefers the UI-thread push cache (see `bridge::cached_system_insets`):
-    /// the render thread never blocks on JNI once the UI thread has
-    /// delivered a layout pass; the direct query only covers the first frame.
+    /// Prefers the UI-thread push cache; the direct query covers the first frame.
     pub(super) fn system_insets(
         &mut self,
         app: &AndroidApp,
@@ -215,9 +196,8 @@ impl AndroidOsd {
         Self::query_system_insets(app)
     }
 
-    /// Root-window safe insets in physical pixels, cached on the Java
-    /// side and refreshed on every layout pass. Falls back to zeros
-    /// (corner dp base still applies) when the bridge is unavailable.
+    /// Root-window safe insets in physical pixels, cached on the Java side.
+    /// Falls back to zeros when the bridge is unavailable.
     pub(super) fn query_system_insets(app: &AndroidApp) -> SafeInsets {
         let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
         let insets: Option<[i32; 4]> = super::bridge::with_java_env(&vm, |env| {
@@ -254,9 +234,7 @@ impl AndroidOsd {
     }
 
     /// Rasterize the OSD layer on change and hand it to the renderer.
-    /// Also applies the reserved edge strip when settings or surface
-    /// size change it. `now` is injected by the caller so render and
-    /// poll share one clock read per tick.
+    /// `now` is caller-injected; render and poll share one clock read per tick.
     pub(super) fn sync(&mut self, ctx: OsdSyncCtx<'_>) {
         let OsdSyncCtx {
             tick,

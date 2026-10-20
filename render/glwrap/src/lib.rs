@@ -4,21 +4,14 @@ pub mod vertex;
 
 pub use error::Error as GlError;
 
-/// Proof that the GL context is current on this thread. Destroy
-/// entry points take `Option<Self>` so a detached teardown skips GL
-/// calls instead of fabricating currency. Build only with
-/// [`CurrentContext::assert_current`]: there is no other constructor,
-/// so a token always traces back to a `ctx.is_current()` check at the
-/// call site.
+/// Proof that the GL context is current on this thread. Build only with
+/// [`CurrentContext::assert_current`]; destroy takes `Option<Self>`.
 #[derive(Debug, Clone, Copy)]
 pub struct CurrentContext(());
 
 impl CurrentContext {
-    /// Checked proof: `Some` only when the caller verified
-    /// `ctx.is_current()`. `None` skips GL deletes and reports.
-    /// Takes the `bool` verdict (not `&PossiblyCurrentContext`) so
-    /// this crate stays free of a glutin dependency; call sites pass
-    /// `ctx.is_current()` directly.
+    /// Checked proof: `Some` only when the caller verified `ctx.is_current()`.
+    /// Takes the `bool` verdict so this crate stays free of a glutin dependency.
     pub fn assert_current(is_current: bool) -> Option<Self> {
         is_current.then_some(Self(()))
     }
@@ -40,9 +33,8 @@ use self::{
     },
 };
 
-/// Per-call drain in debug builds; release no-op to avoid a
-/// pipeline stall on every GL call. Release builds rely on the
-/// batched [`check_frame`] drain once per frame.
+/// Per-call drain in debug builds; release no-op to avoid a pipeline stall.
+/// Release builds rely on the batched [`check_frame`] drain once per frame.
 #[cfg(debug_assertions)]
 fn gl_error_handle<T, F: FnMut() -> T>(mut func: F) -> Result<T, Error> {
     let result = func();
@@ -72,10 +64,8 @@ fn gl_get_error() -> Result<(), Error> {
     Ok(())
 }
 
-/// Batched per-frame error drain. Call once at the end of a frame
-/// instead of relying on the per-call drain in release builds.
-/// In debug builds every wrapper still drains (see `gl_error_handle`);
-/// in release wrappers are no-ops and this is the only check.
+/// Batched per-frame error drain. Call once at the end of a frame.
+/// In release this is the only check; in debug wrappers also drain per call.
 pub fn check_frame() -> Result<(), Error> {
     gl_get_error()
 }
@@ -131,9 +121,8 @@ pub struct Shader {
     deleted: bool,
 }
 
-/// RAII shader-object guard: deleting happens on drop. A failed
-/// fragment compile or link no longer orphans the vertex shader (or
-/// both shaders on link failure); success paths detach then drop.
+/// RAII shader-object guard: deleting happens on drop.
+/// Failed compiles/links orphan nothing; success paths detach then drop.
 struct ShaderId(GLuint);
 
 impl ShaderId {
@@ -174,15 +163,13 @@ impl Shader {
     }
 
     /// Attribute location, if the linker kept the name. `None` instead
-    /// of ambiguous `0`: location 0 is a valid attribute. Optimized-out
-    /// names legitimately miss; callers skip or fail typed (no sentinel).
+    /// of ambiguous `0`: location 0 is valid; optimized-out names miss legitimately.
     pub fn attribute_opt(&self, key: &str) -> Option<GLuint> {
         self.attributes.get(key).copied()
     }
 
-    /// Uniform location, if the linker kept the name. `None` instead
-    /// of sentinel `-1`: callers skip the upload, which GL would ignore
-    /// anyway, instead of threading a magic value.
+    /// Uniform location, if the linker kept the name. `None` instead of
+    /// sentinel `-1`: callers skip the upload instead of threading magic.
     pub fn uniform_opt(&self, key: &str) -> Option<GLint> {
         self.uniforms.get(key).copied()
     }
@@ -196,9 +183,7 @@ impl Shader {
     }
 
     /// Delete the program when the context is current.
-    /// `None` skips the GL call and reports failure so the caller
-    /// counts the orphan instead of deleting without a context.
-    /// No GL call without a current context; Drop reports the leak.
+    /// `None` skips the GL call and reports failure (caller counts the orphan).
     pub fn destroy_if_current(&mut self, current: Option<CurrentContext>) -> bool {
         if self.deleted {
             return false;

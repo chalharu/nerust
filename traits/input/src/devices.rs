@@ -7,9 +7,7 @@ use super::{
 };
 
 /// Port identifier used by controllers and hubs.
-///
-/// `Send + Sync` so port handles can cross the GUI/emu thread boundary
-/// alongside the buffers they index.
+/// `Send + Sync` so handles cross the GUI/emu thread boundary.
 pub trait Port: std::fmt::Debug + Send + Sync {
     fn index(&self) -> usize;
     fn id(&self) -> &'static str;
@@ -18,9 +16,7 @@ pub trait Port: std::fmt::Debug + Send + Sync {
         PortId::new(self.id())
     }
     /// Typed attachment identifier, derived from [`Port::id`] by default.
-    ///
-    /// Controllers must use this (not `AttachmentId::new(port.id())`) so
-    /// the string aliasing stays in one place.
+    /// Use this (not `AttachmentId::new`) so the aliasing stays in one place.
     fn attachment_id(&self) -> AttachmentId {
         AttachmentId::new(self.id())
     }
@@ -55,11 +51,7 @@ impl Port for SimplePort {
 }
 
 /// One resolved field entry: (attachment, control) → absolute field index.
-///
-/// Replaces the positional `(AttachmentId, DigitalControlId, usize)` tuple
-/// so call sites name each component. `control` is the unified [`ControlId`]
-/// so analog controls share the same map instead of needing a parallel
-/// analog table.
+/// `control` is the unified [`ControlId`], so analog shares the same map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FieldEntry {
     pub attachment: AttachmentId,
@@ -82,15 +74,11 @@ pub trait Controller: std::fmt::Debug + Send {
     fn read(&mut self, port: &dyn Port) -> OpenBusReadResult;
     fn write(&mut self, port: &dyn Port, value: u8);
     /// Broadcast strobe write to this controller.
-    ///
-    /// Index 0 is the broadcast convention: hubs fan a single strobe
-    /// value out to every attached controller. Each controller implements
-    /// the latch-edge directly; there is no synthetic index-0 port.
+    /// Index 0 is the broadcast convention: hubs fan one value out to all.
     fn strobe(&mut self, value: u8);
     fn sync_input(&mut self, _state: &[u8]) {}
     /// Append field entries for this controller at the given port.
-    /// Default appends nothing (no inputs).
-    /// Implementations must only push; they must not clear `out`.
+    /// Default appends nothing; implementations must only push to `out`.
     fn field_map(&self, _port: &dyn Port, _out: &mut Vec<FieldEntry>) {}
 }
 

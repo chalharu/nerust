@@ -31,13 +31,7 @@ internal fun screenRelativeAcceleration(
     )
 }
 
-/**
- * Cartridge motion sensor + rumble routing.
- *
- * Extracted from MainActivity. Owns registration (resumed + focused +
- * motion-enabled) and vibrator selection (handset vs controller target);
- * the activity forwards lifecycle calls and peripheral configuration.
- */
+/** Cartridge motion sensor + rumble routing. Owns registration and vibrator selection. */
 class SensorController(
     private val activity: MainActivity,
 ) : SensorEventListener {

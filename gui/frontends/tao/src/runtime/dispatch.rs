@@ -1,7 +1,5 @@
-//! Per-window event dispatch: one handler per window keeps the
-//! event-loop match in `super` a flat router. Handlers mirror the old
-//! inline arms (debug/PPU focus agreement shares helpers); check the
-//! arm history before reordering Destroyed/focus guards.
+//! Per-window event dispatch: one handler per window keeps the loop match a flat router.
+//! Destroyed/focus-guard order is load-bearing; do not reorder.
 
 use tao::{event::WindowEvent, event_loop::ControlFlow};
 
@@ -10,9 +8,7 @@ use crate::ports::WindowOpener;
 use super::WindowRuntime;
 use crate::aux::focus::{AuxKind, FocusEffect, FocusEvent, pump_aux};
 
-/// Map a native window event to a focus-domain event. Only
-/// `Focused` maps; every other event (Moved/Resized/keys) never arms
-/// or cancels the deferred pause.
+/// Map a native window event to a focus-domain event: only `Focused` maps.
 fn focus_event_of(kind: Option<AuxKind>, event: &WindowEvent) -> Option<FocusEvent> {
     if let WindowEvent::Focused(focused) = event {
         Some(match kind {
@@ -40,9 +36,7 @@ impl WindowRuntime {
                 *control_flow = ControlFlow::Exit;
             }
             WindowEvent::Focused(true) => {
-                // Dispatch maps WindowEvent -> FocusEvent only; the
-                // coordinator decides. A same-burst aux focus already
-                // cancelled any pending pause; this is belt-and-braces.
+                // FocusEvent only; the coordinator decides whether to resume.
                 if self.host.focus_event(FocusEvent::Main(true)) == Some(FocusEffect::Resume) {
                     self.host.resume_session();
                 }
@@ -52,9 +46,7 @@ impl WindowRuntime {
                 self.host.sync_debug_chrome();
             }
             WindowEvent::Focused(false) => {
-                // Deferred: an aux window may take focus in the same
-                // burst, so the pause lands at MainEventsCleared only
-                // if focus truly left us.
+                // Deferred: the pause lands at MainEventsCleared only if focus truly left.
                 let _ = self.host.focus_event(FocusEvent::Main(false));
                 self.host.clear_keys();
                 // Same agreement in the other direction, still
@@ -73,9 +65,7 @@ impl WindowRuntime {
         }
     }
 
-    /// Keyboard/F4 open wiring, extracted so the flag-to-window path
-    /// stays headless-testable (`KeyEvent` itself is unbuildable
-    /// outside tao, so the input arm above keeps no other logic).
+    /// Keyboard/F4 open wiring: flag-to-window path stays headless-testable.
     fn pump_debug_open_request(&mut self, opener: &dyn WindowOpener) {
         if self.host.take_debug_open_request() {
             self.host.open_debug_windows(opener, false);
@@ -83,9 +73,7 @@ impl WindowRuntime {
     }
 
     pub(super) fn on_settings_event(&mut self, event: WindowEvent) {
-        // External destroy without CloseRequested: the window
-        // is already gone, so run the normal close path (pending
-        // apply still commits).
+        // External destroy: run the normal close path (pending apply still commits).
         if matches!(event, WindowEvent::Destroyed) {
             if let Some(handle) = self.host.take_settings_window()
                 && self.host.close_settings_and_maybe_rebuild(handle)
@@ -94,9 +82,7 @@ impl WindowRuntime {
             }
             return;
         }
-        // Same-app focus moves cancel a pending pause;
-        // leaving anywhere arms it (see the main arms). Runs
-        // before borrowing the handle below.
+        // Same-app focus moves cancel a pending pause; leaving anywhere arms it.
         if let Some(focus) = focus_event_of(Some(AuxKind::Settings), &event) {
             let _ = self.host.focus_event(focus);
         }
@@ -106,10 +92,7 @@ impl WindowRuntime {
         if drained.is_none() {
             return;
         }
-        // Coalesced present: every visual path above already
-        // requested a redraw; presenting here per event would
-        // serialize a full draw behind every drag/motion event
-        // and unload the backlog as a hang on release.
+        // Coalesced present: the visual paths above already requested a redraw.
         if self.host.settings_close_requested()
             && let Some(handle) = self.host.take_settings_window()
             && self.host.close_settings_and_maybe_rebuild(handle)
@@ -122,18 +105,14 @@ impl WindowRuntime {
         if let WindowEvent::Moved(position) = &event {
             self.host.remember_debug_window_pos(position.x, position.y);
         }
-        // Focus re-reads, never force-pauses. External destroy
-        // drops the handle so a later F4 reopens; checked before
-        // focus handling so a dead window arms no auto-pause.
+        // Focus re-reads, never force-pauses; external destroy drops the handle.
         if matches!(event, WindowEvent::Destroyed) {
             self.host.drop_debug_window();
             self.host.request_redraw();
             return;
         }
-        // Focus-only drive: the dispatch maps WindowEvent to
-        // FocusEvent; Moved/Resized/key events never touch it.
-        // A system-paused session resumes like on main focus;
-        // explicit pauses stay paused.
+        // Focus-only drive: other events never touch the pause protocol.
+        // System-paused sessions resume like on main focus; explicit pauses stay paused.
         let mut resume = false;
         if let Some(focus) = focus_event_of(Some(AuxKind::Debug), &event)
             && let Some(effect) = self.host.focus_event(focus)
@@ -180,10 +159,8 @@ impl WindowRuntime {
             self.host.request_redraw();
             return;
         }
-        // Focus-only drive: the dispatch maps WindowEvent to
-        // FocusEvent; Moved/Resized/key events never touch it.
-        // A system-paused session resumes like on main focus;
-        // explicit pauses stay paused.
+        // Focus-only drive: other events never touch the pause protocol.
+        // System-paused sessions resume like on main focus; explicit pauses stay paused.
         let mut resume = false;
         if let Some(focus) = focus_event_of(Some(AuxKind::Ppu), &event)
             && let Some(effect) = self.host.focus_event(focus)

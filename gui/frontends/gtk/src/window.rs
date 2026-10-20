@@ -424,9 +424,8 @@ impl WindowExtend for Window {
     }
 
     fn load_path(&self, path: &Path) {
-        // End the state borrow before presenting: the dialog reads
-        // settings back through the same RefCell, so holding the
-        // guard across the call would panic on double-borrow.
+        // End the state borrow before presenting: the dialog reads settings back
+        // through the same RefCell, so holding the guard would double-borrow.
         let detail = self.state().borrow_mut().load_path(path).err();
         if let Some(detail) = detail {
             show_rom_load_error(&self.window(), self.state(), &detail);
@@ -473,8 +472,7 @@ impl WindowExtend for Window {
         self.borrow().pause_action.set_enabled(tick.can_pause());
         self.borrow().resume_action.set_enabled(tick.can_resume());
         self.borrow().reset_action.set_enabled(tick.loaded);
-        // Coreless open is a designed state (NoCore status with
-        // guidance, same as F4): gating on `loaded` would disagree
+        // Coreless open is a designed state: gating on `loaded` would disagree
         // with the shortcut, so the action stays enabled.
         self.borrow().debugger_action.set_enabled(true);
         self.borrow().history_action.set_enabled(true);
@@ -570,9 +568,8 @@ impl WindowExtend for Window {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
-        // No hardcoded F-keys: the debugger open rides the shortcut
-        // schema (default F4, rebindable in Settings) like every other
-        // shortcut, so a user binding always wins.
+        // No hardcoded F-keys: the debugger open rides the shortcut schema
+        // (default F4, rebindable in Settings), so a user binding always wins.
         if let Ok(controller_input) = key.try_into() {
             let shortcut = self
                 .state()
@@ -663,9 +660,8 @@ fn rebuild_slot_menu(
     }
 }
 
-/// Modal error dialog for ROM load failures: mirrors the tao
-/// frontend so a bad file explains itself instead of failing
-/// silently.
+/// Modal error dialog for ROM load failures: mirrors the tao frontend so a
+/// bad file explains itself instead of failing silently.
 fn show_rom_load_error(parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>>, detail: &str) {
     use gtk::prelude::*;
     use nerust_settings_core::i18n::{UiText, text};

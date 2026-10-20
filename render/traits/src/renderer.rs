@@ -107,9 +107,8 @@ impl OsdLayer {
     }
 }
 
-/// OSD anchor corner in render space. This is the rasterizer's own
-/// vocabulary: settings positions map to it once at the shell
-/// boundary, so the render crates never depend on settings types.
+/// OSD anchor corner in render space. The rasterizer's own vocabulary;
+/// the render crates never depend on settings types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OsdAnchor {
     TopLeft,
@@ -137,10 +136,8 @@ impl OsdAnchor {
     }
 }
 
-/// One raster pill row: tag plus body in a single color. Plain data;
-/// shaping lives in the rasterizer crate. The tag is a static level
-/// marker (`"[I]"`, `"[W]"`, `"[E]"`): no per-frame allocation at the
-/// shell boundary.
+/// One raster pill row: tag plus body in a single color.
+/// The tag is a static level marker: no per-frame allocation at the shell boundary.
 #[derive(Debug, Clone)]
 pub struct OsdRow {
     pub tag: &'static str,
@@ -166,10 +163,8 @@ pub struct OsdContent {
     pub status_position: OsdAnchor,
 }
 
-/// Viewport edge padding in physical pixels, on top of the layout
-/// margin. Canonical insets vocabulary for render code: outer layers
-/// set it for rounded corners, notches, or gesture bars the
-/// rasterizer cannot see. [`SafeInsets`] is the historical alias.
+/// Viewport edge padding in physical pixels, on top of the layout margin.
+/// [`SafeInsets`] is the historical alias.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ViewInsets {
     pub top: u32,
@@ -181,8 +176,7 @@ pub struct ViewInsets {
 /// Historical alias for [`ViewInsets`].
 pub type SafeInsets = ViewInsets;
 
-/// Base OSD font size from the client height. Single source for
-/// the rasterizer and strip reservation; the 6px floor keeps tiny
+/// Base OSD font size from the client height. The 6px floor keeps tiny
 /// surfaces legible on both sides.
 pub fn osd_font_px(client_height: u32, ui_scale: f32) -> u32 {
     if client_height == 0 {
@@ -193,9 +187,8 @@ pub fn osd_font_px(client_height: u32, ui_scale: f32) -> u32 {
         .max(6.0) as u32
 }
 
-/// Strip reservation for `rows` of OSD pills. Rounds up where the
-/// rasterizer truncates (`font_px * 16 / 10`), so the reservation
-/// always covers the layer.
+/// Strip reservation for `rows` of OSD pills. Rounds up where the rasterizer
+/// truncates (`font_px * 16 / 10`), so the reservation always covers the layer.
 pub fn strip_pixels(client_height: u32, rows: u32, ui_scale: f32) -> u32 {
     if rows == 0 || client_height == 0 {
         return 0;
@@ -215,8 +208,7 @@ pub enum RenderResult {
     Error,
 }
 
-/// GPU device + pipeline + surface.  Single unified trait.
-///
+/// GPU device + pipeline + surface. Single unified trait.
 /// Lifecycle: GpuFactory::create_renderer() → attach() → render() → detach() → drop
 pub trait GpuRenderer: std::fmt::Debug {
     /// Current output size.
@@ -248,8 +240,7 @@ pub trait GpuRenderer: std::fmt::Debug {
     fn resize(&mut self, size: SurfaceSize);
 
     /// Reserve edge strips for OSD labels. The game viewport fits into
-    /// the remaining rect on the next resize/render; strips stay clear.
-    /// Default ignores the reservation (full-surface game).
+    /// the remaining rect; default ignores the reservation.
     fn set_reserved_strip(&mut self, _strip: ReservedStrip) {}
 
     /// Overlay an OSD layer over the game image on the next render.
@@ -276,9 +267,6 @@ pub struct RendererConfig {
 pub const DEFAULT_OSD_UPLOAD_RETRIES: u8 = 3;
 
 /// Abstract factory: creates a [`GpuRenderer`].
-///
-/// `display_handle` is required by OpenGL (glutin::Display::new).
-/// wgpu ignores it and creates a headless device.
 /// Call `attach()` on the result before rendering.
 pub trait GpuFactory: std::fmt::Debug {
     fn create_renderer(

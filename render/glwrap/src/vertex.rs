@@ -12,11 +12,7 @@ use super::{
 };
 
 /// GL vertex array plus the buffers it references. Single-threaded by
-/// construction: `Rc`/`Cell` internals are `!Send`, so all names live
-/// and die on the GL context thread. Teardown deletes held buffers
-/// first, then the VAO that references them (see
-/// [`VertexArray::destroy_if_current`]); the view teardown follows the
-/// same leaf-first order.
+/// construction (`Rc`/`Cell` are `!Send`); teardown is leaf-first.
 #[derive(Debug)]
 pub struct VertexArray {
     vao: VertexArrayVAO,
@@ -50,8 +46,7 @@ impl VertexArray {
         let mut vao = 0;
         gen_vertex_arrays(1, &mut vao)?;
         // Scope guard: a failing bind or `cb` must not orphan the VAO.
-        // Wrappers already drain per call (debug) / batched (release),
-        // so no second `gl_get_error` drain here.
+        // No second drain here: wrappers already drain per call / batched.
         if let Err(e) = bind_vertex_array(vao) {
             let _ = delete_vertex_arrays(1, &mut vao);
             return Err(e);
