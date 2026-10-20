@@ -13,6 +13,109 @@ impl OsdLimits {
     pub(crate) const MAX_MODAL_QUEUED: usize = 8;
 }
 
+/// Pure outcome of one modal pump step. Data only: the caller
+/// formats the aggregated batch and logs overflow, so this box never
+/// touches `format!` or the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ModalPump {
+    /// Nothing queued.
+    Idle,
+    /// One batch moved to the sequential queue.
+    Queued {
+        /// Batches dropped to overflow while queueing (caller logs).
+        dropped: bool,
+    },
+}
+
+/// Modal half of [`OsdManager`](crate::session::osd::OsdManager):
+/// aggregation plus the sequential display queue. Pure queue logic;
+/// bullet formatting and overflow logging live at the render boundary
+/// (the manager's `pump_modal`), never here.
+#[derive(Debug, Default)]
+pub(crate) struct ModalCenter {
+    modal_box: ModalBox,
+    /// Overflow warn episode flag. Re-arms when the modal queue
+    /// fully drains (see the modal source below).
+    warned_full: bool,
+}
+
+impl ModalCenter {
+    /// Move the aggregated batch into the sequential queue, capped.
+    /// Pure: returns the outcome for the caller to format and log.
+    /// `detailed` is the pre-formatted batch text supplied by the
+    /// caller; the box only stores it.
+    pub(crate) fn pump(&mut self, detailed: Option<String>) -> ModalPump {
+        match detailed {
+            None => ModalPump::Idle,
+            Some(detail) => {
+                let dropped = self.modal_box.queue_modal(detail);
+                ModalPump::Queued { dropped }
+            }
+        }
+    }
+
+    /// Record that one overflow episode was reported. Called by the
+    /// render boundary after it logs, so repeats stay quiet until the
+    /// queue fully drains and re-arms.
+    pub(crate) fn note_overflow_reported(&mut self) {
+        self.warned_full = true;
+    }
+
+    pub(crate) fn overflow_already_reported(&self) -> bool {
+        self.warned_full
+    }
+
+    /// Take the pending raw lines as one display batch. The caller
+    /// formats them (bullets) at the render boundary.
+    pub(crate) fn take_batch_text(&mut self) -> Vec<String> {
+        self.modal_box.take_modal_text()
+    }
+
+    /// Push one pre-routed raw line into the aggregation.
+    pub(crate) fn push_text(&mut self, text: String) {
+        self.modal_box.push(text);
+    }
+
+    /// Take the next batch only when no dialog is showing. Re-arms
+    /// the overflow warn episode when the queue fully drains.
+    pub(crate) fn take_batch(&mut self) -> Option<String> {
+        let next = self.modal_box.take_modal_batch();
+        if next.is_some() && self.modal_box.modal_pending() == 0 {
+            self.warned_full = false;
+        }
+        next
+    }
+
+    /// Ack the showing dialog. Re-arms the overflow warn episode when
+    /// the queue fully drains.
+    pub(crate) fn closed(&mut self) {
+        self.modal_box.modal_closed();
+        if self.modal_box.modal_pending() == 0 {
+            self.warned_full = false;
+        }
+    }
+
+    pub(crate) fn pending(&self) -> usize {
+        self.modal_box.modal_pending()
+    }
+
+    /// Direct queue write for the sink side. Returns true on overflow.
+    pub(crate) fn queue_direct(&mut self, detail: String) -> bool {
+        self.modal_box.queue_modal(detail)
+    }
+
+    /// Direct requeue write for the sink side. Returns true on overflow.
+    pub(crate) fn requeue_direct(&mut self, detail: String) -> bool {
+        self.modal_box.requeue_front(detail)
+    }
+
+    /// Total modal overflow losses (test hook for the warn-once path).
+    #[cfg(test)]
+    pub(crate) fn dropped_total(&self) -> u64 {
+        self.modal_box.dropped_total
+    }
+}
+
 /// Modal error batches with sequential display pumping.
 #[derive(Debug, Default)]
 pub(crate) struct ModalBox {
@@ -142,6 +245,35 @@ mod tests {
             modal.queue_modal(format!("again {i}"));
         }
         assert_eq!(modal.dropped_total, 2);
+    }
+
+    #[test]
+    fn modal_center_pump_is_pure_data() {
+        let mut center = ModalCenter::default();
+        // Idle without a batch.
+        let idle = center.pump(None);
+        assert_eq!(idle, ModalPump::Idle);
+        assert!(matches!(idle, ModalPump::Idle));
+        // Queued batches report without formatting or logging.
+        center.push_text("raw line".to_string());
+        assert_eq!(
+            center.pump(Some("raw line".to_string())),
+            ModalPump::Queued { dropped: false }
+        );
+        assert!(matches!(
+            ModalPump::Queued { dropped: false },
+            ModalPump::Queued { .. }
+        ));
+        // Take/close drain through the center and re-arm the flag.
+        assert_eq!(center.pending(), 1);
+        assert_eq!(center.take_batch().as_deref(), Some("raw line"));
+        assert_eq!(center.pending(), 0);
+        center.closed();
+        // Overflow records the drop for the caller to log.
+        for i in 0..9 {
+            center.queue_direct(format!("batch {i}"));
+        }
+        assert_eq!(center.dropped_total(), 1);
     }
 
     #[test]

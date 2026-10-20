@@ -2,11 +2,14 @@ mod bridge;
 mod dialog_coordinator;
 mod dialog_ownership;
 mod error_dialog;
+mod foreground_controller;
 mod input_router;
 mod lifecycle;
+mod media_loader;
 mod menu;
 mod messages;
 mod osd;
+mod peripheral_sync;
 mod picker;
 mod render_sync;
 mod saf;
@@ -17,7 +20,7 @@ mod touch_layout;
 use std::{ffi::c_void, path::PathBuf, rc::Rc, sync::Arc, time::Instant};
 
 use jni::{jni_sig, jni_str};
-use nerust_core_traits::{audio::AudioBackendRegistry, factory::load::MediaObject};
+use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::{
     settings::{
         BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
@@ -36,8 +39,7 @@ use nerust_gui_shell::{
     },
 };
 use nerust_render_traits::{SurfaceSize, renderer::GpuFactory};
-use nerust_settings_core::model::{local::RumbleTarget, shared::StoragePolicy};
-use sha2::{Digest, Sha256};
+use nerust_settings_core::model::shared::StoragePolicy;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -52,9 +54,10 @@ use self::{
     input_router::InputRouter,
     lifecycle::Lifecycle,
     messages::{FrontendEvent, MenuAction, RomPickerResult, SettingsDialogResult},
+    peripheral_sync::PeripheralSync,
     render_sync::RenderSync,
     settings::{AndroidSettings, SettingsApplier, SettingsPlan},
-    storage::{AndroidStorage, LastMediaReference},
+    storage::AndroidStorage,
 };
 use crate::error_dialog_controller::{DismissTransition, SettingsClosedTransition, ShowTransition};
 
@@ -74,6 +77,12 @@ pub(crate) fn register_main_activity_natives(
                 jni_str!("onMenuAction"),
                 jni_str!("(Ljava/lang/String;)V"),
                 menu::Java_io_github_chalharu_nerust_MainActivity_onMenuAction as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("onErrorDialogDismissed"),
+                jni_str!("()V"),
+                menu::Java_io_github_chalharu_nerust_MainActivity_onErrorDialogDismissed
+                    as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
                 jni_str!("onDirectoryPickerResult"),
@@ -126,6 +135,7 @@ pub(crate) fn run(
     }
 
     let frontend_app = app.clone();
+    let init_fail_app = app.clone();
     let storage_root = app
         .internal_data_path()
         .ok_or_else(|| "Android internal data path is unavailable".to_string())?;
@@ -142,14 +152,34 @@ pub(crate) fn run(
     bridge::bind_event_loop(event_loop.create_proxy());
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut state = AndroidFrontend::new(
+    let mut state = match AndroidFrontend::try_new(
         frontend_app,
         storage,
         storage_root.join("nerust"),
         system_registry,
         audio_registry,
         gpu_factory,
-    );
+    ) {
+        Ok(state) => state,
+        Err(error) => {
+            // No event loop exists yet, so there is no error-dialog queue
+            // to drain: surface the cause with a toast, then finish the
+            // activity instead of aborting the process (cdylib abort used
+            // to take down the whole app with no message).
+            log::error!("android::run: frontend init failed: {error}");
+            let message = format!("Startup failed: {error}");
+            show_toast(&init_fail_app, &message);
+            bridge::call_on_activity(
+                &init_fail_app,
+                "finish Android activity after init failure",
+                |env, activity| {
+                    env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[])?;
+                    Ok(())
+                },
+            );
+            return Err(error);
+        }
+    };
     log::info!("android::run: entering Android event loop");
     event_loop
         .run_app(&mut state)
@@ -180,56 +210,6 @@ fn show_toast(app: &AndroidApp, message: &str) {
     });
 }
 
-fn configure_cartridge_peripherals(
-    app: &AndroidApp,
-    motion_enabled: bool,
-    rumble_enabled: bool,
-    rumble_strength_percent: u8,
-    rumble_target: RumbleTarget,
-) {
-    let target = match rumble_target {
-        RumbleTarget::Auto => "auto",
-        RumbleTarget::Handset => "handset",
-        RumbleTarget::Controller => "controller",
-    }
-    .to_string();
-    bridge::call_on_activity(
-        app,
-        "configure Android cartridge peripherals",
-        move |env, activity| {
-            let target = env.new_string(&target)?;
-            env.call_method(
-                &activity,
-                jni_str!("configureCartridgePeripherals"),
-                jni_sig!("(ZZILjava/lang/String;)V"),
-                &[
-                    jni::objects::JValue::Bool(motion_enabled),
-                    jni::objects::JValue::Bool(rumble_enabled),
-                    jni::objects::JValue::Int(i32::from(rumble_strength_percent)),
-                    jni::objects::JValue::Object(target.as_ref()),
-                ],
-            )?;
-            Ok(())
-        },
-    );
-}
-
-fn set_cartridge_rumble(app: &AndroidApp, intensity: u8) {
-    bridge::call_on_activity(
-        app,
-        "update Android cartridge rumble",
-        move |env, activity| {
-            env.call_method(
-                &activity,
-                jni_str!("setCartridgeRumble"),
-                jni_sig!("(I)V"),
-                &[jni::objects::JValue::Int(i32::from(intensity))],
-            )?;
-            Ok(())
-        },
-    );
-}
-
 struct AndroidFrontend {
     app: AndroidApp,
     session: SessionHandle,
@@ -243,22 +223,26 @@ struct AndroidFrontend {
     is_resumed: bool,
     pending_storage_settings: Option<SettingsSnapshot>,
     pending_legacy_digest: Option<[u8; 32]>,
-    last_peripheral_config: Option<(bool, bool, u8, RumbleTarget)>,
-    last_rumble_intensity: Option<u8>,
+    peripherals: PeripheralSync,
     osd: osd::AndroidOsd,
     event_scratch: Vec<crate::android::messages::FrontendEvent>,
 }
 
 impl AndroidFrontend {
-    fn new(
+    /// Fallible constructor: session creation used to `abort()` the cdylib
+    /// on settings I/O corruption. A dead process shows no message; this
+    /// returns the error so `run()` can toast + finish the activity.
+    /// Corrupted settings files are quarantined (renamed) and replaced
+    /// with defaults instead of wedging every future launch.
+    fn try_new(
         app: AndroidApp,
         storage: AndroidStorage,
         settings_root: PathBuf,
         system_registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
         gpu_factory: Rc<dyn GpuFactory>,
-    ) -> Self {
-        log::info!("AndroidFrontend::new: building frontend state");
+    ) -> Result<Self, String> {
+        log::info!("AndroidFrontend::try_new: building frontend state");
         let capabilities = HostBackendCapabilities {
             window: HostWindowCapabilities {
                 remembers_window_size: false,
@@ -271,16 +255,12 @@ impl AndroidFrontend {
         };
         let settings_paths =
             SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
-        let mut session = SessionHandle::new_with_settings_paths(
+        let mut session = Self::create_session_with_recovery(
             capabilities,
-            system_registry,
-            audio_registry,
+            &system_registry,
+            &audio_registry,
             settings_paths,
-        )
-        .unwrap_or_else(|e| {
-            log::error!("fatal: session creation failed — settings I/O may be corrupted: {e}");
-            std::process::abort();
-        });
+        )?;
         session.set_persistence_backends(
             Box::new(saf::AndroidStorageBackend::new(app.clone())),
             Box::new(saf::AndroidStorageBackend::new(app.clone())),
@@ -315,19 +295,70 @@ impl AndroidFrontend {
             is_resumed: false,
             pending_storage_settings: None,
             pending_legacy_digest: None,
-            last_peripheral_config: None,
-            last_rumble_intensity: None,
+            peripherals: PeripheralSync::new(),
             osd: osd::AndroidOsd::new(),
             event_scratch: Vec::new(),
         };
         if frontend.lifecycle.restore_pending() {
             log::info!(
-                "AndroidFrontend::new: restore_pending flag found; will attempt lifecycle state restore at foreground resume"
+                "AndroidFrontend::try_new: restore_pending flag found; will attempt lifecycle state restore at foreground resume"
             );
         }
         frontend.refresh_dialog_caches();
-        log::info!("AndroidFrontend::new: ready");
-        frontend
+        log::info!("AndroidFrontend::try_new: ready");
+        Ok(frontend)
+    }
+
+    /// Session creation with corrupted-settings recovery. A parse failure
+    /// quarantines the settings file (`settings.yaml.corrupted-<nanos>`)
+    /// and retries once with defaults, so one bad write cannot wedge
+    /// every future launch.
+    fn create_session_with_recovery(
+        capabilities: HostBackendCapabilities,
+        system_registry: &Arc<SystemRegistry>,
+        audio_registry: &Arc<AudioBackendRegistry>,
+        settings_paths: SettingsPaths,
+    ) -> Result<SessionHandle, String> {
+        match SessionHandle::new_with_settings_paths(
+            capabilities,
+            system_registry.clone(),
+            audio_registry.clone(),
+            settings_paths.clone(),
+        ) {
+            Ok(session) => Ok(session),
+            Err(error) => {
+                log::error!(
+                    "session creation failed, quarantining possibly-corrupted settings: {error}"
+                );
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                let corrupted = settings_paths
+                    .settings_file
+                    .with_extension(format!("yaml.corrupted-{stamp}"));
+                match std::fs::rename(&settings_paths.settings_file, &corrupted) {
+                    Ok(()) => log::warn!("renamed corrupted settings to {}", corrupted.display()),
+                    Err(rename_error) if rename_error.kind() == std::io::ErrorKind::NotFound => {
+                        log::debug!("no settings file to quarantine");
+                    }
+                    Err(rename_error) => {
+                        log::warn!("failed to quarantine corrupted settings: {rename_error}");
+                    }
+                }
+                SessionHandle::new_with_settings_paths(
+                    capabilities,
+                    system_registry.clone(),
+                    audio_registry.clone(),
+                    settings_paths,
+                )
+                .map_err(|retry_error| {
+                    format!(
+                        "failed to create Android session (initial: {error}; retry with defaults: {retry_error})"
+                    )
+                })
+            }
+        }
     }
 
     /// Update the cached library entries and settings so synchronous JNI
@@ -342,236 +373,37 @@ impl AndroidFrontend {
         settings::apply_screen_orientation(&self.app, current.screen_orientation);
     }
 
-    fn sync_cartridge_peripherals(&mut self) {
-        let handles = self.session.host_peripherals();
-        let requested = handles
-            .accelerometer
-            .as_ref()
-            .is_some_and(|handle| handle.demand().requested);
-        let settings = &self.session.settings_snapshot().local.cartridge_peripherals;
-        let motion_active = self.is_resumed && requested && settings.motion_enabled;
-        if !motion_active && let Some(accelerometer) = handles.accelerometer.as_ref() {
-            accelerometer.clear();
-        }
-        bridge::bind_accelerometer(
-            motion_active
-                .then(|| handles.accelerometer.as_ref().cloned())
-                .flatten(),
-        );
-
-        let config = (
-            motion_active,
-            settings.rumble_enabled,
-            settings.rumble_strength_percent.min(100),
-            settings.rumble_target,
-        );
-        if self.last_peripheral_config != Some(config) {
-            configure_cartridge_peripherals(&self.app, config.0, config.1, config.2, config.3);
-            self.last_peripheral_config = Some(config);
-            self.last_rumble_intensity = None;
-        }
-
-        let intensity = if self.is_resumed && settings.rumble_enabled {
-            handles
-                .rumble
-                .as_ref()
-                .map_or(0, |handle| handle.snapshot().state.intensity)
-        } else {
-            0
-        };
-        if self.last_rumble_intensity != Some(intensity) {
-            set_cartridge_rumble(&self.app, intensity);
-            self.last_rumble_intensity = Some(intensity);
-        }
-    }
-
-    fn stop_cartridge_peripherals(&mut self) {
-        if let Some(accelerometer) = self.session.host_peripherals().accelerometer.as_ref() {
-            accelerometer.clear();
-        }
-        bridge::bind_accelerometer(None);
-        configure_cartridge_peripherals(&self.app, false, false, 0, RumbleTarget::Auto);
-        set_cartridge_rumble(&self.app, 0);
-        self.last_peripheral_config = None;
-        self.last_rumble_intensity = None;
-    }
-
-    fn load_from_library_with_autosave(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        id: &str,
-        restore_hidden_state: bool,
-    ) -> Result<(), String> {
-        log::info!(
-            "load_from_library_with_autosave: loading id={id} restore_hidden_state={restore_hidden_state}"
-        );
-        let bytes = self
-            .storage
-            .rom_library
-            .load_bytes(id)
-            .map_err(|error| format!("failed to load ROM from library: {error}"))?
-            .ok_or_else(|| format!("ROM {id} was not found in the library"))?;
-        let legacy_digest: [u8; 32] = Sha256::digest(&bytes).into();
-        let path = self.storage.rom_library.rom_path(id);
-        let media = MediaObject::new(path, bytes);
-
-        self.load_media(event_loop, media, None, restore_hidden_state)?;
-        self.pending_legacy_digest = Some(legacy_digest);
-        Ok(())
-    }
-
-    fn load_document_uri(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        reference: LastMediaReference,
-        restore_hidden_state: bool,
-    ) -> Result<(), String> {
-        log::info!(
-            "load_document_uri: loading '{}' from {} restore_hidden_state={restore_hidden_state}",
-            reference.display_name,
-            reference.uri
-        );
-        let bytes = picker::read_uri_bytes(&self.app, &reference.uri)?;
-        let media = MediaObject::from_document_uri(
-            reference.uri.clone(),
-            reference.display_name.clone(),
-            bytes,
-        );
-        self.load_media(event_loop, media, Some(reference), restore_hidden_state)
-    }
-
-    fn load_media(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        media: MediaObject,
-        document_reference: Option<LastMediaReference>,
-        restore_hidden_state: bool,
-    ) -> Result<(), String> {
-        let (factory, system_id) = {
-            let f = self
-                .session
-                .registry()
-                .detect(&media)
-                .map_err(|e| format!("failed to detect ROM system: {e}"))?
-                .ok_or_else(|| "unsupported ROM format".to_string())?;
-            let id = f.system_id();
-            (f.clone(), id)
-        };
-
-        if let Some(reference) = document_reference.as_ref()
-            && reference.system_id != system_id.to_string()
-        {
-            return Err(format!(
-                "last media system mismatch: expected {}, detected {system_id}",
-                reference.system_id
-            ));
-        }
-
-        self.session.clear_input();
-        self.input
-            .reset_touch_tracking(&mut self.session, &self.app);
-        self.input.forget_physical_pressed();
-        self.session
-            .set_active_system(system_id.as_ref())
-            .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
-
-        let options = self
-            .session
-            .default_load_options()
-            .ok_or_else(|| "no active system".to_string())?;
-        let view = nerust_settings_core::factory::settings_view(
-            self.session.settings_snapshot(),
-            system_id.as_ref(),
-        );
-        let resolved = factory
-            .resolve_load_request(&view, options)
-            .map_err(|e| format!("failed to resolve ROM load request: {e}"))?;
-
-        if let Err(error) = self.session.load_resolved(media, resolved) {
-            return Err(format!("failed to start ROM: {error}"));
-        }
-        let restore_document_on_restart = document_reference.as_ref().is_some_and(|reference| {
-            if let Err(error) = self.storage.save_last_media_reference(reference) {
-                log::warn!("{error}");
-                false
-            } else {
-                true
-            }
-        });
-        self.finish_rom_load(event_loop, restore_hidden_state);
-        if restore_document_on_restart {
-            self.storage.touch_restore_pending();
-        }
-        self.notify_rom_loaded(&system_id.to_string());
-        log::info!("load_media: session ready for system={system_id}");
-        Ok(())
-    }
-
-    /// Tell Kotlin a ROM loaded. JNI failures route to the error dialog
-    /// queue (Bridge origin) instead of staying log-only.
-    fn notify_rom_loaded(&mut self, system_id: &str) {
-        let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        let result = bridge::with_java_env(&vm, |env| {
-            let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-            let system_id = env.new_string(system_id)?;
-            env.call_method(
-                &activity,
-                jni_str!("notifyRomLoaded"),
-                jni_sig!("(Ljava/lang/String;)V"),
-                &[jni::objects::JValue::Object(system_id.as_ref())],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        });
-        if let Err(error) = result {
-            log::warn!("failed to notify Android ROM load: {error:?}");
-            self.session.report_external_error(
-                FailureOrigin::Bridge,
-                format!("failed to notify Android ROM load: {error:?}"),
-            );
-        }
-    }
-
-    fn open_rom_from_uri(&mut self, event_loop: &ActiveEventLoop, uri: &str) -> Result<(), String> {
-        log::info!("open_rom_from_uri: opening URI {uri}");
-        let (display_name, extension) = picker::infer_import_metadata(&self.app, uri);
-        let file_name = if extension.is_empty() {
-            display_name
-        } else {
-            format!("{display_name}.{extension}")
-        };
-        let bytes = picker::read_uri_bytes(&self.app, uri)?;
-        if let Some(expected) = self.pending_legacy_digest
-            && <[u8; 32]>::from(Sha256::digest(&bytes)) != expected
-        {
-            return Err("selected ROM does not match the legacy library entry".to_string());
-        }
-        let media = MediaObject::from_document_uri(uri, &file_name, bytes);
-        let detected_system = self
-            .session
-            .registry()
-            .detect(&media)
-            .map_err(|error| format!("failed to detect ROM system: {error}"))?
-            .ok_or_else(|| "unsupported ROM format".to_string())?
-            .system_id()
-            .to_string();
-        let reference = LastMediaReference::new(uri.to_string(), file_name, detected_system);
-        self.load_media(event_loop, media, Some(reference), false)?;
-        self.pending_legacy_digest = None;
-        Ok(())
-    }
-
     fn handle_picker_result(&mut self, event_loop: &ActiveEventLoop, result: RomPickerResult) {
         match result {
             RomPickerResult::Selected(uri) => {
-                log::info!("handle_picker_result: picker returned URI {uri}");
-                if let Err(error) = self.open_rom_from_uri(event_loop, &uri) {
+                log::info!("handle_picker_result: picker returned URI; fetching off-thread");
+                // Document/SAF I/O blocks: fetch on a worker thread and
+                // dispatch the completed buffer when it publishes RomBytes.
+                picker::spawn_document_fetch(self.app.clone(), uri);
+            }
+            RomPickerResult::RomBytes {
+                uri,
+                file_name,
+                bytes,
+            } => {
+                log::info!(
+                    "handle_picker_result: worker delivered {} bytes for {uri}",
+                    bytes.len()
+                );
+                if let Err(error) = self.open_rom_from_bytes(event_loop, &uri, &file_name, bytes) {
                     log::error!("{error}");
                     self.session.report_external_error(
                         nerust_gui_shell::session::notification::FailureOrigin::Picker,
                         error,
                     );
                 }
+            }
+            RomPickerResult::Failed(error) => {
+                log::error!("{error}");
+                self.session.report_external_error(
+                    nerust_gui_shell::session::notification::FailureOrigin::Picker,
+                    error,
+                );
             }
             RomPickerResult::TreeSelected(uri) => {
                 let Some(mut next) = self.pending_storage_settings.take() else {
@@ -624,10 +456,10 @@ impl AndroidFrontend {
             // flush stays shielded below; the user re-saves if needed.
             log::warn!("handle_settings_result: applying settings while a newer dialog is open");
         } else {
-            match self
-                .dialogs
-                .on_settings_closed(self.osd.manager_mut(), self.is_resumed, tick)
-            {
+            match self.osd.with_modal(|queue| {
+                self.dialogs
+                    .on_settings_closed(queue, self.is_resumed, tick)
+            }) {
                 SettingsClosedTransition::Show { auto_pause } => {
                     if auto_pause {
                         self.pause();
@@ -654,7 +486,7 @@ impl AndroidFrontend {
         let plan = SettingsApplier::plan(
             &values,
             &current,
-            self.session.settings_snapshot(),
+            self.session.settings_snapshot().clone(),
             self.session.registry(),
         );
         match plan {
@@ -713,6 +545,9 @@ impl AndroidFrontend {
                 self.render_sync.request_redraw(&mut self.shell);
                 // Settings changed – refresh cached settings for sync dialogs.
                 self.refresh_dialog_caches();
+                // Peripheral settings may have changed: force a re-push
+                // on the next pass (dirty generation).
+                self.peripherals.mark_dirty();
             }
             Err(error) => {
                 let detail = format!("failed to apply Android settings: {error}");
@@ -886,8 +721,8 @@ impl AndroidFrontend {
     /// one per dialog gate.
     fn maybe_show_error_dialog(&mut self, tick: TickMetrics) {
         let request = self
-            .dialogs
-            .poll_error_dialog(self.osd.manager_mut(), self.is_resumed, tick);
+            .osd
+            .with_modal(|queue| self.dialogs.poll_error_dialog(queue, self.is_resumed, tick));
         let Some(transition) = request else {
             return;
         };
@@ -911,8 +746,8 @@ impl AndroidFrontend {
         // Bridge truth here: a settings dialog may have opened over the
         // error since the last event.
         let transition = self
-            .dialogs
-            .on_dismissed(self.osd.manager_mut(), self.is_resumed);
+            .osd
+            .with_modal(|queue| self.dialogs.on_dismissed(queue, self.is_resumed));
         match transition {
             DismissTransition::Idle => {}
             DismissTransition::Reshow => {
@@ -921,220 +756,6 @@ impl AndroidFrontend {
             DismissTransition::ResumeAndReshow => {
                 self.resume();
                 self.maybe_show_error_dialog(tick);
-            }
-        }
-    }
-
-    fn finish_rom_load(&mut self, event_loop: &ActiveEventLoop, restore_hidden_state: bool) {
-        if restore_hidden_state {
-            log::info!("finish_rom_load: restoring hidden lifecycle state");
-            self.session.load_hidden_lifecycle_state();
-        } else {
-            log::info!("finish_rom_load: clearing hidden lifecycle state");
-            self.session.clear_hidden_lifecycle_state();
-        }
-        // Stale batches straddle no ROM boundary: requeue the unacked
-        // head so the previous ROM's error never describes the new one.
-        // The pause flag survives, so the gate below holds the resume
-        // until the requeued dialog is dismissed.
-        self.dialogs.on_suspended(self.osd.manager_mut());
-        // Resume fresh loads and own auto-pauses, never across an error
-        // auto-pause (its dismiss owns that); a manual pause predates
-        // the suspend and must survive it.
-        if self
-            .lifecycle
-            .resume_want_after_restore(restore_hidden_state, self.dialogs.auto_paused())
-        {
-            self.lifecycle.set_auto_paused(false);
-            self.resume();
-        }
-        self.lifecycle.clear_restore_pending();
-        self.storage.clear_restore_pending();
-
-        // Ensure a window and renderer exist immediately when resuming so that
-        // request_redraw() takes effect without requiring a user tap.
-        if !self.render_sync.has_window() && self.is_resumed {
-            match self.render_sync.ensure_window(
-                event_loop,
-                &self.session,
-                &self.gpu_factory,
-                &mut self.osd,
-                &mut self.shell,
-            ) {
-                Ok(()) => {
-                    log::info!("finish_rom_load: ensured window/renderer after ROM load");
-                    self.input.rebuild_overlay(
-                        &self.session,
-                        &self.app,
-                        self.render_sync.window_size(),
-                    );
-                }
-                Err(error) => {
-                    log::warn!(
-                        "finish_rom_load: ensure_window failed: {error}; scheduling foreground resume"
-                    );
-                    self.lifecycle.begin_foreground_resume();
-                }
-            }
-        } else if let Some(window) = self.render_sync.cloned_window() {
-            // Rebuild renderer to ensure the underlying surface is fresh; dialogs or
-            // system UI may have invalidated the previous surface.
-            log::info!("finish_rom_load: rebuilding renderer to ensure visible surface");
-            self.render_sync.rebuild_renderer(
-                window,
-                &self.session,
-                &self.gpu_factory,
-                &mut self.osd,
-                &mut self.shell,
-            );
-            self.input
-                .rebuild_overlay(&self.session, &self.app, self.render_sync.window_size());
-        }
-
-        self.refresh_dialog_caches();
-        self.render_sync.request_redraw(&mut self.shell);
-    }
-
-    fn try_resume_foreground(&mut self, event_loop: &ActiveEventLoop) {
-        if !self.is_resumed || !self.lifecycle.resume_pending() {
-            return;
-        }
-        if let Some(retry_at) = self.lifecycle.retry_deadline() {
-            if Instant::now() < retry_at {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(retry_at));
-                return;
-            }
-            self.lifecycle.clear_retry_deadline();
-        }
-        log::info!(
-            "try_resume_foreground: attempt {}",
-            self.lifecycle.attempt_index()
-        );
-        match self.render_sync.ensure_window(
-            event_loop,
-            &self.session,
-            &self.gpu_factory,
-            &mut self.osd,
-            &mut self.shell,
-        ) {
-            Ok(()) => {
-                let attempt = self.lifecycle.attempt_index();
-                self.lifecycle.record_success();
-                if self.lifecycle.restore_pending() {
-                    log::info!(
-                        "try_resume_foreground: lifecycle_restore_pending=true; attempting to load last ROM and restore hidden lifecycle state"
-                    );
-                    match self.storage.load_last_media_reference() {
-                        Ok(Some(reference)) => {
-                            match self.load_document_uri(event_loop, reference, true) {
-                                Ok(()) => {
-                                    log::info!(
-                                        "try_resume_foreground: loaded last document URI for lifecycle restore"
-                                    );
-                                }
-                                Err(error) => {
-                                    log::warn!(
-                                        "try_resume_foreground: failed to load last document URI for lifecycle restore: {error}"
-                                    );
-                                    self.session.report_external_error(
-                                        nerust_gui_shell::session::notification::FailureOrigin::Restore,
-                                        "Previous ROM is unavailable; open it again".to_string(),
-                                    );
-                                    log::info!(
-                                        "try_resume_foreground: preserving hidden state until the ROM URI is reconnected"
-                                    );
-                                }
-                            }
-                        }
-                        Ok(None) => match self.storage.load_last_rom_id() {
-                            Ok(Some(id)) => {
-                                if self.storage.rom_library.rom_path(&id).is_none() {
-                                    log::warn!(
-                                        "try_resume_foreground: stored ROM id={id} is missing"
-                                    );
-                                    self.session.clear_hidden_lifecycle_state();
-                                    self.storage.clear_restore_pending();
-                                    self.lifecycle.clear_restore_pending();
-                                } else {
-                                    match self
-                                        .load_from_library_with_autosave(event_loop, &id, true)
-                                    {
-                                        Ok(()) => {
-                                            log::info!(
-                                                "try_resume_foreground: loaded last ROM id={id} for lifecycle restore"
-                                            );
-                                            // Toasts mark success only; failures surface via the error dialog.
-                                            show_toast(
-                                                &self.app,
-                                                "Legacy ROM restored; use Open ROM to reconnect its document",
-                                            );
-                                            // finish_rom_load will handle resume and clearing pending flags.
-                                        }
-                                        Err(error) => {
-                                            log::warn!(
-                                                "try_resume_foreground: failed to load last ROM id={id} for lifecycle restore: {error}"
-                                            );
-                                            self.session.clear_hidden_lifecycle_state();
-                                            self.storage.clear_restore_pending();
-                                            self.lifecycle.clear_restore_pending();
-                                        }
-                                    }
-                                }
-                            }
-                            Ok(None) => {
-                                log::info!("try_resume_foreground: no last ROM recorded");
-                                self.session.clear_hidden_lifecycle_state();
-                                self.storage.clear_restore_pending();
-                                self.lifecycle.clear_restore_pending();
-                            }
-                            Err(error) => {
-                                log::warn!(
-                                    "try_resume_foreground: failed to read last ROM id: {error}"
-                                );
-                                self.session.clear_hidden_lifecycle_state();
-                                self.storage.clear_restore_pending();
-                                self.lifecycle.clear_restore_pending();
-                            }
-                        },
-                        Err(error) => {
-                            log::warn!(
-                                "try_resume_foreground: failed to read last media reference: {error}"
-                            );
-                            self.session.report_external_error(
-                                nerust_gui_shell::session::notification::FailureOrigin::Restore,
-                                "Previous ROM reference is invalid; open it again".to_string(),
-                            );
-                            self.session.clear_hidden_lifecycle_state();
-                            self.storage.clear_restore_pending();
-                            self.lifecycle.clear_restore_pending();
-                        }
-                    }
-                }
-                // Resume only our own lifecycle auto-pause, never across
-                // an error auto-pause (its dismiss path owns that resume).
-                if self
-                    .lifecycle
-                    .resume_want_foreground_retry(self.dialogs.auto_paused())
-                {
-                    self.resume();
-                    self.lifecycle.set_auto_paused(false);
-                    log::info!("try_resume_foreground: resumed session after lifecycle pause");
-                }
-                // The OS may have killed the audio stream while
-                // backgrounded regardless of pause state; re-acquire it
-                // (idempotent, silent when already playing).
-                self.session.restart_audio();
-                log::info!("try_resume_foreground: attempt {attempt} succeeded");
-                self.render_sync.request_redraw(&mut self.shell);
-            }
-            Err(error) => {
-                let attempt = self.lifecycle.attempt_index();
-                log::warn!("try_resume_foreground: attempt {attempt} failed: {error}");
-                if self.lifecycle.schedule_retry(self.is_resumed)
-                    && let Some(retry_at) = self.lifecycle.retry_deadline()
-                {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(retry_at));
-                }
             }
         }
     }
@@ -1181,6 +802,7 @@ impl PauseControl for AndroidFrontend {
 
     fn resume(&mut self) {
         self.exec(SessionCommand::Resume);
+        self.peripherals.mark_dirty();
     }
 
     fn toggle_pause(&mut self) {
@@ -1275,7 +897,7 @@ impl ApplicationHandler for AndroidFrontend {
         log::info!("ApplicationHandler::suspended");
         self.is_resumed = false;
         self.lifecycle.cancel_foreground_resume();
-        self.stop_cartridge_peripherals();
+        self.peripherals.stop(&self.app, &mut self.session);
         self.save_lifecycle_state();
         bridge::reset_transient();
         picker::reset_transient();
@@ -1283,7 +905,8 @@ impl ApplicationHandler for AndroidFrontend {
         // Transient UI dies with the activity: the coordinator releases
         // the gate and requeues the unacked head; the settings bridge
         // pending id dies with the dialog it tracked.
-        self.dialogs.on_suspended(self.osd.manager_mut());
+        self.osd
+            .with_modal(|queue| self.dialogs.on_suspended(queue));
         self.release_window_resources();
     }
 
@@ -1322,14 +945,15 @@ impl ApplicationHandler for AndroidFrontend {
                 self.input.handle_touch(&mut self.session, &self.app, touch);
             }
             WindowEvent::RedrawRequested => {
-                let tick = self.session.tick_metrics();
+                // One build per pass: the bundle owns the session borrow
+                // chain; render/Osd fan out from it without re-locking.
+                let input = RenderSync::build_frame_input(&mut self.session);
                 self.render_sync.render(
                     &self.app,
-                    &mut self.session,
                     &mut self.osd,
                     &mut self.shell,
-                    tick,
                     Instant::now(),
+                    &input,
                 );
             }
             _ => {}
@@ -1364,7 +988,9 @@ impl ApplicationHandler for AndroidFrontend {
             self.handle_menu_action(event, tick);
         }
         self.event_scratch = pending;
-        self.sync_cartridge_peripherals();
+        let is_resumed = self.is_resumed;
+        self.peripherals
+            .sync(&self.app, &mut self.session, is_resumed);
         self.maybe_refresh_title(now);
         let settings = self.notification_settings();
         let language = self.notification_language();

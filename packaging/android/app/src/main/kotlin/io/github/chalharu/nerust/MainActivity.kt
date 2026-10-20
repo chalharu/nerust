@@ -2,15 +2,9 @@ package io.github.chalharu.nerust
 
 import android.annotation.SuppressLint
 import android.app.NativeActivity
-import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.RectF
-import android.graphics.Typeface
 import android.hardware.input.InputManager
 import android.media.AudioManager
 import android.os.Build
@@ -22,46 +16,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets as AndroidWindowInsets
 import android.window.OnBackInvokedDispatcher
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -74,11 +28,8 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import org.json.JSONObject
-import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.min
 
-private const val MENU_ACTION_ERROR_DIALOG_DISMISSED = "error_dialog_dismissed"
 private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
 private const val ERROR_DIALOG_TAG = "nerust-error-dialog"
 private const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
@@ -91,35 +42,6 @@ internal fun screenOrientationRequest(value: Int): Int? =
         else -> null
     }
 
-private data class AndroidSetting(
-    val key: String,
-    val section: String,
-    val label: String,
-    val choices: List<String>,
-    val edges: List<String> = emptyList(),
-)
-
-private data class AndroidSettingsSection(
-    val id: String,
-    val label: String,
-    val settingIndices: List<Int>,
-)
-
-internal data class OverlayZoneSpec(
-    val x: Float,
-    val y: Float,
-    val width: Float,
-    val height: Float,
-    val label: String,
-)
-
-internal data class FloatingJoystickSpec(
-    val centerX: Float,
-    val centerY: Float,
-    val baseRadius: Float,
-    val knobRadius: Float,
-    val activationBounds: RectF,
-)
 
 private fun createRomPickerIntent(): Intent =
     Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -352,7 +274,7 @@ class MainActivity :
             "onDestroy: isFinishing=$isFinishing isDestroyed=$isDestroyed " +
                 "lastDrawerState=${chromeManager.lastDrawerStateForTest} lastDialogState=$lastDialogStateForTest",
         )
-        chromeManager.onStop()
+        chromeManager.onDestroy()
         dialogManager.dismissForStop()
         sensorController.onDestroy()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
@@ -562,6 +484,25 @@ class MainActivity :
         append: Boolean,
     ): String = safRepository.writeSafFileChunk(treeUri, relativePath, encoded, append)
 
+    fun readSafFileChunkBytes(
+        treeUri: String,
+        relativePath: String,
+        offset: Long,
+        length: Long,
+    ): ByteArray? = safRepository.readSafFileChunkBytes(treeUri, relativePath, offset, length)
+
+    fun writeSafFileChunkBytes(
+        treeUri: String,
+        relativePath: String,
+        bytes: ByteArray,
+        append: Boolean,
+    ): String = safRepository.writeSafFileChunkBytes(treeUri, relativePath, bytes, append)
+
+    fun listSafFilesWithSizes(
+        treeUri: String,
+        relativePath: String,
+    ): String = safRepository.listSafFilesWithSizes(treeUri, relativePath)
+
     @Suppress("DEPRECATION")
     override fun onActivityResult(
         requestCode: Int,
@@ -750,15 +691,6 @@ class MainActivity :
         }
     }
 
-    private data class SettingsDialogContent(
-        val keys: List<String>,
-        val labels: List<String>,
-        val choiceStrings: List<String>,
-        val currentIndices: List<String>,
-        val sections: List<String>,
-        val edgeStrings: List<String>,
-    )
-
     private fun showSettingsDialogInternal(
         content: SettingsDialogContent,
         requestId: Long?,
@@ -850,7 +782,7 @@ class MainActivity :
      * Presents an aggregated OSD error batch as scrollable text with a single
      * dismiss button. Called from the Rust JNI bridge on the Java main thread.
      * Dismissal (including replacement by another dialog) reports back through
-     * the menu string bridge so Rust can resume its auto-pause and show the
+     * the dedicated onErrorDialogDismissed native so Rust can resume its auto-pause and show the
      * next queued error. A long batch scrolls instead of clipping.
      */
     fun showErrorDialog(message: String) {
@@ -860,7 +792,7 @@ class MainActivity :
         // settings instead of losing it.
         if (dialogManager.isShowing(SETTINGS_DIALOG_TAG)) {
             Log.i(TAG, "showErrorDialog: suppressed while settings dialog is showing")
-            chromeManager.dispatchMenuAction(MENU_ACTION_ERROR_DIALOG_DISMISSED)
+            onErrorDialogDismissed()
             return
         }
         dialogManager.show(
@@ -868,7 +800,7 @@ class MainActivity :
             contentDescription = message,
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = false,
-            onDismiss = { chromeManager.dispatchMenuAction(MENU_ACTION_ERROR_DIALOG_DISMISSED) },
+            onDismiss = { onErrorDialogDismissed() },
         ) { dismiss ->
             NerustErrorDialogCard(
                 message = message,
@@ -898,6 +830,8 @@ class MainActivity :
     private external fun onFilePickerResult(uri: String?)
 
     private external fun onMenuAction(action: String)
+
+    private external fun onErrorDialogDismissed()
 
     private external fun onDirectoryPickerResult(uri: String?)
 
@@ -942,734 +876,4 @@ class MainActivity :
     }
 }
 
-@Composable
-private fun NerustDialogHost(content: @Composable () -> Unit) {
-    Box(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        content()
-    }
-}
 
-@Composable
-private fun NerustFullScreenDialogHost(content: @Composable ColumnScope.() -> Unit) {
-    Surface(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(WindowInsets.safeDrawing.asPaddingValues())
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
-            content = content,
-        )
-    }
-}
-
-@Composable
-private fun NerustDialogCard(
-    title: String,
-    buttons: @Composable RowScope.() -> Unit,
-    body: @Composable ColumnScope.() -> Unit,
-) {
-    Surface(
-        modifier = Modifier.widthIn(min = 280.dp, max = 420.dp),
-        shape = MaterialTheme.shapes.extraLarge,
-        tonalElevation = 6.dp,
-    ) {
-        Column(modifier = Modifier.padding(24.dp)) {
-            Text(text = title, style = MaterialTheme.typography.headlineSmall)
-            Spacer(modifier = Modifier.height(16.dp))
-            body()
-            Spacer(modifier = Modifier.height(24.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                content = buttons,
-            )
-        }
-    }
-}
-
-@Composable
-private fun NerustErrorDialogCard(
-    message: String,
-    onDismissRequest: () -> Unit,
-) {
-    NerustDialogHost {
-        NerustDialogCard(
-            title = "Error",
-            buttons = {
-                TextButton(onClick = onDismissRequest) { Text("OK") }
-            },
-        ) {
-            SelectionContainer {
-                Text(
-                    text = message,
-                    modifier =
-                        Modifier
-                            .heightIn(max = 480.dp)
-                            .verticalScroll(rememberScrollState()),
-                )
-            }
-        }
-    }
-}
-
-private fun settingsContentDescription(
-    settings: List<AndroidSetting>,
-    selections: List<Int>,
-): String =
-    buildList {
-        add("Settings")
-        settings.forEachIndexed { index, setting ->
-            val value = setting.choices.getOrElse(selections.getOrElse(index) { 0 }) { "?" }
-            add("${setting.label}: $value")
-        }
-    }.joinToString("\n")
-
-@Composable
-private fun NerustSettingsDialogCard(
-    settings: List<AndroidSetting>,
-    initialSelections: List<Int>,
-    onDismissRequest: () -> Unit,
-    onSave: (List<Int>) -> Unit,
-) {
-    val selections = rememberSettingsSelections(settings, initialSelections)
-    val sections = remember(settings) { buildSettingsSections(settings) }
-    var activeSectionId by remember { mutableStateOf<String?>(null) }
-    var activeSettingIndex by remember { mutableStateOf<Int?>(null) }
-
-    Surface(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(WindowInsets.safeDrawing.asPaddingValues()),
-        ) {
-            val activeSection = sections.find { it.id == activeSectionId }
-            val visibleSettingCount =
-                activeSection
-                    ?.let { visibleSettingIndices(settings, it, selections).size }
-            SettingsNavigationHeader(
-                title =
-                    activeSettingIndex?.let { settings[it].label }
-                        ?: activeSection?.label
-                        ?: "Settings",
-                subtitle =
-                    when {
-                        activeSettingIndex != null -> "Choose a value"
-                        activeSection != null -> settingsCountLabel(visibleSettingCount ?: 0)
-                        else -> "Choose a category"
-                    },
-                canNavigateBack = activeSection != null || activeSettingIndex != null,
-                onNavigateBack = {
-                    if (activeSettingIndex != null) {
-                        activeSettingIndex = null
-                    } else {
-                        activeSectionId = null
-                    }
-                },
-                onDismissRequest = onDismissRequest,
-                onSave = { onSave(selections.toList()) },
-            )
-            HorizontalDivider()
-
-            when {
-                activeSettingIndex != null -> {
-                    val settingIndex = requireNotNull(activeSettingIndex)
-                    SettingsChoiceList(
-                        setting = settings[settingIndex],
-                        selectedIndex = selections[settingIndex],
-                        onSelect = { choiceIndex ->
-                            selections[settingIndex] = choiceIndex
-                            activeSettingIndex = null
-                        },
-                    )
-                }
-
-                activeSection != null -> {
-                    val visibleSection =
-                        activeSection.copy(
-                            settingIndices =
-                                visibleSettingIndices(settings, activeSection, selections),
-                        )
-                    SettingsSectionList(
-                        section = visibleSection,
-                        settings = settings,
-                        selections = selections,
-                        onSettingClick = { activeSettingIndex = it },
-                    )
-                }
-
-                else -> {
-                    SettingsCategoryList(
-                        sections = sections,
-                        settings = settings,
-                        selections = selections,
-                        onSectionClick = { activeSectionId = it },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingsNavigationHeader(
-    title: String,
-    subtitle: String,
-    canNavigateBack: Boolean,
-    onNavigateBack: () -> Unit,
-    onDismissRequest: () -> Unit,
-    onSave: () -> Unit,
-) {
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (canNavigateBack) {
-                TextButton(onClick = onNavigateBack) { Text("Back") }
-            } else {
-                TextButton(onClick = onDismissRequest) { Text("Cancel") }
-            }
-            TextButton(onClick = onSave) { Text("Save") }
-        }
-        Text(text = title, style = MaterialTheme.typography.headlineSmall)
-        Text(text = subtitle, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-@Composable
-private fun SettingsCategoryList(
-    sections: List<AndroidSettingsSection>,
-    settings: List<AndroidSetting>,
-    selections: List<Int>,
-    onSectionClick: (String) -> Unit,
-) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        itemsIndexed(sections) { index, section ->
-            val visibleIndices = visibleSettingIndices(settings, section, selections)
-            val summary =
-                visibleIndices.take(2).joinToString(" · ") { settingIndex ->
-                    val setting = settings[settingIndex]
-                    val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
-                    "${setting.label}: $value"
-                }
-            SettingsNavigationRow(
-                title = section.label,
-                value = settingsCountLabel(visibleIndices.size),
-                supportingText = summary,
-                semanticsLabel = "${section.label}: ${settingsCountLabel(visibleIndices.size)}",
-                onClick = { onSectionClick(section.id) },
-            )
-            if (index < sections.lastIndex) HorizontalDivider()
-        }
-    }
-}
-
-@Composable
-private fun SettingsSectionList(
-    section: AndroidSettingsSection,
-    settings: List<AndroidSetting>,
-    selections: List<Int>,
-    onSettingClick: (Int) -> Unit,
-) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        itemsIndexed(section.settingIndices) { index, settingIndex ->
-            val setting = settings[settingIndex]
-            val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
-            SettingsNavigationRow(
-                title = setting.label,
-                value = value,
-                semanticsLabel = "${setting.key}: ${setting.label}: $value",
-                onClick = { onSettingClick(settingIndex) },
-            )
-            if (index < section.settingIndices.lastIndex) HorizontalDivider()
-        }
-    }
-}
-
-@Composable
-private fun SettingsChoiceList(
-    setting: AndroidSetting,
-    selectedIndex: Int,
-    onSelect: (Int) -> Unit,
-) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        itemsIndexed(setting.choices) { choiceIndex, choiceLabel ->
-            DialogChoiceButton(
-                label = choiceLabel,
-                selected = selectedIndex == choiceIndex,
-            ) {
-                onSelect(choiceIndex)
-            }
-            if (choiceIndex < setting.choices.lastIndex) HorizontalDivider()
-        }
-    }
-}
-
-@Composable
-private fun SettingsNavigationRow(
-    title: String,
-    value: String,
-    semanticsLabel: String,
-    supportingText: String? = null,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(horizontal = 24.dp, vertical = 18.dp)
-                .semantics { contentDescription = semanticsLabel },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
-            supportingText?.takeIf(String::isNotBlank)?.let {
-                Text(text = it, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        Text(text = value, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-private fun buildSettingsSections(settings: List<AndroidSetting>): List<AndroidSettingsSection> =
-    settings
-        .withIndex()
-        .groupBy({ it.value.section }, { it.index })
-        .map { (id, indices) ->
-            AndroidSettingsSection(id, settingsSectionLabel(id), indices)
-        }
-
-private fun settingsSectionLabel(id: String): String =
-    when (id) {
-        "audio" -> "Audio"
-        "video" -> "Video"
-        "controls" -> "Controls"
-        "storage" -> "Storage"
-        "system.nes" -> "Nintendo Entertainment System"
-        "system.gbc" -> "Game Boy Color"
-        "system.gba" -> "Game Boy Advance"
-        "general" -> "General"
-        else -> id.substringAfterLast('.').replace('_', ' ').replaceFirstChar(Char::uppercase)
-    }
-
-private fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) "setting" else "settings"}"
-
-// Same-edge follow (mirrors desktop): the notification area mode
-// governs the edge, so the status row hides while both position
-// pickers share the top or bottom band. Edge classes come from the
-// Rust payload ("top"/"bottom" per choice); nothing here assumes
-// choice indices.
-private fun visibleSettingIndices(
-    settings: List<AndroidSetting>,
-    section: AndroidSettingsSection,
-    selections: List<Int>,
-): List<Int> {
-    val notifPos = settings.indexOfFirst { it.key == "notifications.position" }
-    val statusPos = settings.indexOfFirst { it.key == "status.position" }
-    val statusArea = settings.indexOfFirst { it.key == "status.area_mode" }
-    if (notifPos < 0 || statusPos < 0 || statusArea < 0) return section.settingIndices
-    fun edgeOf(settingIndex: Int): String {
-        val setting = settings.getOrNull(settingIndex) ?: return ""
-        return setting.edges.getOrElse(selections.getOrElse(settingIndex) { 0 }) { "" }
-    }
-    val notifEdge = edgeOf(notifPos)
-    val statusEdge = edgeOf(statusPos)
-    if (notifEdge.isEmpty() || statusEdge.isEmpty()) return section.settingIndices
-    if (notifEdge != statusEdge) return section.settingIndices
-    return section.settingIndices.filter { it != statusArea }
-}
-
-@Composable
-private fun rememberSettingsSelections(
-    settings: List<AndroidSetting>,
-    initialSelections: List<Int>,
-) = remember(settings, initialSelections) {
-    mutableStateListOf<Int>().apply {
-        settings.forEachIndexed { index, setting ->
-            val maxIndex = max(0, setting.choices.lastIndex)
-            add(initialSelections.getOrElse(index) { 0 }.coerceIn(0, maxIndex))
-        }
-    }
-}
-
-@Composable
-private fun DialogSettingButton(
-    label: String,
-    value: String,
-    key: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(vertical = 16.dp)
-                .semantics { contentDescription = "$key: $label: $value" },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(text = label, modifier = Modifier.weight(1f))
-        Text(text = value, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-@Composable
-private fun DialogChoiceButton(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(vertical = 12.dp)
-                .semantics { contentDescription = label },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(text = label, modifier = Modifier.weight(1f))
-        RadioButton(selected = selected, onClick = null)
-    }
-}
-
-@SuppressLint("ViewConstructor")
-/**
- * One touch zone pushed from Rust, in relative (0.0..1.0) surface
- * coordinates. Geometry is owned by Rust (`touch_layout.rs` TOUCH_ZONES);
- * Kotlin only draws the pushed payload.
- */
-internal data class PushedOverlayZone(
-    val x: Float,
-    val y: Float,
-    val width: Float,
-    val height: Float,
-    val label: String,
-)
-
-internal class ControlsOverlayView(
-    context: Context,
-    opacityPercent: Int,
-    private val scalePercent: Int,
-    private val verticalOffsetPercent: Int,
-    private val shouldersVisible: Boolean,
-    private var pushedZones: List<PushedOverlayZone> = emptyList(),
-) : View(context) {
-    private val opacity = opacityPercent.coerceIn(0, 100) / 100f
-    private val fillPaint =
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb((48 * opacity).toInt(), 255, 255, 255)
-            style = Paint.Style.FILL
-        }
-    private val strokePaint =
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb((160 * opacity).toInt(), 255, 255, 255)
-            strokeWidth = 2f
-            style = Paint.Style.STROKE
-        }
-    private val textPaint =
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb((220 * opacity).toInt(), 255, 255, 255)
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        }
-    private val knobPaint =
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb((220 * opacity).toInt(), 255, 255, 255)
-            style = Paint.Style.FILL
-        }
-    private var floatingDpadActive = false
-    private var floatingDpadCenterX = 0f
-    private var floatingDpadCenterY = 0f
-    private var floatingDpadKnobX = 0f
-    private var floatingDpadKnobY = 0f
-
-    fun updateFloatingDpad(
-        active: Boolean,
-        centerX: Float,
-        centerY: Float,
-        knobX: Float,
-        knobY: Float,
-    ) {
-        floatingDpadActive = active
-        floatingDpadCenterX = centerX
-        floatingDpadCenterY = centerY
-        floatingDpadKnobX = knobX
-        floatingDpadKnobY = knobY
-        invalidate()
-    }
-
-    fun floatingDpadStateForTest(): FloatArray =
-        floatArrayOf(
-            if (floatingDpadActive) 1f else 0f,
-            floatingDpadCenterX,
-            floatingDpadCenterY,
-            floatingDpadKnobX,
-            floatingDpadKnobY,
-        )
-
-    fun setPushedZones(zones: List<PushedOverlayZone>) {
-        pushedZones = zones
-        invalidate()
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val viewWidth = width.toFloat()
-        val viewHeight = height.toFloat()
-        if (viewWidth <= 0f || viewHeight <= 0f) {
-            return
-        }
-
-        val joystick = floatingJoystickLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent)
-        drawFloatingJoystick(canvas, joystick)
-        // Geometry is pushed from Rust via configureControlsOverlay: prefer
-        // the pushed zones so both sides render from one source of truth.
-        // The local controlsLayout() copy is the fallback when no payload
-        // arrived (or it failed to parse); keep the fractions in sync.
-        val zones =
-            pushedZones.takeIf(List<PushedOverlayZone>::isNotEmpty)?.map { zone ->
-                OverlayZoneSpec(
-                    x = zone.x * viewWidth,
-                    y = zone.y * viewHeight,
-                    width = zone.width * viewWidth,
-                    height = zone.height * viewHeight,
-                    label = zone.label,
-                )
-            }
-                ?: controlsLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent, shouldersVisible)
-        zones.forEach { zone ->
-            drawZone(canvas, zone.x, zone.y, zone.width, zone.height, zone.label)
-        }
-    }
-
-    private fun drawFloatingJoystick(
-        canvas: Canvas,
-        spec: FloatingJoystickSpec,
-    ) {
-        val centerX = if (floatingDpadActive) floatingDpadCenterX else spec.centerX
-        val centerY = if (floatingDpadActive) floatingDpadCenterY else spec.centerY
-        val knobX = if (floatingDpadActive) floatingDpadKnobX else centerX
-        val knobY = if (floatingDpadActive) floatingDpadKnobY else centerY
-        canvas.drawCircle(centerX, centerY, spec.baseRadius, fillPaint)
-        canvas.drawCircle(centerX, centerY, spec.baseRadius, strokePaint)
-        canvas.drawCircle(knobX, knobY, spec.knobRadius, knobPaint)
-        canvas.drawCircle(knobX, knobY, spec.knobRadius, strokePaint)
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    override fun onTouchEvent(event: MotionEvent): Boolean = false
-
-    private fun drawZone(
-        canvas: Canvas,
-        x: Float,
-        y: Float,
-        width: Float,
-        height: Float,
-        label: String,
-    ) {
-        val rect = RectF(x, y, x + width, y + height)
-        val radius = min(width, height) * 0.20f
-        canvas.drawRoundRect(rect, radius, radius, fillPaint)
-        canvas.drawRoundRect(rect, radius, radius, strokePaint)
-
-        textPaint.textSize = max(12f, min(height * 0.42f, width * 0.28f))
-        val centerY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
-        canvas.drawText(label, rect.centerX(), centerY, textPaint)
-    }
-}
-
-@SuppressLint("ViewConstructor")
-internal class DrawerEdgeSwipeHandleView(
-    context: Context,
-    private val onDrawerOpen: () -> Unit,
-) : View(context) {
-    private val swipeThresholdPx = context.resources.displayMetrics.density * 24f
-    private val verticalTolerancePx = context.resources.displayMetrics.density * 32f
-    private var downX = 0f
-    private var downY = 0f
-    private var trackingSwipe = false
-
-    override fun onTouchEvent(event: MotionEvent): Boolean =
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                downX = event.x
-                downY = event.y
-                trackingSwipe = true
-                true
-            }
-
-            MotionEvent.ACTION_MOVE -> {
-                if (!trackingSwipe) {
-                    false
-                } else {
-                    val deltaX = event.x - downX
-                    val deltaY = abs(event.y - downY)
-                    if (deltaY > verticalTolerancePx) {
-                        trackingSwipe = false
-                    } else if (deltaX >= swipeThresholdPx) {
-                        trackingSwipe = false
-                        performClick()
-                        onDrawerOpen()
-                    }
-                    true
-                }
-            }
-
-            MotionEvent.ACTION_UP,
-            MotionEvent.ACTION_CANCEL,
-            -> {
-                trackingSwipe = false
-                true
-            }
-
-            else -> {
-                super.onTouchEvent(event)
-            }
-        }
-
-    override fun performClick(): Boolean = super.performClick()
-}
-
-internal fun controlsLayout(
-    width: Float,
-    height: Float,
-    scalePercent: Int = 100,
-    verticalOffsetPercent: Int = 0,
-    shouldersVisible: Boolean = true,
-): List<OverlayZoneSpec> {
-    // Local fallback copy: geometry is owned and pushed by Rust
-    // (touch_layout.rs TOUCH_ZONES via configureControlsOverlay) and the
-    // overlay view prefers the pushed zones. This computation only draws
-    // when no payload arrived; keep the fractions in sync.
-    val portrait = height >= width
-    val base = min(width, height)
-    val scale = scalePercent.coerceIn(50, 150) / 100f
-    val verticalOffset = height * verticalOffsetPercent.coerceIn(-30, 30) / 100f
-    val controlTop = if (portrait) height * 0.54f else 0f
-    val controlHeight = height - controlTop
-    val joystick = floatingJoystickLayout(width, height, scalePercent, verticalOffsetPercent)
-    val actionSize = base * 0.14f * scale
-    val actionGap = base * 0.04f
-    val actionLeft = if (portrait) width * 0.64f else width - base * 0.08f - actionSize * 2f - actionGap
-    val actionTop = joystick.centerY - actionSize * 0.5f
-    val centerButtonWidth = base * 0.10f * scale
-    val centerButtonHeight = base * 0.068f * scale
-    val centerGap = base * 0.03f
-    val centerRowWidth = centerButtonWidth * 2f + centerGap
-    val centerStartX = (width - centerRowWidth) * 0.5f
-    val centerTop =
-        (if (portrait) controlTop + controlHeight * 0.16f else height * 0.82f) + verticalOffset
-    // Shoulder strip above the D-Pad activation area and the center row.
-    // Mirrors ProfileTouchOverlay in android.rs; keep the fractions in sync.
-    val shoulderWidth = base * 0.20f * scale
-    val shoulderHeight = base * 0.08f * scale
-    val shoulderMarginX = width * 0.02f
-    val shoulderTop = controlTop + base * 0.015f + verticalOffset
-
-    return buildList {
-        add(
-            OverlayZoneSpec(
-                x = actionLeft,
-                y = actionTop,
-                width = actionSize,
-                height = actionSize,
-                label = "B",
-            ),
-        )
-        add(
-            OverlayZoneSpec(
-                x = actionLeft + actionSize + actionGap,
-                y = actionTop,
-                width = actionSize,
-                height = actionSize,
-                label = "A",
-            ),
-        )
-        if (shouldersVisible) {
-            add(
-                OverlayZoneSpec(
-                    x = shoulderMarginX,
-                    y = shoulderTop,
-                    width = shoulderWidth,
-                    height = shoulderHeight,
-                    label = "L",
-                ),
-            )
-            add(
-                OverlayZoneSpec(
-                    x = width - shoulderMarginX - shoulderWidth,
-                    y = shoulderTop,
-                    width = shoulderWidth,
-                    height = shoulderHeight,
-                    label = "R",
-                ),
-            )
-        }
-        add(
-            OverlayZoneSpec(
-                x = centerStartX,
-                y = centerTop,
-                width = centerButtonWidth,
-                height = centerButtonHeight,
-                label = "SELECT",
-            ),
-        )
-        add(
-            OverlayZoneSpec(
-                x = centerStartX + centerButtonWidth + centerGap,
-                y = centerTop,
-                width = centerButtonWidth,
-                height = centerButtonHeight,
-                label = "START",
-            ),
-        )
-    }
-}
-
-internal fun floatingJoystickLayout(
-    width: Float,
-    height: Float,
-    scalePercent: Int = 100,
-    verticalOffsetPercent: Int = 0,
-): FloatingJoystickSpec {
-    val portrait = height >= width
-    val base = min(width, height)
-    val scale = scalePercent.coerceIn(50, 150) / 100f
-    val verticalOffset = height * verticalOffsetPercent.coerceIn(-30, 30) / 100f
-    val controlTop = if (portrait) height * 0.54f else 0f
-    val controlHeight = height - controlTop
-    val dpadSize = base * 0.28f * scale
-    val baseRadius = dpadSize * 0.42f
-    val centerX = base * 0.08f + dpadSize * 0.5f
-    val centerY =
-        (if (portrait) controlTop + controlHeight * 0.58f else height * 0.65f) + verticalOffset
-    val activationRight = if (portrait) width * 0.52f else width * 0.45f
-    val activationTop = if (portrait) controlTop else height * 0.25f
-    return FloatingJoystickSpec(
-        centerX = centerX,
-        centerY = centerY,
-        baseRadius = baseRadius,
-        knobRadius = baseRadius * 0.48f,
-        activationBounds =
-            RectF(
-                baseRadius,
-                activationTop + baseRadius,
-                activationRight - baseRadius,
-                height - baseRadius,
-            ),
-    )
-}

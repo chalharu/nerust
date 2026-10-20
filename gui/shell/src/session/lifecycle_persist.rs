@@ -10,18 +10,19 @@ impl SessionHandle {
     /// Best-effort for suspend: failures log and report `false`.
     pub fn save_hidden_lifecycle_state(&mut self) -> bool {
         self.emu
-            .core()
+            .exporter()
             .ok()
-            .is_some_and(|core| self.media.persistence.save_hidden(core))
+            .is_some_and(|exporter| self.media.persistence.save_hidden(exporter))
     }
 
     /// Restore runtime state from the hidden autosave slot.
     /// Best-effort for resume: failures log and report `false`.
     pub fn load_hidden_lifecycle_state(&mut self) -> bool {
-        self.emu
-            .core()
-            .ok()
-            .is_some_and(|core| self.media.persistence.load_hidden(core))
+        self.emu.exporter().ok().is_some_and(|exporter| {
+            self.media
+                .persistence
+                .load_hidden(exporter, crate::state::resolve_state_format)
+        })
     }
 
     /// Drop the hidden autosave slot, if any.

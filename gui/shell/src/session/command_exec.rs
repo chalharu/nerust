@@ -5,25 +5,54 @@
 use crate::session::{
     SessionError, SessionHandle,
     commands::{
-        SessionCommand, SessionCommandOutcome, command_name, outcome_notification, resolve_toggle,
+        SessionCmd, SessionCommand, SessionCommandOutcome, outcome_notification, resolve_toggle,
     },
     error::SlotOpFailure,
     osd::TickMetrics,
     persistence::SlotDirection,
 };
 
-/// Persistence operation behind a slot command. The executor matches
-/// on this instead of taking a closure over `PersistenceManager` and
-/// `EmuCore`, so the persistence/core seam never leaks into the
-/// dispatch signature.
+/// Save-side persistence operation behind a slot command. Split from
+/// [`LoadOp`] so the `unreachable!` legs disappear: the executor
+/// matches on the half it runs, and a new op fails to compile until
+/// it picks a side.
 #[derive(Debug, Clone, Copy)]
-enum SlotOp {
+enum SaveOp {
     CreateSlot,
     SaveActiveSlotOrNew,
-    LoadActiveSlot,
     SaveSlot(u64),
-    LoadSlot(u64),
     DeleteSlot(u64),
+}
+
+/// Load-side persistence operation behind a slot command. Loads run
+/// through [`run_load_op`](SessionHandle::run_load_op), which takes
+/// the post-load tick for the redraw decision.
+#[derive(Debug, Clone, Copy)]
+enum LoadOp {
+    LoadActiveSlot,
+    LoadSlot(u64),
+}
+
+impl SessionCommand {
+    /// Save half of this command, if it saves.
+    fn as_save_op(self) -> Option<SaveOp> {
+        match self {
+            SessionCommand::CreateSlot => Some(SaveOp::CreateSlot),
+            SessionCommand::SaveActiveSlotOrNew => Some(SaveOp::SaveActiveSlotOrNew),
+            SessionCommand::SaveSlot(id) => Some(SaveOp::SaveSlot(id)),
+            SessionCommand::DeleteSlot(id) => Some(SaveOp::DeleteSlot(id)),
+            _ => None,
+        }
+    }
+
+    /// Load half of this command, if it loads.
+    fn as_load_op(self) -> Option<LoadOp> {
+        match self {
+            SessionCommand::LoadActiveSlot => Some(LoadOp::LoadActiveSlot),
+            SessionCommand::LoadSlot(id) => Some(LoadOp::LoadSlot(id)),
+            _ => None,
+        }
+    }
 }
 
 impl SessionHandle {
@@ -33,8 +62,9 @@ impl SessionHandle {
     ) -> Result<SessionCommandOutcome, SessionError> {
         // One metrics lock per command: the tick threads through the
         // executor and the notification below, so steady frames pay
-        // exactly one lock. (Loads re-fetch once on success for the
-        // redraw decision; see `run_load_op`.)
+        // exactly one lock. Loads fetch once more on success for the
+        // redraw decision (see `run_load_op`): the executor takes
+        // that post tick as a parameter instead of re-locking.
         let tick = self.tick_metrics();
         let result = self.run_command_inner(command, &tick);
         match &result {
@@ -54,13 +84,15 @@ impl SessionHandle {
                 // Single audit point for transport failures: frontends
                 // must not log these at their call sites. The push
                 // below logs the UX wording; this line keeps the cause.
-                let name = command_name(command);
+                // The typed source chain renders at the boundary, so no
+                // `error.to_string()` escapes into the notification.
+                let name = command.cmd_name();
                 log::warn!("run_command {name} failed: {error}");
                 self.notifications.push(
-                    crate::session::notification::NotificationKind::command_failure(
+                    crate::session::notification::NotificationKind::command_failure_from(
                         crate::session::notification::FailureOrigin::Command,
                         name,
-                        error.to_string(),
+                        error,
                     ),
                 )
             }
@@ -73,23 +105,47 @@ impl SessionHandle {
         command: SessionCommand,
         tick: &TickMetrics,
     ) -> Result<SessionCommandOutcome, SessionError> {
+        // Slot commands dispatch through their save/load half: one
+        // match, no second dispatch inside the runners.
+        if let Some(op) = command.as_save_op() {
+            return Ok(self.run_save_op(op));
+        }
+        if let Some(op) = command.as_load_op() {
+            // The redraw decision needs the post-load pause state, so
+            // the caller fetches once and threads it in: the runner
+            // itself never re-locks.
+            let post_tick = self.tick_metrics();
+            return Ok(self.run_load_op(op, tick, &post_tick));
+        }
         match command {
             SessionCommand::Pause => self.cmd_pause(tick),
             SessionCommand::Resume => self.cmd_resume(tick),
             SessionCommand::TogglePause => self.cmd_toggle_pause(tick),
             SessionCommand::Reset => self.cmd_reset(),
-            SessionCommand::CreateSlot => Ok(self.run_slot_op(SlotOp::CreateSlot)),
-            SessionCommand::SaveActiveSlotOrNew => {
-                Ok(self.run_slot_op(SlotOp::SaveActiveSlotOrNew))
-            }
-            SessionCommand::LoadActiveSlot => Ok(self.run_load_op(SlotOp::LoadActiveSlot, tick)),
             SessionCommand::SelectActiveSlot(id) => Ok(self.cmd_select_active_slot(id)),
-            SessionCommand::SaveSlot(id) => Ok(self.run_slot_op(SlotOp::SaveSlot(id))),
-            SessionCommand::LoadSlot(id) => Ok(self.run_load_op(SlotOp::LoadSlot(id), tick)),
-            SessionCommand::DeleteSlot(id) => Ok(self.run_slot_op(SlotOp::DeleteSlot(id))),
             SessionCommand::SelectNextSlot => Ok(self.cmd_adjacent_slot(SlotDirection::Next)),
             SessionCommand::SelectPreviousSlot => {
                 Ok(self.cmd_adjacent_slot(SlotDirection::Previous))
+            }
+            // Save/load arms return above; reaching one here means the
+            // halves disagree with the command set. The assert pins
+            // the invariant with a real condition; the fallback keeps
+            // the command total even in release.
+            SessionCommand::CreateSlot
+            | SessionCommand::SaveActiveSlotOrNew
+            | SessionCommand::SaveSlot(_)
+            | SessionCommand::DeleteSlot(_)
+            | SessionCommand::LoadActiveSlot
+            | SessionCommand::LoadSlot(_) => {
+                debug_assert!(
+                    command.as_save_op().is_some() || command.as_load_op().is_some(),
+                    "slot command missing its save/load half",
+                );
+                Ok(SessionCommandOutcome {
+                    executed: false,
+                    needs_redraw: false,
+                    slot_failure: Some(SlotOpFailure::Unavailable),
+                })
             }
         }
     }
@@ -159,21 +215,23 @@ impl SessionHandle {
         }
     }
 
-    /// Run one slot op against the persistence manager and the live
+    /// Run one save op against the persistence manager and the live
     /// core. Absent core reads as [`SlotOpFailure::Empty`]; failures
     /// ride the outcome instead of erroring the command.
-    fn run_slot_op(&mut self, op: SlotOp) -> SessionCommandOutcome {
-        let slot_failure = match self.emu.core().ok() {
+    fn run_save_op(&mut self, op: SaveOp) -> SessionCommandOutcome {
+        let exporter = self.emu.exporter().ok();
+        let slot_failure = match exporter {
             Some(core) => {
                 let persistence = &mut self.media.persistence;
                 let result = match op {
-                    SlotOp::CreateSlot => persistence.create_slot(core),
-                    SlotOp::SaveActiveSlotOrNew => persistence.save_active_slot_or_new(core),
-                    SlotOp::SaveSlot(id) => persistence.save_slot(id, core, false),
-                    SlotOp::DeleteSlot(id) => persistence.delete_slot(id, core),
-                    SlotOp::LoadActiveSlot | SlotOp::LoadSlot(_) => {
-                        unreachable!("loads run through run_load_op")
-                    }
+                    SaveOp::CreateSlot => persistence.create_slot(core),
+                    SaveOp::SaveActiveSlotOrNew => persistence.save_active_slot_or_new(core),
+                    SaveOp::SaveSlot(id) => persistence.save_slot(
+                        id,
+                        core,
+                        crate::session::persistence::SlotActivation::Leave,
+                    ),
+                    SaveOp::DeleteSlot(id) => persistence.delete_slot(id, core),
                 };
                 result.err()
             }
@@ -186,18 +244,24 @@ impl SessionHandle {
         }
     }
 
-    /// Load variant of [`run_slot_op`]: a successful load that clears
-    /// a stale pause needs a redraw. The pause comparison re-fetches
-    /// once (the only second lock on this path); everything else
-    /// reuses the command tick.
-    fn run_load_op(&mut self, op: SlotOp, tick: &TickMetrics) -> SessionCommandOutcome {
-        let slot_failure = match self.emu.core().ok() {
+    /// Load variant of [`run_save_op`](Self::run_save_op): a successful
+    /// load that clears a stale pause needs a redraw. The pause
+    /// comparison uses the caller-threaded `post_tick`, so this runner
+    /// itself never re-locks.
+    fn run_load_op(
+        &mut self,
+        op: LoadOp,
+        tick: &TickMetrics,
+        post_tick: &TickMetrics,
+    ) -> SessionCommandOutcome {
+        let exporter = self.emu.exporter().ok();
+        let slot_failure = match exporter {
             Some(core) => {
                 let persistence = &mut self.media.persistence;
+                let resolve = crate::state::resolve_state_format;
                 let result = match op {
-                    SlotOp::LoadActiveSlot => persistence.load_active_slot(core),
-                    SlotOp::LoadSlot(id) => persistence.load_slot(id, core),
-                    _ => unreachable!("saves run through run_slot_op"),
+                    LoadOp::LoadActiveSlot => persistence.load_active_slot(core, resolve),
+                    LoadOp::LoadSlot(id) => persistence.load_slot(id, core, resolve),
                 };
                 result.err()
             }
@@ -205,10 +269,10 @@ impl SessionHandle {
         };
         let executed = slot_failure.is_none();
         // A successful load that clears a stale pause needs a redraw:
-        // re-fetch once for the comparison (the only second lock on
-        // this path). Anything else reuses the command tick.
+        // compare against the caller-threaded post tick instead of
+        // re-locking here.
         let now_paused = if executed {
-            self.tick_metrics().paused
+            post_tick.paused
         } else {
             tick.paused
         };

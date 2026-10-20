@@ -9,9 +9,9 @@ use nerust_render_traits::renderer::GpuRenderer;
 use tao::event::WindowEvent;
 
 use super::HostState;
-use crate::aux::focus::WindowHandler;
+use crate::aux::focus::{AuxWindow as _, pump_aux};
 use crate::ports::WindowOpener;
-use nerust_gui_shell::session::osd::ModalSource;
+use nerust_gui_shell::session::osd::ModalSource as _;
 use nerust_render_traits::ReservedStrip;
 use nerust_render_traits::renderer::strip_pixels;
 
@@ -23,14 +23,19 @@ pub(crate) struct ModalFlight {
 }
 
 /// Shell-side OSD sync gate, calling only public presenter/manager
-/// APIs. The generation comparison replaces the old peek-then-take
-/// flag; visibility, the 2Hz status digits, and geometry (size/chrome
-/// moves boxes without a generation bump) are the other pass
-/// signals. The live-layer memo is deliberately not an input: a live
-/// but steady layer must Skip without running the presenter.
-/// (Ideal home is `OsdPresenter::should_sync` in the shell crate;
+/// APIs (`last_seen`, `generation`, `has_visible`). The generation
+/// comparison replaces the old peek-then-take flag; visibility, the
+/// 2Hz status digits, and geometry (size/chrome moves boxes without
+/// a generation bump) are the other pass signals. The live-layer memo
+/// is deliberately not an input: a live but steady layer must Skip
+/// without running the presenter.
+/// (Ideal home is `OsdPresenter::should_sync` in the shell crate --
 /// shell is out of scope here, so this free fn keeps the signal list
-/// in one place instead of spreading raw scalars at the call site.)
+/// in one place instead of spreading raw scalars at the call site.
+/// It calls only public shell APIs, matching exactly what the future
+/// `OsdPresenter::should_sync(&self, &OsdManager, status_enabled,
+/// geometry_changed) -> bool` would read; moving it is a pure
+/// relocation with no behavior change.)
 fn osd_should_sync(
     presenter: &nerust_gui_shell::session::osd::OsdPresenter,
     manager: &nerust_gui_shell::session::osd::OsdManager,
@@ -44,10 +49,14 @@ fn osd_should_sync(
 }
 
 /// One settings snapshot per frame. Captured once per loop entry and
-/// threaded by reference: `poll_notifications` and `render_osd_frame`
-/// must share the frame instead of cloning the snapshot twice per
-/// tick.
-pub(crate) struct FrameSnapshot {
+/// threaded by reference (cheap `Arc` clone): `poll_notifications`
+/// and `render_osd_frame` share the frame instead of cloning the
+/// snapshot twice per tick.
+#[derive(Debug, Clone)]
+pub(crate) struct FrameSnapshot(std::sync::Arc<FrameSnapshotData>);
+
+#[derive(Debug)]
+struct FrameSnapshotData {
     notifications: nerust_settings_core::model::local::NotificationSettings,
     language: nerust_settings_core::model::language::AppLanguage,
 }
@@ -55,10 +64,20 @@ pub(crate) struct FrameSnapshot {
 impl FrameSnapshot {
     fn capture(session: &nerust_gui_shell::session::SessionHandle) -> Self {
         let snapshot = session.settings_snapshot();
-        Self {
+        Self(std::sync::Arc::new(FrameSnapshotData {
             notifications: snapshot.local.notifications.clone(),
             language: snapshot.shared.general.language,
-        }
+        }))
+    }
+
+    pub(crate) fn notifications(
+        &self,
+    ) -> &nerust_settings_core::model::local::NotificationSettings {
+        &self.0.notifications
+    }
+
+    pub(crate) fn language(&self) -> nerust_settings_core::model::language::AppLanguage {
+        self.0.language
     }
 }
 
@@ -80,24 +99,25 @@ impl HostState {
             self.sync_history_window(&frame);
             return;
         }
-        if let Some(handle) = opener.create_history(frame.language) {
+        if let Some(handle) = opener.create_history(frame.language()) {
             self.osd.history_window = Some(handle);
             // Fresh window needs full content regardless of cache.
-            self.osd.history_sync_key = None;
+            self.osd.history_sync_key.clear();
             self.sync_history_window(&frame);
         }
     }
 
     fn sync_history_window(&mut self, frame: &FrameSnapshot) {
-        let language = frame.language;
+        let language = frame.language();
         let key = (self.session.notification_history_seq(), language);
-        // dirty gate: the sync runs every loop pass while open, but
-        // row building is skipped unless content or language changed.
-        if self.osd.history_sync_key == Some(key) {
+        // Dirty gate via Memo: the sync runs every loop pass while
+        // open, but row building is skipped unless content or language
+        // changed. Construction stays seq-gated by the caller.
+        if !self.osd.history_sync_key.check(&key) {
             return;
         }
-        self.osd.history_sync_key = Some(key);
-        let lines = self.session.notification_history_lines(language);
+        let lines: std::sync::Arc<[nerust_gui_shell::session::osd::HistoryLine]> =
+            self.session.notification_history_lines(language).into();
         if let Some(handle) = self.osd.history_window.as_mut() {
             handle.sync(lines, language);
         }
@@ -109,7 +129,7 @@ impl HostState {
         let frame = self.frame_snapshot();
         if matches!(event, WindowEvent::Destroyed) {
             self.osd.history_window = None;
-            self.osd.history_sync_key = None;
+            self.osd.history_sync_key.clear();
             return;
         }
         // Read-only viewer like settings: arrival only cancels a
@@ -119,7 +139,7 @@ impl HostState {
             self.on_aux_focus(crate::aux::focus::AuxKind::History, focused);
         }
         if let Some(handle) = self.osd.history_window.as_mut() {
-            handle.on_event(event);
+            pump_aux(&mut *handle, event);
             if handle.close_requested() {
                 self.osd.history_window = None;
                 return;
@@ -143,7 +163,7 @@ impl HostState {
     /// frame) so the renderer never churns surfaces.
     fn reserved_strip_with(&self, frame: &FrameSnapshot) -> ReservedStrip {
         use nerust_gui_shell::session::osd::OsdChrome;
-        let chrome = OsdChrome::from(&frame.notifications);
+        let chrome = OsdChrome::from(frame.notifications());
         let client_h = self
             .window
             .as_ref()
@@ -208,8 +228,8 @@ impl HostState {
                 log::error!("error dialog thread died before ack");
             }
             self.osd.modal_flight = None;
-            self.osd.manager.modal_closed();
-            if self.osd.manager.modal_pending() == 0 {
+            self.osd.modal_closed();
+            if self.osd.modal_queue_len() == 0 {
                 self.osd.resume_after_modal = false;
                 if resume_after {
                     self.resume();
@@ -218,14 +238,10 @@ impl HostState {
         }
     }
 
-    /// Present the next batch only when no dialog is showing.
-    /// The blocking `show_error` runs on a short-lived thread
-    /// (see `ModalFlight`): presenting from the loop would freeze
-    /// every window and starve backends needing loop cooperation.
+    /// Present one error batch without blocking the loop, via the
+    /// [`OsdService`] modal ports (never the manager fields directly).
     fn present_modal(&mut self, language: nerust_settings_core::model::language::AppLanguage) {
-        if self.osd.modal_flight.is_none()
-            && let Some(detail) = self.osd.manager.take_modal_batch()
-        {
+        if let Some(detail) = self.osd.take_modal_batch() {
             self.spawn_modal(detail, language);
         }
     }
@@ -239,12 +255,12 @@ impl HostState {
     pub(crate) fn poll_notifications(&mut self, frame: &FrameSnapshot) {
         use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
         let now = Instant::now();
-        let language = frame.language;
+        let language = frame.language();
         let tick = self.session.tick_metrics();
         let report = self.session.pump_osd(
             &mut self.osd.manager,
             PushInput {
-                policy: TransientPolicy::from(&frame.notifications),
+                policy: TransientPolicy::from(frame.notifications()),
                 language,
                 now,
                 tick,
@@ -279,8 +295,7 @@ impl HostState {
         frame: &FrameSnapshot,
     ) {
         let strip = self.reserved_strip_with(frame);
-        if strip != self.osd.last_strip {
-            self.osd.last_strip = strip;
+        if self.osd.last_strip.check(&strip) {
             renderer.set_reserved_strip(strip);
         }
         self.sync_osd_layer(renderer, size, frame);
@@ -297,14 +312,18 @@ impl HostState {
         frame: &FrameSnapshot,
     ) {
         use nerust_gui_shell::session::osd::{OsdChrome, OsdSync, OsdSyncInput};
-        let language = frame.language;
-        let chrome = OsdChrome::from(&frame.notifications);
+        let language = frame.language();
+        let chrome = OsdChrome::from(frame.notifications());
         // Cheap shell-side pre-gate before running the presenter:
         // generation, visibility, status liveness, and geometry
         // (size/chrome) mirror exactly the signals the presenter
-        // reads (see `osd_should_sync`).
+        // reads (see `osd_should_sync`). Geometry rides a Memo so
+        // steady state skips without a manual `!=` gate.
         let geometry = (size.width, size.height, chrome);
-        let geometry_changed = self.osd.last_sync_geometry != Some(geometry);
+        // Peek (no record): the memo records only on a pass below,
+        // so a skipped frame re-reports the move, exactly like the
+        // old `!=` gate.
+        let geometry_changed = self.osd.last_sync_geometry.get() != Some(&geometry);
         if !osd_should_sync(
             &self.osd.presenter,
             &self.osd.manager,
@@ -327,7 +346,7 @@ impl HostState {
                 safe_insets: nerust_gui_shell::session::osd::UiInsets::default(),
             },
         );
-        self.osd.last_sync_geometry = Some(geometry);
+        self.osd.last_sync_geometry.check(&geometry);
         match decision {
             OsdSync::Skip => {}
             OsdSync::Clear => {
@@ -407,7 +426,7 @@ mod tests {
         use nerust_gui_shell::session::osd::OsdChrome;
         let support = TestHost::new();
         let host = support.host;
-        let chrome = OsdChrome::from(&host.frame_snapshot().notifications);
+        let chrome = OsdChrome::from(host.frame_snapshot().notifications());
         assert!(!chrome.status_enabled);
         // Idle: same generation, nothing visible, status off, no
         // geometry move -- the presenter stays untouched.

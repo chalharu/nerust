@@ -12,8 +12,8 @@ use nerust_core_traits::{
     SwapFrameSlotCommand,
     audio::AudioBackend,
     debugger::{
-        DebuggerError, InspectError, InspectRequest, InspectResult, MemoryWrite, SpaceInfo,
-        StepUnit,
+        DebugImage, DebuggerError, InspectError, InspectRequest, InspectResult, MemoryWrite,
+        SnapshotRequest, SnapshotResult, SpaceInfo, StepUnit,
     },
     factory::{CoreParts, load::MediaObject},
     identity::SystemIdentity,
@@ -86,6 +86,69 @@ pub trait CorePersistence {
     fn canonical_media_identity(&self) -> Option<SystemIdentity>;
     fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, CorePersistenceError>;
     fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError>;
+}
+
+/// Live view of the running core behind the session facade. The
+/// cluster hands out `&dyn LiveCore` instead of the concrete
+/// [`EmuCore`], so session code programs against this port and the
+/// transport (`EmuThreadPort`) stays the only concrete seam. Combines
+/// the persistence ports with the pause/reset/load/metrics surface
+/// every per-tick path needs; anything requiring owned buffers or
+/// thread sends keeps the concrete [`EmuCore`] handle explicitly
+/// (see [`drain_handle`](LiveCore::drain_handle)).
+pub trait LiveCore: CorePersistence + crate::session::persistence::StateExporter {
+    fn pause(&self) -> Result<(), OperationError>;
+    fn resume(&self) -> Result<(), OperationError>;
+    fn reset(&self) -> Result<(), OperationError>;
+    fn load(
+        &self,
+        media: &MediaObject,
+        core_options: Option<Box<dyn CoreOptions>>,
+    ) -> Result<(), OperationError>;
+    fn unload(&self) -> Result<(), OperationError>;
+    fn metrics(&self) -> ConsoleMetrics;
+    fn render_profile(&self) -> &VideoRenderProfile;
+    fn swap_frame_buffer(&mut self);
+    fn frame_buffer(&self) -> &FrameBuffer;
+    fn clear_display(&mut self);
+    fn set_volume(&self, volume: f32) -> Result<(), OperationError>;
+    fn restart_audio(&self) -> Result<(), OperationError>;
+    fn swap_audio_backend(
+        &self,
+        backend: Box<dyn AudioBackend>,
+        sample_rate: u32,
+    ) -> Result<(), OperationError>;
+    fn apply_presentation(
+        &mut self,
+        profile: VideoRenderProfile,
+        palette: Box<[u32]>,
+    ) -> Result<(), OperationError>;
+    fn step(&self, unit: StepUnit) -> Result<Result<u64, DebuggerError>, OperationError>;
+    fn inspect(
+        &self,
+        req: InspectRequest,
+    ) -> Result<Result<InspectResult, InspectError>, OperationError>;
+    fn debug_snapshot_batch(
+        &self,
+        req: SnapshotRequest,
+    ) -> Result<Result<SnapshotResult, DebuggerError>, OperationError>;
+    fn memory_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError>;
+    fn output_channels(&self) -> Result<Vec<String>, OperationError>;
+    fn debug_images(&self)
+    -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError>;
+    /// Owned handle for the async debug drain: shares the transport,
+    /// metrics, and image cache through `Arc`s. The drain is the only
+    /// session-adjacent consumer of the concrete type.
+    fn drain_handle(&self) -> EmuCore;
+    fn write_memory(
+        &self,
+        req: nerust_core_traits::debugger::MemoryWrite,
+    ) -> Result<Result<(), nerust_core_traits::debugger::DebuggerError>, OperationError>;
+    fn write_register(
+        &self,
+        name: &'static str,
+        value: u64,
+    ) -> Result<Result<(), nerust_core_traits::debugger::DebuggerError>, OperationError>;
 }
 
 /// Thread-transport port behind [`EmuCore`]: application code
@@ -813,6 +876,175 @@ impl CorePersistence for EmuCore {
 
     fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError> {
         self.load_mapper_raw(bytes).map_err(op_to_persistence)
+    }
+}
+
+impl crate::session::persistence::StateExporter for EmuCore {
+    fn export_state(&self) -> Result<Vec<u8>, crate::session::error::SlotOpFailure> {
+        CorePersistence::save_state_raw(self).map_err(|error| {
+            log::warn!("state export failed: {error}");
+            error.slot_failure()
+        })
+    }
+
+    fn import_state(&self, data: Vec<u8>) -> Result<(), crate::session::error::SlotOpFailure> {
+        CorePersistence::load_state_raw(self, data).map_err(|error| {
+            log::warn!("state import failed: {error}");
+            error.slot_failure()
+        })
+    }
+
+    fn export_preview(&self) -> Option<nerust_persistence::thumbnail::ThumbnailSource> {
+        CorePersistence::generate_preview(self).map(|frame| {
+            nerust_persistence::thumbnail::ThumbnailSource {
+                width: frame.width,
+                height: frame.height,
+                rgba: frame.rgba,
+            }
+        })
+    }
+
+    fn export_identity(&self) -> Option<SystemIdentity> {
+        CorePersistence::canonical_media_identity(self)
+    }
+
+    fn canonical_media_identity(&self) -> Option<SystemIdentity> {
+        CorePersistence::canonical_media_identity(self)
+    }
+
+    fn export_mapper(&self) -> Result<Option<Vec<u8>>, crate::session::error::SlotOpFailure> {
+        CorePersistence::save_mapper_raw(self).map_err(|error| {
+            log::warn!("mapper save export failed: {error}");
+            error.slot_failure()
+        })
+    }
+
+    fn import_mapper(&self, bytes: Vec<u8>) -> Result<(), crate::session::error::SlotOpFailure> {
+        CorePersistence::load_mapper_raw(self, bytes).map_err(|error| {
+            log::warn!("mapper save import failed: {error}");
+            error.slot_failure()
+        })
+    }
+}
+
+impl LiveCore for EmuCore {
+    fn pause(&self) -> Result<(), OperationError> {
+        self.pause()
+    }
+
+    fn resume(&self) -> Result<(), OperationError> {
+        self.resume()
+    }
+
+    fn reset(&self) -> Result<(), OperationError> {
+        self.reset()
+    }
+
+    fn load(
+        &self,
+        media: &MediaObject,
+        core_options: Option<Box<dyn CoreOptions>>,
+    ) -> Result<(), OperationError> {
+        self.load(media, core_options)
+    }
+
+    fn unload(&self) -> Result<(), OperationError> {
+        self.unload()
+    }
+
+    fn metrics(&self) -> ConsoleMetrics {
+        self.metrics()
+    }
+
+    fn render_profile(&self) -> &VideoRenderProfile {
+        self.render_profile()
+    }
+
+    fn swap_frame_buffer(&mut self) {
+        self.swap_frame_buffer()
+    }
+
+    fn frame_buffer(&self) -> &FrameBuffer {
+        self.frame_buffer()
+    }
+
+    fn clear_display(&mut self) {
+        self.clear_display()
+    }
+
+    fn set_volume(&self, volume: f32) -> Result<(), OperationError> {
+        self.set_volume(volume)
+    }
+
+    fn restart_audio(&self) -> Result<(), OperationError> {
+        self.restart_audio()
+    }
+
+    fn swap_audio_backend(
+        &self,
+        backend: Box<dyn AudioBackend>,
+        sample_rate: u32,
+    ) -> Result<(), OperationError> {
+        self.swap_audio_backend(backend, sample_rate)
+    }
+
+    fn apply_presentation(
+        &mut self,
+        profile: VideoRenderProfile,
+        palette: Box<[u32]>,
+    ) -> Result<(), OperationError> {
+        self.apply_presentation(profile, palette)
+    }
+
+    fn step(&self, unit: StepUnit) -> Result<Result<u64, DebuggerError>, OperationError> {
+        self.step(unit)
+    }
+
+    fn inspect(
+        &self,
+        req: InspectRequest,
+    ) -> Result<Result<InspectResult, InspectError>, OperationError> {
+        self.inspect(req)
+    }
+
+    fn debug_snapshot_batch(
+        &self,
+        req: SnapshotRequest,
+    ) -> Result<Result<SnapshotResult, DebuggerError>, OperationError> {
+        self.debug_snapshot_batch(req)
+    }
+
+    fn memory_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError> {
+        self.memory_spaces()
+    }
+
+    fn output_channels(&self) -> Result<Vec<String>, OperationError> {
+        self.output_channels()
+    }
+
+    fn debug_images(
+        &self,
+    ) -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError> {
+        self.debug_images()
+    }
+
+    fn drain_handle(&self) -> EmuCore {
+        self.drain_core()
+    }
+
+    fn write_memory(
+        &self,
+        req: nerust_core_traits::debugger::MemoryWrite,
+    ) -> Result<Result<(), nerust_core_traits::debugger::DebuggerError>, OperationError> {
+        self.write_memory(req)
+    }
+
+    fn write_register(
+        &self,
+        name: &'static str,
+        value: u64,
+    ) -> Result<Result<(), nerust_core_traits::debugger::DebuggerError>, OperationError> {
+        self.write_register(name, value)
     }
 }
 

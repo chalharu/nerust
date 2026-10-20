@@ -19,6 +19,14 @@ use nerust_input_traits::{AttachmentId, DigitalControlId};
 
 /// Top of the touch-control band in portrait (fraction of height).
 pub(super) const PORTRAIT_CONTROL_TOP: f32 = 0.54;
+/// Fixed-capacity D-Pad target set: at most the four cardinal directions,
+/// `None` pads unused slots, so the touch-move path allocates nothing
+/// (no per-move `Vec`, no SmallVec/ArrayVec dependency).
+pub(super) type DpadTargets = [Option<(AttachmentId, DigitalControlId)>; 4];
+
+/// Empty target set for D-Pad release paths.
+pub(super) const NO_DPAD_TARGETS: DpadTargets = [None; 4];
+
 /// D-Pad cell size as a fraction of the minor axis, before user scale.
 pub(super) const DPAD_SIZE_OF_BASE: f32 = 0.28;
 /// D-Pad activation radius as a fraction of the D-Pad cell.
@@ -114,7 +122,10 @@ pub(super) struct ProfileTouchOverlay {
 pub(super) struct FloatingDpadState {
     pub(super) touch_id: u64,
     pub(super) center: TouchPoint,
-    pub(super) targets: Vec<(AttachmentId, DigitalControlId)>,
+    /// Fixed-capacity target set (at most the four cardinal directions):
+    /// `None` pads unused slots, so the touch-move path allocates nothing.
+    /// See `DpadTargets` in `input_router.rs`.
+    pub(super) targets: DpadTargets,
 }
 
 impl ProfileTouchOverlay {
@@ -303,16 +314,23 @@ impl ProfileTouchOverlay {
         &self,
         center: TouchPoint,
         point: TouchPoint,
-    ) -> Vec<(AttachmentId, DigitalControlId)> {
-        floating_dpad_roles(center, point, self.dpad_radius)
-            .into_iter()
-            .filter_map(|role| {
-                self.dpad_controls
-                    .iter()
-                    .find(|control| control.role == role)
-                    .map(|control| (control.attachment_id, control.control_id))
-            })
-            .collect()
+    ) -> DpadTargets {
+        let mut out: DpadTargets = [None; 4];
+        let mut len = 0;
+        for role in floating_dpad_roles(center, point, self.dpad_radius) {
+            if len >= out.len() {
+                break;
+            }
+            if let Some(control) = self
+                .dpad_controls
+                .iter()
+                .find(|control| control.role == role)
+            {
+                out[len] = Some((control.attachment_id, control.control_id));
+                len += 1;
+            }
+        }
+        out
     }
 
     pub(super) fn floating_knob(&self, center: TouchPoint, point: TouchPoint) -> TouchPoint {
@@ -426,5 +444,161 @@ mod tests {
         ] {
             assert_ne!(zone_label(role), "?");
         }
+    }
+
+    /// CI-parseable geometry pin: `touch_geometry.json` is the canonical
+    /// table shared with the Kotlin fallback (`controlsLayout` /
+    /// `floatingJoystickLayout`). This test parses the JSON and asserts
+    /// every Rust fraction matches, so a one-side drift fails loudly.
+    #[test]
+    fn geometry_fractions_match_canonical_json() {
+        #[derive(serde::Deserialize)]
+        struct GeometryPin {
+            portrait_control_top: f32,
+            dpad_size_of_base: f32,
+            dpad_radius_of_size: f32,
+            action_size_of_base: f32,
+            action_gap_of_base: f32,
+            portrait_action_left: f32,
+            landscape_action_margin_of_base: f32,
+            center_width_of_base: f32,
+            center_height_of_base: f32,
+            center_gap_of_base: f32,
+            portrait_center_top_of_control: f32,
+            landscape_center_top: f32,
+            portrait_dpad_center_of_control: f32,
+            landscape_dpad_center: f32,
+            shoulder_width_of_base: f32,
+            shoulder_height_of_base: f32,
+            shoulder_margin_x_of_width: f32,
+            shoulder_top_nudge_of_base: f32,
+            portrait_activation_right: f32,
+            landscape_activation_right: f32,
+            landscape_activation_top: f32,
+            knob_radius_of_base: f32,
+            zone_labels: Vec<String>,
+        }
+        let raw = include_str!("../../touch_geometry.json");
+        let pin: GeometryPin = serde_json::from_str(raw).expect("touch_geometry.json must parse");
+        for (name, actual, expected) in [
+            (
+                "portrait_control_top",
+                PORTRAIT_CONTROL_TOP,
+                pin.portrait_control_top,
+            ),
+            (
+                "dpad_size_of_base",
+                DPAD_SIZE_OF_BASE,
+                pin.dpad_size_of_base,
+            ),
+            (
+                "dpad_radius_of_size",
+                DPAD_RADIUS_OF_SIZE,
+                pin.dpad_radius_of_size,
+            ),
+            (
+                "action_size_of_base",
+                ACTION_SIZE_OF_BASE,
+                pin.action_size_of_base,
+            ),
+            (
+                "action_gap_of_base",
+                ACTION_GAP_OF_BASE,
+                pin.action_gap_of_base,
+            ),
+            (
+                "portrait_action_left",
+                PORTRAIT_ACTION_LEFT,
+                pin.portrait_action_left,
+            ),
+            (
+                "landscape_action_margin_of_base",
+                LANDSCAPE_ACTION_MARGIN_OF_BASE,
+                pin.landscape_action_margin_of_base,
+            ),
+            (
+                "center_width_of_base",
+                CENTER_WIDTH_OF_BASE,
+                pin.center_width_of_base,
+            ),
+            (
+                "center_height_of_base",
+                CENTER_HEIGHT_OF_BASE,
+                pin.center_height_of_base,
+            ),
+            (
+                "center_gap_of_base",
+                CENTER_GAP_OF_BASE,
+                pin.center_gap_of_base,
+            ),
+            (
+                "portrait_center_top_of_control",
+                PORTRAIT_CENTER_TOP_OF_CONTROL,
+                pin.portrait_center_top_of_control,
+            ),
+            (
+                "landscape_center_top",
+                LANDSCAPE_CENTER_TOP,
+                pin.landscape_center_top,
+            ),
+            (
+                "portrait_dpad_center_of_control",
+                PORTRAIT_DPAD_CENTER_OF_CONTROL,
+                pin.portrait_dpad_center_of_control,
+            ),
+            (
+                "landscape_dpad_center",
+                LANDSCAPE_DPAD_CENTER,
+                pin.landscape_dpad_center,
+            ),
+            (
+                "shoulder_width_of_base",
+                SHOULDER_WIDTH_OF_BASE,
+                pin.shoulder_width_of_base,
+            ),
+            (
+                "shoulder_height_of_base",
+                SHOULDER_HEIGHT_OF_BASE,
+                pin.shoulder_height_of_base,
+            ),
+            (
+                "shoulder_margin_x_of_width",
+                SHOULDER_MARGIN_X_OF_WIDTH,
+                pin.shoulder_margin_x_of_width,
+            ),
+            (
+                "shoulder_top_nudge_of_base",
+                SHOULDER_TOP_NUDGE_OF_BASE,
+                pin.shoulder_top_nudge_of_base,
+            ),
+            (
+                "portrait_activation_right",
+                PORTRAIT_ACTIVATION_RIGHT,
+                pin.portrait_activation_right,
+            ),
+            (
+                "landscape_activation_right",
+                LANDSCAPE_ACTIVATION_RIGHT,
+                pin.landscape_activation_right,
+            ),
+            (
+                "landscape_activation_top",
+                LANDSCAPE_ACTIVATION_TOP,
+                pin.landscape_activation_top,
+            ),
+            (
+                "knob_radius_of_base",
+                KNOB_RADIUS_OF_BASE,
+                pin.knob_radius_of_base,
+            ),
+        ] {
+            assert!(
+                (actual - expected).abs() < 1e-6,
+                "{name} drifted: Rust {actual} vs canonical {expected}"
+            );
+        }
+        let rust_labels: Vec<&str> = TOUCH_ZONES.iter().map(|(_, label)| *label).collect();
+        let pin_labels: Vec<&str> = pin.zone_labels.iter().map(String::as_str).collect();
+        assert_eq!(rust_labels, pin_labels, "zone order drifted");
     }
 }

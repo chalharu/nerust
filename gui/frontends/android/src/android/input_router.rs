@@ -8,14 +8,16 @@
 use std::collections::{HashMap, HashSet};
 
 use jni::{jni_sig, jni_str};
-use nerust_core_traits::touch::{TouchControlRole, TouchOverlayAction, TouchPoint};
+use nerust_core_traits::touch::{
+    TouchControlRole, TouchOverlayAction, TouchOverlayModel, TouchPoint,
+};
 use nerust_gui_shell::session::SessionHandle;
 use nerust_input_traits::{AbstractKey, AttachmentId, DigitalControlId};
 use winit::{event::Touch, platform::android::activity::AndroidApp};
 
 use super::{
     bridge,
-    touch_layout::{FloatingDpadState, ProfileTouchOverlay},
+    touch_layout::{DpadTargets, FloatingDpadState, NO_DPAD_TARGETS, ProfileTouchOverlay},
 };
 
 /// Transient input state behind the overlay. All behavior that used to
@@ -53,9 +55,10 @@ impl InputRouter {
         }
         self.active_touches.clear();
         if let Some(state) = self.floating_dpad.take() {
-            for (attachment, control) in state.targets {
+            for (attachment, control) in state.targets.iter().flatten() {
                 session.apply_input_event(nerust_input_traits::DigitalInputEvent::released(
-                    attachment, control,
+                    *attachment,
+                    *control,
                 ));
             }
         }
@@ -69,9 +72,12 @@ impl InputRouter {
 
     /// Release every physically held button before forgetting it, so a
     /// surface reset cannot strand pressed bits inside the emulator.
+    /// The overlay model is built once and shared by every key (not once
+    /// per key): model construction walks the whole input topology.
     pub(super) fn release_physical_tracking(&mut self, session: &mut SessionHandle) {
+        let model = session.touch_overlay_model(self.overlay_revision);
         for (_, key) in std::mem::take(&mut self.physical_pressed) {
-            if let Some((attachment, control)) = self.control_for_physical_key(session, key) {
+            if let Some((attachment, control)) = Self::control_for_physical_key(&model, key) {
                 session.apply_input_event(nerust_input_traits::DigitalInputEvent::released(
                     attachment, control,
                 ));
@@ -85,9 +91,11 @@ impl InputRouter {
         self.physical_pressed.clear();
     }
 
+    /// Role lookup against a prebuilt overlay model. Callers build the
+    /// model once per pass/event and share it across keys; the model walk
+    /// is the expensive part, not the role match.
     fn control_for_physical_key(
-        &self,
-        session: &SessionHandle,
+        model: &TouchOverlayModel,
         key: AbstractKey,
     ) -> Option<(AttachmentId, DigitalControlId)> {
         let role = match key {
@@ -103,10 +111,9 @@ impl InputRouter {
             AbstractKey::DpadRight => TouchControlRole::DpadRight,
             _ => return None,
         };
-        let model = session.touch_overlay_model(self.overlay_revision);
         model
             .controls
-            .into_iter()
+            .iter()
             .find(|control| control.role == role)
             .map(|control| (control.attachment_id, control.control_id))
     }
@@ -130,7 +137,8 @@ impl InputRouter {
             .physical_pressed
             .iter()
             .any(|(_, pressed_key)| *pressed_key == key);
-        let Some((attachment, control)) = self.control_for_physical_key(session, key) else {
+        let model = session.touch_overlay_model(self.overlay_revision);
+        let Some((attachment, control)) = Self::control_for_physical_key(&model, key) else {
             return;
         };
         let event = if effective_pressed {
@@ -190,18 +198,11 @@ impl InputRouter {
         configure_controls_overlay(app, overlay_settings, shoulders_visible, &zones);
     }
 
-    fn apply_touch_actions(
-        &mut self,
-        session: &mut SessionHandle,
-        actions: Vec<TouchOverlayAction>,
-    ) {
-        for action in actions {
-            match action {
-                TouchOverlayAction::Input(event) => {
-                    session.apply_input_event(event);
-                }
-            }
-        }
+    /// Single touch action dispatch: the old `Vec<TouchOverlayAction>`
+    /// per touch event allocated on every move; callers pass one action.
+    fn apply_touch_action(&mut self, session: &mut SessionHandle, action: TouchOverlayAction) {
+        let TouchOverlayAction::Input(event) = action;
+        session.apply_input_event(event);
     }
 
     fn sync_touch_target(
@@ -215,20 +216,20 @@ impl InputRouter {
             return;
         }
         if let Some(previous) = previous {
-            self.apply_touch_actions(
+            self.apply_touch_action(
                 session,
-                vec![TouchOverlayAction::Input(
-                    nerust_input_traits::DigitalInputEvent::released(previous.0, previous.1),
-                )],
+                TouchOverlayAction::Input(nerust_input_traits::DigitalInputEvent::released(
+                    previous.0, previous.1,
+                )),
             );
             self.active_touches.remove(&touch_id);
         }
         if let Some(next) = next_target {
-            self.apply_touch_actions(
+            self.apply_touch_action(
                 session,
-                vec![TouchOverlayAction::Input(
-                    nerust_input_traits::DigitalInputEvent::pressed(next.0, next.1),
-                )],
+                TouchOverlayAction::Input(nerust_input_traits::DigitalInputEvent::pressed(
+                    next.0, next.1,
+                )),
             );
             self.active_touches.insert(touch_id, next);
         }
@@ -237,31 +238,29 @@ impl InputRouter {
     fn sync_floating_dpad_targets(
         &mut self,
         session: &mut SessionHandle,
-        next_targets: Vec<(AttachmentId, DigitalControlId)>,
+        next_targets: &DpadTargets,
     ) {
         let previous_targets = self
             .floating_dpad
             .as_ref()
-            .map(|state| state.targets.clone())
-            .unwrap_or_default();
-        for previous in previous_targets
-            .iter()
-            .filter(|target| !next_targets.contains(target))
-        {
-            session.apply_input_event(nerust_input_traits::DigitalInputEvent::released(
-                previous.0, previous.1,
-            ));
+            .map(|state| state.targets)
+            .unwrap_or(NO_DPAD_TARGETS);
+        for previous in previous_targets.iter().flatten() {
+            if !next_targets.iter().flatten().any(|next| next == previous) {
+                session.apply_input_event(nerust_input_traits::DigitalInputEvent::released(
+                    previous.0, previous.1,
+                ));
+            }
         }
-        for next in next_targets
-            .iter()
-            .filter(|target| !previous_targets.contains(target))
-        {
-            session.apply_input_event(nerust_input_traits::DigitalInputEvent::pressed(
-                next.0, next.1,
-            ));
+        for next in next_targets.iter().flatten() {
+            if !previous_targets.iter().flatten().any(|prev| prev == next) {
+                session.apply_input_event(nerust_input_traits::DigitalInputEvent::pressed(
+                    next.0, next.1,
+                ));
+            }
         }
         if let Some(state) = self.floating_dpad.as_mut() {
-            state.targets = next_targets;
+            state.targets = *next_targets;
         }
     }
 
@@ -281,7 +280,7 @@ impl InputRouter {
         self.floating_dpad = Some(FloatingDpadState {
             touch_id,
             center: point,
-            targets: Vec::new(),
+            targets: NO_DPAD_TARGETS,
         });
         log::info!(
             "floating D-Pad started: touch_id={touch_id} x={:.1} y={:.1}",
@@ -309,12 +308,12 @@ impl InputRouter {
         };
         let targets = overlay.floating_dpad_targets(center, point);
         let knob = overlay.floating_knob(center, point);
-        self.sync_floating_dpad_targets(session, targets);
+        self.sync_floating_dpad_targets(session, &targets);
         update_floating_dpad_visual(app, true, center, knob);
     }
 
     fn end_floating_dpad(&mut self, session: &mut SessionHandle, app: &AndroidApp) {
-        self.sync_floating_dpad_targets(session, Vec::new());
+        self.sync_floating_dpad_targets(session, &NO_DPAD_TARGETS);
         self.floating_dpad = None;
         log::info!("floating D-Pad ended");
         update_floating_dpad_visual(

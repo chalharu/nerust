@@ -1,6 +1,20 @@
 //! Shared bridge between the iced programs and the host drain.
 //! Used by both [`super::debug`] and [`super::ppu`] so the viewers stay
 //! siblings instead of one depending on the other.
+//!
+//! # Lock order
+//!
+//! `nav` before `display` before any small field mutex (`selected`,
+//! `watch`, `freeze`, `reg_target`, `ppu_hover`, `outbox`). Dual
+//! access goes through [`DebugBridge::nav_display`]; single-field
+//! access uses [`lock_recovered`]. No path may hold a `display` guard
+//! while acquiring `nav`, and no path may hold two small-field guards
+//! at once. The host drain only touches the bridge through
+//! [`BridgeLock`], so the order is enforced at one seam.
+//! Blocking `lock()` is never used: [`lock_recovered`] recovers from
+//! poison and `try_lock` audits below assert no contention path can
+//! wedge the UI thread (all bridge critical sections are short field
+//! copies).
 
 use std::sync::{
     Mutex, MutexGuard,
@@ -25,6 +39,21 @@ pub(crate) fn lock_recovered<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// Shared bridge between the iced program and the host drain.
 /// Movement state and display cache are owned separately; user lists
 /// (bookmarks, watch, freeze, selection) are presentation state.
+/// Snapshot returned by [`DebugBridge::drain_snapshot`]: nav space,
+/// dump/disassembly anchors, watch/freeze/reg-target, previous rows,
+/// and the PPU-open flag. Named so the 8-tuple does not sprawl at
+/// every signature.
+pub(crate) type DrainSnapshot = (
+    Option<SpaceId>,
+    u32,
+    Option<u32>,
+    Option<u32>,
+    Option<(u32, u8)>,
+    Option<&'static str>,
+    std::sync::Arc<[nerust_core_traits::debugger::HexRow]>,
+    bool,
+);
+
 pub(crate) struct DebugBridge {
     pub(crate) nav: Mutex<NavState>,
     pub(crate) display: Mutex<DisplayCache>,
@@ -92,6 +121,95 @@ impl DebugBridge {
         self.spaces.get(idx).map(|(id, _, _)| *id)
     }
 
+    /// Narrow drain snapshot: nav (space/mem/dis) plus the small
+    /// watch/freeze/reg-target fields plus the previous dump rows for
+    /// the diff gate. Single method so `drain.rs` never locks
+    /// `handle.bridge.*` directly. Lock order inside: nav, then
+    /// display (rows), then one small field at a time.
+    pub(crate) fn drain_snapshot(&self, ppu_open: bool) -> DrainSnapshot {
+        let nav = lock_recovered(&self.nav);
+        let mem_addr = nav.mem_addr();
+        let dis_addr = nav.dis_addr();
+        drop(nav);
+        let space = self.selected_space();
+        let prev: std::sync::Arc<[nerust_core_traits::debugger::HexRow]> =
+            lock_recovered(&self.display).dump_rows.clone().into();
+        let watch = *lock_recovered(&self.watch);
+        let freeze = *lock_recovered(&self.freeze);
+        let reg_target = *lock_recovered(&self.reg_target);
+        (
+            space, mem_addr, dis_addr, watch, freeze, reg_target, prev, ppu_open,
+        )
+    }
+
+    /// Apply a finished live-images fetch: replaces images when newer
+    /// regardless of pause; running chrome only applies while still
+    /// running. Returns whether the viewer needs a rebuild.
+    pub(crate) fn apply_live_images(
+        &self,
+        generation: u64,
+        images: Vec<(String, u32, u32, Vec<u8>)>,
+        running: bool,
+    ) -> bool {
+        let mut display = lock_recovered(&self.display);
+        if display.images_gen == generation {
+            return false;
+        }
+        display.images = images;
+        display.images_gen = generation;
+        if running {
+            display.paused = false;
+            display.status = nerust_gui_viewmodel::debugger::StatusMessage::Running;
+        }
+        true
+    }
+
+    /// Apply a finished drain display: selection write plus the
+    /// paused-section restore live here so the host never holds a
+    /// `display` guard itself.
+    pub(crate) fn apply_drain_display(
+        &self,
+        mut display: DisplayCache,
+        reselected: Option<(u32, Option<u8>)>,
+    ) {
+        if let Some(selected) = reselected {
+            *lock_recovered(&self.selected) = Some(selected);
+        }
+        {
+            let old = lock_recovered(&self.display).clone_without_images();
+            display.restore_paused_sections(&old);
+        }
+        *lock_recovered(&self.display) = display;
+    }
+
+    /// Non-blocking contention audit: every bridge mutex must be
+    /// immediately available on the UI thread. Returns the names of
+    /// contended locks (empty when healthy). All critical sections
+    /// are short field copies, so contention indicates a bug. The
+    /// host drain asserts this before snapshotting.
+    pub(crate) fn try_lock_audit(&self) -> Vec<&'static str> {
+        let mut contended = Vec::new();
+        if self.nav.try_lock().is_err() {
+            contended.push("nav");
+        }
+        if self.display.try_lock().is_err() {
+            contended.push("display");
+        }
+        if self.watch.try_lock().is_err() {
+            contended.push("watch");
+        }
+        if self.freeze.try_lock().is_err() {
+            contended.push("freeze");
+        }
+        if self.selected.try_lock().is_err() {
+            contended.push("selected");
+        }
+        if self.outbox.try_lock().is_err() {
+            contended.push("outbox");
+        }
+        contended
+    }
+
     pub(crate) fn selected_name(&self) -> Option<String> {
         let idx = lock_recovered(&self.nav).space_idx();
         self.spaces.get(idx).map(|(_, name, _)| name.clone())
@@ -132,6 +250,33 @@ impl DebugBridge {
     }
 }
 
+/// Narrow host-drain port over [`DebugBridge`]. `drain.rs` takes
+/// `&dyn BridgeLock` and never locks `handle.bridge.display` directly.
+pub(crate) trait BridgeLock {
+    fn drain_snapshot(&self, ppu_open: bool) -> DrainSnapshot;
+    fn take_debug_batch(&self) -> (bool, Vec<DebugAction>);
+    /// Contended lock names, if any (see `try_lock_audit`).
+    fn try_lock_audit(&self) -> Vec<&'static str>;
+}
+
+impl BridgeLock for DebugBridge {
+    fn drain_snapshot(&self, ppu_open: bool) -> DrainSnapshot {
+        DebugBridge::drain_snapshot(self, ppu_open)
+    }
+
+    fn take_debug_batch(&self) -> (bool, Vec<DebugAction>) {
+        (
+            self.open_ppu
+                .swap(false, std::sync::atomic::Ordering::SeqCst),
+            self.take_requests(),
+        )
+    }
+
+    fn try_lock_audit(&self) -> Vec<&'static str> {
+        DebugBridge::try_lock_audit(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +288,12 @@ mod tests {
             0,
             AppLanguage::English,
         )
+    }
+
+    #[test]
+    fn try_lock_audit_is_empty_when_uncontended() {
+        let bridge = test_bridge();
+        assert!(bridge.try_lock_audit().is_empty());
     }
 
     #[test]

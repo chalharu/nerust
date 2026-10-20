@@ -24,6 +24,27 @@ pub enum RomLoaderError {
     Resolve(String),
     #[error("ROM load failed: {0}")]
     Load(String),
+    /// Typed load failure: the session error chain renders once, at
+    /// this boundary. Shaping stays identical to [`Load`](Self::Load)
+    /// so persisted logs and frontend wording do not change; the
+    /// `#[source]` chain keeps the cause for diagnostics.
+    #[error("ROM load failed: {detail}")]
+    LoadFailed {
+        detail: String,
+        #[source]
+        source: Box<crate::session::SessionError>,
+    },
+}
+
+impl RomLoaderError {
+    /// Typed constructor for session-driven loads: renders the text
+    /// once at the boundary and keeps the chain as `source`.
+    pub fn from_session(source: crate::session::SessionError) -> Self {
+        Self::LoadFailed {
+            detail: source.to_string(),
+            source: Box::new(source),
+        }
+    }
 }
 
 /// Target for a ROM load operation.
@@ -75,6 +96,23 @@ mod tests {
     use std::path::PathBuf;
 
     use nerust_core_traits::factory::load::MediaObject;
+
+    #[test]
+    fn load_failed_keeps_source_chain_with_compat_text() {
+        use super::RomLoaderError;
+        use std::error::Error as _;
+        let typed = RomLoaderError::from_session(crate::session::SessionError::NoCore);
+        // Display matches the legacy `Load` wording.
+        assert_eq!(
+            typed.to_string(),
+            "ROM load failed: no emulation core active"
+        );
+        // The chain is inspectable, not stringified away.
+        assert!(typed.source().is_some());
+        // Legacy construction still compiles for out-of-crate callers.
+        let legacy = RomLoaderError::Load("no ROM in tests".to_string());
+        assert!(legacy.to_string().contains("no ROM in tests"));
+    }
 
     #[test]
     fn media_object_tracks_path_extension() {

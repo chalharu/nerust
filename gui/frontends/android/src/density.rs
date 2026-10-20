@@ -1,15 +1,23 @@
 //! Display-density cache keys. Densities quantize to 0.01 so float
 //! jitter never re-queries platform insets every frame.
 
+/// Sentinel for "unmeasurable density" (NaN input). Never a real key:
+/// real keys are `round(clamp(scale, 0.25, 8.0) * 100)` in `25..=800`,
+/// and `u32::MAX` stays the force-miss sentinel.
+pub(crate) const DENSITY_KEY_INVALID: u32 = 0;
+
 /// Quantized density key: `round(scale * 100)`, clamped to sane range.
 /// Key equality is the epsilon; `u32::MAX` stays a force-miss sentinel.
-/// NaN maps to 0 (unreachable after the 0.25 clamp floor), so 0 means
-/// "unmeasurable" without colliding with any real key.
+/// NaN maps to [`DENSITY_KEY_INVALID`] (unreachable after the 0.25 clamp
+/// floor), so invalid never collides with any real key.
 pub(crate) fn density_key(scale: f32) -> u32 {
     if scale.is_nan() {
-        return 0;
+        return DENSITY_KEY_INVALID;
     }
-    (scale.clamp(0.25, 8.0) * 100.0).round() as u32
+    let key = (scale.clamp(0.25, 8.0) * 100.0).round() as u32;
+    debug_assert_ne!(key, DENSITY_KEY_INVALID);
+    debug_assert_ne!(key, u32::MAX);
+    key
 }
 
 #[cfg(test)]

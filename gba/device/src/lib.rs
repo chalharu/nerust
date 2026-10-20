@@ -2,11 +2,11 @@ use std::rc::Rc;
 
 use nerust_input_traits::{
     AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, Controller, ControllerProfile,
-    DigitalControlId, OpenBusReadResult, Port, PortSet, ProfileId,
+    DigitalControlId, FieldEntry, OpenBusReadResult, Port, PortSet, ProfileId,
 };
 
-pub fn gba_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
-    vec![Rc::new(StandardPadProfile) as Rc<dyn ControllerProfile>]
+pub fn gba_device_controller_profiles() -> impl Iterator<Item = Rc<dyn ControllerProfile>> {
+    [Rc::new(StandardPadProfile) as Rc<dyn ControllerProfile>].into_iter()
 }
 
 /// GBA joypad bit assignments for the 2-byte input buffer.
@@ -59,43 +59,28 @@ impl Controller for StandardPad {
 
     fn write(&mut self, _port: &dyn Port, _value: u8) {}
 
-    fn field_map(&self, port: &dyn Port, out: &mut Vec<(AttachmentId, DigitalControlId, usize)>) {
-        let attachment = AttachmentId::new(port.id());
+    fn strobe(&mut self, _value: u8) {}
+
+    fn field_map(&self, port: &dyn Port, out: &mut Vec<FieldEntry>) {
+        let attachment = port.attachment_id();
+        let digital = |id: &'static str, field: usize| {
+            FieldEntry::new(
+                attachment,
+                ControlId::Digital(DigitalControlId::new(id)),
+                field,
+            )
+        };
         out.extend([
-            (attachment, DigitalControlId::new("gba.control.a"), FIELD_A),
-            (attachment, DigitalControlId::new("gba.control.b"), FIELD_B),
-            (
-                attachment,
-                DigitalControlId::new("gba.control.select"),
-                FIELD_SELECT,
-            ),
-            (
-                attachment,
-                DigitalControlId::new("gba.control.start"),
-                FIELD_START,
-            ),
-            (
-                attachment,
-                DigitalControlId::new("gba.control.right"),
-                FIELD_RIGHT,
-            ),
-            (
-                attachment,
-                DigitalControlId::new("gba.control.left"),
-                FIELD_LEFT,
-            ),
-            (
-                attachment,
-                DigitalControlId::new("gba.control.up"),
-                FIELD_UP,
-            ),
-            (
-                attachment,
-                DigitalControlId::new("gba.control.down"),
-                FIELD_DOWN,
-            ),
-            (attachment, DigitalControlId::new("gba.control.l"), FIELD_L),
-            (attachment, DigitalControlId::new("gba.control.r"), FIELD_R),
+            digital("gba.control.a", FIELD_A),
+            digital("gba.control.b", FIELD_B),
+            digital("gba.control.select", FIELD_SELECT),
+            digital("gba.control.start", FIELD_START),
+            digital("gba.control.right", FIELD_RIGHT),
+            digital("gba.control.left", FIELD_LEFT),
+            digital("gba.control.up", FIELD_UP),
+            digital("gba.control.down", FIELD_DOWN),
+            digital("gba.control.l", FIELD_L),
+            digital("gba.control.r", FIELD_R),
         ]);
     }
 }
@@ -232,7 +217,7 @@ mod tests {
         let pad = StandardPad::default();
         let mut map = Vec::new();
         pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"), &mut map);
-        let indices: Vec<usize> = map.iter().map(|(_, _, idx)| *idx).collect();
+        let indices: Vec<usize> = map.iter().map(|entry| entry.field).collect();
         let mut sorted = indices.clone();
         sorted.sort();
         sorted.dedup();
@@ -250,8 +235,11 @@ mod tests {
         pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"), &mut map);
         let bit = |id: &str| {
             map.iter()
-                .find(|(_, control, _)| control.as_str() == id)
-                .map(|(_, _, idx)| *idx)
+                .find(|entry| match entry.control {
+                    nerust_input_traits::ControlId::Digital(control) => control.as_str() == id,
+                    nerust_input_traits::ControlId::Analog(control) => control.as_str() == id,
+                })
+                .map(|entry| entry.field)
                 .expect("control must be mapped")
         };
         assert_eq!(bit("gba.control.r"), 8);

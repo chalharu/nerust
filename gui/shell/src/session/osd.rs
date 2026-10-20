@@ -21,27 +21,60 @@ pub use super::osd_history::{
 pub use crate::session::osd_modal::{ModalSink, ModalSource};
 pub use crate::session::osd_presenter::{
     OsdChrome, OsdPlan, OsdPresenter, OsdState, OsdSync, OsdSyncInput, STATUS_FPS_MIN_INTERVAL,
-    StatusGate, TickMetrics, UiInsets,
+    StatusGate, TickMetrics, UiInsets, format_status_value,
 };
 pub use crate::session::osd_render::{OSD_STATUS_RGB, osd_anchor};
 pub use crate::session::osd_transient::{FrameChannel, OsdRow, TransientPolicy};
 
-use crate::session::osd_modal::ModalBox;
+use crate::session::osd_modal::{ModalCenter, ModalPump};
 use crate::session::osd_presenter::{ModalRoute, ModalRouter, status_key, status_text};
 use crate::session::osd_transient::{OsdItem, RouteEffect, TransientQueue, counted_row};
 
+/// Transient half of [`OsdManager`]: the single sequential display
+/// plus the pending queue. Queue discipline lives in
+/// [`TransientQueue`]; this center is the owned half the manager
+/// composes, so transient state is never a bare field again.
+#[derive(Debug, Default)]
+pub(crate) struct TransientCenter {
+    queue: TransientQueue,
+}
+
+impl TransientCenter {
+    fn route_row(&mut self, item: OsdItem) -> RouteEffect {
+        self.queue.route_row(item)
+    }
+
+    fn poll(&mut self, now: Instant) -> bool {
+        self.queue.poll(now)
+    }
+
+    fn rows(&self) -> &[OsdRow] {
+        self.queue.rows()
+    }
+
+    fn visible_row(&self) -> Option<&OsdRow> {
+        self.queue.visible_row()
+    }
+
+    fn has_visible(&self) -> bool {
+        self.queue.has_visible()
+    }
+
+    fn wakeup_deadline(&self, now: Instant) -> Option<Instant> {
+        self.queue.wakeup_deadline(now)
+    }
+}
+
 /// Notification display state: transient in-frame rows plus modal batches.
-/// Queue discipline lives in TransientQueue, pumping in ModalBox.
+/// Queue discipline lives in [`TransientCenter`], modal pumping in
+/// [`ModalCenter`].
 #[derive(Debug, Default)]
 pub struct OsdManager {
-    transient: TransientQueue,
-    modal_box: ModalBox,
+    transient: TransientCenter,
+    modal: ModalCenter,
     /// Monotonic display-generation. Presenters remember the last
     /// generation they synced; inequality means re-render.
     generation: u64,
-    /// Overflow warn episode flag. Re-arms when the modal queue
-    /// fully drains (see the modal source below).
-    modal_warned_full: bool,
 }
 
 /// Bundled inputs for [`SessionHandle::pump_osd`]: the caller-owned
@@ -89,8 +122,8 @@ impl OsdManager {
                 // Disabled levels never display.
                 ModalRoute::Drop => continue,
                 ModalRoute::Modal => {
-                    self.modal_box
-                        .push(super::notification::render_text(&n.kind, n.count, language));
+                    self.modal
+                        .push_text(super::notification::render_text(&n.kind, n.count, language));
                     changed = true;
                     continue;
                 }
@@ -139,13 +172,13 @@ impl OsdManager {
     }
 
     /// Drain the aggregated modal batch into the sequential queue.
-    /// Internal pump step for [`SessionHandle::pump_osd`]: frontends
-    /// present via the modal source, never this. Bullet formatting
-    /// happens here at the render boundary, so the box keeps raw
-    /// lines. Overflow warns once per episode: the flag re-arms when
-    /// the queue fully drains.
+    /// Render-boundary adapter over the pure [`ModalCenter::pump`]:
+    /// bullet formatting happens here, so the box keeps raw lines,
+    /// and overflow warns once per episode (the flag re-arms when the
+    /// queue fully drains). Internal pump step for the pump target;
+    /// frontends present via the modal source, never this.
     pub(crate) fn pump_modal(&mut self) -> bool {
-        let lines = self.take_modal_text();
+        let lines = self.modal.take_batch_text();
         if lines.is_empty() {
             return false;
         }
@@ -156,15 +189,21 @@ impl OsdManager {
             .map(|line| format!("• {line}"))
             .collect::<Vec<_>>()
             .join("\n");
-        if self.modal_box.queue_modal(detail) && !self.modal_warned_full {
-            log::warn!("error modal queue full; dropping oldest batch");
-            self.modal_warned_full = true;
+        match self.modal.pump(Some(detail)) {
+            ModalPump::Idle => false,
+            ModalPump::Queued { dropped } => {
+                if dropped && !self.modal.overflow_already_reported() {
+                    log::warn!("error modal queue full; dropping oldest batch");
+                    self.modal.note_overflow_reported();
+                }
+                true
+            }
         }
-        true
     }
 
+    #[cfg(test)]
     fn take_modal_text(&mut self) -> Vec<String> {
-        self.modal_box.take_modal_text()
+        self.modal.take_batch_text()
     }
 
     /// Monotonic change count. `dirty`/`take_dirty` stay for the
@@ -180,32 +219,66 @@ impl OsdManager {
 
 impl ModalSink for OsdManager {
     fn queue_modal(&mut self, detail: String) {
-        self.modal_box.queue_modal(detail);
+        self.modal.queue_direct(detail);
     }
 
     fn requeue_front(&mut self, detail: String) {
-        self.modal_box.requeue_front(detail);
+        self.modal.requeue_direct(detail);
     }
 }
 
 impl ModalSource for OsdManager {
     fn take_modal_batch(&mut self) -> Option<String> {
-        let next = self.modal_box.take_modal_batch();
-        if next.is_some() && self.modal_box.modal_pending() == 0 {
-            self.modal_warned_full = false;
-        }
-        next
+        self.modal.take_batch()
     }
 
     fn modal_closed(&mut self) {
-        self.modal_box.modal_closed();
-        if self.modal_box.modal_pending() == 0 {
-            self.modal_warned_full = false;
-        }
+        self.modal.closed()
     }
 
     fn modal_pending(&self) -> usize {
-        self.modal_box.modal_pending()
+        self.modal.pending()
+    }
+}
+
+/// Narrow pump surface for [`SessionHandle::pump_osd`]. The manager
+/// implements this; the session programs against the trait, so the
+/// pump step stays decoupled from the orchestration type.
+pub trait PumpTarget: OsdState + ModalSink {
+    /// Route one drained batch through the transient/modal policy.
+    fn push_notifications(
+        &mut self,
+        notifications: Vec<UiNotification>,
+        policy: &TransientPolicy,
+        language: AppLanguage,
+        now: Instant,
+        channel: FrameChannel,
+    );
+    /// Advance the showing label.
+    fn poll_queue(&mut self, now: Instant);
+    /// Drain the aggregated modal batch into the sequential queue.
+    /// Returns whether a batch was queued.
+    fn pump_modal_queue(&mut self) -> bool;
+}
+
+impl PumpTarget for OsdManager {
+    fn push_notifications(
+        &mut self,
+        notifications: Vec<UiNotification>,
+        policy: &TransientPolicy,
+        language: AppLanguage,
+        now: Instant,
+        channel: FrameChannel,
+    ) {
+        self.push_all_with_policy(notifications, policy, language, now, channel);
+    }
+
+    fn poll_queue(&mut self, now: Instant) {
+        self.poll(now);
+    }
+
+    fn pump_modal_queue(&mut self) -> bool {
+        self.pump_modal()
     }
 }
 
@@ -213,14 +286,14 @@ impl OsdManager {
     /// Total modal overflow losses (test hook for the warn-once path).
     #[cfg(test)]
     pub fn overflow_dropped(&self) -> u64 {
-        self.modal_box.dropped_total
+        self.modal.dropped_total()
     }
 
     /// Queued error batches awaiting a dialog, for the wake policy.
     /// Inherent twin of the [`ModalSource`] read: frontends that own
     /// the manager directly (no trait import) use this.
     pub fn modal_pending(&self) -> usize {
-        self.modal_box.modal_pending()
+        self.modal.pending()
     }
 
     pub fn has_visible(&self) -> bool {
@@ -239,7 +312,7 @@ impl OsdManager {
     pub fn status_parts(fps: f32, paused: bool, language: AppLanguage) -> (String, String) {
         (
             status_text(status_key(paused), language).to_string(),
-            format!("{fps:.1} fps"),
+            super::osd_presenter::format_status_value(fps),
         )
     }
 }

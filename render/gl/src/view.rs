@@ -8,14 +8,15 @@ use nerust_render_traits::{
 };
 
 use crate::{
-    frame_textures::{allocate_texture_store, upload_texture_bytes, use_texture},
+    frame_textures::{
+        allocate_texture_store, configure_ntsc_texture, upload_texture_bytes, use_texture,
+    },
     mat4::Mat4,
     osd_overlay::{
-        OSDRect, RetryBudget, RetryDecision, checked_clear_need, checked_osd_rect, osd_gl_y,
+        OSDRect, RetryBudget, RetryDecision, checked_clear_need, checked_osd_gl_y, checked_osd_rect,
     },
     shader_compiler::{
-        OSD_FRAGMENT_COMPAT, OSD_FRAGMENT_DESKTOP, build_glsl_source, compile_shader_program,
-        compose_glsl_source, is_gles_context, supports_unpack_row_length,
+        compile_osd_program, compile_shader_program, is_gles_context, supports_unpack_row_length,
     },
     vec2d::Vec2D,
     vertex_data::VertexData,
@@ -53,29 +54,53 @@ fn ok_osd_gl<T>(
     })
 }
 
-/// RAII reset for `UNPACK_ROW_LENGTH`: the padded upload sets
-/// global pixel-store state, and every `?` below would otherwise leak
-/// it into the next frame's stride interpretation. Drop restores
-/// best-effort; construction failure leaves state untouched.
-struct UnpackRowLengthGuard {
+/// RAII reset for `UNPACK_ROW_LENGTH` and `UNPACK_ALIGNMENT`: the
+/// padded upload sets global pixel-store state, and every `?` below
+/// would otherwise leak it into the next frame's stride
+/// interpretation. Drop restores both best-effort; construction
+/// failure leaves state untouched. The loader owns alignment `1`, so
+/// a foreign value trips the debug ownership assert instead of
+/// silently mis-striding the upload.
+struct PixelStoreGuard {
+    alignment: i32,
+    row_length: i32,
     active: bool,
 }
 
-impl UnpackRowLengthGuard {
+impl PixelStoreGuard {
     fn set(row_length: i32) -> Result<Self, ViewError> {
+        let alignment = ok_gl(get_integer(gl::UNPACK_ALIGNMENT))?;
+        debug_assert_eq!(
+            alignment, 1,
+            "GlView owns UNPACK_ALIGNMENT=1; foreign value would mis-stride uploads",
+        );
+        let saved = ok_gl(get_integer(gl::UNPACK_ROW_LENGTH))?;
         ok_gl(pixel_storei(gl::UNPACK_ROW_LENGTH, row_length))?;
-        Ok(Self { active: true })
+        Ok(Self {
+            alignment,
+            row_length: saved,
+            active: true,
+        })
     }
 
     fn none() -> Self {
-        Self { active: false }
+        Self {
+            alignment: 1,
+            row_length: 0,
+            active: false,
+        }
     }
 }
 
-impl Drop for UnpackRowLengthGuard {
+impl Drop for PixelStoreGuard {
     fn drop(&mut self) {
-        if self.active && pixel_storei(gl::UNPACK_ROW_LENGTH, 0).is_err() {
-            log::debug!("GlView: UNPACK_ROW_LENGTH reset failed");
+        if self.active {
+            if pixel_storei(gl::UNPACK_ROW_LENGTH, self.row_length).is_err() {
+                log::debug!("GlView: UNPACK_ROW_LENGTH reset failed");
+            }
+            if pixel_storei(gl::UNPACK_ALIGNMENT, self.alignment).is_err() {
+                log::debug!("GlView: UNPACK_ALIGNMENT reset failed");
+            }
         }
     }
 }
@@ -91,6 +116,14 @@ impl ViewportGuard {
         ok_gl(get_viewport(&mut read))?;
         ok_gl(viewport(0, 0, surface_w, surface_h))?;
         Ok(Self { saved: read })
+    }
+
+    /// Assume a memoized game viewport: skip the synchronous
+    /// `GetIntegerv` and restore this box on drop. Only correct when
+    /// the caller memoized the live box (see `CompositeGuard`).
+    fn assume(saved: [i32; 4], surface_w: i32, surface_h: i32) -> Result<Self, ViewError> {
+        ok_gl(viewport(0, 0, surface_w, surface_h))?;
+        Ok(Self { saved })
     }
 
     fn saved_viewport(&self) -> [i32; 4] {
@@ -110,19 +143,21 @@ impl Drop for ViewportGuard {
 /// RAII blend save/restore: pre-enabled BLEND survives the composite.
 struct BlendGuard {
     was_enabled: bool,
-    src_rgb: i32,
-    dst_rgb: i32,
-    src_alpha: i32,
-    dst_alpha: i32,
+    src_rgb: u32,
+    dst_rgb: u32,
+    src_alpha: u32,
+    dst_alpha: u32,
 }
 
 impl BlendGuard {
     fn enable_src_alpha() -> Result<Self, ViewError> {
         let was_enabled = ok_gl(is_enabled(gl::BLEND))?;
-        let src_rgb = ok_gl(get_integer(gl::BLEND_SRC_RGB))?;
-        let dst_rgb = ok_gl(get_integer(gl::BLEND_DST_RGB))?;
-        let src_alpha = ok_gl(get_integer(gl::BLEND_SRC_ALPHA))?;
-        let dst_alpha = ok_gl(get_integer(gl::BLEND_DST_ALPHA))?;
+        // Checked `u32` reads: a negative GL enum refuses instead of
+        // wrapping through `as u32` at the restore site.
+        let src_rgb = ok_gl(get_integer_u32(gl::BLEND_SRC_RGB))?;
+        let dst_rgb = ok_gl(get_integer_u32(gl::BLEND_DST_RGB))?;
+        let src_alpha = ok_gl(get_integer_u32(gl::BLEND_SRC_ALPHA))?;
+        let dst_alpha = ok_gl(get_integer_u32(gl::BLEND_DST_ALPHA))?;
         ok_gl(enable(gl::BLEND))?;
         ok_gl(blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA))?;
         Ok(Self {
@@ -139,15 +174,13 @@ impl Drop for BlendGuard {
     fn drop(&mut self) {
         // Restore factors first, then the enable flag: a pre-enabled
         // BLEND must survive, a pre-disabled one must not leak on.
-        unsafe {
-            gl::BlendFuncSeparate(
-                self.src_rgb as u32,
-                self.dst_rgb as u32,
-                self.src_alpha as u32,
-                self.dst_alpha as u32,
-            );
+        // No raw `gl::` calls: the wrapper drains and the GL error
+        // chain lands in the debug log instead of stalling the drop.
+        if let Err(e) =
+            blend_func_separate(self.src_rgb, self.dst_rgb, self.src_alpha, self.dst_alpha)
+        {
+            log::debug!("GlView: blend factor restore failed: {e}");
         }
-        let _ = check_frame();
         if !self.was_enabled && disable(gl::BLEND).is_err() {
             log::debug!("GlView: blend disable restore failed");
         }
@@ -156,39 +189,39 @@ impl Drop for BlendGuard {
 
 /// RAII program + active-texture + VAO save/restore.
 struct ProgramGuard {
-    program: i32,
-    active_texture: i32,
-    vao_binding: i32,
-    array_buffer: i32,
+    program: u32,
+    active_texture: u32,
+    vao_binding: u32,
+    array_buffer: u32,
 }
 
 impl ProgramGuard {
     fn save() -> Result<Self, ViewError> {
         Ok(Self {
-            program: ok_gl(get_integer(gl::CURRENT_PROGRAM))?,
-            active_texture: ok_gl(get_integer(gl::ACTIVE_TEXTURE))?,
-            vao_binding: ok_gl(get_integer(gl::VERTEX_ARRAY_BINDING))?,
-            array_buffer: ok_gl(get_integer(gl::ARRAY_BUFFER_BINDING))?,
+            program: ok_gl(get_integer_u32(gl::CURRENT_PROGRAM))?,
+            active_texture: ok_gl(get_integer_u32(gl::ACTIVE_TEXTURE))?,
+            vao_binding: ok_gl(get_integer_u32(gl::VERTEX_ARRAY_BINDING))?,
+            array_buffer: ok_gl(get_integer_u32(gl::ARRAY_BUFFER_BINDING))?,
         })
     }
 }
 
 impl Drop for ProgramGuard {
     fn drop(&mut self) {
-        if active_texture(self.active_texture as u32).is_err() {
+        // No raw `gl::` calls: wrappers drain per call and report the
+        // GL error chain in the debug log on failure.
+        if active_texture(self.active_texture).is_err() {
             log::debug!("GlView: active texture restore failed");
         }
-        if bind_buffer(gl::ARRAY_BUFFER, self.array_buffer as u32).is_err() {
+        if bind_buffer(gl::ARRAY_BUFFER, self.array_buffer).is_err() {
             log::debug!("GlView: array buffer restore failed");
         }
-        unsafe {
-            gl::BindVertexArray(self.vao_binding as u32);
+        if bind_vertex_array(self.vao_binding).is_err() {
+            log::debug!("GlView: VAO restore failed");
         }
-        let _ = check_frame();
-        unsafe {
-            gl::UseProgram(self.program as u32);
+        if use_program(self.program).is_err() {
+            log::debug!("GlView: program restore failed");
         }
-        let _ = check_frame();
     }
 }
 
@@ -206,14 +239,17 @@ impl CompositeGuard {
     fn fullscreen(
         surface_w: i32,
         surface_h: i32,
-        game_viewport: Option<[i32; 4]>,
+        saved: Option<[i32; 4]>,
     ) -> Result<Self, ViewError> {
-        // Memoized game viewport is restored by the caller; the guard
-        // still saves the live viewport so Drop is total even when the
-        // memo is cold. Blend/program/texture/VAO always save live.
-        let _ = game_viewport;
+        // `Some` skips the synchronous `GetIntegerv`: the caller
+        // memoized the game viewport and the guard restores it on
+        // drop. `None` (cold cache) reads once inside the guard.
+        let viewport = match saved {
+            Some(memo) => ViewportGuard::assume(memo, surface_w, surface_h)?,
+            None => ViewportGuard::fullscreen(surface_w, surface_h)?,
+        };
         Ok(Self {
-            viewport: ViewportGuard::fullscreen(surface_w, surface_h)?,
+            viewport,
             _blend: BlendGuard::enable_src_alpha()?,
             _program: ProgramGuard::save()?,
         })
@@ -286,6 +322,11 @@ struct OsdResources {
     osd_clear_scratch: Vec<u8>,
     osd_matrix: Option<GLint>,
     last_osd_matrix: Option<[f32; 16]>,
+    /// Sampler uniform resolved once in `init_osd` (not per frame).
+    osd_texture_loc: Option<GLint>,
+    /// Last uploaded sampler unit; unit 0 is the only value ever
+    /// bound, so the second and later composites skip the upload.
+    last_osd_sampler: Option<i32>,
 }
 
 /// Surface memo: last resize inputs plus the applied game viewport.
@@ -311,6 +352,8 @@ impl Default for OsdResources {
             osd_clear_scratch: Vec::new(),
             osd_matrix: None,
             last_osd_matrix: None,
+            osd_texture_loc: None,
+            last_osd_sampler: None,
         }
     }
 }
@@ -403,7 +446,7 @@ impl GlView {
     /// Use the game program, skipping the GL call when already current.
     fn use_game_program(&mut self) -> Result<(), ViewError> {
         let Some(shader) = self.frame.shader.as_ref() else {
-            return Err(ViewError::NoProgram);
+            return Err(ViewError::NoProgram { program: "game" });
         };
         let id = shader.id();
         if self.frame.current_program != Some(id) {
@@ -419,7 +462,7 @@ impl GlView {
             return Ok(());
         }
         let Some(loc) = self.frame.uniforms.matrix else {
-            return Err(ViewError::NoProgram);
+            return Err(ViewError::NoProgram { program: "game" });
         };
         ok_gl(uniform_matrix_4fv(loc, 1, gl::FALSE, mat.as_ptr()))?;
         self.frame.last_matrix = Some(*mat);
@@ -492,7 +535,7 @@ impl GlView {
     fn load_palette_ntsc(&mut self, render_profile: &VideoRenderProfile) -> Result<(), ViewError> {
         let palette_loc = {
             let Some(shader) = self.frame.shader.as_ref() else {
-                return Err(ViewError::NoProgram);
+                return Err(ViewError::NoProgram { program: "game" });
             };
             required_uniform(shader, "game", "palette_texture")?
         };
@@ -515,7 +558,7 @@ impl GlView {
             )?;
             let loc = {
                 let Some(shader) = self.frame.shader.as_ref() else {
-                    return Err(ViewError::NoProgram);
+                    return Err(ViewError::NoProgram { program: "game" });
                 };
                 required_uniform(shader, "game", "ntsc_texture")?
             };
@@ -536,7 +579,7 @@ impl GlView {
             )?;
             let loc = {
                 let Some(shader) = self.frame.shader.as_ref() else {
-                    return Err(ViewError::NoProgram);
+                    return Err(ViewError::NoProgram { program: "game" });
                 };
                 required_uniform(shader, "game", "ntsc_texture")?
             };
@@ -546,7 +589,7 @@ impl GlView {
 
         let (source_loc, output_loc, enabled_loc) = {
             let Some(shader) = self.frame.shader.as_ref() else {
-                return Err(ViewError::NoProgram);
+                return Err(ViewError::NoProgram { program: "game" });
             };
             (
                 required_uniform(shader, "game", "source_size")?,
@@ -583,7 +626,7 @@ impl GlView {
         let vbo = Rc::new(ok_gl(VertexBuffer::from_slice(&vertex_data))?);
         let (position, uv) = {
             let Some(shader) = self.frame.shader.as_ref() else {
-                return Err(ViewError::NoProgram);
+                return Err(ViewError::NoProgram { program: "game" });
             };
             (
                 required_attrib(shader, "game", "position")?,
@@ -622,7 +665,7 @@ impl GlView {
 
         let (matrix_loc, frame_loc) = {
             let Some(shader) = self.frame.shader.as_ref() else {
-                return Err(ViewError::NoProgram);
+                return Err(ViewError::NoProgram { program: "game" });
             };
             (
                 required_uniform(shader, "game", "unif_matrix")?,
@@ -655,6 +698,8 @@ impl GlView {
         self.frame.current_program = None;
         self.osd.osd_matrix = None;
         self.osd.last_osd_matrix = None;
+        self.osd.osd_texture_loc = None;
+        self.osd.last_osd_sampler = None;
         self.frame.is_palette_format = render_profile.frame_format == VideoFrameFormat::Palette;
         let version = gl_string(gl::VERSION);
         let is_gles = is_gles_context(version.as_deref());
@@ -701,50 +746,18 @@ impl GlView {
             return;
         }
         self.osd.osd_size = (1, 1);
-        let candidates: Vec<(&str, String, String)> = if is_gles {
-            vec![
-                (
-                    "osd-gles3",
-                    build_glsl_source(
-                        include_str!("vertex_desktop.glsl"),
-                        Some("#version 300 es"),
-                        &["precision mediump float;"],
-                    ),
-                    compose_glsl_source(
-                        "#version 300 es",
-                        &["precision mediump float;"],
-                        &[OSD_FRAGMENT_DESKTOP],
-                    ),
-                ),
-                (
-                    "osd-gles2",
-                    include_str!("vertex.glsl").to_owned(),
-                    compose_glsl_source(
-                        "#version 100",
-                        &["#define NERUST_MEDIUMP mediump"],
-                        &[OSD_FRAGMENT_COMPAT],
-                    ),
-                ),
-            ]
-        } else {
-            vec![(
-                "osd-desktop",
-                include_str!("vertex_desktop.glsl").to_owned(),
-                compose_glsl_source("#version 150", &[], &[OSD_FRAGMENT_DESKTOP]),
-            )]
+        let Some(shader) = compile_osd_program(is_gles) else {
+            return;
         };
-        for (name, vertex, fragment) in candidates {
-            match Shader::try_new(vertex.as_str(), fragment.as_str()) {
-                Ok(shader) => {
-                    log::info!("selected {name} osd pipeline");
-                    self.osd.osd_matrix = shader.uniform_opt("unif_matrix");
-                    self.osd.last_osd_matrix = None;
-                    self.osd.osd_shader = Some(shader);
-                    return;
-                }
-                Err(err) => log::warn!("osd shader {name} unavailable: {err}"),
-            }
-        }
+        self.osd.osd_matrix = shader.uniform_opt("unif_matrix");
+        // Optional sampler: resolved once here (not per frame). A
+        // dropped `osd_texture` defaults to unit 0, which is exactly
+        // where the layer binds below, so the composite skips the
+        // upload instead of failing.
+        self.osd.osd_texture_loc = shader.uniform_opt("osd_texture");
+        self.osd.last_osd_matrix = None;
+        self.osd.last_osd_sampler = None;
+        self.osd.osd_shader = Some(shader);
     }
 }
 
@@ -755,7 +768,7 @@ impl GlView {
     /// Stage an OSD layer for the next present. `None` clears.
     /// Equal layers skip; new content resets the failure budget.
     /// Override the upload retry budget (from `RendererConfig`).
-    /// Clamps to at least one attempt: zero would drop live layers.
+    /// The floor of one attempt lives in `RetryBudget::new`, not here.
     pub fn set_osd_retry_max(&mut self, max: u8) {
         self.osd.osd_retry = RetryBudget::new(max);
     }
@@ -774,7 +787,7 @@ impl GlView {
     /// program is current at a time, and the guard restores it after.
     fn use_osd_program(&mut self) -> Result<(), ViewError> {
         let Some(shader) = self.osd.osd_shader.as_ref() else {
-            return Err(ViewError::NoProgram);
+            return Err(ViewError::NoProgram { program: "osd" });
         };
         let id = shader.id();
         if self.frame.current_program != Some(id) {
@@ -832,23 +845,25 @@ impl GlView {
                 }
             }
         }
-        // Optional sampler: a dropped `osd_texture` defaults to unit 0,
-        // which is exactly where the layer binds below, so skip the
-        // upload instead of failing the composite.
-        if let Some(shader) = self.osd.osd_shader.as_ref()
-            && let Some(sampler) = shader.uniform_opt("osd_texture")
+        // Optional sampler, resolved once in `init_osd`: a dropped
+        // `osd_texture` defaults to unit 0, which is exactly where the
+        // layer binds below, so skip the upload instead of failing.
+        // The unit never changes, so only the first composite uploads.
+        if let Some(sampler) = self.osd.osd_texture_loc
+            && self.osd.last_osd_sampler != Some(0)
         {
             ok_gl(uniform_1i(sampler, 0))?;
+            self.osd.last_osd_sampler = Some(0);
         }
         use_texture(0, self.osd.osd_texture)?;
         if self.frame.use_vao {
             let Some(vba) = self.frame.vba.as_ref() else {
-                return Err(ViewError::NoVertexArray);
+                return Err(ViewError::NoVertexArray { pipeline: "game" });
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.frame.vbo.as_ref() else {
-                return Err(ViewError::NoVertexBuffer);
+                return Err(ViewError::NoVertexBuffer { pipeline: "game" });
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -908,8 +923,14 @@ impl GlView {
             return Ok(());
         }
         if self.osd.osd_size != (surface_w, surface_h) {
-            let w = usize::try_from(surface_w.max(1)).map_err(|_| ViewError::InvalidSurface)?;
-            let h = usize::try_from(surface_h.max(1)).map_err(|_| ViewError::InvalidSurface)?;
+            let w = usize::try_from(surface_w.max(1)).map_err(|_| ViewError::InvalidSurface {
+                w: surface_w,
+                h: surface_h,
+            })?;
+            let h = usize::try_from(surface_h.max(1)).map_err(|_| ViewError::InvalidSurface {
+                w: surface_w,
+                h: surface_h,
+            })?;
             use_texture(0, self.osd.osd_texture)?;
             ok_gl(tex_image_2d(
                 gl::TEXTURE_2D,
@@ -1000,7 +1021,11 @@ impl GlView {
         } else {
             self.osd.osd_clear_scratch[..need].fill(0);
         }
-        let gl_y = osd_gl_y(surface_h, y, h);
+        let gl_y = checked_osd_gl_y(surface_h, y, h).map_err(|_| ViewError::InvalidOsdFlip {
+            surface_h,
+            y,
+            h,
+        })?;
         let rect = (x, y, w, h);
         use_texture(0, texture)?;
         ok_osd_gl(
@@ -1032,7 +1057,11 @@ impl GlView {
         h: i32,
         bytes: &[u8],
     ) -> Result<(), ViewError> {
-        let gl_y = osd_gl_y(surface_h, y, h);
+        let gl_y = checked_osd_gl_y(surface_h, y, h).map_err(|_| ViewError::InvalidOsdFlip {
+            surface_h,
+            y,
+            h,
+        })?;
         let rect = (x, y, w, h);
         use_texture(0, texture)?;
         ok_osd_gl(
@@ -1086,9 +1115,9 @@ impl GlView {
         use_texture(0, self.frame.frame_texture)?;
 
         let _row_guard = if row_length != self.frame.logical_width {
-            UnpackRowLengthGuard::set(row_length)?
+            PixelStoreGuard::set(row_length)?
         } else {
-            UnpackRowLengthGuard::none()
+            PixelStoreGuard::none()
         };
 
         if self.frame.is_palette_format {
@@ -1110,12 +1139,12 @@ impl GlView {
 
         if self.frame.use_vao {
             let Some(vba) = self.frame.vba.as_ref() else {
-                return Err(ViewError::NoVertexArray);
+                return Err(ViewError::NoVertexArray { pipeline: "game" });
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.frame.vbo.as_ref() else {
-                return Err(ViewError::NoVertexBuffer);
+                return Err(ViewError::NoVertexBuffer { pipeline: "game" });
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
@@ -1165,59 +1194,36 @@ impl GlView {
         if self.surface.last_resize == Some((viewport_width, viewport_height, strip)) {
             return Ok(());
         }
-        if self.frame.logical_width <= 0 || self.frame.logical_height <= 0 {
-            return Err(ViewError::InvalidViewport {
-                w: viewport_width,
-                h: viewport_height,
-            });
-        }
-        let height_i = viewport_height.max(1);
-        let top = strip.top.min(height_i as u32) as i32;
-        let bottom = strip.bottom.min(height_i as u32 - top as u32) as i32;
-        let area_height = (height_i - top - bottom).max(1);
-        let area_width = viewport_width.max(1);
-        let window_aspect = area_width as f32 / area_height as f32;
-        let content_aspect = self.frame.logical_width as f32 / self.frame.logical_height as f32;
-        if !window_aspect.is_finite() || !content_aspect.is_finite() || content_aspect == 0.0 {
-            return Err(ViewError::InvalidViewport {
-                w: viewport_width,
-                h: viewport_height,
-            });
-        }
-
-        let (scale_x, scale_y) = if window_aspect > content_aspect {
-            (content_aspect / window_aspect, 1.0)
-        } else {
-            (1.0, window_aspect / content_aspect)
-        };
-        if !scale_x.is_finite() || !scale_y.is_finite() {
-            return Err(ViewError::InvalidViewport {
-                w: viewport_width,
-                h: viewport_height,
-            });
-        }
+        // Pure fit (f64 ratios, tested in `layout`): the view only
+        // uploads the resulting box and matrix.
+        let (game_box, arr) = crate::layout::fit_viewport(
+            viewport_width,
+            viewport_height,
+            strip,
+            self.frame.logical_width,
+            self.frame.logical_height,
+        )?;
+        let [_, bottom, area_width, area_height] = game_box;
 
         self.use_game_program()?;
         if self.frame.use_vao {
             let Some(vba) = self.frame.vba.as_ref() else {
-                return Err(ViewError::NoVertexArray);
+                return Err(ViewError::NoVertexArray { pipeline: "game" });
             };
             ok_gl(vba.bind_vao(|_vac| Ok(())))?;
         } else {
             let Some(vbo) = self.frame.vbo.as_ref() else {
-                return Err(ViewError::NoVertexBuffer);
+                return Err(ViewError::NoVertexBuffer { pipeline: "game" });
             };
             ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
         }
         ok_gl(viewport(0, bottom, area_width, area_height))?;
-        let mat = Mat4::scale(scale_x, scale_y, 1.0);
-        let arr: [f32; 16] = mat.as_array();
         // Resize always records: force the upload even if the cached
         // matrix matches, so a stale GPU value cannot survive.
         self.frame.last_matrix = None;
         self.set_game_matrix(&arr)?;
         self.surface.last_resize = Some((viewport_width, viewport_height, strip));
-        self.surface.game_viewport = Some([0, bottom, area_width, area_height]);
+        self.surface.game_viewport = Some(game_box);
         Ok(())
     }
 
@@ -1241,7 +1247,9 @@ impl GlView {
         }
         if !ids.is_empty() {
             if !has_context {
-                report.failed_textures += ids.len() as u32;
+                let count = u32::try_from(ids.len()).unwrap_or(u32::MAX);
+                debug_assert!(u32::try_from(ids.len()).is_ok());
+                report.failed_textures += count;
                 log::debug!("GL view teardown skipped: no current context");
             } else if let Err(e) = delete_textures(ids.len() as i32, ids.as_ptr()) {
                 log::debug!("GL view teardown failed: {e}");
@@ -1258,6 +1266,7 @@ impl GlView {
         self.surface.game_viewport = None;
         self.frame.last_matrix = None;
         self.osd.last_osd_matrix = None;
+        self.osd.last_osd_sampler = None;
         self.frame.current_program = None;
         if let Some(mut shader) = self.frame.shader.take()
             && shader.destroy_if_current(current)
@@ -1281,50 +1290,6 @@ impl GlView {
         }
         report
     }
-}
-
-/// NTSC kernel texture (RGBA8)。packed_ntsc_rgba8 は big-endian u32 を RGBA8 に変換。
-/// 実際の kernel entry stride を data 長から計算して texture 高さとする。
-fn configure_ntsc_texture(
-    unit: u32,
-    texture: u32,
-    width: usize,
-    height: usize,
-    be_data: &[u8],
-    scratch: &mut Vec<u8>,
-) -> Result<(), ViewError> {
-    let entry_count = be_data.len() / (width.saturating_mul(4).max(1));
-    let actual_height = entry_count.max(height);
-    let need = width
-        .checked_mul(actual_height)
-        .and_then(|px| px.checked_mul(4))
-        .ok_or(crate::layout::FrameError::DimensionsOverflow {
-            have: be_data.len(),
-        })?;
-    if scratch.len() < need {
-        scratch.resize(need, 0);
-    }
-    let rgba = &mut scratch[..need];
-    for row in 0..actual_height {
-        for col in 0..width {
-            let offset = (row * width + col) * 4;
-            if offset + 4 <= be_data.len() {
-                rgba[offset..offset + 4].copy_from_slice(&be_data[offset..offset + 4]);
-            } else {
-                rgba[offset..offset + 4].copy_from_slice(&[0, 0, 0, 0]);
-            }
-        }
-    }
-    upload_texture_bytes(
-        unit,
-        texture,
-        width,
-        actual_height,
-        gl::RGBA as GLint,
-        gl::RGBA,
-        rgba,
-    )?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1487,7 +1452,7 @@ mod tests {
     fn frame_error_carries_sizes() {
         let err = super::ViewError::from(crate::layout::FrameError::TooShort { need: 10, have: 4 });
         assert!(err.to_string().contains("10"));
-        let internal = super::ViewError::NoProgram;
+        let internal = super::ViewError::NoProgram { program: "game" };
         assert!(internal.to_string().contains("shader"));
     }
 
@@ -1705,13 +1670,6 @@ mod tests {
             let mut after = [0; 4];
             crate::test_display::TestDisplay::viewport_of(&mut after);
             assert_eq!(before, after);
-            // OSD y-flip: top-left layer must land at the GL bottom-left
-            // row; read back the texel to prove the flip.
-            {
-                use nerust_glwrap::raw::{bind_texture, get_integer};
-                let _ = bind_texture(gl::TEXTURE_2D, view.osd.osd_texture);
-                let _ = get_integer(gl::TEXTURE_BINDING_2D);
-            }
             view.update_palette_texture(&[0x12; 256]).unwrap();
             view.set_osd_layer(None);
             assert_eq!(view.draw_osd(64, 64).unwrap(), OsdOutcome::Skipped);
@@ -1732,5 +1690,76 @@ mod tests {
             assert!(pview.on_close(current).is_ok());
             assert!(pview.on_close(current).is_ok());
         }
+    }
+
+    /// OSD flip + NTSC byte order, proved by readback (Xvfb + llvmpipe
+    /// in CI). Skips without a display so headless runs stay green.
+    #[cfg(unix)]
+    #[test]
+    fn osd_flip_and_ntsc_readback() {
+        use glutin::display::GlDisplay as _;
+        use nerust_glwrap::raw::{delete_textures, gen_textures, get_tex_image};
+
+        use crate::frame_textures::{configure_ntsc_texture, upload_texture_bytes, use_texture};
+
+        let _serial = crate::test_display::lock_display();
+        let Some(display) = crate::test_display::TestDisplay::connect() else {
+            eprintln!("SKIP GL context tests: no GL display");
+            return;
+        };
+        let Some(_current) = display.make_pbuffer_current(64, 64) else {
+            eprintln!("SKIP GL context tests: no GL context");
+            return;
+        };
+        GlView::load_with(|name| {
+            let proc_name = std::ffi::CString::new(name)
+                .unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
+            display.display.get_proc_address(&proc_name)
+        });
+        // 2x2 RGBA texture, zeroed.
+        let mut names = [0u32; 2];
+        gen_textures(2, names.as_mut_ptr()).unwrap();
+        let osd_tex = names[0];
+        upload_texture_bytes(0, osd_tex, 2, 2, gl::RGBA as i32, gl::RGBA, &[0; 16]).unwrap();
+        // OSD top row (y=0) red, bottom row (y=1) green.
+        let red = [255u8, 0, 0, 255, 255, 0, 0, 255];
+        let green = [0u8, 255, 0, 255, 0, 255, 0, 255];
+        GlView::blit_bytes(osd_tex, 2, 0, 0, 2, 1, &red).unwrap();
+        GlView::blit_bytes(osd_tex, 2, 0, 1, 2, 1, &green).unwrap();
+        let mut out = [0u8; 16];
+        get_tex_image(
+            gl::TEXTURE_2D,
+            0,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            out.as_mut_ptr().cast(),
+        )
+        .unwrap();
+        // GetTexImage returns GL row 0 (bottom) first: the flip put the
+        // OSD-bottom row (green) at row 0 and the OSD-top row (red) at
+        // row 1. Without the flip both rows would sit swapped.
+        assert_eq!(&out[..8], &green);
+        assert_eq!(&out[8..], &red);
+        // Checked math agrees with the upload sites above.
+        assert_eq!(crate::osd_overlay::checked_osd_gl_y(2, 0, 1).unwrap(), 1);
+        assert_eq!(crate::osd_overlay::checked_osd_gl_y(2, 1, 1).unwrap(), 0);
+        // NTSC kernel: GPU-upload bytes equal the CPU pack order
+        // byte-for-byte (big-endian words `[R, G, B, A]`).
+        let ntsc_tex = names[1];
+        let words: Vec<u8> = (0u8..16).collect();
+        let mut scratch = Vec::new();
+        configure_ntsc_texture(1, ntsc_tex, 2, 2, &words, &mut scratch).unwrap();
+        use_texture(1, ntsc_tex).unwrap();
+        let mut ntsc_out = [0u8; 16];
+        get_tex_image(
+            gl::TEXTURE_2D,
+            0,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            ntsc_out.as_mut_ptr().cast(),
+        )
+        .unwrap();
+        assert_eq!(&ntsc_out, &words[..]);
+        delete_textures(2, names.as_ptr()).unwrap();
     }
 }

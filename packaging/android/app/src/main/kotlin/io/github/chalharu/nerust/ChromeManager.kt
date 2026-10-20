@@ -135,6 +135,27 @@ class ChromeManager(private val activity: MainActivity) {
         dismissChromePopups()
     }
 
+    /**
+     * Destroy path: like [onStop] but also disables re-attachment so no
+     * posted runnable can resurrect chrome after the window is gone.
+     * Callers (and tests via [hasLiveChromeForTest]) assert nothing
+     * survives this.
+     */
+    fun onDestroy() {
+        chromeAttachEnabled = false
+        activity.window.decorView.removeCallbacks(ensureChromeAttachedRunnable)
+        activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
+        removePendingChromeAttachCallbacks()
+        dismissChromePopups()
+    }
+
+    /** Test probe: true while any chrome popup is still showing. */
+    fun hasLiveChromeForTest(): Boolean =
+        controlsOverlayPopup?.isShowing == true ||
+            drawerChromePopup?.isShowing == true ||
+            drawerFullScreenPopup?.isShowing == true ||
+            fpsOverlayPopup?.isShowing == true
+
     fun onConfigurationChanged() {
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
@@ -620,8 +641,12 @@ class ChromeManager(private val activity: MainActivity) {
         gravity: Int,
         x: Int,
         y: Int,
-    ): Boolean =
-        try {
+    ): Boolean {
+        if (anchor.windowToken == null) {
+            Log.w(TAG, "showPopupAtLocation: $popupName skipped with null window token")
+            return false
+        }
+        return try {
             popup.showAtLocation(anchor, gravity, x, y)
             Log.i(
                 TAG,
@@ -635,6 +660,7 @@ class ChromeManager(private val activity: MainActivity) {
             Log.w(TAG, "showPopupAtLocation: $popupName failed with illegal state", error)
             false
         }
+    }
 
     private fun clearDrawerWindowReferences() {
         drawerShowing = false
@@ -665,23 +691,6 @@ class ChromeManager(private val activity: MainActivity) {
         private const val MENU_CHROME_ATTACH_RETRY_DELAY_MS = 100L
         private const val MENU_CHROME_MAX_ATTACH_ATTEMPTS = 100
         private const val CONTROLLER_OVERLAY_HIDE_MS = 5_000L
-    }
-}
-
-private fun parsePushedZones(payload: String): List<PushedOverlayZone> {
-    if (payload.isBlank()) return emptyList()
-    return payload.split(';').mapNotNull { entry ->
-        val labelAndRect = entry.split(':')
-        if (labelAndRect.size != 2) return@mapNotNull null
-        val coords = labelAndRect[1].split(',').mapNotNull(String::toFloatOrNull)
-        if (coords.size != 4) return@mapNotNull null
-        PushedOverlayZone(
-            x = coords[0],
-            y = coords[1],
-            width = coords[2],
-            height = coords[3],
-            label = labelAndRect[0],
-        )
     }
 }
 

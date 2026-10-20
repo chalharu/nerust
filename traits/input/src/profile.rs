@@ -1,6 +1,7 @@
 //! Controller profiles, slot assignments, and the GUI/emu split runtime.
 
 use std::{
+    collections::HashMap,
     rc::Rc,
     sync::{
         Arc, Mutex,
@@ -11,7 +12,7 @@ use std::{
 use super::{
     devices::ControllerCollection,
     events::{BufferError, InputStateBuffer, InputValue},
-    ids::{AttachmentId, DeviceKindId, DigitalControlId, ProfileId},
+    ids::{AttachmentId, DeviceKindId, ProfileId},
     topology::ControlId,
 };
 
@@ -104,10 +105,13 @@ pub trait InputPorts: std::fmt::Debug {
     fn slots(&self) -> &[SlotInfo];
     /// All controller profiles this system supports.
     ///
-    /// Init-only: returns a freshly allocated `Vec` per call, so callers
-    /// must invoke it during setup and cache the result rather than
-    /// polling it on the hot path.
-    fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>>;
+    /// Init-only: returns a boxed iterator so no `Vec` is allocated by the
+    /// callee; callers must invoke it during setup and cache the collected
+    /// result rather than polling it on the hot path. (Boxed — not `impl
+    /// Trait` — so the trait stays object-safe for `dyn InputSystemFactory`.)
+    /// `Rc` handles are `!Send + !Sync` by design: clone them only on the
+    /// setup thread, then share the cached collection read-only.
+    fn controllers(&self) -> Box<dyn Iterator<Item = Rc<dyn ControllerProfile>> + '_>;
 
     /// Resolve a persisted slot ID string to an AttachmentId.
     /// Returns None if no slot matches.
@@ -117,10 +121,7 @@ pub trait InputPorts: std::fmt::Debug {
 
     /// Resolve a persisted controller ID string to a ControllerProfile.
     fn resolve_controller(&self, id: &str) -> Option<Rc<dyn ControllerProfile>> {
-        self.controllers()
-            .iter()
-            .find(|p| p.profile_id().as_str() == id)
-            .cloned()
+        self.controllers().find(|p| p.profile_id().as_str() == id)
     }
 }
 
@@ -132,9 +133,37 @@ pub trait InputPorts: std::fmt::Debug {
 /// order with equal attachment ids, and each paired controller is compared by
 /// [`ProfileId`] (not by pointer identity). Persisting an `InputAssignments`
 /// must therefore preserve slot order for round-trip equality to hold.
+/// Construct with [`InputAssignments::new`]; read with [`InputAssignments::slots`].
 #[derive(Clone)]
 pub struct InputAssignments {
-    pub slots: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>,
+    slots: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>,
+}
+
+impl InputAssignments {
+    pub fn new(slots: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>) -> Self {
+        Self { slots }
+    }
+
+    pub fn slots(&self) -> &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)] {
+        &self.slots
+    }
+
+    pub fn slots_mut(&mut self) -> &mut [(AttachmentId, Option<Rc<dyn ControllerProfile>>)] {
+        &mut self.slots
+    }
+
+    /// Explicit order-sensitive structural comparison used by `PartialEq`.
+    pub fn eq_ordered(&self, other: &Self) -> bool {
+        self.slots.len() == other.slots.len()
+            && self.slots.iter().zip(other.slots.iter()).all(|(a, b)| {
+                a.0 == b.0
+                    && match (&a.1, &b.1) {
+                        (None, None) => true,
+                        (Some(x), Some(y)) => x.profile_id() == y.profile_id(),
+                        _ => false,
+                    }
+            })
+    }
 }
 
 impl std::fmt::Debug for InputAssignments {
@@ -159,31 +188,31 @@ impl std::fmt::Debug for InputAssignments {
 /// equality to hold.
 impl PartialEq for InputAssignments {
     fn eq(&self, other: &Self) -> bool {
-        self.slots.len() == other.slots.len()
-            && self.slots.iter().zip(other.slots.iter()).all(|(a, b)| {
-                a.0 == b.0
-                    && match (&a.1, &b.1) {
-                        (None, None) => true,
-                        (Some(x), Some(y)) => x.profile_id() == y.profile_id(),
-                        _ => false,
-                    }
-            })
+        self.eq_ordered(other)
     }
 }
 
 impl Eq for InputAssignments {}
 
 /// Errors from create_split.
+///
+/// All identifiers are typed (`AttachmentId`/`ProfileId`), never free-form
+/// strings such as `"none"` or `"missing controller"`. Single policy:
+/// an empty collection yields `ControllerNotFound` (naming the expected
+/// profile); a wrong non-zero count yields `IncompatibleController`.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CreateSplitError {
     #[error("slot '{slot}' not found")]
-    SlotNotFound { slot: String },
+    SlotNotFound { slot: AttachmentId },
     #[error("controller '{controller}' not found")]
-    ControllerNotFound { controller: String },
+    ControllerNotFound { controller: ProfileId },
     #[error("controller '{controller}' cannot be assigned to slot '{slot}'")]
-    IncompatibleController { controller: String, slot: String },
+    IncompatibleController {
+        controller: ProfileId,
+        slot: AttachmentId,
+    },
     #[error("slot conflict between {a} and {b}")]
-    SlotConflict { a: String, b: String },
+    SlotConflict { a: AttachmentId, b: AttachmentId },
 }
 
 /// Factory for creating input runtime state.
@@ -196,18 +225,74 @@ pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
 }
 
 /// Output of create_split.
+///
+/// `field_map` uses the standard `HashMap` hasher deliberately: the map is
+/// built once at init time and probed on frontend key events, never on the
+/// per-frame hot path, so a cryptographic-random hasher costs nothing here
+/// while avoiding an extra hash dependency.
 #[derive(Debug)]
 pub struct InputResources {
-    pub split: InputSplit,
-    /// (attachment, control) → absolute field index
-    pub field_map: std::collections::HashMap<(AttachmentId, DigitalControlId), usize>,
+    split: InputSplit,
+    field_map: HashMap<(AttachmentId, ControlId), usize>,
+}
+
+impl InputResources {
+    pub fn new(split: InputSplit, field_map: HashMap<(AttachmentId, ControlId), usize>) -> Self {
+        Self { split, field_map }
+    }
+
+    pub fn split(&self) -> &InputSplit {
+        &self.split
+    }
+
+    pub fn split_mut(&mut self) -> &mut InputSplit {
+        &mut self.split
+    }
+
+    pub fn field_map(&self) -> &HashMap<(AttachmentId, ControlId), usize> {
+        &self.field_map
+    }
+
+    pub fn field_map_mut(&mut self) -> &mut HashMap<(AttachmentId, ControlId), usize> {
+        &mut self.field_map
+    }
 }
 
 /// Thread-shared state reference.
+///
+/// `Send + Sync`: the `shared` mutex plus the atomic flag are safe to share
+/// between the GUI producer and the emu consumer threads. The `new_buffer`
+/// factory itself is `Send + Sync` so either thread can mint fresh buffers.
 pub struct InputSplit {
-    pub shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-    pub flag: Arc<AtomicBool>,
-    pub new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
+    shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+    flag: Arc<AtomicBool>,
+    new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
+}
+
+impl InputSplit {
+    pub fn new(
+        shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+        flag: Arc<AtomicBool>,
+        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
+    ) -> Self {
+        Self {
+            shared,
+            flag,
+            new_buffer,
+        }
+    }
+
+    pub fn shared(&self) -> &Arc<Mutex<Box<dyn InputStateBuffer>>> {
+        &self.shared
+    }
+
+    pub fn flag(&self) -> &Arc<AtomicBool> {
+        &self.flag
+    }
+
+    pub fn new_buffer(&self) -> &(dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync) {
+        &*self.new_buffer
+    }
 }
 
 impl std::fmt::Debug for InputSplit {
@@ -220,6 +305,11 @@ impl std::fmt::Debug for InputSplit {
 }
 
 /// GUI thread input delivery.
+///
+/// `Send` but `!Sync`: the staged `Box<dyn InputStateBuffer>` is `Send`
+/// (movable to the GUI thread) but not `Sync` (never shared by reference
+/// across threads). Keep each `GuiInput` on its owning GUI thread; the
+/// thread-safe handoff is the `InputSplit` mutex + flag.
 /// Maintains absolute input state in an internal buffer.
 /// On publish, copies state → write_buf → shared (swap), preserving held keys.
 #[derive(Debug)]
@@ -236,19 +326,20 @@ impl GuiInput {
         flag: Arc<AtomicBool>,
         new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
     ) -> Self {
-        Self::from_split(&InputSplit {
+        Self {
             shared,
             flag,
-            new_buffer,
-        })
+            state: (new_buffer)(),
+            write_buf: (new_buffer)(),
+        }
     }
 
     pub fn from_split(split: &InputSplit) -> Self {
         Self {
-            shared: Arc::clone(&split.shared),
-            flag: Arc::clone(&split.flag),
-            state: (split.new_buffer)(),
-            write_buf: (split.new_buffer)(),
+            shared: Arc::clone(split.shared()),
+            flag: Arc::clone(split.flag()),
+            state: (split.new_buffer())(),
+            write_buf: (split.new_buffer())(),
         }
     }
 
@@ -261,11 +352,11 @@ impl GuiInput {
     pub fn publish(&mut self) {
         // Prepare write_buf from absolute state (fast concrete copy).
         // Both buffers come from the same `new_buffer` factory, so a
-        // mismatch here is a programming error; surface it loudly in
-        // debug builds but keep release behavior total.
-        let copy = self.write_buf.copy_state(&*self.state);
-        debug_assert!(copy.is_ok(), "GuiInput buffers must share a concrete type");
-        let _ = copy;
+        // mismatch here is a programming error: panic loudly with both
+        // type names instead of silently dropping input.
+        if let Err(error) = self.write_buf.copy_state(&*self.state) {
+            unreachable!("GuiInput buffers must share a concrete type: {error}");
+        }
         // Swap into shared (fast pointer exchange). The mutex cannot be
         // poisoned: only std::mem::swap (non-panicking) runs under the lock.
         let mut lock = self
@@ -282,6 +373,11 @@ impl GuiInput {
 }
 
 /// Emu thread input consumer.
+///
+/// `Send` but `!Sync`: the snapshot `read_buf` is `Send` (movable to the
+/// emu thread) but not `Sync` (never shared by reference). Keep each
+/// `EmuInput` on its owning emu thread; the thread-safe handoff is the
+/// `InputSplit` mutex + flag.
 #[derive(Debug)]
 pub struct EmuInput {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
@@ -295,18 +391,18 @@ impl EmuInput {
         flag: Arc<AtomicBool>,
         new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
     ) -> Self {
-        Self::from_split(&InputSplit {
+        Self {
             shared,
             flag,
-            new_buffer,
-        })
+            read_buf: (new_buffer)(),
+        }
     }
 
     pub fn from_split(split: &InputSplit) -> Self {
         Self {
-            shared: Arc::clone(&split.shared),
-            flag: Arc::clone(&split.flag),
-            read_buf: (split.new_buffer)(),
+            shared: Arc::clone(split.shared()),
+            flag: Arc::clone(split.flag()),
+            read_buf: (split.new_buffer())(),
         }
     }
 

@@ -1,6 +1,6 @@
 use nerust_input_traits::{
     AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, Controller, ControllerProfile,
-    DigitalControlId, OpenBusReadResult, Port, PortSet, ProfileId,
+    DigitalControlId, FieldEntry, OpenBusReadResult, Port, PortSet, ProfileId,
 };
 
 /// NES Standard Controller: full 8-button pad for a single port.
@@ -29,6 +29,14 @@ impl StandardPad {
         self.result = [0; 2];
         self.strobe = false;
     }
+
+    fn apply_strobe(&mut self, value: u8) {
+        let new_strobe = value & 1 == 1;
+        if self.strobe && !new_strobe {
+            self.result = self.cached;
+        }
+        self.strobe = new_strobe;
+    }
 }
 
 impl Default for StandardPad {
@@ -55,46 +63,63 @@ impl Controller for StandardPad {
         OpenBusReadResult::new(bit, self.open_bus_mask)
     }
     fn write(&mut self, _port: &dyn Port, value: u8) {
-        let new_strobe = value & 1 == 1;
-        if self.strobe && !new_strobe {
-            self.result = self.cached;
-        }
-        self.strobe = new_strobe;
+        self.apply_strobe(value);
     }
-    fn field_map(&self, port: &dyn Port, out: &mut Vec<(AttachmentId, DigitalControlId, usize)>) {
-        let attachment = AttachmentId::new(port.id());
+    fn strobe(&mut self, value: u8) {
+        self.apply_strobe(value);
+    }
+    fn field_map(&self, port: &dyn Port, out: &mut Vec<FieldEntry>) {
+        let attachment = port.attachment_id();
         let base = port.index() * 8;
         out.extend([
-            (attachment, DigitalControlId::new("nes.control.a"), base),
-            (attachment, DigitalControlId::new("nes.control.b"), base + 1),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.select"),
+                ControlId::Digital(nerust_input_traits::DigitalControlId::new("nes.control.a")),
+                base,
+            ),
+            FieldEntry::new(
+                attachment,
+                ControlId::Digital(nerust_input_traits::DigitalControlId::new("nes.control.b")),
+                base + 1,
+            ),
+            FieldEntry::new(
+                attachment,
+                ControlId::Digital(nerust_input_traits::DigitalControlId::new(
+                    "nes.control.select",
+                )),
                 base + 2,
             ),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.start"),
+                ControlId::Digital(nerust_input_traits::DigitalControlId::new(
+                    "nes.control.start",
+                )),
                 base + 3,
             ),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.up"),
+                ControlId::Digital(nerust_input_traits::DigitalControlId::new("nes.control.up")),
                 base + 4,
             ),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.down"),
+                ControlId::Digital(nerust_input_traits::DigitalControlId::new(
+                    "nes.control.down",
+                )),
                 base + 5,
             ),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.left"),
+                ControlId::Digital(nerust_input_traits::DigitalControlId::new(
+                    "nes.control.left",
+                )),
                 base + 6,
             ),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.right"),
+                ControlId::Digital(nerust_input_traits::DigitalControlId::new(
+                    "nes.control.right",
+                )),
                 base + 7,
             ),
         ]);
@@ -238,7 +263,13 @@ mod tests {
         let pad = StandardPad::default();
         let mut map = Vec::new();
         pad.field_map(&player1(), &mut map);
-        let ids: Vec<&str> = map.iter().map(|(_, id, _)| id.as_str()).collect();
+        let ids: Vec<&str> = map
+            .iter()
+            .map(|entry| match entry.control {
+                nerust_input_traits::ControlId::Digital(id) => id.as_str(),
+                nerust_input_traits::ControlId::Analog(id) => id.as_str(),
+            })
+            .collect();
         assert_eq!(
             ids,
             [
@@ -252,7 +283,7 @@ mod tests {
                 "nes.control.right",
             ]
         );
-        let offsets: Vec<usize> = map.iter().map(|(_, _, bit)| *bit).collect();
+        let offsets: Vec<usize> = map.iter().map(|entry| entry.field).collect();
         assert_eq!(offsets, [0, 1, 2, 3, 4, 5, 6, 7]);
     }
 

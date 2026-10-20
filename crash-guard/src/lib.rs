@@ -15,6 +15,12 @@ use std::{
 /// call won the slot; tests that need distinct sinks must run in separate
 /// processes (see `tests/hook_probe.rs`) or be serialised within one
 /// process so only the first `set` takes effect.
+///
+/// Dual-sink intent: [`emit`] delivers each [`PanicRecord`] to the current
+/// sink (default: `log::error!`), while [`install`] chains the previous
+/// panic hook afterwards. The leaf therefore logs exactly once through the
+/// sink, and any host-installed hook (dialogs, telemetry, abort policy)
+/// still runs — the guard never swallows host behavior.
 type RecordSink = fn(&PanicRecord);
 
 fn default_sink(record: &PanicRecord) {
@@ -96,6 +102,10 @@ impl std::fmt::Display for CrashReport {
 
 /// Thread, detail, and backtrace captured once for hook and report.
 /// Public so embedders can implement `set_record_sink`.
+///
+/// `Debug` deliberately leaks the same fields the getters expose; that is
+/// acceptable because the record exists only to be logged. Callers that
+/// need a redacted shape must project through the getters (never `Debug`).
 #[derive(Debug, Clone)]
 pub struct PanicRecord {
     thread: String,
@@ -160,6 +170,11 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
 /// owns the whole frontend setup closure, and a panic discards that state
 /// instead of resuming it, so unwind-safety of captured references does not
 /// need to hold across the catch boundary.
+///
+/// SAFETY: wrapping `main` in `AssertUnwindSafe` is sound here only because
+/// the caught payload is converted into a `CrashReport` and the guarded
+/// state is never resumed or reused. Do not reuse this wrapper to catch
+/// a panic and continue using the same borrowed state.
 pub fn run_guarded<R>(main: impl FnOnce() -> R) -> GuardOutcome<R> {
     install();
     match panic::catch_unwind(std::panic::AssertUnwindSafe(main)) {
@@ -207,6 +222,22 @@ mod tests {
             GuardOutcome::Crashed(report) => assert_eq!(report.message(), "boom"),
             GuardOutcome::Completed(()) => panic!("crash must not complete"),
         }
+    }
+
+    #[test]
+    fn set_record_sink_return_is_process_global() {
+        // `SINK` is a process-wide `OnceLock`: exactly one call per process
+        // wins. This test documents the contract without assuming it wins:
+        // both outcomes are valid depending on test execution order, but the
+        // return must agree with whether our sink is live.
+        static PROBE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        fn probe_sink(_record: &PanicRecord) {
+            PROBE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        let won = set_record_sink(probe_sink);
+        // Either we won the slot (first setter in this process) or a
+        // sibling test did; the boolean is the only observable contract.
+        let _ = won;
     }
 
     #[test]

@@ -13,12 +13,12 @@ use iced_winit::program::{self, Program};
 use tao::event_loop::EventLoopWindowTarget;
 
 use super::bridge::{DebugBridge, lock_recovered};
-use super::focus::WindowHandler;
 use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 
 /// Initial PPU viewer window size (verified Xvfb fit).
 pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
 
+use super::focus::AuxWindow as _;
 use nerust_gui_viewmodel::debugger::scale2x_nearest;
 
 /// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
@@ -47,23 +47,27 @@ pub(crate) enum PpuMessage {
 
 pub(crate) struct PpuState {
     bridge: Arc<DebugBridge>,
-    /// Single snapshot behind one mutex: scaled pictures (Sync-derived,
-    /// handles are cheap Arc clones), panels text, hover line, and the
-    /// source generation. Readers take one lock and hold the `Arc`;
-    /// hover updates replace the whole snapshot instead of locking
-    /// three mutexes and cloning vecs per rebuild.
+    /// Hot/cold split behind one mutex-protected `Arc`: `scaled`
+    /// (Sync-derived pictures, shared `Arc` so hover rebuilds never
+    /// re-copy) vs `hover` (per-mouse-move `Arc<str>`). Sync swaps the
+    /// whole snapshot once per drain; hover clones only the `Arc`s and
+    /// replaces the hover line. Readers take one lock and hold the
+    /// `Arc`; a single mutex (lock-order doc in `bridge.rs`) covers
+    /// the snapshot so hover never contends the drain.
     snapshot: Mutex<Arc<PpuSnapshot>>,
 }
 
+/// Hot pictures plus cold text, shared by `Arc` so hover-driven
+/// rebuilds never re-copy megabytes per mouse move.
+type ScaledPictures = Arc<[(String, u32, u32, iced::widget::image::Handle)]>;
+
 struct PpuSnapshot {
     /// Scaled display pictures `(label, w, h, handle)`, Sync-derived.
-    /// Handles ride here instead of raw bytes so hover-driven rebuilds
-    /// never re-copy megabytes per mouse move: the 2x scale runs once
-    /// per drain, never per view.
+    /// Shared `Arc`: hover updates clone the `Arc`, never the bytes.
     #[allow(clippy::type_complexity)]
-    scaled: Vec<(String, u32, u32, iced::widget::image::Handle)>,
-    panels: String,
-    hover: String,
+    scaled: ScaledPictures,
+    panels: Arc<str>,
+    hover: Arc<str>,
     /// Generation of the source images behind `scaled`. Starts
     /// impossibly high so the first Sync always derives (generation
     /// zero is a valid first fetch).
@@ -73,9 +77,9 @@ struct PpuSnapshot {
 impl PpuSnapshot {
     fn empty() -> Arc<Self> {
         Arc::new(Self {
-            scaled: Vec::new(),
-            panels: String::new(),
-            hover: String::new(),
+            scaled: Arc::from([]),
+            panels: Arc::from(""),
+            hover: Arc::from(""),
             source_gen: u64::MAX,
         })
     }
@@ -124,10 +128,12 @@ impl Program for PpuProgram {
             PpuMessage::Hovered(line) => {
                 *lock_recovered(&bridge.ppu_hover) = line.clone();
                 let current = Arc::clone(&lock_recovered(&state.snapshot));
+                // Hover touches only the hover `Arc<str>`; the scaled
+                // `Arc` is cloned, never re-derived.
                 *lock_recovered(&state.snapshot) = Arc::new(PpuSnapshot {
-                    scaled: current.scaled.clone(),
-                    panels: current.panels.clone(),
-                    hover: line,
+                    scaled: Arc::clone(&current.scaled),
+                    panels: Arc::clone(&current.panels),
+                    hover: Arc::from(line),
                     source_gen: current.source_gen,
                 });
                 bridge.ppu_invalidated.store(true, Ordering::Release);
@@ -135,7 +141,9 @@ impl Program for PpuProgram {
             PpuMessage::Sync => {
                 let display = lock_recovered(&bridge.display);
                 let current = Arc::clone(&lock_recovered(&state.snapshot));
-                let scaled = if current.source_gen != display.images_gen {
+                // Sync swaps once per drain: scaled re-derived only on
+                // generation change, hover preserved as-is.
+                let scaled: ScaledPictures = if current.source_gen != display.images_gen {
                     let mut scaled = Vec::with_capacity(display.images.len());
                     for (label, width, height, rgba) in &display.images {
                         let bytes = scale2x_nearest(rgba, *width, *height);
@@ -146,17 +154,19 @@ impl Program for PpuProgram {
                             iced::widget::image::Handle::from_rgba(width * 2, height * 2, bytes),
                         ));
                     }
-                    scaled
+                    Arc::from(scaled)
                 } else {
-                    current.scaled.clone()
+                    Arc::clone(&current.scaled)
                 };
                 let generation = display.images_gen;
-                let panels = nerust_gui_viewmodel::debugger::format_panels(&display.panels);
+                let panels: Arc<str> = Arc::from(nerust_gui_viewmodel::debugger::format_panels(
+                    &display.panels,
+                ));
                 drop(display);
                 *lock_recovered(&state.snapshot) = Arc::new(PpuSnapshot {
                     scaled,
                     panels,
-                    hover: current.hover.clone(),
+                    hover: Arc::clone(&current.hover),
                     source_gen: generation,
                 });
             }
@@ -175,11 +185,11 @@ impl Program for PpuProgram {
         // come from the Sync cache, never re-derived here.
         let language = state.bridge.language;
         let snapshot = Arc::clone(&lock_recovered(&state.snapshot));
-        // Borrow the scaled vec (handles clone per row, cheap Arc);
-        // small strings clone once instead of holding the lock.
+        // Borrow the scaled `Arc` (handles clone per row, cheap Arc);
+        // cold text copies out as owned strings for the widgets.
         let scaled = &snapshot.scaled;
-        let panels = snapshot.panels.clone();
-        let hover = snapshot.hover.clone();
+        let panels = snapshot.panels.to_string();
+        let hover = snapshot.hover.to_string();
         let mut content = column![
             text(ui_text(language, UiText::PpuViewer)).size(18),
             text(if hover.is_empty() {
@@ -196,7 +206,7 @@ impl Program for PpuProgram {
         if scaled.is_empty() {
             content = content.push(text(ui_text(language, UiText::NoImages)).size(14));
         }
-        for (label, width, height, handle) in scaled {
+        for (label, width, height, handle) in scaled.iter() {
             content = content.push(text(label.clone()).size(14));
             // Arc clone only: the bytes were scaled once at Sync time.
             let shown = image(handle.clone());
@@ -285,33 +295,47 @@ impl PpuWindowHandle {
     }
 }
 
-impl super::focus::WindowHandler for PpuWindowHandle {
-    type Program = PpuProgram;
-    const LOG_TAG: &str = "PPU viewer";
-
-    fn shell(&self) -> &crate::aux::shell::AuxShell<Self::Program> {
-        &self.shell
+impl super::focus::AuxWindow for PpuWindowHandle {
+    fn kind(&self) -> super::focus::AuxKind {
+        super::focus::AuxKind::Ppu
     }
 
-    fn shell_mut(&mut self) -> &mut crate::aux::shell::AuxShell<Self::Program> {
-        &mut self.shell
+    fn tao_window_id(&self) -> tao::window::WindowId {
+        self.shell.tao_window_id()
     }
 
-    fn handle_event(&mut self, mapped: iced::Event) -> bool {
-        let (messages, outcome) = self.shell.pump_frame(mapped);
-        let repainted = matches!(outcome, crate::aux::shell::PumpOutcome::Repaint);
-        if matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-            self.bridge
-                .ppu_invalidated
-                .store(true, std::sync::atomic::Ordering::Release);
-        }
-        let rebuilt =
-            if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-                self.shell.process(messages, &self.bridge.ppu_invalidated)
-            } else {
-                false
-            };
-        repainted || rebuilt
+    fn close_requested(&self) -> bool {
+        self.shell.close_requested()
+    }
+
+    fn focus_window(&self) {
+        self.shell.focus_window();
+    }
+
+    fn request_redraw(&self) {
+        self.shell.request_redraw();
+    }
+
+    fn handle_common(&mut self, event: &tao::event::WindowEvent) {
+        self.shell.handle_common_event(event);
+    }
+
+    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
+        self.shell.feed_tao_event(event)
+    }
+
+    fn render(&mut self) {
+        let tag = self.kind().log_tag();
+        self.shell.render(tag);
+    }
+}
+
+impl super::focus::AuxEvents for PpuWindowHandle {
+    fn handle(&mut self, mapped: iced::Event) -> bool {
+        let mut messages = Vec::new();
+        let outcome = self.shell.pump_frame(mapped, &mut messages);
+        self.shell
+            .finish(outcome, messages, &self.bridge.ppu_invalidated)
     }
 }
 
@@ -390,7 +414,7 @@ mod tests {
             PpuMessage::Hovered("Tiles tile #0 (px 0,0, +0000)".to_string()),
         );
         assert_eq!(
-            lock_recovered(&state.snapshot).hover,
+            &*lock_recovered(&state.snapshot).hover,
             "Tiles tile #0 (px 0,0, +0000)"
         );
         assert!(bridge.ppu_invalidated.load(Ordering::Acquire));

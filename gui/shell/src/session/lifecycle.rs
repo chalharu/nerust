@@ -7,7 +7,7 @@ use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest};
 
 use crate::session::{
     SessionError, SessionHandle,
-    osd::{OsdManager, PumpReport, PushInput},
+    osd::{PumpReport, PumpTarget, PushInput},
     persistence_setup::{MapperRestore, PersistenceBinder},
 };
 
@@ -26,18 +26,19 @@ impl SessionHandle {
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
         {
-            let Some(core) = self.emu.core().ok() else {
+            let Some(exporter) = self.emu.exporter().ok() else {
                 return Err(SessionError::NoCore);
             };
             // Best-effort: a stale battery-save write failure must
-            // never veto opening a new ROM.
-            if let Err(error) = self.media.persistence.flush_mapper_save(core) {
+            // never veto opening a new ROM. The typed chain renders
+            // at the notification boundary.
+            if let Err(error) = self.media.persistence.flush_mapper_save(exporter) {
                 log::warn!("mapper-save flush before load failed: {error}");
                 self.notifications.push(
-                    crate::session::notification::NotificationKind::command_failure(
+                    crate::session::notification::NotificationKind::command_failure_from(
                         crate::session::notification::FailureOrigin::Bridge,
                         "mapper-flush",
-                        error.to_string(),
+                        &error,
                     ),
                 );
             }
@@ -47,9 +48,9 @@ impl SessionHandle {
             .ok()
             .ok_or(SessionError::NoCore)?
             .load(&media, Some(resolved.options))?;
-        self.media.loaded = Some(super::LoadedMedia {
+        self.media.set_loaded(Some(super::LoadedMedia {
             media: media.clone(),
-        });
+        }));
 
         PersistenceBinder::bind(self, media.native_path(), MapperRestore::Load);
 
@@ -58,20 +59,19 @@ impl SessionHandle {
     }
 
     pub fn unload(&mut self) -> Result<(), SessionError> {
-        if let Ok(core) = self.emu.core() {
-            self.media.persistence.flush_mapper_save(core)?;
+        if let Ok(exporter) = self.emu.exporter() {
+            self.media.persistence.flush_mapper_save(exporter)?;
         }
         if let Ok(core) = self.emu.core_mut() {
             core.unload()?;
         }
-        self.media.loaded = None;
-        self.media.persistence.reset();
+        self.media.clear_runtime();
         Ok(())
     }
 
     pub fn flush_before_exit(&mut self) {
-        if let Some(core) = self.emu.core().ok()
-            && let Err(error) = self.media.persistence.flush_mapper_save(core)
+        if let Some(exporter) = self.emu.exporter().ok()
+            && let Err(error) = self.media.persistence.flush_mapper_save(exporter)
         {
             log::warn!("mapper save flush before close failed: {error}");
         }
@@ -99,29 +99,29 @@ impl SessionHandle {
         self.notifications.drain()
     }
 
-    pub fn pump_osd(&mut self, manager: &mut OsdManager, input: PushInput) -> PumpReport {
+    pub fn pump_osd(&mut self, osd: &mut impl PumpTarget, input: PushInput) -> PumpReport {
         let PushInput {
             policy,
             language,
             now,
             tick,
         } = input;
-        let before = manager.generation();
+        let before = osd.generation();
         if self.notifications.pending_len() == 0 {
-            manager.poll(now);
-            let modal_queued = manager.pump_modal();
+            osd.poll_queue(now);
+            let modal_queued = osd.pump_modal_queue();
             return PumpReport {
-                changed: manager.generation() != before,
+                changed: osd.generation() != before,
                 modal_queued,
             };
         }
         let channel = tick.frame_channel();
         let drained = self.drain_notifications();
-        manager.push_all_with_policy(drained, &policy, language, now, channel);
-        manager.poll(now);
-        let modal_queued = manager.pump_modal();
+        osd.push_notifications(drained, &policy, language, now, channel);
+        osd.poll_queue(now);
+        let modal_queued = osd.pump_modal_queue();
         PumpReport {
-            changed: manager.generation() != before,
+            changed: osd.generation() != before,
             modal_queued,
         }
     }

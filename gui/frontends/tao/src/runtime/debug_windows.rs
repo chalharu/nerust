@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::aux::focus::WindowHandler;
+use crate::aux::focus::AuxWindow;
 use tao::window::WindowId;
 
 /// Live PPU cadence while the core runs: the viewer follows the
@@ -40,24 +40,25 @@ impl DebugWindows {
         }
     }
 
-    /// Share the debugger window for bridge reads, if open.
-    pub(super) fn debug_window(&self) -> Option<&crate::aux::debug::DebugWindowHandle> {
-        self.debug_window.as_ref()
-    }
-
     /// Borrow the debugger window for event routing, if open.
+    /// Narrow port: the borrow never escapes the closure caller.
     pub(super) fn debug_window_mut(&mut self) -> Option<&mut crate::aux::debug::DebugWindowHandle> {
         self.debug_window.as_mut()
     }
 
-    /// Share the PPU viewer for bridge reads, if open.
-    pub(super) fn ppu_window(&self) -> Option<&crate::aux::ppu::PpuWindowHandle> {
-        self.ppu_window.as_ref()
-    }
-
     /// Borrow the PPU viewer for event routing, if open.
+    /// Narrow port: the borrow never escapes the closure caller.
     pub(super) fn ppu_window_mut(&mut self) -> Option<&mut crate::aux::ppu::PpuWindowHandle> {
         self.ppu_window.as_mut()
+    }
+
+    /// Share the debugger bridge for PPU-viewer creation (the viewer
+    /// renders the same live images). Cloned `Arc`, never a lock.
+    pub(super) fn shared_bridge_for_ppu(
+        &self,
+    ) -> Option<std::sync::Arc<crate::aux::bridge::DebugBridge>> {
+        let handle = self.debug_window.as_ref()?;
+        Some(std::sync::Arc::clone(handle.shared_bridge()))
     }
 
     /// Seat a newly created debugger window (single writer: the open path).
@@ -117,16 +118,13 @@ impl DebugWindows {
     }
 
     /// Drain one batch from the debugger window: queued requests plus
-    /// the toolbar PPU-open flag. `None` with no debugger open.
+    /// the toolbar PPU-open flag. `None` with no debugger open. Routes
+    /// through the handle narrow port, never `bridge` fields directly.
     pub(super) fn take_debug_batch(
         &mut self,
     ) -> Option<(bool, Vec<nerust_gui_shell::debug::DebugAction>)> {
         let handle = self.debug_window.as_ref()?;
-        let open = handle
-            .bridge
-            .open_ppu
-            .swap(false, std::sync::atomic::Ordering::SeqCst);
-        Some((open, handle.take_requests()))
+        Some(handle.take_debug_batch())
     }
 
     pub(crate) fn debug_window_pos(&self) -> Option<(i32, i32)> {

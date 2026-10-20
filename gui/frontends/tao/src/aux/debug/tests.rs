@@ -419,13 +419,15 @@ fn uishell_headless_build_pump_relayout_draw() {
     let bounds = iced::Size::new(1100.0, 800.0);
     let mut shell = UiShell::new(instance, iced::window::Id::unique(), bounds);
     let mut clipboard = iced_winit::Clipboard::unconnected();
-    let (messages, _) = shell.pump(
+    let mut messages = Vec::new();
+    let _ = shell.pump(
         iced::Event::Window(iced::window::Event::RedrawRequested(
             std::time::Instant::now(),
         )),
         iced::mouse::Cursor::default(),
         &mut clipboard,
         &mut backend,
+        &mut messages,
     );
     assert!(messages.is_empty());
     shell.push_message(DebugMessage::RefreshPressed);
@@ -436,18 +438,18 @@ fn uishell_headless_build_pump_relayout_draw() {
         &invalidated,
     );
     assert!(!invalidated.load(Ordering::Acquire));
-    shell
-        .relayout(iced::Size::new(900.0, 650.0))
-        .expect("relayout records bounds");
+    shell.relayout(iced::Size::new(900.0, 650.0));
     // Post-relayout pump rebuilds the transient interface from the
     // retained cache and folds back without orphans.
-    let (messages, _) = shell.pump(
+    messages.clear();
+    let _ = shell.pump(
         iced::Event::Window(iced::window::Event::RedrawRequested(
             std::time::Instant::now(),
         )),
         iced::mouse::Cursor::default(),
         &mut clipboard,
         &mut backend,
+        &mut messages,
     );
     assert!(messages.is_empty());
 }

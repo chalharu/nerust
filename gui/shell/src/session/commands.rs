@@ -1,5 +1,28 @@
 pub use crate::session::error::SlotOpFailure;
 
+/// Data-driven command vocabulary: every per-command answer (stable
+/// name, slot affinity, success notification) lives on this trait, so
+/// the executor matches once and the notification mapping cannot
+/// drift across parallel `match` sites. [`SessionCommand`] is the
+/// sole implementor; the free functions below delegate to it for
+/// callers migrating off the old entry points.
+pub trait SessionCmd {
+    /// Stable command name for logs and failure messages.
+    fn cmd_name(&self) -> &'static str;
+    /// Slot carried for failure messages. Explicit-slot commands use
+    /// their own id; active-slot commands resolve to `active`, the
+    /// rest report `None`. New variants must pick an arm here.
+    fn slot_affinity(&self, active: Option<u64>) -> Option<u64>;
+    /// Success notification for an executed command. Slot failures
+    /// map to Warning/Error by reason; transport errors become a
+    /// generic Error. `None` means silence.
+    fn success_notification(
+        &self,
+        outcome: &SessionCommandOutcome,
+        active_slot: Option<u64>,
+    ) -> Option<crate::session::notification::NotificationKind>;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionCommand {
     Pause,
@@ -17,11 +40,26 @@ pub enum SessionCommand {
     SelectPreviousSlot,
 }
 
-impl SessionCommand {
-    /// Slot carried for failure messages. Explicit-slot commands use
-    /// their own id; active-slot commands resolve to `active`, the
-    /// rest report `None`. New variants must pick an arm here.
-    pub fn associated_slot(&self, active: Option<u64>) -> Option<u64> {
+impl SessionCmd for SessionCommand {
+    fn cmd_name(&self) -> &'static str {
+        match self {
+            SessionCommand::Pause => "Pause",
+            SessionCommand::Resume => "Resume",
+            SessionCommand::TogglePause => "TogglePause",
+            SessionCommand::Reset => "Reset",
+            SessionCommand::CreateSlot => "CreateSlot",
+            SessionCommand::SaveActiveSlotOrNew => "SaveActiveSlotOrNew",
+            SessionCommand::LoadActiveSlot => "LoadActiveSlot",
+            SessionCommand::SelectActiveSlot(_) => "SelectActiveSlot",
+            SessionCommand::SaveSlot(_) => "SaveSlot",
+            SessionCommand::LoadSlot(_) => "LoadSlot",
+            SessionCommand::DeleteSlot(_) => "DeleteSlot",
+            SessionCommand::SelectNextSlot => "SelectNextSlot",
+            SessionCommand::SelectPreviousSlot => "SelectPreviousSlot",
+        }
+    }
+
+    fn slot_affinity(&self, active: Option<u64>) -> Option<u64> {
         match self {
             SessionCommand::SaveSlot(id)
             | SessionCommand::LoadSlot(id)
@@ -36,6 +74,49 @@ impl SessionCommand {
             | SessionCommand::SelectNextSlot
             | SessionCommand::SelectPreviousSlot => None,
         }
+    }
+
+    fn success_notification(
+        &self,
+        outcome: &SessionCommandOutcome,
+        active_slot: Option<u64>,
+    ) -> Option<crate::session::notification::NotificationKind> {
+        use crate::session::notification::NotificationKind;
+        if let Some(reason) = outcome.slot_failure {
+            let slot = self.slot_affinity(active_slot);
+            return Some(NotificationKind::SlotFailed { slot, reason });
+        }
+        if !outcome.executed {
+            return None;
+        }
+        Some(match self {
+            SessionCommand::Pause | SessionCommand::TogglePause => NotificationKind::Paused,
+            SessionCommand::Resume => NotificationKind::Resumed,
+            SessionCommand::Reset => NotificationKind::Reset,
+            SessionCommand::CreateSlot => NotificationKind::CreatedSlot,
+            SessionCommand::SaveActiveSlotOrNew => {
+                NotificationKind::SavedSlot(active_slot.unwrap_or(0))
+            }
+            SessionCommand::LoadActiveSlot => {
+                NotificationKind::LoadedSlot(active_slot.unwrap_or(0))
+            }
+            SessionCommand::SelectActiveSlot(id) => NotificationKind::SelectedSlot(*id),
+            SessionCommand::SelectNextSlot | SessionCommand::SelectPreviousSlot => {
+                NotificationKind::SelectedSlot(active_slot.unwrap_or(0))
+            }
+            SessionCommand::SaveSlot(id) => NotificationKind::SavedSlot(*id),
+            SessionCommand::LoadSlot(id) => NotificationKind::LoadedSlot(*id),
+            SessionCommand::DeleteSlot(id) => NotificationKind::DeletedSlot(*id),
+        })
+    }
+}
+
+impl SessionCommand {
+    /// Slot carried for failure messages. Explicit-slot commands use
+    /// their own id; active-slot commands resolve to `active`, the
+    /// rest report `None`. New variants must pick an arm here.
+    pub fn associated_slot(&self, active: Option<u64>) -> Option<u64> {
+        SessionCmd::slot_affinity(self, active)
     }
 }
 
@@ -57,31 +138,7 @@ pub fn outcome_notification(
     outcome: &SessionCommandOutcome,
     active_slot: Option<u64>,
 ) -> Option<crate::session::notification::NotificationKind> {
-    use crate::session::notification::NotificationKind;
-    if let Some(reason) = outcome.slot_failure {
-        let slot = command.associated_slot(active_slot);
-        return Some(NotificationKind::SlotFailed { slot, reason });
-    }
-    if !outcome.executed {
-        return None;
-    }
-    Some(match command {
-        SessionCommand::Pause | SessionCommand::TogglePause => NotificationKind::Paused,
-        SessionCommand::Resume => NotificationKind::Resumed,
-        SessionCommand::Reset => NotificationKind::Reset,
-        SessionCommand::CreateSlot => NotificationKind::CreatedSlot,
-        SessionCommand::SaveActiveSlotOrNew => {
-            NotificationKind::SavedSlot(active_slot.unwrap_or(0))
-        }
-        SessionCommand::LoadActiveSlot => NotificationKind::LoadedSlot(active_slot.unwrap_or(0)),
-        SessionCommand::SelectActiveSlot(id) => NotificationKind::SelectedSlot(id),
-        SessionCommand::SelectNextSlot | SessionCommand::SelectPreviousSlot => {
-            NotificationKind::SelectedSlot(active_slot.unwrap_or(0))
-        }
-        SessionCommand::SaveSlot(id) => NotificationKind::SavedSlot(id),
-        SessionCommand::LoadSlot(id) => NotificationKind::LoadedSlot(id),
-        SessionCommand::DeleteSlot(id) => NotificationKind::DeletedSlot(id),
-    })
+    command.success_notification(outcome, active_slot)
 }
 
 /// Backwards-compatible batch form kept for callers migrating off
@@ -105,30 +162,11 @@ pub fn resolve_toggle(command: SessionCommand, was_paused: bool) -> SessionComma
     }
 }
 
-/// Stable command name for logs and failure messages. Single source
-/// so the transport audit and the UI wording cannot drift apart.
-pub(crate) fn command_name(command: SessionCommand) -> &'static str {
-    match command {
-        SessionCommand::Pause => "Pause",
-        SessionCommand::Resume => "Resume",
-        SessionCommand::TogglePause => "TogglePause",
-        SessionCommand::Reset => "Reset",
-        SessionCommand::CreateSlot => "CreateSlot",
-        SessionCommand::SaveActiveSlotOrNew => "SaveActiveSlotOrNew",
-        SessionCommand::LoadActiveSlot => "LoadActiveSlot",
-        SessionCommand::SelectActiveSlot(_) => "SelectActiveSlot",
-        SessionCommand::SaveSlot(_) => "SaveSlot",
-        SessionCommand::LoadSlot(_) => "LoadSlot",
-        SessionCommand::DeleteSlot(_) => "DeleteSlot",
-        SessionCommand::SelectNextSlot => "SelectNextSlot",
-        SessionCommand::SelectPreviousSlot => "SelectPreviousSlot",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::session::commands::{
-        SessionCommand, SessionCommandOutcome, outcome_notifications, resolve_toggle,
+        SessionCmd as _, SessionCommand, SessionCommandOutcome, outcome_notifications,
+        resolve_toggle,
     };
     use crate::session::error::SlotOpFailure;
     use crate::session::notification::{NotificationKind, NotificationLevel};
@@ -269,6 +307,39 @@ mod tests {
                 reason: SlotOpFailure::Missing,
             }]
         );
+    }
+
+    #[test]
+    fn session_cmd_trait_is_the_single_source() {
+        use crate::session::commands::SessionCommand as C;
+        // Names cover every command exactly once.
+        for command in [
+            C::Pause,
+            C::Resume,
+            C::TogglePause,
+            C::Reset,
+            C::CreateSlot,
+            C::SaveActiveSlotOrNew,
+            C::LoadActiveSlot,
+            C::SelectActiveSlot(1),
+            C::SaveSlot(1),
+            C::LoadSlot(1),
+            C::DeleteSlot(1),
+            C::SelectNextSlot,
+            C::SelectPreviousSlot,
+        ] {
+            assert!(!command.cmd_name().is_empty());
+            // Free functions delegate to the trait.
+            assert_eq!(
+                command.associated_slot(Some(7)),
+                command.slot_affinity(Some(7))
+            );
+        }
+        // Slot affinity matches the legacy expectations.
+        assert_eq!(C::SaveSlot(4).slot_affinity(Some(7)), Some(4));
+        assert_eq!(C::SaveActiveSlotOrNew.slot_affinity(Some(7)), Some(7));
+        assert_eq!(C::SaveActiveSlotOrNew.slot_affinity(None), None);
+        assert_eq!(C::Pause.slot_affinity(Some(7)), None);
     }
 
     #[test]

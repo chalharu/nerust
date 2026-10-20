@@ -10,6 +10,7 @@ use nerust_input_traits::InputAssignments;
 
 use crate::session::{
     SessionError, SessionHandle,
+    osd::TickMetrics,
     persistence_setup::{MapperRestore, PersistenceBinder},
 };
 use nerust_settings_core::factory::settings_view;
@@ -51,6 +52,18 @@ struct DerivedApply {
     strategy: LiveStrategy,
     next_assignments: Option<InputAssignments>,
     assignments_changed: bool,
+}
+
+/// Bundled inputs for one live-runtime apply. Keeps the 7-field
+/// call legible without a positional bool/enum trap.
+struct LiveRuntimeInput<'a> {
+    strategy: LiveStrategy,
+    plan: &'a SettingsApplyPlan,
+    factory: &'a Option<Arc<dyn CoreFactory>>,
+    previous: &'a SettingsSnapshot,
+    next_settings: &'a SettingsSnapshot,
+    applied_assignments: &'a InputAssignments,
+    tick: &'a TickMetrics,
 }
 
 impl SessionHandle {
@@ -102,7 +115,7 @@ impl SessionHandle {
     /// without a live core.
     fn derive_apply(&self, next_settings: &SettingsSnapshot) -> DerivedApply {
         let previous_assignments = &self.input.current_assignments;
-        let factory = self.active_factory().cloned();
+        let factory = self.active_factory_cloned();
         let next_assignments = factory.as_ref().map(|f| {
             let sid = f.system_id();
             Self::load_assignments(f, next_settings, sid.as_ref())
@@ -130,13 +143,17 @@ impl SessionHandle {
     /// swap falls back to a rebuild, which is what gets undone.
     fn apply_live_runtime(
         &mut self,
-        strategy: LiveStrategy,
-        plan: &SettingsApplyPlan,
-        factory: &Option<Arc<dyn CoreFactory>>,
-        previous: &SettingsSnapshot,
-        next_settings: &SettingsSnapshot,
-        applied_assignments: &InputAssignments,
+        input: LiveRuntimeInput<'_>,
     ) -> Result<LiveStrategy, SessionError> {
+        let LiveRuntimeInput {
+            strategy,
+            plan,
+            factory,
+            previous,
+            next_settings,
+            applied_assignments,
+            tick,
+        } = input;
         let effective = match strategy {
             LiveStrategy::AudioSwap => {
                 self.swap_audio_for_settings(next_settings)?;
@@ -156,12 +173,12 @@ impl SessionHandle {
                 } else {
                     // Core behavior changed (or no factory to swap
                     // with): full reconstruction carries the new speaker too.
-                    self.rebuild_for_settings(next_settings, applied_assignments)?;
+                    self.rebuild_for_settings(next_settings, applied_assignments, tick)?;
                     LiveStrategy::Rebuild
                 }
             }
             LiveStrategy::Rebuild => {
-                self.rebuild_for_settings(next_settings, applied_assignments)?;
+                self.rebuild_for_settings(next_settings, applied_assignments, tick)?;
                 LiveStrategy::Rebuild
             }
             LiveStrategy::Idle => LiveStrategy::Idle,
@@ -185,10 +202,11 @@ impl SessionHandle {
         next_settings: &SettingsSnapshot,
         previous_assignments: &InputAssignments,
         effective: LiveStrategy,
+        tick: &TickMetrics,
     ) -> RollbackReport {
         let mut report = RollbackReport::default();
         if effective == LiveStrategy::Rebuild
-            && let Err(e) = self.rebuild_for_settings(previous, previous_assignments)
+            && let Err(e) = self.rebuild_for_settings(previous, previous_assignments, tick)
         {
             log::error!("failed to rollback settings rebuild: {e}");
             report.fail(e);
@@ -249,26 +267,30 @@ impl SessionHandle {
     ) -> Result<SettingsApplyPlan, SessionError> {
         let previous = self.settings.snapshot.clone();
         let previous_assignments = self.input.current_assignments.clone();
-        let factory = self.active_factory().cloned();
+        let factory = self.active_factory_cloned();
         let derived = self.derive_apply(&next_settings);
+        // One metrics lock for the whole apply: the tick threads
+        // through the runtime apply and the persistence re-bind below.
+        let tick = self.tick_metrics();
 
         if derived.plan.persistence_changed
-            && let Ok(core) = self.emu.core()
+            && let Ok(exporter) = self.emu.exporter()
         {
-            self.media.persistence.flush_mapper_save(core)?;
+            self.media.persistence.flush_mapper_save(exporter)?;
         }
 
-        let effective = self.apply_live_runtime(
-            derived.strategy,
-            &derived.plan,
-            &factory,
-            &previous,
-            &next_settings,
-            derived
+        let effective = self.apply_live_runtime(LiveRuntimeInput {
+            strategy: derived.strategy,
+            plan: &derived.plan,
+            factory: &factory,
+            previous: &previous,
+            next_settings: &next_settings,
+            applied_assignments: derived
                 .next_assignments
                 .as_ref()
                 .unwrap_or(&previous_assignments),
-        )?;
+            tick: &tick,
+        })?;
 
         if let Err(error) = self.settings.manager.save_snapshot(next_settings.clone()) {
             let report = self.rollback_runtime_apply(
@@ -277,6 +299,7 @@ impl SessionHandle {
                 &next_settings,
                 &previous_assignments,
                 effective,
+                &tick,
             );
             if let Some(rollback_error) = report.error {
                 log::error!("settings rollback failed: {rollback_error}");
@@ -291,7 +314,7 @@ impl SessionHandle {
         }
 
         self.settings.snapshot = next_settings;
-        if derived.plan.persistence_changed && self.tick_metrics().loaded {
+        if derived.plan.persistence_changed && tick.loaded {
             let rom_path = self
                 .media
                 .loaded
@@ -328,20 +351,23 @@ impl SessionHandle {
         &mut self,
         next_settings: &SettingsSnapshot,
         assignments: &InputAssignments,
+        tick: &TickMetrics,
     ) -> Result<(), SessionError> {
-        let tick = self.tick_metrics();
         let loaded = LoadedState {
             present: tick.loaded || self.media.loaded.is_some(),
             core_bytes: tick
                 .loaded
                 .then(|| {
+                    use crate::emu_core::CorePersistence;
                     let core = self.emu.core().ok().ok_or(SessionError::NoCore)?;
-                    core.save_state_raw().map_err(SessionError::from)
+                    CorePersistence::save_state_raw(core)
+                        .map_err(nerust_persistence::error::PersistenceError::from)
+                        .map_err(SessionError::from)
                 })
                 .transpose()?,
         };
 
-        let factory = self.active_factory().ok_or(SessionError::NoCore)?.clone();
+        let factory = self.active_factory_cloned().ok_or(SessionError::NoCore)?;
         let rebuilt =
             build_core_for_settings(&self.audio_registry, next_settings, &factory, assignments)?;
         let rebuilt_core = rebuilt.emu_core;

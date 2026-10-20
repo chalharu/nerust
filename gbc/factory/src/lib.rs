@@ -21,7 +21,7 @@ use nerust_core_traits::{
 use nerust_gbc_settings::{GbcSettings, HardwareModel};
 use nerust_input_traits::{ControllerProfile, InputAssignments, InputSystemFactory};
 
-pub fn gbc_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
+pub fn gbc_device_controller_profiles() -> impl Iterator<Item = Rc<dyn ControllerProfile>> {
     nerust_gbc_device::gbc_device_controller_profiles()
 }
 

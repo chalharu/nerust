@@ -5,9 +5,10 @@ use std::rc::Rc;
 
 use nerust_input_traits::ControllerProfile;
 
-pub fn nes_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
-    vec![
+pub fn nes_device_controller_profiles() -> impl Iterator<Item = Rc<dyn ControllerProfile>> {
+    [
         Rc::new(famicom_set::FamicomSetProfile) as Rc<dyn ControllerProfile>,
         Rc::new(standard_pad::StandardPadProfile) as Rc<dyn ControllerProfile>,
     ]
+    .into_iter()
 }

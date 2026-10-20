@@ -70,28 +70,27 @@ impl InputPorts for TestInputFactory {
         ];
         &SLOTS
     }
-    fn controllers(&self) -> Vec<std::rc::Rc<dyn ControllerProfile>> {
-        static P1_PORTS: [AttachmentId; 1] = [P1_SLOT];
-        static P2_PORTS: [AttachmentId; 1] = [P2_SLOT];
+    fn controllers(&self) -> Box<dyn Iterator<Item = std::rc::Rc<dyn ControllerProfile>> + '_> {
         use std::rc::Rc;
-        vec![
+        let items: Vec<Rc<dyn ControllerProfile>> = vec![
             Rc::new(TestSlotProfile {
                 id: ProfileId::new("test.ctrl.p1"),
                 label: "Test P1",
-                port_set: PortSet { ports: &P1_PORTS },
+                port_set: PortSet { ports: &[P1_SLOT] },
             }),
             Rc::new(TestSlotProfile {
                 id: ProfileId::new("test.ctrl.p2"),
                 label: "Test P2",
-                port_set: PortSet { ports: &P2_PORTS },
+                port_set: PortSet { ports: &[P2_SLOT] },
             }),
-        ]
+        ];
+        Box::new(items.into_iter())
     }
 }
 
 impl InputSystemFactory for TestInputFactory {
     fn default_assignments(&self) -> InputAssignments {
-        InputAssignments { slots: vec![] }
+        InputAssignments::new(vec![])
     }
     fn create_split(
         &self,

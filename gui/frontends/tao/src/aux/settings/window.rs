@@ -8,7 +8,7 @@ use tao::event_loop::EventLoopWindowTarget;
 
 use super::program::{Message, SettingsAppProgram, find_duplicate_system_id};
 use crate::aux::bridge::lock_recovered;
-use crate::aux::shell::{AuxShell, PumpOutcome, WindowScaffold};
+use crate::aux::shell::{AuxShell, WindowScaffold};
 
 /// Settings dialog: the shared [`AuxShell`] host plus the
 /// settings-only pieces (pending-apply staging and the external
@@ -82,19 +82,43 @@ impl SettingsWindowHandle {
     }
 }
 
-impl crate::aux::focus::WindowHandler for SettingsWindowHandle {
-    type Program = SettingsAppProgram;
-    const LOG_TAG: &str = "settings";
-
-    fn shell(&self) -> &AuxShell<Self::Program> {
-        &self.shell
+impl crate::aux::focus::AuxWindow for SettingsWindowHandle {
+    fn kind(&self) -> crate::aux::focus::AuxKind {
+        crate::aux::focus::AuxKind::Settings
     }
 
-    fn shell_mut(&mut self) -> &mut AuxShell<Self::Program> {
-        &mut self.shell
+    fn tao_window_id(&self) -> tao::window::WindowId {
+        self.shell.tao_window_id()
     }
 
-    fn handle_event(&mut self, mapped: iced::Event) -> bool {
+    fn close_requested(&self) -> bool {
+        self.shell.close_requested()
+    }
+
+    fn focus_window(&self) {
+        self.shell.focus_window();
+    }
+
+    fn request_redraw(&self) {
+        self.shell.request_redraw();
+    }
+
+    fn handle_common(&mut self, event: &tao::event::WindowEvent) {
+        self.shell.handle_common_event(event);
+    }
+
+    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
+        self.shell.feed_tao_event(event)
+    }
+
+    fn render(&mut self) {
+        let tag = self.kind().log_tag();
+        self.shell.render(tag);
+    }
+}
+
+impl crate::aux::focus::AuxEvents for SettingsWindowHandle {
+    fn handle(&mut self, mapped: iced::Event) -> bool {
         let capture = if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
             physical_key,
             repeat: false,
@@ -106,20 +130,10 @@ impl crate::aux::focus::WindowHandler for SettingsWindowHandle {
         } else {
             None
         };
-        let (mut messages, outcome) = self.shell.pump_frame(mapped);
+        let mut messages = Vec::new();
+        let outcome = self.shell.pump_frame(mapped, &mut messages);
         messages.extend(capture);
-        if matches!(outcome, PumpOutcome::Rebuild) {
-            self.view_invalidated
-                .store(true, std::sync::atomic::Ordering::Release);
-        }
-
-        let repainted = matches!(outcome, PumpOutcome::Repaint);
-        let rebuilt = if !messages.is_empty() || matches!(outcome, PumpOutcome::Rebuild) {
-            self.shell.process(messages, &self.view_invalidated)
-        } else {
-            false
-        };
-        repainted || rebuilt
+        self.shell.finish(outcome, messages, &self.view_invalidated)
     }
 }
 #[cfg(test)]

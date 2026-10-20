@@ -57,7 +57,8 @@ impl InputStateBuffer for NesInputBuffer {
             Ok(())
         } else {
             Err(nerust_input_traits::BufferError::MismatchedBuffer {
-                expected: "NesInputBuffer",
+                expected: std::any::type_name::<Self>(),
+                actual: std::any::type_name_of_val(other),
             })
         }
     }

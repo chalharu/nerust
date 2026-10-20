@@ -181,7 +181,7 @@ fn validate_factory_settings(
         .unwrap_or_else(|| {
             input_factory
                 .default_assignments()
-                .slots
+                .slots()
                 .iter()
                 .map(|(slot_id, ctrl)| {
                     (

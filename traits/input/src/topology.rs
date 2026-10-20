@@ -20,13 +20,27 @@ pub enum ControlId {
 ///
 /// Built once at init time and shared read-only afterwards; the linear
 /// lookup helpers below are init-only conveniences, not per-frame queries.
+/// Construct with [`InputTopologyDescriptor::new`]; read with
+/// [`InputTopologyDescriptor::ports`]/[`InputTopologyDescriptor::devices`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputTopologyDescriptor {
-    pub ports: Vec<PortDescriptor>,
-    pub devices: Vec<DeviceDescriptor>,
+    ports: Vec<PortDescriptor>,
+    devices: Vec<DeviceDescriptor>,
 }
 
 impl InputTopologyDescriptor {
+    pub fn new(ports: Vec<PortDescriptor>, devices: Vec<DeviceDescriptor>) -> Self {
+        Self { ports, devices }
+    }
+
+    pub fn ports(&self) -> &[PortDescriptor] {
+        &self.ports
+    }
+
+    pub fn devices(&self) -> &[DeviceDescriptor] {
+        &self.devices
+    }
+
     /// Init-only linear scan for an attachment across all ports.
     pub fn attachment(&self, id: AttachmentId) -> Option<&AttachmentSlotDescriptor> {
         self.ports
@@ -43,24 +57,104 @@ impl InputTopologyDescriptor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortDescriptor {
-    pub id: PortId,
-    pub label: &'static str,
-    pub attachments: Vec<AttachmentSlotDescriptor>,
+    id: PortId,
+    label: &'static str,
+    attachments: Vec<AttachmentSlotDescriptor>,
+}
+
+impl PortDescriptor {
+    pub fn new(
+        id: PortId,
+        label: &'static str,
+        attachments: Vec<AttachmentSlotDescriptor>,
+    ) -> Self {
+        Self {
+            id,
+            label,
+            attachments,
+        }
+    }
+
+    pub fn id(&self) -> PortId {
+        self.id
+    }
+
+    pub fn label(&self) -> &'static str {
+        self.label
+    }
+
+    pub fn attachments(&self) -> &[AttachmentSlotDescriptor] {
+        &self.attachments
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachmentSlotDescriptor {
-    pub id: AttachmentId,
-    pub label: &'static str,
-    pub device: DeviceKindId,
-    pub supported_devices: Vec<DeviceKindId>,
+    id: AttachmentId,
+    label: &'static str,
+    device: DeviceKindId,
+    supported_devices: Vec<DeviceKindId>,
+}
+
+impl AttachmentSlotDescriptor {
+    pub fn new(
+        id: AttachmentId,
+        label: &'static str,
+        device: DeviceKindId,
+        supported_devices: Vec<DeviceKindId>,
+    ) -> Self {
+        Self {
+            id,
+            label,
+            supported_devices,
+            device,
+        }
+    }
+
+    pub fn id(&self) -> AttachmentId {
+        self.id
+    }
+
+    pub fn label(&self) -> &'static str {
+        self.label
+    }
+
+    pub fn device(&self) -> DeviceKindId {
+        self.device
+    }
+
+    pub fn supported_devices(&self) -> &[DeviceKindId] {
+        &self.supported_devices
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceDescriptor {
-    pub kind: DeviceKindId,
-    pub label: &'static str,
-    pub controls: Vec<ControlDescriptor>,
+    kind: DeviceKindId,
+    label: &'static str,
+    controls: Vec<ControlDescriptor>,
+}
+
+impl DeviceDescriptor {
+    pub fn new(kind: DeviceKindId, label: &'static str, controls: Vec<ControlDescriptor>) -> Self {
+        Self {
+            kind,
+            label,
+            controls,
+        }
+    }
+
+    pub fn kind(&self) -> DeviceKindId {
+        self.kind
+    }
+
+    pub fn label(&self) -> &'static str {
+        self.label
+    }
+
+    pub fn controls(&self) -> &[ControlDescriptor] {
+        &self.controls
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,16 +174,60 @@ impl ControlDescriptor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigitalControlDescriptor {
-    pub id: DigitalControlId,
-    pub label: &'static str,
-    pub description: &'static str,
+    id: DigitalControlId,
+    label: &'static str,
+    description: &'static str,
+}
+
+impl DigitalControlDescriptor {
+    pub const fn new(id: DigitalControlId, label: &'static str, description: &'static str) -> Self {
+        Self {
+            id,
+            label,
+            description,
+        }
+    }
+
+    pub const fn id(&self) -> DigitalControlId {
+        self.id
+    }
+
+    pub const fn label(&self) -> &'static str {
+        self.label
+    }
+
+    pub const fn description(&self) -> &'static str {
+        self.description
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnalogControlDescriptor {
-    pub id: AnalogControlId,
-    pub label: &'static str,
-    pub description: &'static str,
+    id: AnalogControlId,
+    label: &'static str,
+    description: &'static str,
+}
+
+impl AnalogControlDescriptor {
+    pub const fn new(id: AnalogControlId, label: &'static str, description: &'static str) -> Self {
+        Self {
+            id,
+            label,
+            description,
+        }
+    }
+
+    pub const fn id(&self) -> AnalogControlId {
+        self.id
+    }
+
+    pub const fn label(&self) -> &'static str {
+        self.label
+    }
+
+    pub const fn description(&self) -> &'static str {
+        self.description
+    }
 }
 
 #[cfg(test)]
@@ -104,36 +242,36 @@ mod tests {
     fn topology_tracks_ports_attachments_and_devices() {
         let attachment = AttachmentId::new("test.pad1");
         let device = DeviceKindId::new("test.gamepad");
-        let topology = InputTopologyDescriptor {
-            ports: vec![PortDescriptor {
-                id: PortId::new("test.port1"),
-                label: "Port 1",
-                attachments: vec![AttachmentSlotDescriptor {
-                    id: attachment,
-                    label: "Player 1",
+        let topology = InputTopologyDescriptor::new(
+            vec![PortDescriptor::new(
+                PortId::new("test.port1"),
+                "Port 1",
+                vec![AttachmentSlotDescriptor::new(
+                    attachment,
+                    "Player 1",
                     device,
-                    supported_devices: vec![device],
-                }],
-            }],
-            devices: vec![DeviceDescriptor {
-                kind: device,
-                label: "Gamepad",
-                controls: vec![
-                    ControlDescriptor::Digital(DigitalControlDescriptor {
-                        id: DigitalControlId::new("test.a"),
-                        label: "A",
-                        description: "Primary face button",
-                    }),
-                    ControlDescriptor::Analog(AnalogControlDescriptor {
-                        id: AnalogControlId::new("test.stick_x"),
-                        label: "Stick X",
-                        description: "Horizontal axis",
-                    }),
+                    vec![device],
+                )],
+            )],
+            vec![DeviceDescriptor::new(
+                device,
+                "Gamepad",
+                vec![
+                    ControlDescriptor::Digital(DigitalControlDescriptor::new(
+                        DigitalControlId::new("test.a"),
+                        "A",
+                        "Primary face button",
+                    )),
+                    ControlDescriptor::Analog(AnalogControlDescriptor::new(
+                        AnalogControlId::new("test.stick_x"),
+                        "Stick X",
+                        "Horizontal axis",
+                    )),
                 ],
-            }],
-        };
+            )],
+        );
 
-        assert_eq!(topology.attachment(attachment).unwrap().device, device);
+        assert_eq!(topology.attachment(attachment).unwrap().device(), device);
         let controls = &topology.device(device).unwrap().controls;
         assert_eq!(
             controls[0].id(),

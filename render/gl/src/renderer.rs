@@ -35,6 +35,8 @@ pub struct GlRenderer {
     /// Warn-once for OSD give-up. Reset when a new layer stages so a
     /// later dead driver warns again without spamming per frame.
     osd_drop_warned: bool,
+    /// Warn-once for view-teardown failures (see `close_live_view`).
+    close_warned: bool,
     /// Fixed-size staging for the pre-GLES3 pack path (see `render`).
     tight: Vec<u8>,
 }
@@ -63,8 +65,10 @@ impl GlRenderer {
         Ok(view)
     }
 
-    /// Tear down the live view, warning once on failure. Best-effort:
-    /// a failed delete must not fail the rebuild that triggered it.
+    /// Tear down the live view, warning once per failure streak.
+    /// Best-effort: a failed delete must not fail the rebuild that
+    /// triggered it. A later clean teardown re-arms the warning so a
+    /// new failure streak warns again instead of staying silent.
     fn close_live_view(&mut self) {
         if let Some(ref mut v) = self.view {
             let current = self
@@ -73,21 +77,30 @@ impl GlRenderer {
                 .map(|ctx| ctx.is_current())
                 .unwrap_or(false);
             let report = v.on_close(nerust_glwrap::CurrentContext::assert_current(current));
-            Self::log_close_report(&report);
+            self.log_close_report(&report);
         }
     }
 
-    fn log_close_report(report: &crate::view::CloseReport) {
-        if !report.is_ok() {
-            log::warn!(
-                "GlRenderer: view teardown failed ({} names: textures={}, programs={}, arrays={}, buffers={})",
-                report.failed_names(),
-                report.failed_textures,
-                report.failed_programs,
-                report.failed_arrays,
-                report.failed_buffers,
-            );
+    /// Warn-once sink shared by the rebuild and detach teardowns: the
+    /// first failure of a streak warns, repeats stay quiet, and a
+    /// clean teardown re-arms for the next streak.
+    fn log_close_report(&mut self, report: &crate::view::CloseReport) {
+        if report.is_ok() {
+            self.close_warned = false;
+            return;
         }
+        if self.close_warned {
+            return;
+        }
+        self.close_warned = true;
+        log::warn!(
+            "GlRenderer: view teardown failed ({} names: textures={}, programs={}, arrays={}, buffers={})",
+            report.failed_names(),
+            report.failed_textures,
+            report.failed_programs,
+            report.failed_arrays,
+            report.failed_buffers,
+        );
     }
 
     /// Validated surface size as `i32` for the GL viewport path.
@@ -160,7 +173,7 @@ impl GlRenderer {
                     log::debug!("GlRenderer: detach without current context");
                 }
                 let report = v.on_close(current);
-                Self::log_close_report(&report);
+                self.log_close_report(&report);
                 drop(v);
             }
             (Some(v), None) => {
@@ -185,7 +198,9 @@ impl GlRenderer {
             return RenderResult::Skipped;
         };
         let reserved = self.reserved;
-        let render_profile = self.render_profile.clone();
+        // Borrow, don't clone: the ~10KiB NTSC kernel rode along with
+        // every frame before; only `update_render_profile` clones.
+        let render_profile = &self.render_profile;
         let Some(ref ctx) = self.context else {
             return RenderResult::Skipped;
         };
@@ -307,6 +322,9 @@ impl GpuRenderer for GlRenderer {
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
         self.render_profile = profile.clone();
+        // The pre-GLES3 pack buffer only ever grows per frame; a
+        // profile change is the one safe point to give memory back.
+        self.tight.shrink_to_fit();
         let Some(ref ctx) = self.context else {
             return Err(RendererError::not_attached("update"));
         };
@@ -428,7 +446,8 @@ impl GpuFactory for GlFactory {
             display,
             gl_config,
             render_profile: config.render_profile.clone(),
-            max_osd_upload_retries: config.max_osd_upload_retries.max(1),
+            // Floor of one attempt lives in `RetryBudget::new`, not here.
+            max_osd_upload_retries: config.max_osd_upload_retries,
             view: None,
             context: None,
             gl_surface: None,
@@ -436,6 +455,7 @@ impl GpuFactory for GlFactory {
             reserved: nerust_render_traits::ReservedStrip::default(),
             osd: None,
             osd_drop_warned: false,
+            close_warned: false,
             tight: Vec::new(),
         }))
     }
@@ -619,6 +639,7 @@ mod tests {
             reserved: nerust_render_traits::ReservedStrip::default(),
             osd: None,
             osd_drop_warned: false,
+            close_warned: false,
             tight: Vec::new(),
         };
         let empty = nerust_render_traits::FrameBuffer::with_capacity(

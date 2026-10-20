@@ -9,9 +9,10 @@ use std::{rc::Rc, sync::Arc, time::Instant};
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_shell::session::{SessionHandle, osd::TickMetrics};
 use nerust_render_traits::{
-    SurfaceSize,
+    FrameBuffer, SurfaceSize, VideoRenderProfile,
     renderer::{DEFAULT_OSD_UPLOAD_RETRIES, GpuFactory, GpuRenderer, RendererConfig},
 };
+use nerust_settings_core::model::{language::AppLanguage, local::NotificationSettings};
 use winit::{
     dpi::LogicalSize,
     event_loop::ActiveEventLoop,
@@ -21,6 +22,19 @@ use winit::{
 };
 
 use super::osd::{AndroidOsd, OsdSyncCtx};
+
+/// Per-frame input bundle, built once per pass (`RedrawRequested`) and
+/// passed to [`RenderSync::render`] (and from there to `Osd::sync`).
+/// Previously every layer re-locked the session (`tick_metrics`,
+/// `render_profile`, `settings_snapshot`, `frame_buffer`); the single
+/// build pays one borrow chain per frame and hands out owned/cloned data.
+pub(super) struct FrameInput {
+    pub tick: TickMetrics,
+    pub notifications: NotificationSettings,
+    pub language: AppLanguage,
+    pub profile: Option<VideoRenderProfile>,
+    pub fb: Option<FrameBuffer>,
+}
 
 /// Window + renderer pair. Everything frame-related that used to live on
 /// `AndroidFrontend` now routes through here.
@@ -182,14 +196,38 @@ impl RenderSync {
         }
     }
 
+    /// Build the per-frame bundle once per pass. Owns the session borrow
+    /// chain (clear/swap/clone) so `render` never touches the session.
+    pub(super) fn build_frame_input(session: &mut SessionHandle) -> FrameInput {
+        // If the session has no loaded ROM, clear the display just before
+        // rendering to guard against a stale frame that the emuthread may
+        // have written into shared_fb between the last clear_display() call
+        // and now (race between Unload processing and render_frame completion).
+        if !session.tick_metrics().loaded {
+            session.clear_display();
+        }
+        session.swap_frame_buffer();
+        let tick = session.tick_metrics();
+        let profile = session.render_profile().cloned();
+        let notifications = session.settings_snapshot().local.notifications.clone();
+        let language = session.settings_snapshot().shared.general.language;
+        let fb = session.frame_buffer().cloned();
+        FrameInput {
+            tick,
+            notifications,
+            language,
+            profile,
+            fb,
+        }
+    }
+
     pub(super) fn render(
         &mut self,
         app: &AndroidApp,
-        session: &mut SessionHandle,
         osd: &mut AndroidOsd,
         shell: &mut NativeShellState,
-        tick: TickMetrics,
         now: Instant,
+        input: &FrameInput,
     ) {
         let Some(window) = self.window.as_ref() else {
             shell.needs_redraw = false;
@@ -199,30 +237,20 @@ impl RenderSync {
             shell.needs_redraw = false;
             return;
         };
-        // If the session has no loaded ROM, clear the display just before
-        // rendering to guard against a stale frame that the emuthread may
-        // have written into shared_fb between the last clear_display() call
-        // and now (race between Unload processing and render_frame completion).
-        if !session.tick_metrics().loaded {
-            session.clear_display();
-        }
-        session.swap_frame_buffer();
         let window_size = SurfaceSize::new(window.inner_size().width, window.inner_size().height);
         if renderer.size() != window_size {
             renderer.resize(window_size);
         }
         let scale_factor = window.scale_factor() as f32;
-        let content = session
-            .render_profile()
-            .map(|profile| profile.physical_size);
+        let content = input.profile.as_ref().map(|profile| profile.physical_size);
         // UI-thread push cache: render never blocks on JNI. The cache is
         // refreshed from the UI-thread insets callback; the render thread
         // only reads it (first frame falls back to a direct query).
         let system = osd.system_insets(app, window_size, scale_factor);
         let insets = AndroidOsd::safe_insets(scale_factor, content, window_size, system);
-        let settings = session.settings_snapshot().local.notifications.clone();
-        let language = session.settings_snapshot().shared.general.language;
-        let Some(fb) = session.frame_buffer() else {
+        let settings = &input.notifications;
+        let language = input.language;
+        let Some(fb) = input.fb.as_ref() else {
             shell.needs_redraw = false;
             return;
         };
@@ -231,8 +259,8 @@ impl RenderSync {
             return;
         };
         osd.sync(OsdSyncCtx {
-            tick,
-            settings: &settings,
+            tick: input.tick,
+            settings,
             language,
             renderer: renderer.as_mut(),
             size: window_size,
@@ -241,7 +269,7 @@ impl RenderSync {
         });
         match renderer.render(fb) {
             nerust_render_traits::renderer::RenderResult::Presented => {
-                shell.on_frame_presented(tick.frame_counter);
+                shell.on_frame_presented(input.tick.frame_counter);
                 self.request_redraw(shell);
             }
             nerust_render_traits::renderer::RenderResult::Skipped => {

@@ -48,6 +48,8 @@ impl Controller for NullController {
     }
 
     fn write(&mut self, _port: &dyn Port, _value: u8) {}
+
+    fn strobe(&mut self, _value: u8) {}
 }
 
 impl ControllerHub for NullController {

@@ -163,8 +163,19 @@ cargo ndk \
 # after every .so passes.
 # Per-ABI native library budget in bytes. Only arm64-v8a ships today;
 # extend the table (not the gate logic) when new ABIs land.
+# BUDGET_BYTES override: only ever lowers the budget (a raise is ignored
+# with a warning) so CI cannot silently ratchet past bloat.
+NATIVE_BUDGET_DEFAULT_BYTES=41943040
 native_budget_bytes() {
-    printf '%s' "${BUDGET_BYTES:-41943040}"
+    local requested="${BUDGET_BYTES:-${NATIVE_BUDGET_DEFAULT_BYTES}}"
+    if (( requested < NATIVE_BUDGET_DEFAULT_BYTES )); then
+        printf '%s' "${requested}"
+    else
+        if [[ -n "${BUDGET_BYTES:-}" ]]; then
+            echo "warning: BUDGET_BYTES=${BUDGET_BYTES} exceeds the default; keeping ${NATIVE_BUDGET_DEFAULT_BYTES}" >&2
+        fi
+        printf '%s' "${NATIVE_BUDGET_DEFAULT_BYTES}"
+    fi
 }
 readelf_bin=""
 # Quoted array expansion keeps NDK paths with spaces intact; an unquoted
@@ -234,7 +245,18 @@ mv "${stage_publish_tmp}" "${JNI_LIBS_DIR}"
     ./gradlew --no-daemon assembleRelease
 )
 
+# Verify the release signature (fails closed when apksigner is missing)
+# and re-verify the published checksum.
+if command -v apksigner >/dev/null 2>&1; then
+    apksigner verify --print-certs "${APK_SRC}"
+else
+    echo "apksigner not found: release signature not verified" >&2
+    exit 1
+fi
+
 
 mkdir -p "${OUT_DIR}"
 cp "${APK_SRC}" "${OUT_DIR}/${APK_NAME}"
 sha256sum "${OUT_DIR}/${APK_NAME}" > "${OUT_DIR}/${APK_NAME}.sha256"
+(cd "${OUT_DIR}" && sha256sum -c "${APK_NAME}.sha256")
+echo "effective native budget: $(native_budget_bytes) bytes (BUDGET_BYTES=${BUDGET_BYTES:-default})"

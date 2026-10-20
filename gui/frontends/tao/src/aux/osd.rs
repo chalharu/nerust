@@ -18,7 +18,7 @@ use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 #[derive(Debug, Clone)]
 pub(crate) enum HistoryMessage {
     Sync {
-        lines: Vec<HistoryLine>,
+        lines: std::sync::Arc<[HistoryLine]>,
         language: AppLanguage,
     },
     SetFilter(HistoryFilter),
@@ -87,7 +87,7 @@ impl HistoryFilter {
 }
 
 pub(crate) struct HistoryState {
-    lines: Vec<HistoryLine>,
+    lines: std::sync::Arc<[HistoryLine]>,
     filter: HistoryFilter,
     language: AppLanguage,
     clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -124,7 +124,7 @@ impl Program for HistoryProgram {
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
         (
             HistoryState {
-                lines: Vec::new(),
+                lines: std::sync::Arc::from([]),
                 filter: HistoryFilter::All,
                 language: self.language,
                 clear_requested: std::sync::Arc::clone(&self.clear_requested),
@@ -316,7 +316,7 @@ impl HistoryWindowHandle {
             .swap(false, std::sync::atomic::Ordering::AcqRel)
     }
 
-    pub(crate) fn sync(&mut self, lines: Vec<HistoryLine>, language: AppLanguage) {
+    pub(crate) fn sync(&mut self, lines: std::sync::Arc<[HistoryLine]>, language: AppLanguage) {
         self.shell.process(
             vec![HistoryMessage::Sync { lines, language }],
             &self.view_invalidated,
@@ -324,32 +324,46 @@ impl HistoryWindowHandle {
     }
 }
 
-impl super::focus::WindowHandler for HistoryWindowHandle {
-    type Program = HistoryProgram;
-    const LOG_TAG: &str = "history window";
-
-    fn shell(&self) -> &crate::aux::shell::AuxShell<Self::Program> {
-        &self.shell
+impl super::focus::AuxWindow for HistoryWindowHandle {
+    fn kind(&self) -> super::focus::AuxKind {
+        super::focus::AuxKind::History
     }
 
-    fn shell_mut(&mut self) -> &mut crate::aux::shell::AuxShell<Self::Program> {
-        &mut self.shell
+    fn tao_window_id(&self) -> tao::window::WindowId {
+        self.shell.tao_window_id()
     }
 
-    fn handle_event(&mut self, mapped: iced::Event) -> bool {
-        let (messages, outcome) = self.shell.pump_frame(mapped);
-        // Repaint already requested a redraw inside `pump_frame`.
-        let repainted = matches!(outcome, crate::aux::shell::PumpOutcome::Repaint);
-        if matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-            self.shell.request_redraw();
-        }
-        let rebuilt =
-            if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-                self.shell.process(messages, &self.view_invalidated)
-            } else {
-                false
-            };
-        repainted || rebuilt
+    fn close_requested(&self) -> bool {
+        self.shell.close_requested()
+    }
+
+    fn focus_window(&self) {
+        self.shell.focus_window();
+    }
+
+    fn request_redraw(&self) {
+        self.shell.request_redraw();
+    }
+
+    fn handle_common(&mut self, event: &tao::event::WindowEvent) {
+        self.shell.handle_common_event(event);
+    }
+
+    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
+        self.shell.feed_tao_event(event)
+    }
+
+    fn render(&mut self) {
+        let tag = self.kind().log_tag();
+        self.shell.render(tag);
+    }
+}
+
+impl super::focus::AuxEvents for HistoryWindowHandle {
+    fn handle(&mut self, mapped: iced::Event) -> bool {
+        let mut messages = Vec::new();
+        let outcome = self.shell.pump_frame(mapped, &mut messages);
+        self.shell.finish(outcome, messages, &self.view_invalidated)
     }
 }
 
@@ -439,10 +453,10 @@ mod tests {
         let _ = program.update(
             &mut state,
             HistoryMessage::Sync {
-                lines: vec![
+                lines: std::sync::Arc::from([
                     line(NotificationLevel::Info, "Paused"),
                     line(NotificationLevel::Error, "failed"),
-                ],
+                ]),
                 language: ja(),
             },
         );
@@ -466,11 +480,11 @@ mod tests {
         let _ = program.update(
             &mut state,
             HistoryMessage::Sync {
-                lines: vec![
+                lines: std::sync::Arc::from([
                     line(NotificationLevel::Info, "Paused"),
                     line(NotificationLevel::Warning, "empty"),
                     line(NotificationLevel::Error, "failed"),
-                ],
+                ]),
                 language: ja(),
             },
         );
@@ -524,7 +538,7 @@ mod tests {
         // against the dedicated refresh flag, never the close flag.
         ui.process_messages(
             vec![HistoryMessage::Sync {
-                lines: Vec::new(),
+                lines: std::sync::Arc::from([]),
                 language: en(),
             }],
             &mut backend,

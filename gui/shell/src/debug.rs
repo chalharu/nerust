@@ -3,7 +3,7 @@
 
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, mpsc::Receiver},
+    sync::{Arc, Mutex, MutexGuard, mpsc::Receiver},
     time::{Duration, Instant},
 };
 
@@ -11,6 +11,7 @@ use nerust_core_traits::debugger::{
     DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, DebugImage, DebuggerError, HexRow, InspectError,
     InspectRequest, InspectResult, SnapshotResult, SpaceId, StepUnit,
 };
+use nerust_gui_viewmodel::debugger as debug_vm;
 use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache};
 
 use crate::{emu_core::EmuCore, session::SessionHandle};
@@ -67,6 +68,152 @@ pub struct DebugDrainOutput {
     pub reselected: Option<(u32, Option<u8>)>,
 }
 
+/// Typed debugger failure for one thread round-trip. The viewmodel
+/// [`StatusMessage`](debug_vm::StatusMessage) variants carry plain
+/// strings, so this enum keeps the transport/refusal distinction
+/// typed until the final render-boundary mapping below. Exactly one
+/// place formats each kind: no `format!("{error:?}")` at call sites.
+#[derive(Debug, Clone)]
+pub(crate) enum CoreFailure {
+    /// No live core behind the session.
+    NoCore,
+    /// The emu thread is gone or never answered.
+    TransportGone,
+    /// The core refused the request; the detail rides verbatim.
+    Refused(String),
+}
+
+impl From<nerust_emu_thread::OperationError> for CoreFailure {
+    fn from(error: nerust_emu_thread::OperationError) -> Self {
+        use nerust_emu_thread::OperationError as Op;
+        match error {
+            Op::WorkerUnavailable | Op::NoReply => Self::TransportGone,
+            Op::Reply(detail) => Self::Refused(detail),
+        }
+    }
+}
+
+impl From<nerust_core_traits::debugger::DebuggerError> for CoreFailure {
+    fn from(error: nerust_core_traits::debugger::DebuggerError) -> Self {
+        // `DebuggerError` is data-only (no `Display` by design: display
+        // resolves outside the kernel), and the debugger contract pins
+        // these exact strings. The `Debug` render lives here alone —
+        // never at call sites — until the viewmodel gains typed
+        // variants (out of shell scope).
+        Self::Refused(format!("{error:?}"))
+    }
+}
+
+impl From<nerust_core_traits::debugger::InspectError> for CoreFailure {
+    fn from(error: nerust_core_traits::debugger::InspectError) -> Self {
+        // Same data-only constraint as `DebuggerError` above.
+        Self::Refused(format!("{error:?}"))
+    }
+}
+
+impl CoreFailure {
+    pub(crate) fn no_core() -> Self {
+        Self::NoCore
+    }
+
+    pub(crate) fn thread_status(self) -> debug_vm::StatusMessage {
+        match self {
+            Self::NoCore => debug_vm::StatusMessage::NoCore,
+            Self::TransportGone => {
+                debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
+            }
+            Self::Refused(detail) => debug_vm::StatusMessage::ThreadFailed(detail),
+        }
+    }
+
+    pub(crate) fn register_status(self) -> debug_vm::StatusMessage {
+        match self {
+            Self::NoCore => debug_vm::StatusMessage::NoCore,
+            Self::TransportGone => {
+                debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
+            }
+            Self::Refused(detail) => {
+                if detail.is_empty() {
+                    debug_vm::StatusMessage::RegisterRefused("refused".to_string())
+                } else {
+                    debug_vm::StatusMessage::RegisterRefused(detail)
+                }
+            }
+        }
+    }
+
+    pub(crate) fn write_status(self) -> debug_vm::StatusMessage {
+        match self {
+            Self::NoCore => debug_vm::StatusMessage::NoCore,
+            Self::TransportGone => {
+                debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
+            }
+            Self::Refused(detail) => debug_vm::StatusMessage::WriteRefused(detail),
+        }
+    }
+
+    pub(crate) fn pause_status(self, pausing: bool) -> debug_vm::StatusMessage {
+        match (self, pausing) {
+            (Self::NoCore, _) => debug_vm::StatusMessage::NoCore,
+            (Self::TransportGone, _) => {
+                debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
+            }
+            (Self::Refused(detail), true) => debug_vm::StatusMessage::PauseFailed(detail),
+            (Self::Refused(detail), false) => debug_vm::StatusMessage::ResumeFailed(detail),
+        }
+    }
+
+    pub(crate) fn step_status(self) -> debug_vm::StatusMessage {
+        match self {
+            Self::NoCore => debug_vm::StatusMessage::NoCore,
+            Self::TransportGone => {
+                debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
+            }
+            Self::Refused(detail) => debug_vm::StatusMessage::StepFailed(detail),
+        }
+    }
+}
+
+/// Whether a debugger pass fetches system images (pattern tables).
+/// Explicit enum: a bare `bool` at five call sites never says what
+/// the fetch is for. Frontend-constructed structs
+/// ([`DebugDrainInput`](crate::debug::DebugDrainInput)) keep their
+/// `bool` fields for out-of-crate compatibility and convert at the
+/// drain boundary via `From<bool>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImageNeed {
+    /// Skip the fetch (no PPU viewer open): CHR decode is skipped,
+    /// not just unused.
+    #[default]
+    Skip,
+    /// Fetch system images through the emu thread.
+    Fetch,
+}
+
+impl From<bool> for ImageNeed {
+    fn from(need_images: bool) -> Self {
+        if need_images { Self::Fetch } else { Self::Skip }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrafficKind {
+    /// Step/refresh/pause traffic: kills staged-but-uncommitted values.
+    StateChanging,
+    /// Select/stage/commit traffic: builds the transaction in place.
+    Transactional,
+}
+
+impl From<bool> for TrafficKind {
+    fn from(state_changing: bool) -> Self {
+        if state_changing {
+            Self::StateChanging
+        } else {
+            Self::Transactional
+        }
+    }
+}
+
 impl SessionHandle {
     /// Run one action batch and return the render-ready display.
     /// Phase order: execution, cancel/commit, stale-kill, prepare and
@@ -115,7 +262,11 @@ impl SessionHandle {
     /// [`LiveImagesPoll::Done`]. Cache hits and coreless sessions
     /// resolve on the first poll.
     pub fn debug_live_images_begin(&self, need_images: bool) -> LiveImagesFlight {
-        LiveImagesFlight::begin(self.drain_ctx().core, need_images, DEBUG_DRAIN_TIMEOUT)
+        LiveImagesFlight::begin(
+            self.drain_ctx().core,
+            ImageNeed::from(need_images),
+            DEBUG_DRAIN_TIMEOUT,
+        )
     }
 }
 
@@ -149,6 +300,16 @@ pub struct DrainCtx {
 impl DrainCtx {
     pub(crate) fn new(core: Option<EmuCore>, txn: Arc<Mutex<vm::WriteTransaction>>) -> Self {
         Self { core, txn }
+    }
+
+    /// Poison-recovering transaction lock. Same recovery contract as
+    /// the session-side lock: plain data survives a panicked holder.
+    /// Exactly one logging point for the recovery.
+    fn lock_txn(&self) -> MutexGuard<'_, vm::WriteTransaction> {
+        self.txn.lock().unwrap_or_else(|error| {
+            log::error!("debug transaction mutex poisoned, recovering");
+            error.into_inner()
+        })
     }
 }
 
@@ -242,7 +403,7 @@ pub struct DrainFlight {
     freeze: Option<(u32, u8)>,
     reg_target: Option<&'static str>,
     prev_dump_rows: Vec<HexRow>,
-    need_images: bool,
+    need_images: ImageNeed,
     steps: VecDeque<StepUnit>,
     commits: VecDeque<CommitOp>,
     preps: VecDeque<PrepOp>,
@@ -296,7 +457,7 @@ impl DrainFlight {
             freeze: input.freeze,
             reg_target: input.reg_target,
             prev_dump_rows: input.prev_dump_rows.to_vec(),
-            need_images: input.need_images,
+            need_images: ImageNeed::from(input.need_images),
             steps: VecDeque::new(),
             commits: VecDeque::new(),
             preps: VecDeque::new(),
@@ -512,14 +673,14 @@ impl DrainFlight {
             // Stale-kill runs after commit, before prepare — same
             // seat as the blocking drain.
             if self.state_changing {
-                self.ctx.txn.lock().unwrap().on_state_changing_traffic();
+                self.ctx.lock_txn().on_state_changing_traffic();
             }
             self.phase = FlightPhase::Prepare;
             return;
         };
         match op {
             CommitOp::Cancel => {
-                self.ctx.txn.lock().unwrap().clear();
+                self.ctx.lock_txn().clear();
             }
             CommitOp::Confirm => self.send_confirm(),
             CommitOp::RegWrite(value) => self.send_reg_write(value),
@@ -532,7 +693,7 @@ impl DrainFlight {
     /// take only happens together with its send.
     fn send_confirm(&mut self) {
         use nerust_core_traits::debugger::MemoryWrite;
-        let staged = self.ctx.txn.lock().unwrap().take_commit();
+        let staged = self.ctx.lock_txn().take_commit();
         let (space, addr, value) = match staged {
             Some(staged) => staged,
             None => {
@@ -584,7 +745,7 @@ impl DrainFlight {
                 });
             }
             Some(Err(error)) => {
-                self.status = Some(vm::StatusMessage::ThreadFailed(format!("{error:?}")));
+                self.status = Some(CoreFailure::from(error).thread_status());
             }
             None => {
                 self.status = Some(vm::StatusMessage::NoCore);
@@ -599,7 +760,7 @@ impl DrainFlight {
         };
         match op {
             PrepOp::Stage(value) => {
-                self.ctx.txn.lock().unwrap().stage(value);
+                self.ctx.lock_txn().stage(value);
             }
             PrepOp::Select(addr) => self.send_prepare(addr),
         }
@@ -633,7 +794,7 @@ impl DrainFlight {
             // Send failure reads as empty, like the blocking path's
             // `None` old byte.
             Some(Err(_)) | None => {
-                self.ctx.txn.lock().unwrap().prepare(space, addr, None);
+                self.ctx.lock_txn().prepare(space, addr, None);
                 self.reselected = Some((addr, None));
             }
         }
@@ -699,7 +860,7 @@ impl DrainFlight {
     }
 
     fn advance_images(&mut self) {
-        if !self.need_images {
+        if self.need_images == ImageNeed::Skip {
             self.phase = FlightPhase::Watch;
             return;
         }
@@ -782,7 +943,7 @@ impl DrainFlight {
                 self.status = Some(vm::StatusMessage::Stepped(count));
             }
             Err(error) => {
-                self.status = Some(vm::StatusMessage::StepFailed(format!("{error:?}")));
+                self.status = Some(CoreFailure::from(error).step_status());
             }
         }
     }
@@ -804,12 +965,12 @@ impl DrainFlight {
                 let (_, addr, value) = self.confirm_sent.unwrap_or((SpaceId(0), 0, 0));
                 vm::StatusMessage::WroteMemory { addr, value }
             }
-            (true, Err(error)) => vm::StatusMessage::WriteRefused(format!("{error:?}")),
+            (true, Err(error)) => CoreFailure::from(error).write_status(),
             (false, Ok(())) => {
                 let (name, value) = self.reg_sent.unwrap_or(("?", 0));
                 vm::StatusMessage::RegisterWrote { name, value }
             }
-            (false, Err(error)) => vm::StatusMessage::RegisterRefused(format!("{error:?}")),
+            (false, Err(error)) => CoreFailure::from(error).register_status(),
         });
     }
 
@@ -826,12 +987,12 @@ impl DrainFlight {
         addr: u32,
     ) {
         let old = first_byte(reply);
-        self.ctx.txn.lock().unwrap().prepare(space, addr, old);
+        self.ctx.lock_txn().prepare(space, addr, old);
         self.reselected = Some((addr, old));
     }
 
     fn resolve_prepare_lost(&mut self, space: SpaceId, addr: u32) {
-        self.ctx.txn.lock().unwrap().prepare(space, addr, None);
+        self.ctx.lock_txn().prepare(space, addr, None);
         self.reselected = Some((addr, None));
     }
 
@@ -903,7 +1064,7 @@ impl DrainFlight {
             paused,
             reg_names: snap.reg_names,
             status,
-            pending: self.ctx.txn.lock().unwrap().pending(),
+            pending: self.ctx.lock_txn().pending(),
         };
         DebugDrainOutput {
             display,
@@ -930,8 +1091,7 @@ impl DrainCtx {
         match result {
             Ok(()) if pause => vm::StatusMessage::Paused,
             Ok(()) => vm::StatusMessage::Resume,
-            Err(error) if pause => vm::StatusMessage::PauseFailed(format!("{error:?}")),
-            Err(error) => vm::StatusMessage::ResumeFailed(format!("{error:?}")),
+            Err(error) => CoreFailure::from(error).pause_status(pause),
         }
     }
 
@@ -945,7 +1105,7 @@ impl DrainCtx {
         match self.core.as_ref() {
             Some(core) => core
                 .step_send(unit)
-                .map_err(|error| vm::StatusMessage::ThreadFailed(format!("{error:?}"))),
+                .map_err(|error| CoreFailure::from(error).thread_status()),
             None => Err(vm::StatusMessage::NoCore),
         }
     }
@@ -1008,8 +1168,8 @@ enum LiveImagesState {
 }
 
 impl LiveImagesFlight {
-    fn begin(core: Option<EmuCore>, need_images: bool, deadline: Duration) -> Self {
-        if !need_images {
+    fn begin(core: Option<EmuCore>, need_images: ImageNeed, deadline: Duration) -> Self {
+        if need_images == ImageNeed::Skip {
             return Self::ready(None, deadline);
         }
         let Some(core) = core else {

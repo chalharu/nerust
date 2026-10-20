@@ -610,6 +610,10 @@ mod tests {
                 convert($event, &mut cursor, &mut modifiers, &should_close)
             };
         }
+        // SAFETY: test-only `DeviceId::dummy()` (no transmute in
+        // production; see the matching note in
+        // `aux::settings::window` tests). No `mem::transmute` remains
+        // outside these two test dummies.
         let device = unsafe { DeviceId::dummy() };
         // Cursor movement tracks the pointer.
         let moved = feed!(WindowEvent::CursorMoved {

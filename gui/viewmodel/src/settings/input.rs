@@ -62,7 +62,7 @@ fn persisted_pairs(
         .unwrap_or_else(|| {
             let defaults = input_factory.default_assignments();
             defaults
-                .slots
+                .slots()
                 .iter()
                 .map(|(slot_id, ctrl)| {
                     (
@@ -331,7 +331,7 @@ fn project_view(
     let system_id = factory.system_id();
     let input_factory = factory.input_system_factory();
     let slots_descs = input_factory.slots();
-    let controllers = input_factory.controllers();
+    let controllers: Vec<Rc<dyn ControllerProfile>> = input_factory.controllers().collect();
 
     let assignments = resolve_assignments(&persisted_pairs(state, factory), input_factory);
 

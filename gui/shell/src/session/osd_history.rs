@@ -70,6 +70,9 @@ pub struct HistoryLine {
 
 /// Local wall-clock datetime from a `SystemTime`.
 /// Falls back to UTC when the zone is indeterminate.
+/// Single-row form: resolves the zone offset per call. Test-only and
+/// rare paths; batch callers use [`history_lines`], which hoists the
+/// offset once via [`format_datetime_in`].
 pub fn format_datetime(time: std::time::SystemTime) -> String {
     format_datetime_in(time, local_utc_offset_secs())
 }
@@ -93,6 +96,11 @@ fn local_utc_offset_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// Zero UTC offset for civil-math normalization. A `const` with a
+/// `debug_assert`: the conversion is infallible by construction, so
+/// no `expect` guards the cold path.
+const ZERO_OFFSET_SECS: i32 = 0;
+
 /// Datetime with a pre-resolved offset (see
 /// [`local_utc_offset_secs`]). Civil math delegates to `time`;
 /// out-of-range instants fall back to the epoch rendering.
@@ -102,7 +110,9 @@ fn format_datetime_in(time: std::time::SystemTime, offset_secs: i64) -> String {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     let secs = utc.saturating_add(offset_secs);
-    let offset = time::UtcOffset::from_whole_seconds(0).expect("zero offset valid");
+    debug_assert!(time::UtcOffset::from_whole_seconds(ZERO_OFFSET_SECS).is_ok());
+    let offset =
+        time::UtcOffset::from_whole_seconds(ZERO_OFFSET_SECS).unwrap_or(time::UtcOffset::UTC);
     if let Ok(dt) = time::OffsetDateTime::from_unix_timestamp(secs) {
         let dt = dt.to_offset(offset);
         let (year, month, day) = dt.to_calendar_date();

@@ -1,7 +1,8 @@
 //! Host-side half of the deferred auto-pause protocol: session
-//! driving for the state machine in [`crate::aux::focus`].
+//! driving for the coordinator in [`crate::aux::focus`].
 
 use super::HostState;
+use crate::aux::focus::{FocusEffect, FocusEvent};
 use nerust_gui_shell::session::access::PauseControl;
 
 impl HostState {
@@ -14,15 +15,16 @@ impl HostState {
     }
 
     /// Execute a still-armed auto-pause at the end of the event burst.
-    /// Post-pause chrome sync keeps the menu/title truthful (the blur
-    /// path below only synced pre-pause truth).
+    /// The coordinator commits the armed pause (`BurstEnd` ->
+    /// `Pause`); post-pause chrome sync keeps the menu/title truthful
+    /// (the blur path below only synced pre-pause truth).
     pub(crate) fn commit_pending_auto_pause(&mut self) {
-        if !self.focus.take_armed() {
+        if self.focus_event(FocusEvent::BurstEnd) != Some(FocusEffect::Pause) {
             return;
         }
         if self.session.tick_metrics().can_pause() {
             self.pause_session();
-            self.focus.mark_auto_paused();
+            self.note_protocol_pause();
             self.sync_debug_chrome();
         }
     }

@@ -1,116 +1,47 @@
 //! Static string identifiers for ports, attachments, devices, and controls.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PortId(&'static str);
+/// Define a `&'static str` newtype with `new`/`as_str`/`Display`/`From`.
+///
+/// Each identifier is a distinct type so mismatched kinds fail at compile
+/// time instead of aliasing through raw `&str` equality.
+macro_rules! static_id {
+    ($name:ident) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub struct $name(&'static str);
 
-impl PortId {
-    pub const fn new(value: &'static str) -> Self {
-        Self(value)
-    }
+        impl $name {
+            pub const fn new(value: &'static str) -> Self {
+                Self(value)
+            }
 
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
+            pub const fn as_str(self) -> &'static str {
+                self.0
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.0)
+            }
+        }
+
+        impl From<&'static str> for $name {
+            fn from(value: &'static str) -> Self {
+                Self(value)
+            }
+        }
+
+        impl From<$name> for &'static str {
+            fn from(id: $name) -> Self {
+                id.0
+            }
+        }
+    };
 }
 
-impl std::fmt::Display for PortId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AttachmentId(&'static str);
-
-impl AttachmentId {
-    pub const fn new(value: &'static str) -> Self {
-        Self(value)
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
-}
-
-impl std::fmt::Display for AttachmentId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DeviceKindId(&'static str);
-
-impl DeviceKindId {
-    pub const fn new(value: &'static str) -> Self {
-        Self(value)
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
-}
-
-impl std::fmt::Display for DeviceKindId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DigitalControlId(&'static str);
-
-impl DigitalControlId {
-    pub const fn new(value: &'static str) -> Self {
-        Self(value)
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
-}
-
-impl std::fmt::Display for DigitalControlId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-
-/// Identifies a controller profile type (e.g. "nes.standard_pad", "nes.famicom").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ProfileId(&'static str);
-
-impl ProfileId {
-    pub const fn new(value: &'static str) -> Self {
-        Self(value)
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
-}
-
-impl std::fmt::Display for ProfileId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AnalogControlId(&'static str);
-
-impl AnalogControlId {
-    pub const fn new(value: &'static str) -> Self {
-        Self(value)
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
-}
-
-impl std::fmt::Display for AnalogControlId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
+static_id!(PortId);
+static_id!(AttachmentId);
+static_id!(DeviceKindId);
+static_id!(DigitalControlId);
+static_id!(ProfileId);
+static_id!(AnalogControlId);

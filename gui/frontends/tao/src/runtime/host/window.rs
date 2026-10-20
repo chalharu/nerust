@@ -5,7 +5,6 @@ use super::{
     create_window_builder, default_fit_window_size, logical_size_from_remembered,
     logical_window_size, window_is_fullscreen, window_surface_size,
 };
-use crate::aux::focus::WindowHandler;
 use std::path::Path;
 use std::time::Instant;
 use tao::{dpi::LogicalSize as TaoLogicalSize, event_loop::ControlFlow, window::WindowId};
@@ -15,50 +14,57 @@ use nerust_render_traits::{SurfaceSize, renderer::RenderResult};
 use nerust_settings_core::model::app_state::RememberedWindowSize;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+use crate::aux::focus::AuxWindow;
 use crate::ports::WindowOpener;
 
-/// Wake policy: earliest deadline among live tick, flight poll,
-/// and OSD expiry wins. No side effects; the host supplies the
-/// inputs, so the min-fold stays unit-testable.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct WakePolicy {
+/// Wake inputs for one control-flow pass. Plain data, no tao import:
+/// the host assembles it, [`earliest_wake`] folds it.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct WakeInput {
     pub live_tick: Option<Instant>,
-    pub flight_deadline: Option<Instant>,
+    pub flight_pending: bool,
     pub osd_deadline: Option<Instant>,
 }
 
-impl WakePolicy {
-    /// Poll latency for an in-flight drain/live fetch: the backstop
-    /// that bounds reply latency when the loop would otherwise sleep.
-    pub(crate) fn flight_backstop(now: Instant) -> Instant {
-        now + std::time::Duration::from_millis(30)
-    }
-
-    /// Earliest deadline wins; no deadline sleeps.
-    pub(crate) fn next(&self) -> ControlFlow {
-        [self.live_tick, self.flight_deadline, self.osd_deadline]
-            .into_iter()
-            .flatten()
-            .min()
-            .map_or(ControlFlow::Wait, ControlFlow::WaitUntil)
-    }
+/// Poll latency for an in-flight drain/live fetch: the backstop that
+/// bounds reply latency when the loop would otherwise sleep.
+pub(crate) fn flight_backstop(now: Instant) -> Instant {
+    now + std::time::Duration::from_millis(30)
 }
 
-/// Redraw policy: repaint while focused, while the PPU follows a
-/// running core, or while the session runs (a bare WaitUntil alone
-/// would not reliably wake the loop, at the cost of one running
-/// frame render).
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct RedrawPolicy {
-    pub main_active: bool,
-    pub live_follow: bool,
-    pub running: bool,
+/// Earliest deadline wins; no deadline sleeps. Pure (no tao import);
+/// the runtime maps the result to `ControlFlow`.
+pub(crate) fn earliest_wake(input: WakeInput, now: Instant) -> Option<Instant> {
+    [
+        input.live_tick,
+        input.flight_pending.then(|| flight_backstop(now)),
+        input.osd_deadline,
+    ]
+    .into_iter()
+    .flatten()
+    .min()
 }
 
-impl RedrawPolicy {
-    pub(crate) fn wants_redraw(&self) -> bool {
-        self.main_active || self.live_follow || self.running
-    }
+/// Pure control-flow decision with injected clock: returns the wake
+/// deadline plus whether the loop must repaint. The runtime maps the
+/// deadline to `ControlFlow::{Wait, WaitUntil}`.
+///
+/// Repaint while focused, while the PPU follows a running core, or
+/// while the session runs (a bare WaitUntil alone would not reliably
+/// wake the loop, at the cost of one running frame render).
+pub(crate) fn update_flow(
+    now: Instant,
+    tick_loaded: bool,
+    tick_paused: bool,
+    main_active: bool,
+    live_follow: bool,
+    input: WakeInput,
+) -> (Option<Instant>, bool) {
+    let running = tick_loaded && !tick_paused;
+    (
+        earliest_wake(input, now),
+        main_active || live_follow || running,
+    )
 }
 
 impl HostState {
@@ -100,7 +106,7 @@ impl HostState {
                 .default_vbox()
                 .map(|vbox| crate::gtk_embed::ContentArea::new(vbox, window.gtk_window(), &window));
         }
-        self.window = Some(window);
+        self.window = Some(super::close::LiveWindow::new(window));
         self.sync_fullscreen_from_settings();
         self.sync_chrome(true);
     }
@@ -151,7 +157,7 @@ impl HostState {
         if let Some((handle, size, xid)) = self.content_target() {
             return Some((handle, size, Some(xid)));
         }
-        let handle = window.window_handle().ok()?.as_raw();
+        let handle = window.raw().window_handle().ok()?.as_raw();
         Some((handle, window_surface_size(window.inner_size()), None))
     }
 
@@ -221,7 +227,8 @@ impl HostState {
         // tick: plain Wait sleeps until the next input event, which
         // would collapse the live cadence to zero whenever the aux
         // windows (not the main one) hold focus.
-        let live_tick = if self.live_follow_active() {
+        let live_follow = self.live_follow_active();
+        let live_tick = if live_follow {
             self.next_live_tick()
         } else {
             None
@@ -229,8 +236,7 @@ impl HostState {
         // While a drain or live flight is pending, wake soon to poll
         // it: the reply applies within ~30ms instead of waiting for
         // the next input event.
-        let flight_deadline = (drain_pending || self.live_flight.is_some())
-            .then(|| WakePolicy::flight_backstop(Instant::now()));
+        let flight_pending = drain_pending || self.live_flight_pending();
 
         // Drain notifications here, not only in on_update: a paused
         // unfocused loop schedules no redraws, which is exactly when
@@ -246,30 +252,27 @@ impl HostState {
             // Redraw while labels show so expiry applies even paused.
             self.request_redraw();
         }
-        *control_flow = WakePolicy {
-            live_tick,
-            flight_deadline,
-            osd_deadline,
-        }
-        .next();
-
-        // Inactive loop sleeps; redraw while focused, while the PPU
-        // follows a running core, or while the session runs (a bare
-        // WaitUntil alone would not reliably wake the loop, at the
-        // cost of one running frame render).
-        let live = self.live_follow_active();
-        // Repaint a running session even unfocused (e.g. operating the
-        // debugger while the game runs): frames keep coming and must
-        // show. Paused, unfocused, and unfollowed sleeps.
         let tick = self.session.tick_metrics();
-        let running = tick.loaded && !tick.paused;
-        if (RedrawPolicy {
-            main_active: self.main_active(),
-            live_follow: live,
-            running,
-        })
-        .wants_redraw()
-        {
+        let now = Instant::now();
+        let (deadline, wants_redraw) = update_flow(
+            now,
+            tick.loaded,
+            tick.paused,
+            self.main_active(),
+            live_follow,
+            WakeInput {
+                live_tick,
+                flight_pending,
+                osd_deadline,
+            },
+        );
+        *control_flow = deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil);
+
+        // Inactive loop sleeps; repaint a running session even
+        // unfocused (e.g. operating the debugger while the game runs):
+        // frames keep coming and must show. Paused, unfocused, and
+        // unfollowed sleeps.
+        if wants_redraw {
             self.request_redraw();
         }
     }
@@ -278,7 +281,7 @@ impl HostState {
         match result {
             RenderResult::Presented => {
                 self.shell
-                    .on_frame_presented(self.session.metrics().frame_counter);
+                    .on_frame_presented(self.session.tick_metrics().frame_counter);
                 self.maybe_refresh_window_title(Instant::now());
             }
             RenderResult::Skipped | RenderResult::Error => {}
@@ -301,7 +304,6 @@ impl HostState {
             window.request_redraw();
         }
     }
-
     /// Idempotent close teardown: the guard makes flush run exactly
     /// once across CloseRequested + Destroyed. Handles stay alive:
     /// dropping tao/GTK objects inside a destroy handler re-enters
@@ -353,7 +355,7 @@ impl HostState {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        if window_is_fullscreen(window)
+        if window_is_fullscreen(window.raw())
             || scaling_factor(self.session.settings_snapshot().local.video.window.scaling).is_some()
         {
             return;
@@ -433,57 +435,53 @@ mod tests {
 
     #[test]
     fn wake_policy_folds_to_earliest_deadline() {
-        use super::{RedrawPolicy, WakePolicy};
+        use super::{WakeInput, earliest_wake, flight_backstop, update_flow};
         let now = Instant::now();
-        let idle = WakePolicy {
-            live_tick: None,
-            flight_deadline: None,
-            osd_deadline: None,
-        };
-        assert_eq!(idle.next(), ControlFlow::Wait);
+        let idle = WakeInput::default();
+        assert_eq!(earliest_wake(idle, now), None);
         // Flight poll alone wakes soon (30ms backstop).
-        let flight = WakePolicy {
-            live_tick: None,
-            flight_deadline: Some(WakePolicy::flight_backstop(now)),
-            osd_deadline: None,
+        let flight = WakeInput {
+            flight_pending: true,
+            ..WakeInput::default()
         };
         assert_eq!(
-            flight.next(),
-            ControlFlow::WaitUntil(now + std::time::Duration::from_millis(30))
+            earliest_wake(flight, now).map(|t| t.duration_since(now)),
+            Some(std::time::Duration::from_millis(30))
+        );
+        assert_eq!(
+            flight_backstop(now),
+            now + std::time::Duration::from_millis(30)
         );
         // Earliest wins across all three sources.
         let tick = now + std::time::Duration::from_millis(250);
         let soon_deadline = now + std::time::Duration::from_millis(10);
-        let raced = WakePolicy {
+        let raced = WakeInput {
             live_tick: Some(tick),
-            flight_deadline: Some(WakePolicy::flight_backstop(now)),
+            flight_pending: true,
             osd_deadline: Some(soon_deadline),
         };
-        assert_eq!(raced.next(), ControlFlow::WaitUntil(soon_deadline));
+        assert_eq!(earliest_wake(raced, now), Some(soon_deadline));
         // Live tick earlier than the flight backstop survives.
         let early_tick = now + std::time::Duration::from_millis(5);
-        let tick_wins = WakePolicy {
+        let tick_wins = WakeInput {
             live_tick: Some(early_tick),
-            flight_deadline: Some(WakePolicy::flight_backstop(now)),
+            flight_pending: true,
             osd_deadline: None,
         };
-        assert_eq!(tick_wins.next(), ControlFlow::WaitUntil(early_tick));
-        // Redraw policy: any live source repaints; quiet sleeps.
-        assert!(
-            RedrawPolicy {
-                main_active: false,
-                live_follow: false,
-                running: true,
-            }
-            .wants_redraw()
-        );
-        assert!(
-            !RedrawPolicy {
-                main_active: false,
-                live_follow: false,
-                running: false,
-            }
-            .wants_redraw()
+        assert_eq!(earliest_wake(tick_wins, now), Some(early_tick));
+        // Pure flow decision with injected clock: any live source
+        // repaints; quiet sleeps. The runtime maps the deadline to
+        // ControlFlow.
+        let (deadline, redraw) = update_flow(now, true, false, false, false, idle);
+        assert_eq!(deadline, None);
+        assert!(redraw);
+        let (deadline, redraw) = update_flow(now, false, false, false, false, idle);
+        assert_eq!(deadline, None);
+        assert!(!redraw);
+        let (deadline, _) = update_flow(now, false, false, false, false, flight);
+        assert_eq!(
+            deadline.map(|t| t.duration_since(now)),
+            Some(std::time::Duration::from_millis(30))
         );
     }
 
