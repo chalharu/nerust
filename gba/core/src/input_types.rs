@@ -46,29 +46,6 @@ impl InputStateBuffer for GbaInputBuffer {
             })
         }
     }
-
-    /// Merge only staged bits: the staged word keeps working state,
-    /// untouched bits survive without a full copy.
-    fn copy_dirty_from(
-        &mut self,
-        other: &dyn InputStateBuffer,
-        dirty: &[usize],
-    ) -> Result<(), BufferError> {
-        let Some(source) = other.downcast_ref::<Self>() else {
-            return Err(BufferError::MismatchedBuffer {
-                expected: std::any::type_name::<Self>(),
-                actual: std::any::type_name_of_val(other),
-            });
-        };
-        for &field in dirty {
-            if field >= 10 {
-                return Err(BufferError::FieldNotFound { field });
-            }
-            let mask = 1u16 << field;
-            self.0 = (self.0 & !mask) | (source.0 & mask);
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -97,20 +74,15 @@ mod tests {
     }
 
     #[test]
-    fn dirty_merge_keeps_unstaged_bits() {
+    fn full_copy_replaces_working_bits() {
         let mut staged = GbaInputBuffer::default();
         staged.set(0, InputValue::Digital(true)).unwrap();
         staged.set(9, InputValue::Digital(true)).unwrap();
         let mut working = GbaInputBuffer::default();
         working.set(8, InputValue::Digital(true)).unwrap();
-        // Only staged fields merge; working bit 8 survives.
-        working.copy_dirty_from(&staged, &[0, 9]).unwrap();
-        assert_eq!(working.0 & 1, 0);
-        assert_eq!(working.0 & (1 << 9), 0);
-        assert_eq!(working.0 & (1 << 8), 0);
-        // Empty list merges nothing; unknown fields refuse.
-        working.copy_dirty_from(&staged, &[]).unwrap();
-        assert!(working.copy_dirty_from(&staged, &[10]).is_err());
+        // Full copy overwrites everything: rotation cannot resurrect bits.
+        working.copy_state(&staged).unwrap();
+        assert_eq!(working.0, staged.0);
     }
 
     #[test]

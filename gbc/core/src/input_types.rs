@@ -46,28 +46,6 @@ impl InputStateBuffer for GbcInputBuffer {
             })
         }
     }
-
-    /// Merge only staged bits: untouched bits survive without a full copy.
-    fn copy_dirty_from(
-        &mut self,
-        other: &dyn InputStateBuffer,
-        dirty: &[usize],
-    ) -> Result<(), BufferError> {
-        let Some(source) = other.downcast_ref::<Self>() else {
-            return Err(BufferError::MismatchedBuffer {
-                expected: std::any::type_name::<Self>(),
-                actual: std::any::type_name_of_val(other),
-            });
-        };
-        for &field in dirty {
-            if field >= 8 {
-                return Err(BufferError::FieldNotFound { field });
-            }
-            let mask = 1u8 << field;
-            self.0 = (self.0 & !mask) | (source.0 & mask);
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -86,18 +64,15 @@ mod tests {
     }
 
     #[test]
-    fn dirty_merge_keeps_unstaged_bits() {
+    fn full_copy_replaces_working_bits() {
         let mut staged = GbcInputBuffer::default();
         staged.set(0, InputValue::Digital(true)).unwrap();
         staged.set(7, InputValue::Digital(true)).unwrap();
         let mut working = GbcInputBuffer::default();
         working.set(3, InputValue::Digital(true)).unwrap();
-        // Only staged bits merge; working bit 3 survives.
-        working.copy_dirty_from(&staged, &[0, 7]).unwrap();
-        assert_eq!(working.0, 0x76);
-        // Empty list merges nothing; unknown fields refuse.
-        working.copy_dirty_from(&staged, &[]).unwrap();
-        assert!(working.copy_dirty_from(&staged, &[8]).is_err());
+        // Full copy overwrites everything: rotation cannot resurrect bits.
+        working.copy_state(&staged).unwrap();
+        assert_eq!(working.0, staged.0);
     }
 
     #[test]

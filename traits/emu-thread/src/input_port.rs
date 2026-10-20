@@ -89,11 +89,6 @@ pub struct GuiInput {
     /// Staged state changed since the last publish; clean frames skip
     /// the copy and the shared lock entirely.
     dirty: bool,
-    /// Absolute fields staged since the last publish; the handoff merges
-    /// only these instead of a full memcpy.
-    dirty_fields: Vec<usize>,
-    /// `clear` neutralizes every field: the next publish copies full state.
-    full_copy: bool,
     /// Mismatch already warned; a later successful publish re-arms.
     mismatch_warned: bool,
 }
@@ -106,8 +101,6 @@ impl GuiInput {
             state: (split.new_buffer)(),
             write_buf: (split.new_buffer)(),
             dirty: false,
-            dirty_fields: Vec::new(),
-            full_copy: false,
             mismatch_warned: false,
         }
     }
@@ -115,9 +108,6 @@ impl GuiInput {
     /// Write one absolute field of the staged GUI state.
     pub fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
         self.state.set(field, value)?;
-        if !self.dirty_fields.contains(&field) {
-            self.dirty_fields.push(field);
-        }
         self.dirty = true;
         Ok(())
     }
@@ -133,22 +123,13 @@ impl GuiInput {
         }
     }
 
-    /// Staged fields since the last publish; drives the dirty-only handoff.
-    pub fn dirty_fields(&self) -> &[usize] {
-        &self.dirty_fields
-    }
-
-    /// Fallible publish core: merges staged fields; mismatch alone surfaces as `Err`.
+    /// Fallible publish core: full staged copy; mismatch surfaces as `Err`.
+    /// Partial merge is unsound: rotation resurrects superseded bytes.
     fn try_publish(&mut self) -> Result<(), BufferError> {
         if !self.dirty {
             return Ok(());
         }
-        if self.full_copy {
-            self.write_buf.copy_state(&*self.state)?;
-        } else {
-            self.write_buf
-                .copy_dirty_from(&*self.state, &self.dirty_fields)?;
-        }
+        self.write_buf.copy_state(&*self.state)?;
         let mut lock = self
             .shared
             .lock()
@@ -156,8 +137,6 @@ impl GuiInput {
         std::mem::swap(&mut *lock, &mut self.write_buf);
         self.flag.store(true, Ordering::Release);
         self.dirty = false;
-        self.dirty_fields.clear();
-        self.full_copy = false;
         self.mismatch_warned = false;
         Ok(())
     }
@@ -165,8 +144,6 @@ impl GuiInput {
     pub fn clear(&mut self) {
         self.state.clear();
         self.dirty = true;
-        self.dirty_fields.clear();
-        self.full_copy = true;
     }
 }
 
@@ -405,14 +382,13 @@ mod tests {
     }
 
     #[test]
-    fn publish_merges_only_staged_fields() {
+    fn publish_overwrites_swap_resurrected_state() {
         use std::sync::atomic::{AtomicUsize, Ordering};
-        /// Counts full vs dirty copies: dirty-only publish must not memcpy.
+        /// Counts full copies: every publish must memcpy staged state.
         #[derive(Debug, Default)]
         struct Counting {
             bits: u64,
             full_copies: AtomicUsize,
-            dirty_copies: AtomicUsize,
         }
         impl InputStateBuffer for Counting {
             fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
@@ -446,54 +422,41 @@ mod tests {
                 self.full_copies.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             }
-            fn copy_dirty_from(
-                &mut self,
-                other: &dyn InputStateBuffer,
-                dirty: &[usize],
-            ) -> Result<(), BufferError> {
-                let Some(source) = other.downcast_ref::<Self>() else {
-                    return Err(BufferError::MismatchedBuffer {
-                        expected: "Counting",
-                        actual: "other",
-                    });
-                };
-                self.dirty_copies.fetch_add(1, Ordering::SeqCst);
-                for &field in dirty {
-                    if field >= 64 {
-                        return Err(BufferError::FieldNotFound { field });
-                    }
-                    let mask = 1 << field;
-                    self.bits = (self.bits & !mask) | (source.bits & mask);
-                }
-                Ok(())
-            }
         }
         let split = InputSplit::spawn_typed(Counting::default);
         let mut gui = split.gui_endpoint();
         let mut emu = split.emu_endpoint();
-        // Staging tracks absolute fields, deduped.
+        // Rotation resurrects superseded bytes into the write buffer across
+        // swap/take cycles; each publish must overwrite them, never merge.
         gui.set(3, InputValue::Digital(true)).unwrap();
-        gui.set(3, InputValue::Digital(true)).unwrap();
-        gui.set(5, InputValue::Digital(true)).unwrap();
-        assert_eq!(gui.dirty_fields(), &[3, 5]);
         gui.publish();
-        assert!(gui.dirty_fields().is_empty());
         emu.take();
         let snapshot = emu.read_buffer().downcast_ref::<Counting>().unwrap();
-        let bits = snapshot.bits;
-        assert_eq!(bits, (1 << 3) | (1 << 5));
-        // Dirty-only handoff: one dirty merge, no full memcpy.
-        assert_eq!(snapshot.dirty_copies.load(Ordering::SeqCst), 1);
-        assert_eq!(snapshot.full_copies.load(Ordering::SeqCst), 0);
-        // `clear` neutralizes everything: the next publish copies full state.
-        gui.set(7, InputValue::Digital(true)).unwrap();
-        gui.clear();
-        assert!(gui.dirty_fields().is_empty());
+        assert_eq!(snapshot.bits, 1 << 3);
+        // First handoff lands in the initial write buffer: one full copy.
+        assert_eq!(snapshot.full_copies.load(Ordering::SeqCst), 1);
+        gui.set(3, InputValue::Digital(false)).unwrap();
         gui.publish();
         emu.take();
         let snapshot = emu.read_buffer().downcast_ref::<Counting>().unwrap();
         assert_eq!(snapshot.bits, 0);
-        assert_eq!(snapshot.full_copies.load(Ordering::SeqCst), 1);
+        gui.set(5, InputValue::Digital(true)).unwrap();
+        gui.publish();
+        emu.take();
+        let snapshot = emu.read_buffer().downcast_ref::<Counting>().unwrap();
+        assert_eq!(snapshot.bits, 1 << 5);
+        gui.set(5, InputValue::Digital(false)).unwrap();
+        gui.publish();
+        emu.take();
+        let snapshot = emu.read_buffer().downcast_ref::<Counting>().unwrap();
+        assert_eq!(snapshot.bits, 0);
+        // `clear` neutralizes everything: the next publish releases all bits.
+        gui.set(7, InputValue::Digital(true)).unwrap();
+        gui.clear();
+        gui.publish();
+        emu.take();
+        let snapshot = emu.read_buffer().downcast_ref::<Counting>().unwrap();
+        assert_eq!(snapshot.bits, 0);
     }
 
     #[test]
