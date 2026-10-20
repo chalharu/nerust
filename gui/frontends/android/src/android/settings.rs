@@ -546,23 +546,27 @@ impl AndroidSettings {
         defs
     }
 
+    /// Locked [`Self::cached_setting_defs`]: callers already holding the bridge
+    /// state use this; nesting `with_state` would trip the reentrancy guard.
+    fn cached_setting_defs_locked(
+        state: &mut SettingsBridgeState,
+        current: &AndroidSettings,
+    ) -> Vec<SettingDef> {
+        let hash = current.defs_fingerprint();
+        if let Some((cached_hash, defs)) = &state.defs_cache {
+            if *cached_hash == hash {
+                return defs.clone();
+            }
+        }
+        let defs = current.setting_defs();
+        state.defs_cache = Some((hash, defs.clone()));
+        defs
+    }
+
     /// Cached [`Self::setting_defs`], keyed by a fingerprint of every field it reads.
     /// The entry lives on the bridge state, not a global, so tests stay isolated.
     pub(crate) fn cached_setting_defs(current: &AndroidSettings) -> Vec<SettingDef> {
-        let hash = current.defs_fingerprint();
-        let cached = with_state(|state| {
-            state
-                .defs_cache
-                .as_ref()
-                .filter(|(cached_hash, _)| *cached_hash == hash)
-                .map(|(_, defs)| defs.clone())
-        });
-        if let Some(defs) = cached {
-            return defs;
-        }
-        let defs = current.setting_defs();
-        with_state(|state| state.defs_cache = Some((hash, defs.clone())));
-        defs
+        with_state(|state| Self::cached_setting_defs_locked(state, current))
     }
 
     fn defs_fingerprint(&self) -> u64 {
@@ -789,9 +793,11 @@ impl AndroidSettings {
         })
     }
 
-    pub(crate) fn dialog_payload(&self, request_id: u64) -> String {
+    /// Locked payload builder: `begin_request` already holds the bridge state.
+    /// Tests build defs through [`Self::cached_setting_defs`] first.
+    fn dialog_payload_from_defs(request_id: u64, defs: &[SettingDef]) -> String {
         let mut sections: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
-        for def in AndroidSettings::cached_setting_defs(self) {
+        for def in defs {
             let section = if def.key.starts_with("system.") {
                 def.key.split('.').take(2).collect::<Vec<_>>().join(".")
             } else if def.key.starts_with("controls.") {
@@ -932,7 +938,11 @@ fn begin_request(current: &AndroidSettings) -> Option<(u64, String)> {
         let request_id = state.next_request_id;
         state.next_request_id = state.next_request_id.wrapping_add(1).max(1);
         state.pending_request_id = Some(request_id);
-        Some((request_id, current.dialog_payload(request_id)))
+        let defs = AndroidSettings::cached_setting_defs_locked(state, current);
+        Some((
+            request_id,
+            AndroidSettings::dialog_payload_from_defs(request_id, &defs),
+        ))
     })
 }
 
@@ -1588,7 +1598,9 @@ mod tests {
     fn dialog_payload_contains_schema_request_and_stable_keys() {
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
-        let payload: serde_json::Value = serde_json::from_str(&android.dialog_payload(42)).unwrap();
+        let defs = AndroidSettings::cached_setting_defs(&android);
+        let payload: serde_json::Value =
+            serde_json::from_str(&AndroidSettings::dialog_payload_from_defs(42, &defs)).unwrap();
 
         assert_eq!(payload["schemaVersion"], 1);
         assert_eq!(payload["requestId"], 42);
@@ -1649,7 +1661,9 @@ mod tests {
         // positions share an edge; Kotlin only filters on `visible`.
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
-        let doc: serde_json::Value = serde_json::from_str(&android.dialog_payload(1)).unwrap();
+        let defs = AndroidSettings::cached_setting_defs(&android);
+        let doc: serde_json::Value =
+            serde_json::from_str(&AndroidSettings::dialog_payload_from_defs(1, &defs)).unwrap();
         let fields: Vec<&serde_json::Value> = doc["sections"]
             .as_array()
             .unwrap()
@@ -1666,7 +1680,10 @@ mod tests {
         assert!(visible("notifications.position"));
         let mut same_edge = android;
         same_edge.status_position = NotificationPosition::BottomRight;
-        let doc: serde_json::Value = serde_json::from_str(&same_edge.dialog_payload(2)).unwrap();
+        let same_defs = AndroidSettings::cached_setting_defs(&same_edge);
+        let doc: serde_json::Value =
+            serde_json::from_str(&AndroidSettings::dialog_payload_from_defs(2, &same_defs))
+                .unwrap();
         let area = doc["sections"]
             .as_array()
             .unwrap()
@@ -1746,7 +1763,12 @@ mod tests {
         // applies directly.
         snapshot.shared.persistence.storage_policy = StoragePolicy::AppSharedData;
         let current = android_settings(&snapshot, &registry);
-        match SettingsApplier::plan(&current_values(&current), &current, &snapshot, &registry) {
+        match SettingsApplier::plan(
+            &current_values(&current),
+            &current,
+            snapshot.clone(),
+            &registry,
+        ) {
             SettingsPlan::Apply { next } => {
                 assert_eq!(
                     next.shared.persistence.storage_policy,
@@ -1771,7 +1793,12 @@ mod tests {
         let current = android_settings(&snapshot, &registry);
         let mut android = current.clone();
         android.storage_policy = StoragePolicy::CustomDirectory;
-        match SettingsApplier::plan(&current_values(&android), &current, &snapshot, &registry) {
+        match SettingsApplier::plan(
+            &current_values(&android),
+            &current,
+            snapshot.clone(),
+            &registry,
+        ) {
             SettingsPlan::NeedDocumentTree { next } => {
                 assert_eq!(
                     next.shared.persistence.storage_policy,
@@ -1790,7 +1817,7 @@ mod tests {
         let registry = registry();
         let snapshot = default_snapshot();
         let current = android_settings(&snapshot, &registry);
-        match SettingsApplier::plan(&BTreeMap::new(), &current, &snapshot, &registry) {
+        match SettingsApplier::plan(&BTreeMap::new(), &current, snapshot.clone(), &registry) {
             SettingsPlan::Invalid { .. } => {}
             _ => panic!("empty values must be invalid"),
         }
