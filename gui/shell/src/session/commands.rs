@@ -429,25 +429,26 @@ mod mapping_tests {
     }
 
     #[test]
-    fn state_faults_map_to_slot_failures() {
+    fn state_faults_map_to_slot_failures_once() {
+        use crate::emu_core::state_fault_to_failure;
         assert_eq!(
-            SlotOpFailure::from(StateFault::Transport),
+            state_fault_to_failure(StateFault::Transport),
             SlotOpFailure::Unavailable
         );
         assert_eq!(
-            SlotOpFailure::from(StateFault::Missing),
+            state_fault_to_failure(StateFault::Missing),
             SlotOpFailure::Missing
         );
         assert_eq!(
-            SlotOpFailure::from(StateFault::Storage),
+            state_fault_to_failure(StateFault::Storage),
             SlotOpFailure::Storage
         );
         assert_eq!(
-            SlotOpFailure::from(StateFault::Corrupt),
+            state_fault_to_failure(StateFault::Corrupt),
             SlotOpFailure::Corrupt
         );
         assert_eq!(
-            SlotOpFailure::from(StateFault::Incompatible),
+            state_fault_to_failure(StateFault::Incompatible),
             SlotOpFailure::Incompatible
         );
     }

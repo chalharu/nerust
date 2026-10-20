@@ -1,5 +1,5 @@
 //! OSD overlay domain: validation, retry decisions, and GL row addressing. The retry budget is the
-//! shared `BoundedUploadPolicy`; this module only maps its boolean outcome to the overlay decision.
+//! Impl-owned `BoundedUploadPolicy`; this module only maps its boolean outcome to the overlay decision.
 
 use nerust_render_traits::renderer::OsdLayer;
 
@@ -124,7 +124,8 @@ mod tests {
     use super::{
         OsdReject, RetryDecision, checked_clear_need, checked_osd_gl_y, checked_osd_rect, osd_gl_y,
     };
-    use nerust_render_traits::renderer::{BoundedUploadPolicy, OsdLayer, OsdUploadPolicy};
+    use crate::upload::BoundedUploadPolicy;
+    use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
 
     #[test]
     fn decision_maps_shared_policy_outcome() {

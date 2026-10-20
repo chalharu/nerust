@@ -3,6 +3,7 @@
 
 pub(crate) mod bridge;
 pub(crate) mod debug;
+pub(crate) mod domain;
 pub(crate) mod focus;
 pub(crate) mod native;
 pub(crate) mod osd;

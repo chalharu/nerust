@@ -322,7 +322,7 @@ impl ProfileTouchOverlay {
         )
     }
 
-    fn is_dpad_role(role: TouchControlRole) -> bool {
+    pub(super) fn is_dpad_role(role: TouchControlRole) -> bool {
         matches!(
             role,
             TouchControlRole::DpadUp

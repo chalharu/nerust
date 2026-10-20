@@ -5,6 +5,8 @@ pub mod vertex;
 
 pub use context::{Current, CurrentContext, DeletionPolicy, GlObject, ScopeGuard};
 pub use error::Error as GlError;
+/// Re-exported for typed test construction; production reads kinds from drains.
+pub use error::ErrorKind as GlErrorKind;
 
 use std::{
     collections::HashMap,

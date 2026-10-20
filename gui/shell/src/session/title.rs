@@ -9,17 +9,6 @@ pub struct TitleInput<'a> {
     pub slot_count: usize,
 }
 
-/// Stable state key for title caching: pause/load quadrants as one static.
-/// Frontends key their own caches on this instead of formatting first.
-pub fn title_state_key(paused: bool, loaded: bool) -> &'static str {
-    match (paused, loaded) {
-        (true, true) => "paused-loaded",
-        (true, false) => "paused-unloaded",
-        (false, true) => "running-loaded",
-        (false, false) => "running-unloaded",
-    }
-}
-
 /// Single title builder: structured input in, display text out.
 /// All title entry points delegate here.
 pub fn title(input: TitleInput<'_>) -> String {
@@ -43,28 +32,6 @@ pub fn title(input: TitleInput<'_>) -> String {
     } else {
         format!("{state}{slot} | No ROM")
     }
-}
-
-pub fn window_title(
-    paused: bool,
-    loaded: bool,
-    system_name: Option<&str>,
-    active_slot: Option<u64>,
-    slot_count: usize,
-) -> String {
-    window_title_input(TitleInput {
-        paused,
-        loaded,
-        system_name,
-        active_slot,
-        slot_count,
-    })
-}
-
-/// Structured form of [`window_title`]: single source for the text,
-/// so positional call sites cannot misalign the flags.
-pub fn window_title_input(input: TitleInput<'_>) -> String {
-    title(input)
 }
 
 /// Cache key for [`TitleCache`]: everything the title text reads.
@@ -115,44 +82,48 @@ impl TitleCache {
 
 #[cfg(test)]
 mod tests {
-    use super::{TitleCache, TitleInput, window_title, window_title_input};
+    use super::{TitleCache, TitleInput, title};
 
     #[test]
-    fn window_title_omits_runtime_metrics() {
-        let title = window_title(false, true, Some("Nes"), Some(2), 3);
-
-        assert!(!title.contains("FPS"));
-        assert!(!title.contains("Speed"));
-        assert!(title.contains("Slot 2"));
-        assert!(title.contains("3 slots"));
-    }
-
-    #[test]
-    fn window_title_marks_no_rom() {
-        assert!(window_title(true, false, Some("Nes"), None, 0).contains("Paused"));
-        assert!(window_title(true, false, Some("Nes"), None, 0).contains("No ROM"));
-    }
-
-    #[test]
-    fn window_title_surfaces_slot_count_without_active_slot() {
-        let title = window_title(false, false, Some("Nes"), None, 2);
-        assert!(title.contains("2 slots"));
-        assert!(!title.contains("Slot"));
-    }
-
-    #[test]
-    fn title_input_matches_positional_form() {
-        let input = TitleInput {
-            paused: true,
+    fn title_omits_runtime_metrics() {
+        let text = title(TitleInput {
+            paused: false,
             loaded: true,
             system_name: Some("Nes"),
             active_slot: Some(2),
             slot_count: 3,
-        };
-        assert_eq!(
-            window_title_input(input),
-            window_title(true, true, Some("Nes"), Some(2), 3)
-        );
+        });
+
+        assert!(!text.contains("FPS"));
+        assert!(!text.contains("Speed"));
+        assert!(text.contains("Slot 2"));
+        assert!(text.contains("3 slots"));
+    }
+
+    #[test]
+    fn title_marks_no_rom() {
+        let text = title(TitleInput {
+            paused: true,
+            loaded: false,
+            system_name: Some("Nes"),
+            active_slot: None,
+            slot_count: 0,
+        });
+        assert!(text.contains("Paused"));
+        assert!(text.contains("No ROM"));
+    }
+
+    #[test]
+    fn title_surfaces_slot_count_without_active_slot() {
+        let text = title(TitleInput {
+            paused: false,
+            loaded: false,
+            system_name: Some("Nes"),
+            active_slot: None,
+            slot_count: 2,
+        });
+        assert!(text.contains("2 slots"));
+        assert!(!text.contains("Slot"));
     }
 
     #[test]
@@ -191,8 +162,7 @@ mod agreement_tests {
             slot_count: 3,
         };
         let direct = title(input.clone());
-        assert_eq!(direct, window_title(true, true, Some("Nes"), Some(2), 3));
-        assert_eq!(direct, window_title_input(input));
+        assert_eq!(direct, super::title(input));
         let mut cache = TitleCache::new();
         let owned = cache
             .title(TitleInput {
@@ -212,11 +182,23 @@ mod title_cov_tests {
     use crate::session::title::*;
 
     #[test]
-    fn state_key_covers_all_quadrants() {
-        assert_eq!(title_state_key(true, true), "paused-loaded");
-        assert_eq!(title_state_key(true, false), "paused-unloaded");
-        assert_eq!(title_state_key(false, true), "running-loaded");
-        assert_eq!(title_state_key(false, false), "running-unloaded");
+    fn cached_and_direct_titles_agree() {
+        use crate::session::osd::TickMetrics;
+        let tick = TickMetrics {
+            paused: true,
+            loaded: true,
+            fps: 60.0,
+            frame_counter: 7,
+        };
+        let input = TitleInput {
+            paused: tick.paused,
+            loaded: tick.loaded,
+            system_name: Some("Nes"),
+            active_slot: Some(2),
+            slot_count: 3,
+        };
+        let mut cache = TitleCache::new();
+        assert_eq!(cache.title(input.clone()), title(input));
     }
 
     #[test]

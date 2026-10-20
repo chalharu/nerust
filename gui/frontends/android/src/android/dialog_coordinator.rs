@@ -1,25 +1,30 @@
 //! DialogCoordinator: frontend-owned dialog flow, no OSD pass-through.
-//! Screen gates come from [`DialogOwnership`] (bridge truth).
+//! Screen gates come from the injected [`ScreenSource`]; no cached bool.
 
 use nerust_gui_shell::session::osd::{ModalSink, ModalSource, TickMetrics};
 
-use super::dialog_ownership::DialogOwnership;
 use crate::error_dialog_controller::{
     DismissTransition, Screen, SettingsClosedTransition, ShowTransition,
 };
 
-/// Frontend-owned error-dialog flow. The JNI handoff reads the showing
-/// batch via [`DialogCoordinator::current_detail`].
-pub(super) struct DialogCoordinator {
-    controller: crate::error_dialog_controller::ErrorDialogController,
-    ownership: DialogOwnership,
+/// Source of screen truth for dialog gates; injected for isolation.
+pub(super) trait ScreenSource {
+    /// Whether the settings dialog is currently up (bridge truth).
+    fn is_settings_open(&self) -> bool;
 }
 
-impl DialogCoordinator {
-    pub(super) fn new(ownership: DialogOwnership) -> Self {
+/// Frontend-owned error-dialog flow. The JNI handoff reads the showing
+/// batch via [`DialogCoordinator::current_detail`].
+pub(super) struct DialogCoordinator<S> {
+    controller: crate::error_dialog_controller::ErrorDialogController,
+    source: S,
+}
+
+impl<S: ScreenSource> DialogCoordinator<S> {
+    pub(super) fn new(source: S) -> Self {
         Self {
             controller: crate::error_dialog_controller::ErrorDialogController::new(),
-            ownership,
+            source,
         }
     }
 
@@ -28,10 +33,9 @@ impl DialogCoordinator {
         self.controller.current_detail()
     }
 
-    /// Whether the settings dialog is up (bridge truth via ownership).
-    /// Replaces the deleted cached bool: every gate queries this.
+    /// Whether the settings dialog is up (source truth, never cached).
     pub(super) fn is_settings_open(&self) -> bool {
-        self.ownership.is_settings_open()
+        self.source.is_settings_open()
     }
 
     /// Whether the session is paused on behalf of the error dialog.
@@ -39,8 +43,10 @@ impl DialogCoordinator {
         self.controller.auto_paused()
     }
 
+    /// Single gate ctor for both lanes: every dialog decision
+    /// routes through `Screen::show_gate` with the live tick.
     fn screen(&self, is_resumed: bool, tick: TickMetrics) -> Screen {
-        self.ownership.screen(is_resumed, tick.can_pause())
+        Screen::show_gate(is_resumed, self.source.is_settings_open(), tick.can_pause())
     }
 
     /// Show the oldest queued error unless suspended, showing,
@@ -56,16 +62,15 @@ impl DialogCoordinator {
     }
 
     /// Dismiss hook from the Kotlin dialog. Resumes only our own
-    /// auto-pause, then asks for the next batch.
+    /// auto-pause, then asks for the next batch. Takes the pass tick.
     pub(super) fn on_dismissed(
         &mut self,
         queue: &mut (impl ModalSink + ModalSource),
         is_resumed: bool,
+        tick: TickMetrics,
     ) -> DismissTransition {
-        // Bridge truth here: a settings dialog may have opened over the
-        // error between the cached flag's last event-driven update.
-        let screen = self.ownership.screen(is_resumed, false);
-        self.controller.on_dismissed(queue, screen)
+        self.controller
+            .on_dismissed(queue, self.screen(is_resumed, tick))
     }
 
     /// Activity suspend kills transient UI: release the gate and requeue
@@ -82,7 +87,7 @@ impl DialogCoordinator {
         is_resumed: bool,
         tick: TickMetrics,
     ) -> SettingsClosedTransition {
-        let screen = self.ownership.screen(is_resumed, tick.can_pause());
-        self.controller.on_settings_closed(queue, screen)
+        self.controller
+            .on_settings_closed(queue, self.screen(is_resumed, tick))
     }
 }

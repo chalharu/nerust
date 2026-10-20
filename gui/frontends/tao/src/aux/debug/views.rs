@@ -49,15 +49,11 @@ pub(super) struct ViewSnapshot {
 /// No widget code runs here; see `anchor()` for the anchor rule.
 pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     let language = bridge.language();
-    let nav = bridge.read().nav.clone();
-    let display = bridge.read().display.clone_without_images();
-    let bookmarks = bridge.read().bookmarks.clone();
-    let bm_input = bridge.read().bm_input.clone();
-    let watch = bridge.read().watch;
-    let freeze = bridge.read().freeze;
-    let freeze_input = bridge.read().freeze_input.clone();
-    let selected = bridge.read().selected;
-    let edit_input = bridge.read().edit_input.clone();
+    // One coherent pass: core fields clone under one guard, images
+    // ride the display `Arc` and clone lock-free below.
+    let view = bridge.view_snapshot();
+    let nav = view.nav;
+    let display = view.display;
     let pending = display.pending;
     let selected_name = bridge.selected_name();
     let regs = display.regs;
@@ -87,8 +83,8 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     } else {
         nav.dis_addr().unwrap_or(0)
     };
-    let reg_target = bridge.read().reg_target;
-    let reg_input = bridge.read().reg_input.clone();
+    let reg_target = view.reg_target;
+    let reg_input = view.reg_input;
     ViewSnapshot {
         language,
         mem_input,
@@ -96,14 +92,14 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
         follow_pc,
         back_len,
         anchor,
-        bookmarks,
-        bm_input,
-        watch,
+        bookmarks: view.bookmarks,
+        bm_input: view.bm_input,
+        watch: view.watch,
         watch_value,
-        freeze,
-        freeze_input,
-        selected,
-        edit_input,
+        freeze: view.freeze,
+        freeze_input: view.freeze_input,
+        selected: view.selected,
+        edit_input: view.edit_input,
         pending,
         selected_name,
         regs,

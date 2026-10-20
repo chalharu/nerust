@@ -1,7 +1,10 @@
 //! OSD sync decision: status gate, layer plan, and presenter.
 //! Pure decision procedure; frontends only rasterize the plan.
 
-use std::time::{Duration, Instant};
+use std::{
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use nerust_settings_core::model::language::AppLanguage;
 use nerust_settings_core::model::local::{
@@ -146,12 +149,12 @@ pub struct UiInsets {
     pub left: u32,
 }
 
-/// Raster-ready frame decided by [`OsdPresenter`]: rows plus the gated status text.
-/// Corners stay in settings vocabulary; the render adapter maps them at the boundary.
+/// Raster-ready frame decided by [`OsdPresenter`]: rows plus gated status text.
+/// Status shares the fingerprint pair: steady renders clone the `Rc`.
 #[derive(Debug, Clone)]
 pub struct OsdPlan {
     pub rows: Vec<OsdRow>,
-    pub status: Option<(String, String)>,
+    pub status: Option<(Rc<str>, Rc<str>)>,
     pub position: NotificationPosition,
     pub status_position: NotificationPosition,
     pub width: u32,
@@ -414,16 +417,18 @@ impl OsdPresenter {
         // Borrowed fingerprint: `Rc` clones share; rows reuse the buffer.
         let (label_value, position, status_position) = match self.last_status.as_ref() {
             Some(fingerprint) => (
-                Some((fingerprint.label.to_string(), fingerprint.value.to_string())),
+                Some((Rc::clone(&fingerprint.label), Rc::clone(&fingerprint.value))),
                 fingerprint.position,
                 fingerprint.status_position,
             ),
             None => (None, chrome.position, chrome.status_position),
         };
-        self.row_buffer.clear();
-        self.row_buffer.extend(state.rows().iter().cloned());
+        // Swap keeps the buffer capacity across renders; `take` would reset it to zero.
+        let mut rows = Vec::with_capacity(self.row_buffer.len());
+        std::mem::swap(&mut self.row_buffer, &mut rows);
+        rows.extend(state.rows().iter().cloned());
         OsdSync::Render(OsdPlan {
-            rows: std::mem::take(&mut self.row_buffer),
+            rows,
             status: label_value,
             position,
             status_position,
@@ -763,7 +768,7 @@ mod tests {
             other => panic!("expected render, got {other:?}"),
         };
         assert_eq!(
-            plan.status.as_ref().map(|(l, v)| (l.as_str(), v.as_str())),
+            plan.status.as_ref().map(|(l, v)| (l.as_ref(), v.as_ref())),
             Some(("", "60.0 fps"))
         );
         assert_eq!(plan.width, 960);
@@ -1035,7 +1040,7 @@ mod tests {
             other => panic!("expected render, got {other:?}"),
         };
         assert_eq!(
-            plan.status.as_ref().map(|(l, v)| (l.as_str(), v.as_str())),
+            plan.status.as_ref().map(|(l, v)| (l.as_ref(), v.as_ref())),
             Some(("", "61.0 fps"))
         );
     }

@@ -96,13 +96,14 @@ mod tests {
         ]);
         let resources = crate::NesFactory.create_split(&controllers).unwrap();
         assert_eq!(resources.field_map().len(), 16);
-        let buffer = (resources.new_buffer())();
-        assert!(buffer.downcast_ref::<NesInputBuffer>().is_some());
         assert!(
             resources
                 .probe_set(0, nerust_input_traits::InputValue::Digital(true))
                 .is_ok()
         );
+        let (_, factory) = resources.into_parts();
+        let buffer = factory();
+        assert!(buffer.downcast_ref::<NesInputBuffer>().is_some());
         let empty = ControllerCollection::new(vec![]);
         assert!(crate::NesFactory.create_split(&empty).is_err());
     }

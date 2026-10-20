@@ -143,15 +143,15 @@ fn configure_cartridge_peripherals(
         RumbleTarget::Controller => "controller",
     }
     .to_string();
-    bridge::call_on_activity(
+    bridge::post_to_activity(
         app,
         "configure Android cartridge peripherals",
         move |env, activity| {
             let target = env.new_string(&target)?;
-            env.call_method(
+            bridge::call_bridge_method(
+                env,
                 &activity,
-                jni::jni_str!("configureCartridgePeripherals"),
-                jni::jni_sig!("(ZZILjava/lang/String;)V"),
+                &bridge::methods::CONFIGURE_CARTRIDGE_PERIPHERALS,
                 &[
                     jni::objects::JValue::Bool(motion_enabled),
                     jni::objects::JValue::Bool(rumble_enabled),
@@ -161,21 +161,23 @@ fn configure_cartridge_peripherals(
             )?;
             Ok(())
         },
+        None,
     );
 }
 
 fn set_cartridge_rumble(app: &AndroidApp, intensity: u8) {
-    bridge::call_on_activity(
+    bridge::post_to_activity(
         app,
         "update Android cartridge rumble",
         move |env, activity| {
-            env.call_method(
+            bridge::call_bridge_method(
+                env,
                 &activity,
-                jni::jni_str!("setCartridgeRumble"),
-                jni::jni_sig!("(I)V"),
+                &bridge::methods::SET_CARTRIDGE_RUMBLE,
                 &[jni::objects::JValue::Int(i32::from(intensity))],
             )?;
             Ok(())
         },
+        None,
     );
 }

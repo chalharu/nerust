@@ -20,7 +20,6 @@ use nerust_core_traits::{
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_input_traits::{AttachmentId, DigitalControlId};
-use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, PixelFormat, VideoFrameFormat, VideoRenderProfile};
 
 pub(crate) mod images;
@@ -77,6 +76,71 @@ impl CorePersistenceError {
             Self::Core(message) => OperationError::Reply(message.clone()),
         })
     }
+
+    /// Typed slot failure for this error; single mapping point.
+    pub fn slot_failure(&self) -> SlotOpFailure {
+        state_fault_to_failure(self.fault())
+    }
+}
+
+/// Why a state-slot save/load did not execute.
+/// Lives beside [`StateFault`]: the single mapping below is the only adapter in the shell.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum SlotOpFailure {
+    /// No active slot (nothing saved yet, or no core loaded).
+    Empty,
+    /// The slot file does not exist.
+    Missing,
+    /// Storage/backend I/O failure (filesystem, Android SAF, ...).
+    Storage,
+    /// The slot archive or its payload does not decode.
+    Corrupt,
+    /// The core rejected the payload (foreign ROM, options or schema
+    /// mismatch, invalid state).
+    Incompatible,
+    /// Cannot operate (no states dir, no media identity, core export
+    /// or thread failure).
+    #[default]
+    Unavailable,
+}
+
+/// Single mapping from core faults into slot failures; the only such adapter in the shell.
+pub fn state_fault_to_failure(fault: StateFault) -> SlotOpFailure {
+    use SlotOpFailure as F;
+    match fault {
+        StateFault::Transport => F::Unavailable,
+        StateFault::Storage => F::Storage,
+        StateFault::Missing => F::Missing,
+        StateFault::Corrupt => F::Corrupt,
+        StateFault::Incompatible => F::Incompatible,
+        StateFault::Other(_) => F::Corrupt,
+    }
+}
+
+/// Persistence-facing view of the live core: slot bytes are stored verbatim.
+/// The caller resolves the envelope via [`StateExporter::resolve_format`].
+pub trait StateExporter {
+    /// Export raw core state bytes for slot storage.
+    fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure>;
+    /// Import raw core state bytes previously resolved by the caller.
+    fn import_state(&self, data: Vec<u8>) -> Result<(), SlotOpFailure>;
+    /// Preview pixels for the slot thumbnail, if a frame is available.
+    fn export_preview(&self) -> Option<nerust_persistence::thumbnail::ThumbnailSource>;
+    /// Identity the slot is filed under.
+    fn export_identity(&self) -> Option<SystemIdentity>;
+    /// Canonical media identity for slot filing; defaults to [`export_identity`](Self::export_identity).
+    fn canonical_media_identity(&self) -> Option<SystemIdentity> {
+        self.export_identity()
+    }
+    /// Export the battery-backed mapper save, if the core holds one.
+    fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure>;
+    /// Import a battery-backed mapper save from disk.
+    fn import_mapper(&self, bytes: Vec<u8>) -> Result<(), SlotOpFailure>;
+    /// Resolve a stored state blob to raw core bytes.
+    /// Default decodes the shell envelope; backends never call the free function directly.
+    fn resolve_format(&self, bytes: &[u8]) -> Vec<u8> {
+        crate::state::resolve_state_format(bytes)
+    }
 }
 
 /// Typed state fault end to end: transport vs storage vs undecodable vs rejected.
@@ -99,7 +163,8 @@ pub enum StateFault {
 
 impl StateFault {
     /// Single message classification; the only string matching in the shell.
-    pub fn from_message(message: &str) -> Self {
+    /// Typed protocol mapping enters via `From<OperationError>`; this stays crate-local.
+    pub(crate) fn from_message(message: &str) -> Self {
         let lower = message.to_lowercase();
         if lower.contains("mismatch")
             || lower.contains("unsupported")
@@ -150,6 +215,20 @@ impl From<CorePersistenceError> for StateFault {
     }
 }
 
+/// Shell-owned tick snapshot: one pass, no metrics lock.
+/// Replaces the positional `(fps, paused, loaded, frames)` tuple.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TickSnapshot {
+    /// Emulation frames per second.
+    pub fps: f32,
+    /// Core pause flag.
+    pub paused: bool,
+    /// ROM loaded flag.
+    pub loaded: bool,
+    /// Thread frame counter.
+    pub frames: u64,
+}
+
 /// Playback leg of the live core.
 pub trait LivePlayback {
     fn pause(&self) -> Result<(), OperationError>;
@@ -162,7 +241,11 @@ pub trait LivePlayback {
     ) -> Result<(), OperationError>;
     fn unload(&self) -> Result<(), OperationError>;
     fn metrics(&self) -> ConsoleMetrics;
-    fn tick_snapshot(&self) -> (f32, bool, bool, u64);
+    fn tick_snapshot(&self) -> TickSnapshot;
+    /// Lock-free pause flag: per-frame image gates read this instead of locking `metrics()`.
+    fn is_paused(&self) -> bool {
+        self.tick_snapshot().paused
+    }
 }
 
 /// Frame leg of the live core.
@@ -189,40 +272,52 @@ pub trait LiveAudioPort {
     ) -> Result<(), OperationError>;
 }
 
-/// Debug leg of the live core.
-pub trait LiveDebugPort {
+/// Narrow step leg of the debug port.
+pub trait LiveStepPort {
     fn step(&self, unit: StepUnit) -> Result<Result<u64, DebuggerError>, OperationError>;
+    /// Narrow send half for the async drain.
+    fn step_send(
+        &self,
+        unit: StepUnit,
+    ) -> Result<std::sync::mpsc::Receiver<Result<u64, DebuggerError>>, OperationError>;
+}
+
+/// Narrow inspect leg of the debug port.
+pub trait LiveInspectPort {
     fn inspect(
         &self,
         req: InspectRequest,
     ) -> Result<Result<InspectResult, InspectError>, OperationError>;
+    fn inspect_send(
+        &self,
+        req: InspectRequest,
+    ) -> Result<std::sync::mpsc::Receiver<Result<InspectResult, InspectError>>, OperationError>;
+}
+
+/// Narrow snapshot leg of the debug port.
+pub trait LiveSnapshotPort {
     fn debug_snapshot_batch(
         &self,
         req: SnapshotRequest,
     ) -> Result<Result<SnapshotResult, DebuggerError>, OperationError>;
-    fn memory_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError>;
-    fn output_channels(&self) -> Result<Vec<String>, OperationError>;
     fn debug_images(&self)
     -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError>;
+    fn memory_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError>;
+    fn output_channels(&self) -> Result<Vec<String>, OperationError>;
+    fn snapshot_batch_send(
+        &self,
+        req: SnapshotRequest,
+    ) -> Result<std::sync::mpsc::Receiver<Result<SnapshotResult, DebuggerError>>, OperationError>;
+}
+
+/// Narrow memory-write leg of the debug port.
+pub trait LiveMemoryPort {
     fn write_memory(&self, req: MemoryWrite) -> Result<Result<(), DebuggerError>, OperationError>;
     fn write_register(
         &self,
         name: &'static str,
         value: u64,
     ) -> Result<Result<(), DebuggerError>, OperationError>;
-    /// Narrow send halves for the async drain.
-    fn step_send(
-        &self,
-        unit: StepUnit,
-    ) -> Result<std::sync::mpsc::Receiver<Result<u64, DebuggerError>>, OperationError>;
-    fn inspect_send(
-        &self,
-        req: InspectRequest,
-    ) -> Result<std::sync::mpsc::Receiver<Result<InspectResult, InspectError>>, OperationError>;
-    fn snapshot_batch_send(
-        &self,
-        req: SnapshotRequest,
-    ) -> Result<std::sync::mpsc::Receiver<Result<SnapshotResult, DebuggerError>>, OperationError>;
     fn write_memory_send(
         &self,
         req: MemoryWrite,
@@ -232,6 +327,17 @@ pub trait LiveDebugPort {
         name: &'static str,
         value: u64,
     ) -> Result<std::sync::mpsc::Receiver<Result<(), DebuggerError>>, OperationError>;
+}
+
+/// Debug leg of the live core: union of the narrow step/inspect/snapshot/memory legs.
+pub trait LiveDebugPort:
+    LiveStepPort + LiveInspectPort + LiveSnapshotPort + LiveMemoryPort
+{
+}
+
+impl<T: LiveStepPort + LiveInspectPort + LiveSnapshotPort + LiveMemoryPort + ?Sized> LiveDebugPort
+    for T
+{
 }
 
 /// Persist leg of the live core: single port for slot bytes.
@@ -244,15 +350,72 @@ pub trait LivePersistPort {
     fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError>;
 }
 
-/// Full live core: all narrow legs plus the owned drain handle.
-pub trait LiveCore:
-    LivePlayback + LiveFramePort + LiveAudioPort + LiveDebugPort + LivePersistPort
-{
-    /// Owned handle for the async debug drain.
-    fn drain_handle(&self) -> EmuCore;
+/// Report from storing a fetched image decode: generation, pixels, and freshness.
+#[derive(Debug)]
+pub struct StoredImages {
+    /// Source generation of the stored decode.
+    pub generation: u64,
+    /// Stored pixels.
+    pub images: Vec<DebugImage>,
+    /// Whether the content changed (viewers skip re-deriving when false).
+    pub fresh: bool,
 }
 
-use self::images::CachedImages;
+/// Narrow image-cache leg of the live core: paused PPU-viewer cache.
+pub trait LiveImagePort {
+    fn mark_images_dirty(&self);
+    fn images_cache_lookup(&self) -> Option<(u64, std::sync::Arc<Vec<DebugImage>>)>;
+    fn images_send(
+        &self,
+    ) -> Result<std::sync::mpsc::Receiver<Result<Vec<DebugImage>, DebuggerError>>, OperationError>;
+    fn images_store(&self, images: Vec<DebugImage>) -> StoredImages;
+}
+
+/// Full live core: all narrow legs plus the owned drain handle.
+pub trait LiveCore:
+    LivePlayback + LiveFramePort + LiveAudioPort + LiveDebugPort + LivePersistPort + LiveImagePort
+{
+    /// Owned handle for the async debug drain.
+    fn drain_handle(&self) -> Box<dyn LiveCore>;
+    /// Persistence view of this core; object-safe upcast for boxed holders.
+    fn as_exporter(&self) -> &dyn StateExporter;
+}
+
+/// Cached system images for the debugger PPU viewer; viewers compare `generation`.
+/// Anything advancing or replacing memory marks dirty.
+#[derive(Debug, Clone)]
+pub(crate) struct CachedImages {
+    pub(crate) dirty: bool,
+    pub(crate) generation: u64,
+    pub(crate) images: std::sync::Arc<Vec<DebugImage>>,
+    /// Content hash and generation of the last served decode, for the
+    /// identical-content skip in [`EmuCore::images_store`].
+    pub(crate) served_hash: Option<u64>,
+    pub(crate) served_generation: u64,
+}
+
+/// FNV-1a content hash over decoded image bytes (dependency-free).
+fn hash_debug_images(images: &[DebugImage]) -> u64 {
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut hash = OFFSET;
+    let mut mix = |bytes: &[u8]| {
+        for &byte in bytes {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(PRIME);
+        }
+    };
+    for image in images {
+        mix(image.id.as_bytes());
+        mix(&image.width.to_le_bytes());
+        mix(&image.height.to_le_bytes());
+        for triple in &image.palette {
+            mix(triple);
+        }
+        mix(&image.pixels);
+    }
+    hash
+}
 
 /// Bound for debugger query round-trips; interactive drains never wait on it.
 /// It bounds only the blocking wrappers for tests, headless drivers, and non-drain callers.
@@ -299,9 +462,10 @@ impl EmuThreadPort for EmuThread {
     }
 }
 
-/// Clone shares transport, metrics, frame slot, and image cache; the framebuffer resets empty.
-impl Clone for EmuCore {
-    fn clone(&self) -> Self {
+/// Explicit shared-transport handle: same sharing as the old `Clone`, named.
+impl EmuCore {
+    /// Share transport, metrics, frame slot, and image cache; the framebuffer resets empty.
+    pub(crate) fn shallow_handle(&self) -> Self {
         Self {
             emu: Arc::clone(&self.emu),
             render_profile: self.render_profile.clone(),
@@ -315,6 +479,11 @@ impl Clone for EmuCore {
             tick_fps_bits: Arc::clone(&self.tick_fps_bits),
             image_cache: Arc::clone(&self.image_cache),
         }
+    }
+
+    /// Boxed drain handle behind the [`LiveCore`] port.
+    pub(crate) fn drain_handle_boxed(&self) -> Box<dyn LiveCore> {
+        Box::new(self.shallow_handle())
     }
 }
 
@@ -475,16 +644,19 @@ impl EmuCore {
             .store(metrics.emulation_fps.to_bits(), Ordering::Relaxed);
     }
 
+    /// Lock-free pause flag: stamped atomics, no mutex.
+    pub fn is_paused(&self) -> bool {
+        self.tick_paused.load(Ordering::Relaxed)
+    }
+
     /// Lock-free tick snapshot for per-frame passes: pure read.
-    pub fn tick_snapshot(&self) -> (f32, bool, bool, u64) {
-        let frames = self.emu.frame_count();
-        let fps = self.emu.fps();
-        (
-            fps,
-            self.tick_paused.load(Ordering::Relaxed),
-            self.tick_loaded.load(Ordering::Relaxed),
-            frames,
-        )
+    pub fn tick_snapshot(&self) -> TickSnapshot {
+        TickSnapshot {
+            fps: self.emu.fps(),
+            paused: self.tick_paused.load(Ordering::Relaxed),
+            loaded: self.tick_loaded.load(Ordering::Relaxed),
+            frames: self.emu.frame_count(),
+        }
     }
 
     pub fn set_volume(&self, volume: f32) -> Result<(), OperationError> {
@@ -499,12 +671,6 @@ impl EmuCore {
         self.emu
             .send(EmuCommand::RestartAudio)
             .map_err(|_| OperationError::WorkerUnavailable)
-    }
-
-    /// Shareable clone for the async debug drain: owns a clone and polls across UI ticks.
-    /// Shares pause truth and image generation through `Arc`s; the framebuffer stays empty.
-    pub(crate) fn drain_core(&self) -> EmuCore {
-        self.clone()
     }
 
     /// Live audio-backend swap. Blocks for the reply barrier; no pause,
@@ -1006,6 +1172,93 @@ impl EmuCore {
     }
 }
 
+impl EmuCore {
+    /// Mark cached system images stale; the next `debug_images` refetches and bumps generation.
+    pub(crate) fn mark_images_dirty(&self) {
+        if let Ok(mut cache) = self.image_cache.lock() {
+            cache.dirty = true;
+            cache.generation = cache.generation.wrapping_add(1);
+        }
+    }
+
+    /// On-demand system images through the emu thread, cached while paused.
+    /// Returns the source generation so viewers skip re-deriving known generations.
+    pub fn debug_images(
+        &self,
+    ) -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError> {
+        // A running core advances memory at any time: dirty first so the lookup below refetches.
+        // Atomic pause flag: no metrics lock on the image path.
+        if !self.is_paused() {
+            self.mark_images_dirty();
+        }
+        if let Some((generation, shared)) = self.images_cache_lookup() {
+            return Ok(Ok((generation, Vec::clone(&shared))));
+        }
+        let result = recv_debug_reply(self.images_send()?);
+        let images = match result {
+            Ok(Ok(images)) => images,
+            Ok(Err(error)) => return Ok(Err(error)),
+            Err(_) => return Err(OperationError::NoReply),
+        };
+        let stored = self.images_store(images);
+        Ok(Ok((stored.generation, stored.images)))
+    }
+
+    /// Paused-cache lookup for [`EmuCore::debug_images`]: a fresh hit skips the emu thread.
+    /// Pure query with no side effects; callers mark dirty explicitly when memory may advance.
+    pub(crate) fn images_cache_lookup(&self) -> Option<(u64, std::sync::Arc<Vec<DebugImage>>)> {
+        self.image_cache
+            .lock()
+            .ok()
+            .filter(|cache| !cache.dirty && !cache.images.is_empty())
+            .map(|cache| (cache.generation, std::sync::Arc::clone(&cache.images)))
+    }
+
+    /// Send half of the [`EmuCore::debug_images`] fetch: queues without
+    /// blocking so the async debug drain can poll on its own tick.
+    pub(crate) fn images_send(
+        &self,
+    ) -> Result<mpsc::Receiver<Result<Vec<DebugImage>, DebuggerError>>, OperationError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.emu
+            .send(EmuCommand::DebuggerImages { reply: reply_tx })
+            .map_err(|_| OperationError::WorkerUnavailable)?;
+        Ok(reply_rx)
+    }
+
+    /// Store a fetched decode and report freshness; a poisoned cache still serves.
+    /// Content-identical refetches report the *served* generation so viewers skip re-deriving.
+    pub(crate) fn images_store(&self, images: Vec<DebugImage>) -> StoredImages {
+        let hash = hash_debug_images(&images);
+        // One shared copy: the cache holds it, the report moves the input without re-cloning.
+        let shared = std::sync::Arc::new(images);
+        let mut cache = self.image_cache.lock().unwrap_or_else(|e| {
+            log::warn!("image cache mutex poisoned, recovering");
+            e.into_inner()
+        });
+        cache.images = std::sync::Arc::clone(&shared);
+        cache.dirty = false;
+        if cache.served_hash == Some(hash) {
+            // Identical content collapses the dirty bump back to the served generation.
+            // Same pixels, same generation: viewers skip re-deriving instead of flapping.
+            cache.generation = cache.served_generation;
+            StoredImages {
+                generation: cache.served_generation,
+                images: Vec::clone(&shared),
+                fresh: false,
+            }
+        } else {
+            cache.served_hash = Some(hash);
+            cache.served_generation = cache.generation;
+            StoredImages {
+                generation: cache.generation,
+                images: Vec::clone(&shared),
+                fresh: true,
+            }
+        }
+    }
+}
+
 impl LivePersistPort for EmuCore {
     fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError> {
         self.save_state_raw().map_err(op_to_persistence)
@@ -1063,8 +1316,12 @@ impl LivePlayback for EmuCore {
         self.metrics()
     }
 
-    fn tick_snapshot(&self) -> (f32, bool, bool, u64) {
+    fn tick_snapshot(&self) -> TickSnapshot {
         self.tick_snapshot()
+    }
+
+    fn is_paused(&self) -> bool {
+        self.is_paused()
     }
 }
 
@@ -1112,11 +1369,20 @@ impl LiveAudioPort for EmuCore {
     }
 }
 
-impl LiveDebugPort for EmuCore {
+impl LiveStepPort for EmuCore {
     fn step(&self, unit: StepUnit) -> Result<Result<u64, DebuggerError>, OperationError> {
         self.step(unit)
     }
 
+    fn step_send(
+        &self,
+        unit: StepUnit,
+    ) -> Result<mpsc::Receiver<Result<u64, DebuggerError>>, OperationError> {
+        self.step_send(unit)
+    }
+}
+
+impl LiveInspectPort for EmuCore {
     fn inspect(
         &self,
         req: InspectRequest,
@@ -1124,11 +1390,26 @@ impl LiveDebugPort for EmuCore {
         self.inspect(req)
     }
 
+    fn inspect_send(
+        &self,
+        req: InspectRequest,
+    ) -> Result<mpsc::Receiver<Result<InspectResult, InspectError>>, OperationError> {
+        self.inspect_send(req)
+    }
+}
+
+impl LiveSnapshotPort for EmuCore {
     fn debug_snapshot_batch(
         &self,
         req: SnapshotRequest,
     ) -> Result<Result<SnapshotResult, DebuggerError>, OperationError> {
         self.debug_snapshot_batch(req)
+    }
+
+    fn debug_images(
+        &self,
+    ) -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError> {
+        self.debug_images()
     }
 
     fn memory_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError> {
@@ -1139,12 +1420,15 @@ impl LiveDebugPort for EmuCore {
         self.output_channels()
     }
 
-    fn debug_images(
+    fn snapshot_batch_send(
         &self,
-    ) -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError> {
-        self.debug_images()
+        req: SnapshotRequest,
+    ) -> Result<mpsc::Receiver<Result<SnapshotResult, DebuggerError>>, OperationError> {
+        self.snapshot_batch_send(req)
     }
+}
 
+impl LiveMemoryPort for EmuCore {
     fn write_memory(
         &self,
         req: nerust_core_traits::debugger::MemoryWrite,
@@ -1158,27 +1442,6 @@ impl LiveDebugPort for EmuCore {
         value: u64,
     ) -> Result<Result<(), nerust_core_traits::debugger::DebuggerError>, OperationError> {
         self.write_register(name, value)
-    }
-
-    fn step_send(
-        &self,
-        unit: StepUnit,
-    ) -> Result<mpsc::Receiver<Result<u64, DebuggerError>>, OperationError> {
-        self.step_send(unit)
-    }
-
-    fn inspect_send(
-        &self,
-        req: InspectRequest,
-    ) -> Result<mpsc::Receiver<Result<InspectResult, InspectError>>, OperationError> {
-        self.inspect_send(req)
-    }
-
-    fn snapshot_batch_send(
-        &self,
-        req: SnapshotRequest,
-    ) -> Result<mpsc::Receiver<Result<SnapshotResult, DebuggerError>>, OperationError> {
-        self.snapshot_batch_send(req)
     }
 
     fn write_memory_send(
@@ -1197,9 +1460,68 @@ impl LiveDebugPort for EmuCore {
     }
 }
 
+impl crate::emu_core::LiveImagePort for EmuCore {
+    fn mark_images_dirty(&self) {
+        self.mark_images_dirty()
+    }
+
+    fn images_cache_lookup(&self) -> Option<(u64, std::sync::Arc<Vec<DebugImage>>)> {
+        self.images_cache_lookup()
+    }
+
+    fn images_send(
+        &self,
+    ) -> Result<std::sync::mpsc::Receiver<Result<Vec<DebugImage>, DebuggerError>>, OperationError>
+    {
+        self.images_send()
+    }
+
+    fn images_store(&self, images: Vec<DebugImage>) -> StoredImages {
+        self.images_store(images)
+    }
+}
+
 impl LiveCore for EmuCore {
-    fn drain_handle(&self) -> EmuCore {
-        self.drain_core()
+    fn drain_handle(&self) -> Box<dyn LiveCore> {
+        self.drain_handle_boxed()
+    }
+
+    fn as_exporter(&self) -> &dyn StateExporter {
+        self
+    }
+}
+
+/// Session-side adapter: narrow persist port plus fault mapping.
+/// Lives here so `session::error` never imports the core.
+impl StateExporter for EmuCore {
+    fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
+        LivePersistPort::save_state_raw(self).map_err(|error| error.slot_failure())
+    }
+
+    fn import_state(&self, data: Vec<u8>) -> Result<(), SlotOpFailure> {
+        LivePersistPort::load_state_raw(self, data).map_err(|error| error.slot_failure())
+    }
+
+    fn export_preview(&self) -> Option<nerust_persistence::thumbnail::ThumbnailSource> {
+        LivePersistPort::generate_preview(self).map(|frame| {
+            nerust_persistence::thumbnail::ThumbnailSource {
+                width: frame.width,
+                height: frame.height,
+                rgba: frame.rgba,
+            }
+        })
+    }
+
+    fn export_identity(&self) -> Option<SystemIdentity> {
+        LivePersistPort::canonical_media_identity(self)
+    }
+
+    fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
+        LivePersistPort::save_mapper_raw(self).map_err(|error| error.slot_failure())
+    }
+
+    fn import_mapper(&self, bytes: Vec<u8>) -> Result<(), SlotOpFailure> {
+        LivePersistPort::load_mapper_raw(self, bytes).map_err(|error| error.slot_failure())
     }
 }
 
@@ -1208,13 +1530,6 @@ fn op_to_persistence(e: OperationError) -> CorePersistenceError {
         OperationError::WorkerUnavailable => CorePersistenceError::WorkerUnavailable,
         OperationError::NoReply => CorePersistenceError::NoReply,
         OperationError::Reply(s) => CorePersistenceError::Core(s),
-    }
-}
-
-/// Core export failures surface through `PersistenceError` so flush callers propagate with `?`.
-impl From<CorePersistenceError> for PersistenceError {
-    fn from(error: CorePersistenceError) -> Self {
-        PersistenceError::Export(error.to_string())
     }
 }
 
@@ -1500,7 +1815,7 @@ mod tests {
 
 #[cfg(test)]
 mod port_tests {
-    use super::{LiveAudioPort, LiveDebugPort, LiveFramePort, LivePersistPort, LivePlayback};
+    use super::{LiveAudioPort, LiveFramePort, LivePersistPort, LivePlayback, LiveSnapshotPort};
     use crate::emu_core::*;
     use crate::test_helpers::build_test_core_parts;
     use nerust_core_traits::factory::load::MediaObject;
@@ -1519,16 +1834,63 @@ mod port_tests {
         LivePlayback::resume(&core).expect("resume");
         LivePlayback::reset(&core).expect("reset");
         let _ = LivePlayback::metrics(&core);
-        let (fps, paused, loaded, _) = LivePlayback::tick_snapshot(&core);
-        assert!((fps, paused, loaded) != (0.0, false, false) || true);
+        let snapshot = LivePlayback::tick_snapshot(&core);
+        assert!((snapshot.fps, snapshot.paused, snapshot.loaded) != (0.0, false, false) || true);
         let _ = LiveFramePort::render_profile(&core);
         let _ = LiveFramePort::frame_buffer(&core);
         LiveAudioPort::set_volume(&core, 0.5).expect("volume");
         LiveAudioPort::restart_audio(&core).expect("restart");
-        assert!(LiveDebugPort::memory_spaces(&core).is_ok());
-        assert!(LiveDebugPort::output_channels(&core).is_ok());
+        assert!(LiveSnapshotPort::memory_spaces(&core).is_ok());
+        assert!(LiveSnapshotPort::output_channels(&core).is_ok());
         assert!(LivePersistPort::save_state_raw(&core).is_ok());
         assert!(LivePersistPort::save_mapper_raw(&core).is_ok());
+    }
+
+    #[test]
+    fn shallow_handle_shares_transport_with_empty_framebuffer() {
+        let core = loaded_core();
+        // Old `Clone` vs new explicit handle: same sharing, named constructor.
+        let handle = core.shallow_handle();
+        assert_eq!(
+            LivePlayback::tick_snapshot(&handle).frames,
+            LivePlayback::tick_snapshot(&core).frames,
+            "drain handle shares the frame counter"
+        );
+        assert_eq!(
+            handle.frame_buffer().width(),
+            0,
+            "handle framebuffer stays empty"
+        );
+        // Boxed drain handle behind the port shares too.
+        let boxed = LiveCore::drain_handle(&core);
+        assert!(LivePlayback::metrics(&*boxed).loaded);
+        assert!(boxed.as_exporter().export_identity().is_some());
+    }
+
+    #[test]
+    fn is_paused_reads_atomic_without_metrics_lock() {
+        let core = loaded_core();
+        assert!(!LivePlayback::is_paused(&core));
+        LivePlayback::pause(&core).expect("pause");
+        assert!(LivePlayback::is_paused(&core));
+        assert!(core.is_paused());
+    }
+
+    #[test]
+    fn live_image_batch_names_tuple_fields() {
+        use crate::emu_core::images::{LiveImage, LiveImageBatch};
+        let image = LiveImage::from(("tiles".to_string(), 2u32, 1u32, vec![9u8]));
+        assert_eq!(
+            (image.label.as_str(), image.width, image.height),
+            ("tiles", 2, 1)
+        );
+        assert_eq!(image.rgba, vec![9u8]);
+        let batch = LiveImageBatch {
+            generation: 7,
+            images: vec![image],
+        };
+        assert_eq!(batch.generation, 7);
+        assert_eq!(batch.images.len(), 1);
     }
 
     #[test]
@@ -1536,7 +1898,7 @@ mod port_tests {
         let core = loaded_core();
         let first = core.tick_snapshot();
         let second = core.tick_snapshot();
-        assert_eq!((first.1, first.2), (second.1, second.2));
+        assert_eq!((first.paused, first.loaded), (second.paused, second.loaded));
     }
 
     #[test]
@@ -1559,7 +1921,7 @@ mod port_tests {
 #[cfg(test)]
 mod narrow_tests {
     use super::*;
-    use super::{LiveAudioPort, LiveDebugPort, LiveFramePort, LivePersistPort, LivePlayback};
+    use super::{LiveAudioPort, LiveFramePort, LivePersistPort, LivePlayback};
 
     /// Static bound check: the core implements every narrow leg.
     #[test]
@@ -1578,6 +1940,16 @@ mod fault_tests {
 
     #[test]
     fn fault_maps_messages_to_typed_kinds() {
+        // Typed arms never sniff strings: transport maps without touching the message.
+        assert_eq!(
+            StateFault::from(OperationError::WorkerUnavailable),
+            StateFault::Transport
+        );
+        assert_eq!(
+            StateFault::from(CorePersistenceError::NoReply),
+            StateFault::Transport
+        );
+        // Boundary decode only: the single crate-local classifier for reply strings.
         assert_eq!(
             StateFault::from_message("ROM identity mismatch"),
             StateFault::Incompatible
@@ -1666,6 +2038,35 @@ mod fault_tests {
             StateFault::Corrupt
         );
         assert!(!CorePersistenceError::NoReply.to_string().is_empty());
+    }
+
+    #[test]
+    fn slot_failure_maps_every_arm_once() {
+        use SlotOpFailure as F;
+        for (fault, failure) in [
+            (StateFault::Transport, F::Unavailable),
+            (StateFault::Storage, F::Storage),
+            (StateFault::Missing, F::Missing),
+            (StateFault::Corrupt, F::Corrupt),
+            (StateFault::Incompatible, F::Incompatible),
+            (StateFault::Other("x".into()), F::Corrupt),
+        ] {
+            assert_eq!(state_fault_to_failure(fault), failure);
+        }
+    }
+
+    #[test]
+    fn core_error_shim_matches_fault() {
+        use SlotOpFailure as F;
+        assert_eq!(
+            CorePersistenceError::WorkerUnavailable.slot_failure(),
+            F::Unavailable
+        );
+        assert_eq!(CorePersistenceError::NoReply.slot_failure(), F::Unavailable);
+        assert_eq!(
+            CorePersistenceError::Core("slot file not found".into()).slot_failure(),
+            F::Missing
+        );
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! Narrow session services: each owns one domain behind a trait.
 //! SessionHandle delegates; callers depend on these traits.
 
-use super::{EmuCore, SessionError, SessionHandle};
+use super::{SessionError, SessionHandle};
+use crate::emu_core::LiveCore;
 
 /// Input domain: assignments and key maps.
 pub trait InputService {
@@ -12,13 +13,14 @@ pub trait InputService {
 }
 
 /// Live-core domain: single typed access, mapped once at the boundary.
+/// Callers depend on the port, never the concrete core.
 pub trait EmuService {
     /// Shared live core; `NoCore` maps once at the boundary.
-    fn require_live(&self) -> Result<&EmuCore, SessionError>;
+    fn require_live(&self) -> Result<&dyn LiveCore, SessionError>;
     /// Exclusive live core for swaps.
-    fn require_live_mut(&mut self) -> Result<&mut EmuCore, SessionError>;
+    fn require_live_mut(&mut self) -> Result<&mut Box<dyn LiveCore>, SessionError>;
     /// Run one closure against the live core.
-    fn with_live<R>(&self, f: impl FnOnce(&EmuCore) -> R) -> Result<R, SessionError>;
+    fn with_live<R>(&self, f: impl FnOnce(&dyn LiveCore) -> R) -> Result<R, SessionError>;
 }
 
 /// Media domain: loaded media plus persistence.
@@ -54,15 +56,15 @@ impl InputService for SessionHandle {
 }
 
 impl EmuService for SessionHandle {
-    fn require_live(&self) -> Result<&EmuCore, SessionError> {
+    fn require_live(&self) -> Result<&dyn LiveCore, SessionError> {
         self.emu.require_live()
     }
 
-    fn require_live_mut(&mut self) -> Result<&mut EmuCore, SessionError> {
+    fn require_live_mut(&mut self) -> Result<&mut Box<dyn LiveCore>, SessionError> {
         self.emu.require_live_mut()
     }
 
-    fn with_live<R>(&self, f: impl FnOnce(&EmuCore) -> R) -> Result<R, SessionError> {
+    fn with_live<R>(&self, f: impl FnOnce(&dyn LiveCore) -> R) -> Result<R, SessionError> {
         self.emu.require_live().map(f)
     }
 }

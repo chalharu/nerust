@@ -2,10 +2,73 @@ pub mod descriptors;
 
 use std::collections::BTreeMap;
 
+use crate::model::input::KeyboardProfile;
 use crate::model::shared::DesktopSharedSettings;
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::InputTopologyDescriptor;
 use nerust_keyboard::Key;
+
+/// Precomputed (attachment, control) → key lookup for one profile.
+/// Build once per pass; repeated validations reuse it instead of re-indexing.
+#[derive(Debug, Default)]
+pub struct BindingIndex<'a> {
+    map: std::collections::HashMap<(&'a str, &'a str), Key>,
+}
+
+impl<'a> BindingIndex<'a> {
+    /// Index one profile's bindings; duplicate pairs keep the first key.
+    pub fn for_profile(profile: &'a KeyboardProfile) -> Self {
+        let mut map = std::collections::HashMap::with_capacity(profile.bindings.len());
+        for binding in &profile.bindings {
+            map.entry((binding.attachment.as_str(), binding.control.as_str()))
+                .or_insert(binding.key);
+        }
+        Self { map }
+    }
+
+    /// Probe one descriptor pair in O(1).
+    pub fn key_for(&self, attachment: &str, control: &str) -> Option<Key> {
+        self.map.get(&(attachment, control)).copied()
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
+
+/// Key conflicts with a precomputed profile index; same result as [`conflicting_keys`].
+pub fn conflicting_keys_indexed(
+    settings: &DesktopSharedSettings,
+    topology: &InputTopologyDescriptor,
+    system: &dyn SystemId,
+    index: &BindingIndex<'_>,
+) -> BTreeMap<Key, Vec<String>> {
+    let mut by_key = BTreeMap::<Key, Vec<(&'static str, &'static str)>>::new();
+
+    if settings
+        .input
+        .systems
+        .get(system)
+        .and_then(|s| s.implicit_keyboard_profile())
+        .is_some()
+    {
+        for descriptor in descriptors::keyboard_binding_descriptors(topology, system) {
+            let query = (descriptor.attachment.as_str(), descriptor.control.as_str());
+            if let Some(key) = index.key_for(query.0, query.1) {
+                by_key
+                    .entry(key)
+                    .or_default()
+                    .push((descriptor.attachment_label, descriptor.control_label));
+            }
+        }
+    }
+
+    collect_shortcut_conflicts(settings, by_key)
+}
 
 /// Find key binding conflicts within a single system. Only the implicit keyboard profile is
 /// checked; same-key shortcut conflicts included. Bindings are indexed once (attachment, control) → key, so the descriptor walk probes O(1) instead of scanning per descriptor; labels stay interned `&'static str` pairs until the final materialization (no `format!`).
@@ -14,32 +77,21 @@ pub fn conflicting_keys(
     topology: &InputTopologyDescriptor,
     system: &dyn SystemId,
 ) -> BTreeMap<Key, Vec<String>> {
-    use std::collections::HashMap;
-
-    let mut by_key = BTreeMap::<Key, Vec<(&'static str, &'static str)>>::new();
-
-    if let Some(profile) = settings
+    let index = settings
         .input
         .systems
         .get(system)
         .and_then(|s| s.implicit_keyboard_profile())
-    {
-        let mut index = HashMap::<(&str, &str), Key>::with_capacity(profile.bindings.len());
-        for binding in &profile.bindings {
-            index
-                .entry((binding.attachment.as_str(), binding.control.as_str()))
-                .or_insert(binding.key);
-        }
-        for descriptor in descriptors::keyboard_binding_descriptors(topology, system) {
-            let query = (descriptor.attachment.as_str(), descriptor.control.as_str());
-            if let Some(key) = index.get(&query) {
-                by_key
-                    .entry(*key)
-                    .or_default()
-                    .push((descriptor.attachment_label, descriptor.control_label));
-            }
-        }
-    }
+        .map(BindingIndex::for_profile)
+        .unwrap_or_default();
+    conflicting_keys_indexed(settings, topology, system, &index)
+}
+
+fn collect_shortcut_conflicts(
+    settings: &DesktopSharedSettings,
+    mut by_key: BTreeMap<Key, Vec<(&'static str, &'static str)>>,
+) -> BTreeMap<Key, Vec<String>> {
+    use std::collections::HashMap;
 
     let mut shortcut_keys = HashMap::with_capacity(settings.input.shortcuts.keyboard.len());
     for binding in &settings.input.shortcuts.keyboard {
@@ -224,5 +276,42 @@ mod tests {
             "{labels:?}"
         );
         assert!(labels.contains(&"Reset".to_string()), "{labels:?}");
+    }
+
+    #[test]
+    fn precomputed_index_matches_fresh_scan_and_reuses() {
+        use super::{BindingIndex, conflicting_keys_indexed};
+        let mut settings = DesktopSharedSettings::default();
+        let mut sys = SystemInputSettings::default();
+        let profile = sys.implicit_keyboard_profile_mut();
+        profile.bindings.push(KeyboardBinding::new(
+            TEST_ATT.to_string(),
+            PersistedControlId::digital("test.ctrl.a".to_string()),
+            Key::KeyZ,
+        ));
+        profile.bindings.push(KeyboardBinding::new(
+            TEST_ATT.to_string(),
+            PersistedControlId::digital("test.ctrl.b".to_string()),
+            Key::KeyZ,
+        ));
+        let snapshot = sys.implicit_keyboard_profile().expect("profile").clone();
+        settings.input.systems.insert(Box::new(TestSysId), sys);
+        let topology = single_port_topology();
+        let fresh = conflicting_keys(&settings, &topology, &TestSysId);
+        assert!(fresh.contains_key(&Key::KeyZ));
+        // One index build, probed across repeated validations.
+        let index = BindingIndex::for_profile(&snapshot);
+        assert_eq!(index.len(), 2);
+        assert!(!index.is_empty());
+        assert_eq!(index.key_for("test.att", "test.ctrl.a"), Some(Key::KeyZ));
+        assert_eq!(index.key_for("test.att", "missing"), None);
+        assert_eq!(
+            conflicting_keys_indexed(&settings, &topology, &TestSysId, &index),
+            fresh
+        );
+        assert_eq!(
+            conflicting_keys_indexed(&settings, &topology, &TestSysId, &index),
+            fresh
+        );
     }
 }

@@ -13,7 +13,9 @@ use nerust_glwrap::{
         viewport,
     },
 };
-use nerust_render_traits::renderer::{BoundedUploadPolicy, OsdLayer, OsdUploadPolicy, StagingBuf};
+use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
+
+use crate::upload::{BoundedUploadPolicy, StagingBuf};
 
 use crate::error::ViewError;
 use crate::frame_textures::use_texture;
@@ -208,7 +210,7 @@ pub(crate) struct OsdView {
     pub(crate) osd_size: (i32, i32),
     pub(crate) osd_prev: Option<(i32, i32, i32, i32)>,
     pub(crate) osd_dirty: bool,
-    /// Bounded retry for the staged layer (shared `BoundedUploadPolicy`).
+    /// Bounded retry for the staged layer (impl-owned `BoundedUploadPolicy`).
     pub(crate) osd_retry: Box<dyn OsdUploadPolicy>,
     pub(crate) osd_shader: Option<Shader>,
     pub(crate) osd_layer: Option<OsdLayer>,
@@ -678,7 +680,7 @@ mod tests {
 
     #[test]
     fn retry_budget_uses_single_shared_policy() {
-        use nerust_render_traits::renderer::BoundedUploadPolicy;
+        use crate::upload::BoundedUploadPolicy;
         // Rebuilt shared budget: two failures then drop.
         let mut view = staged_view();
         view.set_osd_policy(Box::new(BoundedUploadPolicy::new(3)));

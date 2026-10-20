@@ -204,10 +204,12 @@ impl TransientQueue {
     /// Reports where the merge landed for dirty gating.
     fn merge_consecutive(&mut self, item: &OsdItem) -> Option<MergeTarget> {
         if !self.pending.is_empty() {
-            let matches = self
-                .pending
-                .back()
-                .is_some_and(|back| back.level == item.level && back.message == item.message);
+            // Key comparison first: equal keys skip the O(n) message walk.
+            let matches = self.pending.back().is_some_and(|back| {
+                back.level == item.level
+                    && back.message.coalescing_key() == item.message.coalescing_key()
+                    && back.message == item.message
+            });
             if !matches {
                 return None;
             }
@@ -218,7 +220,10 @@ impl TransientQueue {
             return Some(MergeTarget::Queued);
         }
         let current = self.current.as_mut()?;
-        if current.level != item.level || current.message != item.message {
+        if current.level != item.level
+            || current.message.coalescing_key() != item.message.coalescing_key()
+            || current.message != item.message
+        {
             return None;
         }
         current.count += item.count;

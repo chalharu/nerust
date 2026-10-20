@@ -1,18 +1,17 @@
 pub mod access;
 pub(crate) mod command_exec;
 pub mod commands;
-pub mod debug_ops;
-pub(crate) mod debug_snapshot;
+pub(crate) mod debug_ops;
 pub mod error;
 pub mod fs;
 pub mod input;
 pub(crate) mod input_map;
 pub mod lifecycle;
-pub mod lifecycle_persist;
+pub(crate) mod lifecycle_persist;
 pub mod load_adapter;
 pub mod notification;
 pub mod osd;
-pub mod osd_history;
+pub(crate) mod osd_history;
 pub(crate) mod osd_modal;
 pub(crate) mod osd_presenter;
 pub(crate) mod osd_render;
@@ -25,7 +24,7 @@ pub mod ports;
 pub mod services;
 pub mod session_query;
 pub(crate) mod settings_apply;
-pub mod title;
+pub(crate) mod title;
 
 use std::{
     collections::HashMap,
@@ -40,7 +39,6 @@ use nerust_core_traits::{
         load::{DynSystemLoadOptions, MediaObject},
     },
     identity::SystemId,
-    touch::TouchOverlayModel,
 };
 use nerust_emu_thread::OperationError;
 use nerust_gui_runtime::settings::{
@@ -114,13 +112,26 @@ struct InputDept {
     pressed_keys: std::collections::HashSet<Key>,
     /// Last served touch overlay, keyed by the caller revision.
     /// A repeat revision always means identical controls.
-    touch_cache: Option<crate::session::input::TouchCache>,
-    /// Empty overlay served if the cache write is ever lost. Keeps the
-    /// cached accessor infallible without an `expect` on the hot path.
-    fallback_model: TouchOverlayModel,
+    touch_cache: TouchCache,
 }
 
 impl InputDept {
+    /// Department constructor: the facade builds departments, never bare field lists.
+    fn new(
+        current_assignments: InputAssignments,
+        field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
+        host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
+    ) -> Self {
+        Self {
+            current_assignments,
+            field_map,
+            host_peripherals,
+            key_field_map: HashMap::new(),
+            pressed_keys: std::collections::HashSet::new(),
+            touch_cache: Default::default(),
+        }
+    }
+
     /// Rebuild the keyboard reverse map from the implicit profile.
     /// Takes only the bindings it reads; never reaches into settings or the registry.
     pub(crate) fn rebuild_key_field_map(
@@ -161,11 +172,28 @@ impl InputDept {
     }
 }
 
+/// Cached touch overlay: served model plus the revision it was built for.
+/// `None` before the first call; no empty-fallback pair.
+#[derive(Debug, Default)]
+pub(crate) struct TouchCache {
+    pub(crate) rev: Option<u64>,
+    pub(crate) model: nerust_core_traits::touch::TouchOverlayModel,
+}
+
 /// Settings cluster: manager plus its snapshot. Single owner for the
 /// settings domain.
 struct SettingsCluster {
     manager: SettingsManager,
     snapshot: SettingsSnapshot,
+}
+
+impl SettingsCluster {
+    /// Department constructor: the facade builds departments, never bare field lists.
+    fn load(registry: &SystemRegistry, use_persistent: bool, paths: Option<SettingsPaths>) -> Self {
+        let (manager, snapshot) =
+            SessionHandle::init_settings_manager(registry, use_persistent, paths);
+        Self { manager, snapshot }
+    }
 }
 
 /// Media department: loaded media plus persistence. Single owner
@@ -176,6 +204,14 @@ struct MediaDept {
 }
 
 impl MediaDept {
+    /// Department constructor: the facade builds departments, never bare field lists.
+    fn new() -> Self {
+        Self {
+            loaded: None,
+            persistence: PersistenceManager::new(),
+        }
+    }
+
     fn set_loaded(&mut self, loaded: Option<LoadedMedia>) {
         self.loaded = loaded;
     }
@@ -189,7 +225,7 @@ impl MediaDept {
 /// Live emulation objects: the core plus its GUI input adapter.
 /// Everything touching the running core goes through these typed methods.
 struct EmuCluster {
-    core: Option<EmuCore>,
+    core: Option<Box<dyn LiveCore>>,
     input: Option<Box<dyn nerust_core_traits::factory::GuiInputPort>>,
 }
 
@@ -201,37 +237,47 @@ impl EmuCluster {
         }
     }
 
-    /// Single typed access: shared live core.
-    pub(crate) fn require_live(&self) -> Result<&EmuCore, SessionError> {
-        self.core.as_ref().ok_or(SessionError::NoCore)
+    /// Single typed access: shared live core behind the port.
+    pub(crate) fn require_live(&self) -> Result<&dyn LiveCore, SessionError> {
+        self.core.as_deref().ok_or(SessionError::NoCore)
     }
 
-    /// Single typed access: exclusive live core.
-    pub(crate) fn require_live_mut(&mut self) -> Result<&mut EmuCore, SessionError> {
+    /// Single typed access: exclusive live core behind the port.
+    /// Returns the box so the borrow stays concrete; callers deref to the port.
+    pub(crate) fn require_live_mut(&mut self) -> Result<&mut Box<dyn LiveCore>, SessionError> {
         self.core.as_mut().ok_or(SessionError::NoCore)
     }
 
     /// Shared live core behind the [`LiveCore`](crate::emu_core::LiveCore) port.
     pub(crate) fn core(&self) -> Result<&dyn LiveCore, SessionError> {
-        self.require_live().map(|core| core as &dyn LiveCore)
+        self.require_live()
     }
 
     /// Exclusive live core for swaps and rebuilds.
-    pub(crate) fn core_mut(&mut self) -> Result<&mut dyn LiveCore, SessionError> {
+    pub(crate) fn core_mut(&mut self) -> Result<&mut Box<dyn LiveCore>, SessionError> {
         self.require_live_mut()
-            .map(|core| core as &mut dyn LiveCore)
+    }
+
+    /// Shared live core, mapping absence once to the slot `Empty` fault.
+    /// Save/load paths use this so `NoCore` never fans out at call sites.
+    pub(crate) fn live_or_empty(
+        &self,
+    ) -> Result<&dyn LiveCore, crate::session::error::SlotOpFailure> {
+        self.core
+            .as_deref()
+            .ok_or(crate::session::error::SlotOpFailure::Empty)
     }
 
     /// Persistence port of the live core.
     pub(crate) fn exporter(&self) -> Result<&dyn StateExporter, SessionError> {
-        self.require_live().map(|core| core as &dyn StateExporter)
+        self.require_live().map(|core| core.as_exporter())
     }
 
     /// Paired install: core and input always arrive together from the
     /// factory, so they are never half-present.
     fn install(
         &mut self,
-        core: EmuCore,
+        core: Box<dyn LiveCore>,
         input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
     ) {
         self.core = Some(core);
@@ -404,8 +450,8 @@ impl SessionHandle {
         use_persistent: bool,
         paths: Option<SettingsPaths>,
     ) -> Result<Self, SessionError> {
-        let (settings, settings_snapshot) =
-            Self::init_settings_manager(&registry, use_persistent, paths);
+        let settings = SettingsCluster::load(&registry, use_persistent, paths);
+        let settings_snapshot = settings.snapshot.clone();
         let factory = active_system_id
             .as_ref()
             .and_then(|id| registry.find_by_id(id.as_ref()))
@@ -438,30 +484,13 @@ impl SessionHandle {
             )
         };
         let mut result = Self {
-            input: InputDept {
-                current_assignments: assignments,
-                field_map,
-                host_peripherals,
-                key_field_map: HashMap::new(),
-                pressed_keys: std::collections::HashSet::new(),
-                touch_cache: None,
-                fallback_model: TouchOverlayModel {
-                    revision: 0,
-                    controls: Vec::new(),
-                },
-            },
+            input: InputDept::new(assignments, field_map, host_peripherals),
             emu: EmuCluster::new(),
             registry,
             active_system_id,
             capabilities,
-            settings: SettingsCluster {
-                manager: settings,
-                snapshot: settings_snapshot,
-            },
-            media: MediaDept {
-                loaded: None,
-                persistence: PersistenceManager::new(),
-            },
+            settings,
+            media: MediaDept::new(),
             audio_registry,
             debug_txn: Arc::new(Mutex::new(debug_vm::WriteTransaction::Empty)),
             notifications: notification::NotificationCenter::new(),
@@ -469,7 +498,7 @@ impl SessionHandle {
             history_view: session_query::HistoryView::new(),
         };
         if let (Some(core), Some(input)) = (emu_core, gui_input) {
-            result.emu.install(core, input);
+            result.emu.install(Box::new(core), input);
         }
         result.rebuild_key_field_map();
         Ok(result)
@@ -578,16 +607,6 @@ impl SessionHandle {
         &self.input.current_assignments
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_test_assignments(&mut self, assignments: InputAssignments) {
-        self.input.current_assignments = assignments;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn loaded_media_ref(&self) -> &Option<LoadedMedia> {
-        &self.media.loaded
-    }
-
     /// Infra escape hatch: full settings manager; new code uses narrow readers and writers.
     /// Kept as a shim: removing it breaks out-of-crate frontends.
     pub fn settings_manager(&self) -> &SettingsManager {
@@ -613,16 +632,6 @@ impl SessionHandle {
             autosave: autosave_backend,
             mapper: mapper_backend,
         });
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_settings(&mut self, settings: SettingsManager) {
-        self.settings.manager = settings;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_settings_snapshot(&mut self, snapshot: SettingsSnapshot) {
-        self.settings.snapshot = snapshot;
     }
 
     /// Port for building live speakers: session code depends on this seam, never the registry.
@@ -732,8 +741,21 @@ pub enum SessionError {
     Persistence(#[from] PersistenceError),
     #[error("factory: {0}")]
     Factory(#[from] FactoryError),
+    /// Typed slot fault; renders once at the notification boundary via `SlotOpFailure::text`.
+    #[error("slot operation failed: {0:?}")]
+    Slot(crate::session::error::SlotOpFailure),
+    /// Typed mapper-flush fault; the `fault` field keeps the typed source.
+    #[error(transparent)]
+    MapperFlush(#[from] crate::session::persistence::MapperFlushError),
     #[error("no emulation core active")]
     NoCore,
+}
+
+impl From<crate::session::error::SlotOpFailure> for SessionError {
+    /// Typed slot fault into the session error; renders once at the notification boundary.
+    fn from(fault: crate::session::error::SlotOpFailure) -> Self {
+        Self::Slot(fault)
+    }
 }
 
 use crate::load::SystemActivationError;
@@ -772,8 +794,10 @@ impl SessionHandle {
 
         self.active_system_id = Some(system_id.clone_box());
         self.input.current_assignments = created.applied_assignments;
-        self.emu
-            .install(created.runtime.emu_core, created.runtime.gui_input);
+        self.emu.install(
+            Box::new(created.runtime.emu_core),
+            created.runtime.gui_input,
+        );
         self.input.field_map = created.runtime.field_map;
         self.input.host_peripherals = created.runtime.host_peripherals;
         self.media.clear_runtime();
@@ -813,6 +837,55 @@ pub(crate) mod test_util {
             .set_active_system(factory.system_id().as_ref())
             .expect("test setup failed");
         session
+    }
+
+    /// Session whose settings save always fails: the settings file sits
+    /// under a regular file, so every write fails with `NotADirectory`.
+    pub(crate) fn test_session_with_failing_settings() -> (SessionHandle, std::path::PathBuf) {
+        use nerust_gui_runtime::settings::SettingsPaths;
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        };
+        let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+        let audio_registry = Arc::new(AudioBackendRegistry::new());
+        let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
+        let dir = crate::test_helpers::unique_temp_dir("failing-settings");
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"not a dir").expect("blocker file should write");
+        let paths = SettingsPaths {
+            settings_file: blocker.join("settings.toml"),
+            central_storage_root: dir.join("storage"),
+        };
+        let mut session =
+            SessionHandle::new_with_settings_paths(capabilities, registry, audio_registry, paths)
+                .expect("construction falls back to ephemeral settings");
+        session
+            .set_active_system(factory.system_id().as_ref())
+            .expect("test setup failed");
+        (session, dir)
+    }
+
+    /// Blocking live-images poll for tests only; live ticks use the flight.
+    /// The sleep loop stays here so production code never blocks the UI thread.
+    pub(crate) fn poll_live_images(
+        session: &SessionHandle,
+        need_images: crate::debug::ImageNeed,
+    ) -> crate::session::LiveImages {
+        let mut flight =
+            session.debug_live_images_begin(matches!(need_images, crate::debug::ImageNeed::Fetch));
+        loop {
+            match flight.poll() {
+                crate::debug::LiveImagesPoll::Done(live) => return live,
+                crate::debug::LiveImagesPoll::Pending => {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+        }
     }
 
     pub(crate) fn test_view(session: &SessionHandle) -> FactorySettingsView {

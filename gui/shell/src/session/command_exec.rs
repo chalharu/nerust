@@ -252,22 +252,15 @@ impl SessionHandle {
         }
     }
 
-    /// Single live access: `NoCore` maps once here to `Empty`.
+    /// Single live access: absence maps once to `Empty` in `live_or_empty`.
     fn run_save_op(&mut self, op: SaveOp) -> SessionCommandOutcome {
-        let live = match self.emu.require_live() {
-            Ok(core) => core as &dyn crate::session::ports::StateExporter,
-            Err(SessionError::NoCore) => {
+        let live = match self.emu.live_or_empty() {
+            Ok(core) => core.as_exporter(),
+            Err(failure) => {
                 return SessionCommandOutcome {
                     executed: false,
                     needs_redraw: false,
-                    slot_failure: Some(SlotOpFailure::Empty),
-                };
-            }
-            Err(_) => {
-                return SessionCommandOutcome {
-                    executed: false,
-                    needs_redraw: false,
-                    slot_failure: Some(SlotOpFailure::Unavailable),
+                    slot_failure: Some(failure),
                 };
             }
         };
@@ -282,7 +275,7 @@ impl SessionHandle {
                     live,
                     crate::session::persistence::SlotActivation::Leave,
                 ),
-                SaveOp::DeleteSlot(id) => persistence.delete_slot(id, live),
+                SaveOp::DeleteSlot(id) => persistence.delete_slot(id),
             };
             if let Err(failure) = &result {
                 log::warn!("slot save failed: {failure:?}");
@@ -296,24 +289,22 @@ impl SessionHandle {
         }
     }
 
-    /// Single live access: `NoCore` maps once here to `Empty`.
+    /// Single live access: absence maps once to `Empty` in `live_or_empty`.
     fn run_load_op(&mut self, op: LoadOp, tick: &TickMetrics) -> SessionCommandOutcome {
-        let slot_failure = match self.emu.require_live() {
+        let slot_failure = match self.emu.live_or_empty() {
             Ok(core) => {
-                let live = core as &dyn crate::session::ports::StateExporter;
+                let live = core.as_exporter();
                 let persistence = &mut self.media.persistence;
-                let resolve = crate::state::resolve_state_format;
                 let result = match op {
-                    LoadOp::LoadActiveSlot => persistence.load_active_slot(live, resolve),
-                    LoadOp::LoadSlot(id) => persistence.load_slot(id, live, resolve),
+                    LoadOp::LoadActiveSlot => persistence.load_active_slot(live),
+                    LoadOp::LoadSlot(id) => persistence.load_slot(id, live),
                 };
                 if let Err(failure) = &result {
                     log::warn!("slot load failed: {failure:?}");
                 }
                 result.err()
             }
-            Err(SessionError::NoCore) => Some(SlotOpFailure::Empty),
-            Err(_) => Some(SlotOpFailure::Unavailable),
+            Err(failure) => Some(failure),
         };
         let executed = slot_failure.is_none();
         // A successful load that clears a stale pause needs a redraw: re-read pause only then.

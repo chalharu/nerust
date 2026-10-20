@@ -3,6 +3,7 @@ default-members = [".", "nes/core", "gbc/core", "gba/core"]
 members = [
   "gui/frontends/android",
   "gui/frontends/gtk",
+  "gui/frontends/kernel",
   "gui/frontends/rom_tool",
   "gui/frontends/tao",
   "gui/run-options",
@@ -186,6 +187,7 @@ nerust_glwrap = { path = "render/glwrap" }
 nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_gui_runtime = { path = "gui/runtime" }
 nerust_gui_shell = { path = "gui/shell" }
+nerust_frontend_kernel = { path = "gui/frontends/kernel" }
 nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }
 nerust_keyboard = { default-features = false, path = "keyboard" }

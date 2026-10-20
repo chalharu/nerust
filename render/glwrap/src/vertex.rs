@@ -153,7 +153,7 @@ impl VertexArrayContext<'_> {
         draw_arrays(mode, first, count)
     }
     #[expect(dead_code, reason = "indexed draw for future renderer use")]
-    fn draw_elements(&self, mode: GLuint, count: GLsizei, offset: usize) -> Result<(), Error> {
+    fn draw_elements(&self, mode: GLuint, count: GLsizei, offset: u32) -> Result<(), Error> {
         let data_type = self
             .va
             .ibo_ref
@@ -173,7 +173,7 @@ impl VertexArrayBufferContext {
         data_size: GLint,
         data_type: GLuint,
         stride: GLsizei,
-        offset: usize,
+        offset: u32,
     ) -> Result<(), Error> {
         enable_vertex_attrib_array(a.id)?;
         vertex_attrib_pointer(
@@ -182,9 +182,9 @@ impl VertexArrayBufferContext {
             data_type,
             gl::FALSE,
             stride,
-            // SAFETY: null base plus a byte offset is the standard
-            // client-side attribute address form for a bound VBO.
-            unsafe { std::ptr::null::<std::ffi::c_void>().add(offset) },
+            // Buffer-object byte offset as an address: no provenance,
+            // `u32`-bounded so the `usize` widening cannot overflow.
+            std::ptr::without_provenance::<std::ffi::c_void>(offset as usize),
         )
     }
 }

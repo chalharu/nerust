@@ -1,22 +1,13 @@
 //! Forward-compatibility: a state blob written at the Phase 12 start (before the `pending_oam` /
 //! `intrwait_mask` wire fields existed) must still load. The fixture was produced by `save_state` on the Phase-12-base commit with `nba_dma_start_delay` after two frames; the new fields fall back to live-OAM seeding and an unrestricted wake mask respectively.
 use nerust_core_traits::{ConsoleCore, CoreConfig};
-use nerust_emu_thread::EmuInput;
+use nerust_emu_thread::{InputPort as _, InputSplit};
 use nerust_gba_core::console_core::GbaConsoleCore;
 use nerust_gba_core::input_types::GbaInputBuffer;
-use nerust_input_traits::InputStateBuffer;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
 
 fn test_core() -> GbaConsoleCore {
-    let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-        Arc::new(Mutex::new(Box::<GbaInputBuffer>::default()));
-    GbaConsoleCore::new(EmuInput::new(
-        shared,
-        Arc::new(AtomicBool::new(false)),
-        Box::new(|| Box::<GbaInputBuffer>::default()),
-    ))
+    GbaConsoleCore::new(InputSplit::spawn_typed(GbaInputBuffer::default).emu_endpoint())
 }
 
 fn test_config() -> CoreConfig {

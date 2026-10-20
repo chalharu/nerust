@@ -1,11 +1,12 @@
 use std::{
     io::Error as IoError,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use jni::{
-    JavaVM, jni_sig, jni_str,
+    JavaVM,
     objects::{JObject, JString, JValue},
     refs::Global,
     sys::jobject,
@@ -23,18 +24,45 @@ use nerust_persistence::{
 };
 use winit::platform::android::activity::AndroidApp;
 
+use super::bridge;
+use crate::saf_decision::{SafCapability, SafError};
+
 #[derive(Clone)]
-pub(crate) struct AndroidStorageBackend {
+pub(super) struct AndroidStorageBackend {
     app: AndroidApp,
+    /// Memoized probe winner: every transfer takes this path.
+    /// A skew on the memoized path re-probes once; I/O faults hard-error.
+    capability: Arc<Mutex<Option<SafCapability>>>,
 }
 
 impl AndroidStorageBackend {
-    pub(crate) fn new(app: AndroidApp) -> Self {
-        Self { app }
+    pub(super) fn new(app: AndroidApp) -> Self {
+        Self {
+            app,
+            capability: Arc::new(Mutex::new(None)),
+        }
     }
 
-    fn io_error(error: impl ToString) -> PersistenceError {
-        PersistenceError::Io(IoError::other(error.to_string()))
+    /// Classify a JNI failure: only a missing method is a version skew.
+    /// Every other fault hard-errors on the chosen path.
+    fn classify(error: jni::errors::Error) -> SafError {
+        match error {
+            jni::errors::Error::MethodNotFound { .. }
+            | jni::errors::Error::NoSuchMethod(_)
+            | jni::errors::Error::FieldNotFound { .. }
+            | jni::errors::Error::EnvMethodNotFound(_) => SafError::version_skew(),
+            other => SafError::io(other.to_string()),
+        }
+    }
+
+    fn persist(error: SafError) -> PersistenceError {
+        PersistenceError::Io(match error {
+            SafError::Missing => IoError::other("Android SAF document is missing"),
+            SafError::VersionSkew => {
+                IoError::other("Android SAF bridge is older than the chosen path")
+            }
+            SafError::Io(message) => IoError::other(message),
+        })
     }
 
     fn decode(path: &Path) -> Option<(String, String)> {
@@ -55,44 +83,79 @@ impl AndroidStorageBackend {
         Ok(())
     }
 
-    fn read(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, PersistenceError> {
-        Self::validate_relative_path(relative)?;
-        // Streamed session first: one openInputStream, sequential server-side
-        // reads. Chunked and whole-file paths stay for old APKs.
-        match self.read_streamed(uri, relative) {
-            Ok(bytes) => return Ok(bytes),
-            Err(error) => {
-                log::debug!("SAF streamed read unavailable, falling back to chunked: {error}");
-            }
-        }
-        // Chunked path bounds every JNI crossing to 64KB.
-        // Legacy whole-file read is the fallback for old APKs.
-        match self.read_chunked(uri, relative) {
-            Ok(bytes) => Ok(bytes),
-            Err(error) => {
-                log::debug!("SAF chunked read unavailable, falling back to whole-file: {error}");
-                let value = self.call_read(uri, relative)?;
-                value
-                    .map(|value| STANDARD.decode(value).map_err(Self::io_error))
-                    .transpose()
-            }
+    fn memo(&self) -> Option<SafCapability> {
+        self.capability.lock().map(|guard| *guard).unwrap_or(None)
+    }
+
+    fn memoize(&self, capability: SafCapability) {
+        if let Ok(mut guard) = self.capability.lock() {
+            *guard = Some(capability);
         }
     }
 
-    /// Streaming read: size probe then 64KB chunks into one buffer.
-    /// Prefers `byte[]`; falls back to Base64 chunks, then whole-file.
-    fn read_chunked(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, PersistenceError> {
-        match self.read_chunked_bytes(uri, relative) {
-            Ok(bytes) => Ok(bytes),
-            Err(error) => {
-                log::debug!("SAF byte[] read unavailable, falling back to Base64 chunks: {error}");
-                self.read_chunked_base64(uri, relative)
+    fn clear_memo(&self) {
+        if let Ok(mut guard) = self.capability.lock() {
+            *guard = None;
+        }
+    }
+
+    fn read(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, PersistenceError> {
+        Self::validate_relative_path(relative)?;
+        // Absent documents read as `None`, never as I/O faults.
+        match self.run_read(uri, relative) {
+            Err(SafError::Missing) => Ok(None),
+            outcome => outcome.map_err(Self::persist),
+        }
+    }
+
+    /// One memoized path; a skew re-probes once, faults hard-error.
+    fn run_read(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, SafError> {
+        if let Some(capability) = self.memo() {
+            match self.read_with(capability, uri, relative) {
+                Err(error) if error.fallback_eligible() => self.clear_memo(),
+                outcome => return outcome,
             }
+        }
+        self.probe_read(uri, relative)
+    }
+
+    /// Single probe: first non-skew path wins and memoizes.
+    fn probe_read(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, SafError> {
+        for capability in [
+            SafCapability::Streamed,
+            SafCapability::ChunkedBytes,
+            SafCapability::ChunkedBase64,
+            SafCapability::Legacy,
+        ] {
+            match self.read_with(capability, uri, relative) {
+                Err(error) if error.fallback_eligible() => continue,
+                outcome => {
+                    self.memoize(capability);
+                    return outcome;
+                }
+            }
+        }
+        Err(SafError::version_skew())
+    }
+
+    fn read_with(
+        &self,
+        capability: SafCapability,
+        uri: &str,
+        relative: &str,
+    ) -> Result<Option<Vec<u8>>, SafError> {
+        match capability {
+            SafCapability::Streamed => self.read_streamed(uri, relative),
+            SafCapability::ChunkedBytes => self.read_chunked_bytes(uri, relative),
+            SafCapability::ChunkedBase64 => self.read_chunked_base64(uri, relative),
+            SafCapability::Legacy => match self.call_read(uri, relative)? {
+                None => Err(SafError::missing()),
+                Some(value) => Ok(Some(STANDARD.decode(value).map_err(SafError::io)?)),
+            },
         }
     }
 
     /// Sized read: skips the size probe when the batch listing carries the length.
-    /// Prefers `byte[]`; falls back to Base64 chunks.
     fn read_sized(
         &self,
         uri: &str,
@@ -103,355 +166,416 @@ impl AndroidStorageBackend {
         if size < 0 {
             return Ok(None);
         }
-        match self.read_chunked_bytes_sized(uri, relative, size) {
-            Ok(bytes) => Ok(bytes),
-            Err(error) => {
-                log::debug!("SAF byte[] read unavailable, falling back to Base64 chunks: {error}");
-                self.read_chunked_base64_sized(uri, relative, size)
+        let capability = self
+            .memo()
+            .unwrap_or(SafCapability::ChunkedBytes)
+            .write_capability();
+        match self.read_sized_with(capability, uri, relative, size) {
+            Err(SafError::Missing) => Ok(None),
+            outcome => outcome.map_err(Self::persist),
+        }
+    }
+
+    fn read_sized_with(
+        &self,
+        capability: SafCapability,
+        uri: &str,
+        relative: &str,
+        size: i64,
+    ) -> Result<Option<Vec<u8>>, SafError> {
+        match capability {
+            SafCapability::ChunkedBytes | SafCapability::Streamed => {
+                self.read_chunked_bytes_sized(uri, relative, size)
             }
+            SafCapability::ChunkedBase64 => self.read_chunked_base64_sized(uri, relative, size),
+            SafCapability::Legacy => match self.call_read(uri, relative)? {
+                None => Err(SafError::missing()),
+                Some(value) => Ok(Some(STANDARD.decode(value).map_err(SafError::io)?)),
+            },
         }
     }
 
     /// `byte[]` chunked read: size probe then raw chunks, one JNI crossing per 64KB.
-    /// Absence (old APK) surfaces as `Err`; the caller falls back.
-    fn read_chunked_bytes(
-        &self,
-        uri: &str,
-        relative: &str,
-    ) -> Result<Option<Vec<u8>>, PersistenceError> {
+    /// One attach per transfer; the URI strings intern once for every chunk.
+    fn read_chunked_bytes(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, SafError> {
         let size = self.call_file_size(uri, relative)?;
         self.read_chunked_bytes_sized(uri, relative, size)
     }
 
-    /// `byte[]` chunked read with a known size: no probe crossing.
     fn read_chunked_bytes_sized(
         &self,
         uri: &str,
         relative: &str,
         size: i64,
-    ) -> Result<Option<Vec<u8>>, PersistenceError> {
+    ) -> Result<Option<Vec<u8>>, SafError> {
         if size < 0 {
-            return Ok(None);
+            return Err(SafError::missing());
         }
-        let mut bytes = Vec::with_capacity(size.max(0) as usize);
-        let mut offset: i64 = 0;
-        while offset < size {
-            let length = (size - offset).min(SAF_CHUNK_BYTES as i64);
-            let chunk = self
-                .call_read_chunk_bytes(uri, relative, offset, length)?
-                .ok_or_else(|| Self::io_error("Android SAF byte[] chunked read returned null"))?;
-            bytes.extend_from_slice(&chunk);
-            offset += length;
-        }
-        Ok(Some(bytes))
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let activity = activity.as_ref();
+            let uri = JString::from_str(env, uri)?;
+            let relative = JString::from_str(env, relative)?;
+            let mut bytes = Vec::with_capacity(size.max(0) as usize);
+            let mut offset: i64 = 0;
+            while offset < size {
+                let length = (size - offset).min(SAF_CHUNK_BYTES as i64);
+                let chunk = Self::call_read_chunk_bytes_inner(
+                    env, activity, &uri, &relative, offset, length,
+                )?
+                .ok_or(jni::errors::Error::NullPtr(
+                    "Android SAF byte[] chunked read returned null",
+                ))?;
+                bytes.extend_from_slice(&chunk);
+                offset += length;
+            }
+            Ok::<_, jni::errors::Error>(Some(bytes))
+        })
+        .map_err(Self::classify)
     }
 
     /// One raw `byte[]` chunk read at `offset` (`length` bytes max).
-    fn call_read_chunk_bytes(
-        &self,
-        uri: &str,
-        relative: &str,
+    fn call_read_chunk_bytes_inner(
+        env: &mut jni::Env<'_>,
+        activity: &JObject<'_>,
+        uri: &JString<'_>,
+        relative: &JString<'_>,
         offset: i64,
         length: i64,
-    ) -> Result<Option<Vec<u8>>, PersistenceError> {
-        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        super::bridge::with_java_env(&vm, |env| {
-            let activity_raw = self.app.activity_as_ptr() as jobject;
-            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-            let uri = JString::from_str(env, uri)?;
-            let relative = JString::from_str(env, relative)?;
-            let object = env
-                .call_method(
-                    activity.as_ref(),
-                    jni_str!("readSafFileChunkBytes"),
-                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;JJ)[B"),
-                    &[
-                        JValue::Object(uri.as_ref()),
-                        JValue::Object(relative.as_ref()),
-                        JValue::Long(offset),
-                        JValue::Long(length),
-                    ],
-                )?
-                .l()?;
-            if object.is_null() {
-                Ok(None)
-            } else {
-                let array = env.cast_local::<jni::objects::JByteArray>(object)?;
-                Ok(Some(env.convert_byte_array(&array)?))
-            }
-        })
-        .map_err(Self::io_error)
+    ) -> jni::errors::Result<Option<Vec<u8>>> {
+        let object = bridge::call_bridge_method(
+            env,
+            activity,
+            &bridge::methods::READ_SAF_FILE_CHUNK_BYTES,
+            &[
+                JValue::Object(uri.as_ref()),
+                JValue::Object(relative.as_ref()),
+                JValue::Long(offset),
+                JValue::Long(length),
+            ],
+        )?
+        .l()?;
+        if object.is_null() {
+            return Ok(None);
+        }
+        let array = env.cast_local::<jni::objects::JByteArray>(object)?;
+        Ok(Some(env.convert_byte_array(&array)?))
     }
 
-    fn read_chunked_base64(
-        &self,
-        uri: &str,
-        relative: &str,
-    ) -> Result<Option<Vec<u8>>, PersistenceError> {
+    fn read_chunked_base64(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, SafError> {
         let size = self.call_file_size(uri, relative)?;
         self.read_chunked_base64_sized(uri, relative, size)
     }
 
-    /// Base64 chunked read with a known size: no probe crossing.
+    /// Base64 chunked read with a known size: one attach, interned strings.
     fn read_chunked_base64_sized(
         &self,
         uri: &str,
         relative: &str,
         size: i64,
-    ) -> Result<Option<Vec<u8>>, PersistenceError> {
+    ) -> Result<Option<Vec<u8>>, SafError> {
         if size < 0 {
             return Ok(None);
         }
-        let mut bytes = Vec::with_capacity(size.max(0) as usize);
-        let mut offset: i64 = 0;
-        while offset < size {
-            let length = (size - offset).min(SAF_CHUNK_BYTES as i64);
-            let chunk = self
-                .call_read_chunk(uri, relative, offset, length)?
-                .ok_or_else(|| Self::io_error("Android SAF chunked read returned null"))?;
-            bytes.extend_from_slice(&STANDARD.decode(chunk).map_err(Self::io_error)?);
-            offset += length;
-        }
-        Ok(Some(bytes))
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let activity = activity.as_ref();
+            let uri = JString::from_str(env, uri)?;
+            let relative = JString::from_str(env, relative)?;
+            let mut bytes = Vec::with_capacity(size.max(0) as usize);
+            let mut offset: i64 = 0;
+            while offset < size {
+                let length = (size - offset).min(SAF_CHUNK_BYTES as i64);
+                let chunk =
+                    Self::call_read_chunk_inner(env, activity, &uri, &relative, offset, length)?
+                        .ok_or(jni::errors::Error::NullPtr(
+                            "Android SAF chunked read returned null",
+                        ))?;
+                bytes.extend_from_slice(
+                    &STANDARD
+                        .decode(chunk)
+                        .map_err(|error| jni::errors::Error::ParseFailed(error.to_string()))?,
+                );
+                offset += length;
+            }
+            Ok::<_, jni::errors::Error>(Some(bytes))
+        })
+        .map_err(Self::classify)
     }
 
-    /// Streaming session read: one `openInputStream`, sequential server-side
-    /// chunks in a single pass. Absence (old APK) surfaces as `Err`.
-    fn read_streamed(
-        &self,
-        uri: &str,
-        relative: &str,
-    ) -> Result<Option<Vec<u8>>, PersistenceError> {
-        let session = self.call_open_read_session(uri, relative)?;
-        if session < 0 {
-            return Ok(None);
-        }
-        let mut bytes = Vec::new();
-        let result = (|| {
-            loop {
-                match self.call_read_session_chunk(session)? {
-                    Some(chunk) if !chunk.is_empty() => bytes.extend_from_slice(&chunk),
-                    _ => break,
-                }
+    /// Streaming read: one `openInputStream`, sequential server-side
+    /// chunks in a single pass and attach. Absence surfaces as skew.
+    fn read_streamed(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, SafError> {
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let activity = activity.as_ref();
+            let uri = JString::from_str(env, uri)?;
+            let relative = JString::from_str(env, relative)?;
+            let session = Self::call_open_read_session_inner(env, activity, &uri, &relative)?;
+            if session < 0 {
+                return Ok(None);
             }
-            Ok::<(), PersistenceError>(())
-        })();
-        let close_result = self.call_close_read_session(session);
-        result?;
-        close_result?;
-        Ok(Some(bytes))
+            let mut bytes = Vec::new();
+            let result = (|| {
+                loop {
+                    match Self::call_read_session_chunk_inner(env, activity, session)? {
+                        Some(chunk) if !chunk.is_empty() => bytes.extend_from_slice(&chunk),
+                        _ => break,
+                    }
+                }
+                Ok::<(), jni::errors::Error>(())
+            })();
+            let close_result = Self::call_close_read_session_inner(env, activity, session);
+            result?;
+            close_result?;
+            Ok::<_, jni::errors::Error>(Some(bytes))
+        })
+        .map_err(Self::classify)
     }
 
     /// Open a server-side read session; negative means the document is missing.
-    fn call_open_read_session(&self, uri: &str, relative: &str) -> Result<i64, PersistenceError> {
-        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        super::bridge::with_java_env(&vm, |env| {
-            let activity_raw = self.app.activity_as_ptr() as jobject;
-            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-            let uri = JString::from_str(env, uri)?;
-            let relative = JString::from_str(env, relative)?;
-            let session = env
-                .call_method(
-                    activity.as_ref(),
-                    jni_str!("openSafReadSession"),
-                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;)J"),
-                    &[
-                        JValue::Object(uri.as_ref()),
-                        JValue::Object(relative.as_ref()),
-                    ],
-                )?
-                .j()?;
-            Ok::<_, jni::errors::Error>(session)
-        })
-        .map_err(Self::io_error)
+    fn call_open_read_session_inner(
+        env: &mut jni::Env<'_>,
+        activity: &JObject<'_>,
+        uri: &JString<'_>,
+        relative: &JString<'_>,
+    ) -> jni::errors::Result<i64> {
+        Ok(bridge::call_bridge_method(
+            env,
+            activity,
+            &bridge::methods::OPEN_SAF_READ_SESSION,
+            &[
+                JValue::Object(uri.as_ref()),
+                JValue::Object(relative.as_ref()),
+            ],
+        )?
+        .j()?)
     }
 
     /// One sequential chunk from an open session; empty marks end of stream.
-    fn call_read_session_chunk(&self, session: i64) -> Result<Option<Vec<u8>>, PersistenceError> {
-        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        super::bridge::with_java_env(&vm, |env| {
-            let activity_raw = self.app.activity_as_ptr() as jobject;
-            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-            let object = env
-                .call_method(
-                    activity.as_ref(),
-                    jni_str!("readSafReadSession"),
-                    jni_sig!("(JI)[B"),
-                    &[JValue::Long(session), JValue::Int(SAF_CHUNK_BYTES as i32)],
-                )?
-                .l()?;
-            if object.is_null() {
-                Ok(None)
-            } else {
-                let array = env.cast_local::<jni::objects::JByteArray>(object)?;
-                Ok(Some(env.convert_byte_array(&array)?))
-            }
-        })
-        .map_err(Self::io_error)
+    fn call_read_session_chunk_inner(
+        env: &mut jni::Env<'_>,
+        activity: &JObject<'_>,
+        session: i64,
+    ) -> jni::errors::Result<Option<Vec<u8>>> {
+        let object = bridge::call_bridge_method(
+            env,
+            activity,
+            &bridge::methods::READ_SAF_READ_SESSION,
+            &[JValue::Long(session), JValue::Int(SAF_CHUNK_BYTES as i32)],
+        )?
+        .l()?;
+        if object.is_null() {
+            return Ok(None);
+        }
+        let array = env.cast_local::<jni::objects::JByteArray>(object)?;
+        Ok(Some(env.convert_byte_array(&array)?))
     }
 
     /// Close a server-side read session; a missing session is a no-op.
-    fn call_close_read_session(&self, session: i64) -> Result<(), PersistenceError> {
-        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        super::bridge::with_java_env(&vm, |env| {
-            let activity_raw = self.app.activity_as_ptr() as jobject;
-            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-            env.call_method(
-                activity.as_ref(),
-                jni_str!("closeSafReadSession"),
-                jni_sig!("(J)V"),
-                &[JValue::Long(session)],
-            )?;
-            Ok::<_, jni::errors::Error>(())
-        })
-        .map_err(Self::io_error)
+    fn call_close_read_session_inner(
+        env: &mut jni::Env<'_>,
+        activity: &JObject<'_>,
+        session: i64,
+    ) -> jni::errors::Result<()> {
+        bridge::call_bridge_method(
+            env,
+            activity,
+            &bridge::methods::CLOSE_SAF_READ_SESSION,
+            &[JValue::Long(session)],
+        )?;
+        Ok(())
     }
 
     fn write(&self, uri: &str, relative: &str, bytes: &[u8]) -> Result<(), PersistenceError> {
         Self::validate_relative_path(relative)?;
-        // Chunked path streams 64KB Base64 appends; legacy whole-file write
-        // is the fallback for APKs predating the chunked methods.
-        match self.write_chunked(uri, relative, bytes) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                log::debug!("SAF chunked write unavailable, falling back to whole-file: {error}");
+        self.run_write(uri, relative, bytes).map_err(Self::persist)
+    }
+
+    /// One memoized path; a skew re-probes once, faults hard-error.
+    fn run_write(&self, uri: &str, relative: &str, bytes: &[u8]) -> Result<(), SafError> {
+        if let Some(capability) = self.memo() {
+            match self.write_with(capability.write_capability(), uri, relative, bytes) {
+                Err(error) if error.fallback_eligible() => self.clear_memo(),
+                outcome => return outcome,
+            }
+        }
+        self.probe_write(uri, relative, bytes)
+    }
+
+    /// Single probe: first non-skew path wins and memoizes.
+    fn probe_write(&self, uri: &str, relative: &str, bytes: &[u8]) -> Result<(), SafError> {
+        for capability in [
+            SafCapability::ChunkedBytes,
+            SafCapability::ChunkedBase64,
+            SafCapability::Legacy,
+        ] {
+            match self.write_with(capability, uri, relative, bytes) {
+                Err(error) if error.fallback_eligible() => continue,
+                outcome => {
+                    self.memoize(capability);
+                    return outcome;
+                }
+            }
+        }
+        Err(SafError::version_skew())
+    }
+
+    fn write_with(
+        &self,
+        capability: SafCapability,
+        uri: &str,
+        relative: &str,
+        bytes: &[u8],
+    ) -> Result<(), SafError> {
+        match capability {
+            SafCapability::Streamed | SafCapability::ChunkedBytes => {
+                self.write_chunked_bytes(uri, relative, bytes)
+            }
+            SafCapability::ChunkedBase64 => self.write_chunked_base64(uri, relative, bytes),
+            SafCapability::Legacy => {
                 let encoded = STANDARD.encode(bytes);
                 let result = self.call_write(uri, relative, &encoded)?;
                 if result.as_deref() == Some("ok") {
                     Ok(())
                 } else {
-                    Err(Self::io_error("Android SAF write failed"))
+                    Err(SafError::io("Android SAF write failed"))
                 }
             }
         }
     }
 
-    /// Streaming write: first chunk overwrites, the rest append.
-    /// Prefers `byte[]`; falls back to Base64 chunks, then whole-file.
-    fn write_chunked(
-        &self,
-        uri: &str,
-        relative: &str,
-        bytes: &[u8],
-    ) -> Result<(), PersistenceError> {
-        match self.write_chunked_bytes(uri, relative, bytes) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                log::debug!("SAF byte[] write unavailable, falling back to Base64 chunks: {error}");
-                self.write_chunked_base64(uri, relative, bytes)
-            }
-        }
-    }
-
     /// `byte[]` chunked write: first chunk overwrites, the rest append.
-    /// Absence (old APK) surfaces as `Err`; the caller falls back.
-    fn write_chunked_bytes(
-        &self,
-        uri: &str,
-        relative: &str,
-        bytes: &[u8],
-    ) -> Result<(), PersistenceError> {
-        if bytes.is_empty() {
-            let result = self.call_write_chunk_bytes(uri, relative, &[], false)?;
-            return if result.as_deref() == Some("ok") {
-                Ok(())
+    /// One attach per transfer; the URI strings intern once for every chunk.
+    fn write_chunked_bytes(&self, uri: &str, relative: &str, bytes: &[u8]) -> Result<(), SafError> {
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let activity = activity.as_ref();
+            let uri = JString::from_str(env, uri)?;
+            let relative = JString::from_str(env, relative)?;
+            let chunks: Vec<&[u8]> = if bytes.is_empty() {
+                vec![&[]]
             } else {
-                Err(Self::io_error("Android SAF write failed"))
+                bytes.chunks(SAF_CHUNK_BYTES).collect()
             };
-        }
-        for (index, chunk) in bytes.chunks(SAF_CHUNK_BYTES).enumerate() {
-            let result = self.call_write_chunk_bytes(uri, relative, chunk, index > 0)?;
-            if result.as_deref() != Some("ok") {
-                return Err(Self::io_error("Android SAF write failed"));
+            for (index, chunk) in chunks.iter().enumerate() {
+                let result = Self::call_write_chunk_bytes_inner(
+                    env,
+                    activity,
+                    &uri,
+                    &relative,
+                    chunk,
+                    index > 0,
+                )?;
+                if result.as_deref() != Some("ok") {
+                    return Err(jni::errors::Error::NullPtr("Android SAF write failed"));
+                }
             }
-        }
-        Ok(())
+            Ok::<(), jni::errors::Error>(())
+        })
+        .map_err(Self::classify)
     }
 
     /// One raw `byte[]` chunk write; `append` selects `"wa"` (append) over
     /// `"rwt"` (overwrite).
-    fn call_write_chunk_bytes(
-        &self,
-        uri: &str,
-        relative: &str,
+    fn call_write_chunk_bytes_inner(
+        env: &mut jni::Env<'_>,
+        activity: &JObject<'_>,
+        uri: &JString<'_>,
+        relative: &JString<'_>,
         chunk: &[u8],
         append: bool,
-    ) -> Result<Option<String>, PersistenceError> {
-        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        super::bridge::with_java_env(&vm, |env| {
-            let activity_raw = self.app.activity_as_ptr() as jobject;
-            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-            let uri = JString::from_str(env, uri)?;
-            let relative = JString::from_str(env, relative)?;
-            let buffer = env.byte_array_from_slice(chunk)?;
-            let object = env
-                .call_method(
-                    activity.as_ref(),
-                    jni_str!("writeSafFileChunkBytes"),
-                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;[BZ)Ljava/lang/String;"),
-                    &[
-                        JValue::Object(uri.as_ref()),
-                        JValue::Object(relative.as_ref()),
-                        JValue::Object(buffer.as_ref()),
-                        JValue::Bool(append),
-                    ],
-                )?
-                .l()?;
-            if object.is_null() {
-                Ok(None)
-            } else {
-                Ok(Some(JString::cast_local(env, object)?.try_to_string(env)?))
-            }
-        })
-        .map_err(Self::io_error)
+    ) -> jni::errors::Result<Option<String>> {
+        let buffer = env.byte_array_from_slice(chunk)?;
+        let object = bridge::call_bridge_method(
+            env,
+            activity,
+            &bridge::methods::WRITE_SAF_FILE_CHUNK_BYTES,
+            &[
+                JValue::Object(uri.as_ref()),
+                JValue::Object(relative.as_ref()),
+                JValue::Object(buffer.as_ref()),
+                JValue::Bool(append),
+            ],
+        )?
+        .l()?;
+        if object.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(JString::cast_local(env, object)?.try_to_string(env)?))
     }
 
     /// Streaming Base64 write (legacy chunked bridge for old APKs).
-    /// First chunk overwrites, the rest append.
+    /// First chunk overwrites, the rest append; one attach per transfer.
     fn write_chunked_base64(
         &self,
         uri: &str,
         relative: &str,
         bytes: &[u8],
-    ) -> Result<(), PersistenceError> {
-        if bytes.is_empty() {
-            let result = self.call_write_chunk(uri, relative, "", false)?;
-            return if result.as_deref() == Some("ok") {
-                Ok(())
+    ) -> Result<(), SafError> {
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+        bridge::with_java_env(&vm, |env| {
+            let activity_raw = self.app.activity_as_ptr() as jobject;
+            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let activity = activity.as_ref();
+            let uri = JString::from_str(env, uri)?;
+            let relative = JString::from_str(env, relative)?;
+            let chunks: Vec<Vec<u8>> = if bytes.is_empty() {
+                vec![Vec::new()]
             } else {
-                Err(Self::io_error("Android SAF write failed"))
+                bytes.chunks(SAF_CHUNK_BYTES).map(<[u8]>::to_vec).collect()
             };
-        }
-        for (index, chunk) in bytes.chunks(SAF_CHUNK_BYTES).enumerate() {
-            let encoded = STANDARD.encode(chunk);
-            let result = self.call_write_chunk(uri, relative, &encoded, index > 0)?;
-            if result.as_deref() != Some("ok") {
-                return Err(Self::io_error("Android SAF write failed"));
+            for (index, chunk) in chunks.iter().enumerate() {
+                let encoded = STANDARD.encode(chunk);
+                let encoded = JString::from_str(env, &encoded)?;
+                let result = Self::call_write_chunk_inner(
+                    env,
+                    activity,
+                    &uri,
+                    &relative,
+                    &encoded,
+                    index > 0,
+                )?;
+                if result.as_deref() != Some("ok") {
+                    return Err(jni::errors::Error::NullPtr("Android SAF write failed"));
+                }
             }
-        }
-        Ok(())
+            Ok::<(), jni::errors::Error>(())
+        })
+        .map_err(Self::classify)
     }
 
     fn delete(&self, uri: &str, relative: &str) -> Result<(), PersistenceError> {
         Self::validate_relative_path(relative)?;
-        let result = self.call_delete(uri, relative)?;
+        let result = self.call_delete(uri, relative).map_err(Self::persist)?;
         if matches!(result.as_deref(), Some("ok") | Some("missing")) {
             Ok(())
         } else {
-            Err(Self::io_error("Android SAF delete failed"))
+            Err(PersistenceError::Io(IoError::other(
+                "Android SAF delete failed",
+            )))
         }
     }
 
     /// Batched listing: one JNI crossing per directory; negatives mean unknown.
+    /// Skew surfaces typed so the caller falls back exactly once.
     fn list_with_sizes(
         &self,
         uri: &str,
         relative: &str,
-    ) -> Result<Vec<(String, Option<i64>)>, PersistenceError> {
+    ) -> Result<Vec<(String, Option<i64>)>, SafError> {
         let value = self
             .call_list_with_sizes(uri, relative)?
             .unwrap_or_else(|| "[]".to_string());
-        let entries: Vec<SizedEntry> = serde_json::from_str(&value).map_err(Self::io_error)?;
+        let entries: Vec<SizedEntry> = serde_json::from_str(&value).map_err(SafError::io)?;
         Ok(entries
             .into_iter()
             .map(|entry| {
@@ -462,27 +586,30 @@ impl AndroidStorageBackend {
     }
 
     /// One batched listing shared by `scan` and `allocate_next_id`.
-    /// Sized batch first; names-only list is the old-APK fallback.
+    /// Sized batch first; only a version skew falls back.
     fn sized_listing(
         &self,
         uri: &str,
         relative: &str,
     ) -> Result<Vec<(String, Option<i64>)>, PersistenceError> {
-        if let Ok(entries) = self.list_with_sizes(uri, relative) {
-            return Ok(entries);
+        match self.list_with_sizes(uri, relative) {
+            Ok(entries) => Ok(entries),
+            Err(error) if error.fallback_eligible() => {
+                let value = self
+                    .call_list(uri, relative)
+                    .map_err(Self::persist)?
+                    .unwrap_or_else(|| "[]".to_string());
+                serde_json::from_str::<Vec<String>>(&value)
+                    .map_err(|error| Self::persist(SafError::io(error)))
+                    .map(|names| names.into_iter().map(|name| (name, None)).collect())
+            }
+            Err(error) => Err(Self::persist(error)),
         }
-        let value = self
-            .call_list(uri, relative)?
-            .unwrap_or_else(|| "[]".to_string());
-        serde_json::from_str::<Vec<String>>(&value)
-            .map_err(Self::io_error)
-            .map(|names| names.into_iter().map(|name| (name, None)).collect())
     }
 
-    /// Whole-file read (legacy bridge for old APKs).
-    /// Each verb below carries its own JNI name + signature.
-    fn call_read(&self, uri: &str, relative: &str) -> Result<Option<String>, PersistenceError> {
-        self.call_saf_string(SafStringOp::Read, uri, relative, None)
+    /// String-bridge verbs. Each maps to exactly one tabled JNI name + signature.
+    fn call_read(&self, uri: &str, relative: &str) -> Result<Option<String>, SafError> {
+        self.call_saf_string(&bridge::methods::READ_SAF_FILE, uri, relative, None)
     }
 
     fn call_write(
@@ -490,208 +617,148 @@ impl AndroidStorageBackend {
         uri: &str,
         relative: &str,
         payload: &str,
-    ) -> Result<Option<String>, PersistenceError> {
-        self.call_saf_string(SafStringOp::Write, uri, relative, Some(payload))
+    ) -> Result<Option<String>, SafError> {
+        self.call_saf_string(
+            &bridge::methods::WRITE_SAF_FILE,
+            uri,
+            relative,
+            Some(payload),
+        )
     }
 
-    fn call_delete(&self, uri: &str, relative: &str) -> Result<Option<String>, PersistenceError> {
-        self.call_saf_string(SafStringOp::Delete, uri, relative, None)
+    fn call_delete(&self, uri: &str, relative: &str) -> Result<Option<String>, SafError> {
+        self.call_saf_string(&bridge::methods::DELETE_SAF_FILE, uri, relative, None)
     }
 
-    fn call_list(&self, uri: &str, relative: &str) -> Result<Option<String>, PersistenceError> {
-        self.call_saf_string(SafStringOp::List, uri, relative, None)
+    fn call_list(&self, uri: &str, relative: &str) -> Result<Option<String>, SafError> {
+        self.call_saf_string(&bridge::methods::LIST_SAF_FILES, uri, relative, None)
     }
 
-    fn call_list_with_sizes(
-        &self,
-        uri: &str,
-        relative: &str,
-    ) -> Result<Option<String>, PersistenceError> {
-        self.call_saf_string(SafStringOp::ListWithSizes, uri, relative, None)
+    fn call_list_with_sizes(&self, uri: &str, relative: &str) -> Result<Option<String>, SafError> {
+        self.call_saf_string(
+            &bridge::methods::LIST_SAF_FILES_WITH_SIZES,
+            uri,
+            relative,
+            None,
+        )
     }
 
     fn call_saf_string(
         &self,
-        op: SafStringOp,
+        method: &bridge::methods::BridgeMethod,
         uri: &str,
         relative: &str,
         payload: Option<&str>,
-    ) -> Result<Option<String>, PersistenceError> {
-        if matches!(op, SafStringOp::Write) && payload.is_none() {
-            return Err(Self::io_error("SAF write requires a payload"));
-        }
+    ) -> Result<Option<String>, SafError> {
+        // `call_write` is the only payload carrier; its signature
+        // takes `&str`, so a missing payload cannot typecheck.
         let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        super::bridge::with_java_env(&vm, |env| {
+        bridge::with_java_env(&vm, |env| {
             let activity_raw = self.app.activity_as_ptr() as jobject;
             let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let activity = activity.as_ref();
             let uri = JString::from_str(env, uri)?;
             let relative = JString::from_str(env, relative)?;
             let payload = payload
                 .map(|value| JString::from_str(env, value))
                 .transpose()?;
-            let result = match op {
-                SafStringOp::Write => {
-                    let payload = payload.as_ref().ok_or(jni::errors::Error::JavaException)?;
-                    env.call_method(
-                        activity.as_ref(),
-                        jni_str!("writeSafFile"),
-                        jni_sig!(
-                            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
-                        ),
-                        &[
-                            JValue::Object(uri.as_ref()),
-                            JValue::Object(relative.as_ref()),
-                            JValue::Object(payload.as_ref()),
-                        ],
-                    )?
-                }
-                SafStringOp::Read => env.call_method(
-                    activity.as_ref(),
-                    jni_str!("readSafFile"),
-                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"),
-                    &[
-                        JValue::Object(uri.as_ref()),
-                        JValue::Object(relative.as_ref()),
-                    ],
-                )?,
-                SafStringOp::Delete => env.call_method(
-                    activity.as_ref(),
-                    jni_str!("deleteSafFile"),
-                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"),
-                    &[
-                        JValue::Object(uri.as_ref()),
-                        JValue::Object(relative.as_ref()),
-                    ],
-                )?,
-                SafStringOp::List => env.call_method(
-                    activity.as_ref(),
-                    jni_str!("listSafFiles"),
-                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"),
-                    &[
-                        JValue::Object(uri.as_ref()),
-                        JValue::Object(relative.as_ref()),
-                    ],
-                )?,
-                SafStringOp::ListWithSizes => env.call_method(
-                    activity.as_ref(),
-                    jni_str!("listSafFilesWithSizes"),
-                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"),
-                    &[
-                        JValue::Object(uri.as_ref()),
-                        JValue::Object(relative.as_ref()),
-                    ],
-                )?,
-            };
-            let object = result.l()?;
+            let mut args = vec![
+                JValue::Object(uri.as_ref()),
+                JValue::Object(relative.as_ref()),
+            ];
+            if let Some(payload) = payload.as_ref() {
+                args.push(JValue::Object(payload.as_ref()));
+            }
+            let object = bridge::call_bridge_method(env, activity, method, &args)?.l()?;
             if object.is_null() {
                 Ok(None)
             } else {
                 Ok(Some(JString::cast_local(env, object)?.try_to_string(env)?))
             }
         })
-        .map_err(Self::io_error)
+        .map_err(Self::classify)
     }
 
     /// Size probe for the chunked read: bytes, negative when missing.
-    /// Absence (old APK) surfaces as `Err`; the caller falls back.
-    fn call_file_size(&self, uri: &str, relative: &str) -> Result<i64, PersistenceError> {
+    /// A missing method surfaces as skew; the probe picks another path.
+    fn call_file_size(&self, uri: &str, relative: &str) -> Result<i64, SafError> {
         let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        super::bridge::with_java_env(&vm, |env| {
+        bridge::with_java_env(&vm, |env| {
             let activity_raw = self.app.activity_as_ptr() as jobject;
             let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+            let activity = activity.as_ref();
             let uri = JString::from_str(env, uri)?;
             let relative = JString::from_str(env, relative)?;
-            let size = env
-                .call_method(
-                    activity.as_ref(),
-                    jni_str!("getSafFileSize"),
-                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;)J"),
+            Ok::<_, jni::errors::Error>(
+                bridge::call_bridge_method(
+                    env,
+                    activity,
+                    &bridge::methods::GET_SAF_FILE_SIZE,
                     &[
                         JValue::Object(uri.as_ref()),
                         JValue::Object(relative.as_ref()),
                     ],
                 )?
-                .j()?;
-            Ok::<_, jni::errors::Error>(size)
+                .j()?,
+            )
         })
-        .map_err(Self::io_error)
+        .map_err(Self::classify)
     }
 
-    /// One 64KB Base64 chunk read at `offset`. New bridge (v2); absence
-    /// (old APK) surfaces as `Err` and the caller falls back.
-    fn call_read_chunk(
-        &self,
-        uri: &str,
-        relative: &str,
+    /// One 64KB Base64 chunk read at `offset`, through the shared attach.
+    /// Absence surfaces as skew and the probe picks another path.
+    fn call_read_chunk_inner(
+        env: &mut jni::Env<'_>,
+        activity: &JObject<'_>,
+        uri: &JString<'_>,
+        relative: &JString<'_>,
         offset: i64,
         length: i64,
-    ) -> Result<Option<String>, PersistenceError> {
-        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        super::bridge::with_java_env(&vm, |env| {
-            let activity_raw = self.app.activity_as_ptr() as jobject;
-            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-            let uri = JString::from_str(env, uri)?;
-            let relative = JString::from_str(env, relative)?;
-            let object = env
-                .call_method(
-                    activity.as_ref(),
-                    jni_str!("readSafFileChunk"),
-                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;JJ)Ljava/lang/String;"),
-                    &[
-                        JValue::Object(uri.as_ref()),
-                        JValue::Object(relative.as_ref()),
-                        JValue::Long(offset),
-                        JValue::Long(length),
-                    ],
-                )?
-                .l()?;
-            if object.is_null() {
-                Ok(None)
-            } else {
-                Ok(Some(JString::cast_local(env, object)?.try_to_string(env)?))
-            }
-        })
-        .map_err(Self::io_error)
+    ) -> jni::errors::Result<Option<String>> {
+        let object = bridge::call_bridge_method(
+            env,
+            activity,
+            &bridge::methods::READ_SAF_FILE_CHUNK,
+            &[
+                JValue::Object(uri.as_ref()),
+                JValue::Object(relative.as_ref()),
+                JValue::Long(offset),
+                JValue::Long(length),
+            ],
+        )?
+        .l()?;
+        if object.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(JString::cast_local(env, object)?.try_to_string(env)?))
     }
 
     /// One 64KB Base64 chunk write; `append` selects append over overwrite.
-    /// Absence (old APK) surfaces as `Err`; the caller falls back.
-    fn call_write_chunk(
-        &self,
-        uri: &str,
-        relative: &str,
-        encoded: &str,
+    /// Absence surfaces as skew; the probe picks another path.
+    fn call_write_chunk_inner(
+        env: &mut jni::Env<'_>,
+        activity: &JObject<'_>,
+        uri: &JString<'_>,
+        relative: &JString<'_>,
+        encoded: &JString<'_>,
         append: bool,
-    ) -> Result<Option<String>, PersistenceError> {
-        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        super::bridge::with_java_env(&vm, |env| {
-            let activity_raw = self.app.activity_as_ptr() as jobject;
-            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-            let uri = JString::from_str(env, uri)?;
-            let relative = JString::from_str(env, relative)?;
-            let encoded = JString::from_str(env, encoded)?;
-            let object = env
-                .call_method(
-                    activity.as_ref(),
-                    jni_str!("writeSafFileChunk"),
-                    jni_sig!(
-                        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;"
-                    ),
-                    &[
-                        JValue::Object(uri.as_ref()),
-                        JValue::Object(relative.as_ref()),
-                        JValue::Object(encoded.as_ref()),
-                        JValue::Bool(append),
-                    ],
-                )?
-                .l()?;
-            if object.is_null() {
-                Ok(None)
-            } else {
-                Ok(Some(JString::cast_local(env, object)?.try_to_string(env)?))
-            }
-        })
-        .map_err(Self::io_error)
+    ) -> jni::errors::Result<Option<String>> {
+        let object = bridge::call_bridge_method(
+            env,
+            activity,
+            &bridge::methods::WRITE_SAF_FILE_CHUNK,
+            &[
+                JValue::Object(uri.as_ref()),
+                JValue::Object(relative.as_ref()),
+                JValue::Object(encoded.as_ref()),
+                JValue::Bool(append),
+            ],
+        )?
+        .l()?;
+        if object.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(JString::cast_local(env, object)?.try_to_string(env)?))
     }
 
     fn state_path(dir: &Path, slot_id: u64) -> PathBuf {
@@ -702,17 +769,6 @@ impl AndroidStorageBackend {
 /// Per-crossing SAF chunk: 64KB of raw bytes per JNI call.
 /// Must equal `SafRepository.SAF_CHUNK_BYTES` in Kotlin.
 const SAF_CHUNK_BYTES: usize = 64 * 1024;
-
-/// String-bridge verbs. Each maps to exactly one JNI name + signature in
-/// `call_saf_string`; there is no `method: &str` parameter to ignore.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SafStringOp {
-    Read,
-    Write,
-    Delete,
-    List,
-    ListWithSizes,
-}
 
 /// One entry of the `listSafFilesWithSizes` batch; unknown sizes are `None`.
 #[derive(Debug, serde::Deserialize)]

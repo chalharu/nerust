@@ -6,7 +6,9 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
+use nerust_input_traits::{
+    BufferError, InputResources, InputStateBuffer, InputValue, UnifiedFieldMap,
+};
 
 /// Shared-state factory behind the split endpoints.
 /// Lets shells hold the port without naming thread primitives.
@@ -26,20 +28,8 @@ pub struct InputSplit {
 }
 
 impl InputSplit {
-    pub fn new(
-        shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-        flag: Arc<AtomicBool>,
-        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
-    ) -> Self {
-        Self {
-            shared,
-            flag,
-            new_buffer,
-        }
-    }
-
-    /// Init-time constructor: allocates shared state plus flag from one factory. One factory mints
-    /// every buffer, so endpoints can never disagree on the concrete type; the copy path below stays a defensive check only.
+    /// Legacy init-time constructor for erased factories; prefer [`Self::from_resources`].
+    /// One factory still mints every buffer, so endpoints never disagree on type.
     pub fn spawn(new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>) -> Self {
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> = Arc::new(Mutex::new((new_buffer)()));
         Self {
@@ -59,6 +49,13 @@ impl InputSplit {
             let buffer: Box<dyn InputStateBuffer> = Box::new(make());
             buffer
         }))
+    }
+
+    /// Single move-out from factory resources: the unified field map plus
+    /// the shared endpoints travel out together, never separately.
+    pub fn from_resources(resources: InputResources) -> (Self, UnifiedFieldMap) {
+        let (field_map, factory) = resources.into_parts();
+        (Self::spawn(factory), field_map)
     }
 }
 
@@ -92,33 +89,25 @@ pub struct GuiInput {
     /// Staged state changed since the last publish; clean frames skip
     /// the copy and the shared lock entirely.
     dirty: bool,
+    /// Absolute fields staged since the last publish; the handoff merges
+    /// only these instead of a full memcpy.
+    dirty_fields: Vec<usize>,
+    /// `clear` neutralizes every field: the next publish copies full state.
+    full_copy: bool,
     /// Mismatch already warned; a later successful publish re-arms.
     mismatch_warned: bool,
 }
 
 impl GuiInput {
-    pub fn new(
-        shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-        flag: Arc<AtomicBool>,
-        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
-    ) -> Self {
-        Self {
-            shared,
-            flag,
-            state: (new_buffer)(),
-            write_buf: (new_buffer)(),
-            dirty: false,
-            mismatch_warned: false,
-        }
-    }
-
-    pub fn from_split(split: &InputSplit) -> Self {
+    fn from_split(split: &InputSplit) -> Self {
         Self {
             shared: Arc::clone(&split.shared),
             flag: Arc::clone(&split.flag),
             state: (split.new_buffer)(),
             write_buf: (split.new_buffer)(),
             dirty: false,
+            dirty_fields: Vec::new(),
+            full_copy: false,
             mismatch_warned: false,
         }
     }
@@ -126,6 +115,9 @@ impl GuiInput {
     /// Write one absolute field of the staged GUI state.
     pub fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
         self.state.set(field, value)?;
+        if !self.dirty_fields.contains(&field) {
+            self.dirty_fields.push(field);
+        }
         self.dirty = true;
         Ok(())
     }
@@ -141,13 +133,22 @@ impl GuiInput {
         }
     }
 
-    /// Fallible publish core: `Ok` on clean skip, success, or... only
-    /// the mismatch surfaces as `Err`; the flag is set on success alone.
+    /// Staged fields since the last publish; drives the dirty-only handoff.
+    pub fn dirty_fields(&self) -> &[usize] {
+        &self.dirty_fields
+    }
+
+    /// Fallible publish core: merges staged fields; mismatch alone surfaces as `Err`.
     fn try_publish(&mut self) -> Result<(), BufferError> {
         if !self.dirty {
             return Ok(());
         }
-        self.write_buf.copy_state(&*self.state)?;
+        if self.full_copy {
+            self.write_buf.copy_state(&*self.state)?;
+        } else {
+            self.write_buf
+                .copy_dirty_from(&*self.state, &self.dirty_fields)?;
+        }
         let mut lock = self
             .shared
             .lock()
@@ -155,6 +156,8 @@ impl GuiInput {
         std::mem::swap(&mut *lock, &mut self.write_buf);
         self.flag.store(true, Ordering::Release);
         self.dirty = false;
+        self.dirty_fields.clear();
+        self.full_copy = false;
         self.mismatch_warned = false;
         Ok(())
     }
@@ -162,6 +165,8 @@ impl GuiInput {
     pub fn clear(&mut self) {
         self.state.clear();
         self.dirty = true;
+        self.dirty_fields.clear();
+        self.full_copy = true;
     }
 }
 
@@ -189,19 +194,7 @@ pub struct EmuInput {
 }
 
 impl EmuInput {
-    pub fn new(
-        shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-        flag: Arc<AtomicBool>,
-        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
-    ) -> Self {
-        Self {
-            shared,
-            flag,
-            read_buf: (new_buffer)(),
-        }
-    }
-
-    pub fn from_split(split: &InputSplit) -> Self {
+    fn from_split(split: &InputSplit) -> Self {
         Self {
             shared: Arc::clone(&split.shared),
             flag: Arc::clone(&split.flag),
@@ -293,6 +286,23 @@ mod tests {
 
     fn bit_split() -> InputSplit {
         InputSplit::spawn_typed(BitBuffer::default)
+    }
+
+    /// Test-only resources: `InputSplit::from_resources` is the single
+    /// move-out; nothing here touches the private triplets.
+    fn bit_resources() -> nerust_input_traits::InputResources {
+        use nerust_input_traits::{AttachmentId, ControlId, DigitalControlId};
+        use std::collections::HashMap;
+        nerust_input_traits::InputResources::new(
+            HashMap::from([(
+                (
+                    AttachmentId::new("test.p1"),
+                    ControlId::digital(DigitalControlId::new("test.a")),
+                ),
+                0,
+            )]),
+            Box::new(|| Box::new(BitBuffer::default()) as Box<dyn InputStateBuffer>),
+        )
     }
 
     #[test]
@@ -395,6 +405,98 @@ mod tests {
     }
 
     #[test]
+    fn publish_merges_only_staged_fields() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        /// Counts full vs dirty copies: dirty-only publish must not memcpy.
+        #[derive(Debug, Default)]
+        struct Counting {
+            bits: u64,
+            full_copies: AtomicUsize,
+            dirty_copies: AtomicUsize,
+        }
+        impl InputStateBuffer for Counting {
+            fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
+                if field >= 64 {
+                    return Err(BufferError::FieldNotFound { field });
+                }
+                let InputValue::Digital(pressed) = value else {
+                    return Err(BufferError::UnsupportedFieldType {
+                        field,
+                        expected: "digital",
+                    });
+                };
+                if pressed {
+                    self.bits |= 1 << field;
+                } else {
+                    self.bits &= !(1 << field);
+                }
+                Ok(())
+            }
+            fn clear(&mut self) {
+                self.bits = 0;
+            }
+            fn copy_state(&mut self, other: &dyn InputStateBuffer) -> Result<(), BufferError> {
+                let Some(source) = other.downcast_ref::<Self>() else {
+                    return Err(BufferError::MismatchedBuffer {
+                        expected: "Counting",
+                        actual: "other",
+                    });
+                };
+                self.bits = source.bits;
+                self.full_copies.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            fn copy_dirty_from(
+                &mut self,
+                other: &dyn InputStateBuffer,
+                dirty: &[usize],
+            ) -> Result<(), BufferError> {
+                let Some(source) = other.downcast_ref::<Self>() else {
+                    return Err(BufferError::MismatchedBuffer {
+                        expected: "Counting",
+                        actual: "other",
+                    });
+                };
+                self.dirty_copies.fetch_add(1, Ordering::SeqCst);
+                for &field in dirty {
+                    if field >= 64 {
+                        return Err(BufferError::FieldNotFound { field });
+                    }
+                    let mask = 1 << field;
+                    self.bits = (self.bits & !mask) | (source.bits & mask);
+                }
+                Ok(())
+            }
+        }
+        let split = InputSplit::spawn_typed(Counting::default);
+        let mut gui = split.gui_endpoint();
+        let mut emu = split.emu_endpoint();
+        // Staging tracks absolute fields, deduped.
+        gui.set(3, InputValue::Digital(true)).unwrap();
+        gui.set(3, InputValue::Digital(true)).unwrap();
+        gui.set(5, InputValue::Digital(true)).unwrap();
+        assert_eq!(gui.dirty_fields(), &[3, 5]);
+        gui.publish();
+        assert!(gui.dirty_fields().is_empty());
+        emu.take();
+        let snapshot = emu.read_buffer().downcast_ref::<Counting>().unwrap();
+        let bits = snapshot.bits;
+        assert_eq!(bits, (1 << 3) | (1 << 5));
+        // Dirty-only handoff: one dirty merge, no full memcpy.
+        assert_eq!(snapshot.dirty_copies.load(Ordering::SeqCst), 1);
+        assert_eq!(snapshot.full_copies.load(Ordering::SeqCst), 0);
+        // `clear` neutralizes everything: the next publish copies full state.
+        gui.set(7, InputValue::Digital(true)).unwrap();
+        gui.clear();
+        assert!(gui.dirty_fields().is_empty());
+        gui.publish();
+        emu.take();
+        let snapshot = emu.read_buffer().downcast_ref::<Counting>().unwrap();
+        assert_eq!(snapshot.bits, 0);
+        assert_eq!(snapshot.full_copies.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn port_trait_endpoints_share_state() {
         let split = bit_split();
         let mut gui = InputSplit::gui_endpoint(&split);
@@ -408,11 +510,10 @@ mod tests {
                 .unwrap()
                 .pressed
         );
-        let mut direct = GuiInput::new(
-            std::sync::Arc::clone(&split.shared),
-            std::sync::Arc::clone(&split.flag),
-            Box::new(|| Box::new(BitBuffer::default())),
-        );
-        assert!(direct.try_publish().is_ok());
+        // `from_resources` moves the map plus the factory together.
+        let (split2, map) = InputSplit::from_resources(bit_resources());
+        assert_eq!(map.len(), 1);
+        let mut gui2 = split2.gui_endpoint();
+        assert!(gui2.try_publish().is_ok());
     }
 }

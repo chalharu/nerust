@@ -12,6 +12,13 @@ pub enum SystemActivationError {
     NotRegistered(Box<dyn SystemId>),
     #[error("system activation failed: {0}")]
     Activation(String),
+    /// Typed activation failure: renders once at this boundary, keeping the chain as `source`.
+    /// Shaping matches [`Activation`](Self::Activation) so persisted logs do not change.
+    #[error("system activation failed: {source}")]
+    ActivationFailed {
+        #[source]
+        source: Box<crate::session::SessionError>,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -26,20 +33,17 @@ pub enum RomLoaderError {
     Load(String),
     /// Typed load failure: renders once at this boundary, keeping the `source` chain.
     /// Shaping matches [`Load`](Self::Load) so persisted logs and wording do not change.
-    #[error("ROM load failed: {detail}")]
+    #[error("ROM load failed: {source}")]
     LoadFailed {
-        detail: String,
         #[source]
         source: Box<crate::session::SessionError>,
     },
 }
 
 impl RomLoaderError {
-    /// Typed constructor for session-driven loads: renders the text
-    /// once at the boundary and keeps the chain as `source`.
+    /// Typed constructor for session-driven loads: keeps the chain as `source`, renders once.
     pub fn from_session(source: crate::session::SessionError) -> Self {
         Self::LoadFailed {
-            detail: source.to_string(),
             source: Box::new(source),
         }
     }
@@ -48,7 +52,9 @@ impl RomLoaderError {
 impl SystemActivationError {
     /// Typed constructor from a session error; keeps the chain renderable.
     pub fn from_session(source: crate::session::SessionError) -> Self {
-        Self::Activation(source.to_string())
+        Self::ActivationFailed {
+            source: Box::new(source),
+        }
     }
 }
 
@@ -131,6 +137,16 @@ mod activation_tests {
     #[test]
     fn activation_error_constructs_from_session() {
         let error = SystemActivationError::from_session(crate::session::SessionError::NoCore);
-        assert!(matches!(error, SystemActivationError::Activation(_)));
+        assert!(matches!(
+            error,
+            SystemActivationError::ActivationFailed { .. }
+        ));
+        // Legacy spelling still renders the same shape.
+        let legacy = SystemActivationError::Activation("boom".to_string());
+        assert_eq!(legacy.to_string(), "system activation failed: boom");
+        assert_eq!(
+            error.to_string(),
+            "system activation failed: no emulation core active"
+        );
     }
 }

@@ -1,18 +1,25 @@
-//! Single tao mapping leaf: codes, buttons, and keys.
-//! Both the native adapter and the iced converter depend on this.
+//! Single tao mapping leaf: codes, buttons, modifiers (tao to domain only).
+//! Iced conversion lives in `crate::convert` (domain to iced).
 
-use iced::keyboard;
-use iced_winit::core::SmolStr;
+use super::domain::{AuxButton, AuxModifiers};
 use nerust_keyboard::Key;
 use tao::keyboard::{KeyCode, ModifiersState as TaoModifiers};
 
-/// Convert Tao modifiers to iced modifiers.
-pub(crate) fn tao_modifiers_to_iced(m: TaoModifiers) -> keyboard::Modifiers {
-    let mut out = keyboard::Modifiers::empty();
-    out.set(keyboard::Modifiers::SHIFT, m.contains(TaoModifiers::SHIFT));
-    out.set(keyboard::Modifiers::CTRL, m.contains(TaoModifiers::CONTROL));
-    out.set(keyboard::Modifiers::ALT, m.contains(TaoModifiers::ALT));
-    out.set(keyboard::Modifiers::LOGO, m.contains(TaoModifiers::SUPER));
+/// Convert Tao modifiers to domain modifiers.
+pub(crate) fn tao_modifiers_to_domain(m: TaoModifiers) -> AuxModifiers {
+    let mut out = AuxModifiers::empty();
+    if m.contains(TaoModifiers::SHIFT) {
+        out = out.with_shift();
+    }
+    if m.contains(TaoModifiers::CONTROL) {
+        out = out.with_ctrl();
+    }
+    if m.contains(TaoModifiers::ALT) {
+        out = out.with_alt();
+    }
+    if m.contains(TaoModifiers::SUPER) {
+        out = out.with_logo();
+    }
     out
 }
 /// Convert a Tao physical key code to the shared [`Key`]: `None` for unhandled codes.
@@ -215,22 +222,6 @@ pub(crate) fn keycode_to_key(code: tao::keyboard::KeyCode) -> Option<Key> {
         _ => return None,
     })
 }
-/// Convert Tao KeyCode to iced key::Code. Unmapped codes stay
-/// `None` so the boundary adapter can drop them.
-pub(crate) fn tao_keycode_to_iced_code(
-    code: tao::keyboard::KeyCode,
-) -> Option<keyboard::key::Code> {
-    keycode_to_key(code).map(|key| key.into())
-}
-
-/// Domain mouse button: only mapped buttons cross the boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AuxButton {
-    Left,
-    Right,
-    Middle,
-}
-
 /// Map a native mouse button: unmapped buttons stay `None`.
 pub(crate) fn tao_button_to_aux(button: tao::event::MouseButton) -> Option<AuxButton> {
     Some(match button {
@@ -241,17 +232,40 @@ pub(crate) fn tao_button_to_aux(button: tao::event::MouseButton) -> Option<AuxBu
     })
 }
 
-/// Convert Tao Key to iced Key. Named editing keys map explicitly;
-/// anything else stays unidentified (physical codes cover shortcuts).
-pub(crate) fn tao_key_to_iced_key(key: &tao::keyboard::Key) -> keyboard::Key {
-    use iced::keyboard::key::Named;
-    match key {
-        tao::keyboard::Key::Character(s) => keyboard::Key::Character(SmolStr::new(s)),
-        tao::keyboard::Key::Backspace => keyboard::Key::Named(Named::Backspace),
-        tao::keyboard::Key::Delete => keyboard::Key::Named(Named::Delete),
-        tao::keyboard::Key::Enter => keyboard::Key::Named(Named::Enter),
-        tao::keyboard::Key::Escape => keyboard::Key::Named(Named::Escape),
-        tao::keyboard::Key::Tab => keyboard::Key::Named(Named::Tab),
-        _ => keyboard::Key::Unidentified,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tao::keyboard::ModifiersState as M;
+
+    #[test]
+    fn modifiers_map_each_flag_to_domain() {
+        assert_eq!(tao_modifiers_to_domain(M::empty()), AuxModifiers::empty());
+        assert!(tao_modifiers_to_domain(M::SHIFT).shift());
+        assert!(tao_modifiers_to_domain(M::CONTROL).ctrl());
+        assert!(tao_modifiers_to_domain(M::ALT).alt());
+        assert!(tao_modifiers_to_domain(M::SUPER).logo());
+        let all = tao_modifiers_to_domain(M::SHIFT | M::CONTROL | M::ALT | M::SUPER);
+        assert!(all.shift() && all.ctrl() && all.alt() && all.logo());
+    }
+
+    #[test]
+    fn mapped_buttons_cross_but_others_drop() {
+        use tao::event::MouseButton;
+        assert_eq!(tao_button_to_aux(MouseButton::Left), Some(AuxButton::Left));
+        assert_eq!(
+            tao_button_to_aux(MouseButton::Right),
+            Some(AuxButton::Right)
+        );
+        assert_eq!(
+            tao_button_to_aux(MouseButton::Middle),
+            Some(AuxButton::Middle)
+        );
+        assert_eq!(tao_button_to_aux(MouseButton::Other(5)), None);
+    }
+
+    #[test]
+    fn unmapped_codes_stay_unmapped() {
+        let code = tao::keyboard::KeyCode::Unidentified(tao::keyboard::NativeKeyCode::Unidentified);
+        assert!(keycode_to_key(code).is_none());
     }
 }

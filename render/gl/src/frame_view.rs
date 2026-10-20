@@ -15,13 +15,12 @@ use nerust_glwrap::{
     vertex::{Attrib, VertexArray, VertexBuffer},
 };
 use nerust_render_ntsc::NTSC_TEXTURE_HEIGHT;
-use nerust_render_traits::{
-    ReservedStrip, VideoFrameFormat, VideoRenderProfile, renderer::StagingBuf,
-};
+use nerust_render_traits::{ReservedStrip, VideoFrameFormat, VideoRenderProfile};
 
 use crate::mat4::Mat4;
 use crate::shader_compiler::{compile_shader_program, is_gles_context, supports_unpack_row_length};
 use crate::surface_view::LeakedName;
+use crate::upload::StagingBuf;
 use crate::vec2d::Vec2D;
 use crate::vertex_data::VertexData;
 use crate::{

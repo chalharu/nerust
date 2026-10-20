@@ -1,7 +1,7 @@
 //! Aux-window focus agreement as behavior-carrying types.
 //! Aux handles implement [`AuxWindow`] + [`AuxEvents`]; runtime only drives them.
 
-use crate::aux::native::{AuxNativeEvent, NativeWindowId};
+use crate::aux::domain::{AuxNativeEvent, NativeWindowId};
 use crate::aux::shell::AuxShellOps;
 
 /// Which aux window changed focus. Interactive viewers may report a resume;

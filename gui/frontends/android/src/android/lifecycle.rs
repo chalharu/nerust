@@ -3,10 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use nerust_gui_shell::session::SessionHandle;
-
-use super::storage::AndroidStorage;
-use crate::lifecycle_decision::{self, ResumeWant};
+use crate::lifecycle_decision::{self, LifecyclePolicy, SuspendFileAction};
 
 const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 const FOREGROUND_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
@@ -40,6 +37,10 @@ impl Lifecycle {
         self.restore_pending
     }
 
+    pub(super) fn auto_paused(&self) -> bool {
+        self.auto_paused
+    }
+
     pub(super) fn clear_restore_pending(&mut self) {
         self.restore_pending = false;
     }
@@ -61,7 +62,7 @@ impl Lifecycle {
         log::info!(
             "begin_foreground_resume: restore_pending={} auto_paused={}",
             self.restore_pending,
-            self.auto_paused
+            self.auto_paused,
         );
         self.resume_pending = true;
         self.retry_attempts = 0;
@@ -119,65 +120,34 @@ impl Lifecycle {
         self.retry_at = None;
     }
 
-    /// Fresh-load resume gate: always resumes except across an error auto-pause.
-    /// Manual pauses survive.
-    pub(super) fn resume_want_after_restore(
+    /// Restore policy for the current flags: the single decision point
+    /// for the fetch lane and both resume gates.
+    pub(super) fn policy(
         &self,
         restore_hidden_state: bool,
         error_paused: bool,
-    ) -> bool {
-        let want =
-            lifecycle_decision::should_resume_after_restore(restore_hidden_state, self.auto_paused);
-        let want = want.then_some(ResumeWant::FreshLoad);
-        lifecycle_decision::should_resume_on_foreground(lifecycle_decision::ForegroundResume {
+        has_document_reference: bool,
+        has_library_id: bool,
+    ) -> LifecyclePolicy {
+        LifecyclePolicy {
+            restore_hidden_state,
+            lifecycle_auto_paused: self.auto_paused,
             error_paused,
-            want,
-        })
-    }
-
-    /// Resume gate for the foreground retry: only our own lifecycle
-    /// auto-pause, never across an error auto-pause.
-    pub(super) fn resume_want_foreground_retry(&self, error_paused: bool) -> bool {
-        let want = self.auto_paused.then_some(ResumeWant::LifecycleRetry);
-        lifecycle_decision::should_resume_on_foreground(lifecycle_decision::ForegroundResume {
-            error_paused,
-            want,
-        })
+            has_document_reference,
+            has_library_id,
+        }
     }
 
     /// Auto-pause only with a pausable session. The caller executes the pause;
     /// this type never touches command execution.
-    pub(super) fn should_auto_pause(&self, session: &SessionHandle) -> bool {
-        lifecycle_decision::should_lifecycle_pause(
-            self.auto_paused,
-            session.tick_metrics().can_pause(),
-        )
+    pub(super) fn should_auto_pause(&self, can_pause: bool) -> bool {
+        lifecycle_decision::should_lifecycle_pause(self.auto_paused, can_pause)
     }
 
-    pub(super) fn save_for_suspend(
-        &mut self,
-        session: &mut SessionHandle,
-        storage: &AndroidStorage,
-    ) {
-        log::info!(
-            "save_lifecycle_state: paused={} lifecycle_auto_paused={} restore_pending={}",
-            session.tick_metrics().paused,
-            self.auto_paused,
-            self.restore_pending
-        );
-        // The caller already decided and executed auto-pause; the flag here
-        // only reflects recorded state.
-        session.clear_input();
-        self.restore_pending = session.save_hidden_lifecycle_state();
-        if !self.restore_pending {
-            session.clear_hidden_lifecycle_state();
-            storage.clear_restore_pending();
-            log::info!("save_lifecycle_state: no hidden lifecycle state was produced");
-        } else {
-            storage.touch_restore_pending();
-            log::info!("save_lifecycle_state: hidden lifecycle state saved");
-        }
-        session.flush_before_exit();
-        log::info!("save_lifecycle_state: flushed session state");
+    /// Pure suspend decision: records the hidden-save outcome and returns
+    /// the marker action. The frontend executes the storage and session I/O.
+    pub(super) fn save_decision(&mut self, saved_hidden: bool) -> SuspendFileAction {
+        self.restore_pending = saved_hidden;
+        lifecycle_decision::suspend_file_action(saved_hidden)
     }
 }

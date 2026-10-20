@@ -10,28 +10,8 @@ use nerust_persistence::{
     thumbnail::ThumbnailSource,
 };
 
-use super::error::SlotOpFailure;
-
-/// Persistence-facing view of the live core: slot bytes are stored verbatim.
-/// The caller resolves the envelope at the session boundary; implemented for the live core.
-pub trait StateExporter {
-    /// Export raw core state bytes for slot storage.
-    fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure>;
-    /// Import raw core state bytes previously resolved by the caller.
-    fn import_state(&self, data: Vec<u8>) -> Result<(), SlotOpFailure>;
-    /// Preview pixels for the slot thumbnail, if a frame is available.
-    fn export_preview(&self) -> Option<ThumbnailSource>;
-    /// Identity the slot is filed under.
-    fn export_identity(&self) -> Option<SystemIdentity>;
-    /// Canonical media identity for slot filing; defaults to [`export_identity`](Self::export_identity).
-    fn canonical_media_identity(&self) -> Option<SystemIdentity> {
-        self.export_identity()
-    }
-    /// Export the battery-backed mapper save, if the core holds one.
-    fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure>;
-    /// Import a battery-backed mapper save from disk.
-    fn import_mapper(&self, bytes: Vec<u8>) -> Result<(), SlotOpFailure>;
-}
+/// Re-exported from the live-core home; ports depend on it, never define it.
+pub use crate::emu_core::StateExporter;
 
 /// Whether a save also moves the active-slot pointer. Explicit enum:
 /// a bare `bool` at six call sites never says which way it flips.
@@ -52,14 +32,12 @@ pub struct PersistenceBackends {
     pub mapper: Box<dyn MapperSaveBackend>,
 }
 
-/// Loader-facing session ports; load adapter depends on this, never the handle.
-pub trait SessionPorts {
+/// Loader-facing load leg: options, resolved loads, resume, activation.
+pub trait LoadPorts {
     /// Default load options for the active system.
     fn default_load_options(
         &self,
     ) -> Option<Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptions>>;
-    /// Current settings snapshot.
-    fn settings_snapshot(&self) -> &nerust_gui_runtime::settings::SettingsSnapshot;
     /// Load resolved media.
     fn load_resolved(
         &mut self,
@@ -74,6 +52,16 @@ pub trait SessionPorts {
         system_id: &dyn nerust_core_traits::identity::SystemId,
     ) -> Result<(), crate::load::SystemActivationError>;
 }
+
+/// Loader-facing snapshot leg: current settings snapshot.
+pub trait SnapshotPort {
+    /// Current settings snapshot.
+    fn settings_snapshot(&self) -> &nerust_gui_runtime::settings::SettingsSnapshot;
+}
+
+/// Loader-facing session ports: load plus snapshot legs.
+/// Callers needing one leg bound on it directly; this union stays for compat.
+pub trait SessionPorts: LoadPorts + SnapshotPort {}
 
 /// Plain-args notification view; single adapter at the settings boundary.
 #[derive(Debug, Clone, Copy)]
@@ -201,6 +189,7 @@ pub trait MapperSaveBackend: Send {
 
 #[cfg(test)]
 mod ports_cov_tests {
+    use crate::emu_core::SlotOpFailure;
     use crate::session::ports::*;
 
     fn settings() -> nerust_settings_core::model::local::NotificationSettings {

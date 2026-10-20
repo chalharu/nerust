@@ -53,7 +53,7 @@ impl HistoryFilter {
             HistoryFilter::Warning => 1,
             HistoryFilter::Error => 2,
         };
-        level.severity() >= minimum
+        crate::util::level_visible(minimum, level.severity())
     }
 
     /// Localized dropdown label. Levels reuse the settings table;
@@ -332,21 +332,21 @@ impl super::focus::AuxShellRef for HistoryWindowHandle {
     }
 }
 
-impl super::registry::DebugDrainPort for HistoryWindowHandle {}
-impl super::registry::LiveImagesPort for HistoryWindowHandle {}
-impl super::registry::SettingsClosePort for HistoryWindowHandle {}
-impl super::registry::BridgeSharePort for HistoryWindowHandle {}
 impl super::registry::AuxController for HistoryWindowHandle {
     fn sync_view(&mut self) {
         // History rebuilds from pushed content, not from the bridge.
     }
-}
 
-impl super::registry::HistorySyncPort for HistoryWindowHandle {
+    fn as_history(&mut self) -> Option<&mut dyn super::registry::HistorySyncPort> {
+        Some(self)
+    }
+
     fn take_history_clear(&mut self) -> bool {
         self.take_clear_request()
     }
+}
 
+impl super::registry::HistorySyncPort for HistoryWindowHandle {
     fn sync_history(&mut self, lines: std::sync::Arc<[HistoryLine]>, language: AppLanguage) {
         self.sync(lines, language);
     }

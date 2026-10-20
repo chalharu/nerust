@@ -1,0 +1,13 @@
+[package]
+authors.workspace = true
+description = "Shared frontend kernel: hashes, caches, and gates behind both native frontends"
+edition.workspace = true
+license.workspace = true
+name = "nerust_frontend_kernel"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]

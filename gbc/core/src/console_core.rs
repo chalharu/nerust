@@ -429,15 +429,13 @@ impl DebugControl for GbcDebugControl<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex, atomic::AtomicBool},
-    };
+    use std::collections::HashMap;
 
     use nerust_core_traits::{
         CoreOptions,
         peripheral::{AccelerationSample, RumbleState, accelerometer_channel, rumble_channel},
     };
+    use nerust_emu_thread::{InputPort as _, InputSplit};
     use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 
     use super::*;
@@ -467,23 +465,11 @@ mod tests {
     }
 
     fn input() -> EmuInput {
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-            Arc::new(Mutex::new(Box::<GbcInputBuffer>::default()));
-        EmuInput::new(
-            shared,
-            Arc::new(AtomicBool::new(false)),
-            Box::new(|| Box::<GbcInputBuffer>::default()),
-        )
+        InputSplit::spawn_typed(GbcInputBuffer::default).emu_endpoint()
     }
 
     fn wrong_input() -> EmuInput {
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-            Arc::new(Mutex::new(Box::new(OtherInput)));
-        EmuInput::new(
-            shared,
-            Arc::new(AtomicBool::new(false)),
-            Box::new(|| Box::new(OtherInput)),
-        )
+        InputSplit::spawn_typed(|| OtherInput).emu_endpoint()
     }
 
     fn rom() -> Vec<u8> {

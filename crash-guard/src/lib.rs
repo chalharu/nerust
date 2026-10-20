@@ -6,8 +6,8 @@ use std::{
     panic::{self, PanicHookInfo},
 };
 
-/// Record sink for the panic hook. Passed per install; no global slot.
-pub type RecordSink = fn(&PanicRecord);
+/// Record sink for the panic hook. Capturing sinks move in by value; no global slot.
+pub type RecordSink = std::sync::Arc<dyn Fn(&PanicRecord) + Send + Sync + 'static>;
 
 /// Default sink: stderr log line for the crash record.
 pub fn default_sink(record: &PanicRecord) {
@@ -17,25 +17,32 @@ pub fn default_sink(record: &PanicRecord) {
     );
 }
 
-/// Backtrace source: injected so hosts and tests avoid the real capture.
-/// Production passes [`capture_backtrace`]; tests pass a fixed string.
-pub type BacktraceSource = fn() -> String;
+/// Backtrace source: hosts and tests inject; capturing sources move in by value.
+pub type BacktraceSource = std::sync::Arc<dyn Fn() -> String + Send + Sync + 'static>;
 
 /// Real backtrace capture for production installs.
 pub fn capture_backtrace() -> String {
     std::backtrace::Backtrace::capture().to_string()
 }
 
-/// RAII panic-hook install. Chains the previous hook on construction and restores it on drop, so
-/// scoped installs never leak into the host. Drops must nest (LIFO); `mem::forget` the guard for a permanent install.
+/// Install generation: a guard restores only when no later install is live.
+static INSTALL_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// RAII panic-hook install: chains on construction, generation-guarded restore on drop.
+/// Out-of-order drops keep the newer hook; `mem::forget` the guard for a permanent install.
 pub struct HookGuard {
     chained: std::sync::Arc<dyn Fn(&PanicHookInfo<'_>) + Sync + Send + 'static>,
+    epoch: u64,
 }
 
 impl Drop for HookGuard {
     fn drop(&mut self) {
-        // Best-effort LIFO restore: wrap the chained hook back in place.
-        // A later install dropped out of order keeps its own chain.
+        // Generation-counted restore: only the newest live install owns
+        // the hook slot. An older guard dropped late keeps the newer hook.
+        if INSTALL_EPOCH.load(std::sync::atomic::Ordering::SeqCst) != self.epoch {
+            eprintln!("panic hook guard dropped out of order; keeping the newer hook");
+            return;
+        }
         let chained = std::sync::Arc::clone(&self.chained);
         panic::set_hook(Box::new(move |info| chained(info)));
     }
@@ -43,13 +50,24 @@ impl Drop for HookGuard {
 
 /// Install the hook with an explicit sink, chaining the previous hook.
 /// Returns a guard: dropping restores the previous hook.
-pub fn install_with(sink: RecordSink) -> HookGuard {
+pub fn install_with(sink: impl Fn(&PanicRecord) + Send + Sync + 'static) -> HookGuard {
     install_with_source(sink, capture_backtrace)
 }
 
 /// Install the hook with an explicit sink and backtrace source.
 /// Returns a guard: dropping restores the previous hook.
-pub fn install_with_source(sink: RecordSink, source: BacktraceSource) -> HookGuard {
+pub fn install_with_source(
+    sink: impl Fn(&PanicRecord) + Send + Sync + 'static,
+    source: impl Fn() -> String + Send + Sync + 'static,
+) -> HookGuard {
+    install_erased(std::sync::Arc::new(sink), std::sync::Arc::new(source))
+}
+
+/// Erased entry point for pre-boxed sinks and sources.
+fn install_erased(sink: RecordSink, source: BacktraceSource) -> HookGuard {
+    // Epoch is the counter value *after* our install; a later install
+    // moves the counter past it, marking this guard stale.
+    let epoch = INSTALL_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     let previous = panic::take_hook();
     let chained: std::sync::Arc<dyn Fn(&PanicHookInfo<'_>) + Sync + Send + 'static> =
         std::sync::Arc::from(previous);
@@ -59,7 +77,7 @@ pub fn install_with_source(sink: RecordSink, source: BacktraceSource) -> HookGua
         sink(&record);
         for_hook(info);
     }));
-    HookGuard { chained }
+    HookGuard { chained, epoch }
 }
 
 /// Install the default hook for the process lifetime. The host owns the guard;
@@ -69,6 +87,7 @@ pub fn install_default() -> HookGuard {
 }
 
 /// Crash exit code for hosts (Rust panic convention: 101).
+/// Kept for frozen host call sites; hosts map [`GuardOutcome`] to process policy.
 pub const CRASH_EXIT_CODE: i32 = 101;
 
 /// Guard result: normal completion or an unwound crash. `#[must_use]`
@@ -92,9 +111,9 @@ impl CrashReport {
         &self.record.detail
     }
 
-    fn from_payload(payload: &(dyn Any + Send), source: BacktraceSource) -> Self {
+    fn from_payload(payload: &(dyn Any + Send), backtrace: String) -> Self {
         Self {
-            record: PanicRecord::capture_with(payload_message(payload), source()),
+            record: PanicRecord::capture_with(payload_message(payload), backtrace),
         }
     }
 }
@@ -166,13 +185,17 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
 /// Silent (the hook already logged); caught state is never resumed or reused.
 pub fn run_guarded_with<R>(
     main: impl FnOnce() -> R,
-    sink: RecordSink,
-    source: BacktraceSource,
+    sink: impl Fn(&PanicRecord) + Send + Sync + 'static,
+    source: impl Fn() -> String + Send + Sync + 'static,
 ) -> GuardOutcome<R> {
-    let _guard = install_with_source(sink, source);
+    let source: BacktraceSource = std::sync::Arc::new(source);
+    let for_hook = std::sync::Arc::clone(&source);
+    let _guard = install_with_source(sink, move || for_hook());
     match panic::catch_unwind(std::panic::AssertUnwindSafe(main)) {
         Ok(value) => GuardOutcome::Completed(value),
-        Err(payload) => GuardOutcome::Crashed(CrashReport::from_payload(payload.as_ref(), source)),
+        Err(payload) => {
+            GuardOutcome::Crashed(CrashReport::from_payload(payload.as_ref(), source()))
+        }
     }
 }
 
@@ -211,7 +234,7 @@ mod tests {
 
     #[test]
     fn report_display_names_thread_and_message() {
-        let report = CrashReport::from_payload(&"boom", stub_source);
+        let report = CrashReport::from_payload(&"boom", stub_source());
         let text = report.to_string();
         assert!(text.contains("boom"), "{text}");
         assert!(text.contains("crashed on thread"), "{text}");
@@ -237,6 +260,61 @@ mod tests {
             GuardOutcome::Completed(()) => panic!("crash must not complete"),
         }
         assert_eq!(SINK_CALLS.load(Ordering::SeqCst), before + 1);
+    }
+
+    #[test]
+    fn capturing_sink_moves_in_without_globals() {
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        use std::sync::{Arc, Mutex};
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let probe = Arc::clone(&seen);
+        // Capturing closure: no global slot, no fn-pointer gymnastics.
+        let outcome: GuardOutcome<()> = run_guarded_with(
+            || panic!("captured boom"),
+            move |record: &PanicRecord| {
+                probe.lock().unwrap().push(record.detail.clone());
+            },
+            || "stub backtrace".to_string(),
+        );
+        assert!(matches!(outcome, GuardOutcome::Crashed(_)));
+        // Hook-path detail is the full hook info, not just the payload.
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].contains("captured boom"), "{}", seen[0]);
+    }
+
+    #[test]
+    fn nested_installs_restore_in_epoch_order() {
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        use std::sync::{Arc, Mutex};
+        let outer_seen = Arc::new(Mutex::new(0usize));
+        let inner_seen = Arc::new(Mutex::new(0usize));
+        let outer_probe = Arc::clone(&outer_seen);
+        let inner_probe = Arc::clone(&inner_seen);
+        let outer = install_with_source(
+            move |_| {
+                *outer_probe.lock().unwrap() += 1;
+            },
+            stub_source,
+        );
+        let inner = install_with_source(
+            move |_| {
+                *inner_probe.lock().unwrap() += 1;
+            },
+            stub_source,
+        );
+        // Out-of-order drop: the older guard keeps the newer hook live.
+        drop(outer);
+        let result = panic::catch_unwind(|| panic!("nested probe"));
+        assert!(result.is_err());
+        assert_eq!(*inner_seen.lock().unwrap(), 1, "newer hook stays live");
+        assert_eq!(*outer_seen.lock().unwrap(), 1, "chain still delegates");
+        // Dropping the newest guard restores what it chained (the outer hook).
+        drop(inner);
+        let result = panic::catch_unwind(|| panic!("after inner drop"));
+        assert!(result.is_err());
+        assert_eq!(*inner_seen.lock().unwrap(), 1, "inner hook gone");
+        assert_eq!(*outer_seen.lock().unwrap(), 2, "outer hook restored");
     }
 
     #[test]
@@ -285,16 +363,16 @@ mod tests {
 
     #[test]
     fn report_covers_owned_and_unknown_payloads() {
-        let owned = CrashReport::from_payload(&"owned".to_owned(), stub_source);
+        let owned = CrashReport::from_payload(&"owned".to_owned(), stub_source());
         assert_eq!(owned.message(), "owned");
         assert!(owned.to_string().contains("stub backtrace"));
-        let unknown = CrashReport::from_payload(&42_u32, stub_source);
+        let unknown = CrashReport::from_payload(&42_u32, stub_source());
         assert_eq!(unknown.message(), "non-string panic payload");
     }
 
     #[test]
     fn record_getters_expose_thread_and_backtrace() {
-        let report = CrashReport::from_payload(&"boom", stub_source);
+        let report = CrashReport::from_payload(&"boom", stub_source());
         let text = format!("{report:?}");
         assert!(text.contains("boom"), "{text}");
     }
@@ -304,7 +382,7 @@ mod tests {
         let completed: GuardOutcome<u32> = GuardOutcome::Completed(1);
         assert!(format!("{completed:?}").contains("Completed"));
         let crashed: GuardOutcome<u32> =
-            GuardOutcome::Crashed(CrashReport::from_payload(&"x", stub_source));
+            GuardOutcome::Crashed(CrashReport::from_payload(&"x", stub_source()));
         assert!(format!("{crashed:?}").contains("Crashed"));
     }
 }

@@ -205,20 +205,25 @@ pub fn draw_arrays(mode: GLenum, first: GLint, count: GLsizei) -> Result<(), Err
     gl_error_handle(|| unsafe { gl::DrawArrays(mode, first, count) })
 }
 
+/// Buffer-object byte offset as a GL client address; `u32`-bounded, no provenance.
+pub(crate) fn index_offset(offset: u32) -> *const std::ffi::c_void {
+    std::ptr::without_provenance::<std::ffi::c_void>(offset as usize)
+}
+
 pub fn draw_elements(
     mode: GLenum,
     count: GLsizei,
     type_: GLenum,
-    offset: usize,
+    offset: u32,
 ) -> Result<(), Error> {
     gl_error_handle(|| unsafe {
         gl::DrawElements(
             mode,
             count,
             type_,
-            // SAFETY: null base plus a byte offset is the standard
-            // client-side index address form for `DrawElements`.
-            std::ptr::null::<std::ffi::c_void>().add(offset),
+            // Index-buffer byte offset as an address without provenance.
+            // `u32` bounds the offset; the `usize` widening cannot overflow.
+            index_offset(offset),
         )
     })
 }
@@ -325,6 +330,14 @@ pub fn gl_string(name: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::super::error::{Error, ErrorKind};
+
+    #[test]
+    fn index_offset_carries_no_provenance() {
+        // `u32` offsets widen exactly; the address equals the offset value.
+        assert_eq!(super::index_offset(0) as usize, 0);
+        assert_eq!(super::index_offset(8) as usize, 8);
+        assert_eq!(super::index_offset(u32::MAX) as usize, u32::MAX as usize);
+    }
 
     #[test]
     fn error_kind_maps_known_codes() {

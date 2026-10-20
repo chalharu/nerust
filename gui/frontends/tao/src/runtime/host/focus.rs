@@ -14,6 +14,24 @@ impl HostState {
         PauseControl::pause(self);
     }
 
+    /// Shared aux-focus drive: every aux path routes here; sync/drain defer to burst.
+    pub(crate) fn drive_aux_focus(
+        &mut self,
+        kind: crate::aux::focus::AuxKind,
+        focused: bool,
+    ) -> bool {
+        let mut resume = false;
+        if let Some(effect) = self.focus_event(crate::aux::focus::FocusEvent::Aux(kind, focused))
+            && effect == FocusEffect::Resume
+        {
+            resume = true;
+        }
+        if resume {
+            self.resume_session();
+        }
+        focused
+    }
+
     /// Execute a still-armed auto-pause at the end of the event burst.
     pub(super) fn tick_focus_sync(&mut self) {
         if self.focus_event(FocusEvent::BurstEnd) != Some(FocusEffect::Pause) {

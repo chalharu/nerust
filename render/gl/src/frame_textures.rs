@@ -3,7 +3,9 @@
 
 use gl::types::{GLenum, GLint};
 use nerust_glwrap::raw::{active_texture, bind_texture, tex_image_2d, tex_parameteri};
-use nerust_render_traits::{renderer::StagingBuf, rgb::RgbaWord};
+use nerust_render_traits::rgb::RgbaWord;
+
+use crate::upload::StagingBuf;
 
 use crate::error::ViewError;
 
@@ -159,7 +161,8 @@ pub(crate) fn upload_texture_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::{StagingBuf, pack_ntsc_bytes};
+    use super::pack_ntsc_bytes;
+    use crate::upload::StagingBuf;
 
     #[test]
     fn ntsc_pack_copies_bytes_verbatim_with_zero_pad() {

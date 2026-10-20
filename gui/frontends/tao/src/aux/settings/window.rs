@@ -59,12 +59,11 @@ impl SettingsWindowHandle {
         .ok()?;
         // Birth geometry is a placeholder on some compositors; record
         // it to tell "born 0x0, never resized" apart from later traffic.
+        let (viewport_w, viewport_h) = surface.viewport();
         log::debug!(
-            "settings create: physical={}x{} scale={} bounds={:?}",
-            surface.viewport_physical.0,
-            surface.viewport_physical.1,
-            surface.scale_factor,
-            surface.bounds,
+            "settings create: physical={viewport_w}x{viewport_h} scale={} bounds={:?}",
+            surface.scale(),
+            surface.bounds(),
         );
         let shell = AuxShell::assemble(surface, instance);
         Some(Self {
@@ -93,11 +92,11 @@ impl crate::aux::focus::AuxShellRef for SettingsWindowHandle {
     }
 }
 
-impl crate::aux::registry::DebugDrainPort for SettingsWindowHandle {}
-impl crate::aux::registry::LiveImagesPort for SettingsWindowHandle {}
-impl crate::aux::registry::HistorySyncPort for SettingsWindowHandle {}
-impl crate::aux::registry::BridgeSharePort for SettingsWindowHandle {}
-impl crate::aux::registry::AuxController for SettingsWindowHandle {}
+impl crate::aux::registry::AuxController for SettingsWindowHandle {
+    fn as_settings(&mut self) -> Option<&mut dyn crate::aux::registry::SettingsClosePort> {
+        Some(self)
+    }
+}
 
 impl crate::aux::registry::SettingsClosePort for SettingsWindowHandle {
     fn take_pending_settings(&mut self) -> Option<SettingsSnapshot> {

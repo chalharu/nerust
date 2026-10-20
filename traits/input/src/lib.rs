@@ -11,15 +11,16 @@ pub use devices::{
     Controller, ControllerCollection, ControllerHub, FieldEntry, Port, SimplePort, StrobeTarget,
 };
 pub use events::{
-    BufferError, DigitalInputEvent, DigitalInputState, InputEvent, InputStateBuffer, InputValue,
-    OpenBusReadResult,
+    BufferError, DigitalInputEvent, DigitalInputState, FieldId, InputEvent, InputStateBuffer,
+    InputValue, OpenBusReadResult,
 };
 pub use ids::{
     AnalogControlId, AttachmentId, ControlId, DeviceKindId, DigitalControlId, PortId, ProfileId,
 };
 pub use profile::{
-    AbstractKey, ControlInfo, ControlKind, ControllerProfile, CreateSplitError, InputAssignments,
-    InputPorts, InputResources, InputSystemFactory, PortSet, SlotInfo,
+    AbstractKey, BufferFactory, ControlInfo, ControlKind, ControllerProfile, CreateSplitError,
+    InputAssignments, InputPorts, InputResources, InputSystemFactory, PortSet, SlotInfo,
+    UnifiedFieldMap,
 };
 pub use topology::{
     AnalogControlDescriptor, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,

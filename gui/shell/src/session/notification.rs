@@ -126,6 +126,42 @@ impl Message {
             ..Self::unit(key)
         }
     }
+
+    /// 64-bit coalescing key over the stable fields: equal messages hash
+    /// equal; collisions only over-coalesce.
+    pub fn coalescing_key(&self) -> u64 {
+        fn disc(key: MessageKey) -> u8 {
+            match key {
+                MessageKey::Paused => 0,
+                MessageKey::Resumed => 1,
+                MessageKey::Reset => 2,
+                MessageKey::SlotCreated => 3,
+                MessageKey::SlotSaved => 4,
+                MessageKey::SlotLoaded => 5,
+                MessageKey::SlotDeleted => 6,
+                MessageKey::SlotSelected => 7,
+                MessageKey::SavesUnavailable => 8,
+                MessageKey::SlotFailed => 9,
+                MessageKey::CommandFailed => 10,
+            }
+        }
+        const OFFSET: u64 = 0xcbf29ce484222325;
+        const PRIME: u64 = 0x100000001b3;
+        let mut hash = OFFSET;
+        let mut mix = |bytes: &[u8]| {
+            for &byte in bytes {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(PRIME);
+            }
+        };
+        mix(&[disc(self.key)]);
+        mix(&self.slot.unwrap_or(u64::MAX).to_le_bytes());
+        mix(&[self.reason.map_or(u8::MAX, |r| r as u8)]);
+        mix(&[self.origin.map_or(u8::MAX, |o| o as u8)]);
+        mix(self.id.as_bytes());
+        mix(self.detail.as_bytes());
+        hash
+    }
 }
 
 /// Single localization adapter: the only place turning keys into text.
@@ -138,7 +174,13 @@ pub struct NotificationRenderer {
 impl NotificationRenderer {
     /// Render one domain event in the adapter language.
     pub fn render(&self, kind: &NotificationKind) -> String {
-        render_message(&kind.message(), self.language)
+        self.render_message(&kind.message())
+    }
+
+    /// Render one prebuilt domain message: the single format point shared
+    /// by the row and the coalescing key.
+    pub fn render_message(&self, message: &Message) -> String {
+        render_message(message, self.language)
     }
 
     /// Render one stable level name in the adapter language.
@@ -270,6 +312,55 @@ pub enum ReplaceGroup {
 }
 
 impl NotificationKind {
+    /// 64-bit coalescing key over the full content: equal kinds hash equal;
+    /// collisions only over-coalesce.
+    pub fn coalescing_key(&self) -> u64 {
+        const OFFSET: u64 = 0xcbf29ce484222325;
+        const PRIME: u64 = 0x100000001b3;
+        let mut hash = OFFSET;
+        let mut mix = |bytes: &[u8]| {
+            for &byte in bytes {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(PRIME);
+            }
+        };
+        match self {
+            Self::Paused => mix(b"paused"),
+            Self::Resumed => mix(b"resumed"),
+            Self::Reset => mix(b"reset"),
+            Self::SavedSlot(id) => {
+                mix(b"saved");
+                mix(&id.to_le_bytes());
+            }
+            Self::LoadedSlot(id) => {
+                mix(b"loaded");
+                mix(&id.to_le_bytes());
+            }
+            Self::DeletedSlot(id) => {
+                mix(b"deleted");
+                mix(&id.to_le_bytes());
+            }
+            Self::CreatedSlot => mix(b"created"),
+            Self::SelectedSlot(id) => {
+                mix(b"selected");
+                mix(&id.to_le_bytes());
+            }
+            Self::PersistenceUnavailable => mix(b"unavailable"),
+            Self::SlotFailed { slot, reason } => {
+                mix(b"slotfailed");
+                mix(&slot.unwrap_or(u64::MAX).to_le_bytes());
+                mix(&[*reason as u8]);
+            }
+            Self::CommandFailure { origin, id, detail } => {
+                mix(b"command");
+                mix(&[*origin as u8]);
+                mix(id.as_bytes());
+                mix(detail.as_bytes());
+            }
+        }
+        hash
+    }
+
     /// Single truncation point for failure details; both paths funnel here.
     /// A pathological message cannot wedge the count-capped modal queue.
     pub fn command_failure(origin: FailureOrigin, id: &'static str, detail: String) -> Self {
@@ -464,10 +555,11 @@ pub struct PendingQueue {
 
 impl PendingQueue {
     /// Offer one logged event; identical neighbours coalesce.
+    /// Key comparison is O(1); kinds keep `PartialEq` for tests only.
     pub fn offer(&mut self, event: UiNotification) {
         if let Some(back) = self.pending.back_mut()
             && back.level == event.level
-            && back.kind == event.kind
+            && back.kind.coalescing_key() == event.kind.coalescing_key()
         {
             back.count += 1;
             return;
@@ -838,6 +930,56 @@ mod tests {
         assert_eq!(drained[0].seq, history[0].seq);
         assert_eq!(drained[0].at, history[0].at);
         assert_eq!(drained[0].count, history[0].count);
+    }
+}
+
+#[cfg(test)]
+mod message_key_tests {
+    use crate::session::notification::*;
+
+    #[test]
+    fn equal_messages_hash_equal_and_differ_otherwise() {
+        let a = NotificationKind::SavedSlot(1).message();
+        let b = NotificationKind::SavedSlot(1).message();
+        let c = NotificationKind::SavedSlot(2).message();
+        let d = NotificationKind::SavedSlot(1);
+        assert_eq!(a.coalescing_key(), b.coalescing_key());
+        assert_ne!(a.coalescing_key(), c.coalescing_key());
+        // Kind keys are stable per content within their own space.
+        assert_eq!(d.coalescing_key(), d.coalescing_key());
+        // Every variant produces a stable key across calls.
+        for kind in [
+            NotificationKind::Paused,
+            NotificationKind::CommandFailure {
+                origin: FailureOrigin::Bridge,
+                id: "x",
+                detail: "boom".to_string(),
+            },
+            NotificationKind::SlotFailed {
+                slot: None,
+                reason: SlotOpFailure::Corrupt,
+            },
+        ] {
+            assert_eq!(kind.coalescing_key(), kind.coalescing_key());
+        }
+    }
+
+    #[test]
+    fn render_message_matches_render() {
+        let renderer = NotificationRenderer {
+            language: AppLanguage::English,
+        };
+        for kind in [
+            NotificationKind::Paused,
+            NotificationKind::SavedSlot(3),
+            NotificationKind::SlotFailed {
+                slot: Some(1),
+                reason: SlotOpFailure::Storage,
+            },
+        ] {
+            let message = kind.message();
+            assert_eq!(renderer.render(&kind), renderer.render_message(&message));
+        }
     }
 }
 

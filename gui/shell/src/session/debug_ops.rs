@@ -1,23 +1,73 @@
 //! Debugger views: batched, paused-gated reads plus the shell-owned write transaction.
 //! Frontends render from snapshots and never touch the core.
 
-use std::sync::{Arc, MutexGuard};
+use std::sync::Arc;
 
 use nerust_gui_viewmodel::debugger as debug_vm;
 
-#[cfg(test)]
-use super::LiveImages;
 use super::{SessionHandle, osd::TickMetrics};
 use crate::debug::{CoreFailure, ImageNeed, TrafficKind};
 
 impl SessionHandle {
-    /// Poison-recovering transaction lock: plain data survives a panicked holder.
-    /// Exactly one logging point for the recovery.
-    fn lock_txn(&self) -> MutexGuard<'_, debug_vm::WriteTransaction> {
-        self.debug_txn.lock().unwrap_or_else(|error| {
-            log::error!("debug transaction mutex poisoned, recovering");
-            error.into_inner()
-        })
+    /// Run one action batch and return the render-ready display.
+    /// Tests/headless only; frontends use the flight.
+    pub fn debug_drain(
+        &self,
+        actions: &[crate::debug::DebugAction],
+        input: &crate::debug::DebugDrainInput,
+    ) -> crate::debug::DebugDrainOutput {
+        let mut flight = self.debug_drain_begin(actions, input);
+        loop {
+            match flight.poll() {
+                crate::debug::DrainPoll::Done(output) => return *output,
+                crate::debug::DrainPoll::Pending => {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+        }
+    }
+
+    /// Start one action batch without blocking; safe on the UI thread.
+    /// Poll to `Done`; a newer batch drops the old flight, newest view wins.
+    pub fn debug_drain_begin(
+        &self,
+        actions: &[crate::debug::DebugAction],
+        input: &crate::debug::DebugDrainInput,
+    ) -> crate::debug::DrainFlight {
+        self.debug_drain_begin_with_deadline(actions, input, crate::debug::DEBUG_DRAIN_TIMEOUT)
+    }
+
+    /// [`SessionHandle::debug_drain_begin`] with an explicit per-await deadline.
+    /// Tests inject milliseconds to cover the timeout fallbacks without waiting.
+    pub(crate) fn debug_drain_begin_with_deadline(
+        &self,
+        actions: &[crate::debug::DebugAction],
+        input: &crate::debug::DebugDrainInput,
+        deadline: std::time::Duration,
+    ) -> crate::debug::DrainFlight {
+        crate::debug::DrainFlight::begin(self.drain_ctx(), actions, input, deadline)
+    }
+
+    /// Start one images-only live fetch without blocking; drive the flight with `poll` per tick.
+    /// Cache hits and coreless sessions resolve on the first poll.
+    pub fn debug_live_images_begin(&self, need_images: bool) -> crate::debug::LiveImagesFlight {
+        crate::debug::LiveImagesFlight::begin(
+            self.drain_ctx().core,
+            ImageNeed::from_flag(need_images),
+            crate::debug::DEBUG_DRAIN_TIMEOUT,
+        )
+    }
+
+    /// Scoped transaction access: the guard never escapes, so holders cannot deadlock.
+    /// Exactly one logging point for the poison recovery.
+    fn with_txn<R>(&self, f: impl FnOnce(&mut debug_vm::WriteTransaction) -> R) -> R {
+        match self.debug_txn.lock() {
+            Ok(mut txn) => f(&mut txn),
+            Err(error) => {
+                log::error!("debug transaction mutex poisoned, recovering");
+                f(&mut error.into_inner())
+            }
+        }
     }
 
     pub fn debug_spaces(&self) -> Vec<nerust_core_traits::debugger::SpaceInfo> {
@@ -40,7 +90,7 @@ impl SessionHandle {
         self.emu.core().ok().is_none_or(|_| tick.paused)
     }
 
-    /// Owned context for one async drain flight: a cloned core plus
+    /// Owned context for one async drain flight: a boxed live core plus
     /// the shared write transaction. See [`DrainCtx`].
     pub(crate) fn drain_ctx(&self) -> crate::debug::DrainCtx {
         crate::debug::DrainCtx::new(
@@ -59,7 +109,7 @@ impl SessionHandle {
         need_images: ImageNeed,
         watch: Option<u32>,
     ) -> debug_vm::DebugSnapshot {
-        use super::debug_snapshot::{assemble_snapshot_parts, fold_watch_byte};
+        use crate::debug::{assemble_snapshot_parts, fold_watch_byte};
         use nerust_core_traits::debugger::{
             DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, InspectRequest, SnapshotRequest,
         };
@@ -107,21 +157,6 @@ impl SessionHandle {
         // off-page watches still fall back to a single-byte inspect.
         snapshot.watch = watch.and_then(|addr| fold_watch_byte(&snapshot.dump_rows, addr));
         snapshot
-    }
-
-    /// Images-only refresh for the live PPU follow while the core runs.
-    /// Blocking wrapper for tests only; live ticks use the flight.
-    #[cfg(test)]
-    pub fn debug_live_images(&self, need_images: ImageNeed) -> LiveImages {
-        let mut flight = self.debug_live_images_begin(matches!(need_images, ImageNeed::Fetch));
-        loop {
-            match flight.poll() {
-                crate::debug::LiveImagesPoll::Done(live) => return live,
-                crate::debug::LiveImagesPoll::Pending => {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-            }
-        }
     }
 
     /// Single-byte read for old-value display and watch values.
@@ -188,25 +223,25 @@ impl SessionHandle {
         addr: u32,
     ) -> Option<u8> {
         let old = self.debug_read_byte(space, addr);
-        self.lock_txn().prepare(space, addr, old);
+        self.with_txn(|txn| txn.prepare(space, addr, old));
         old
     }
 
     /// Stage the parsed value; only a prepared transaction accepts it.
     pub fn debug_stage_write(&self, value: u64) {
-        self.lock_txn().stage(value);
+        self.with_txn(|txn| txn.stage(value));
     }
 
     /// Confirm-row data, if fully staged. The frontend renders the
     /// wording; the session only reports the staged values.
     pub fn debug_pending_text(&self) -> Option<debug_vm::PendingWrite> {
-        self.lock_txn().pending()
+        self.with_txn(|txn| txn.pending())
     }
 
     /// Commit the staged write, consuming the transaction.
     pub fn debug_commit_write(&self) -> debug_vm::StatusMessage {
         use nerust_core_traits::debugger::MemoryWrite;
-        let staged = self.lock_txn().take_commit();
+        let staged = self.with_txn(|txn| txn.take_commit());
         let (space, addr, value) = match staged {
             Some(staged) => staged,
             None => return debug_vm::StatusMessage::NothingToWrite,
@@ -229,14 +264,14 @@ impl SessionHandle {
 
     /// Drop any uncommitted transaction (cancel, space switch).
     pub fn debug_clear_write(&self) {
-        self.lock_txn().clear();
+        self.with_txn(|txn| txn.clear());
     }
 
     /// Report drain traffic: kills staged-but-uncommitted values from previous drains.
     /// Select/stage/commit traffic passes [`TrafficKind::Transactional`], consumed by this drain.
     pub fn debug_note_traffic(&self, traffic: TrafficKind) {
         if traffic == TrafficKind::StateChanging {
-            self.lock_txn().on_state_changing_traffic();
+            self.with_txn(|txn| txn.on_state_changing_traffic());
         }
     }
 
@@ -281,6 +316,34 @@ impl SessionHandle {
 }
 
 #[cfg(test)]
+mod drain_ctx_cov_tests {
+    use crate::session::test_util::test_session;
+
+    #[test]
+    fn drain_ctx_exposes_narrow_debug_port() {
+        let session = test_session();
+        let ctx = session.drain_ctx();
+        assert!(ctx.core_port().is_some());
+    }
+
+    #[test]
+    fn drain_ctx_recovers_and_images_skip_resolves() {
+        use crate::debug::{DEBUG_DRAIN_TIMEOUT, ImageNeed, LiveImagesFlight, LiveImagesPoll};
+        let session = test_session();
+        let ctx = session.drain_ctx();
+        let _pending = ctx.with_txn(|txn| txn.pending());
+        let mut flight = LiveImagesFlight::begin(None, ImageNeed::Skip, DEBUG_DRAIN_TIMEOUT);
+        assert!(matches!(flight.poll(), LiveImagesPoll::Done(None)));
+        let mut flight = LiveImagesFlight::begin(
+            ctx.core.as_ref().map(|core| core.drain_handle()),
+            ImageNeed::Skip,
+            DEBUG_DRAIN_TIMEOUT,
+        );
+        assert!(matches!(flight.poll(), LiveImagesPoll::Done(_)));
+    }
+}
+
+#[cfg(test)]
 mod debug_ops_cov_tests {
     use super::*;
     use crate::debug::ImageNeed;
@@ -302,7 +365,7 @@ mod debug_ops_cov_tests {
                 .debug_snapshot(None, 0, None, ImageNeed::Skip, None)
                 .available
         );
-        assert!(session.debug_live_images(ImageNeed::Skip).is_none());
+        assert!(crate::session::test_util::poll_live_images(&session, ImageNeed::Skip).is_none());
         assert_eq!(session.debug_read_byte(SpaceId(0), 0), None);
         assert!(!session.debug_write_byte(SpaceId(0), 0, 1));
         assert!(matches!(

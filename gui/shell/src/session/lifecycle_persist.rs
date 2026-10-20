@@ -16,11 +16,10 @@ impl SessionHandle {
     /// Restore runtime state from the hidden autosave slot.
     /// Best-effort for resume: failures log and report `false`.
     pub fn load_hidden_lifecycle_state(&mut self) -> bool {
-        self.emu.exporter().ok().is_some_and(|exporter| {
-            self.media
-                .persistence
-                .load_hidden(exporter, crate::state::resolve_state_format)
-        })
+        self.emu
+            .exporter()
+            .ok()
+            .is_some_and(|exporter| self.media.persistence.load_hidden(exporter))
     }
 
     /// Drop the hidden autosave slot, if any.

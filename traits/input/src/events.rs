@@ -139,17 +139,49 @@ pub enum BufferError {
     },
 }
 
+/// Typed absolute field index for input buffers. New code passes this;
+/// the `usize` overloads stay for the frozen GUI port surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FieldId(usize);
+
+impl FieldId {
+    /// Absolute field index in `0..N`.
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    /// Raw index for the `usize` port surface.
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
 /// GUI-side write abstraction for input state.
 /// Emu side reads via `Any::downcast_ref`; `field` is a dense index in `0..N`.
 pub trait InputStateBuffer: std::fmt::Debug + Send + Downcast {
     /// Write one logical field.
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
+    /// Typed write; defaults to [`Self::set`].
+    fn set_field(&mut self, field: FieldId, value: InputValue) -> Result<(), BufferError> {
+        self.set(field.index(), value)
+    }
     /// Reset all fields to the neutral (released) state.
     /// Postcondition: the buffer equals a freshly constructed default.
     fn clear(&mut self);
     /// Copy absolute state from another buffer of the same concrete type.
     /// Mismatched types refuse without partially applying state.
     fn copy_state(&mut self, other: &dyn InputStateBuffer) -> Result<(), BufferError>;
+    /// Copy only listed dirty fields; defaults to full [`Self::copy_state`].
+    fn copy_dirty_from(
+        &mut self,
+        other: &dyn InputStateBuffer,
+        dirty: &[usize],
+    ) -> Result<(), BufferError> {
+        if dirty.is_empty() {
+            return Ok(());
+        }
+        self.copy_state(other)
+    }
 }
 
 downcast_rs::impl_downcast!(InputStateBuffer);
@@ -195,6 +227,80 @@ mod tests {
         assert!(foreign.as_digital().is_none());
         let from: InputEvent = pressed.into();
         assert_eq!(from, general);
+    }
+
+    #[test]
+    fn typed_field_id_round_trips_through_set() {
+        use super::{FieldId, InputStateBuffer, InputValue};
+        use crate::BufferError;
+        #[derive(Debug, Default)]
+        struct Bit {
+            pressed: bool,
+        }
+        impl InputStateBuffer for Bit {
+            fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
+                if field != 0 {
+                    return Err(BufferError::FieldNotFound { field });
+                }
+                let InputValue::Digital(pressed) = value else {
+                    return Err(BufferError::UnsupportedFieldType {
+                        field,
+                        expected: "digital",
+                    });
+                };
+                self.pressed = pressed;
+                Ok(())
+            }
+            fn clear(&mut self) {
+                self.pressed = false;
+            }
+            fn copy_state(&mut self, other: &dyn InputStateBuffer) -> Result<(), BufferError> {
+                let Some(source) = other.downcast_ref::<Self>() else {
+                    return Err(BufferError::MismatchedBuffer {
+                        expected: "Bit",
+                        actual: "test",
+                    });
+                };
+                self.pressed = source.pressed;
+                Ok(())
+            }
+        }
+        let mut bit = Bit::default();
+        // Typed write delegates to the `usize` port.
+        bit.set_field(FieldId::new(0), InputValue::Digital(true))
+            .unwrap();
+        assert!(bit.pressed);
+        assert!(
+            bit.set_field(FieldId::new(9), InputValue::Digital(true))
+                .is_err()
+        );
+        assert_eq!(FieldId::new(3).index(), 3);
+        // Empty dirty list copies nothing; nonempty defaults to full state.
+        let mut other = Bit::default();
+        other.copy_dirty_from(&bit, &[]).unwrap();
+        assert!(!other.pressed);
+        other.copy_dirty_from(&bit, &[0]).unwrap();
+        assert!(other.pressed);
+        // Mismatched buffers refuse without partially applying.
+        struct Foreign;
+        impl std::fmt::Debug for Foreign {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("Foreign")
+            }
+        }
+        impl InputStateBuffer for Foreign {
+            fn set(&mut self, _f: usize, _v: InputValue) -> Result<(), BufferError> {
+                Ok(())
+            }
+            fn clear(&mut self) {}
+            fn copy_state(&mut self, _: &dyn InputStateBuffer) -> Result<(), BufferError> {
+                Err(BufferError::MismatchedBuffer {
+                    expected: "Foreign",
+                    actual: "other",
+                })
+            }
+        }
+        assert!(other.copy_dirty_from(&Foreign, &[0]).is_err());
     }
 
     #[test]

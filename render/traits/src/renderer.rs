@@ -1,4 +1,7 @@
-use std::rc::Rc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -20,22 +23,66 @@ impl std::error::Error for OpaqueError {}
 #[derive(Debug)]
 pub struct RendererError {
     context: &'static str,
+    kind: RendererErrorKind,
     source: Box<dyn std::error::Error + Send + Sync>,
 }
 
 impl RendererError {
     pub fn new(context: &'static str, source: Box<dyn std::error::Error + Send + Sync>) -> Self {
-        Self { context, source }
+        Self {
+            context,
+            kind: RendererErrorKind::Other,
+            source,
+        }
+    }
+
+    /// Kind-carrying constructor: one `RenderError` type with source plus kind.
+    pub fn with_kind(
+        context: &'static str,
+        kind: RendererErrorKind,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    ) -> Self {
+        Self {
+            context,
+            kind,
+            source,
+        }
+    }
+
+    /// Machine-readable fault class for logs and tests.
+    pub fn kind(&self) -> RendererErrorKind {
+        self.kind
+    }
+
+    /// Typed attach fault: replaces `AttachError` string details.
+    pub fn attach(
+        backend: &'static str,
+        stage: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    ) -> Self {
+        Self::with_kind(
+            "attach",
+            RendererErrorKind::Attach { backend, stage },
+            source,
+        )
     }
 
     /// Renderer exists but no surface is attached yet.
     pub fn not_attached(op: &'static str) -> Self {
-        Self::new(op, Box::new(RendererErrorKind::NotAttached))
+        Self::with_kind(
+            op,
+            RendererErrorKind::NotAttached,
+            Box::new(RendererErrorKind::NotAttached),
+        )
     }
 
     /// Surface exists but its context is not current on this thread.
     pub fn not_current(op: &'static str) -> Self {
-        Self::new(op, Box::new(RendererErrorKind::NotCurrent))
+        Self::with_kind(
+            op,
+            RendererErrorKind::NotCurrent,
+            Box::new(RendererErrorKind::NotCurrent),
+        )
     }
 }
 
@@ -46,6 +93,19 @@ pub enum RendererErrorKind {
     NotAttached,
     NotCurrent,
     NoConfig,
+    /// Backend attach failure at `stage` (context/surface/adapter/device/pipeline).
+    Attach {
+        backend: &'static str,
+        stage: &'static str,
+    },
+    /// OSD texture upload failure at `stage`.
+    Upload {
+        stage: &'static str,
+    },
+    /// Invalid surface or viewport geometry.
+    InvalidSurface,
+    /// Catch-all for sources without a dedicated variant.
+    Other,
 }
 
 impl std::fmt::Display for RendererErrorKind {
@@ -54,6 +114,12 @@ impl std::fmt::Display for RendererErrorKind {
             Self::NotAttached => write!(f, "renderer not attached"),
             Self::NotCurrent => write!(f, "GL context not current"),
             Self::NoConfig => write!(f, "no GL config"),
+            Self::Attach { backend, stage } => {
+                write!(f, "{backend} {stage} failed")
+            }
+            Self::Upload { stage } => write!(f, "OSD upload failed at {stage}"),
+            Self::InvalidSurface => write!(f, "invalid surface size"),
+            Self::Other => write!(f, "renderer error"),
         }
     }
 }
@@ -74,7 +140,7 @@ impl std::error::Error for RendererError {
 
 /// In-frame OSD layer, cropped over the game image. `rgba` is shared;
 /// `generation` orders re-stages without a memcmp.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OsdLayer {
     /// Top-left corner in physical surface pixels.
     pub x: u32,
@@ -82,33 +148,75 @@ pub struct OsdLayer {
     pub width: u32,
     pub height: u32,
     /// Row-major straight-alpha RGBA, `width * height * 4` bytes.
-    pub rgba: Rc<[u8]>,
+    pub rgba: Arc<[u8]>,
     /// Monotonic stage counter; zero means "unset" (struct literals, tests).
     pub generation: u64,
+    /// FNV-1a content hash minted at stage time; skips the memcmp.
+    content_hash: u64,
 }
 
-/// Next OSD stage counter. Wraps only after 2^64 stages.
-static OSD_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+/// Staging-owner generation clock. Ports stay pure: only the stager
+/// (the OSD rasterizer) owns a clock and mints generations.
+#[derive(Debug, Default)]
+pub struct GenerationClock {
+    next: AtomicU64,
+}
+
+impl GenerationClock {
+    /// Clock starting at generation 1; zero stays reserved for "unset".
+    pub fn new() -> Self {
+        Self {
+            next: AtomicU64::new(1),
+        }
+    }
+
+    /// Mint the next generation. Wraps past 2^64, skipping zero.
+    pub fn next(&self) -> u64 {
+        let mut generation = self.next.fetch_add(1, Ordering::Relaxed);
+        if generation == 0 {
+            generation = self.next.fetch_add(1, Ordering::Relaxed);
+        }
+        generation
+    }
+}
 
 impl OsdLayer {
-    /// Build a layer with a fresh generation for the equality fast path.
+    /// Unstaged layer: generation zero, hash still minted for the fast path.
     pub fn new(x: u32, y: u32, width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        Self::with_generation(x, y, width, height, rgba, 0)
+    }
+
+    /// Staged layer: the staging owner passes `clock.next()`.
+    pub fn with_generation(
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        generation: u64,
+    ) -> Self {
         Self {
             x,
             y,
             width,
             height,
-            rgba: Rc::from(rgba),
-            generation: OSD_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            content_hash: content_hash(&rgba),
+            rgba: Arc::from(rgba),
+            generation,
         }
     }
 
-    /// Cheap content equality: identity, then generation, then header, then bytes.
+    /// Stage-time content hash; zero only for empty input.
+    pub fn content_hash(&self) -> u64 {
+        self.content_hash
+    }
+
+    /// Cheap content equality: identity, generation, hash, then bytes.
     pub fn same_content(&self, other: Option<&Self>) -> bool {
         let Some(other) = other else {
             return false;
         };
-        if Rc::ptr_eq(&self.rgba, &other.rgba)
+        if Arc::ptr_eq(&self.rgba, &other.rgba)
             && self.x == other.x
             && self.y == other.y
             && self.width == other.width
@@ -117,6 +225,15 @@ impl OsdLayer {
             return true;
         }
         if self.generation != 0 && other.generation != 0 && self.generation == other.generation {
+            return true;
+        }
+        if self.x == other.x
+            && self.y == other.y
+            && self.width == other.width
+            && self.height == other.height
+            && self.content_hash != 0
+            && self.content_hash == other.content_hash
+        {
             return true;
         }
         self.x == other.x
@@ -135,6 +252,19 @@ impl OsdLayer {
             (None, Some(_)) | (Some(_), None) => false,
         }
     }
+}
+
+/// FNV-1a hash over staged bytes; empty input hashes to zero (unset).
+fn content_hash(bytes: &[u8]) -> u64 {
+    if bytes.is_empty() {
+        return 0;
+    }
+    let mut hash: u64 = 0x0cbf_29ce_4842_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    hash
 }
 
 /// OSD anchor corner in render space. The rasterizer's own vocabulary;
@@ -203,67 +333,13 @@ pub fn strip_pixels(client_height: u32, rows: u32, ui_scale: f32) -> u32 {
     rows.saturating_mul(row) + margin + gap * rows.saturating_sub(1)
 }
 
-/// Outcome reported by [`Present::render`].
+/// Outcome reported by [`FrameSink::render`] (and legacy [`Present::render`]).
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RenderResult {
     Presented,
     Skipped,
     Error,
 }
-
-/// Typed attach-path failure shared by every backend. Replaces `OpaqueError(String)` on
-/// context/surface/adapter/device construction so logs name the fault instead of a free-form string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AttachError {
-    Context {
-        backend: &'static str,
-        detail: String,
-    },
-    Surface {
-        backend: &'static str,
-        detail: String,
-    },
-    Adapter {
-        backend: &'static str,
-        detail: String,
-    },
-    Device {
-        backend: &'static str,
-        detail: String,
-    },
-    Pipeline {
-        backend: &'static str,
-        detail: String,
-    },
-    NoSurface {
-        op: &'static str,
-    },
-}
-
-impl std::fmt::Display for AttachError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Context { backend, detail } => {
-                write!(f, "{backend} context failed: {detail}")
-            }
-            Self::Surface { backend, detail } => {
-                write!(f, "{backend} surface failed: {detail}")
-            }
-            Self::Adapter { backend, detail } => {
-                write!(f, "{backend} adapter failed: {detail}")
-            }
-            Self::Device { backend, detail } => {
-                write!(f, "{backend} device failed: {detail}")
-            }
-            Self::Pipeline { backend, detail } => {
-                write!(f, "{backend} pipeline failed: {detail}")
-            }
-            Self::NoSurface { op } => write!(f, "{op} without an attached surface"),
-        }
-    }
-}
-
-impl std::error::Error for AttachError {}
 
 /// Frame presentation: surface lifecycle plus per-frame blit. Backends implement this without any
 /// OSD vocabulary. Legacy composite; new code programs to [`SurfaceLifecycle`] plus [`FrameSink`] directly.
@@ -300,6 +376,18 @@ pub trait Present: std::fmt::Debug {
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult;
 }
 
+/// Explicit detach + attach for surface loss or Wayland.
+/// Free function so the side-effectful sequence never hides in a default.
+pub fn reattach_surface(
+    lifecycle: &mut (impl SurfaceLifecycle + ?Sized),
+    window_handle: RawWindowHandle,
+    display_handle: RawDisplayHandle,
+    size: SurfaceSize,
+) -> Result<(), RendererError> {
+    lifecycle.detach();
+    lifecycle.attach(window_handle, display_handle, size)
+}
+
 /// Surface ownership: attach/detach/resize without any frame vocabulary.
 /// Split from [`Present`] so lifecycle tests never need a frame.
 pub trait SurfaceLifecycle: std::fmt::Debug {
@@ -324,8 +412,7 @@ pub trait SurfaceLifecycle: std::fmt::Debug {
         display_handle: RawDisplayHandle,
         size: SurfaceSize,
     ) -> Result<(), RendererError> {
-        self.detach();
-        self.attach(window_handle, display_handle, size)
+        reattach_surface(self, window_handle, display_handle, size)
     }
 
     /// Resize the output (swapchain for wgpu; stored for GL).
@@ -366,60 +453,21 @@ pub trait OsdUploadPolicy: std::fmt::Debug {
     fn reset(&mut self);
 }
 
-/// Single policy implementation: floor of one attempt, saturating counter.
-#[derive(Debug)]
-pub struct BoundedUploadPolicy {
-    max: u8,
-    fails: u8,
+/// Factory minting one upload policy per rebuilt view; impl crates provide it.
+pub trait OsdUploadPolicyFactory: std::fmt::Debug {
+    /// Mint a fresh policy budget for one view lifetime.
+    fn create_policy(&self) -> Box<dyn OsdUploadPolicy>;
 }
 
-impl BoundedUploadPolicy {
-    /// Zero would drop live layers on the first transient failure, so
-    /// the floor is one attempt: the constructor clamps, not callers.
-    pub fn new(max: u8) -> Self {
-        Self {
-            max: max.max(1),
-            fails: 0,
-        }
-    }
+/// Per-use-site pipeline composition without the legacy composites.
+pub trait RenderPipeline:
+    SurfaceLifecycle + FrameSink + OsdSink + StripSink + ProfileSwitch
+{
 }
 
-impl OsdUploadPolicy for BoundedUploadPolicy {
-    fn record_failure(&mut self) -> bool {
-        self.fails = self.fails.saturating_add(1);
-        self.fails >= self.max
-    }
-
-    fn reset(&mut self) {
-        self.fails = 0;
-    }
-}
-
-/// Grow-only byte staging for texture uploads. One concrete buffer serves every backend; no steady
-/// allocs. Ports take `&mut [u8]` slices staged from here, never the buffer itself.
-#[derive(Debug, Default)]
-pub struct StagingBuf(Vec<u8>);
-
-impl StagingBuf {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Grow-only staging of at least `need` bytes, zero-filled on growth.
-    pub fn staging(&mut self, need: usize) -> &mut [u8] {
-        if self.0.len() < need {
-            self.0.resize(need, 0);
-        }
-        &mut self.0[..need]
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
+impl<T> RenderPipeline for T where
+    T: SurfaceLifecycle + FrameSink + OsdSink + StripSink + ProfileSwitch
+{
 }
 
 /// GPU device + pipeline + surface. Composition of the three sinks.
@@ -442,16 +490,10 @@ pub struct RendererConfig {
 pub const DEFAULT_OSD_UPLOAD_RETRIES: u8 = 3;
 
 impl RendererConfig {
-    /// Boxed upload policy for renderer injection. Single construction
-    /// site so every backend shares one budget type and default.
-    pub fn osd_upload_policy(&self) -> Box<dyn OsdUploadPolicy> {
-        Box::new(BoundedUploadPolicy::new(self.max_osd_upload_retries))
-    }
-
-    /// Factory form for renderers that mint one policy per rebuilt view.
-    pub fn osd_upload_policy_factory(&self) -> Box<dyn Fn() -> Box<dyn OsdUploadPolicy>> {
-        let max = self.max_osd_upload_retries;
-        Box::new(move || Box::new(BoundedUploadPolicy::new(max)) as Box<dyn OsdUploadPolicy>)
+    /// Upload budget with the one-attempt floor: zero clamps instead of
+    /// dropping live layers on the first transient failure.
+    pub fn upload_budget(&self) -> u8 {
+        self.max_osd_upload_retries.max(1)
     }
 }
 
@@ -463,6 +505,17 @@ pub trait GpuFactory: std::fmt::Debug {
         config: &RendererConfig,
         display_handle: RawDisplayHandle,
     ) -> Result<Box<dyn GpuRenderer>, RendererError>;
+}
+
+/// Narrow factory: returns the per-use-site [`RenderPipeline`] composition
+/// instead of the legacy [`GpuRenderer`] composite. New code prefers this.
+pub trait PipelineFactory: std::fmt::Debug {
+    /// Create a pipeline; call `attach()` on the result before rendering.
+    fn create_pipeline(
+        &self,
+        config: &RendererConfig,
+        display_handle: RawDisplayHandle,
+    ) -> Result<Box<dyn RenderPipeline>, RendererError>;
 }
 
 #[cfg(test)]
@@ -503,70 +556,115 @@ mod tests {
     fn layer_generation_skips_memcmp_for_shared_handles() {
         let base = OsdLayer::new(0, 0, 2, 1, vec![9; 8]);
         let shared = base.clone();
-        assert!(Rc::ptr_eq(&base.rgba, &shared.rgba));
+        assert!(Arc::ptr_eq(&base.rgba, &shared.rgba));
         assert!(base.same_content(Some(&shared)));
     }
 
     #[test]
-    fn attach_error_names_backend_and_stage() {
-        let err = AttachError::Surface {
-            backend: "softbuffer",
-            detail: "no display".to_string(),
-        };
-        assert!(err.to_string().contains("softbuffer"));
-        assert!(err.to_string().contains("surface"));
-        let err = AttachError::NoSurface { op: "update" };
-        assert!(err.to_string().contains("update"));
+    fn layer_hash_skips_memcmp_for_distinct_buffers() {
+        // Same bytes, distinct allocations: the stage-time hash agrees.
+        let clock = GenerationClock::new();
+        let first = OsdLayer::with_generation(0, 0, 2, 1, vec![9; 8], clock.next());
+        let second = OsdLayer::with_generation(0, 0, 2, 1, vec![9; 8], clock.next());
+        assert!(!Arc::ptr_eq(&first.rgba, &second.rgba));
+        assert_ne!(first.generation, second.generation);
+        assert_eq!(first.content_hash(), second.content_hash());
+        assert!(first.same_content(Some(&second)));
+        assert!(OsdLayer::same_option(Some(&first), Some(&second)));
+        // Empty input hashes to zero (unset), never a false fast-path.
+        let empty = OsdLayer::new(0, 0, 0, 0, vec![]);
+        assert_eq!(empty.content_hash(), 0);
+    }
+
+    #[test]
+    fn generation_clock_mints_monotonic_nonzero() {
+        let clock = GenerationClock::new();
+        let first = clock.next();
+        let second = clock.next();
+        assert_ne!(first, 0);
+        assert!(second > first);
+        // Independent clocks never share state.
+        let other = GenerationClock::new();
+        assert_eq!(other.next(), first);
+        // Layers are Send + Sync: no Rc payload crosses threads.
+        fn assert_thread_safe<T: Send + Sync>() {}
+        assert_thread_safe::<OsdLayer>();
+        assert_thread_safe::<GenerationClock>();
+    }
+
+    #[test]
+    fn attach_error_carries_kind_and_source() {
+        let err = RendererError::attach(
+            "softbuffer",
+            "surface",
+            Box::new(std::io::Error::other("no display")),
+        );
         assert_eq!(
-            AttachError::Adapter {
-                backend: "wgpu",
-                detail: "x".to_string()
-            },
-            AttachError::Adapter {
-                backend: "wgpu",
-                detail: "x".to_string()
+            err.kind(),
+            RendererErrorKind::Attach {
+                backend: "softbuffer",
+                stage: "surface"
             }
+        );
+        assert!(err.to_string().contains("no display"));
+        let err = RendererError::with_kind(
+            "upload",
+            RendererErrorKind::Upload { stage: "blit" },
+            Box::new(RendererErrorKind::Upload { stage: "blit" }),
+        );
+        assert_eq!(err.kind(), RendererErrorKind::Upload { stage: "blit" });
+        assert!(err.to_string().contains("upload"));
+        let err = RendererError::with_kind(
+            "size",
+            RendererErrorKind::InvalidSurface,
+            Box::new(RendererErrorKind::InvalidSurface),
+        );
+        assert_eq!(
+            err.kind().to_string(),
+            RendererErrorKind::InvalidSurface.to_string()
         );
     }
 
     #[test]
-    fn staging_buf_grows_once_and_reuses() {
-        let mut buf = StagingBuf::new();
-        assert!(buf.is_empty());
-        buf.staging(8).fill(0xAB);
-        assert_eq!(buf.len(), 8);
-        let ptr = buf.staging(4).as_ptr();
-        // Smaller need reuses the allocation without shrinking.
-        assert_eq!(buf.staging(4).as_ptr(), ptr);
-        assert_eq!(buf.len(), 8);
-        assert_eq!(&buf.staging(8)[..4], &[0xAB; 4]);
-        // Growth zero-fills the tail.
-        assert_eq!(&buf.staging(10)[8..], &[0, 0]);
-    }
-
-    #[test]
-    fn bounded_policy_pins_single_budget() {
-        let mut policy = BoundedUploadPolicy::new(0);
-        // Zero clamps to one attempt, never drops live layers at once.
-        assert!(policy.record_failure());
-        policy.reset();
-        let mut policy = BoundedUploadPolicy::new(3);
-        assert!(!policy.record_failure());
-        assert!(!policy.record_failure());
-        assert!(policy.record_failure());
-        assert!(policy.record_failure());
-        policy.reset();
-        assert!(!policy.record_failure());
-        // Saturation: hundreds of failures never wrap back to retry.
-        let mut policy = BoundedUploadPolicy::new(3);
-        for _ in 0..300 {
-            policy.record_failure();
+    fn upload_factory_mints_fresh_budgets() {
+        // Port-side harness: impl crates provide the concrete policy.
+        #[derive(Debug)]
+        struct StubPolicy {
+            max: u8,
+            fails: u8,
         }
-        assert!(policy.record_failure());
+        impl OsdUploadPolicy for StubPolicy {
+            fn record_failure(&mut self) -> bool {
+                self.fails = self.fails.saturating_add(1);
+                self.fails >= self.max
+            }
+            fn reset(&mut self) {
+                self.fails = 0;
+            }
+        }
+        #[derive(Debug)]
+        struct StubFactory(u8);
+        impl OsdUploadPolicyFactory for StubFactory {
+            fn create_policy(&self) -> Box<dyn OsdUploadPolicy> {
+                Box::new(StubPolicy {
+                    max: self.0.max(1),
+                    fails: 0,
+                })
+            }
+        }
+        let factory = StubFactory(2);
+        let mut first = factory.create_policy();
+        let mut second = factory.create_policy();
+        assert!(!first.record_failure());
+        assert!(first.record_failure());
+        // Independent budgets: the second policy is unaffected.
+        assert!(!second.record_failure());
+        first.reset();
+        assert!(!first.record_failure());
     }
 
     #[test]
-    fn config_builds_the_injected_policy() {
+    fn config_budget_floors_at_one() {
         let config = RendererConfig {
             render_profile: crate::VideoRenderProfile {
                 source_logical_size: crate::logical::LogicalSize {
@@ -585,13 +683,99 @@ mod tests {
                 ntsc_packed_rgba8: None,
             },
             vsync: true,
-            max_osd_upload_retries: 2,
+            max_osd_upload_retries: 0,
         };
-        let mut policy = config.osd_upload_policy();
-        assert!(!policy.record_failure());
-        assert!(policy.record_failure());
-        policy.reset();
-        assert!(!policy.record_failure());
+        // Zero clamps to one attempt, never drops live layers at once.
+        assert_eq!(config.upload_budget(), 1);
+        assert_eq!(DEFAULT_OSD_UPLOAD_RETRIES, 3);
+    }
+
+    #[test]
+    fn reattach_helper_sequences_detach_then_attach() {
+        #[derive(Debug, Default)]
+        struct Order {
+            log: Vec<&'static str>,
+            fail_attach: bool,
+        }
+        impl SurfaceLifecycle for Order {
+            fn size(&self) -> SurfaceSize {
+                SurfaceSize::new(1, 1)
+            }
+            fn attach(
+                &mut self,
+                _w: RawWindowHandle,
+                _d: RawDisplayHandle,
+                _s: SurfaceSize,
+            ) -> Result<(), RendererError> {
+                self.log.push("attach");
+                if self.fail_attach {
+                    return Err(RendererError::not_attached("attach"));
+                }
+                Ok(())
+            }
+            fn detach(&mut self) {
+                self.log.push("detach");
+            }
+            fn resize(&mut self, _size: SurfaceSize) {}
+        }
+        // Never dereferenced: the stub records order without touching hardware.
+        let window: RawWindowHandle = unsafe { std::mem::zeroed() };
+        let display: RawDisplayHandle = unsafe { std::mem::zeroed() };
+        let mut order = Order::default();
+        reattach_surface(&mut order, window, display, SurfaceSize::new(2, 2)).unwrap();
+        assert_eq!(order.log, vec!["detach", "attach"]);
+        // A failed attach still detached first: the sequence is explicit.
+        let mut failing = Order {
+            log: Vec::new(),
+            fail_attach: true,
+        };
+        assert!(reattach_surface(&mut failing, window, display, SurfaceSize::new(2, 2)).is_err());
+        assert_eq!(failing.log, vec!["detach", "attach"]);
+    }
+
+    #[test]
+    fn pipeline_composition_covers_narrow_traits() {
+        #[derive(Debug, Default)]
+        struct Stub;
+        impl SurfaceLifecycle for Stub {
+            fn size(&self) -> SurfaceSize {
+                SurfaceSize::new(1, 1)
+            }
+            fn attach(
+                &mut self,
+                _w: RawWindowHandle,
+                _d: RawDisplayHandle,
+                _s: SurfaceSize,
+            ) -> Result<(), RendererError> {
+                Ok(())
+            }
+            fn detach(&mut self) {}
+            fn resize(&mut self, _size: SurfaceSize) {}
+        }
+        impl FrameSink for Stub {
+            fn render(&mut self, _frame: &FrameBuffer) -> RenderResult {
+                RenderResult::Skipped
+            }
+        }
+        impl OsdSink for Stub {
+            fn set_osd_layer(&mut self, _layer: Option<OsdLayer>) {}
+        }
+        impl StripSink for Stub {}
+        impl ProfileSwitch for Stub {
+            fn update_render_profile(
+                &mut self,
+                _profile: &VideoRenderProfile,
+            ) -> Result<(), RendererError> {
+                Ok(())
+            }
+        }
+        fn assert_pipeline<T: RenderPipeline>() {}
+        assert_pipeline::<Stub>();
+        // Narrow traits compose as trait objects for per-use-site callers.
+        fn lifecycle_only(_: &mut dyn SurfaceLifecycle) {}
+        fn sink_only(_: &mut dyn FrameSink) {}
+        fn pipeline(_: &mut dyn RenderPipeline) {}
+        let _ = (lifecycle_only, sink_only, pipeline);
     }
 
     #[test]
@@ -612,33 +796,34 @@ mod tests {
         assert_eq!(osd_font_px(720, 1.0), 16);
         let err = RendererError::not_attached("attach");
         assert!(err.to_string().contains("attach"));
+        assert_eq!(err.kind(), RendererErrorKind::NotAttached);
         let err = RendererError::not_current("present");
         assert!(err.to_string().contains("present"));
+        assert_eq!(err.kind(), RendererErrorKind::NotCurrent);
         assert_eq!(
             RendererErrorKind::NotAttached.to_string(),
             "renderer not attached"
         );
         assert_eq!(RendererErrorKind::NoConfig.to_string(), "no GL config");
-        for attach in [
-            AttachError::Context {
+        assert_eq!(
+            RendererErrorKind::Attach {
                 backend: "b",
-                detail: "d".to_string(),
-            },
-            AttachError::Adapter {
-                backend: "b",
-                detail: "d".to_string(),
-            },
-            AttachError::Device {
-                backend: "b",
-                detail: "d".to_string(),
-            },
-            AttachError::Pipeline {
-                backend: "b",
-                detail: "d".to_string(),
-            },
-        ] {
-            assert!(attach.to_string().contains('b'));
-        }
+                stage: "s"
+            }
+            .to_string(),
+            "b s failed"
+        );
+        assert!(
+            RendererErrorKind::Upload { stage: "s" }
+                .to_string()
+                .contains('s')
+        );
+        assert!(!RendererErrorKind::Other.to_string().is_empty());
+        assert!(
+            RendererErrorKind::InvalidSurface
+                .to_string()
+                .contains("surface")
+        );
         assert_eq!(DEFAULT_OSD_UPLOAD_RETRIES, 3);
     }
 }

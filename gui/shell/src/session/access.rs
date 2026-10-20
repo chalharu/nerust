@@ -3,18 +3,8 @@ use nerust_settings_core::model::input::ShortcutAction;
 
 use crate::session::SessionError;
 
-/// Summary of a settings-apply operation, visible to frontends.
-/// Only the flags that frontends actually act on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct SettingsResult {
-    /// The emulation core's renderer (GPU surface) needs to be recreated.
-    pub renderer_needs_rebuild: bool,
-    /// The fullscreen-default setting changed; frontend should sync the
-    /// window's fullscreen state.
-    pub fullscreen_default_changed: bool,
-    /// The window-scaling mode changed; frontend should resize the window.
-    pub scaling_changed: bool,
-}
+/// Re-exported from the settings domain home; frontends keep importing it here.
+pub use super::settings_apply::SettingsResult;
 
 /// Pause control: the only session operations the modal auto-pause path needs.
 /// Kept separate so callers depend on three methods, not the whole session surface.
@@ -148,23 +138,32 @@ pub trait SessionControl {
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError>;
 }
 
-/// Dispatch one schema session action; chrome actions use dedicated variants.
-pub fn dispatch_session_action<T>(target: &mut T, action: ShortcutAction)
+/// Dispatch one schema session action; chrome-only actions return `false`
+/// so frontends route them elsewhere.
+pub fn dispatch_session_action<T>(target: &mut T, action: ShortcutAction) -> bool
 where
     T: PauseControl + SlotIo + SlotNav + ResetControl + ?Sized,
 {
     match action {
-        ShortcutAction::TogglePause => target.toggle_pause(),
-        ShortcutAction::SaveActiveSlot => {
-            let _ = target.save_active_slot();
+        ShortcutAction::TogglePause => {
+            target.toggle_pause();
+            true
         }
-        ShortcutAction::SelectNextSlot => target.select_next_slot(),
-        ShortcutAction::SelectPreviousSlot => target.select_previous_slot(),
-        ShortcutAction::LoadActiveSlot => {
-            let _ = target.load_active_slot();
+        ShortcutAction::SaveActiveSlot => target.save_active_slot(),
+        ShortcutAction::SelectNextSlot => {
+            target.select_next_slot();
+            true
         }
-        ShortcutAction::Reset => target.reset(),
-        ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger => {}
+        ShortcutAction::SelectPreviousSlot => {
+            target.select_previous_slot();
+            true
+        }
+        ShortcutAction::LoadActiveSlot => target.load_active_slot(),
+        ShortcutAction::Reset => {
+            target.reset();
+            true
+        }
+        ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger => false,
     }
 }
 
@@ -317,13 +316,22 @@ mod tests {
             (ShortcutAction::LoadActiveSlot, "load_active_slot"),
             (ShortcutAction::Reset, "reset"),
         ] {
-            dispatch_session_action(&mut recorder, action);
+            assert!(
+                dispatch_session_action(&mut recorder, action),
+                "{action:?} runs as a session operation"
+            );
             assert_eq!(recorder.calls.last(), Some(&name), "{action:?}");
         }
         assert_eq!(recorder.calls.len(), 6, "no action double-dispatches");
-        // Chrome actions are not session operations: silence, no call.
-        dispatch_session_action(&mut recorder, ShortcutAction::ToggleFullscreen);
-        dispatch_session_action(&mut recorder, ShortcutAction::OpenDebugger);
+        // Chrome actions are not session operations: silence, no call, unhandled.
+        assert!(!dispatch_session_action(
+            &mut recorder,
+            ShortcutAction::ToggleFullscreen
+        ));
+        assert!(!dispatch_session_action(
+            &mut recorder,
+            ShortcutAction::OpenDebugger
+        ));
         assert_eq!(recorder.calls.len(), 6);
     }
 

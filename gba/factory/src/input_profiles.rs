@@ -91,7 +91,8 @@ mod tests {
         let controllers = ControllerCollection::new(vec![Box::new(StandardPad::new())]);
         let resources = crate::GbaFactory.create_split(&controllers).unwrap();
         assert_eq!(resources.field_map().len(), 10);
-        let buffer = (resources.new_buffer())();
+        let (_, factory) = resources.into_parts();
+        let buffer = factory();
         assert!(buffer.downcast_ref::<GbaInputBuffer>().is_some());
     }
 
