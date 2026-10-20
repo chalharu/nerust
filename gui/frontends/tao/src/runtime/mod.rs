@@ -54,6 +54,30 @@ impl WindowRuntime {
         })
     }
 
+    /// Live-follow pulse: parked with no wakeups unless a viewer
+    /// wants live ticks; arming wakes it, disarming re-parks it.
+    fn spawn_tick_thread(
+        tick_proxy: tao::event_loop::EventLoopProxy<UserEvent>,
+        tick_armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Option<std::thread::Thread> {
+        let (thread_tx, thread_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = thread_tx.send(std::thread::current());
+            use std::sync::atomic::Ordering;
+            loop {
+                if tick_armed.load(Ordering::Acquire) {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    if tick_proxy.send_event(UserEvent::LiveTick).is_err() {
+                        break;
+                    }
+                } else {
+                    std::thread::park();
+                }
+            }
+        });
+        thread_rx.recv().ok()
+    }
+
     fn build_renderer_and_surface(
         &mut self,
         raw_display_handle: raw_window_handle::RawDisplayHandle,
@@ -125,26 +149,9 @@ impl WindowRuntime {
             .take()
             .expect("WindowRuntime::run() called more than once");
 
-        // Live-follow pulse: parked with no wakeups unless a viewer
-        // wants live ticks; arming wakes it, disarming re-parks it.
-        let tick_proxy = event_loop.create_proxy();
-        let tick_armed = self.host.live_tick_armed();
-        let (thread_tx, thread_rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = thread_tx.send(std::thread::current());
-            use std::sync::atomic::Ordering;
-            loop {
-                if tick_armed.load(Ordering::Acquire) {
-                    std::thread::sleep(std::time::Duration::from_millis(250));
-                    if tick_proxy.send_event(UserEvent::LiveTick).is_err() {
-                        break;
-                    }
-                } else {
-                    std::thread::park();
-                }
-            }
-        });
-        if let Ok(thread) = thread_rx.recv() {
+        if let Some(thread) =
+            Self::spawn_tick_thread(event_loop.create_proxy(), self.host.live_tick_armed())
+        {
             self.host.register_tick_thread(thread);
         }
 

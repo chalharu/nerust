@@ -13,9 +13,8 @@ pub(crate) enum OpenerCall {
     History,
 }
 
-/// `WindowOpener` that fails every creation closed and records calls.
-/// Aux handles are unbuildable headless (they embed `TaoWindow`),
-/// so only the failure/skip paths are reachable — the honest maximum.
+/// `WindowOpener` that fails every creation closed and records calls. Aux handles are unbuildable
+/// headless (they embed `TaoWindow`), so only the failure/skip paths are reachable — the honest maximum.
 #[derive(Debug, Default)]
 pub(crate) struct FakeOpener {
     calls: Mutex<Vec<OpenerCall>>,

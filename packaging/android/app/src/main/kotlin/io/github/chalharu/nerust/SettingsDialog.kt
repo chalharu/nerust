@@ -410,6 +410,7 @@ internal fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) 
 
 /** Native ranged row: a Slider over `min..max` with a value label.
  * Kotlin expands nothing; the index rides back as `value - min`. */
+@Composable
 private fun SettingsSliderRow(
     setting: AndroidSetting,
     selectedIndex: Int,

@@ -15,9 +15,8 @@ impl From<u32> for RGB {
     }
 }
 
-/// Single RGBA word: canonical `0xRRGGBBAA` value on every host.
-/// All byte serialization and word blends go through this type so no
-/// backend repeats endian-sensitive shifts or `*_bytes` conversions.
+/// Single RGBA word: canonical `0xRRGGBBAA` value on every host. All byte serialization and word
+/// blends go through this type so no backend repeats endian-sensitive shifts or `*_bytes` conversions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RgbaWord(u32);
 
@@ -85,9 +84,8 @@ impl RgbaWord {
         self.0 as u8
     }
 
-    /// Straight-alpha composite of `src` over `self` in one word pass.
-    /// Strength-reduced divide-by-255 (`(v*257 + 32895) >> 16`, exact for
-    /// every `v` in range); alpha complement hoisted out of the channels.
+    /// Straight-alpha composite of `src` over `self` in one word pass. Strength-reduced
+    /// divide-by-255 (`(v*257 + 32895) >> 16`, exact for every `v` in range); alpha complement hoisted out of the channels.
     pub fn blend_src_over(self, src: [u8; 4]) -> Self {
         let alpha = u32::from(src[3]);
         // Fully opaque source replaces; fully transparent keeps dst.
