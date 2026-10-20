@@ -26,10 +26,14 @@ static PICKER_STATE: Mutex<PickerState> = Mutex::new(PickerState {
 });
 
 /// Lock order for the three JNI-bridge mutexes (bridge, settings,
-/// picker): never nest `with_state` calls, wake the looper after
-/// releasing. A panicking JNI callback must not wedge the process on
+/// picker): never nest `with_state` calls (enforced in debug by the
+/// shared re-entrancy guard), wake the looper after releasing.
+/// A panicking JNI callback must not wedge the process on
 /// the next lock, so a poisoned mutex recovers its state and logs.
 fn with_state<T>(operation: impl FnOnce(&mut PickerState) -> T) -> T {
+    // Same lock-order contract as the bridge mutex (see
+    // `bridge::lock_reentrancy_guard`): never nest, wake after release.
+    let _guard = bridge::lock_reentrancy_guard();
     let mut guard = PICKER_STATE.lock().unwrap_or_else(|poison| {
         log::error!("picker state mutex poisoned; recovering state");
         poison.into_inner()
@@ -56,15 +60,29 @@ pub(crate) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
     }) {
         return Ok(false);
     }
-    let app = app.clone();
-    let callback_app = app.clone();
-    app.run_on_java_main_thread(Box::new(move || {
-        if let Err(error) = start_picker_on_java_main_thread(&callback_app) {
-            log::error!("{error}");
+    // Route every raw `run_on_java_main_thread` through the bridge helper
+    // so JNI failures share one log label (picker.rs owns no session to
+    // report to; the on_failure synthesis keeps the gate unwedged).
+    bridge::call_on_activity_or(
+        app,
+        "launch Android ROM picker",
+        |env, activity| {
+            env.with_local_frame(4, |env| {
+                env.call_method(
+                    activity.as_ref(),
+                    jni_str!("startRomPicker"),
+                    jni_sig!("()V"),
+                    &[],
+                )?;
+                Ok::<(), jni::errors::Error>(())
+            })?;
+            Ok(())
+        },
+        || {
             with_state(|state| state.in_flight = false);
             bridge::wake();
-        }
-    }));
+        },
+    );
     Ok(true)
 }
 
@@ -76,16 +94,58 @@ pub(crate) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, Strin
     }) {
         return Ok(false);
     }
-    let app = app.clone();
-    let callback_app = app.clone();
-    app.run_on_java_main_thread(Box::new(move || {
-        if let Err(error) = start_tree_picker_on_java_main_thread(&callback_app) {
-            log::error!("{error}");
+    bridge::call_on_activity_or(
+        app,
+        "launch Android directory picker",
+        |env, activity| {
+            env.call_method(
+                activity.as_ref(),
+                jni_str!("startDirectoryPicker"),
+                jni_sig!("()V"),
+                &[],
+            )?;
+            Ok(())
+        },
+        || {
             with_state(|state| state.in_flight = false);
             bridge::wake();
-        }
-    }));
+        },
+    );
     Ok(true)
+}
+
+/// Fetch the picked document off the event-loop thread. SAF/document I/O
+/// can block (slow providers, large ROMs); the event thread must only
+/// dispatch the completed buffer published here. Display-name lookup runs
+/// here too, for the same reason.
+pub(crate) fn spawn_document_fetch(app: AndroidApp, uri: String) {
+    let job = move || {
+        let (display_name, extension) = infer_import_metadata(&app, &uri);
+        let file_name = if extension.is_empty() {
+            display_name
+        } else {
+            format!("{display_name}.{extension}")
+        };
+        match read_uri_bytes(&app, &uri) {
+            Ok(bytes) => publish_result(RomPickerResult::RomBytes {
+                uri,
+                file_name,
+                bytes,
+            }),
+            Err(error) => {
+                log::error!("{error}");
+                publish_result(RomPickerResult::Failed(error));
+            }
+        }
+    };
+    if let Err(error) = std::thread::Builder::new()
+        .name("nerust-picker-fetch".to_string())
+        .spawn(job)
+    {
+        publish_result(RomPickerResult::Failed(format!(
+            "failed to spawn ROM fetch thread: {error}"
+        )));
+    }
 }
 
 pub(crate) fn read_uri_bytes(app: &AndroidApp, uri: &str) -> Result<Vec<u8>, String> {
@@ -263,40 +323,6 @@ fn read_display_name(app: &AndroidApp, uri: &str) -> Result<Option<String>, Stri
     })
 }
 
-fn start_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    bridge::with_java_env(&vm, |env| {
-        env.with_local_frame(4, |env| {
-            let activity_raw = app.activity_as_ptr() as jobject;
-            let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-            env.call_method(
-                activity.as_ref(),
-                jni_str!("startRomPicker"),
-                jni_sig!("()V"),
-                &[],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        })
-    })
-    .map_err(|error| format!("failed to launch Android ROM picker: {error:?}"))
-}
-
-fn start_tree_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    bridge::with_java_env(&vm, |env| {
-        let activity_raw = app.activity_as_ptr() as jobject;
-        let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-        env.call_method(
-            activity.as_ref(),
-            jni_str!("startDirectoryPicker"),
-            jni_sig!("()V"),
-            &[],
-        )?;
-        Ok::<(), jni::errors::Error>(())
-    })
-    .map_err(|error| format!("failed to launch Android directory picker: {error:?}"))
-}
-
 fn publish_result(result: RomPickerResult) {
     with_state(|state| {
         state.result = Some(result);
@@ -311,23 +337,19 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onFilePickerR
     _activity: JObject<'_>,
     uri: JString<'_>,
 ) {
-    match env
-        .with_env(|env| -> jni::errors::Result<RomPickerResult> {
-            if uri.is_null() {
-                Ok(RomPickerResult::Cancelled)
-            } else {
-                let uri = uri.try_to_string(env)?;
-                Ok(RomPickerResult::Selected(uri))
-            }
-        })
-        .into_outcome()
-    {
+    match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<RomPickerResult> {
+        if uri.is_null() {
+            Ok(RomPickerResult::Cancelled)
+        } else {
+            let uri = uri.try_to_string(env)?;
+            Ok(RomPickerResult::Selected(uri))
+        }
+    }) {
         jni::Outcome::Ok(result) => {
-            log::info!("received Android ROM picker result: {result:?}");
+            log::info!("received Android ROM picker result");
             publish_result(result);
         }
-        jni::Outcome::Err(error) => {
-            log::error!("failed to decode Android ROM picker result: {error:?}");
+        jni::Outcome::Err(_) => {
             publish_result(RomPickerResult::Cancelled);
         }
         jni::Outcome::Panic(_) => {
@@ -343,19 +365,15 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onDirectoryPi
     _activity: JObject<'_>,
     uri: JString<'_>,
 ) {
-    match env
-        .with_env(|env| -> jni::errors::Result<RomPickerResult> {
-            if uri.is_null() {
-                Ok(RomPickerResult::Cancelled)
-            } else {
-                Ok(RomPickerResult::TreeSelected(uri.try_to_string(env)?))
-            }
-        })
-        .into_outcome()
-    {
+    match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<RomPickerResult> {
+        if uri.is_null() {
+            Ok(RomPickerResult::Cancelled)
+        } else {
+            Ok(RomPickerResult::TreeSelected(uri.try_to_string(env)?))
+        }
+    }) {
         jni::Outcome::Ok(result) => publish_result(result),
-        jni::Outcome::Err(error) => {
-            log::error!("failed to decode Android directory picker result: {error:?}");
+        jni::Outcome::Err(_) => {
             publish_result(RomPickerResult::Cancelled);
         }
         jni::Outcome::Panic(_) => publish_result(RomPickerResult::Cancelled),

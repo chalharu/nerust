@@ -20,24 +20,20 @@ impl InputPorts for crate::NesFactory {
         ];
         SLOTS
     }
-    fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>> {
-        nerust_nes_device::nes_device_controller_profiles()
+    fn controllers(&self) -> Box<dyn Iterator<Item = Rc<dyn ControllerProfile>> + '_> {
+        Box::new(nerust_nes_device::nes_device_controller_profiles())
     }
 }
 
 impl InputSystemFactory for crate::NesFactory {
     fn default_assignments(&self) -> InputAssignments {
-        let profiles = self.controllers();
-        let famicom = profiles
-            .iter()
-            .find(|p| p.profile_id() == ProfileId::new("nes.famicom"))
-            .cloned();
-        InputAssignments {
-            slots: vec![
-                (AttachmentId::new("nes.attachment.player1"), famicom),
-                (AttachmentId::new("nes.attachment.player2"), None),
-            ],
-        }
+        let famicom = self
+            .controllers()
+            .find(|p| p.profile_id() == ProfileId::new("nes.famicom"));
+        InputAssignments::new(vec![
+            (AttachmentId::new("nes.attachment.player1"), famicom),
+            (AttachmentId::new("nes.attachment.player2"), None),
+        ])
     }
 
     fn create_split(
@@ -56,13 +52,13 @@ impl InputSystemFactory for crate::NesFactory {
             };
             let mut entries = Vec::new();
             dev.field_map(port, &mut entries);
-            for (s, ctrl, bit) in entries {
-                field_map.insert((s, ctrl), bit);
+            for entry in entries {
+                field_map.insert((entry.attachment, entry.control), entry.field);
             }
         }
         if field_map.is_empty() {
             return Err(CreateSplitError::ControllerNotFound {
-                controller: "none".to_string(),
+                controller: ProfileId::new("nes.standard_pad"),
             });
         }
 
@@ -70,12 +66,12 @@ impl InputSystemFactory for crate::NesFactory {
             Arc::new(Mutex::new(Box::<NesInputBuffer>::default()));
         let flag = std::sync::atomic::AtomicBool::new(false);
 
-        let split = InputSplit {
-            shared: Arc::clone(&shared),
-            flag: Arc::new(flag),
-            new_buffer: Box::new(|| Box::<NesInputBuffer>::default()),
-        };
+        let split = InputSplit::new(
+            Arc::clone(&shared),
+            Arc::new(flag),
+            Box::new(|| Box::<NesInputBuffer>::default()),
+        );
 
-        Ok(InputResources { split, field_map })
+        Ok(InputResources::new(split, field_map))
     }
 }

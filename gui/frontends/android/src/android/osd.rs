@@ -76,11 +76,13 @@ impl AndroidOsd {
         }
     }
 
-    /// Borrow the notification manager for the frontend-owned dialog
-    /// coordinator. The coordinator never touches raster/strip/insets,
-    /// and this struct never touches dialog flow.
-    pub(super) fn manager_mut(&mut self) -> &mut OsdManager {
-        &mut self.manager
+    /// Borrow the notification queue for the frontend-owned dialog
+    /// coordinator. The closure receives `&mut OsdManager`, which
+    /// implements the narrow `ModalSink + ModalSource` capability the
+    /// coordinator bounds on; the borrow ends when the closure returns.
+    /// The old `manager_mut() -> &mut OsdManager` escape hatch is gone.
+    pub(super) fn with_modal<R>(&mut self, operation: impl FnOnce(&mut OsdManager) -> R) -> R {
+        operation(&mut self.manager)
     }
 
     /// Forget sync state after a renderer rebuild: the new object
@@ -101,7 +103,7 @@ impl AndroidOsd {
 
     // Frontend-owned modal flow lives in `DialogCoordinator`; the only
     // `&mut` path to the shell queue besides the shell pump is
-    // `manager_mut` above, so the one-dialog invariant keeps one owner.
+    // `with_modal` above, so the one-dialog invariant keeps one owner.
 
     /// Drain shell notifications into display state. Error batches join
     /// the shell modal queue; the dialog shows one at a time.

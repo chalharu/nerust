@@ -20,18 +20,18 @@ pub(crate) enum ViewError {
         name: &'static str,
         program: &'static str,
     },
-    #[error("GL view has no shader program")]
-    NoProgram,
-    #[error("GL view has no vertex array")]
-    NoVertexArray,
-    #[error("GL view has no vertex buffer")]
-    NoVertexBuffer,
+    #[error("GL view has no `{program}` shader program")]
+    NoProgram { program: &'static str },
+    #[error("GL view has no vertex array for `{pipeline}` pipeline")]
+    NoVertexArray { pipeline: &'static str },
+    #[error("GL view has no vertex buffer for `{pipeline}` pipeline")]
+    NoVertexBuffer { pipeline: &'static str },
     #[error("invalid OSD clear {w}x{h}")]
     InvalidOsdClear { w: i32, h: i32 },
-    #[error("invalid viewport {w}x{h}")]
-    InvalidViewport { w: i32, h: i32 },
-    #[error("invalid surface size")]
-    InvalidSurface,
+    #[error("invalid OSD row flip surface={surface_h} y={y} h={h}")]
+    InvalidOsdFlip { surface_h: i32, y: i32, h: i32 },
+    #[error("invalid surface size {w}x{h}")]
+    InvalidSurface { w: i32, h: i32 },
     #[error("OSD upload failed at {stage} for rect {rect:?}: {source}")]
     OsdUpload {
         rect: (i32, i32, i32, i32),

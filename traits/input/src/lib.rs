@@ -11,9 +11,9 @@ mod ids;
 mod profile;
 mod topology;
 
-pub use devices::{Controller, ControllerCollection, ControllerHub, Port, SimplePort};
+pub use devices::{Controller, ControllerCollection, ControllerHub, FieldEntry, Port, SimplePort};
 pub use events::{
-    BufferError, DigitalInputEvent, DigitalInputState, InputStateBuffer, InputValue,
+    BufferError, DigitalInputEvent, DigitalInputState, InputEvent, InputStateBuffer, InputValue,
     OpenBusReadResult,
 };
 pub use ids::{AnalogControlId, AttachmentId, DeviceKindId, DigitalControlId, PortId, ProfileId};

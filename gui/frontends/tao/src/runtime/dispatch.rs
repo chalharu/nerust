@@ -8,7 +8,21 @@ use tao::{event::WindowEvent, event_loop::ControlFlow};
 use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
-use crate::aux::focus::{AuxKind, WindowHandler};
+use crate::aux::focus::{AuxKind, FocusEffect, FocusEvent, pump_aux};
+
+/// Map a native window event to a focus-domain event. Only
+/// `Focused` maps; every other event (Moved/Resized/keys) never arms
+/// or cancels the deferred pause.
+fn focus_event_of(kind: Option<AuxKind>, event: &WindowEvent) -> Option<FocusEvent> {
+    if let WindowEvent::Focused(focused) = event {
+        Some(match kind {
+            None => FocusEvent::Main(*focused),
+            Some(kind) => FocusEvent::Aux(kind, *focused),
+        })
+    } else {
+        None
+    }
+}
 
 impl WindowRuntime {
     pub(super) fn on_main_event(
@@ -26,9 +40,10 @@ impl WindowRuntime {
                 *control_flow = ControlFlow::Exit;
             }
             WindowEvent::Focused(true) => {
-                // A same-burst aux focus already cancelled any
-                // pending pause; this is belt-and-braces.
-                if self.host.note_main_arrival() {
+                // Dispatch maps WindowEvent -> FocusEvent only; the
+                // coordinator decides. A same-burst aux focus already
+                // cancelled any pending pause; this is belt-and-braces.
+                if self.host.focus_event(FocusEvent::Main(true)) == Some(FocusEffect::Resume) {
                     self.host.resume_session();
                 }
                 self.host.request_redraw();
@@ -40,7 +55,7 @@ impl WindowRuntime {
                 // Deferred: an aux window may take focus in the same
                 // burst, so the pause lands at MainEventsCleared only
                 // if focus truly left us.
-                self.host.note_main_departure();
+                let _ = self.host.focus_event(FocusEvent::Main(false));
                 self.host.clear_keys();
                 // Same agreement in the other direction, still
                 // without redundant round-trips.
@@ -79,27 +94,27 @@ impl WindowRuntime {
             }
             return;
         }
-        // Same-app focus moves cancel a pending auto-pause;
+        // Same-app focus moves cancel a pending pause;
         // leaving anywhere arms it (see the main arms). Runs
         // before borrowing the handle below.
-        if let WindowEvent::Focused(focused) = event {
-            self.host.on_aux_focus(AuxKind::Settings, focused);
+        if let Some(focus) = focus_event_of(Some(AuxKind::Settings), &event) {
+            let _ = self.host.focus_event(focus);
         }
-        let Some(handle) = self.host.settings_window_mut() else {
+        let drained = self
+            .host
+            .with_settings_window(|handle| pump_aux(handle, event));
+        if drained.is_none() {
             return;
-        };
-        handle.on_event(event);
+        }
         // Coalesced present: every visual path above already
         // requested a redraw; presenting here per event would
         // serialize a full draw behind every drag/motion event
         // and unload the backlog as a hang on release.
-        if handle.close_requested() {
-            let Some(handle) = self.host.take_settings_window() else {
-                return;
-            };
-            if self.host.close_settings_and_maybe_rebuild(handle) {
-                self.recreate_renderer();
-            }
+        if self.host.settings_close_requested()
+            && let Some(handle) = self.host.take_settings_window()
+            && self.host.close_settings_and_maybe_rebuild(handle)
+        {
+            self.recreate_renderer();
         }
     }
 
@@ -115,19 +130,26 @@ impl WindowRuntime {
             self.host.request_redraw();
             return;
         }
-        // Focus-only drive: Moved/Resized/key events must not arm
-        // the deferred pause. Only Focused(true/false) touches it.
-        let focused = matches!(event, WindowEvent::Focused(true));
-        if matches!(event, WindowEvent::Focused(_))
-            && self.host.on_aux_focus(AuxKind::Debug, focused)
+        // Focus-only drive: the dispatch maps WindowEvent to
+        // FocusEvent; Moved/Resized/key events never touch it.
+        // A system-paused session resumes like on main focus;
+        // explicit pauses stay paused.
+        let mut resume = false;
+        if let Some(focus) = focus_event_of(Some(AuxKind::Debug), &event)
+            && let Some(effect) = self.host.focus_event(focus)
         {
+            resume = effect == FocusEffect::Resume;
+        }
+        if resume {
             self.host.resume_session();
         }
+        let focused = matches!(event, WindowEvent::Focused(true));
+        if self
+            .host
+            .with_debug_window(|handle| pump_aux(handle, event))
+            .is_none()
         {
-            let Some(handle) = self.host.debug_window_mut() else {
-                return;
-            };
-            handle.on_event(event);
+            return;
         }
         if focused {
             self.host.sync_debug_chrome();
@@ -147,9 +169,7 @@ impl WindowRuntime {
 
     pub(super) fn on_debug_redrawn(&mut self, opener: &dyn WindowOpener) {
         self.drain_and_maybe_open_ppu(opener);
-        if let Some(handle) = self.host.debug_window_mut() {
-            handle.render();
-        }
+        self.host.render_debug_window();
     }
 
     pub(super) fn on_ppu_event(&mut self, event: WindowEvent) {
@@ -160,23 +180,28 @@ impl WindowRuntime {
             self.host.request_redraw();
             return;
         }
+        // Focus-only drive: the dispatch maps WindowEvent to
+        // FocusEvent; Moved/Resized/key events never touch it.
         // A system-paused session resumes like on main focus;
         // explicit pauses stay paused.
-        // Focus-only drive: Moved/Resized/key events must not arm
-        // the deferred pause. Only Focused(true/false) touches it.
-        let focused = matches!(event, WindowEvent::Focused(true));
-        if matches!(event, WindowEvent::Focused(_)) && self.host.on_aux_focus(AuxKind::Ppu, focused)
+        let mut resume = false;
+        if let Some(focus) = focus_event_of(Some(AuxKind::Ppu), &event)
+            && let Some(effect) = self.host.focus_event(focus)
         {
+            resume = effect == FocusEffect::Resume;
+        }
+        if resume {
             self.host.resume_session();
         }
         if let WindowEvent::Moved(position) = &event {
             self.host.remember_ppu_window_pos(position.x, position.y);
         }
+        if self
+            .host
+            .with_ppu_window(|handle| pump_aux(handle, event))
+            .is_none()
         {
-            let Some(handle) = self.host.ppu_window_mut() else {
-                return;
-            };
-            handle.on_event(event);
+            return;
         }
         if self.host.ppu_close_requested() {
             self.host.drop_ppu_window();
@@ -394,5 +419,24 @@ mod tests {
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
         assert!(!runtime.host.is_debug_open());
         assert!(!runtime.host.is_ppu_open());
+    }
+
+    #[test]
+    fn focus_event_of_maps_only_focused() {
+        use super::focus_event_of;
+        use crate::aux::focus::FocusEvent;
+        assert_eq!(
+            focus_event_of(None, &WindowEvent::Focused(true)),
+            Some(FocusEvent::Main(true))
+        );
+        assert_eq!(
+            focus_event_of(Some(AuxKind::Ppu), &WindowEvent::Focused(false)),
+            Some(FocusEvent::Aux(AuxKind::Ppu, false))
+        );
+        // Moved/Resized never arm or cancel the deferred pause.
+        assert_eq!(
+            focus_event_of(None, &WindowEvent::Moved(PhysicalPosition::new(1, 2))),
+            None
+        );
     }
 }

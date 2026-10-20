@@ -66,15 +66,53 @@ pub(super) fn take_exit_request() -> bool {
 }
 
 pub(super) fn with_state<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T) -> T {
-    // Lock order for the three bridge mutexes: never nest `with_state`
-    // calls; wake the looper after releasing. A panicking JNI callback
-    // must not wedge the process on the next lock: recover the state
-    // and keep serving events.
+    // Lock order for the three bridge mutexes (bridge, settings, picker):
+    // never nest `with_state` calls, wake the looper after releasing. The
+    // debug re-entrancy guard below turns the comment into a check: a
+    // nested `with_state` on the same thread panics in debug builds
+    // instead of deadlocking in release. A panicking JNI callback must
+    // not wedge the process on the next lock: recover the state and keep
+    // serving events.
+    let _guard = lock_reentrancy_guard();
     let mut guard = ANDROID_BRIDGE.lock().unwrap_or_else(|poison| {
         log::error!("Android bridge mutex poisoned; recovering state");
         poison.into_inner()
     });
     operation(&mut guard)
+}
+
+/// Debug re-entrancy guard shared by the three bridge mutexes (bridge,
+/// settings, picker). `with_state` must never nest: nesting would
+/// deadlock on the second lock (or mask a lock-order inversion), so debug
+/// builds fail loudly while release builds keep the poison-recovery path.
+pub(super) fn lock_reentrancy_guard() -> ReentrancyGuard {
+    ReentrancyGuard::new()
+}
+
+pub(super) struct ReentrancyGuard;
+
+impl ReentrancyGuard {
+    fn new() -> Self {
+        BRIDGE_REENTRANCY.with(|held| {
+            let depth = held.get();
+            debug_assert_eq!(
+                depth, 0,
+                "nested Android bridge with_state: reorder to avoid nesting",
+            );
+            held.set(depth + 1);
+        });
+        Self
+    }
+}
+
+impl Drop for ReentrancyGuard {
+    fn drop(&mut self) {
+        BRIDGE_REENTRANCY.with(|held| held.set(held.get().saturating_sub(1)));
+    }
+}
+
+thread_local! {
+    static BRIDGE_REENTRANCY: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 pub(super) fn wake() {
@@ -153,8 +191,32 @@ pub(super) fn with_java_env<T>(
     })
 }
 
-/// Single helper for the fire-and-forget activity calls that used to be
-/// six copy-paste `run_on_java_main_thread` + `with_java_env` blocks.
+/// Run a JNI callback with the same exception-clear semantics as
+/// [`with_java_env`], for native callbacks that already own an `Env`.
+/// Every native callback (`onMenuAction`, `onSystemInsetsChanged`,
+/// picker results, settings results) routes through here so a
+/// `NoSuchMethodError` (e.g. after a Kotlin rename) can never wedge the
+/// thread with a pending exception.
+pub(super) fn with_callback_env<T>(
+    env: &mut jni::EnvUnowned<'_>,
+    operation: impl FnOnce(&mut jni::Env<'_>) -> jni::errors::Result<T>,
+) -> jni::Outcome<T, jni::errors::Error> {
+    let outcome = env.with_env(|env| {
+        let result = operation(env);
+        if env.exception_check() {
+            env.exception_clear();
+            log::debug!("cleared pending Java exception after JNI callback");
+            return Err(result.err().unwrap_or(jni::errors::Error::JavaException));
+        }
+        result
+    });
+    let outcome = outcome.into_outcome();
+    if let jni::Outcome::Err(ref error) = outcome {
+        log::warn!("JNI callback failed: {error:?}");
+    }
+    outcome
+}
+
 /// Marshals to the Java main thread, resolves the activity, runs the
 /// operation, and logs failures with the call-site label. JNI failures
 /// are reported to the session by the caller (it owns the session);
@@ -238,18 +300,13 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSystemInset
     _activity: jni::objects::JObject<'_>,
     insets: JIntArray<'_>,
 ) {
-    match env
-        .with_env(|env| -> jni::errors::Result<[i32; 4]> {
-            let mut out = [0i32; 4];
-            insets.get_region(env, 0, &mut out)?;
-            Ok(out)
-        })
-        .into_outcome()
-    {
+    match with_callback_env(&mut env, |env| -> jni::errors::Result<[i32; 4]> {
+        let mut out = [0i32; 4];
+        insets.get_region(env, 0, &mut out)?;
+        Ok(out)
+    }) {
         jni::Outcome::Ok(values) => push_system_insets(values),
-        jni::Outcome::Err(error) => {
-            log::warn!("failed to decode system insets push: {error:?}");
-        }
+        jni::Outcome::Err(_) => {}
         jni::Outcome::Panic(_) => {
             log::error!("system insets callback panicked");
         }

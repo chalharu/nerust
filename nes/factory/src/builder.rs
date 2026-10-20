@@ -5,8 +5,8 @@ use nerust_core_traits::{
     factory::{CoreParts, FactoryError, settings::FactorySettingsView},
 };
 use nerust_input_traits::{
-    AttachmentId, Controller, ControllerCollection, DigitalControlId, EmuInput, GuiInput,
-    InputAssignments, InputSystemFactory, ProfileId,
+    AttachmentId, Controller, ControllerCollection, EmuInput, GuiInput, InputAssignments,
+    InputSystemFactory, ProfileId,
 };
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_render_filters::FilterTypeExt;
@@ -23,7 +23,7 @@ pub(crate) fn create_core_and_adapter_with_assignments(
 ) -> Result<CoreParts, FactoryError> {
     // Build controller devices per occupied port.
     let mut devices: Vec<Box<dyn Controller + Send>> = Vec::new();
-    for (_, ctrl_opt) in &assignments.slots {
+    for (_, ctrl_opt) in assignments.slots() {
         let profile = match ctrl_opt {
             Some(p) => p,
             None => continue,
@@ -42,14 +42,24 @@ pub(crate) fn create_core_and_adapter_with_assignments(
     let resources = input_factory
         .create_split(&controller_collection)
         .map_err(|e| FactoryError::Create(e.to_string()))?;
-    let gui_input = GuiInput::from_split(&resources.split);
-    let emu_input = EmuInput::from_split(&resources.split);
+    let gui_input = GuiInput::from_split(resources.split());
+    let emu_input = EmuInput::from_split(resources.split());
+    // Project the unified (attachment, ControlId) map onto the legacy
+    // CoreParts digital-only key until CoreParts migrates to ControlId.
+    let field_map = resources
+        .field_map()
+        .iter()
+        .filter_map(|((attachment, control), field)| match control {
+            nerust_input_traits::ControlId::Digital(id) => Some(((*attachment, *id), *field)),
+            _ => None,
+        })
+        .collect();
     create_core_and_adapter(
         view,
         speaker,
         gui_input,
         emu_input,
-        resources.field_map,
+        field_map,
         controller_collection,
     )
 }
@@ -59,7 +69,7 @@ pub(crate) fn create_core_and_adapter(
     speaker: Box<dyn AudioBackend>,
     gui_input: GuiInput,
     emu_input: EmuInput,
-    field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
+    field_map: HashMap<(AttachmentId, nerust_input_traits::DigitalControlId), usize>,
     controller_collection: ControllerCollection,
 ) -> Result<CoreParts, FactoryError> {
     let filter = crate::settings::filter_type_from_bytes(view.system_config.as_deref());

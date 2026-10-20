@@ -41,7 +41,7 @@ impl RomLoadTarget for SessionLoadAdapter<'_> {
     ) -> Result<(), RomLoaderError> {
         self.0
             .load_resolved(media, resolved)
-            .map_err(|e| RomLoaderError::Load(e.to_string()))
+            .map_err(RomLoaderError::from_session)
     }
 
     fn resume(&mut self) {

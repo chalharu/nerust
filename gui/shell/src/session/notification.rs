@@ -77,13 +77,16 @@ pub enum FailureOrigin {
 pub const MAX_EXTERNAL_DETAIL: usize = 512;
 
 /// Pick the language side. Splitting this out (instead of inline
-/// `if ja` per arm) keeps `text()` under the complexity budget.
-fn bilingual(ja: bool, en: &str, ja_text: &str) -> String {
-    bilingual_str(ja, en, ja_text).to_string()
+/// `language` matches per arm) keeps `text()` under the complexity budget.
+fn bilingual(language: AppLanguage, en: &str, ja_text: &str) -> String {
+    bilingual_str(language, en, ja_text).to_string()
 }
 
-fn bilingual_str<'a>(ja: bool, en: &'a str, ja_text: &'a str) -> &'a str {
-    if ja { ja_text } else { en }
+fn bilingual_str<'a>(language: AppLanguage, en: &'a str, ja_text: &'a str) -> &'a str {
+    match language {
+        AppLanguage::Japanese => ja_text,
+        _ => en,
+    }
 }
 
 /// Latest-wins replace group for selection echoes.
@@ -102,6 +105,18 @@ impl NotificationKind {
             id,
             detail: detail.chars().take(MAX_EXTERNAL_DETAIL).collect(),
         }
+    }
+
+    /// Typed failure entry: the source chain renders to text once, at
+    /// this boundary. Callers pass the typed error; no
+    /// `error.to_string()` escapes into notification construction.
+    /// Truncation and shaping stay in [`command_failure`](Self::command_failure).
+    pub fn command_failure_from<E: std::fmt::Display + ?Sized>(
+        origin: FailureOrigin,
+        id: &'static str,
+        error: &E,
+    ) -> Self {
+        Self::command_failure(origin, id, error.to_string())
     }
 
     pub fn level(&self) -> NotificationLevel {
@@ -172,13 +187,12 @@ impl NotificationKind {
     }
 
     pub fn text(&self, language: AppLanguage) -> String {
-        let ja = matches!(language, AppLanguage::Japanese);
         match self {
-            NotificationKind::Paused => bilingual(ja, "Paused", "一時停止しました"),
-            NotificationKind::Resumed => bilingual(ja, "Resumed", "再開しました"),
-            NotificationKind::Reset => bilingual(ja, "Reset", "リセットしました"),
+            NotificationKind::Paused => bilingual(language, "Paused", "一時停止しました"),
+            NotificationKind::Resumed => bilingual(language, "Resumed", "再開しました"),
+            NotificationKind::Reset => bilingual(language, "Reset", "リセットしました"),
             NotificationKind::CreatedSlot => {
-                bilingual(ja, "Slot created", "スロットを作成しました")
+                bilingual(language, "Slot created", "スロットを作成しました")
             }
             NotificationKind::SavedSlot(id) => {
                 Self::slot_text(Some(*id), language, "Saved to", "保存しました")
@@ -193,33 +207,33 @@ impl NotificationKind {
                 Self::slot_text(Some(*id), language, "Selected", "選択しました")
             }
             NotificationKind::PersistenceUnavailable => {
-                bilingual(ja, "Saves unavailable", "保存機能が利用できません")
+                bilingual(language, "Saves unavailable", "保存機能が利用できません")
             }
             NotificationKind::SlotFailed { slot, reason } => {
                 Self::slot_failed_text(*slot, *reason, language)
             }
             NotificationKind::CommandFailure { origin, id, detail } => {
-                let prefix = match (origin, ja) {
-                    (FailureOrigin::Command, true) => {
+                let prefix = match (origin, language) {
+                    (FailureOrigin::Command, AppLanguage::Japanese) => {
                         return if detail.is_empty() {
                             format!("{id} に失敗しました")
                         } else {
                             format!("{id} に失敗しました: {detail}")
                         };
                     }
-                    (FailureOrigin::Command, false) => {
+                    (FailureOrigin::Command, _) => {
                         return if detail.is_empty() {
                             format!("{id} failed")
                         } else {
                             format!("{id} failed: {detail}")
                         };
                     }
-                    (FailureOrigin::Picker, true) => "選択",
-                    (FailureOrigin::Picker, false) => "Picker",
-                    (FailureOrigin::Restore, true) => "復元",
-                    (FailureOrigin::Restore, false) => "Restore",
-                    (FailureOrigin::Bridge, true) => "通知",
-                    (FailureOrigin::Bridge, false) => "Bridge",
+                    (FailureOrigin::Picker, AppLanguage::Japanese) => "選択",
+                    (FailureOrigin::Picker, _) => "Picker",
+                    (FailureOrigin::Restore, AppLanguage::Japanese) => "復元",
+                    (FailureOrigin::Restore, _) => "Restore",
+                    (FailureOrigin::Bridge, AppLanguage::Japanese) => "通知",
+                    (FailureOrigin::Bridge, _) => "Bridge",
                 };
                 if detail.is_empty() {
                     prefix.to_string()
@@ -231,25 +245,28 @@ impl NotificationKind {
     }
 
     fn slot_failed_text(slot: Option<u64>, reason: SlotOpFailure, language: AppLanguage) -> String {
-        let ja = matches!(language, AppLanguage::Japanese);
-        let what = Self::failure_reason_text(reason, ja);
-        match (slot, ja) {
-            (Some(id), true) => format!("スロット{id}: {what}"),
-            (Some(id), false) => format!("Slot {id}: {what}"),
+        let what = Self::failure_reason_text(reason, language);
+        match (slot, language) {
+            (Some(id), AppLanguage::Japanese) => format!("スロット{id}: {what}"),
+            (Some(id), _) => format!("Slot {id}: {what}"),
             (None, _) => what.to_string(),
         }
     }
 
-    fn failure_reason_text(reason: SlotOpFailure, ja: bool) -> &'static str {
+    fn failure_reason_text(reason: SlotOpFailure, language: AppLanguage) -> &'static str {
         match reason {
-            SlotOpFailure::Empty => bilingual_str(ja, "slot is empty", "空きスロットです"),
-            SlotOpFailure::Missing => bilingual_str(ja, "no data", "データがありません"),
-            SlotOpFailure::Storage => bilingual_str(ja, "storage failure", "保存に失敗しました"),
-            SlotOpFailure::Corrupt => bilingual_str(ja, "data is corrupt", "データが壊れています"),
-            SlotOpFailure::Incompatible => {
-                bilingual_str(ja, "incompatible data", "互換性がありません")
+            SlotOpFailure::Empty => bilingual_str(language, "slot is empty", "空きスロットです"),
+            SlotOpFailure::Missing => bilingual_str(language, "no data", "データがありません"),
+            SlotOpFailure::Storage => {
+                bilingual_str(language, "storage failure", "保存に失敗しました")
             }
-            SlotOpFailure::Unavailable => bilingual_str(ja, "unavailable", "利用できません"),
+            SlotOpFailure::Corrupt => {
+                bilingual_str(language, "data is corrupt", "データが壊れています")
+            }
+            SlotOpFailure::Incompatible => {
+                bilingual_str(language, "incompatible data", "互換性がありません")
+            }
+            SlotOpFailure::Unavailable => bilingual_str(language, "unavailable", "利用できません"),
         }
     }
 }
@@ -601,6 +618,23 @@ mod tests {
         );
         assert!(!NotificationKind::Paused.wants_modal());
         assert!(!NotificationKind::SelectedSlot(1).wants_modal());
+    }
+
+    #[test]
+    fn command_failure_from_renders_typed_source_at_boundary() {
+        use crate::session::SessionError;
+        let error = SessionError::NoCore;
+        let kind = NotificationKind::command_failure_from(FailureOrigin::Command, "Pause", &error);
+        match &kind {
+            NotificationKind::CommandFailure { origin, id, detail } => {
+                assert_eq!(*origin, FailureOrigin::Command);
+                assert_eq!(*id, "Pause");
+                assert_eq!(detail, &error.to_string());
+            }
+            other => panic!("unexpected kind: {other:?}"),
+        }
+        assert!(!kind.text(AppLanguage::English).is_empty());
+        assert!(!kind.text(AppLanguage::Japanese).is_empty());
     }
 
     #[test]

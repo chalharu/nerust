@@ -2,16 +2,27 @@
 //! two-phase write transaction. Frontends render from snapshots and
 //! never touch the core.
 
-use std::sync::Arc;
+use std::sync::{Arc, MutexGuard};
 
 use nerust_gui_viewmodel::debugger as debug_vm;
 
 #[cfg(test)]
 use super::LiveImages;
-use super::SessionHandle;
-use crate::emu_core::EmuCore;
+use super::{SessionHandle, osd::TickMetrics};
+use crate::debug::{CoreFailure, ImageNeed, TrafficKind};
 
 impl SessionHandle {
+    /// Poison-recovering transaction lock. A poisoned mutex means a
+    /// previous holder panicked mid-edit; the transaction is plain
+    /// data, so recovering keeps the debugger usable instead of
+    /// wedging it. Exactly one logging point for the recovery.
+    fn lock_txn(&self) -> MutexGuard<'_, debug_vm::WriteTransaction> {
+        self.debug_txn.lock().unwrap_or_else(|error| {
+            log::error!("debug transaction mutex poisoned, recovering");
+            error.into_inner()
+        })
+    }
+
     pub fn debug_spaces(&self) -> Vec<nerust_core_traits::debugger::SpaceInfo> {
         self.emu
             .core()
@@ -27,17 +38,20 @@ impl SessionHandle {
     /// this reports read safety (`true` with no core).
     /// [`paused`]: SessionHandle::paused
     pub fn debug_snapshot_ready(&self) -> bool {
-        self.emu
-            .core()
-            .ok()
-            .is_none_or(|core| core.metrics().paused)
+        self.debug_snapshot_ready_tick(&self.tick_metrics())
+    }
+
+    /// Tick-threaded form of [`debug_snapshot_ready`](Self::debug_snapshot_ready):
+    /// no metrics lock here, so per-tick debugger gates share the pass tick.
+    pub fn debug_snapshot_ready_tick(&self, tick: &TickMetrics) -> bool {
+        self.emu.core().ok().is_none_or(|_| tick.paused)
     }
 
     /// Owned context for one async drain flight: a cloned core plus
     /// the shared write transaction. See [`DrainCtx`].
     pub(crate) fn drain_ctx(&self) -> crate::debug::DrainCtx {
         crate::debug::DrainCtx::new(
-            self.emu.core().ok().map(EmuCore::drain_core),
+            self.emu.core().ok().map(|core| core.drain_handle()),
             Arc::clone(&self.debug_txn),
         )
     }
@@ -50,7 +64,7 @@ impl SessionHandle {
         space: Option<nerust_core_traits::debugger::SpaceId>,
         mem_addr: u32,
         dis_addr: Option<u32>,
-        need_images: bool,
+        need_images: ImageNeed,
         watch: Option<u32>,
     ) -> debug_vm::DebugSnapshot {
         use nerust_core_traits::debugger::{
@@ -94,7 +108,7 @@ impl SessionHandle {
         let anchor = batch.anchor;
         snapshot.pc = anchor;
         snapshot.disasm_lines = batch.disasm;
-        let (images_gen, images) = if need_images {
+        let (images_gen, images) = if need_images == ImageNeed::Fetch {
             match core.debug_images() {
                 Ok(Ok((generation, images))) => (generation, images),
                 _ => (0, Vec::new()),
@@ -122,8 +136,8 @@ impl SessionHandle {
     /// the last paused sections alone. Blocking wrapper for tests only;
     /// live ticks use the flight.
     #[cfg(test)]
-    pub fn debug_live_images(&self, need_images: bool) -> LiveImages {
-        let mut flight = self.debug_live_images_begin(need_images);
+    pub fn debug_live_images(&self, need_images: ImageNeed) -> LiveImages {
+        let mut flight = self.debug_live_images_begin(matches!(need_images, ImageNeed::Fetch));
         loop {
             match flight.poll() {
                 crate::debug::LiveImagesPoll::Done(live) => return live,
@@ -181,12 +195,12 @@ impl SessionHandle {
     pub fn debug_write_register(&self, name: &'static str, value: u64) -> debug_vm::StatusMessage {
         let core = match self.emu.core().ok() {
             Some(core) => core,
-            None => return debug_vm::StatusMessage::NoCore,
+            None => return CoreFailure::no_core().thread_status(),
         };
         match core.write_register(name, value) {
             Ok(Ok(())) => debug_vm::StatusMessage::RegisterWrote { name, value },
-            Ok(Err(error)) => debug_vm::StatusMessage::RegisterRefused(format!("{error:?}")),
-            Err(error) => debug_vm::StatusMessage::ThreadFailed(format!("{error:?}")),
+            Ok(Err(error)) => CoreFailure::from(error).register_status(),
+            Err(error) => CoreFailure::from(error).thread_status(),
         }
     }
 
@@ -198,32 +212,32 @@ impl SessionHandle {
         addr: u32,
     ) -> Option<u8> {
         let old = self.debug_read_byte(space, addr);
-        self.debug_txn.lock().unwrap().prepare(space, addr, old);
+        self.lock_txn().prepare(space, addr, old);
         old
     }
 
     /// Stage the parsed value; only a prepared transaction accepts it.
     pub fn debug_stage_write(&self, value: u64) {
-        self.debug_txn.lock().unwrap().stage(value);
+        self.lock_txn().stage(value);
     }
 
     /// Confirm-row data, if fully staged. The frontend renders the
     /// wording; the session only reports the staged values.
     pub fn debug_pending_text(&self) -> Option<debug_vm::PendingWrite> {
-        self.debug_txn.lock().unwrap().pending()
+        self.lock_txn().pending()
     }
 
     /// Commit the staged write, consuming the transaction.
     pub fn debug_commit_write(&self) -> debug_vm::StatusMessage {
         use nerust_core_traits::debugger::MemoryWrite;
-        let staged = self.debug_txn.lock().unwrap().take_commit();
+        let staged = self.lock_txn().take_commit();
         let (space, addr, value) = match staged {
             Some(staged) => staged,
             None => return debug_vm::StatusMessage::NothingToWrite,
         };
         let core = match self.emu.core().ok() {
             Some(core) => core,
-            None => return debug_vm::StatusMessage::NoCore,
+            None => return CoreFailure::no_core().thread_status(),
         };
         match core.write_memory(MemoryWrite {
             space,
@@ -232,24 +246,24 @@ impl SessionHandle {
             value,
         }) {
             Ok(Ok(())) => debug_vm::StatusMessage::WroteMemory { addr, value },
-            Ok(Err(error)) => debug_vm::StatusMessage::WriteRefused(format!("{error:?}")),
-            Err(error) => debug_vm::StatusMessage::ThreadFailed(format!("{error:?}")),
+            Ok(Err(error)) => CoreFailure::from(error).write_status(),
+            Err(error) => CoreFailure::from(error).thread_status(),
         }
     }
 
     /// Drop any uncommitted transaction (cancel, space switch).
     pub fn debug_clear_write(&self) {
-        self.debug_txn.lock().unwrap().clear();
+        self.lock_txn().clear();
     }
 
-    /// Report drain traffic: `state_changing` kills staged-but-
-    /// uncommitted values from previous drains (step, refresh, pause
-    /// switches). Select/stage/commit traffic passes `false`: it
-    /// builds the transaction this drain consumes. The frontend owns
+    /// Report drain traffic. `traffic` kills staged-but-uncommitted
+    /// values from previous drains (step, refresh, pause switches).
+    /// Select/stage/commit traffic passes [`TrafficKind::Transactional`]:
+    /// it builds the transaction this drain consumes. The frontend owns
     /// request semantics; the session owns the kill.
-    pub fn debug_note_traffic(&self, state_changing: bool) {
-        if state_changing {
-            self.debug_txn.lock().unwrap().on_state_changing_traffic();
+    pub fn debug_note_traffic(&self, traffic: TrafficKind) {
+        if traffic == TrafficKind::StateChanging {
+            self.lock_txn().on_state_changing_traffic();
         }
     }
 
@@ -258,9 +272,9 @@ impl SessionHandle {
         match self.emu.core().ok() {
             Some(core) => match core.pause() {
                 Ok(()) => debug_vm::StatusMessage::Paused,
-                Err(error) => debug_vm::StatusMessage::PauseFailed(format!("{error:?}")),
+                Err(error) => CoreFailure::from(error).pause_status(true),
             },
-            None => debug_vm::StatusMessage::NoCore,
+            None => CoreFailure::no_core().thread_status(),
         }
     }
 
@@ -269,9 +283,9 @@ impl SessionHandle {
         match self.emu.core().ok() {
             Some(core) => match core.resume() {
                 Ok(()) => debug_vm::StatusMessage::Resume,
-                Err(error) => debug_vm::StatusMessage::ResumeFailed(format!("{error:?}")),
+                Err(error) => CoreFailure::from(error).pause_status(false),
             },
-            None => debug_vm::StatusMessage::NoCore,
+            None => CoreFailure::no_core().thread_status(),
         }
     }
 
@@ -283,12 +297,12 @@ impl SessionHandle {
     ) -> debug_vm::StatusMessage {
         let core = match self.emu.core().ok() {
             Some(core) => core,
-            None => return debug_vm::StatusMessage::NoCore,
+            None => return CoreFailure::no_core().thread_status(),
         };
         match core.step(unit) {
             Ok(Ok(count)) => debug_vm::StatusMessage::Stepped(count),
-            Ok(Err(error)) => debug_vm::StatusMessage::StepFailed(format!("{error:?}")),
-            Err(error) => debug_vm::StatusMessage::ThreadFailed(format!("{error:?}")),
+            Ok(Err(error)) => CoreFailure::from(error).step_status(),
+            Err(error) => CoreFailure::from(error).thread_status(),
         }
     }
 }

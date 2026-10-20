@@ -71,9 +71,9 @@ impl SessionHandle {
     ) -> PersistenceSetup {
         let sidecars = self
             .emu
-            .core()
+            .exporter()
             .ok()
-            .and_then(|c| c.canonical_media_identity())
+            .and_then(|exporter| exporter.export_identity())
             .and_then(|identity| self.resolve_persistence_paths(rom_path, &identity));
         let Some(sidecars) = sidecars else {
             return PersistenceSetup::Unavailable;
@@ -81,10 +81,10 @@ impl SessionHandle {
         self.media
             .persistence
             .configure(sidecars.states_dir, sidecars.mapper_save_path);
-        if let Ok(core) = self.emu.core() {
-            self.media.persistence.refresh_slots(core);
+        if let Ok(exporter) = self.emu.exporter() {
+            self.media.persistence.refresh_slots(exporter);
             if mapper_restore == MapperRestore::Load
-                && let Err(e) = self.media.persistence.load_mapper_save_if_needed(core)
+                && let Err(e) = self.media.persistence.load_mapper_save_if_needed(exporter)
             {
                 log::warn!("load_mapper_save_if_needed failed: {e}");
             }

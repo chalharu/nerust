@@ -119,6 +119,9 @@ pub fn android_main(app: AndroidApp) {
             std::process::exit(0);
         }
         GuardOutcome::Completed(Err(error)) => {
+            // Init failures (e.g. corrupted settings) are already toasted
+            // and the activity finished inside `android::run`; this log is
+            // the record for post-loop failures.
             log::error!("android_main: frontend failed: {error:#}");
         }
         // Crash path: logged by the guard; return to the JVM instead

@@ -42,7 +42,8 @@ impl InputStateBuffer for GbcInputBuffer {
             Ok(())
         } else {
             Err(BufferError::MismatchedBuffer {
-                expected: "GbcInputBuffer",
+                expected: std::any::type_name::<Self>(),
+                actual: std::any::type_name_of_val(other),
             })
         }
     }

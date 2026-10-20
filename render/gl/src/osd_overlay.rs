@@ -20,8 +20,13 @@ pub(crate) enum RetryDecision {
 }
 
 impl RetryBudget {
+    /// Zero would drop live layers on the first transient failure, so
+    /// the floor is one attempt: the constructor clamps, not callers.
     pub(crate) fn new(max: u8) -> Self {
-        Self { max, fails: 0 }
+        Self {
+            max: max.max(1),
+            fails: 0,
+        }
     }
 
     pub(crate) fn record_failure(&mut self) -> RetryDecision {
@@ -109,8 +114,26 @@ pub(crate) fn checked_osd_rect(
 
 /// GL textures start at the bottom-left; OSD layers start at the
 /// top-left. Flip once at the upload edge so blit and clear agree.
+/// Test-only geometry reference: production uploads go through the
+/// checked [`checked_osd_gl_y`] below.
+#[cfg(test)]
 pub(crate) fn osd_gl_y(surface_h: i32, ly: i32, lh: i32) -> i32 {
     surface_h - ly - lh
+}
+
+/// Checked row flip: refuses negative geometry, overflow, and rows
+/// past the surface instead of wrapping the `TexSubImage` offset.
+/// Upload sites use this; the unchecked `osd_gl_y` stays for tested
+/// pure geometry only.
+pub(crate) fn checked_osd_gl_y(surface_h: i32, ly: i32, lh: i32) -> Result<i32, OsdReject> {
+    if surface_h <= 0 || ly < 0 || lh <= 0 {
+        return Err(OsdReject::OutOfBounds);
+    }
+    let bottom = ly.checked_add(lh).ok_or(OsdReject::OutOfBounds)?;
+    if bottom > surface_h {
+        return Err(OsdReject::OutOfBounds);
+    }
+    surface_h.checked_sub(bottom).ok_or(OsdReject::OutOfBounds)
 }
 
 /// Checked OSD scratch need: `w > 0 && h > 0`, then checked
@@ -134,7 +157,7 @@ pub(crate) fn checked_clear_need(w: i32, h: i32) -> Result<usize, OsdReject> {
 /// only coordinates uploads.
 #[cfg(test)]
 mod tests {
-    use super::{OsdReject, checked_clear_need, checked_osd_rect, osd_gl_y};
+    use super::{OsdReject, checked_clear_need, checked_osd_gl_y, checked_osd_rect, osd_gl_y};
     use nerust_render_traits::renderer::OsdLayer;
 
     #[test]
@@ -143,6 +166,20 @@ mod tests {
         assert_eq!(osd_gl_y(64, 6, 1), 57);
         assert_eq!(osd_gl_y(64, 0, 1), 63);
         assert_eq!(osd_gl_y(64, 63, 1), 0);
+    }
+
+    #[test]
+    fn checked_flip_rejects_bad_geometry() {
+        assert_eq!(checked_osd_gl_y(64, 6, 1), Ok(57));
+        assert_eq!(checked_osd_gl_y(64, 0, 1), Ok(63));
+        assert_eq!(checked_osd_gl_y(64, 63, 1), Ok(0));
+        assert_eq!(checked_osd_gl_y(64, 64, 1), Err(OsdReject::OutOfBounds));
+        assert_eq!(checked_osd_gl_y(64, 0, 65), Err(OsdReject::OutOfBounds));
+        assert_eq!(checked_osd_gl_y(64, -1, 1), Err(OsdReject::OutOfBounds));
+        assert_eq!(
+            checked_osd_gl_y(i32::MAX, i32::MAX, 1),
+            Err(OsdReject::OutOfBounds)
+        );
     }
 
     #[test]

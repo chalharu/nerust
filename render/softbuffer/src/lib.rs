@@ -51,15 +51,22 @@ pub struct SoftbufferRenderer {
 /// too: the key carries buffer lengths plus `lut_rev`, so transient
 /// LUT/buffer growth during `resize_lut` changes the key and the stale
 /// `false` never survives the resize that fixes it. `src` geometry,
-/// `avail_h`, kernel, and reserved strips are part of the key so a
-/// stale `true` cannot survive a profile/strip change.
+/// byte stride, `avail_h`, kernel, and reserved strips are part of the
+/// key so a stale `true` cannot survive a profile/strip change.
+/// `dst_h` is deliberately *not* stored: it always equals
+/// `avail_h + height_loss` (asserted at the call site), so storing it
+/// would only admit inconsistent keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TapKey {
     dst_w: usize,
-    dst_h: usize,
     avail_h: usize,
     src_w: usize,
     src_h: usize,
+    /// Byte stride of the source frame. Distinct from `tap_stride`
+    /// (which is pixels or indices): two strides can share a
+    /// `tap_stride` under integer division yet feed the indexer
+    /// different rows (e.g. byte strides 256 vs 258 at bpp 4).
+    src_stride: usize,
     tap_stride: usize,
     resize_len: usize,
     ntsc_writes: usize,
@@ -372,8 +379,11 @@ impl SoftbufferRenderer {
         Self::vertical_pass(dst, dst_w, dst_h, lut, px, resize_buffer);
     }
 
-    /// Horizontal two-tap loop with consistent LE packing. Weights sum to
-    /// one in the interior; edges go black where taps fall outside.
+    /// Horizontal two-tap loop with consistent LE packing. Canonical
+    /// order: the `src_f` indexer returns `[R, G, B, A]` bytes and the
+    /// buffer word is `0xAARRGGBB` little-endian (byte 0 = blue).
+    /// Weights sum to one in the interior; edges go black where taps
+    /// fall outside.
     fn horizontal_pass<F: Fn(usize) -> [u8; 4]>(
         src_stride: usize,
         src_h: usize,
@@ -389,6 +399,9 @@ impl SoftbufferRenderer {
             for x in 0..dst_w {
                 let dst_index = dst_y_index + x;
                 let base = x * px;
+                // Covered by `taps_cover`; a short LUT here would
+                // silently black out the row via the `unwrap_or` below.
+                debug_assert!(lut.x_lut.len() >= base + px);
                 let mut acc = [0u16; 4];
                 let mut touched = false;
                 for tap in lut.x_lut.get(base..base + px).unwrap_or(&[]) {
@@ -420,6 +433,8 @@ impl SoftbufferRenderer {
     }
 
     /// Vertical pass over the horizontal result. Taps are at most 2.
+    /// Reads buffer words (`0xAARRGGBB` LE) back with `to_le_bytes`,
+    /// the exact inverse of the horizontal pack above.
     fn vertical_pass(
         dst: &mut [u32],
         dst_w: usize,
@@ -430,6 +445,9 @@ impl SoftbufferRenderer {
     ) {
         for y in 0..dst_h {
             let base = y * px;
+            // Covered by `taps_cover`; a short LUT would silently
+            // black out the row via the `get` below.
+            debug_assert!(lut.y_lut.len() >= base + px);
             let mut taps = [(0u16, 0u16); 2];
             let mut tap_count = 0;
             if let Some(slice) = lut.y_lut.get(base..base + px) {
@@ -518,15 +536,16 @@ impl SoftbufferRenderer {
         &mut self,
         dst_w: usize,
         avail_h: usize,
+        src_stride: usize,
         tap_stride: usize,
         ntsc_writes: usize,
     ) -> bool {
         let key = TapKey {
             dst_w,
-            dst_h: avail_h,
             avail_h,
             src_w: self.render_profile.source_logical_size.width,
             src_h: self.render_profile.source_logical_size.height,
+            src_stride,
             tap_stride,
             resize_len: self.resize_buffer.len(),
             ntsc_writes,
@@ -857,9 +876,16 @@ impl GpuRenderer for SoftbufferRenderer {
             tap_stride,
             ntsc_writes,
         } = valid;
+        // `dst_h` is `avail_h + strips` by construction; `TapKey`
+        // stores only `avail_h` (plus the strips), so lock the
+        // identity here instead of keying a redundant field.
+        debug_assert_eq!(
+            dst_h,
+            avail_h.saturating_add(self.reserved.height_loss(self.size.height) as usize)
+        );
         // Tap coverage admits here (memoizing `&mut`), not inside the
         // pure geometry check above. Refuse before any indexer runs.
-        if !self.taps_covered(dst_w, avail_h, tap_stride, ntsc_writes) {
+        if !self.taps_covered(dst_w, avail_h, src_stride, tap_stride, ntsc_writes) {
             warn!("softbuffer tap coverage mismatch: refusing frame");
             return RenderResult::Skipped;
         }
@@ -1211,9 +1237,9 @@ mod tests {
         let mut renderer = SoftbufferRenderer::new(&test_profile());
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
-        assert!(renderer.taps_covered(8, 8, 256, 0));
+        assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
         // Second call hits the cache; same verdict, no rescan.
-        assert!(renderer.taps_covered(8, 8, 256, 0));
+        assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
         assert!(renderer.taps_cache.is_some());
     }
 
@@ -1222,14 +1248,14 @@ mod tests {
         let mut renderer = SoftbufferRenderer::new(&test_profile());
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
-        assert!(renderer.taps_covered(8, 8, 256, 0));
+        assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
         assert!(renderer.taps_cache.is_some());
         // Same-size rebuild bumps the generation: the cached verdict
         // misses on rev even though every length matches.
         let rev_before = renderer.lut.rev;
         renderer.resize_lut();
         assert!(renderer.lut.rev != rev_before);
-        assert!(renderer.taps_covered(8, 8, 256, 0));
+        assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
         assert!(renderer.taps_cache.is_some());
     }
 
@@ -1252,10 +1278,10 @@ mod tests {
         let mut renderer = SoftbufferRenderer::new(&test_profile());
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
-        assert!(renderer.taps_covered(8, 8, 256, 0));
+        assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
         // Same lengths, bumped rev: verdict must rescan, not hit cache.
         renderer.lut.bump_rev();
-        assert!(renderer.taps_covered(8, 8, 256, 0));
+        assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
         let (key, covered) = renderer.taps_cache.as_ref().unwrap();
         assert_eq!(key.lut_rev, renderer.lut.rev);
         assert!(*covered);
@@ -1276,7 +1302,7 @@ mod tests {
     #[test]
     fn taps_cover_rejects_short_lut() {
         let mut renderer = SoftbufferRenderer::new(&test_profile());
-        assert!(!renderer.taps_covered(8, 8, 4, 0));
+        assert!(!renderer.taps_covered(8, 8, 16, 4, 0));
     }
 
     #[test]
@@ -1290,7 +1316,7 @@ mod tests {
             rev: 1,
         };
         renderer.resize_buffer = vec![0; 8];
-        assert!(!renderer.taps_covered(1, 1, 4, 0));
+        assert!(!renderer.taps_covered(1, 1, 4, 4, 0));
         // y tap beyond the resize buffer.
         renderer.lut = LutEntry {
             x_lut: vec![Some((0, 1)), None],
@@ -1299,7 +1325,7 @@ mod tests {
             rev: 2,
         };
         renderer.resize_buffer = vec![0; 8 * 4];
-        assert!(!renderer.taps_covered(8, 1, 4, 0));
+        assert!(!renderer.taps_covered(8, 1, 32, 4, 0));
         // NTSC writes beyond the NTSC buffer.
         renderer.lut = LutEntry::new();
         renderer.lut.resize_lut(
@@ -1315,7 +1341,7 @@ mod tests {
         );
         renderer.resize_buffer = vec![0; 8 * 4];
         renderer.ntsc_buffer = vec![0; 10];
-        assert!(!renderer.taps_covered(8, 8, 4, 100));
+        assert!(!renderer.taps_covered(8, 8, 32, 4, 100));
     }
 
     #[test]
@@ -1325,17 +1351,20 @@ mod tests {
         let mut renderer = SoftbufferRenderer::new(&test_profile());
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
-        assert!(renderer.taps_covered(8, 8, 256, 0));
+        assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
         let first_key = renderer.taps_cache.as_ref().unwrap().0;
         // Reserved strip change flips the key.
         renderer.reserved.top = 2;
         renderer.resize_lut();
-        assert!(renderer.taps_covered(8, 6, 256, 0));
+        assert!(renderer.taps_covered(8, 6, 1024, 256, 0));
         let second_key = renderer.taps_cache.as_ref().unwrap().0;
         assert_ne!(first_key, second_key);
         assert_eq!(second_key.reserved_top, 2);
         assert_eq!(second_key.avail_h, 6);
         assert_eq!(second_key.src_w, 256);
+        // Byte stride is keyed (not just tap pixels): strides sharing
+        // a `tap_stride` under integer division still miss the cache.
+        assert_eq!(second_key.src_stride, 1024);
     }
 
     #[test]

@@ -226,8 +226,9 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
     activity: JObject<'_>,
     action: JString<'_>,
 ) {
-    match env
-        .with_env(|env| -> jni::errors::Result<Option<FrontendEvent>> {
+    match bridge::with_callback_env(
+        &mut env,
+        |env| -> jni::errors::Result<Option<FrontendEvent>> {
             if action.is_null() {
                 Ok(None)
             } else {
@@ -251,16 +252,33 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
 
                 Ok(decoded)
             }
-        })
-        .into_outcome()
-    {
+        },
+    ) {
         jni::Outcome::Ok(Some(event)) => publish_event(event),
         jni::Outcome::Ok(None) => {}
-        jni::Outcome::Err(error) => {
-            log::error!("failed to decode Android menu action: {error:?}");
-        }
+        jni::Outcome::Err(_) => {}
         jni::Outcome::Panic(_) => {
             log::error!("Android menu action callback panicked");
+        }
+    }
+}
+
+/// Dedicated error-dialog dismiss entry point. New APKs call this
+/// directly (`onErrorDialogDismissed`); the legacy `"error_dialog_dismissed"`
+/// menu-string path in [`decode_frontend_event`] stays as the decoder for
+/// old APKs that still send the dismiss over `onMenuAction`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onErrorDialogDismissed(
+    mut env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+) {
+    match bridge::with_callback_env(&mut env, |_env| -> jni::errors::Result<FrontendEvent> {
+        Ok(FrontendEvent::ErrorDialogDismissed)
+    }) {
+        jni::Outcome::Ok(event) => publish_event(event),
+        jni::Outcome::Err(_) => {}
+        jni::Outcome::Panic(_) => {
+            log::error!("Android error-dismiss callback panicked");
         }
     }
 }

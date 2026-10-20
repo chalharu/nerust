@@ -19,7 +19,6 @@ use tao::{
 };
 
 use self::host::{HostAction, HostState};
-use crate::aux::focus::WindowHandler;
 use crate::event::UserEvent;
 use crate::menu::imp::AppMenu;
 use crate::ports::{NativeDialogs, TaoWindowOpener};
@@ -168,9 +167,7 @@ impl WindowRuntime {
             }
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
             Event::RedrawRequested(window_id) if self.host.is_settings_window(window_id) => {
-                if let Some(handle) = self.host.settings_window_mut() {
-                    handle.render();
-                }
+                self.host.render_settings_window();
             }
             Event::WindowEvent {
                 event, window_id, ..
@@ -193,14 +190,10 @@ impl WindowRuntime {
                 self.host.on_history_event(event);
             }
             Event::RedrawRequested(window_id) if self.host.is_history_window(window_id) => {
-                if let Some(handle) = self.host.history_window_mut() {
-                    handle.render();
-                }
+                self.host.render_history_window();
             }
             Event::RedrawRequested(window_id) if self.host.is_ppu_window(window_id) => {
-                if let Some(handle) = self.host.ppu_window_mut() {
-                    handle.render();
-                }
+                self.host.render_ppu_window();
             }
             Event::MainEventsCleared => self.host.update_control_flow(control_flow),
             Event::UserEvent(command) => match command {
@@ -234,7 +227,7 @@ impl WindowRuntime {
         // full recreate.
         let current_xid = self.host.surface_xid();
         if self.surface_xid != current_xid {
-            if let Some(window) = self.host.window().cloned() {
+            if let Some(window) = self.host.window_arc() {
                 self.build_renderer_and_surface(&window);
             }
             return;
@@ -260,7 +253,7 @@ impl WindowRuntime {
 
     fn recreate_renderer(&mut self) {
         self.renderer = None;
-        if let Some(window) = self.host.window().cloned() {
+        if let Some(window) = self.host.window_arc() {
             self.build_renderer_and_surface(&window);
         }
     }

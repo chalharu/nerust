@@ -101,6 +101,13 @@ impl ModalRouter<'_> {
 /// re-rasterized every frame on timer jitter.
 pub const STATUS_FPS_MIN_INTERVAL: Duration = Duration::from_millis(500);
 
+/// Single source for the status fps text. The gate and the OSD
+/// readout both format through here, so the digits cannot drift
+/// apart between the two call sites.
+pub fn format_status_value(fps: f32) -> String {
+    format!("{fps:.1} fps")
+}
+
 /// Gates the status value: label changes pass through, fps digits at
 /// most every [`STATUS_FPS_MIN_INTERVAL`]. Frontends fold the gated
 /// pair into their raster fingerprint alongside the settings.
@@ -276,11 +283,13 @@ pub trait OsdState {
 
 /// Status half of the sync fingerprint. One struct instead of a
 /// positional tuple, so adding a field cannot silently misalign the
-/// comparison.
+/// comparison. Boxed strings: the sync borrow-compares label/value
+/// (`&str`) before allocating, so steady frames that skip never
+/// format or box.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StatusFingerprint {
-    label: String,
-    value: String,
+    label: Box<str>,
+    value: Box<str>,
     position: NotificationPosition,
     status_position: NotificationPosition,
     area_mode: NotificationAreaMode,
@@ -362,24 +371,42 @@ impl OsdPresenter {
         // Debug-loud, release-total (identity scale keeps layout sane).
         debug_assert!(ui_scale.is_finite(), "non-finite OSD scale");
         let ui_scale = if ui_scale.is_finite() { ui_scale } else { 1.0 };
-        let status_key = chrome.status_enabled.then(|| {
-            let (label, value) = self.gate.gate_or_cached(now, status_key(tick.paused), || {
-                format!("{:.1} fps", tick.fps)
+        // Borrow-compare before allocating: the label is a static
+        // word and the value borrows the gate cache, so a steady
+        // frame that ends in `Skip` boxes nothing and formats nothing.
+        // Only a real change builds the owned fingerprint below.
+        let mut status_fingerprint: Option<StatusFingerprint> = None;
+        let status_changed = if chrome.status_enabled {
+            let key = status_key(tick.paused);
+            let label = status_text(key, language);
+            let (_, cached_value) = self
+                .gate
+                .gate_or_cached(now, key, || format_status_value(tick.fps));
+            let same = self.last_status.as_ref().is_some_and(|last| {
+                last.label.as_ref() == label
+                    && last.value.as_ref() == cached_value
+                    && last.position == chrome.position
+                    && last.status_position == chrome.status_position
+                    && last.area_mode == chrome.area_mode
+                    && last.status_area_mode == chrome.status_area_mode
             });
-            StatusFingerprint {
-                label: status_text(label, language).to_string(),
-                value: value.to_string(),
-                position: chrome.position,
-                status_position: chrome.status_position,
-                area_mode: chrome.area_mode,
-                status_area_mode: chrome.status_area_mode,
+            let changed_now = !same;
+            if changed_now {
+                status_fingerprint = Some(StatusFingerprint {
+                    label: label.into(),
+                    value: cached_value.into(),
+                    position: chrome.position,
+                    status_position: chrome.status_position,
+                    area_mode: chrome.area_mode,
+                    status_area_mode: chrome.status_area_mode,
+                });
             }
-        });
-        if status_key.is_none() {
+            changed_now
+        } else {
             // Forget the throttle: re-enable must pass fresh digits.
             self.gate = StatusGate::new();
-        }
-        let status_changed = status_key != self.last_status;
+            self.last_status.is_some()
+        };
         let raster = (safe_insets, ui_scale.to_bits());
         let chrome_changed = self.last_chrome != Some(chrome) || self.last_raster != Some(raster);
         if !changed && !status_changed && !chrome_changed && self.last_size == Some((width, height))
@@ -389,8 +416,12 @@ impl OsdPresenter {
         self.last_size = Some((width, height));
         self.last_chrome = Some(chrome);
         self.last_raster = Some(raster);
-        self.last_status = status_key.clone();
-        let empty = state.visible_row().is_none() && status_key.is_none();
+        if status_changed {
+            // Only a real change replaces the stored fingerprint; the
+            // unchanged path keeps serving it without cloning.
+            self.last_status = status_fingerprint;
+        }
+        let empty = state.visible_row().is_none() && self.last_status.is_none();
         if empty {
             if self.active {
                 self.active = false;
@@ -399,9 +430,14 @@ impl OsdPresenter {
             return OsdSync::Skip;
         }
         self.active = true;
-        let (label_value, position, status_position) = match status_key {
+        // The render path clones the stored fingerprint: steady frames
+        // skip above, so this allocation only happens on a real change.
+        let (label_value, position, status_position) = match self.last_status.clone() {
             Some(fingerprint) => (
-                Some((fingerprint.label, fingerprint.value)),
+                Some((
+                    fingerprint.label.into_string(),
+                    fingerprint.value.into_string(),
+                )),
                 fingerprint.position,
                 fingerprint.status_position,
             ),

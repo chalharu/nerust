@@ -44,7 +44,8 @@ impl InputStateBuffer for GbaInputBuffer {
             Ok(())
         } else {
             Err(BufferError::MismatchedBuffer {
-                expected: "GbaInputBuffer",
+                expected: std::any::type_name::<Self>(),
+                actual: std::any::type_name_of_val(other),
             })
         }
     }

@@ -2,7 +2,8 @@
 
 use super::{
     events::OpenBusReadResult,
-    ids::{AttachmentId, DigitalControlId},
+    ids::{AttachmentId, PortId},
+    topology::ControlId,
 };
 
 /// Port identifier used by controllers and hubs.
@@ -12,6 +13,17 @@ use super::{
 pub trait Port: std::fmt::Debug + Send + Sync {
     fn index(&self) -> usize;
     fn id(&self) -> &'static str;
+    /// Typed port identifier, derived from [`Port::id`] by default.
+    fn port_id(&self) -> PortId {
+        PortId::new(self.id())
+    }
+    /// Typed attachment identifier, derived from [`Port::id`] by default.
+    ///
+    /// Controllers must use this (not `AttachmentId::new(port.id())`) so
+    /// the string aliasing stays in one place.
+    fn attachment_id(&self) -> AttachmentId {
+        AttachmentId::new(self.id())
+    }
 }
 
 /// A simple port implementation with numeric index and string id.
@@ -34,6 +46,35 @@ impl Port for SimplePort {
     fn id(&self) -> &'static str {
         self.id
     }
+    fn port_id(&self) -> PortId {
+        PortId::new(self.id)
+    }
+    fn attachment_id(&self) -> AttachmentId {
+        AttachmentId::new(self.id)
+    }
+}
+
+/// One resolved field entry: (attachment, control) → absolute field index.
+///
+/// Replaces the positional `(AttachmentId, DigitalControlId, usize)` tuple
+/// so call sites name each component. `control` is the unified [`ControlId`]
+/// so analog controls share the same map instead of needing a parallel
+/// analog table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FieldEntry {
+    pub attachment: AttachmentId,
+    pub control: ControlId,
+    pub field: usize,
+}
+
+impl FieldEntry {
+    pub const fn new(attachment: AttachmentId, control: ControlId, field: usize) -> Self {
+        Self {
+            attachment,
+            control,
+            field,
+        }
+    }
 }
 
 /// Single physical controller (shift register logic).
@@ -43,20 +84,14 @@ pub trait Controller: std::fmt::Debug + Send {
     /// Broadcast strobe write to this controller.
     ///
     /// Index 0 is the broadcast convention: hubs fan a single strobe
-    /// value out to every attached controller without naming a real port.
-    /// The default implementation routes through [`Controller::write`]
-    /// with a synthetic index-0 port; override for hardware where strobe
-    /// is not an ordinary port write.
-    fn strobe(&mut self, value: u8) {
-        let port = SimplePort::new(0, "");
-        self.write(&port, value);
-    }
+    /// value out to every attached controller. Each controller implements
+    /// the latch-edge directly; there is no synthetic index-0 port.
+    fn strobe(&mut self, value: u8);
     fn sync_input(&mut self, _state: &[u8]) {}
-    /// Append field map entries (attachment, control, field_index) for this
-    /// controller at the given port. Default appends nothing (no inputs).
+    /// Append field entries for this controller at the given port.
+    /// Default appends nothing (no inputs).
     /// Implementations must only push; they must not clear `out`.
-    fn field_map(&self, _port: &dyn Port, _out: &mut Vec<(AttachmentId, DigitalControlId, usize)>) {
-    }
+    fn field_map(&self, _port: &dyn Port, _out: &mut Vec<FieldEntry>) {}
 }
 
 /// Multi-port controller hub routing reads/writes to per-port controllers.
@@ -92,6 +127,7 @@ impl ControllerCollection {
         self.devices.is_empty()
     }
 
+    /// The single indexed access: borrow a controller by collection index.
     pub fn get(&self, index: usize) -> Option<&(dyn Controller + Send)> {
         match self.devices.get(index) {
             Some(b) => Some(&**b),
@@ -99,26 +135,8 @@ impl ControllerCollection {
         }
     }
 
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut (dyn Controller + Send)> {
-        match self.devices.get_mut(index) {
-            Some(b) => Some(&mut **b),
-            None => None,
-        }
-    }
-
-    pub fn device_count(&self) -> usize {
-        self.devices.len()
-    }
-
-    pub fn device_mut(&mut self, port: &dyn Port) -> Option<&mut (dyn Controller + Send)> {
-        let index = port.index();
-        match self.devices.get_mut(index) {
-            Some(b) => Some(&mut **b),
-            None => None,
-        }
-    }
-
-    pub fn iter_devices_mut(&mut self) -> impl Iterator<Item = &mut (dyn Controller + Send)> {
+    /// Borrow all controllers mutably (hub fan-out, input sync).
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut (dyn Controller + Send)> {
         self.devices
             .iter_mut()
             .map(|b| &mut **b as &mut (dyn Controller + Send))

@@ -9,7 +9,7 @@ use gl::types::{
     GLbitfield, GLboolean, GLchar, GLenum, GLfloat, GLint, GLsizei, GLsizeiptr, GLuint,
 };
 
-use super::{Error, gl_error_handle};
+use super::{Error, error::ErrorKind, gl_error_handle};
 
 pub fn get_programiv(program: GLuint, pname: GLenum, params: *mut GLint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::GetProgramiv(program, pname, params) })
@@ -205,6 +205,24 @@ pub fn draw_arrays(mode: GLenum, first: GLint, count: GLsizei) -> Result<(), Err
     gl_error_handle(|| unsafe { gl::DrawArrays(mode, first, count) })
 }
 
+pub fn draw_elements(
+    mode: GLenum,
+    count: GLsizei,
+    type_: GLenum,
+    offset: usize,
+) -> Result<(), Error> {
+    gl_error_handle(|| unsafe {
+        gl::DrawElements(
+            mode,
+            count,
+            type_,
+            // SAFETY: null base plus a byte offset is the standard
+            // client-side index address form for `DrawElements`.
+            std::ptr::null::<std::ffi::c_void>().add(offset),
+        )
+    })
+}
+
 pub fn gen_vertex_arrays(n: GLsizei, arrays: *mut GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::GenVertexArrays(n, arrays) })
 }
@@ -252,6 +270,14 @@ pub fn get_integer(pname: GLenum) -> Result<GLint, Error> {
     })
 }
 
+/// Checked `u32` variant for GL names (program, VAO, buffer, blend
+/// factors): negative values refuse as `InvalidValue` instead of
+/// wrapping through `as u32` at the restore site.
+pub fn get_integer_u32(pname: GLenum) -> Result<GLuint, Error> {
+    let value = get_integer(pname)?;
+    u32::try_from(value).map_err(|_| Error::new(vec![ErrorKind::InvalidValue]))
+}
+
 /// Batched per-frame drain. Prefer this over per-call drains in
 /// release builds; wrappers are no-ops there (see `gl_error_handle`).
 pub fn check_frame() -> Result<(), Error> {
@@ -260,6 +286,29 @@ pub fn check_frame() -> Result<(), Error> {
 
 pub fn blend_func(sfactor: GLenum, dfactor: GLenum) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::BlendFunc(sfactor, dfactor) })
+}
+
+pub fn blend_func_separate(
+    src_rgb: GLuint,
+    dst_rgb: GLuint,
+    src_alpha: GLuint,
+    dst_alpha: GLuint,
+) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::BlendFuncSeparate(src_rgb, dst_rgb, src_alpha, dst_alpha) })
+}
+
+pub fn use_program(program: GLuint) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::UseProgram(program) })
+}
+
+pub fn get_tex_image(
+    target: GLenum,
+    level: GLint,
+    format: GLenum,
+    type_: GLenum,
+    pixels: *mut std::os::raw::c_void,
+) -> Result<(), Error> {
+    gl_error_handle(|| unsafe { gl::GetTexImage(target, level, format, type_, pixels) })
 }
 
 pub fn gl_string(name: u32) -> Option<String> {

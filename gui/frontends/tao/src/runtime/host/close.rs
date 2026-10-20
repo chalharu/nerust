@@ -2,16 +2,40 @@
 //! `HostState` delegates instead of threading three flags through
 //! every close-adjacent method.
 
+use std::sync::Arc;
+use tao::window::Window as TaoWindow;
+
+/// Native liveness state. `Live` is the only handle-touchable state;
+/// `Closed` is the idempotent terminal state for normal teardown;
+/// `Failed` is terminal for creation failure and never transitions to
+/// `Closed` (a failed handle was never live).
+#[derive(Debug, Clone)]
+pub(crate) enum Liveness {
+    Live,
+    Closed,
+    Failed(Arc<str>),
+}
+
+impl Liveness {
+    /// Creation-failure detail, if terminally failed.
+    pub(crate) fn failure(&self) -> Option<&str> {
+        match self {
+            Self::Failed(detail) => Some(detail),
+            _ => None,
+        }
+    }
+}
+
 /// Fatal window-creation failure, tracked apart from liveness. The
 /// detail explains *why* the loop must exit; liveness says whether a
 /// native handle may still be touched.
 #[derive(Debug, Default)]
 pub(crate) struct FatalError {
-    detail: Option<String>,
+    detail: Option<Arc<str>>,
 }
 
 impl FatalError {
-    fn set(&mut self, detail: String) {
+    fn set(&mut self, detail: Arc<str>) {
         self.detail = Some(detail);
     }
 
@@ -25,58 +49,147 @@ impl FatalError {
     }
 }
 
+/// One-shot close token: `arm` succeeds exactly once per process.
+/// Separate from [`CloseGuard`] so call sites that only need
+/// idempotence do not touch liveness.
+#[derive(Debug, Default)]
+pub(crate) struct CloseOnce {
+    fired: bool,
+}
+
+impl CloseOnce {
+    pub(crate) fn new() -> Self {
+        Self { fired: false }
+    }
+
+    /// Returns true exactly once; later calls are no-ops.
+    pub(crate) fn arm(&mut self) -> bool {
+        if self.fired {
+            return false;
+        }
+        self.fired = true;
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fired(&self) -> bool {
+        self.fired
+    }
+}
+
+/// Owned native window handle. All dead-handle checks flow through
+/// here: callers request redraws or sizes via this wrapper instead of
+/// holding a bare `Arc<TaoWindow>`.
+#[derive(Debug, Clone)]
+pub(crate) struct LiveWindow {
+    inner: Arc<TaoWindow>,
+}
+
+impl LiveWindow {
+    pub(crate) fn new(window: Arc<TaoWindow>) -> Self {
+        Self { inner: window }
+    }
+
+    /// Native redraw request for the owned window.
+    pub(crate) fn request_redraw(&self) {
+        self.inner.request_redraw();
+    }
+
+    /// Current physical size of the owned window.
+    pub(crate) fn inner_size(&self) -> tao::dpi::PhysicalSize<u32> {
+        self.inner.inner_size()
+    }
+
+    /// Native identity for event routing.
+    pub(crate) fn id(&self) -> tao::window::WindowId {
+        self.inner.id()
+    }
+
+    /// Set the window title.
+    pub(crate) fn set_title(&self, title: &str) {
+        self.inner.set_title(title);
+    }
+
+    /// Resize the window (scaling changes).
+    pub(crate) fn set_inner_size(&self, size: tao::dpi::LogicalSize<f64>) {
+        self.inner.set_inner_size(size);
+    }
+
+    /// Current scale factor for logical-size math.
+    pub(crate) fn scale_factor(&self) -> f64 {
+        self.inner.scale_factor()
+    }
+
+    /// Borrow the raw window for surface attach / title / sizing.
+    pub(crate) fn raw(&self) -> &TaoWindow {
+        &self.inner
+    }
+
+    /// Shared ownership for renderer attach paths.
+    pub(crate) fn shared(&self) -> Arc<TaoWindow> {
+        Arc::clone(&self.inner)
+    }
+}
+
 /// Fatal creation failure, close idempotence, and native liveness.
-/// Constructed live; `fail` and `begin_close` both retire liveness.
-/// Query liveness only through [`CloseGuard::is_usable`].
+/// Constructed live; `fail` moves to `Failed`, `begin_close` moves
+/// `Live` to `Closed` exactly once. Query liveness only through
+/// [`CloseGuard::is_usable`].
 #[derive(Debug)]
 pub(crate) struct CloseGuard {
     fatal: FatalError,
-    exited: bool,
-    live: bool,
+    state: Liveness,
+    once: CloseOnce,
 }
 
 impl CloseGuard {
     pub(crate) fn new() -> Self {
         Self {
             fatal: FatalError::default(),
-            exited: false,
-            live: true,
+            state: Liveness::Live,
+            once: CloseOnce::new(),
         }
     }
 
     /// Record a window-creation failure and retire liveness: no dead
     /// handle may be touched afterwards. The loop exits gracefully.
+    /// `Failed` is terminal: a later `begin_close` still flushes once
+    /// but the state stays `Failed`, never `Closed`.
     pub(crate) fn fail(&mut self, detail: String) {
-        self.fatal.set(detail);
-        self.live = false;
+        let detail: Arc<str> = Arc::from(detail);
+        self.fatal.set(Arc::clone(&detail));
+        self.state = Liveness::Failed(detail);
     }
 
     /// Creation failure, if any.
     pub(crate) fn fatal_message(&self) -> Option<&str> {
-        self.fatal.message()
+        self.fatal.message().or_else(|| self.state.failure())
     }
 
     /// Native window still usable for redraws and surfaces: live, not
     /// yet closed, and never failed. Single liveness predicate for
     /// every close-adjacent path.
     pub(crate) fn is_usable(&self) -> bool {
-        self.live && !self.exited && !self.fatal.is_set()
+        matches!(self.state, Liveness::Live) && !self.fatal.is_set()
     }
 
-    /// Idempotent close entry: true exactly once, retiring liveness.
+    /// Idempotent close entry: true exactly once, retiring liveness
+    /// from `Live` to `Closed`. `Failed` stays `Failed` (the detail
+    /// survives); `Closed` stays `Closed`.
     pub(crate) fn begin_close(&mut self) -> bool {
-        if self.exited {
+        if !self.once.arm() {
             return false;
         }
-        self.exited = true;
-        self.live = false;
+        if matches!(self.state, Liveness::Live) {
+            self.state = Liveness::Closed;
+        }
         true
     }
 
     /// Close teardown already ran (test read of the guard).
     #[cfg(test)]
     pub(crate) fn exited(&self) -> bool {
-        self.exited
+        self.once.fired()
     }
 }
 
@@ -89,6 +202,7 @@ mod tests {
         let mut guard = CloseGuard::new();
         assert!(guard.is_usable());
         assert!(guard.begin_close());
+        assert!(matches!(guard.state, Liveness::Closed));
         assert!(!guard.is_usable());
         assert!(!guard.begin_close());
         assert!(guard.exited());
@@ -99,10 +213,20 @@ mod tests {
         let mut guard = CloseGuard::new();
         guard.fail("no display".to_string());
         assert_eq!(guard.fatal_message(), Some("no display"));
+        assert!(matches!(guard.state, Liveness::Failed(_)));
         assert!(!guard.is_usable());
-        // A later close still runs exactly once; the detail survives.
+        // A later close still runs exactly once; Failed stays Failed.
         assert!(guard.begin_close());
+        assert!(matches!(guard.state, Liveness::Failed(_)));
         assert!(!guard.is_usable());
         assert_eq!(guard.fatal_message(), Some("no display"));
+    }
+
+    #[test]
+    fn close_once_arms_exactly_once() {
+        let mut once = CloseOnce::new();
+        assert!(once.arm());
+        assert!(!once.arm());
+        assert!(once.fired());
     }
 }

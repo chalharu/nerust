@@ -3,7 +3,7 @@ use std::{collections::HashSet, rc::Rc};
 use nerust_input_traits::{
     AnalogControlDescriptor, AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, ControlId,
     ControllerProfile, DeviceDescriptor, DeviceKindId, DigitalControlDescriptor,
-    InputTopologyDescriptor, PortDescriptor, PortId, ProfileId, SlotInfo,
+    InputTopologyDescriptor, PortDescriptor, PortId, SlotInfo,
 };
 
 /// Map a controller profile + port group index to its device kind.
@@ -13,7 +13,7 @@ pub fn device_kind(profile: &dyn ControllerProfile, group_index: usize) -> Devic
 
 struct TopologyContext {
     ports: Vec<PortDescriptor>,
-    seen_devices: HashSet<(ProfileId, usize)>,
+    seen_devices: HashSet<DeviceKindId>,
     devices: Vec<DeviceDescriptor>,
 }
 
@@ -28,45 +28,33 @@ impl TopologyContext {
 
     fn into_descriptor(self) -> InputTopologyDescriptor {
         if self.ports.is_empty() {
-            InputTopologyDescriptor {
-                ports: Vec::new(),
-                devices: Vec::new(),
-            }
+            InputTopologyDescriptor::new(Vec::new(), Vec::new())
         } else {
-            InputTopologyDescriptor {
-                ports: self.ports,
-                devices: self.devices,
-            }
+            InputTopologyDescriptor::new(self.ports, self.devices)
         }
     }
 
-    fn register_device(&mut self, profile: &dyn ControllerProfile, ctrl_id: ProfileId, gi: usize) {
-        if !self.seen_devices.insert((ctrl_id, gi)) {
+    fn register_device(&mut self, profile: &dyn ControllerProfile, gi: usize) {
+        let dk = device_kind(profile, gi);
+        if !self.seen_devices.insert(dk) {
             return;
         }
-        let dk = device_kind(profile, gi);
         let controls = profile.port_groups()[gi];
-        self.devices.push(DeviceDescriptor {
-            kind: dk,
-            label: profile.label(),
-            controls: controls
+        self.devices.push(DeviceDescriptor::new(
+            dk,
+            profile.label(),
+            controls
                 .iter()
                 .map(|ci| match ci.id {
-                    ControlId::Digital(id) => {
-                        ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id,
-                            label: ci.label,
-                            description: ci.label,
-                        })
-                    }
-                    ControlId::Analog(id) => ControlDescriptor::Analog(AnalogControlDescriptor {
-                        id,
-                        label: ci.label,
-                        description: ci.label,
-                    }),
+                    ControlId::Digital(id) => ControlDescriptor::Digital(
+                        DigitalControlDescriptor::new(id, ci.label, ci.label),
+                    ),
+                    ControlId::Analog(id) => ControlDescriptor::Analog(
+                        AnalogControlDescriptor::new(id, ci.label, ci.label),
+                    ),
                 })
                 .collect(),
-        });
+        ));
     }
 
     fn register_port(
@@ -77,24 +65,20 @@ impl TopologyContext {
         slot_label: &impl Fn(AttachmentId) -> &'static str,
     ) {
         let dk = device_kind(profile, gi);
+        let port_id = PortId::new(port.as_str());
         if self
             .ports
             .iter()
-            .any(|p: &PortDescriptor| p.id.as_str() == port.as_str())
+            .any(|p: &PortDescriptor| p.id() == port_id)
         {
             return;
         }
         let label = slot_label(port);
-        self.ports.push(PortDescriptor {
-            id: PortId::new(port.as_str()),
+        self.ports.push(PortDescriptor::new(
+            port_id,
             label,
-            attachments: vec![AttachmentSlotDescriptor {
-                id: port,
-                label,
-                device: dk,
-                supported_devices: vec![dk],
-            }],
-        });
+            vec![AttachmentSlotDescriptor::new(port, label, dk, vec![dk])],
+        ));
     }
 }
 
@@ -122,7 +106,7 @@ pub fn build_topology(
                 continue;
             }
             for (gi, &port) in ps.ports.iter().enumerate() {
-                ctx.register_device(profile, profile.profile_id(), gi);
+                ctx.register_device(profile, gi);
                 ctx.register_port(port, profile, gi, &slot_label);
             }
         }
@@ -245,7 +229,7 @@ mod tests {
     #[test]
     fn build_topology_empty_assignments() {
         let topology = build_topology(&[], &[]);
-        assert!(topology.ports.is_empty());
-        assert!(topology.devices.is_empty());
+        assert!(topology.ports().is_empty());
+        assert!(topology.devices().is_empty());
     }
 }

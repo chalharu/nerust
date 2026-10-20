@@ -79,34 +79,34 @@ mod tests {
     const TEST_ATT: AttachmentId = AttachmentId::new("test.att");
 
     fn single_port_topology() -> InputTopologyDescriptor {
-        InputTopologyDescriptor {
-            ports: vec![PortDescriptor {
-                id: PortId::new("p1"),
-                label: "P1",
-                attachments: vec![AttachmentSlotDescriptor {
-                    id: TEST_ATT,
-                    label: "P1",
-                    device: TEST_DEV,
-                    supported_devices: vec![TEST_DEV],
-                }],
-            }],
-            devices: vec![DeviceDescriptor {
-                kind: TEST_DEV,
-                label: "Test Device",
-                controls: vec![
-                    ControlDescriptor::Digital(DigitalControlDescriptor {
-                        id: DigitalControlId::new("test.ctrl.a"),
-                        label: "A",
-                        description: "A button",
-                    }),
-                    ControlDescriptor::Digital(DigitalControlDescriptor {
-                        id: DigitalControlId::new("test.ctrl.b"),
-                        label: "B",
-                        description: "B button",
-                    }),
+        InputTopologyDescriptor::new(
+            vec![PortDescriptor::new(
+                PortId::new("p1"),
+                "P1",
+                vec![AttachmentSlotDescriptor::new(
+                    TEST_ATT,
+                    "P1",
+                    TEST_DEV,
+                    vec![TEST_DEV],
+                )],
+            )],
+            vec![DeviceDescriptor::new(
+                TEST_DEV,
+                "Test Device",
+                vec![
+                    ControlDescriptor::Digital(DigitalControlDescriptor::new(
+                        DigitalControlId::new("test.ctrl.a"),
+                        "A",
+                        "A button",
+                    )),
+                    ControlDescriptor::Digital(DigitalControlDescriptor::new(
+                        DigitalControlId::new("test.ctrl.b"),
+                        "B",
+                        "B button",
+                    )),
                 ],
-            }],
-        }
+            )],
+        )
     }
 
     #[test]

@@ -22,12 +22,12 @@ pub(crate) fn create_core_and_adapter(
         .as_deref()
         .and_then(|v| v.downcast_ref::<GbaSettings>())
         .ok_or(FactoryError::InvalidSettings)?;
-    if assignments.slots.len() != 1 || assignments.slots[0].0 != GBA_ATTACHMENT {
+    if assignments.slots().len() != 1 || assignments.slots()[0].0 != GBA_ATTACHMENT {
         return Err(FactoryError::Create(
             "GBA requires exactly one player1 assignment".to_string(),
         ));
     }
-    let profile = assignments.slots[0]
+    let profile = assignments.slots()[0]
         .1
         .as_ref()
         .ok_or_else(|| FactoryError::Create("GBA controller is not assigned".to_string()))?;
@@ -43,16 +43,19 @@ pub(crate) fn create_core_and_adapter(
     let resources =
         <crate::GbaFactory as InputSystemFactory>::create_split(&crate::GbaFactory, &controllers)
             .map_err(|e| FactoryError::Create(e.to_string()))?;
-    let gui_input = GuiInput::from_split(&resources.split);
-    let emu_input = EmuInput::from_split(&resources.split);
-    create_core_and_adapter_with_inputs(
-        view,
-        speaker,
-        gui_input,
-        emu_input,
-        resources.field_map,
-        controllers,
-    )
+    let gui_input = GuiInput::from_split(resources.split());
+    let emu_input = EmuInput::from_split(resources.split());
+    // Project the unified (attachment, ControlId) map onto the legacy
+    // CoreParts digital-only key until CoreParts migrates to ControlId.
+    let field_map = resources
+        .field_map()
+        .iter()
+        .filter_map(|((attachment, control), field)| match control {
+            nerust_input_traits::ControlId::Digital(id) => Some(((*attachment, *id), *field)),
+            _ => None,
+        })
+        .collect();
+    create_core_and_adapter_with_inputs(view, speaker, gui_input, emu_input, field_map, controllers)
 }
 
 pub(crate) fn create_core_and_adapter_with_inputs(
@@ -124,9 +127,7 @@ mod tests {
             language: Language::SystemDefault,
             system_config: Some(Box::new(GbaSettings::default())),
         };
-        let assignments = nerust_input_traits::InputAssignments {
-            slots: vec![(GBA_ATTACHMENT, None)],
-        };
+        let assignments = nerust_input_traits::InputAssignments::new(vec![(GBA_ATTACHMENT, None)]);
         assert!(create_core_and_adapter(&view, Box::new(NullAudio), &assignments).is_err());
     }
 

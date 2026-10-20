@@ -24,7 +24,9 @@ use tao::event_loop::EventLoopWindowTarget;
 
 use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
 
-use super::bridge::{DebugBridge, lock_recovered};
+use super::bridge::DebugBridge;
+#[cfg(test)]
+use super::bridge::lock_recovered;
 
 /// Initial debugger window size (verified Xvfb fit).
 pub(crate) const DEBUG_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
@@ -253,7 +255,46 @@ impl Program for DebugProgram {
 
 pub(crate) struct DebugWindowHandle {
     shell: crate::aux::shell::AuxShell<DebugProgram>,
-    pub(crate) bridge: Arc<DebugBridge>,
+    bridge: Arc<DebugBridge>,
+}
+
+impl DebugWindowHandle {
+    /// Narrow bridge port for the host drain: `&dyn BridgeLock`
+    /// snapshot/apply surface. `drain.rs` routes through this, never
+    /// through `handle.bridge` fields or locks.
+    pub(crate) fn bridge_lock(&self) -> &(dyn crate::aux::bridge::BridgeLock + '_) {
+        &*self.bridge
+    }
+
+    /// Narrow live-images apply for the PPU follow tick. Replaces
+    /// images when newer regardless of pause; running chrome only
+    /// applies while still running. Returns whether the viewer needs
+    /// a rebuild.
+    pub(crate) fn apply_live(
+        &mut self,
+        generation: u64,
+        images: Vec<(String, u32, u32, Vec<u8>)>,
+        running: bool,
+    ) -> bool {
+        self.bridge.apply_live_images(generation, images, running)
+    }
+
+    /// Share the bridge for PPU-viewer creation (the viewer renders
+    /// the same live images). Narrow: creation only, never display
+    /// locks; all drain traffic routes through the methods above.
+    pub(crate) fn shared_bridge(&self) -> &Arc<DebugBridge> {
+        &self.bridge
+    }
+
+    /// Narrow selection write + paused-section restore for a finished
+    /// drain. The host never holds a `display` guard itself.
+    pub(crate) fn apply_drain_display(
+        &mut self,
+        display: DisplayCache,
+        reselected: Option<(u32, Option<u8>)>,
+    ) {
+        self.bridge.apply_drain_display(display, reselected);
+    }
 }
 
 /// Window-scoped shortcuts on physical codes: F6 steps a frame,
@@ -319,13 +360,12 @@ impl DebugWindowHandle {
         Some(Self { shell, bridge })
     }
 
-    pub(crate) fn set_display(&mut self, display: DisplayCache) {
-        *lock_recovered(&self.bridge.display) = display;
-        self.sync_from_bridge();
-    }
-
-    pub(crate) fn take_requests(&self) -> Vec<DebugAction> {
-        self.bridge.take_requests()
+    /// Narrow batch take for the host drain: toolbar PPU-open flag
+    /// plus queued actions. Routes through [`BridgeLock`] so the
+    /// orchestrator never touches `bridge.open_ppu` directly.
+    pub(crate) fn take_debug_batch(&self) -> (bool, Vec<DebugAction>) {
+        use crate::aux::bridge::BridgeLock;
+        self.bridge.take_debug_batch()
     }
 
     pub(crate) fn sync_from_bridge(&mut self) {
@@ -335,19 +375,43 @@ impl DebugWindowHandle {
     }
 }
 
-impl super::focus::WindowHandler for DebugWindowHandle {
-    type Program = DebugProgram;
-    const LOG_TAG: &str = "debugger";
-
-    fn shell(&self) -> &crate::aux::shell::AuxShell<Self::Program> {
-        &self.shell
+impl super::focus::AuxWindow for DebugWindowHandle {
+    fn kind(&self) -> super::focus::AuxKind {
+        super::focus::AuxKind::Debug
     }
 
-    fn shell_mut(&mut self) -> &mut crate::aux::shell::AuxShell<Self::Program> {
-        &mut self.shell
+    fn tao_window_id(&self) -> tao::window::WindowId {
+        self.shell.tao_window_id()
     }
 
-    fn handle_event(&mut self, mapped: iced::Event) -> bool {
+    fn close_requested(&self) -> bool {
+        self.shell.close_requested()
+    }
+
+    fn focus_window(&self) {
+        self.shell.focus_window();
+    }
+
+    fn request_redraw(&self) {
+        self.shell.request_redraw();
+    }
+
+    fn handle_common(&mut self, event: &tao::event::WindowEvent) {
+        self.shell.handle_common_event(event);
+    }
+
+    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
+        self.shell.feed_tao_event(event)
+    }
+
+    fn render(&mut self) {
+        let tag = self.kind().log_tag();
+        self.shell.render(tag);
+    }
+}
+
+impl super::focus::AuxEvents for DebugWindowHandle {
+    fn handle(&mut self, mapped: iced::Event) -> bool {
         // Window-scoped shortcuts on physical codes (F6/F7/F9).
         // Dereference `physical_key` before matching (binds by ref).
         if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -373,18 +437,10 @@ impl super::focus::WindowHandler for DebugWindowHandle {
         } else {
             None
         };
-        let (mut messages, outcome) = self.shell.pump_frame(mapped);
-        let repainted = matches!(outcome, crate::aux::shell::PumpOutcome::Repaint);
+        let mut messages = Vec::new();
+        let outcome = self.shell.pump_frame(mapped, &mut messages);
         messages.extend(page);
-        if matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-            self.bridge.view_invalidated.store(true, Ordering::Release);
-        }
-        let rebuilt =
-            if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-                self.shell.process(messages, &self.bridge.view_invalidated)
-            } else {
-                false
-            };
-        repainted || rebuilt
+        self.shell
+            .finish(outcome, messages, &self.bridge.view_invalidated)
     }
 }

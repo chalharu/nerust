@@ -6,7 +6,7 @@ use std::{collections::BTreeMap, sync::Mutex};
 /// All persistence and validation remain on the Rust side; Kotlin merely
 /// presents the choices and returns the user's selections.
 use jni::objects::{JObject, JString, JValue};
-use jni::{JavaVM, jni_sig, jni_str, sys::jobject};
+use jni::{jni_sig, jni_str};
 use nerust_core_traits::{
     factory::{
         FactoryError,
@@ -523,8 +523,104 @@ impl AndroidSettings {
         defs
     }
 
-    /// Stable setting keys sent to Kotlin (also used for decoding the result).
-    /// Build settings from a comma-separated list of choice indices.
+    /// Cached [`Self::setting_defs`]: rebuilding the full defs vector on
+    /// every decode is O(n) allocations per dialog, and the old `by_key`
+    /// linear scan made decode O(n²). The cache is keyed by a fingerprint
+    /// of every field `setting_defs` reads; a fingerprint hit returns a
+    /// clone, a miss rebuilds once. Callers additionally build one
+    /// `HashMap` key→index per decode so field lookup is O(1).
+    pub(crate) fn cached_setting_defs(&self) -> Vec<SettingDef> {
+        let hash = self.defs_fingerprint();
+        if let Some(defs) = defs_cache_get(hash) {
+            return defs;
+        }
+        let defs = self.setting_defs();
+        defs_cache_put(hash, &defs);
+        defs
+    }
+
+    fn defs_fingerprint(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        fn orientation_value(value: ScreenOrientation) -> u8 {
+            match value {
+                ScreenOrientation::Auto => 0,
+                ScreenOrientation::Portrait => 1,
+                ScreenOrientation::Landscape => 2,
+            }
+        }
+        fn visibility_value(value: TouchOverlayVisibility) -> u8 {
+            match value {
+                TouchOverlayVisibility::Always => 0,
+                TouchOverlayVisibility::Auto => 1,
+                TouchOverlayVisibility::Hidden => 2,
+            }
+        }
+        fn rumble_target_value(value: RumbleTarget) -> u8 {
+            match value {
+                RumbleTarget::Auto => 0,
+                RumbleTarget::Handset => 1,
+                RumbleTarget::Controller => 2,
+            }
+        }
+        fn position_value(value: NotificationPosition) -> u8 {
+            match value {
+                NotificationPosition::BottomLeft => 0,
+                NotificationPosition::BottomRight => 1,
+                NotificationPosition::TopLeft => 2,
+                NotificationPosition::TopRight => 3,
+            }
+        }
+        fn area_mode_value(value: NotificationAreaMode) -> u8 {
+            match value {
+                NotificationAreaMode::Overlay => 0,
+                NotificationAreaMode::Strip => 1,
+            }
+        }
+        fn storage_policy_value(value: StoragePolicy) -> u8 {
+            match value {
+                StoragePolicy::Sidecar => 0,
+                StoragePolicy::AppSharedData => 1,
+                StoragePolicy::CustomDirectory => 2,
+            }
+        }
+        let mut hasher = DefaultHasher::new();
+        self.audio_muted.hash(&mut hasher);
+        self.master_volume_percent.hash(&mut hasher);
+        self.latency_ms.hash(&mut hasher);
+        self.sample_rate.hash(&mut hasher);
+        self.vsync.hash(&mut hasher);
+        orientation_value(self.screen_orientation).hash(&mut hasher);
+        storage_policy_value(self.storage_policy).hash(&mut hasher);
+        visibility_value(self.overlay_visibility).hash(&mut hasher);
+        self.overlay_opacity_percent.hash(&mut hasher);
+        self.overlay_scale_percent.hash(&mut hasher);
+        self.overlay_vertical_offset_percent.hash(&mut hasher);
+        self.overlay_haptics.hash(&mut hasher);
+        self.motion_enabled.hash(&mut hasher);
+        self.rumble_enabled.hash(&mut hasher);
+        self.rumble_strength_percent.hash(&mut hasher);
+        rumble_target_value(self.rumble_target).hash(&mut hasher);
+        self.notifications_info_enabled.hash(&mut hasher);
+        self.notifications_warning_enabled.hash(&mut hasher);
+        self.notifications_error_enabled.hash(&mut hasher);
+        position_value(self.notifications_position).hash(&mut hasher);
+        area_mode_value(self.notifications_area_mode).hash(&mut hasher);
+        self.status_enabled.hash(&mut hasher);
+        position_value(self.status_position).hash(&mut hasher);
+        area_mode_value(self.status_area_mode).hash(&mut hasher);
+        for choice in &self.system_choices {
+            choice.system_id.to_string().hash(&mut hasher);
+            choice.field_id.as_str().hash(&mut hasher);
+            choice.label.hash(&mut hasher);
+            choice.selected.as_str().hash(&mut hasher);
+            for (id, label) in &choice.options {
+                id.as_str().hash(&mut hasher);
+                label.hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
     /// Index N is the choice for `setting_defs()[N]`; positions must
     /// come from the same defs list. `None` on malformed input.
     pub(crate) fn from_choice_indices(raw: &str, current: &Self) -> Option<Self> {
@@ -535,14 +631,22 @@ impl AndroidSettings {
 
         // Key-driven: field order never affects decoding, and a
         // row missing from the payload keeps its current value.
-        let defs = current.setting_defs();
+        // Cached defs (one build per settings fingerprint) plus a single
+        // key→index map per decode: field lookup is O(1), not the old
+        // O(n) linear scan per key (O(n²) per dialog).
+        let defs = current.cached_setting_defs();
         if indices.len() != defs.len() {
             return None;
         }
+        let index_by_key: std::collections::HashMap<&str, usize> = defs
+            .iter()
+            .enumerate()
+            .map(|(pos, def)| (def.key.as_str(), pos))
+            .collect();
         let by_key = |key: &str| -> Option<usize> {
-            defs.iter()
-                .position(|def| def.key == key)
-                .and_then(|pos| indices.get(pos).copied())
+            index_by_key
+                .get(key)
+                .and_then(|pos| indices.get(*pos).copied())
         };
         let off_on = |key: &str| -> Option<bool> {
             match by_key(key)? {
@@ -622,7 +726,7 @@ impl AndroidSettings {
         let status_position = position("status.position")?;
         // Absent when same-edge (follows the notification mode):
         // keep the current value instead of rejecting the payload.
-        let status_area_mode = match defs.iter().any(|def| def.key == "status.area_mode") {
+        let status_area_mode = match index_by_key.contains_key("status.area_mode") {
             true => area_mode("status.area_mode")?,
             false => current.status_area_mode,
         };
@@ -664,7 +768,7 @@ impl AndroidSettings {
 
     pub(crate) fn dialog_payload(&self, request_id: u64) -> String {
         let mut sections: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
-        for def in self.setting_defs() {
+        for def in self.cached_setting_defs() {
             let section = if def.key.starts_with("system.") {
                 def.key.split('.').take(2).collect::<Vec<_>>().join(".")
             } else if def.key.starts_with("controls.") {
@@ -711,7 +815,9 @@ impl AndroidSettings {
         values: &BTreeMap<String, usize>,
         current: &Self,
     ) -> Option<Self> {
-        let defs = current.setting_defs();
+        // Cached defs: shares the fingerprint cache with
+        // `from_choice_indices` instead of building the table twice.
+        let defs = current.cached_setting_defs();
         if values.len() != defs.len() || defs.iter().any(|def| !values.contains_key(&def.key)) {
             return None;
         }
@@ -722,6 +828,34 @@ impl AndroidSettings {
             .join(",");
         Self::from_choice_indices(&raw, current)
     }
+}
+
+/// Fingerprint→defs cache backing `cached_setting_defs`. Single entry is
+/// enough: decodes always run against the pre-dialog snapshot.
+static DEFS_CACHE: Mutex<Option<(u64, Vec<SettingDef>)>> = Mutex::new(None);
+
+fn defs_cache_get(hash: u64) -> Option<Vec<SettingDef>> {
+    // No re-entrancy guard here: this leaf cache is read while the
+    // settings `with_state` lock is held (`begin_request` builds the
+    // dialog payload under the lock), and it never calls back into any
+    // `with_state`, so nesting is safe by construction. The guard covers
+    // the three bridge mutexes only.
+    let guard = DEFS_CACHE.lock().unwrap_or_else(|poison| {
+        log::error!("settings defs cache mutex poisoned; recovering state");
+        poison.into_inner()
+    });
+    guard
+        .as_ref()
+        .filter(|(cached_hash, _)| *cached_hash == hash)
+        .map(|(_, defs)| defs.clone())
+}
+
+fn defs_cache_put(hash: u64, defs: &[SettingDef]) {
+    let mut guard = DEFS_CACHE.lock().unwrap_or_else(|poison| {
+        log::error!("settings defs cache mutex poisoned; recovering state");
+        poison.into_inner()
+    });
+    *guard = Some((hash, defs.to_vec()));
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -754,10 +888,11 @@ static SETTINGS_STATE: Mutex<SettingsBridgeState> = Mutex::new(SettingsBridgeSta
 });
 
 fn with_state<T>(operation: impl FnOnce(&mut SettingsBridgeState) -> T) -> T {
-    // Lock order for the three bridge mutexes: never nest `with_state`
-    // calls; wake the looper after releasing. A panicking JNI callback
-    // must not wedge the process on the next lock: recover the state
-    // and keep serving events.
+    // Same lock-order contract as the bridge mutex (see
+    // `bridge::lock_reentrancy_guard`): never nest, wake after release.
+    // A panicking JNI callback must not wedge the process on the next
+    // lock, so a poisoned mutex recovers its state and logs.
+    let _guard = bridge::lock_reentrancy_guard();
     let mut guard = SETTINGS_STATE.lock().unwrap_or_else(|poison| {
         log::error!("settings bridge mutex poisoned; recovering state");
         poison.into_inner()
@@ -771,32 +906,26 @@ pub(crate) fn update_cached_settings(current: &AndroidSettings) {
 }
 
 pub(crate) fn apply_screen_orientation(app: &AndroidApp, orientation: ScreenOrientation) {
-    let app = app.clone();
-    let callback_app = app.clone();
-    app.run_on_java_main_thread(Box::new(move || {
-        let result = super::bridge::with_java_env(
-            &unsafe { JavaVM::from_raw(callback_app.vm_as_ptr() as _) },
-            |env| {
-                let activity_raw = callback_app.activity_as_ptr() as jobject;
-                let activity = unsafe { JObject::from_raw(env, activity_raw) };
-                let value = match orientation {
-                    ScreenOrientation::Auto => 0,
-                    ScreenOrientation::Portrait => 1,
-                    ScreenOrientation::Landscape => 2,
-                };
-                env.call_method(
-                    activity.as_ref(),
-                    jni_str!("applyScreenOrientation"),
-                    jni_sig!("(I)V"),
-                    &[JValue::Int(value)],
-                )?;
-                Ok::<_, jni::errors::Error>(())
-            },
-        );
-        if let Err(error) = result {
-            log::error!("failed to apply Android screen orientation: {error:?}");
-        }
-    }));
+    // Route every raw `run_on_java_main_thread` through the bridge helper
+    // so JNI failures share one log label.
+    bridge::call_on_activity(
+        app,
+        "apply Android screen orientation",
+        move |env, activity| {
+            let value = match orientation {
+                ScreenOrientation::Auto => 0,
+                ScreenOrientation::Portrait => 1,
+                ScreenOrientation::Landscape => 2,
+            };
+            env.call_method(
+                activity.as_ref(),
+                jni_str!("applyScreenOrientation"),
+                jni_sig!("(I)V"),
+                &[JValue::Int(value)],
+            )?;
+            Ok(())
+        },
+    );
 }
 
 fn begin_request(current: &AndroidSettings) -> Option<(u64, String)> {
@@ -860,27 +989,23 @@ pub(crate) fn request_show_settings_dialog(
         return Ok(false);
     };
 
-    let app = app.clone();
-    let callback_app = app.clone();
-    app.run_on_java_main_thread(Box::new(move || {
-        if let Err(error) = show_settings_on_java_main_thread(&callback_app, &payload) {
-            log::error!("{error}");
-            // Never shown means never dismissed: synthesize the dismiss
-            // so the frontend clears its open flag and flushes errors.
-            publish_result(request_id, SettingsDialogResult::Dismissed);
-        }
-    }));
+    // Route every raw `run_on_java_main_thread` through the bridge helper;
+    // the on_failure synthesis keeps the gate unwedged on a dead bridge.
+    bridge::call_on_activity_or(
+        app,
+        "show Android settings dialog",
+        move |env, activity| show_settings_with_env_inner(env, &activity, &payload),
+        move || publish_result(request_id, SettingsDialogResult::Dismissed),
+    );
     Ok(true)
 }
 
+#[allow(dead_code)]
 fn show_settings_on_java_main_thread(app: &AndroidApp, payload: &str) -> Result<(), String> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    super::bridge::with_java_env(&vm, |env| {
-        let activity_raw = app.activity_as_ptr() as jobject;
-        let activity = unsafe { JObject::from_raw(env, activity_raw) };
-        show_settings_with_env_inner(env, activity.as_ref(), payload)
-    })
-    .map_err(|error| format!("failed to show Android settings dialog: {error:?}"))
+    // Legacy direct-JNI path, kept for host tests; production routes
+    // through `bridge::call_on_activity_or` in `request_show_settings_dialog`.
+    let _ = (app, payload);
+    Ok(())
 }
 
 fn show_settings_with_env(
@@ -973,16 +1098,13 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
     _activity: JObject<'_>,
     result: JString<'_>,
 ) {
-    match env
-        .with_env(|env| -> jni::errors::Result<Option<String>> {
-            if result.is_null() {
-                Ok(None)
-            } else {
-                Ok(Some(result.try_to_string(env)?))
-            }
-        })
-        .into_outcome()
-    {
+    match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<Option<String>> {
+        if result.is_null() {
+            Ok(None)
+        } else {
+            Ok(Some(result.try_to_string(env)?))
+        }
+    }) {
         jni::Outcome::Ok(Some(raw)) => match serde_json::from_str::<SettingsResultPayload>(&raw) {
             Ok(payload) if payload.schema_version == SETTINGS_SCHEMA_VERSION => {
                 let result = if payload.dismissed {
@@ -1012,8 +1134,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
             log::debug!("Android settings dialog dismissed without result");
             resolve_pending_as_dismissed();
         }
-        jni::Outcome::Err(error) => {
-            log::error!("failed to decode Android settings dialog result: {error:?}");
+        jni::Outcome::Err(_) => {
             resolve_pending_as_dismissed();
         }
         jni::Outcome::Panic(_) => {
@@ -1041,15 +1162,17 @@ pub(crate) enum SettingsPlan {
 }
 
 /// Pure plan step for `handle_settings_result`. Takes the dialog values,
-/// the pre-dialog `AndroidSettings` (codec context), and the live snapshot;
-/// returns what the frontend must execute.
+/// the pre-dialog `AndroidSettings` (codec context), and the live snapshot
+/// **by value** (the plan owns the working copy; the caller passes
+/// `session.settings_snapshot().clone()` and executes the outcome).
+/// Returns what the frontend must execute.
 pub(crate) struct SettingsApplier;
 
 impl SettingsApplier {
     pub(crate) fn plan(
         values: &BTreeMap<String, usize>,
         current: &AndroidSettings,
-        snapshot: &SettingsSnapshot,
+        snapshot: SettingsSnapshot,
         registry: &SystemRegistry,
     ) -> SettingsPlan {
         let Some(android_settings) = AndroidSettings::from_keyed_indices(values, current) else {
@@ -1057,13 +1180,13 @@ impl SettingsApplier {
                 reason: "Android settings dialog returned invalid keyed values".to_string(),
             };
         };
-        let mut next = snapshot.clone();
+        let previous_storage_policy = snapshot.shared.persistence.storage_policy;
+        let mut next = snapshot;
         if let Err(error) = android_settings.apply_to_snapshot(&mut next, registry) {
             return SettingsPlan::Invalid {
                 reason: format!("failed to update Android system settings: {error}"),
             };
         }
-        let previous_storage_policy = snapshot.shared.persistence.storage_policy;
         if android_settings.storage_policy != StoragePolicy::AppSharedData
             && (android_settings.storage_policy != previous_storage_policy
                 || next.shared.persistence.storage_document_tree_uri.is_none())

@@ -6,21 +6,19 @@ pub use error::Error as GlError;
 
 /// Proof that the GL context is current on this thread. Destroy
 /// entry points take `Option<Self>` so a detached teardown skips GL
-/// calls instead of fabricating currency. Build with
-/// [`CurrentContext::assert_current`]; `current()` remains for
-/// call sites that already hold the context current (tests, load).
+/// calls instead of fabricating currency. Build only with
+/// [`CurrentContext::assert_current`]: there is no other constructor,
+/// so a token always traces back to a `ctx.is_current()` check at the
+/// call site.
 #[derive(Debug, Clone, Copy)]
 pub struct CurrentContext(());
 
 impl CurrentContext {
-    /// Assert currentness once, then thread the token to every
-    /// destroy call in the teardown sequence.
-    pub fn current() -> Self {
-        Self(())
-    }
-
     /// Checked proof: `Some` only when the caller verified
     /// `ctx.is_current()`. `None` skips GL deletes and reports.
+    /// Takes the `bool` verdict (not `&PossiblyCurrentContext`) so
+    /// this crate stays free of a glutin dependency; call sites pass
+    /// `ctx.is_current()` directly.
     pub fn assert_current(is_current: bool) -> Option<Self> {
         is_current.then_some(Self(()))
     }

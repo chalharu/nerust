@@ -473,7 +473,8 @@ mod tests {
 
         fn copy_state(&mut self, _other: &dyn InputStateBuffer) -> Result<(), BufferError> {
             Err(BufferError::MismatchedBuffer {
-                expected: "OtherInput",
+                expected: std::any::type_name::<Self>(),
+                actual: std::any::type_name_of_val(_other),
             })
         }
     }

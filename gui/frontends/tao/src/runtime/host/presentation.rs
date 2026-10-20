@@ -2,7 +2,10 @@
 //! Window sizing helpers live in `window`; the settings dialog in
 //! `settings`.
 use super::HostState;
-use super::{MenuSig, derive_native_fullscreen_sync, set_window_fullscreen, window_is_fullscreen};
+use super::{
+    ChromeScalars, MenuSig, derive_native_fullscreen_sync, set_window_fullscreen,
+    window_is_fullscreen,
+};
 use nerust_gui_shell::session::{SessionError, access::SettingsResult};
 use std::time::Instant;
 
@@ -11,7 +14,7 @@ impl HostState {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        let fullscreen = window_is_fullscreen(window);
+        let fullscreen = window_is_fullscreen(window.raw());
         let sync = derive_native_fullscreen_sync(
             self.pending_fullscreen_sync,
             fullscreen,
@@ -46,36 +49,37 @@ impl HostState {
         let title = self.session.window_title(&tick);
         let slots = self.session.slots();
         let shortcuts = &snapshot.shared.input.shortcuts.keyboard;
-        // Cheap gate first: scalars plus lengths, no Vec clones. A
+        // Cheap gate first: scalars plus lengths, no `Arc` clones. A
         // mismatch here proves change; a match falls through to the
-        // exact reference comparison below (same-len content edits
-        // must still reach the menu).
-        let cheap_same = self.last_menu_sig.as_ref().is_some_and(|sig| {
-            sig.loaded == tick.loaded
-                && sig.paused == tick.paused
-                && sig.settings_open == settings_open
-                && sig.language == language
-                && sig.active_slot == active_slot
-                && sig.slots.len() == slots.len()
-                && sig.shortcuts.len() == shortcuts.len()
-        }) && self.last_title.as_deref() == Some(&title);
-        if cheap_same
-            && let Some(sig) = self.last_menu_sig.as_ref()
-            && slots == sig.slots.as_slice()
-            && shortcuts.as_slice() == sig.shortcuts.as_slice()
-        {
-            return;
+        // exact fingerprint/slice comparison below (same-len content
+        // edits must still reach the menu).
+        if self.chrome.cheap_same(&ChromeScalars {
+            loaded: tick.loaded,
+            paused: tick.paused,
+            settings_open,
+            language,
+            active_slot,
+            slots_len: slots.len(),
+            shortcuts_len: shortcuts.len(),
+            title: &title,
+        }) {
+            let generation = MenuSig::fingerprint(slots, shortcuts);
+            if self.chrome.menu_same(generation, slots, shortcuts) {
+                return;
+            }
         }
-        // Changed: clone the full vecs once and push both halves
-        // through their own gates.
+        // Changed: clone the slices into `Arc`s once and push both
+        // halves through their own gates.
+        let generation = MenuSig::fingerprint(slots, shortcuts);
         let sig = MenuSig {
             loaded: tick.loaded,
             paused: tick.paused,
             settings_open,
             language,
             active_slot,
-            slots: slots.to_vec(),
-            shortcuts: shortcuts.clone(),
+            slots: slots.to_vec().into(),
+            shortcuts: shortcuts.to_vec().into(),
+            generation,
         };
         self.app_menu.update(crate::menu::MenuSync {
             loaded: sig.loaded,
@@ -86,9 +90,9 @@ impl HostState {
             language: sig.language,
             shortcuts: &sig.shortcuts,
         });
-        self.last_menu_sig = Some(sig);
-        if self.last_title.as_deref() != Some(&title) {
-            self.last_title = Some(title.clone());
+        self.chrome.push_menu(sig);
+        if !self.chrome.title_same(&title) {
+            self.chrome.push_title(title.clone());
             self.push_title(&title);
         }
     }
@@ -104,8 +108,8 @@ impl HostState {
         // 500ms throttle path cannot mark menu state it did not push.
         let tick = self.session.tick_metrics();
         let title = self.session.window_title(&tick);
-        if self.last_title.as_deref() != Some(&title) {
-            self.last_title = Some(title.clone());
+        if !self.chrome.title_same(&title) {
+            self.chrome.push_title(title.clone());
             self.push_title(&title);
         }
     }
@@ -118,14 +122,14 @@ impl HostState {
 
     pub(super) fn toggle_fullscreen(&mut self) {
         let fullscreen = if let Some(window) = self.window.as_ref() {
-            !window_is_fullscreen(window)
+            !window_is_fullscreen(window.raw())
         } else {
             return;
         };
         if let Err(error) = self.persist_fullscreen_default(fullscreen) {
             log::warn!("failed to persist fullscreen setting: {error}");
             if let Some(window) = self.window.as_ref() {
-                set_window_fullscreen(window, fullscreen);
+                set_window_fullscreen(window.raw(), fullscreen);
             }
             self.request_redraw();
         }
@@ -158,12 +162,12 @@ impl HostState {
             .video
             .window
             .fullscreen_default;
-        if window_is_fullscreen(window) == fullscreen {
+        if window_is_fullscreen(window.raw()) == fullscreen {
             self.pending_fullscreen_sync = None;
             return;
         }
         self.pending_fullscreen_sync = Some(fullscreen);
-        set_window_fullscreen(window, fullscreen);
+        set_window_fullscreen(window.raw(), fullscreen);
     }
 
     pub(super) fn persist_fullscreen_default(

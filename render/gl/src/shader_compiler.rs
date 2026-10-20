@@ -164,7 +164,52 @@ pub(crate) fn compile_shader_program(
     }
 
     log::warn!("no GL shader pipeline compiled: {}", errors.join("; "));
-    Err(ViewError::NoProgram)
+    Err(ViewError::NoProgram { program: "game" })
+}
+
+pub(crate) fn compile_osd_program(is_gles: bool) -> Option<Shader> {
+    let candidates: Vec<(&str, String, String)> = if is_gles {
+        vec![
+            (
+                "osd-gles3",
+                build_glsl_source(
+                    include_str!("vertex_desktop.glsl"),
+                    Some("#version 300 es"),
+                    &["precision mediump float;"],
+                ),
+                compose_glsl_source(
+                    "#version 300 es",
+                    &["precision mediump float;"],
+                    &[OSD_FRAGMENT_DESKTOP],
+                ),
+            ),
+            (
+                "osd-gles2",
+                include_str!("vertex.glsl").to_owned(),
+                compose_glsl_source(
+                    "#version 100",
+                    &["#define NERUST_MEDIUMP mediump"],
+                    &[OSD_FRAGMENT_COMPAT],
+                ),
+            ),
+        ]
+    } else {
+        vec![(
+            "osd-desktop",
+            include_str!("vertex_desktop.glsl").to_owned(),
+            compose_glsl_source("#version 150", &[], &[OSD_FRAGMENT_DESKTOP]),
+        )]
+    };
+    for (name, vertex, fragment) in candidates {
+        match Shader::try_new(vertex.as_str(), fragment.as_str()) {
+            Ok(shader) => {
+                log::info!("selected {name} osd pipeline");
+                return Some(shader);
+            }
+            Err(err) => log::warn!("osd shader {name} unavailable: {err}"),
+        }
+    }
+    None
 }
 
 pub(crate) fn is_gles_context(version: Option<&str>) -> bool {

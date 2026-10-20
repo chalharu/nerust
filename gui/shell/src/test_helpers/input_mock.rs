@@ -28,6 +28,7 @@ impl InputStateBuffer for TestInputBuffer {
         } else {
             Err(BufferError::MismatchedBuffer {
                 expected: "TestInputBuffer",
+                actual: std::any::type_name_of_val(other),
             })
         }
     }
@@ -42,11 +43,11 @@ pub(crate) fn test_input_resources() -> (GuiInput, InputSplit) {
         Arc::clone(&flag),
         Box::new(|| Box::<TestInputBuffer>::default()),
     );
-    let split = InputSplit {
-        shared: Arc::clone(&shared),
-        flag: Arc::clone(&flag),
-        new_buffer: Box::new(|| Box::<TestInputBuffer>::default()),
-    };
+    let split = InputSplit::new(
+        Arc::clone(&shared),
+        Arc::clone(&flag),
+        Box::new(|| Box::<TestInputBuffer>::default()),
+    );
     (gui, split)
 }
 
@@ -83,27 +84,25 @@ impl InputPorts for MockInputFactory {
         }];
         &SLOTS
     }
-    fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>> {
-        vec![Rc::new(MockSlotProfile)]
+    fn controllers(&self) -> Box<dyn Iterator<Item = Rc<dyn ControllerProfile>> + '_> {
+        Box::new(vec![Rc::new(MockSlotProfile) as Rc<dyn ControllerProfile>].into_iter())
     }
 }
 impl InputSystemFactory for MockInputFactory {
     fn default_assignments(&self) -> InputAssignments {
-        InputAssignments {
-            slots: vec![(TEST_SLOT_P1, None)],
-        }
+        InputAssignments::new(vec![(TEST_SLOT_P1, None)])
     }
     fn create_split(&self, _: &ControllerCollection) -> Result<InputResources, CreateSplitError> {
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
             Arc::new(Mutex::new(Box::<TestInputBuffer>::default()));
         let flag = Arc::new(AtomicBool::new(false));
-        Ok(InputResources {
-            split: InputSplit {
-                shared: Arc::clone(&shared),
-                flag: Arc::clone(&flag),
-                new_buffer: Box::new(|| Box::<TestInputBuffer>::default()),
-            },
-            field_map: std::collections::HashMap::new(),
-        })
+        Ok(InputResources::new(
+            InputSplit::new(
+                Arc::clone(&shared),
+                Arc::clone(&flag),
+                Box::new(|| Box::<TestInputBuffer>::default()),
+            ),
+            std::collections::HashMap::new(),
+        ))
     }
 }

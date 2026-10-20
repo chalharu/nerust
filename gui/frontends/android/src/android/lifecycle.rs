@@ -14,6 +14,9 @@ use crate::lifecycle_decision::{self, ResumeWant};
 const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 const FOREGROUND_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
 const FOREGROUND_RETRY_MAX_ATTEMPTS: u32 = 20;
+/// Backoff shift cap: `1 << attempts` saturates at this shift so the delay
+/// table stays explicit (`250ms, 500ms, 1s, 2s, 2s, ...`).
+const BACKOFF_STEPS: u32 = 3;
 
 /// Auto-pause + restore + foreground-retry state. The retry loop exists
 /// because the Android surface may not be ready on the first `resumed`
@@ -82,20 +85,25 @@ impl Lifecycle {
         if self.retry_attempts >= FOREGROUND_RETRY_MAX_ATTEMPTS {
             self.resume_pending = false;
             log::error!(
-                "giving up after {} Android window initialization attempts",
-                FOREGROUND_RETRY_MAX_ATTEMPTS
+                "giving up after {FOREGROUND_RETRY_MAX_ATTEMPTS} Android window initialization attempts"
             );
             return false;
         }
 
+        // `checked_shl` instead of `1 << attempts`: a future bump of the
+        // cap can never wrap the shift into a zero delay (which would
+        // busy-spin the event loop).
+        let shift = self.retry_attempts.min(BACKOFF_STEPS);
+        let multiplier = 1_u32.checked_shl(shift).unwrap_or(1 << BACKOFF_STEPS);
         let delay = FOREGROUND_RETRY_BASE_DELAY
-            .saturating_mul(1_u32 << self.retry_attempts.min(3))
+            .saturating_mul(multiplier)
             .min(FOREGROUND_RETRY_MAX_DELAY);
         self.retry_attempts += 1;
         self.retry_at = Some(Instant::now() + delay);
         log::info!(
-            "schedule_foreground_retry: scheduled attempt {} in {:?}",
+            "schedule_foreground_retry: scheduled attempt {}/{} in {:?}",
             self.retry_attempts,
+            FOREGROUND_RETRY_MAX_ATTEMPTS,
             delay
         );
         true

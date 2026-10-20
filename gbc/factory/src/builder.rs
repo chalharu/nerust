@@ -23,12 +23,12 @@ pub(crate) fn create_core_and_adapter(
         .as_deref()
         .and_then(|value| value.downcast_ref::<GbcSettings>())
         .ok_or(FactoryError::InvalidSettings)?;
-    if assignments.slots.len() != 1 || assignments.slots[0].0 != GBC_ATTACHMENT {
+    if assignments.slots().len() != 1 || assignments.slots()[0].0 != GBC_ATTACHMENT {
         return Err(FactoryError::Create(
             "GBC requires exactly one player1 assignment".to_string(),
         ));
     }
-    let profile = assignments.slots[0]
+    let profile = assignments.slots()[0]
         .1
         .as_ref()
         .ok_or_else(|| FactoryError::Create("GBC controller is not assigned".to_string()))?;
@@ -44,8 +44,18 @@ pub(crate) fn create_core_and_adapter(
     let resources = crate::GbcFactory
         .create_split(&controllers)
         .map_err(|error| FactoryError::Create(error.to_string()))?;
-    let gui_input = GuiInput::from_split(&resources.split);
-    let emu_input = EmuInput::from_split(&resources.split);
+    let gui_input = GuiInput::from_split(resources.split());
+    let emu_input = EmuInput::from_split(resources.split());
+    // Project the unified (attachment, ControlId) map onto the legacy
+    // CoreParts digital-only key until CoreParts migrates to ControlId.
+    let field_map = resources
+        .field_map()
+        .iter()
+        .filter_map(|((attachment, control), field)| match control {
+            nerust_input_traits::ControlId::Digital(id) => Some(((*attachment, *id), *field)),
+            _ => None,
+        })
+        .collect();
     speaker.start();
     let (accelerometer_handle, accelerometer_port) = accelerometer_channel();
     let (rumble_handle, rumble_port) = rumble_channel();
@@ -58,7 +68,9 @@ pub(crate) fn create_core_and_adapter(
         core: Box::new(core),
         audio: speaker,
         gui_input,
-        field_map: resources.field_map,
+        // Project the unified (attachment, ControlId) map onto the legacy
+        // CoreParts digital-only key until CoreParts migrates to ControlId.
+        field_map,
         render_profile: VideoRenderProfile {
             source_logical_size: logical_size,
             logical_size,
@@ -106,9 +118,7 @@ mod tests {
             language: Language::SystemDefault,
             system_config: Some(Box::new(GbcSettings::default())),
         };
-        let assignments = InputAssignments {
-            slots: vec![(GBC_ATTACHMENT, None)],
-        };
+        let assignments = InputAssignments::new(vec![(GBC_ATTACHMENT, None)]);
         assert!(create_core_and_adapter(&view, Box::new(NullAudio), &assignments).is_err());
     }
 }

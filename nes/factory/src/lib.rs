@@ -208,7 +208,7 @@ impl From<Mmc3IrqVariant> for nerust_nes_core::core_options::Mmc3IrqVariant {
     }
 }
 
-pub fn nes_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
+pub fn nes_device_controller_profiles() -> impl Iterator<Item = Rc<dyn ControllerProfile>> {
     nerust_nes_device::nes_device_controller_profiles()
 }
 

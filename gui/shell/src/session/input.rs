@@ -27,38 +27,91 @@ fn touch_role_for_abstract_key(key: AbstractKey) -> Option<TouchControlRole> {
 }
 
 impl SessionHandle {
-    pub fn touch_overlay_model(&self, revision: u64) -> TouchOverlayModel {
-        let mut controls = Vec::new();
-        for (attachment_id, profile) in &self.input.current_assignments.slots {
-            let Some(profile) = profile else {
-                continue;
-            };
-            let group = profile
-                .port_sets()
-                .iter()
-                .position(|set| set.ports.contains(attachment_id))
-                .and_then(|index| profile.port_groups().get(index));
-            let Some(group) = group else {
-                continue;
-            };
-            for info in *group {
-                let nerust_input_traits::ControlId::Digital(control_id) = info.id else {
-                    continue;
-                };
-                let Some(role) = info.abstract_key.and_then(touch_role_for_abstract_key) else {
-                    continue;
-                };
-                controls.push(TouchControl {
-                    attachment_id: *attachment_id,
-                    control_id,
-                    role,
-                    label: info.label.to_string(),
-                });
-            }
+    /// Last served touch overlay, keyed by the caller's revision.
+    /// Rebuilds only when the revision changes; otherwise serves the
+    /// stored model without re-walking assignments.
+    pub fn touch_overlay_model_cached(&mut self, revision: u64) -> &TouchOverlayModel {
+        let stale = self
+            .input
+            .touch_cache
+            .as_ref()
+            .is_none_or(|cached| cached.rev != revision);
+        if stale {
+            let model = build_touch_overlay(revision, &self.input.current_assignments);
+            self.input.touch_cache = Some(TouchCache {
+                rev: revision,
+                model,
+            });
         }
-        TouchOverlayModel { revision, controls }
+        // `stale` guarantees presence; the fallback below is unreachable
+        // and exists only so no `expect` guards the hot path.
+        debug_assert!(
+            self.input.touch_cache.is_some(),
+            "touch cache populated above"
+        );
+        self.input
+            .touch_cache
+            .as_ref()
+            .map(|cached| &cached.model)
+            .unwrap_or_else(|| {
+                log::error!("touch cache miss after rebuild; serving empty model");
+                &self.input.fallback_model
+            })
     }
 
+    pub fn touch_overlay_model(&self, revision: u64) -> TouchOverlayModel {
+        build_touch_overlay(revision, &self.input.current_assignments)
+    }
+}
+
+/// Cached touch overlay: revision plus the model served for it.
+/// Stored on the input department; see
+/// [`SessionHandle::touch_overlay_model_cached`].
+#[derive(Debug)]
+pub(crate) struct TouchCache {
+    pub(crate) rev: u64,
+    pub(crate) model: TouchOverlayModel,
+}
+
+/// Pure overlay builder: assignments in, model out. Both the
+/// per-call and the cached session methods delegate here, so the
+/// control mapping lives in exactly one place.
+fn build_touch_overlay(
+    revision: u64,
+    assignments: &nerust_input_traits::InputAssignments,
+) -> TouchOverlayModel {
+    let mut controls = Vec::new();
+    for (attachment_id, profile) in assignments.slots() {
+        let Some(profile) = profile else {
+            continue;
+        };
+        let group = profile
+            .port_sets()
+            .iter()
+            .position(|set| set.ports.contains(attachment_id))
+            .and_then(|index| profile.port_groups().get(index));
+        let Some(group) = group else {
+            continue;
+        };
+        for info in *group {
+            let nerust_input_traits::ControlId::Digital(control_id) = info.id else {
+                continue;
+            };
+            let Some(role) = info.abstract_key.and_then(touch_role_for_abstract_key) else {
+                continue;
+            };
+            controls.push(TouchControl {
+                attachment_id: *attachment_id,
+                control_id,
+                role,
+                label: info.label.to_string(),
+            });
+        }
+    }
+    TouchOverlayModel { revision, controls }
+}
+
+impl SessionHandle {
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
         if let Some(&field) = self.input.field_map.get(&(event.attachment, event.control))
@@ -104,19 +157,16 @@ impl SessionHandle {
     }
 
     pub fn rebuild_key_field_map(&mut self) {
-        let bindings = self
-            .active_factory()
-            .map(|factory| factory.system_id())
-            .and_then(|system_id| {
-                self.settings
-                    .snapshot
-                    .shared
-                    .input
-                    .systems
-                    .get(&system_id)
-                    .and_then(|s| s.implicit_keyboard_profile())
-            });
-        // The cluster owns the map; the session only resolves which
+        let bindings = self.active_system_id_box().and_then(|system_id| {
+            self.settings
+                .snapshot
+                .shared
+                .input
+                .systems
+                .get(&system_id)
+                .and_then(|s| s.implicit_keyboard_profile())
+        });
+        // The department owns the map; the session only resolves which
         // profile is active.
         self.input
             .rebuild_key_field_map(bindings.map(|p| p.bindings.as_slice()));
@@ -129,7 +179,7 @@ mod tests {
 
     use nerust_input_traits::{
         AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, ControllerProfile,
-        DeviceKindId, DigitalControlId, PortSet, ProfileId, SlotInfo,
+        DeviceKindId, DigitalControlId, InputAssignments, PortSet, ProfileId, SlotInfo,
     };
     use nerust_settings_core::model::input::KeyboardBinding;
     use nerust_settings_core::model::input::PersistedControlId;
@@ -257,8 +307,8 @@ mod tests {
     fn build_topology_returns_empty_model_without_controllers() {
         let topology = build_topology(&[], &[]);
 
-        assert!(topology.ports.is_empty());
-        assert!(topology.devices.is_empty());
+        assert!(topology.ports().is_empty());
+        assert!(topology.devices().is_empty());
     }
 
     #[test]
@@ -273,11 +323,11 @@ mod tests {
             }],
         );
 
-        assert_eq!(topology.ports.len(), 1);
-        assert_eq!(topology.ports[0].label, "Topology Port");
-        assert_eq!(topology.devices.len(), 1);
-        assert_eq!(topology.devices[0].kind.as_str(), "test.topology.pad");
-        assert_eq!(topology.devices[0].controls.len(), 1);
+        assert_eq!(topology.ports().len(), 1);
+        assert_eq!(topology.ports()[0].label(), "Topology Port");
+        assert_eq!(topology.devices().len(), 1);
+        assert_eq!(topology.devices()[0].kind().as_str(), "test.topology.pad");
+        assert_eq!(topology.devices()[0].controls().len(), 1);
     }
 
     #[test]
@@ -292,16 +342,53 @@ mod tests {
         )];
         let mut key_map = HashMap::from([(Key::KeyB, 2)]);
 
-        rebuild_input_map(&field_map, &bindings, &mut key_map);
+        rebuild_input_map(&field_map, &bindings, &mut key_map).expect("no duplicates");
 
         assert_eq!(key_map, HashMap::from([(Key::KeyA, 7)]));
+    }
+
+    #[test]
+    fn rebuild_input_map_reports_first_duplicate_for_caller_to_log() {
+        use crate::session::input_map::DuplicateBinding;
+        let attachment = AttachmentId::new("test.topology.slot");
+        let control = DigitalControlId::new("test.topology.a");
+        let field_map = HashMap::from([((attachment, control), 7)]);
+        let bindings = [
+            KeyboardBinding::new(
+                attachment.as_str(),
+                PersistedControlId::digital(control.as_str()),
+                Key::KeyA,
+            ),
+            KeyboardBinding::new(
+                attachment.as_str(),
+                PersistedControlId::digital(control.as_str()),
+                Key::KeyB,
+            ),
+        ];
+        let mut key_map = HashMap::new();
+
+        let duplicate = rebuild_input_map(&field_map, &bindings, &mut key_map)
+            .expect_err("second binding duplicates the first");
+
+        // First registration wins; the duplicate is reported, not logged here.
+        assert_eq!(key_map, HashMap::from([(Key::KeyA, 7)]));
+        assert_eq!(
+            duplicate,
+            DuplicateBinding {
+                attachment: attachment.as_str().to_string(),
+                control: control.as_str().to_string(),
+            }
+        );
     }
 
     #[test]
     fn touch_overlay_uses_assigned_profile_controls() {
         let mut session = crate::session::test_util::test_session();
         let slot = AttachmentId::new("test.topology.slot");
-        session.input.current_assignments.slots = vec![(slot, Some(Rc::new(MockTopologyProfile)))];
+        session.set_test_assignments(InputAssignments::new(vec![(
+            slot,
+            Some(Rc::new(MockTopologyProfile)),
+        )]));
 
         let overlay = session.touch_overlay_model(42);
 

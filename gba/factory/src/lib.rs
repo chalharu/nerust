@@ -21,7 +21,7 @@ use nerust_core_traits::{
 use nerust_gba_settings::GbaSettings;
 use nerust_input_traits::{ControllerProfile, InputAssignments, InputSystemFactory};
 
-pub fn gba_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
+pub fn gba_device_controller_profiles() -> impl Iterator<Item = Rc<dyn ControllerProfile>> {
     nerust_gba_device::gba_device_controller_profiles()
 }
 

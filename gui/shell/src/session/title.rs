@@ -1,3 +1,14 @@
+/// Window-title inputs as one struct. Positional bools at every call
+/// site never said which flag was which; the struct fields do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TitleInput<'a> {
+    pub paused: bool,
+    pub loaded: bool,
+    pub system_name: Option<&'a str>,
+    pub active_slot: Option<u64>,
+    pub slot_count: usize,
+}
+
 pub fn window_title(
     paused: bool,
     loaded: bool,
@@ -5,18 +16,32 @@ pub fn window_title(
     active_slot: Option<u64>,
     slot_count: usize,
 ) -> String {
-    let label = system_name.unwrap_or("");
-    let state = if paused {
+    window_title_input(TitleInput {
+        paused,
+        loaded,
+        system_name,
+        active_slot,
+        slot_count,
+    })
+}
+
+/// Structured form of [`window_title`]: single source for the text,
+/// so positional call sites cannot misalign the flags.
+pub fn window_title_input(input: TitleInput<'_>) -> String {
+    let label = input.system_name.unwrap_or("");
+    let state = if input.paused {
         format!("{label} -- Paused")
     } else {
         label.to_string()
     };
-    let slot = match active_slot {
-        Some(id) => format!(" | Slot {id} ({slot_count} slots)"),
-        None if slot_count > 0 => format!(" | {slot_count} slots"),
+    let slot = match input.active_slot {
+        Some(id) => format!(" | Slot {id} ({count} slots)", count = input.slot_count),
+        None if input.slot_count > 0 => {
+            format!(" | {count} slots", count = input.slot_count)
+        }
         None => String::new(),
     };
-    if loaded {
+    if input.loaded {
         // Runtime metrics live in the status readout, not here:
         // fps duplicates the OSD status pill and speed is noise.
         format!("{state}{slot}")
@@ -25,9 +50,55 @@ pub fn window_title(
     }
 }
 
+/// Cache key for [`TitleCache`]: everything the title text reads.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct TitleKey {
+    paused: bool,
+    loaded: bool,
+    system_name: Option<String>,
+    active_slot: Option<u64>,
+    slot_count: usize,
+}
+
+impl<'a> From<&TitleInput<'a>> for TitleKey {
+    fn from(input: &TitleInput<'a>) -> Self {
+        Self {
+            paused: input.paused,
+            loaded: input.loaded,
+            system_name: input.system_name.map(str::to_string),
+            active_slot: input.active_slot,
+            slot_count: input.slot_count,
+        }
+    }
+}
+
+/// Per-frame title cache: rebuilds only when the key changes,
+/// otherwise serves the stored string without formatting.
+#[derive(Debug, Default)]
+pub struct TitleCache {
+    last_key: Option<TitleKey>,
+    last_title: String,
+}
+
+impl TitleCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Borrowed title for `input`: formats only on key change.
+    pub fn title(&mut self, input: TitleInput<'_>) -> &str {
+        let key = TitleKey::from(&input);
+        if self.last_key.as_ref() != Some(&key) {
+            self.last_title = window_title_input(input);
+            self.last_key = Some(key);
+        }
+        &self.last_title
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::window_title;
+    use super::{TitleCache, TitleInput, window_title, window_title_input};
 
     #[test]
     fn window_title_omits_runtime_metrics() {
@@ -50,5 +121,41 @@ mod tests {
         let title = window_title(false, false, Some("Nes"), None, 2);
         assert!(title.contains("2 slots"));
         assert!(!title.contains("Slot"));
+    }
+
+    #[test]
+    fn title_input_matches_positional_form() {
+        let input = TitleInput {
+            paused: true,
+            loaded: true,
+            system_name: Some("Nes"),
+            active_slot: Some(2),
+            slot_count: 3,
+        };
+        assert_eq!(
+            window_title_input(input),
+            window_title(true, true, Some("Nes"), Some(2), 3)
+        );
+    }
+
+    #[test]
+    fn title_cache_rebuilds_only_on_key_change() {
+        let mut cache = TitleCache::new();
+        let input = || TitleInput {
+            paused: false,
+            loaded: true,
+            system_name: Some("Nes"),
+            active_slot: Some(1),
+            slot_count: 2,
+        };
+        let first = cache.title(input()).to_string();
+        // Same key: no rebuild, same borrow.
+        assert_eq!(cache.title(input()), first);
+        // Changed key: fresh text.
+        let changed = TitleInput {
+            paused: true,
+            ..input()
+        };
+        assert_ne!(cache.title(changed), first);
     }
 }

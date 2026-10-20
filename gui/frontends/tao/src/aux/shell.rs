@@ -208,8 +208,10 @@ impl<M> MessageQueue<M> {
         }
     }
 
-    /// Queued plus inline messages for one rebuild pass.
-    fn drain(&mut self, extra: Vec<M>) -> Vec<M> {
+    /// Queued plus inline messages for one rebuild pass. Accepts any
+    /// message source without a call-site alloc; buffers reuse via the
+    /// caller's pass-through.
+    fn drain(&mut self, extra: impl IntoIterator<Item = M>) -> Vec<M> {
         let mut all = std::mem::take(&mut self.pending);
         all.extend(extra);
         all
@@ -233,36 +235,23 @@ pub(crate) enum PumpOutcome {
     Rebuild,
 }
 
-/// Pump policy: map iced's update result onto [`PumpOutcome`]. Pure
-/// so the message-less paths (wheel scroll especially) stay covered
-/// by tests.
-pub(crate) struct PumpPolicy;
-
-impl PumpPolicy {
-    pub(crate) fn outcome(state: &State) -> PumpOutcome {
-        match state {
-            State::Outdated => PumpOutcome::Rebuild,
-            State::Updated { redraw_request, .. } if *redraw_request != RedrawRequest::Wait => {
-                PumpOutcome::Repaint
-            }
-            State::Updated { .. } => PumpOutcome::Idle,
+/// Pump policy as a free function: map iced's update result onto
+/// [`PumpOutcome`]. Pure so the message-less paths (wheel scroll
+/// especially) stay covered by tests.
+pub(crate) fn pump_outcome(state: &State) -> PumpOutcome {
+    match state {
+        State::Outdated => PumpOutcome::Rebuild,
+        State::Updated { redraw_request, .. } if *redraw_request != RedrawRequest::Wait => {
+            PumpOutcome::Repaint
         }
+        State::Updated { .. } => PumpOutcome::Idle,
     }
 }
 
-/// Relayout failure. The transient-UI shell rebuilds from the
-/// retained cache every pass, so recording new bounds cannot fail
-/// today; the `Result` keeps the swap-only-on-success contract (and a
-/// place to surface fallible layout) if layout ever grows fallible.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RelayoutError;
-
-impl core::fmt::Display for RelayoutError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "aux window relayout failed")
-    }
-}
-
+/// Relayout is infallible: the transient-UI shell rebuilds from the
+/// retained cache every pass, so recording new bounds is a plain
+/// store (kept as a named method for the swap-only-on-success
+/// contract if layout ever grows fallible).
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     pub(crate) fn new(
         instance: program::Instance<P>,
@@ -280,12 +269,17 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         }
     }
 
-    /// Record new layout bounds. Infallible (`Ok` always): the next
-    /// pump builds against them, so there is no old interface to keep
-    /// or orphan on failure.
-    pub(crate) fn relayout(&mut self, bounds: Size) -> Result<(), RelayoutError> {
+    /// Record new layout bounds. Infallible: the next pump builds
+    /// against them, so there is no old interface to keep or orphan
+    /// on failure.
+    pub(crate) fn relayout(&mut self, bounds: Size) {
         self.tree.bounds = bounds;
-        Ok(())
+    }
+
+    /// Record new layout bounds via the shell (single mutator: no
+    /// direct `tree.bounds` writes outside this impl).
+    pub(crate) fn set_bounds(&mut self, bounds: Size) {
+        self.relayout(bounds);
     }
 
     /// Queue one program message for the next `process_messages`
@@ -328,14 +322,17 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     /// (wheel/drag/hover/caret move widget state but emit no
     /// messages), or a view rebuild (`State::Outdated`: the tree must
     /// be re-rendered from program state).
+    /// Reuses the caller's `out` buffer (no per-event alloc).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn pump(
         &mut self,
         mapped: iced::Event,
         cursor: mouse::Cursor,
         clipboard: &mut Clipboard,
         backend: &mut Renderer,
-    ) -> (Vec<P::Message>, PumpOutcome) {
-        let mut messages = Vec::new();
+        out: &mut Vec<P::Message>,
+    ) -> PumpOutcome {
+        out.clear();
         // Disjoint tree fields: the interface borrows the instance
         // while the cache slot is taken out and folded back.
         let mut ui = Self::build_transient(
@@ -345,17 +342,19 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
             &mut self.tree.cache,
             backend,
         );
-        let (state, _) = ui.update(&[mapped], cursor, backend, clipboard, &mut messages);
-        let outcome = PumpPolicy::outcome(&state);
+        let (state, _) = ui.update(&[mapped], cursor, backend, clipboard, out);
+        let outcome = pump_outcome(&state);
         Self::retire_transient(&mut self.tree.cache, ui);
-        (messages, outcome)
+        outcome
     }
 
     /// Runs pending messages, rebuilding once. Reports whether a
     /// rebuild happened so the shell redraws only on real change.
+    /// Accepts any message source without allocating a `Vec` at the
+    /// call site; the queue joins this pass.
     pub(crate) fn process_messages(
         &mut self,
-        messages: Vec<P::Message>,
+        messages: impl IntoIterator<Item = P::Message>,
         renderer: &mut Renderer,
         invalidated: &AtomicBool,
     ) -> bool {
@@ -425,35 +424,63 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
 
     /// Pump one converted event through the retained tree. Repaints
     /// redraw immediately; rebuilds report for the caller, which owns
-    /// its invalidation flag.
-    pub(crate) fn pump_frame(&mut self, mapped: iced::Event) -> (Vec<P::Message>, PumpOutcome) {
-        let (messages, outcome) = self.ui_state.pump(
+    /// its invalidation flag. Reuses `out` to avoid a per-event alloc.
+    pub(crate) fn pump_frame(
+        &mut self,
+        mapped: iced::Event,
+        out: &mut Vec<P::Message>,
+    ) -> PumpOutcome {
+        let outcome = self.ui_state.pump(
             mapped,
             self.cursor,
             &mut self.clipboard,
             &mut self.renderer.backend,
+            out,
         );
         if matches!(outcome, PumpOutcome::Repaint) {
             self.window.request_redraw();
         }
-        (messages, outcome)
+        outcome
+    }
+
+    /// Shared pump finish for the four aux windows (debugger, PPU,
+    /// history, settings): repaint bookkeeping, rebuild invalidation,
+    /// and the conditional process pass. Single home so the twins
+    /// cannot drift apart.
+    pub(crate) fn finish(
+        &mut self,
+        outcome: PumpOutcome,
+        messages: Vec<P::Message>,
+        invalidated: &AtomicBool,
+    ) -> bool {
+        let repainted = matches!(outcome, PumpOutcome::Repaint);
+        if matches!(outcome, PumpOutcome::Rebuild) {
+            invalidated.store(true, Ordering::Release);
+        }
+        let rebuilt = if !messages.is_empty() || matches!(outcome, PumpOutcome::Rebuild) {
+            self.process(messages, invalidated)
+        } else {
+            false
+        };
+        repainted || rebuilt
     }
 
     /// Run pending messages against the retained cache, redrawing only
     /// on a real rebuild. Quiet batches (no messages, no flag) skip
-    /// the frame: the trailing redraw in `pump_window_event` stays the
-    /// safety net for paths that bypass `process`.
-    /// Run pending messages; returns whether this pass requested a
-    /// redraw (rebuild), so the event pump can skip its trailing
-    /// request instead of queueing a duplicate present.
+    /// the frame: the trailing redraw in the aux pump stays the safety
+    /// net for paths that bypass `process`.
     ///
     /// The flag is a plain `&AtomicBool`: each handle owns its domain
     /// flag next to its bridge (`view_invalidated`, `ppu_invalidated`,
     /// `view_invalidated`), so the pairing is visible at the call
     /// site without a wrapper type.
-    pub(crate) fn process(&mut self, messages: Vec<P::Message>, invalidated: &AtomicBool) -> bool {
+    pub(crate) fn process(
+        &mut self,
+        messages: impl IntoIterator<Item = P::Message>,
+        invalidated: &AtomicBool,
+    ) -> bool {
         let bounds = self.logical_bounds();
-        self.ui_state.tree.bounds = bounds;
+        self.ui_state.set_bounds(bounds);
         let rebuilt =
             self.ui_state
                 .process_messages(messages, &mut self.renderer.backend, invalidated);
@@ -519,9 +546,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
             logical_bounds((width, height), self.scale_factor)
         );
         let bounds = logical_bounds((width, height), self.scale_factor);
-        if let Err(error) = self.ui_state.relayout(bounds) {
-            log::warn!("aux window relayout failed: {error}");
-        }
+        self.ui_state.relayout(bounds);
         self.window.request_redraw();
     }
 
@@ -529,9 +554,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     pub(crate) fn set_scale_factor(&mut self, scale_factor: f32) {
         self.scale_factor = scale_factor;
         let bounds = logical_bounds(self.viewport_physical, self.scale_factor);
-        if let Err(error) = self.ui_state.relayout(bounds) {
-            log::warn!("aux window relayout failed: {error}");
-        }
+        self.ui_state.relayout(bounds);
         self.window.request_redraw();
     }
 
@@ -589,9 +612,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
             );
             self.scale_factor = live_scale;
             let bounds = logical_bounds(self.viewport_physical, self.scale_factor);
-            if let Err(error) = self.ui_state.relayout(bounds) {
-                log::warn!("{log_tag} render relayout failed: {error}");
-            }
+            self.ui_state.relayout(bounds);
         }
         // Deferred surface configure (see `resize`): resize storms
         // only relayout per event; the realloc lands here, at most
@@ -633,7 +654,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
                 &mut self.renderer.backend,
             );
             // Redraw-only pump: widget rebuild requests wait for the next
-            // event-driven pump (`PumpPolicy::outcome` mapping lives there).
+            // event-driven pump (`pump_outcome` mapping lives there).
             let _ = ui.update(
                 &[redraw_event],
                 self.cursor,
@@ -747,15 +768,15 @@ mod tests {
             has_layout_changed: false,
         };
         // A widget asking for a view rebuild (rare) routes to one.
-        assert_eq!(PumpPolicy::outcome(&State::Outdated), PumpOutcome::Rebuild);
+        assert_eq!(pump_outcome(&State::Outdated), PumpOutcome::Rebuild);
         // Message-less repaint requests (wheel/drag/hover/caret) must
         // repaint: dropping them froze every scrollable.
         assert_eq!(
-            PumpPolicy::outcome(&updated(RedrawRequest::Wait)),
+            pump_outcome(&updated(RedrawRequest::Wait)),
             PumpOutcome::Idle
         );
         assert_eq!(
-            PumpPolicy::outcome(&updated(RedrawRequest::NextFrame)),
+            pump_outcome(&updated(RedrawRequest::NextFrame)),
             PumpOutcome::Repaint
         );
     }
@@ -765,19 +786,21 @@ mod tests {
         // No retained interface: every pump rebuilds from the cache
         // and folds back, so there is no orphan state to warn on.
         let (mut shell, mut backend, mut clipboard) = stub_shell();
-        let (messages, outcome) = shell.pump(
+        let mut messages = Vec::new();
+        let outcome = shell.pump(
             iced::Event::Window(iced::window::Event::RedrawRequested(
                 std::time::Instant::now(),
             )),
             iced::mouse::Cursor::default(),
             &mut clipboard,
             &mut backend,
+            &mut messages,
         );
         assert!(messages.is_empty());
         assert_eq!(outcome, PumpOutcome::Idle);
         // Push and relayout stay total; relayout only records bounds.
         shell.push_message(StubMessage::Ping);
-        assert!(shell.relayout(iced::Size::new(640.0, 480.0)).is_ok());
+        shell.relayout(iced::Size::new(640.0, 480.0));
         assert_eq!(shell.tree.bounds, iced::Size::new(640.0, 480.0));
     }
 

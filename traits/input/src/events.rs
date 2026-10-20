@@ -2,7 +2,10 @@
 
 use downcast_rs::Downcast;
 
-use super::ids::{AttachmentId, DigitalControlId};
+use super::{
+    ids::{AttachmentId, DigitalControlId},
+    topology::ControlId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DigitalInputState {
@@ -41,6 +44,60 @@ impl DigitalInputEvent {
     pub const fn is_pressed(self) -> bool {
         matches!(self.state, DigitalInputState::Pressed)
     }
+
+    /// Lift into the unified [`InputEvent`] path (digital only).
+    pub const fn to_general(self) -> InputEvent {
+        InputEvent {
+            attachment: self.attachment,
+            control: ControlId::Digital(self.control),
+            value: match self.state {
+                DigitalInputState::Pressed => InputValue::Digital(true),
+                DigitalInputState::Released => InputValue::Digital(false),
+            },
+        }
+    }
+}
+
+/// Unified runtime input event covering digital and analog controls.
+///
+/// [`DigitalInputEvent`] remains the narrow digital-only helper used by
+/// touch overlays; convert it with [`DigitalInputEvent::to_general`] (or
+/// `From`) when a single analog-capable path is needed. Prefer this type
+/// for new code so analog controls do not need a parallel event enum.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InputEvent {
+    pub attachment: AttachmentId,
+    pub control: ControlId,
+    pub value: InputValue,
+}
+
+impl InputEvent {
+    pub const fn new(attachment: AttachmentId, control: ControlId, value: InputValue) -> Self {
+        Self {
+            attachment,
+            control,
+            value,
+        }
+    }
+
+    /// Narrow back to a digital event when the control and value are digital.
+    pub fn as_digital(self) -> Option<DigitalInputEvent> {
+        match (self.control, self.value) {
+            (ControlId::Digital(control), InputValue::Digital(true)) => Some(
+                DigitalInputEvent::new(self.attachment, control, DigitalInputState::Pressed),
+            ),
+            (ControlId::Digital(control), InputValue::Digital(false)) => Some(
+                DigitalInputEvent::new(self.attachment, control, DigitalInputState::Released),
+            ),
+            _ => None,
+        }
+    }
+}
+
+impl From<DigitalInputEvent> for InputEvent {
+    fn from(event: DigitalInputEvent) -> Self {
+        event.to_general()
+    }
 }
 
 /// Result of a CPU bus read — data bits and which bits are valid.
@@ -69,7 +126,7 @@ pub enum InputValue {
 }
 
 /// Errors from `InputStateBuffer` operations.
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum BufferError {
     #[error("field {field} not found")]
     FieldNotFound { field: usize },
@@ -78,8 +135,19 @@ pub enum BufferError {
         field: usize,
         expected: &'static str,
     },
-    #[error("buffer type mismatch: expected {expected}")]
-    MismatchedBuffer { expected: &'static str },
+    /// Buffer concrete-type mismatch on `copy_state`.
+    ///
+    /// `expected` is the static compile-time buffer name (`type_name::<Self>()`
+    /// at the call site); `actual` is the runtime `type_name_of_val(other)`.
+    /// Note the runtime name observes the trait object (`dyn InputStateBuffer`)
+    /// rather than the erased concrete type, so it distinguishes "wrong object
+    /// passed" from the exact concrete mismatch only coarsely; implementations
+    /// must still refuse to partially apply state on mismatch.
+    #[error("buffer type mismatch: expected {expected}, got {actual}")]
+    MismatchedBuffer {
+        expected: &'static str,
+        actual: &'static str,
+    },
 }
 
 /// GUI-side write abstraction for input state.

@@ -565,7 +565,7 @@ fn apply_settings_rebuilds_when_assignments_change() {
     );
     assert!(
         new_assignments
-            .slots
+            .slots()
             .iter()
             .any(|(slot, _)| slot.as_str() == TEST_SLOT_P1.as_str()),
         "new assignments should include the test slot"
@@ -737,7 +737,7 @@ fn debug_snapshot_without_core_is_unavailable() {
     // and the snapshot carries degenerates only.
     assert!(session.debug_snapshot_ready());
     assert!(session.debug_spaces().is_empty());
-    let snapshot = session.debug_snapshot(None, 0, None, false, None);
+    let snapshot = session.debug_snapshot(None, 0, None, crate::debug::ImageNeed::Skip, None);
     assert!(!snapshot.available);
     assert!(snapshot.dump_rows.is_empty());
     assert!(snapshot.disasm_lines.is_empty());
@@ -779,6 +779,7 @@ fn debug_write_transaction_without_core() {
 
 #[test]
 fn debug_traffic_kill_flows_through_session() {
+    use crate::debug::TrafficKind;
     use nerust_core_traits::debugger::SpaceId;
     let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
@@ -786,10 +787,10 @@ fn debug_traffic_kill_flows_through_session() {
     session.debug_prepare_write(SpaceId(0), 0x10);
     session.debug_stage_write(0x42);
     // Non-state-changing traffic keeps the staged value.
-    session.debug_note_traffic(false);
+    session.debug_note_traffic(TrafficKind::Transactional);
     assert!(session.debug_pending_text().is_some());
     // State-changing traffic kills it.
-    session.debug_note_traffic(true);
+    session.debug_note_traffic(TrafficKind::StateChanging);
     assert_eq!(session.debug_pending_text(), None);
     // Explicit cancel clears too.
     session.debug_prepare_write(SpaceId(0), 0x10);
@@ -977,7 +978,13 @@ fn drain_input() -> crate::debug::DebugDrainInput<'static> {
 fn debug_snapshot_covers_loaded_mock_core() {
     use nerust_core_traits::debugger::SpaceId;
     let session = loaded_debug_session();
-    let snapshot = session.debug_snapshot(Some(SpaceId(0)), 0, None, true, Some(0x10));
+    let snapshot = session.debug_snapshot(
+        Some(SpaceId(0)),
+        0,
+        None,
+        crate::debug::ImageNeed::Fetch,
+        Some(0x10),
+    );
     assert!(snapshot.available);
     assert_eq!(snapshot.reg_names, vec!["a", "b"]);
     assert_eq!(snapshot.regs.len(), 2);
@@ -1001,8 +1008,12 @@ fn debug_live_images_follow_running_without_snapshot() {
     // Paused baseline carries dump rows.
     let paused = session.debug_drain(&[DebugAction::Refresh], &input);
     assert!(!paused.display.dump_rows.is_empty());
-    assert!(session.debug_live_images(false).is_none());
-    let paused_live = session.debug_live_images(true);
+    assert!(
+        session
+            .debug_live_images(crate::debug::ImageNeed::Skip)
+            .is_none()
+    );
+    let paused_live = session.debug_live_images(crate::debug::ImageNeed::Fetch);
     let paused_gen = paused_live.as_ref().expect("paused fetch serves").0;
     assert_eq!(
         paused_live.map(|(_, images)| images.len()),
@@ -1022,7 +1033,7 @@ fn debug_live_images_follow_running_without_snapshot() {
     // never needs (or blanks) the snapshot sections. Identical
     // content reports the served generation with no payload (the
     // content-hash skip): same pixels, same generation, zero UI work.
-    let live = session.debug_live_images(true);
+    let live = session.debug_live_images(crate::debug::ImageNeed::Fetch);
     let (running_gen, running_images) = live.expect("running fetch serves");
     assert_eq!(
         running_gen, paused_gen,
@@ -1125,7 +1136,7 @@ fn debug_drain_happy_path_reports_success() {
         Some(nerust_core_traits::debugger::SpaceId(0)),
         0,
         None,
-        false,
+        crate::debug::ImageNeed::Skip,
         None,
     );
     assert_eq!(after.regs[0], ("a", 7));
@@ -1436,4 +1447,43 @@ fn pump_osd_drops_info_without_frame() {
     let report = session.pump_osd(&mut manager, input());
     assert!(report.modal_queued);
     assert_eq!(manager.modal_pending(), 1);
+}
+
+/// Cached frame data: the window title, history rows, and touch
+/// overlay rebuild only when their keys change, otherwise the stored
+/// values serve without formatting.
+#[test]
+fn cached_frame_data_rebuilds_only_on_key_change() {
+    use crate::session::notification::NotificationKind;
+
+    let mut session = test_session();
+    let tick = session.tick_metrics();
+    // Title cache: same tick serves the stored string.
+    let first = session.window_title_cached(&tick).to_string();
+    assert_eq!(session.window_title_cached(&tick), first);
+    assert_eq!(first, session.window_title(&tick));
+    // History cache: same seq and language reuses the stored rows.
+    session.notifications.push(NotificationKind::Paused);
+    let rows = session.notification_history_lines_cached(AppLanguage::English);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].text, "Paused");
+    let again = session.notification_history_lines_cached(AppLanguage::English);
+    assert_eq!(again.len(), 1);
+    // Narrow settings adapters read the snapshot without the manager.
+    let chrome = session.chrome();
+    assert_eq!(
+        chrome,
+        crate::session::osd::OsdChrome::from(&session.settings_snapshot().local.notifications)
+    );
+    let policy = session.transient_policy();
+    assert_eq!(
+        policy.error_modal,
+        session.settings_snapshot().local.notifications.error_modal
+    );
+    // Touch cache: same revision reuses the stored model.
+    let model = session.touch_overlay_model_cached(7).clone();
+    assert_eq!(session.touch_overlay_model_cached(7).revision, 7);
+    assert_eq!(session.touch_overlay_model(7), model);
+    let changed = session.touch_overlay_model_cached(8);
+    assert_eq!(changed.revision, 8);
 }

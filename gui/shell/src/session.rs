@@ -25,6 +25,7 @@ pub mod title;
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -35,6 +36,7 @@ use nerust_core_traits::{
         load::{DynSystemLoadOptions, MediaObject},
     },
     identity::SystemId,
+    touch::TouchOverlayModel,
 };
 use nerust_emu_thread::OperationError;
 use nerust_gui_runtime::settings::{
@@ -51,7 +53,10 @@ use nerust_settings_core::model::input::ShortcutAction;
 use thiserror::Error;
 
 use crate::{
-    emu_core::EmuCore, registry::SystemRegistry, session::persistence::PersistenceManager, settings,
+    emu_core::{EmuCore, LiveCore},
+    registry::SystemRegistry,
+    session::persistence::{PersistenceBackends, PersistenceManager, StateExporter},
+    settings,
 };
 
 /// Live PPU image batch. Canonical home is
@@ -98,34 +103,65 @@ pub enum KeyboardShortcut {
     OpenDebugger,
 }
 
-/// Input cluster: assignments, key maps, live runtime. One owner for
-/// the input domain so `SessionHandle` stays a facade.
-struct InputCluster {
+/// Input department: assignments, key maps, live runtime. One owner
+/// for the input domain so `SessionHandle` stays a facade.
+struct InputDept {
     current_assignments: InputAssignments,
     field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_keyboard::Key, usize>,
     pressed_keys: std::collections::HashSet<Key>,
+    /// Last served touch overlay, keyed by the caller's revision.
+    /// Callers bump the revision whenever assignments change, so a
+    /// repeat revision always means identical controls.
+    touch_cache: Option<crate::session::input::TouchCache>,
+    /// Empty overlay served if the cache write is ever lost. Keeps the
+    /// cached accessor infallible without an `expect` on the hot path.
+    fallback_model: TouchOverlayModel,
 }
 
-impl InputCluster {
+impl InputDept {
     /// Rebuild the keyboard reverse map from the implicit profile.
     /// Takes only the bindings it reads; the session resolves which
-    /// profile is active, so this cluster never reaches into settings
-    /// or the factory registry.
+    /// profile is active, so this department never reaches into
+    /// settings or the factory registry.
     pub(crate) fn rebuild_key_field_map<B: crate::session::input_map::InputBinding<Id = Key>>(
         &mut self,
         bindings: Option<&[B]>,
     ) {
         self.key_field_map.clear();
-        if let Some(bindings) = bindings {
-            crate::session::input_map::rebuild_input_map(
+        if let Some(bindings) = bindings
+            && let Err(duplicate) = crate::session::input_map::rebuild_input_map(
                 &self.field_map,
                 bindings,
                 &mut self.key_field_map,
+            )
+        {
+            log::warn!(
+                "duplicate input binding for {attachment}/{control}; keeping first",
+                attachment = duplicate.attachment,
+                control = duplicate.control,
             );
         }
+    }
+
+    /// Persistable projection of the live assignments. Lossy by design:
+    /// only slot and controller identifiers survive, never the profiles,
+    /// so this is an explicitly named projection, not a `From` conversion.
+    fn persistable_pairs(&self) -> Vec<(String, Option<String>)> {
+        self.current_assignments
+            .slots()
+            .iter()
+            .map(|(slot, controller)| {
+                (
+                    slot.as_str().to_owned(),
+                    controller
+                        .as_ref()
+                        .map(|p| p.profile_id().as_str().to_owned()),
+                )
+            })
+            .collect()
     }
 }
 
@@ -136,11 +172,22 @@ struct SettingsCluster {
     snapshot: SettingsSnapshot,
 }
 
-/// Media cluster: loaded media plus persistence. Single owner for the
-/// save/load domain.
-struct MediaCluster {
+/// Media department: loaded media plus persistence. Single owner
+/// for the save/load domain.
+struct MediaDept {
     loaded: Option<LoadedMedia>,
     persistence: PersistenceManager,
+}
+
+impl MediaDept {
+    fn set_loaded(&mut self, loaded: Option<LoadedMedia>) {
+        self.loaded = loaded;
+    }
+
+    fn clear_runtime(&mut self) {
+        self.loaded = None;
+        self.persistence.reset();
+    }
 }
 
 /// Live emulation objects: the core plus its GUI input adapter. Single
@@ -160,15 +207,30 @@ impl EmuCluster {
         }
     }
 
-    /// Shared core or the single no-core error. Named honestly: all
-    /// core methods take `&self`, so no caller needs `&mut`.
-    pub(crate) fn core(&self) -> Result<&EmuCore, SessionError> {
-        self.core.as_ref().ok_or(SessionError::NoCore)
+    /// Shared live core behind the [`LiveCore`] port. Named honestly:
+    /// all core methods take `&self`, so no caller needs `&mut`.
+    pub(crate) fn core(&self) -> Result<&dyn LiveCore, SessionError> {
+        self.core
+            .as_ref()
+            .map(|core| core as &dyn LiveCore)
+            .ok_or(SessionError::NoCore)
     }
 
-    /// Exclusive core for swaps and rebuilds.
-    pub(crate) fn core_mut(&mut self) -> Result<&mut EmuCore, SessionError> {
-        self.core.as_mut().ok_or(SessionError::NoCore)
+    /// Exclusive live core for swaps and rebuilds.
+    pub(crate) fn core_mut(&mut self) -> Result<&mut dyn LiveCore, SessionError> {
+        self.core
+            .as_mut()
+            .map(|core| core as &mut dyn LiveCore)
+            .ok_or(SessionError::NoCore)
+    }
+
+    /// Persistence port of the live core. Slot I/O goes through this,
+    /// never through the wider [`LiveCore`] surface.
+    pub(crate) fn exporter(&self) -> Result<&dyn StateExporter, SessionError> {
+        self.core
+            .as_ref()
+            .map(|core| core as &dyn StateExporter)
+            .ok_or(SessionError::NoCore)
     }
 
     /// Paired install: core and input always arrive together from the
@@ -186,16 +248,18 @@ impl EmuCluster {
 pub struct SessionHandle {
     registry: Arc<SystemRegistry>,
     active_system_id: Option<Box<dyn SystemId>>,
-    input: InputCluster,
+    input: InputDept,
     emu: EmuCluster,
     capabilities: HostBackendCapabilities,
     settings: SettingsCluster,
-    media: MediaCluster,
+    media: MediaDept,
     audio_registry: Arc<AudioBackendRegistry>,
     /// Shell-owned two-phase memory write transaction (Phase B).
     /// `Arc`: async debug-drain flights share it across UI ticks.
     debug_txn: Arc<Mutex<debug_vm::WriteTransaction>>,
     notifications: notification::NotificationCenter,
+    title_cache: title::TitleCache,
+    history_view: session_query::HistoryView,
 }
 
 impl SessionHandle {
@@ -225,7 +289,7 @@ impl SessionHandle {
                         Some((att, profile))
                     })
                     .collect();
-                InputAssignments { slots }
+                InputAssignments::new(slots)
             }
             None => factory.input_system_factory().default_assignments(),
         }
@@ -370,16 +434,21 @@ impl SessionHandle {
                 None,
                 HashMap::new(),
                 Default::default(),
-                InputAssignments { slots: vec![] },
+                InputAssignments::new(vec![]),
             )
         };
         let mut result = Self {
-            input: InputCluster {
+            input: InputDept {
                 current_assignments: assignments,
                 field_map,
                 host_peripherals,
                 key_field_map: HashMap::new(),
                 pressed_keys: std::collections::HashSet::new(),
+                touch_cache: None,
+                fallback_model: TouchOverlayModel {
+                    revision: 0,
+                    controls: Vec::new(),
+                },
             },
             emu: EmuCluster::new(),
             registry,
@@ -389,13 +458,15 @@ impl SessionHandle {
                 manager: settings,
                 snapshot: settings_snapshot,
             },
-            media: MediaCluster {
+            media: MediaDept {
                 loaded: None,
                 persistence: PersistenceManager::new(),
             },
             audio_registry,
             debug_txn: Arc::new(Mutex::new(debug_vm::WriteTransaction::Empty)),
             notifications: notification::NotificationCenter::new(),
+            title_cache: title::TitleCache::new(),
+            history_view: session_query::HistoryView::new(),
         };
         if let (Some(core), Some(input)) = (emu_core, gui_input) {
             result.emu.install(core, input);
@@ -446,6 +517,15 @@ impl SessionHandle {
         self.emu.core().ok().map(|c| c.render_profile())
     }
 
+    /// Swap the display buffer, then report the fresh tick. One
+    /// metrics lock for the whole pass: callers that used to call
+    /// `swap_frame_buffer` and then `tick_metrics` pay two locks;
+    /// this path pays one.
+    pub fn swap_frame_buffer_tick(&mut self) -> osd::TickMetrics {
+        self.swap_frame_buffer();
+        self.tick_metrics()
+    }
+
     pub fn swap_frame_buffer(&mut self) {
         if let Some(gui_input) = self.emu.input_mut() {
             gui_input.publish();
@@ -455,6 +535,17 @@ impl SessionHandle {
         }
     }
 
+    /// Borrow the display buffer for one render call. Narrow port:
+    /// the closure sees the buffer without the session leaking the
+    /// render type by value. Prefer this over [`frame_buffer`](Self::frame_buffer).
+    pub fn with_frame_buffer<R>(&self, render: impl FnOnce(&FrameBuffer) -> R) -> Option<R> {
+        self.emu.core().ok().map(|c| render(c.frame_buffer()))
+    }
+
+    /// Infra escape hatch: raw display buffer. Frontends (tao/gtk/
+    /// android) still call this; new code prefers
+    /// [`with_frame_buffer`](Self::with_frame_buffer), which keeps the
+    /// render type behind a closure instead of a return value.
     pub fn frame_buffer(&self) -> Option<&FrameBuffer> {
         self.emu.core().ok().map(|c| c.frame_buffer())
     }
@@ -469,6 +560,25 @@ impl SessionHandle {
         &self.settings.snapshot
     }
 
+    /// Narrow chrome view for the OSD layer decision, adapted once at
+    /// the settings boundary. Decision code takes [`OsdChrome`], never
+    /// the settings manager.
+    pub fn chrome(&self) -> osd::OsdChrome {
+        osd::OsdChrome::from(&self.settings.snapshot.local.notifications)
+    }
+
+    /// Narrow transient policy for OSD pushes, adapted once at the
+    /// settings boundary.
+    pub fn transient_policy(&self) -> osd::TransientPolicy {
+        osd::TransientPolicy::from(&self.settings.snapshot.local.notifications)
+    }
+
+    /// Configured save locations, if persistence setup resolved them.
+    /// Narrow sidecar view: cloned paths, no manager access needed.
+    pub fn sidecars(&self) -> Option<(PathBuf, PathBuf)> {
+        self.media.persistence.configured_sidecars()
+    }
+
     pub fn host_peripherals(&self) -> &nerust_core_traits::peripheral::HostPeripheralHandles {
         &self.input.host_peripherals
     }
@@ -478,22 +588,44 @@ impl SessionHandle {
     }
 
     #[cfg(test)]
+    pub(crate) fn set_test_assignments(&mut self, assignments: InputAssignments) {
+        self.input.current_assignments = assignments;
+    }
+
+    #[cfg(test)]
     pub(crate) fn loaded_media_ref(&self) -> &Option<LoadedMedia> {
         &self.media.loaded
     }
 
+    /// Infra escape hatch: full settings manager. Frontends (gtk)
+    /// still call this; new code uses [`settings_snapshot`](Self::settings_snapshot)
+    /// for reads and the session's own narrow writers for persistence.
+    /// Kept as a shim: removing it breaks out-of-crate frontends.
     pub fn settings_manager(&self) -> &SettingsManager {
         &self.settings.manager
     }
 
+    /// Bundle form of the backend swap: one struct instead of three
+    /// positional boxes. Test and Android backends enter here.
+    pub fn configure_persistence_backends(&mut self, backends: PersistenceBackends) {
+        self.media.persistence.configure_backends(backends);
+    }
+
+    /// Infra escape hatch: three positional backend boxes. The
+    /// Android frontend still calls this; new code prefers
+    /// [`configure_persistence_backends`](Self::configure_persistence_backends).
+    /// Kept as a shim: removing it breaks the out-of-crate frontend.
     pub fn set_persistence_backends(
         &mut self,
         slot_backend: Box<dyn persistence::SlotBackend>,
         autosave_backend: Box<dyn persistence::AutoSaveBackend>,
         mapper_backend: Box<dyn persistence::MapperSaveBackend>,
     ) {
-        self.media.persistence =
-            PersistenceManager::with_all_backends(slot_backend, autosave_backend, mapper_backend);
+        self.configure_persistence_backends(PersistenceBackends {
+            slot: slot_backend,
+            autosave: autosave_backend,
+            mapper: mapper_backend,
+        });
     }
 
     #[cfg(test)]
@@ -506,18 +638,63 @@ impl SessionHandle {
         self.settings.snapshot = snapshot;
     }
 
+    /// Narrow active-factory query: clone the factory without exposing
+    /// the registry lookup. Same-crate settings/input paths use this.
+    pub(crate) fn active_factory_cloned(&self) -> Option<Arc<dyn CoreFactory>> {
+        self.active_system_id
+            .as_ref()
+            .and_then(|id| self.registry.find_by_id(id.as_ref()))
+            .cloned()
+    }
+
+    /// Narrow active-factory query: run one closure against the live
+    /// factory. Same-crate orchestration uses this instead of holding
+    /// the factory across borrows.
+    pub(crate) fn with_active_factory<R>(
+        &self,
+        use_factory: impl FnOnce(&dyn CoreFactory) -> R,
+    ) -> Option<R> {
+        self.active_system_id
+            .as_ref()
+            .and_then(|id| self.registry.find_by_id(id.as_ref()))
+            .map(|factory| use_factory(factory.as_ref()))
+    }
+
+    /// Narrow active-system query: display name for titles, without
+    /// exposing the factory or the registry.
+    pub fn active_system_display_name(&self) -> Option<&'static str> {
+        self.with_active_factory(|factory| factory.display_name())
+    }
+
+    /// Narrow active-system query: owned id for settings lookups.
+    pub(crate) fn active_system_id_box(&self) -> Option<Box<dyn SystemId>> {
+        self.active_system_id.as_ref().map(|id| id.clone_box())
+    }
+
+    /// Infra escape hatch: live factory behind the registry. Same-crate
+    /// code uses [`active_factory_cloned`](Self::active_factory_cloned)
+    /// or [`with_active_factory`](Self::with_active_factory); tests and
+    /// frontends keep this shim until they migrate.
+    /// Kept as a shim: removing it breaks out-of-crate callers.
     pub fn active_factory(&self) -> Option<&Arc<dyn CoreFactory>> {
         self.active_system_id
             .as_ref()
             .and_then(|id| self.registry.find_by_id(id.as_ref()))
     }
 
+    /// Infra escape hatch: full system registry. Frontends (android/
+    /// gtk) still enumerate factories through this; new code uses the
+    /// `active_system_*` narrow queries.
+    /// Kept as a shim: removing it breaks out-of-crate frontends.
     pub fn registry(&self) -> &SystemRegistry {
         &self.registry
     }
 
     pub fn factory(&self) -> Option<&dyn CoreFactory> {
-        self.active_factory().map(|a| &**a)
+        self.active_system_id
+            .as_ref()
+            .and_then(|id| self.registry.find_by_id(id.as_ref()))
+            .map(|a| &**a)
     }
 
     pub fn active_system_id(&self) -> Option<&dyn SystemId> {
@@ -528,23 +705,40 @@ impl SessionHandle {
     /// only slot and controller identifiers survive, never the profiles,
     /// so this is an explicitly named projection, not a `From` conversion.
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
-        self.input
-            .current_assignments
-            .slots
-            .iter()
-            .map(|(slot, controller)| {
-                (
-                    slot.as_str().to_owned(),
-                    controller
-                        .as_ref()
-                        .map(|p| p.profile_id().as_str().to_owned()),
-                )
-            })
-            .collect()
+        self.input.persistable_pairs()
     }
 
     pub fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
-        self.active_factory().map(|f| f.default_load_options())
+        self.with_active_factory(|f| f.default_load_options())
+    }
+
+    /// Cached window title for the current tick: rebuilds only when
+    /// the tick, slot selection, or system name changes, otherwise
+    /// serves the stored string without formatting.
+    pub fn window_title_cached(&mut self, tick: &osd::TickMetrics) -> &str {
+        let name = self.active_system_display_name();
+        let input = title::TitleInput {
+            paused: tick.paused,
+            loaded: tick.loaded,
+            system_name: name,
+            active_slot: self.active_slot_id(),
+            slot_count: self.slots().len(),
+        };
+        self.title_cache.title(input)
+    }
+
+    /// Cached history rows: rebuilds only when the notification
+    /// history advanced or the language changed, otherwise serves the
+    /// stored rows without reformatting.
+    pub fn notification_history_lines_cached(
+        &mut self,
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) -> &[osd::HistoryLine] {
+        self.history_view.lines(
+            self.notifications.history(),
+            self.notifications.history_seq(),
+            language,
+        )
     }
 }
 
@@ -591,10 +785,10 @@ impl SessionHandle {
         )
         .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
 
-        if let Ok(core) = self.emu.core() {
+        if let Ok(exporter) = self.emu.exporter() {
             self.media
                 .persistence
-                .flush_mapper_save(core)
+                .flush_mapper_save(exporter)
                 .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
         }
 
@@ -604,8 +798,7 @@ impl SessionHandle {
             .install(created.runtime.emu_core, created.runtime.gui_input);
         self.input.field_map = created.runtime.field_map;
         self.input.host_peripherals = created.runtime.host_peripherals;
-        self.media.loaded = None;
-        self.media.persistence.reset();
+        self.media.clear_runtime();
         self.input.pressed_keys.clear();
         self.rebuild_key_field_map();
         Ok(())

@@ -53,7 +53,12 @@ pub trait ResetControl {
     fn reset(&mut self);
 }
 
-/// Save-slot control: slot CRUD plus reset.
+/// Save-slot control: slot CRUD plus reset. Legacy fat trait: the
+/// tao, gtk, and android frontends implement this out of crate, so it
+/// cannot be deleted without breaking them. New code implements the
+/// narrow [`SlotIo`]/[`SlotNav`]/[`ResetControl`] traits instead and
+/// reaches legacy implementors through [`SlotControlAdapter`].
+/// Kept as a shim: removing it breaks out-of-crate frontends.
 pub trait SlotControl {
     fn save_active_slot(&mut self) -> bool;
     fn load_active_slot(&mut self) -> bool;
@@ -67,42 +72,84 @@ pub trait SlotControl {
     fn reset(&mut self);
 }
 
-impl<T: SlotControl> SlotIo for T {
+/// Explicit adapter from the legacy fat [`SlotControl`] to the narrow
+/// ports. One named struct instead of blanket impls, so coherence
+/// never surprises a new narrow implementor: only this adapter
+/// bridges the two shapes.
+#[derive(Debug)]
+pub struct SlotControlAdapter<S>(pub S);
+
+/// Reference forwarding: `&mut T` speaks `SlotControl` whenever `T`
+/// does, so adapters compose without consuming the recorder.
+impl<T: SlotControl> SlotControl for &mut T {
     fn load_slot(&mut self, slot_id: u64) -> bool {
-        SlotControl::load_slot(self, slot_id)
+        T::load_slot(self, slot_id)
     }
     fn save_slot(&mut self, slot_id: u64) {
-        SlotControl::save_slot(self, slot_id)
+        T::save_slot(self, slot_id)
     }
     fn delete_slot(&mut self, slot_id: u64) {
-        SlotControl::delete_slot(self, slot_id)
+        T::delete_slot(self, slot_id)
     }
     fn save_active_slot(&mut self) -> bool {
-        SlotControl::save_active_slot(self)
+        T::save_active_slot(self)
     }
     fn load_active_slot(&mut self) -> bool {
-        SlotControl::load_active_slot(self)
+        T::load_active_slot(self)
     }
-}
-
-impl<T: SlotControl> SlotNav for T {
     fn select_slot(&mut self, slot_id: u64) {
-        SlotControl::select_slot(self, slot_id)
+        T::select_slot(self, slot_id)
     }
     fn select_next_slot(&mut self) {
-        SlotControl::select_next_slot(self)
+        T::select_next_slot(self)
     }
     fn select_previous_slot(&mut self) {
-        SlotControl::select_previous_slot(self)
+        T::select_previous_slot(self)
     }
     fn create_slot(&mut self) {
-        SlotControl::create_slot(self)
+        T::create_slot(self)
+    }
+    fn reset(&mut self) {
+        T::reset(self)
     }
 }
 
-impl<T: SlotControl> ResetControl for T {
+impl<S: SlotControl> SlotIo for SlotControlAdapter<S> {
+    fn load_slot(&mut self, slot_id: u64) -> bool {
+        SlotControl::load_slot(&mut self.0, slot_id)
+    }
+    fn save_slot(&mut self, slot_id: u64) {
+        SlotControl::save_slot(&mut self.0, slot_id)
+    }
+    fn delete_slot(&mut self, slot_id: u64) {
+        SlotControl::delete_slot(&mut self.0, slot_id)
+    }
+    fn save_active_slot(&mut self) -> bool {
+        SlotControl::save_active_slot(&mut self.0)
+    }
+    fn load_active_slot(&mut self) -> bool {
+        SlotControl::load_active_slot(&mut self.0)
+    }
+}
+
+impl<S: SlotControl> SlotNav for SlotControlAdapter<S> {
+    fn select_slot(&mut self, slot_id: u64) {
+        SlotControl::select_slot(&mut self.0, slot_id)
+    }
+    fn select_next_slot(&mut self) {
+        SlotControl::select_next_slot(&mut self.0)
+    }
+    fn select_previous_slot(&mut self) {
+        SlotControl::select_previous_slot(&mut self.0)
+    }
+    fn create_slot(&mut self) {
+        SlotControl::create_slot(&mut self.0)
+    }
+}
+
+impl<S: SlotControl> ResetControl for SlotControlAdapter<S> {
     fn reset(&mut self) {
-        SlotControl::reset(self)
+        SlotControl::reset(&mut self.0)
     }
 }
 
@@ -246,19 +293,23 @@ mod tests {
     #[test]
     fn recorder_pins_each_slot_and_lifecycle_call() {
         // The remaining Recorder methods are not reachable through
-        // dispatch; pin their recording so the fake stays faithful.
-        // Qualified through `SlotControl`: the narrow `SlotIo`/`SlotNav`
-        // blankets would otherwise make the call ambiguous.
+        // dispatch; pin their recording through the explicit adapter,
+        // which is the only bridge from the legacy fat trait to the
+        // narrow ports. New code implements the narrow traits direct.
         let mut recorder = Recorder::default();
         recorder.pause();
         recorder.resume();
-        assert!(SlotControl::save_active_slot(&mut recorder));
-        assert!(SlotControl::load_active_slot(&mut recorder));
-        SlotControl::save_slot(&mut recorder, 1);
-        SlotControl::load_slot(&mut recorder, 1);
-        SlotControl::delete_slot(&mut recorder, 1);
-        SlotControl::select_slot(&mut recorder, 1);
-        SlotNav::create_slot(&mut recorder);
+        {
+            let mut adapted = SlotControlAdapter(&mut recorder);
+            assert!(SlotIo::save_active_slot(&mut adapted));
+            assert!(SlotIo::load_active_slot(&mut adapted));
+            SlotIo::save_slot(&mut adapted, 1);
+            SlotIo::load_slot(&mut adapted, 1);
+            SlotIo::delete_slot(&mut adapted, 1);
+            SlotNav::select_slot(&mut adapted, 1);
+            SlotNav::create_slot(&mut adapted);
+            ResetControl::reset(&mut adapted);
+        }
         recorder.unload();
         for name in [
             "pause",

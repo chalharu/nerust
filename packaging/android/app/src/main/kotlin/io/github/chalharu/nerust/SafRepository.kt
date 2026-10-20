@@ -17,10 +17,12 @@ import java.util.concurrent.Executors
  * variants for any future UI-thread caller; the sync JNI path stays
  * synchronous because JNI requires synchronous returns.
  *
- * Large files never cross JNI whole: [readSafFileChunk]/[writeSafFileChunk]
- * bound every crossing to 64KB (see `SAF_CHUNK_BYTES` on the Rust side).
- * The legacy whole-file methods stay for APKs predating the chunked bridge;
- * the Rust side prefers chunked and falls back on `NoSuchMethodError`.
+ * Large files never cross JNI whole: [readSafFileChunkBytes]/[writeSafFileChunkBytes]
+ * bound every crossing to 64KB of raw `byte[]` (see `SAF_CHUNK_BYTES` on the
+ * Rust side; the Base64 chunk methods stay for APKs predating the `byte[]`
+ * bridge). The legacy whole-file methods stay for even older APKs; the Rust
+ * side prefers `byte[]`, then Base64 chunks, then whole-file, falling back
+ * on `NoSuchMethodError`.
  */
 class SafRepository(private val context: Context) {
 
@@ -116,6 +118,74 @@ class SafRepository(private val context: Context) {
         context.contentResolver.openOutputStream(file.uri, mode)?.use { it.write(bytes) }
             ?: return "error"
         return "ok"
+    }
+
+    /**
+     * One chunk read at [offset] ([length] bytes max) as a raw `byte[]`,
+     * or null when the document does not exist. No Base64 anywhere: this
+     * is the preferred chunk bridge (v3); the Base64 variant stays for
+     * older Rust builds.
+     */
+    fun readSafFileChunkBytes(
+        treeUri: String,
+        relativePath: String,
+        offset: Long,
+        length: Long,
+    ): ByteArray? {
+        val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return null
+        contentResolver.openInputStream(file.uri)?.use { input ->
+            var remaining = offset.coerceAtLeast(0L)
+            while (remaining > 0) {
+                val skipped = input.skip(remaining)
+                if (skipped <= 0) return null
+                remaining -= skipped
+            }
+            val capped = length.coerceIn(0L, SAF_CHUNK_BYTES.toLong()).toInt()
+            val buffer = ByteArray(capped)
+            var filled = 0
+            while (filled < capped) {
+                val read = input.read(buffer, filled, capped - filled)
+                if (read < 0) break
+                filled += read
+            }
+            return buffer.copyOf(filled)
+        }
+        return null
+    }
+
+    /**
+     * One chunk write of raw [bytes]. [append] selects `"wa"` (append) over
+     * `"rwt"` (overwrite for the first chunk). Preferred chunk bridge (v3).
+     */
+    fun writeSafFileChunkBytes(
+        treeUri: String,
+        relativePath: String,
+        bytes: ByteArray,
+        append: Boolean,
+    ): String {
+        val file = resolveSafDocument(treeUri, relativePath, create = true) ?: return "error"
+        val mode = if (append) "wa" else "rwt"
+        contentResolver.openOutputStream(file.uri, mode)?.use { it.write(bytes) }
+            ?: return "error"
+        return "ok"
+    }
+
+    /**
+     * Batched name+size listing (`[{"name": "...", "size": 123}]`) so the
+     * Rust `scan` needs no per-entry size probe (no N+1). Sizes are
+     * best-effort (`length()` may return -1); unknown sizes encode as -1
+     * and Rust treats them as absent.
+     */
+    fun listSafFilesWithSizes(treeUri: String, relativePath: String): String {
+        val directory =
+            resolveSafDirectory(treeUri, relativePath, create = false)
+                ?: return "[]"
+        val array = org.json.JSONArray()
+        for (file in directory.listFiles()) {
+            val name = file.name ?: continue
+            array.put(org.json.JSONObject().put("name", name).put("size", file.length()))
+        }
+        return array.toString()
     }
 
     fun readSafFileAsync(treeUri: String, relativePath: String, callback: (String?) -> Unit) {

@@ -6,7 +6,7 @@ use nerust_persistence::slots::autosave_state_slot_path;
 use crate::emu_core::CorePersistenceError;
 use crate::session::commands::{SessionCommand, SessionCommandOutcome};
 use crate::session::error::SlotOpFailure;
-use crate::session::persistence::FailingSlotBackend;
+use crate::session::persistence::{FailingSlotBackend, PersistenceBackends, StateExporter};
 use crate::session::persistence_setup::{MapperRestore, PersistenceSetup};
 use crate::session::test_util::*;
 use crate::test_helpers::*;
@@ -241,11 +241,11 @@ fn slot_commands_report_empty_missing_and_clean_round_trip() {
 fn failing_slot_backend_reports_storage() {
     let temp_dir = unique_temp_dir("slot-backend-failure");
     let mut session = test_session();
-    session.set_persistence_backends(
-        Box::new(FailingSlotBackend),
-        Box::new(FailingSlotBackend),
-        Box::new(FailingSlotBackend),
-    );
+    session.configure_persistence_backends(PersistenceBackends {
+        slot: Box::new(FailingSlotBackend),
+        autosave: Box::new(FailingSlotBackend),
+        mapper: Box::new(FailingSlotBackend),
+    });
     load_test_rom(&mut session, temp_dir.join("test.nes"));
 
     assert_eq!(
@@ -273,6 +273,8 @@ fn failing_slot_backend_reports_storage() {
 
 #[test]
 fn core_persistence_errors_classify_for_slot_messages() {
+    // The core error type behind the `StateExporter` port still
+    // classifies through `CorePersistenceError::slot_failure`.
     assert_eq!(
         CorePersistenceError::WorkerUnavailable.slot_failure(),
         SlotOpFailure::Unavailable
@@ -303,24 +305,27 @@ fn core_persistence_errors_classify_for_slot_messages() {
 /// in-core battery save (registry #1.1b).
 struct FailingExportCore;
 
-impl crate::emu_core::CorePersistence for FailingExportCore {
-    fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError> {
-        Err(CorePersistenceError::NoReply)
+impl StateExporter for FailingExportCore {
+    fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
+        Err(SlotOpFailure::Unavailable)
     }
-    fn load_state_raw(&self, _data: Vec<u8>) -> Result<(), CorePersistenceError> {
-        Err(CorePersistenceError::NoReply)
+    fn import_state(&self, _data: Vec<u8>) -> Result<(), SlotOpFailure> {
+        Err(SlotOpFailure::Unavailable)
     }
-    fn generate_preview(&self) -> Option<crate::state::PreviewFrame> {
+    fn export_preview(&self) -> Option<nerust_persistence::thumbnail::ThumbnailSource> {
+        None
+    }
+    fn export_identity(&self) -> Option<nerust_core_traits::identity::SystemIdentity> {
         None
     }
     fn canonical_media_identity(&self) -> Option<nerust_core_traits::identity::SystemIdentity> {
         None
     }
-    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, CorePersistenceError> {
-        Err(CorePersistenceError::NoReply)
+    fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
+        Err(SlotOpFailure::Unavailable)
     }
-    fn load_mapper_raw(&self, _bytes: Vec<u8>) -> Result<(), CorePersistenceError> {
-        Err(CorePersistenceError::NoReply)
+    fn import_mapper(&self, _bytes: Vec<u8>) -> Result<(), SlotOpFailure> {
+        Err(SlotOpFailure::Unavailable)
     }
 }
 

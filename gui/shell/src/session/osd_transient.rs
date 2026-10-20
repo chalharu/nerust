@@ -217,11 +217,18 @@ impl TransientQueue {
     /// queue tail when anything is queued, else the showing label.
     /// Reports where the merge landed for dirty gating.
     fn merge_consecutive(&mut self, item: &OsdItem) -> Option<MergeTarget> {
-        if let Some(back) = self.pending.back() {
-            if back.level != item.level || back.key != item.key {
+        if !self.pending.is_empty() {
+            let matches = self
+                .pending
+                .back()
+                .is_some_and(|back| back.level == item.level && back.key == item.key);
+            if !matches {
                 return None;
             }
-            let back = self.pending.back_mut().expect("tail checked");
+            // Tail confirmed non-empty above; the mutable borrow below
+            // cannot fail single-threaded, so the else only drops the
+            // duplicate in the impossible case.
+            let back = self.pending.back_mut()?;
             back.count += item.count;
             back.row = counted_row(item.key.clone(), back.count, item.row.rgb, item.row.tag);
             back.deadline = item.deadline;
@@ -245,13 +252,19 @@ impl TransientQueue {
         if item.level != NotificationLevel::Error {
             return Some(item);
         }
-        let Some(current) = self.current.as_ref() else {
-            return Some(item);
-        };
-        if current.level == NotificationLevel::Error {
+        if self
+            .current
+            .as_ref()
+            .is_none_or(|current| current.level == NotificationLevel::Error)
+        {
             return Some(item);
         }
-        let demoted = self.current.take().expect("showing label checked");
+        // Showing label confirmed non-error above; the take below
+        // cannot fail single-threaded, so the else only keeps the
+        // command total in the impossible case.
+        let Some(demoted) = self.current.take() else {
+            return Some(item);
+        };
         self.current = Some(item);
         self.pending.push_front(demoted);
         while self.pending.len() > OsdLimits::MAX_TRANSIENT_QUEUED {

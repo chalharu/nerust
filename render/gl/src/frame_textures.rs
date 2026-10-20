@@ -75,6 +75,81 @@ pub(crate) fn allocate_texture_store(
     Ok(())
 }
 
+/// NTSC kernel texture (RGBA8) upload path.
+///
+/// # Canonical byte order
+///
+/// The packed kernel (`be_data`) is a sequence of big-endian `u32`
+/// words: bytes `[R, G, B, A]` in that order on the wire. The upload
+/// below copies those bytes verbatim into the RGBA8 texture, so the
+/// GPU samples exactly what the CPU packed: word
+/// `u32::from_be_bytes([R, G, B, A])`. This matches the softbuffer
+/// CPU path, which indexes the same packing with `to_be_bytes` (see
+/// `read_entry` there). A cross-check test
+/// (`ntsc_upload_bytes_match_cpu_order`) locks the identity: upload
+/// bytes must equal the CPU indexer order byte-for-byte.
+/// Pure pack step of the NTSC kernel upload: verbatim big-endian
+/// byte copy with zero padding, no GL. Returns `(actual_height,
+/// need)`; the caller uploads `scratch[..need]`.
+/// Unit-tested without a context (see `ntsc_pack_*` below).
+pub(crate) fn pack_ntsc_bytes(
+    width: usize,
+    height: usize,
+    be_data: &[u8],
+    scratch: &mut Vec<u8>,
+) -> Result<(usize, usize), ViewError> {
+    // Row stride, then total bytes: each step checked so a corrupt
+    // kernel header refuses instead of wrapping the scratch.
+    let row_bytes = width.checked_mul(4).ok_or(ViewError::from(
+        crate::layout::FrameError::DimensionsOverflow {
+            have: be_data.len(),
+        },
+    ))?;
+    let entry_count = be_data.len() / row_bytes.max(1);
+    let actual_height = entry_count.max(height);
+    let need = actual_height.checked_mul(row_bytes).ok_or(ViewError::from(
+        crate::layout::FrameError::DimensionsOverflow {
+            have: be_data.len(),
+        },
+    ))?;
+    if scratch.len() < need {
+        scratch.resize(need, 0);
+    }
+    let rgba = &mut scratch[..need];
+    for row in 0..actual_height {
+        for col in 0..width {
+            let offset = (row * width + col) * 4;
+            if offset + 4 <= be_data.len() {
+                rgba[offset..offset + 4].copy_from_slice(&be_data[offset..offset + 4]);
+            } else {
+                rgba[offset..offset + 4].copy_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+    }
+    Ok((actual_height, need))
+}
+
+pub(crate) fn configure_ntsc_texture(
+    unit: u32,
+    texture: u32,
+    width: usize,
+    height: usize,
+    be_data: &[u8],
+    scratch: &mut Vec<u8>,
+) -> Result<(), ViewError> {
+    let (actual_height, need) = pack_ntsc_bytes(width, height, be_data, scratch)?;
+    upload_texture_bytes(
+        unit,
+        texture,
+        width,
+        actual_height,
+        gl::RGBA as GLint,
+        gl::RGBA,
+        &scratch[..need],
+    )?;
+    Ok(())
+}
+
 /// Initial upload with caller bytes (placeholder palettes, kernels).
 pub(crate) fn upload_texture_bytes(
     unit: u32,
@@ -99,4 +174,44 @@ pub(crate) fn upload_texture_bytes(
         data.as_ptr().cast(),
     ))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pack_ntsc_bytes;
+
+    #[test]
+    fn ntsc_pack_copies_bytes_verbatim_with_zero_pad() {
+        // Three full words: verbatim copy, tail zero-padded. A short
+        // trailing partial word never copies (offset guard).
+        let be: Vec<u8> = (1u8..=12).collect();
+        let mut scratch = Vec::new();
+        let (height, need) = pack_ntsc_bytes(2, 2, &be, &mut scratch).unwrap();
+        assert_eq!((height, need), (2, 16));
+        assert_eq!(&scratch[..12], &(1u8..=12).collect::<Vec<_>>()[..]);
+        assert_eq!(&scratch[12..16], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn ntsc_upload_bytes_match_cpu_order() {
+        // Canonical order lock: the GPU upload bytes equal the CPU
+        // indexer order byte-for-byte, i.e. word
+        // `u32::from_be_bytes([R, G, B, A])` and back via
+        // `to_be_bytes` (the softbuffer `read_entry` convention).
+        let word = u32::from_be_bytes([0x11, 0x22, 0x33, 0x44]);
+        assert_eq!(word.to_be_bytes(), [0x11, 0x22, 0x33, 0x44]);
+        let be = word.to_be_bytes();
+        let mut scratch = Vec::new();
+        let (_, need) = pack_ntsc_bytes(1, 1, &be, &mut scratch).unwrap();
+        assert_eq!(need, 4);
+        assert_eq!(&scratch[..need], &be);
+        assert_eq!(u32::from_be_bytes(scratch[..4].try_into().unwrap()), word);
+    }
+
+    #[test]
+    fn ntsc_pack_rejects_overflow() {
+        let mut scratch = Vec::new();
+        let err = pack_ntsc_bytes(usize::MAX, usize::MAX, &[0; 4], &mut scratch).unwrap_err();
+        assert!(err.to_string().contains("overflow"));
+    }
 }

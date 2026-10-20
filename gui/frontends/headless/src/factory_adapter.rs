@@ -141,8 +141,8 @@ pub(crate) fn open_headless_system(
     // Pad buttons resolve through the slot profiles to buffer fields.
     // Absent from the group means no such hardware (silent no-op);
     // present but unmapped is loud drift.
-    let mut pad_buttons = Vec::with_capacity(assignments.slots.len());
-    for (pad, (attachment, profile)) in assignments.slots.iter().enumerate() {
+    let mut pad_buttons = Vec::with_capacity(assignments.slots().len());
+    for (pad, (attachment, profile)) in assignments.slots().iter().enumerate() {
         let profile = profile
             .as_ref()
             .ok_or_else(|| construction(format!("slot {pad} assigns no controller profile")))?;
@@ -221,12 +221,12 @@ fn headless_view(
 /// events) plus the microphone, so the factory default of an unassigned
 /// P2 is insufficient here.
 fn duplicate_p1_to_p2(base: &InputAssignments) -> Option<InputAssignments> {
-    let p1 = base.slots.first()?.1.clone()?;
-    let mut slots = base.slots.clone();
+    let p1 = base.slots().first()?.1.clone()?;
+    let mut slots = base.slots().to_vec();
     if slots.len() > 1 {
         slots[1].1 = Some(p1);
     }
-    Some(InputAssignments { slots })
+    Some(InputAssignments::new(slots))
 }
 
 /// One address read through the Spaces table: a mapped value, an

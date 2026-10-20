@@ -2,7 +2,14 @@ use std::rc::Rc;
 
 use gl::types::{GLenum, GLint, GLsizei, GLuint};
 
-use super::{CurrentContext, Error, gl_error_handle, gl_get_error};
+use super::{
+    CurrentContext, Error,
+    raw::{
+        bind_buffer, bind_vertex_array, buffer_data, delete_buffers, delete_vertex_arrays,
+        draw_arrays, enable_vertex_attrib_array, gen_buffers, gen_vertex_arrays,
+        vertex_attrib_pointer,
+    },
+};
 
 /// GL vertex array plus the buffers it references. Single-threaded by
 /// construction: `Rc`/`Cell` internals are `!Send`, so all names live
@@ -41,20 +48,12 @@ impl VertexArray {
         F: FnOnce(&mut VertexArrayInitContext<'_>) -> Result<(), Error>,
     {
         let mut vao = 0;
-        unsafe {
-            gl::GenVertexArrays(1, &mut vao);
-        }
-        // Gen itself failed: no name to delete.
-        gl_get_error()?;
+        gen_vertex_arrays(1, &mut vao)?;
         // Scope guard: a failing bind or `cb` must not orphan the VAO.
-        unsafe {
-            gl::BindVertexArray(vao);
-        }
-        if let Err(e) = gl_get_error() {
-            unsafe {
-                gl::DeleteVertexArrays(1, &vao);
-            }
-            let _ = gl_get_error();
+        // Wrappers already drain per call (debug) / batched (release),
+        // so no second `gl_get_error` drain here.
+        if let Err(e) = bind_vertex_array(vao) {
+            let _ = delete_vertex_arrays(1, &mut vao);
             return Err(e);
         }
         let mut va = VertexArray {
@@ -69,10 +68,7 @@ impl VertexArray {
         {
             let mut ctx = VertexArrayInitContext { va: &mut va };
             if let Err(e) = cb(&mut ctx) {
-                unsafe {
-                    gl::DeleteVertexArrays(1, &vao);
-                }
-                let _ = gl_get_error();
+                let _ = delete_vertex_arrays(1, &mut vao);
                 return Err(e);
             }
         }
@@ -117,8 +113,7 @@ impl VertexArray {
     where
         F: FnOnce(&VertexArrayContext<'_>) -> Result<(), Error>,
     {
-        gl_error_handle(|| unsafe { gl::BindVertexArray(self.vao.id) })?;
-        gl_get_error()?;
+        bind_vertex_array(self.vao.id)?;
         let ctx = VertexArrayContext { va: self };
         cb(&ctx)?;
         Ok(())
@@ -141,14 +136,14 @@ impl VertexArrayInitContext<'_> {
     where
         F: FnOnce(VertexArrayBufferContext) -> Result<(), Error>,
     {
-        gl_error_handle(|| unsafe { gl::BindBuffer(gl::ARRAY_BUFFER, vbo.id) })?;
+        bind_buffer(gl::ARRAY_BUFFER, vbo.id)?;
         self.va.add_vbo(vbo);
         cb(VertexArrayBufferContext)?;
         Ok(())
     }
     #[expect(dead_code, reason = "IBO binding for indexed draw future use")]
     fn bind_ibo(&mut self, ibo: Rc<IndexBuffer>) -> Result<(), Error> {
-        gl_error_handle(|| unsafe { gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ibo.id) })?;
+        bind_buffer(gl::ELEMENT_ARRAY_BUFFER, ibo.id)?;
         self.va.set_ibo(ibo);
         Ok(())
     }
@@ -160,7 +155,7 @@ pub struct VertexArrayContext<'a> {
 }
 impl VertexArrayContext<'_> {
     pub fn draw_arrays(&self, mode: GLuint, first: GLint, count: GLsizei) -> Result<(), Error> {
-        gl_error_handle(|| unsafe { gl::DrawArrays(mode, first, count) })
+        draw_arrays(mode, first, count)
     }
     #[expect(dead_code, reason = "indexed draw for future renderer use")]
     fn draw_elements(&self, mode: GLuint, count: GLsizei, offset: usize) -> Result<(), Error> {
@@ -170,14 +165,7 @@ impl VertexArrayContext<'_> {
             .as_ref()
             .expect("No IBO is bound to the VAO")
             .data_type;
-        gl_error_handle(|| unsafe {
-            gl::DrawElements(
-                mode,
-                count,
-                data_type,
-                std::ptr::null::<std::ffi::c_void>().add(offset),
-            )
-        })
+        super::raw::draw_elements(mode, count, data_type, offset)
     }
 }
 
@@ -192,17 +180,17 @@ impl VertexArrayBufferContext {
         stride: GLsizei,
         offset: usize,
     ) -> Result<(), Error> {
-        gl_error_handle(|| unsafe { gl::EnableVertexAttribArray(a.id) })?;
-        gl_error_handle(|| unsafe {
-            gl::VertexAttribPointer(
-                a.id,
-                data_size,
-                data_type,
-                gl::FALSE,
-                stride,
-                std::ptr::null::<std::ffi::c_void>().add(offset),
-            )
-        })
+        enable_vertex_attrib_array(a.id)?;
+        vertex_attrib_pointer(
+            a.id,
+            data_size,
+            data_type,
+            gl::FALSE,
+            stride,
+            // SAFETY: null base plus a byte offset is the standard
+            // client-side attribute address form for a bound VBO.
+            unsafe { std::ptr::null::<std::ffi::c_void>().add(offset) },
+        )
     }
 }
 
@@ -224,30 +212,16 @@ impl Drop for VertexBuffer {
 impl VertexBuffer {
     pub fn from_slice<T>(s: &[T]) -> Result<VertexBuffer, Error> {
         let mut vbo = 0;
-        unsafe { gl::GenBuffers(1, &mut vbo) };
-        gl_get_error()?;
+        gen_buffers(1, &mut vbo)?;
         // Scope guard: a failing bind or upload must not orphan `vbo`.
-        unsafe { gl::BindBuffer(gl::ARRAY_BUFFER, vbo) };
-        if let Err(e) = gl_get_error() {
-            unsafe {
-                gl::DeleteBuffers(1, &vbo);
-            }
-            let _ = gl_get_error();
+        // Wrappers already drain per call, so no extra `gl_get_error`.
+        if let Err(e) = bind_buffer(gl::ARRAY_BUFFER, vbo) {
+            let _ = delete_buffers(1, &vbo);
             return Err(e);
         }
-        unsafe {
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                std::mem::size_of_val(s) as gl::types::GLsizeiptr,
-                s.as_ptr() as _,
-                gl::STATIC_DRAW,
-            );
-        }
-        if let Err(e) = gl_get_error() {
-            unsafe {
-                gl::DeleteBuffers(1, &vbo);
-            }
-            let _ = gl_get_error();
+        let size = std::mem::size_of_val(s) as gl::types::GLsizeiptr;
+        if let Err(e) = buffer_data(gl::ARRAY_BUFFER, size, s.as_ptr() as _, gl::STATIC_DRAW) {
+            let _ = delete_buffers(1, &vbo);
             return Err(e);
         }
 
@@ -294,33 +268,19 @@ impl Drop for IndexBuffer {
 impl IndexBuffer {
     pub fn from_slice<T>(s: &[T], data_type: GLenum) -> Result<IndexBuffer, Error> {
         let mut vbo = 0;
-        unsafe {
-            gl::GenBuffers(1, &mut vbo);
-        }
-        gl_get_error()?;
-        unsafe {
-            gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, vbo);
-        }
-        if let Err(e) = gl_get_error() {
-            unsafe {
-                gl::DeleteBuffers(1, &vbo);
-            }
-            let _ = gl_get_error();
+        gen_buffers(1, &mut vbo)?;
+        if let Err(e) = bind_buffer(gl::ELEMENT_ARRAY_BUFFER, vbo) {
+            let _ = delete_buffers(1, &vbo);
             return Err(e);
         }
-        unsafe {
-            gl::BufferData(
-                gl::ELEMENT_ARRAY_BUFFER,
-                std::mem::size_of_val(s) as gl::types::GLsizeiptr,
-                s.as_ptr() as _,
-                gl::STATIC_DRAW,
-            );
-        }
-        if let Err(e) = gl_get_error() {
-            unsafe {
-                gl::DeleteBuffers(1, &vbo);
-            }
-            let _ = gl_get_error();
+        let size = std::mem::size_of_val(s) as gl::types::GLsizeiptr;
+        if let Err(e) = buffer_data(
+            gl::ELEMENT_ARRAY_BUFFER,
+            size,
+            s.as_ptr() as _,
+            gl::STATIC_DRAW,
+        ) {
+            let _ = delete_buffers(1, &vbo);
             return Err(e);
         }
 

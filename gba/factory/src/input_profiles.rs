@@ -19,8 +19,8 @@ impl InputPorts for crate::GbaFactory {
         SLOTS
     }
 
-    fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>> {
-        nerust_gba_device::gba_device_controller_profiles()
+    fn controllers(&self) -> Box<dyn Iterator<Item = Rc<dyn ControllerProfile>> + '_> {
+        Box::new(nerust_gba_device::gba_device_controller_profiles())
     }
 }
 
@@ -28,46 +28,47 @@ impl InputSystemFactory for crate::GbaFactory {
     fn default_assignments(&self) -> InputAssignments {
         let standard = self
             .controllers()
-            .into_iter()
             .find(|profile| profile.profile_id() == ProfileId::new("gba.standard_pad"));
-        InputAssignments {
-            slots: vec![(GBA_ATTACHMENT, standard)],
-        }
+        InputAssignments::new(vec![(GBA_ATTACHMENT, standard)])
     }
 
     fn create_split(
         &self,
         controllers: &ControllerCollection,
     ) -> Result<InputResources, CreateSplitError> {
-        if controllers.device_count() != 1 {
+        if controllers.is_empty() {
+            return Err(CreateSplitError::ControllerNotFound {
+                controller: ProfileId::new("gba.standard_pad"),
+            });
+        }
+        if controllers.len() != 1 {
             return Err(CreateSplitError::IncompatibleController {
-                controller: format!("{} assigned controllers", controllers.device_count()),
-                slot: GBA_ATTACHMENT.to_string(),
+                controller: ProfileId::new("gba.standard_pad"),
+                slot: GBA_ATTACHMENT,
             });
         }
 
         let field_map = {
             let Some(dev) = controllers.get(0) else {
-                return Err(CreateSplitError::IncompatibleController {
-                    controller: "missing controller".to_string(),
-                    slot: GBA_ATTACHMENT.to_string(),
+                return Err(CreateSplitError::ControllerNotFound {
+                    controller: ProfileId::new("gba.standard_pad"),
                 });
             };
             let mut entries = Vec::new();
             dev.field_map(&GBA_PORT, &mut entries);
             entries
                 .into_iter()
-                .map(|(attachment, control, field)| ((attachment, control), field))
+                .map(|entry| ((entry.attachment, entry.control), entry.field))
                 .collect()
         };
         let shared: std::sync::Arc<std::sync::Mutex<Box<dyn InputStateBuffer>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Box::<GbaInputBuffer>::default()));
-        let split = InputSplit {
-            shared: std::sync::Arc::clone(&shared),
-            flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            new_buffer: Box::new(|| Box::<GbaInputBuffer>::default()),
-        };
-        Ok(InputResources { split, field_map })
+        let split = InputSplit::new(
+            std::sync::Arc::clone(&shared),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            Box::new(|| Box::<GbaInputBuffer>::default()),
+        );
+        Ok(InputResources::new(split, field_map))
     }
 }
 
@@ -80,10 +81,10 @@ mod tests {
     #[test]
     fn default_assignment_uses_standard_pad() {
         let assignments = crate::GbaFactory.default_assignments();
-        assert_eq!(assignments.slots.len(), 1);
-        assert_eq!(assignments.slots[0].0, GBA_ATTACHMENT);
+        assert_eq!(assignments.slots().len(), 1);
+        assert_eq!(assignments.slots()[0].0, GBA_ATTACHMENT);
         assert_eq!(
-            assignments.slots[0]
+            assignments.slots()[0]
                 .1
                 .as_ref()
                 .expect("standard pad")
@@ -96,8 +97,8 @@ mod tests {
     fn split_maps_all_ten_controls_to_gba_buffer() {
         let controllers = ControllerCollection::new(vec![Box::new(StandardPad::new())]);
         let resources = crate::GbaFactory.create_split(&controllers).unwrap();
-        assert_eq!(resources.field_map.len(), 10);
-        let buffer = (resources.split.new_buffer)();
+        assert_eq!(resources.field_map().len(), 10);
+        let buffer = (resources.split().new_buffer())();
         assert!(buffer.downcast_ref::<GbaInputBuffer>().is_some());
     }
 
