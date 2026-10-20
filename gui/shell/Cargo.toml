@@ -15,7 +15,6 @@ nerust_gui_runtime.workspace = true
 nerust_gui_viewmodel.workspace = true
 nerust_input_traits.workspace = true
 nerust_persistence.workspace = true
-nerust_render_osd.workspace = true
 nerust_render_traits.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true

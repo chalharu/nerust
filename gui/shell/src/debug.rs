@@ -372,7 +372,7 @@ pub struct DrainFlight {
     reg_sent: Option<(&'static str, u64)>,
     snap: Option<StoredSnapshot>,
     images_gen: u64,
-    images: Vec<DebugImage>,
+    images: Arc<Vec<DebugImage>>,
     watch_value: Option<u8>,
 }
 
@@ -422,7 +422,7 @@ impl DrainFlight {
             reg_sent: None,
             snap: None,
             images_gen: 0,
-            images: Vec::new(),
+            images: Arc::new(Vec::new()),
             watch_value: None,
         };
         flight.classify(actions);
@@ -815,7 +815,7 @@ impl DrainFlight {
         }
         if let Some((generation, shared)) = core.images_cache_lookup() {
             self.images_gen = generation;
-            self.images = Vec::clone(&shared);
+            self.images = Arc::clone(&shared);
             self.phase = FlightPhase::Watch;
             return;
         }
@@ -964,7 +964,7 @@ impl DrainFlight {
             self.images = if stored.fresh {
                 stored.images
             } else {
-                Vec::new()
+                Arc::new(Vec::new())
             };
         }
     }
@@ -997,7 +997,7 @@ impl DrainFlight {
             dump_rows: snap.dump_rows,
             panels: snap.panels,
             disasm: snap.disasm,
-            images: std::mem::take(&mut self.images),
+            images: std::mem::replace(&mut self.images, Arc::new(Vec::new())),
             images_gen: self.images_gen,
             watch_value: self.watch_value,
             paused,
@@ -1022,7 +1022,7 @@ pub struct DrainSnapshot {
     /// Disassembly lines at the anchor.
     pub disasm: Vec<nerust_core_traits::debugger::DisasmLine>,
     /// Fetched system images (empty when unchanged or skipped).
-    pub images: Vec<DebugImage>,
+    pub images: Arc<Vec<DebugImage>>,
     /// Source generation of the served images.
     pub images_gen: u64,
     /// Folded watch value, if the watch landed on the page or the fallback read.

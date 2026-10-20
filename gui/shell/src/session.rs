@@ -21,7 +21,6 @@ pub(crate) mod persistence_setup;
 #[cfg(test)]
 mod persistence_test;
 pub mod ports;
-pub mod services;
 pub mod session_query;
 pub(crate) mod settings_apply;
 pub(crate) mod title;
@@ -669,6 +668,11 @@ impl SessionHandle {
     /// An explicitly named projection, not a `From` conversion.
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
         self.input.persistable_pairs()
+    }
+
+    /// Whether runtime media is loaded; single owner for the media domain.
+    pub fn has_loaded_media(&self) -> bool {
+        self.media.loaded.is_some()
     }
 
     pub fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {

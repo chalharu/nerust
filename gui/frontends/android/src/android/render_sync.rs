@@ -6,7 +6,8 @@ use std::{rc::Rc, sync::Arc, time::Instant};
 use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_shell::session::{SessionHandle, osd::TickMetrics};
 use nerust_render_traits::{
-    FrameBuffer, SurfaceSize, VideoRenderProfile,
+    FrameBuffer, SurfaceSize,
+    physical::PhysicalSize,
     renderer::{DEFAULT_OSD_UPLOAD_RETRIES, PipelineFactory, RenderPipeline, RendererConfig},
 };
 use nerust_settings_core::model::{language::AppLanguage, local::NotificationSettings};
@@ -25,7 +26,7 @@ pub(super) struct FrameInput<'session> {
     pub tick: TickMetrics,
     pub notifications: NotificationSettings,
     pub language: AppLanguage,
-    pub profile: Option<VideoRenderProfile>,
+    pub profile: Option<PhysicalSize>,
     pub fb: Option<&'session FrameBuffer>,
 }
 
@@ -198,7 +199,7 @@ impl RenderSync {
             session.clear_display();
         }
         session.swap_frame_buffer();
-        let profile = session.render_profile().cloned();
+        let profile = session.render_profile().map(|p| p.physical_size);
         let snapshot = session.settings_snapshot();
         let notifications = snapshot.local.notifications.clone();
         let language = snapshot.shared.general.language;
@@ -232,7 +233,7 @@ impl RenderSync {
             renderer.resize(window_size);
         }
         let scale_factor = window.scale_factor() as f32;
-        let content = input.profile.as_ref().map(|profile| profile.physical_size);
+        let content = input.profile;
         // UI-thread push cache: render never blocks on JNI.
         // First frames use the default until Kotlin pushes.
         let system = osd.system_insets(window_size, scale_factor);

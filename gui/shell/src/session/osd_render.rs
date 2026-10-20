@@ -1,8 +1,7 @@
 //! Render adapter: the single point where OSD decisions cross into render vocabulary.
 //! Only this module names `nerust_render_traits` types and maps settings corners to anchors.
 
-use nerust_render_osd::{OsdContent, OsdRow, OsdStatus};
-use nerust_render_traits::renderer::{OsdAnchor, SafeInsets};
+use nerust_render_traits::renderer::{OsdAnchor, OsdContent, OsdRow, OsdStatus, SafeInsets};
 use nerust_settings_core::model::local::NotificationPosition;
 
 use crate::session::osd_presenter::{OsdPlan, UiInsets};
@@ -47,8 +46,8 @@ impl OsdPlan {
                 })
                 .collect(),
             status: self.status.map(|(label, value)| OsdStatus {
-                label: label.to_string(),
-                value: value.to_string(),
+                label,
+                value,
                 rgb: OSD_STATUS_RGB,
             }),
             position: osd_anchor(self.position),
@@ -93,6 +92,7 @@ mod insets_tests {
 #[cfg(test)]
 mod render_cov_tests {
     use crate::session::osd_render::*;
+    use std::rc::Rc;
 
     #[test]
     fn plan_into_content_carries_status_color() {
@@ -119,7 +119,7 @@ mod render_cov_tests {
         use nerust_settings_core::model::local::NotificationPosition as P;
         let plan = OsdPlan {
             rows: vec![OsdRow {
-                text: "Paused".to_string(),
+                text: Rc::from("Paused"),
                 rgb: (1, 2, 3),
                 tag: "[INFO]".into(),
             }],

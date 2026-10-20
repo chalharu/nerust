@@ -231,8 +231,9 @@ impl WindowRuntime {
 
         self.host.session_mut().swap_frame_buffer();
         if let Some(fb) = self.host.session_mut().frame_buffer() {
+            let frame_counter = ctx.tick().frame_counter;
             let result = renderer.render(fb);
-            self.host.on_render_result(result);
+            self.host.on_render_result(result, frame_counter);
         }
     }
 

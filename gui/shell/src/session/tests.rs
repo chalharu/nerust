@@ -705,10 +705,7 @@ fn switching_system_discards_previous_loaded_runtime_state() {
 
     assert_eq!(session.active_system_id(), Some(second_id.as_ref()));
     assert!(!session.tick_metrics().loaded);
-    {
-        use crate::session::services::MediaService as _;
-        assert!(!session.has_loaded_media());
-    }
+    assert!(!session.has_loaded_media());
     assert!(session.slots().is_empty());
 }
 

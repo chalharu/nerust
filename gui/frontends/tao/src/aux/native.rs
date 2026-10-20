@@ -3,8 +3,17 @@
 
 use tao::event::WindowEvent;
 
-use super::domain::AuxNativeEvent;
+use super::domain::{AuxNativeEvent, NativeWindowId};
 use super::tao_map::{keycode_to_key, tao_button_to_aux, tao_modifiers_to_domain};
+
+/// Map a toolkit window id to the domain routing key.
+/// Hashing stays in this outer adapter; the domain never names `tao`.
+pub(crate) fn native_id_of(id: tao::window::WindowId) -> NativeWindowId {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut hasher);
+    NativeWindowId::new(hasher.finish())
+}
 
 /// Map one native event to the domain event. Cursor and wheel
 /// pixels stay physical: the shell divides by its live scale.
@@ -67,6 +76,12 @@ pub(crate) fn adapt_event(event: &WindowEvent) -> AuxNativeEvent {
 mod tests {
     use super::*;
     use crate::aux::domain::{AuxButton, AuxId, AuxModifiers};
+
+    #[test]
+    fn native_id_mapping_is_stable_and_toolkit_free() {
+        let id = unsafe { tao::window::WindowId::dummy() };
+        assert_eq!(native_id_of(id), native_id_of(id));
+    }
 
     #[test]
     fn aux_ids_compare_by_value() {

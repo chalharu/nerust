@@ -27,7 +27,7 @@ impl FrameCtx {
     }
 
     /// Tick liveness for pause/load and title gates.
-    pub(super) fn tick(&self) -> nerust_gui_shell::session::osd::TickMetrics {
+    pub(crate) fn tick(&self) -> nerust_gui_shell::session::osd::TickMetrics {
         self.tick
     }
 

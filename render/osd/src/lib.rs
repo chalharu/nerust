@@ -8,38 +8,8 @@ use nerust_render_traits::renderer::{
 };
 use std::{collections::HashMap, rc::Rc};
 
-/// One raster pill row: tag plus body in a single color; tag shares one allocation via `Rc`.
-#[derive(Debug, Clone)]
-pub struct OsdRow {
-    pub tag: Rc<str>,
-    pub text: String,
-    pub rgb: (u8, u8, u8),
-}
-
-impl OsdRow {
-    /// Shared tag handle; clones the `Rc` without reallocating.
-    pub fn tag_shared(&self) -> Rc<str> {
-        self.tag.clone()
-    }
-}
-
-/// Status readout: label plus right-aligned value in a fixed-width
-/// pill so digits never shift.
-#[derive(Debug, Clone)]
-pub struct OsdStatus {
-    pub label: String,
-    pub value: String,
-    pub rgb: (u8, u8, u8),
-}
-
-/// Raster input: transient rows plus optional status, with corners.
-#[derive(Debug, Clone, Default)]
-pub struct OsdContent {
-    pub rows: Vec<OsdRow>,
-    pub status: Option<OsdStatus>,
-    pub position: OsdAnchor,
-    pub status_position: OsdAnchor,
-}
+/// Port-owned OSD DTOs, re-exported for frontends that only name the rasterizer crate.
+pub use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
 
 /// System font preference. Extra scan roots arrive via
 /// [`OsdRaster::with_font_dirs`].
@@ -298,7 +268,7 @@ impl OsdRaster {
         for row in &content.rows {
             let entry = Entry::Line {
                 tag: Rc::clone(&row.tag),
-                text: row.text.as_str(),
+                text: Rc::clone(&row.text),
                 rgb: row.rgb,
                 anchor: content.position,
             };
@@ -427,7 +397,7 @@ impl OsdRaster {
                 anchor,
             } => {
                 let tag_span = self.shape_cached_shared(&tag, font_px);
-                let text_span = self.shape_cached(text, font_px);
+                let text_span = self.shape_cached_shared(&text, font_px);
                 let gap = self.shape_cached_rc(GAP_STR, font_px).width;
                 let ascent = tag_span.ascent.max(text_span.ascent);
                 let descent = tag_span.descent.min(text_span.descent);
@@ -457,8 +427,8 @@ impl OsdRaster {
     /// Shape the status readout: solo value pill, or a label/value pair.
     /// The value pill's outer edge pins to the margin either way.
     fn shape_status(&mut self, status: &OsdStatus, anchor: OsdAnchor, font_px: u32) -> Shaped {
-        let label = self.shape_cached(status.label.as_str(), font_px);
-        let value = self.shape_cached(status.value.as_str(), font_px);
+        let label = self.shape_cached_shared(&status.label, font_px);
+        let value = self.shape_cached_shared(&status.value, font_px);
         if status.label.is_empty() {
             // Solo value pill, as before.
             let row_h = self.row_height(font_px, value.ascent, value.descent);
@@ -505,6 +475,7 @@ impl OsdRaster {
 
     /// Cached shape: identical lines shape once per pixel size.
     /// Flat-key lookup hits without allocating; misses intern one `Rc<str>`.
+    #[cfg(test)]
     fn shape_cached(&mut self, line: &str, font_px: u32) -> Rc<ShapedSpan> {
         let key: Rc<str> = Rc::from(line);
         if let Some(hit) = self.shape_cache.get(&(Rc::clone(&key), font_px)).cloned() {
@@ -702,7 +673,7 @@ struct PlacedRow {
 enum Entry<'a> {
     Line {
         tag: Rc<str>,
-        text: &'a str,
+        text: Rc<str>,
         rgb: (u8, u8, u8),
         anchor: OsdAnchor,
     },
@@ -790,7 +761,7 @@ mod tests {
         OsdContent {
             rows: vec![OsdRow {
                 tag: Rc::from("[INFO]"),
-                text: "Paused".to_string(),
+                text: Rc::from("Paused"),
                 rgb: (255, 255, 255),
             }],
             status: None,
@@ -867,7 +838,7 @@ mod tests {
         let content = OsdContent {
             rows: vec![OsdRow {
                 tag: Rc::from("[INFO]"),
-                text: "Paused".to_string(),
+                text: Rc::from("Paused"),
                 rgb: (255, 255, 255),
             }],
             status: None,
@@ -923,7 +894,7 @@ mod tests {
         let content = OsdContent {
             rows: vec![OsdRow {
                 tag: Rc::from("[INFO]"),
-                text: "一時停止しました".to_string(),
+                text: Rc::from("一時停止しました"),
                 rgb: (255, 255, 255),
             }],
             status: None,
@@ -943,7 +914,7 @@ mod tests {
         let body = OsdContent {
             rows: vec![OsdRow {
                 tag: Rc::from(""),
-                text: "一時停止しました".to_string(),
+                text: Rc::from("一時停止しました"),
                 rgb: (255, 255, 255),
             }],
             ..content
@@ -985,8 +956,8 @@ mod tests {
         let content = |label: &str, value: &str, anchor: OsdAnchor| OsdContent {
             rows: Vec::new(),
             status: Some(OsdStatus {
-                label: label.to_string(),
-                value: value.to_string(),
+                label: Rc::from(label),
+                value: Rc::from(value),
                 rgb: (200, 200, 200),
             }),
             position: OsdAnchor::BottomLeft,
@@ -1047,8 +1018,8 @@ mod tests {
         let content = |label: &str| OsdContent {
             rows: Vec::new(),
             status: Some(OsdStatus {
-                label: label.to_string(),
-                value: "60.1 fps".to_string(),
+                label: Rc::from(label),
+                value: Rc::from("60.1 fps"),
                 rgb: (200, 200, 200),
             }),
             position: OsdAnchor::BottomLeft,
@@ -1074,12 +1045,12 @@ mod tests {
         let content = OsdContent {
             rows: vec![OsdRow {
                 tag: Rc::from("[INFO]"),
-                text: "Paused".to_string(),
+                text: Rc::from("Paused"),
                 rgb: (255, 255, 255),
             }],
             status: Some(OsdStatus {
-                label: String::new(),
-                value: "60.1 fps".to_string(),
+                label: Rc::from(""),
+                value: Rc::from("60.1 fps"),
                 rgb: (200, 200, 200),
             }),
             position: OsdAnchor::BottomLeft,
@@ -1133,7 +1104,7 @@ mod tests {
     fn tag_handles_share_one_allocation() {
         let row = OsdRow {
             tag: Rc::from("[INFO]"),
-            text: "Paused".to_string(),
+            text: Rc::from("Paused"),
             rgb: (255, 255, 255),
         };
         // Shared handle: clones the row's `Rc`; shaping keys by value.

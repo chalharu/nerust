@@ -506,12 +506,12 @@ mod tests {
         manager.poll(now);
         assert_ne!(manager.generation(), base);
         assert_eq!(manager.rows().len(), 1);
-        assert_eq!(manager.rows()[0].text, "Paused");
+        assert_eq!(&*manager.rows()[0].text, "Paused");
         // First expires after 2s; the second takes over.
         let base = manager.generation();
         manager.poll(now + Duration::from_millis(2_001));
         assert_ne!(manager.generation(), base);
-        assert_eq!(manager.rows()[0].text, "Resumed");
+        assert_eq!(&*manager.rows()[0].text, "Resumed");
         // Second expires; idle afterwards.
         let base = manager.generation();
         manager.poll(now + Duration::from_millis(4_002));
@@ -1290,7 +1290,7 @@ mod tests {
         // Expiry promotes the queued row and dirties.
         manager.poll(now + Duration::from_millis(2_001));
         assert_ne!(manager.generation(), base);
-        assert_eq!(manager.rows()[0].text, "Resumed");
+        assert_eq!(&*manager.rows()[0].text, "Resumed");
     }
 
     #[test]

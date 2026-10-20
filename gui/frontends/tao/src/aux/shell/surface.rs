@@ -142,7 +142,7 @@ impl AuxSurface {
 
     /// Native window identity for event routing.
     pub(super) fn native_id(&self) -> crate::aux::domain::NativeWindowId {
-        crate::aux::domain::NativeWindowId::new(self.window.id())
+        crate::aux::native::native_id_of(self.window.id())
     }
 
     /// Close was requested through the shared flag.

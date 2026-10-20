@@ -1,21 +1,19 @@
 //! Toolkit-independent aux vocabulary: ids, buttons, modifiers, events.
 //! Both `native` and `tao_map` depend inward on this leaf.
 
-use tao::window::WindowId;
-
 /// Opaque native window identity for registry routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct NativeWindowId(WindowId);
+pub(crate) struct NativeWindowId(u64);
 
 impl NativeWindowId {
-    pub(crate) fn new(id: WindowId) -> Self {
-        Self(id)
+    pub(crate) fn new(raw: u64) -> Self {
+        Self(raw)
     }
 
     /// Test-only dummy id: distinctness across dummies is not guaranteed.
     #[cfg(test)]
     pub(crate) fn dummy() -> Self {
-        Self(unsafe { WindowId::dummy() })
+        Self(u64::MAX)
     }
 }
 
