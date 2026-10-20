@@ -1,6 +1,5 @@
-//! Input map inversion: bindings → field index. Leaf module with no
-//! session imports, so both `session` (cluster owner) and `input`
-//! (event path) can use it without a module cycle.
+//! Input map inversion: bindings → field index. Leaf module with no session imports.
+//! Shared by `session` and `input` without a module cycle.
 
 use std::{collections::HashMap, hash::Hash};
 
@@ -33,10 +32,8 @@ impl InputBinding for KeyboardBinding {
     }
 }
 
-/// One skipped duplicate binding. The leaf reports; the caller logs.
-/// First registration wins, so the map never depends on hash
-/// iteration order: fields probe in sorted attachment/control order
-/// and later duplicates are dropped deterministically.
+/// One skipped duplicate binding, reported for the caller to log.
+/// First registration wins; later duplicates are dropped deterministically.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DuplicateBinding {
     pub attachment: String,
@@ -44,12 +41,7 @@ pub(crate) struct DuplicateBinding {
 }
 
 /// Generic rebuild: index bindings once, then probe per field.
-/// O(F+B) instead of the O(F*B) scan; runs only on
-/// settings/assignment change, never per key event.
-///
-/// Deterministic: fields probe in sorted attachment/control order,
-/// and duplicate bindings keep the first registration (later ones
-/// are reported as [`DuplicateBinding`] for the caller to log).
+/// Runs only on settings/assignment change, never per key event.
 pub(crate) fn rebuild_input_map<B: InputBinding>(
     field_map: &HashMap<(AttachmentId, DigitalControlId), usize>,
     bindings: &[B],

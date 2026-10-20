@@ -40,9 +40,8 @@ pub struct GbcConsoleCore {
     paused: bool,
     accelerometer: AccelerometerInputPort,
     rumble: RumbleOutputPort,
-    /// Device sample rate for the APU resampler, stamped from
-    /// `CoreConfig::audio_sample_rate` at load (data only; the backend
-    /// lives in the session layer).
+    /// Device sample rate for the APU resampler, stamped at load.
+    /// Data only; the backend lives in the session layer.
     sample_rate: u32,
 }
 
@@ -114,9 +113,8 @@ impl GbcConsoleCore {
         self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)
     }
 
-    /// Advance to the next instruction boundary via `step_tcycle`, reporting
-    /// consumed T-cycles. A halted CPU waits bounded for its wake interrupt;
-    /// STOP (no wake source while paused) returns zero immediately.
+    /// Advance to the next instruction boundary, reporting consumed T-cycles.
+    /// A halted CPU waits bounded; STOP with no wake source returns zero.
     pub(crate) fn step_instruction(&mut self) -> Result<u64, CoreError> {
         let loaded = self.loaded_mut()?;
         if loaded.system.bus.is_stopped() {
@@ -140,10 +138,7 @@ impl GbcConsoleCore {
     }
 
     /// Advance one frame, reporting the T-cycles the bus counted.
-    ///
-    /// Same path as the [`ConsoleCore::render_frame`] implementation;
-    /// the count that path discards is returned here for debugger
-    /// stepping. One loop iteration is one T-cycle by construction.
+    /// Same path as [`ConsoleCore::render_frame`]; one loop iteration is one T-cycle.
     pub(crate) fn render_frame_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
@@ -348,14 +343,8 @@ impl ConsoleCore for GbcConsoleCore {
     }
 }
 
-/// GBC execution control.
-///
-/// Holds the console: frame stepping reuses the exact `render_frame`
-/// path and reports the T-cycles it counted. The scratch buffer is
-/// display-irrelevant; stepped frames are not published to any shared
-/// framebuffer here. Debugger pokes land where hardware is writable
-/// (VRAM/OAM bypass the PPU mode locks); ROM refuses as
-/// `ReadOnlySpace` instead of driving MBC commands.
+/// GBC execution control and memory editing.
+/// Holds the console: frame stepping reuses the exact `render_frame` path.
 pub struct GbcDebugControl<'a> {
     console: &'a mut GbcConsoleCore,
     frame_slot: FrameBuffer,
@@ -395,9 +384,8 @@ impl DebugControl for GbcDebugControl<'_> {
         width: u8,
         value: u64,
     ) -> Result<(), DebuggerError> {
-        // One table-owned gate: bad width, unknown space, unmapped
-        // address, then ROM refusal, in that order. The cast below is
-        // safe: check_write pins addr + width - 1.
+        // One table-owned gate in fixed order: width, space, address, ROM refusal.
+        // The cast below is safe: check_write pins addr + width - 1.
         GBC_SPACE_TABLE.check_write(space, addr, width)?;
         let loaded = self
             .console
@@ -420,8 +408,7 @@ impl DebugControl for GbcDebugControl<'_> {
             .as_mut()
             .ok_or(DebuggerError::Unsupported)?;
         // Values mask to the register width; unknown names refuse.
-        // A mid-instruction poke applies immediately and the next
-        // boundary normalizes, same as a memory poke.
+        // A mid-instruction poke applies immediately, normalized at the next boundary.
         let regs = loaded.system.cpu.registers_mut();
         match name {
             "a" => regs.set_a(value as u8),
@@ -805,9 +792,8 @@ mod tests {
     fn gbc_debugger_truncated_tail_degrades_to_raw_db() {
         let mut console = GbcConsoleCore::new_empty(input());
         console.load(&rom(), &config()).expect("test ROM loads");
-        // Park a two-byte prefix at the range end through the control
-        // path: the missing tail byte must degrade to raw instead of
-        // fabricating or panicking.
+        // Park a two-byte prefix at the range end: the missing tail byte
+        // must degrade to raw instead of fabricating or panicking.
         {
             let mut boxed: Box<dyn DebugControl + '_> =
                 Box::new(GbcDebugControl::new(&mut console));

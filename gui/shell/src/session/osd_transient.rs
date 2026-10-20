@@ -24,9 +24,7 @@ pub(crate) struct OsdItem {
     /// Identity for coalescing (text before the `×N` suffix).
     pub(crate) key: String,
     pub(crate) count: u32,
-    /// Display duration: the deadline is stamped at promotion so a
-    /// queued label always shows for its full duration instead of
-    /// carrying the push-time remainder.
+    /// Display duration, stamped at promotion so a queued label always shows its full duration.
     pub(crate) duration: Duration,
     pub(crate) deadline: Instant,
     /// Latest-wins replace group ([`ReplaceGroup`]): at most one
@@ -34,11 +32,8 @@ pub(crate) struct OsdItem {
     pub(crate) group: Option<ReplaceGroup>,
 }
 
-/// Single sequential display (no stacking): one label at a time,
-/// FIFO by push order. `pending` is capped ([`OsdLimits`]) so the
-/// total (current + pending) never exceeds three.
-/// Transient in-frame queue: showing row plus pending rows with the
-/// merge/preempt/latest-wins discipline. No modal state.
+/// Single sequential display (no stacking): one label at a time, FIFO by push order.
+/// `pending` is capped so the total never exceeds three; merge/preempt/latest-wins apply.
 #[derive(Debug, Default)]
 pub(crate) struct TransientQueue {
     current: Option<OsdItem>,
@@ -79,9 +74,8 @@ pub enum FrameChannel {
     Unpresented,
 }
 
-/// Modal fallback: without a composited frame only modal-worthy
-/// kinds (errors, warnings) go modal; info is dropped. Exhaustive:
-/// a new channel must pick its route here.
+/// Modal fallback: without a composited frame only errors and warnings go modal; info drops.
+/// A new channel must pick its route here.
 pub(crate) fn falls_back_to_modal(
     kind: &NotificationKind,
     policy: &TransientPolicy,
@@ -93,9 +87,7 @@ pub(crate) fn falls_back_to_modal(
     }
 }
 
-/// Narrow display policy for transient rows. Decision code takes
-/// this instead of the full settings surface: a new settings field
-/// cannot ripple into OSD routing.
+/// Narrow display policy for transient rows; decision code takes this, never the settings surface.
 #[derive(Debug, Clone, Copy)]
 pub struct TransientPolicy {
     pub info_enabled: bool,
@@ -169,11 +161,8 @@ pub(crate) fn counted_row(
 }
 
 impl TransientQueue {
-    /// Lowest-severity index to drop on overflow, never an Error
-    /// while a lower severity row exists. Single scan: severity rank
-    /// primary, queue position secondary (`Oldest` takes the head of
-    /// the lowest severity present; `Newest` takes its tail, so a
-    /// just-demoted head survives preemption).
+    /// Lowest-severity index to drop on overflow, never an Error while a lower severity row exists.
+    /// Severity rank primary, queue position secondary.
     fn victim_index(
         pending: &std::collections::VecDeque<OsdItem>,
         edge: VictimEdge,
@@ -210,11 +199,7 @@ impl TransientQueue {
         }
     }
 
-    /// Merge a consecutive duplicate into the showing label or the
-    /// queue tail (`×N`, timer reset). Anything interleaved breaks the
-    /// run, so pause/resume flaps keep full slots. Consecutiveness is
-    /// structural, no auxiliary state: the last accepted row is the
-    /// queue tail when anything is queued, else the showing label.
+    /// Merge a consecutive duplicate into the showing label or the queue tail (×N, timer reset).
     /// Reports where the merge landed for dirty gating.
     fn merge_consecutive(&mut self, item: &OsdItem) -> Option<MergeTarget> {
         if !self.pending.is_empty() {
@@ -225,9 +210,7 @@ impl TransientQueue {
             if !matches {
                 return None;
             }
-            // Tail confirmed non-empty above; the mutable borrow below
-            // cannot fail single-threaded, so the else only drops the
-            // duplicate in the impossible case.
+            // The tail was confirmed non-empty above; the `else` only covers the impossible case.
             let back = self.pending.back_mut()?;
             back.count += item.count;
             back.row = counted_row(item.key.clone(), back.count, item.row.rgb, item.row.tag);
@@ -244,10 +227,8 @@ impl TransientQueue {
         Some(MergeTarget::Showing)
     }
 
-    /// Error rows preempt a non-Error showing label (Warnings wait
-    /// their turn). The demoted label waits at the queue head with
-    /// its duration intact. Returns the row unhandled when no
-    /// preempt applies, so the caller keeps ownership by move.
+    /// Error rows preempt a non-Error showing label; the demoted label waits with duration intact.
+    /// Returns the row unhandled when no preempt applies, so the caller keeps ownership by move.
     fn preempt_for_error(&mut self, item: OsdItem) -> Option<OsdItem> {
         if item.level != NotificationLevel::Error {
             return Some(item);
@@ -259,9 +240,7 @@ impl TransientQueue {
         {
             return Some(item);
         }
-        // Showing label confirmed non-error above; the take below
-        // cannot fail single-threaded, so the else only keeps the
-        // command total in the impossible case.
+        // Showing label confirmed non-error above; the `else` covers only the impossible case.
         let Some(demoted) = self.current.take() else {
             return Some(item);
         };
@@ -273,10 +252,8 @@ impl TransientQueue {
         None
     }
 
-    /// Grouped rows collapse latest-wins in place: a row replaces the
-    /// showing or queued row of the same group instead of queueing.
-    /// `Ok` reports whether the showing label changed; `Err` returns
-    /// the row unhandled when no row of its group exists yet.
+    /// Grouped rows collapse latest-wins in place instead of queueing.
+    /// `Ok` reports whether the showing label changed; `Err` returns the row unhandled.
     fn replace_grouped(&mut self, item: OsdItem) -> Result<RouteEffect, OsdItem> {
         let Some(group) = item.group else {
             return Err(item);
@@ -294,9 +271,7 @@ impl TransientQueue {
         Err(item)
     }
 
-    /// Route one staged row through merge, preempt, and replace
-    /// policies, queuing what survives. Ownership stays inside this
-    /// dispatcher so helpers move rows instead of cloning them.
+    /// Route one staged row through merge, preempt, and replace policies, queueing what survives.
     pub(crate) fn route_row(&mut self, item: OsdItem) -> RouteEffect {
         let merged = self.merge_consecutive(&item);
         match merged {
@@ -340,9 +315,7 @@ impl TransientQueue {
         true
     }
 
-    /// True when display state changed since the last sync.
-    /// Borrowed showing row: the sync emptiness check clones nothing;
-    /// only `Render` builds the owned plan.
+    /// Borrowed showing row for the sync emptiness check; only `Render` builds the owned plan.
     pub(crate) fn rows(&self) -> &[OsdRow] {
         self.current
             .as_ref()

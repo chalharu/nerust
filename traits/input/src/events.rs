@@ -59,11 +59,7 @@ impl DigitalInputEvent {
 }
 
 /// Unified runtime input event covering digital and analog controls.
-///
-/// [`DigitalInputEvent`] remains the narrow digital-only helper used by
-/// touch overlays; convert it with [`DigitalInputEvent::to_general`] (or
-/// `From`) when a single analog-capable path is needed. Prefer this type
-/// for new code so analog controls do not need a parallel event enum.
+/// Prefer this for new code; convert via [`DigitalInputEvent::to_general`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InputEvent {
     pub attachment: AttachmentId,
@@ -114,10 +110,7 @@ impl OpenBusReadResult {
 }
 
 /// Values that can be written to an `InputStateBuffer` field.
-///
 /// `PartialEq` follows IEEE-754 float semantics: `NaN != NaN`.
-/// Buffers must not rely on `Analog` equality for state comparison;
-/// use exact bit patterns (`to_bits`) or epsilon checks instead.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputValue {
     Digital(bool),
@@ -136,13 +129,7 @@ pub enum BufferError {
         expected: &'static str,
     },
     /// Buffer concrete-type mismatch on `copy_state`.
-    ///
-    /// `expected` is the static compile-time buffer name (`type_name::<Self>()`
-    /// at the call site); `actual` is the runtime `type_name_of_val(other)`.
-    /// Note the runtime name observes the trait object (`dyn InputStateBuffer`)
-    /// rather than the erased concrete type, so it distinguishes "wrong object
-    /// passed" from the exact concrete mismatch only coarsely; implementations
-    /// must still refuse to partially apply state on mismatch.
+    /// `expected` is the compile-time name; `actual` is the runtime name.
     #[error("buffer type mismatch: expected {expected}, got {actual}")]
     MismatchedBuffer {
         expected: &'static str,
@@ -151,15 +138,7 @@ pub enum BufferError {
 }
 
 /// GUI-side write abstraction for input state.
-/// Emu side reads via `Any::downcast_ref`.
-///
-/// Field-index contract: `field` is a dense logical index in `0..N`
-/// whose meaning is defined by the concrete buffer implementation
-/// (documented alongside each core's buffer type). Out-of-range
-/// indices must return [`BufferError::FieldNotFound`]; a value of the
-/// wrong variant must return [`BufferError::UnsupportedFieldType`].
-/// `clear` resets every field to its neutral (released) state, so a
-/// freshly constructed buffer and a cleared buffer compare equal.
+/// Emu side reads via `Any::downcast_ref`; `field` is a dense index in `0..N`.
 pub trait InputStateBuffer: std::fmt::Debug + Send + Downcast {
     /// Write one logical field.
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
@@ -167,9 +146,7 @@ pub trait InputStateBuffer: std::fmt::Debug + Send + Downcast {
     /// Postcondition: the buffer equals a freshly constructed default.
     fn clear(&mut self);
     /// Copy absolute state from another buffer of the same concrete type.
-    /// Returns [`BufferError::MismatchedBuffer`] when `other` has a
-    /// different concrete type; implementations must not partially apply
-    /// state on mismatch.
+    /// Mismatched types refuse without partially applying state.
     fn copy_state(&mut self, other: &dyn InputStateBuffer) -> Result<(), BufferError>;
 }
 

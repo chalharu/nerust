@@ -5,12 +5,8 @@ use nerust_settings_core::model::language::AppLanguage;
 
 use crate::session::notification::{NotificationLevel, UiNotification};
 
-/// Level tag prefixing OSD labels: text (not color or shape
-/// alone) carries severity. History uses [`level_name`]
-/// instead: the grid Level column and the OSD tag are managed
-/// separately by design (review feedback).
-/// Single source for level text: tag and grid name side by
-/// side so a new level cannot update one and forget the other.
+/// Level tag prefixing OSD labels: text carries severity; grid names come from [`level_name`].
+/// Single source for level text so a new level cannot update one side and forget the other.
 struct LevelText {
     tag: &'static str,
     name: &'static str,
@@ -68,18 +64,12 @@ pub struct HistoryLine {
     pub count: u32,
 }
 
-/// Local wall-clock datetime from a `SystemTime`.
-/// Falls back to UTC when the zone is indeterminate.
-/// Single-row form: resolves the zone offset per call. Test-only and
-/// rare paths; batch callers use [`history_lines`], which hoists the
-/// offset once via [`format_datetime_in`].
+/// Local wall-clock datetime from a `SystemTime`; falls back to UTC when the zone is indeterminate.
 pub fn format_datetime(time: std::time::SystemTime) -> String {
     format_datetime_in(time, local_utc_offset_secs())
 }
 
-/// `SystemTime` as local epoch seconds for [`format_datetime`]:
-/// the UTC instant plus the platform zone offset. Mirrors the
-/// persistence slot-time precedent (`persistence::time`).
+/// `SystemTime` as local epoch seconds for [`format_datetime`]: UTC instant plus platform offset.
 fn local_epoch_secs(time: std::time::SystemTime) -> i64 {
     let utc = time
         .duration_since(std::time::UNIX_EPOCH)
@@ -96,14 +86,10 @@ fn local_utc_offset_secs() -> i64 {
         .unwrap_or(0)
 }
 
-/// Zero UTC offset for civil-math normalization. A `const` with a
-/// `debug_assert`: the conversion is infallible by construction, so
-/// no `expect` guards the cold path.
+/// Zero UTC offset for civil-math normalization; the conversion is infallible by construction.
 const ZERO_OFFSET_SECS: i32 = 0;
 
-/// Datetime with a pre-resolved offset (see
-/// [`local_utc_offset_secs`]). Civil math delegates to `time`;
-/// out-of-range instants fall back to the epoch rendering.
+/// Datetime with a pre-resolved offset; out-of-range instants fall back to the epoch rendering.
 fn format_datetime_in(time: std::time::SystemTime, offset_secs: i64) -> String {
     let utc = time
         .duration_since(std::time::UNIX_EPOCH)
@@ -127,9 +113,7 @@ fn format_datetime_in(time: std::time::SystemTime, offset_secs: i64) -> String {
     }
 }
 
-/// Build render-ready history lines in one pass, resolving the zone
-/// offset once for all rows. Lifecycle delegates here so every
-/// frontend shares identical rows without duplicating the mapping.
+/// Build render-ready history lines in one pass, resolving the zone offset once for all rows.
 pub fn history_lines<'a>(
     history: impl Iterator<Item = &'a UiNotification>,
     language: AppLanguage,
@@ -198,8 +182,7 @@ mod tests {
 
     #[test]
     fn history_datetime_is_local_wall_clock() {
-        // Only this test writes TZ; the rest assert TZ-free
-        // structure, so parallel execution stays sound.
+        // Only this test writes TZ; the rest assert TZ-free structure for parallel soundness.
         // SAFETY: single-process test env, no other TZ writer.
         unsafe { std::env::set_var("TZ", "UTC0") };
         let epoch = std::time::UNIX_EPOCH;
@@ -224,9 +207,7 @@ mod tests {
 
     #[test]
     fn history_lines_batch_matches_single_formatting() {
-        // Injecting SystemTime is impossible here, so the
-        // batch is checked structurally: one row per event, ×N suffix
-        // preserved, level carried through.
+        // Checked structurally: one row per event, ×N suffix preserved, level carried through.
         let events = [
             UiNotification {
                 level: NotificationLevel::Info,

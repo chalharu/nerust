@@ -12,9 +12,8 @@ use crate::{
     input_types::NesInputBuffer,
 };
 
-/// `Core` は `pub(crate)` な `Cartridge` trait (`Box<dyn Cartridge>`) を含む。
-/// 全ての具象 mapper は同一 crate 内 (`nes/core/src/cartridge/mapper/`) にあり、
-/// かつ全て Send であることが確認されているため、`unsafe impl Send` は安全。
+/// `Core` は `pub(crate)` な `Cartridge` trait を含む。全具象 mapper は同一 crate 内にあり
+/// 全て Send であるため、`unsafe impl Send` は安全。
 struct SendCore(Option<Core>);
 
 // Safety: 全ての Cartridge 実装は同一 crate 内にあり、全て Send。
@@ -26,15 +25,13 @@ pub struct NesConsoleCore {
     controller: ControllerCollection,
     emu_input: EmuInput,
     paused: bool,
-    /// Device sample rate for the APU resampler, stamped from
-    /// `CoreConfig::audio_sample_rate` at load (data only; the backend
-    /// lives in the session layer).
+    /// Device sample rate for the APU resampler, stamped at load.
+    /// Data only; the backend lives in the session layer.
     sample_rate: u32,
 }
 
-/// Session-side audio sink: collects the frame's nominal samples into
-/// the caller-provided Vec (transport separation: the core never sees
-/// the real backend).
+/// Session-side audio sink: collects the frame's nominal samples into the caller's Vec.
+/// The core never sees the real backend.
 struct VecSink<'a> {
     out: &'a mut Vec<StereoSample>,
     sample_rate: u32,
@@ -90,10 +87,7 @@ impl NesConsoleCore {
     }
 
     /// Advance one frame, reporting the cycles the core counted.
-    ///
-    /// Same path as the [`ConsoleCore::render_frame`] implementation;
-    /// the cycle count that path discards is returned here for
-    /// debugger stepping.
+    /// Same path as the [`ConsoleCore::render_frame`] implementation.
     pub(crate) fn render_frame_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
@@ -124,8 +118,7 @@ impl NesConsoleCore {
     }
 
     /// Advance one instruction, reporting the cycles the core counted.
-    /// No input is taken and no audio is produced: stepping inspects a
-    /// frozen moment, it does not play it.
+    /// Inspects a frozen moment: no input taken, no audio produced.
     pub(crate) fn step_instruction_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
@@ -244,11 +237,7 @@ impl ConsoleCore for NesConsoleCore {
 }
 
 /// NES execution control and memory editing.
-///
-/// Holds the console (not just the core): frame stepping reuses the
-/// exact `render_frame` path and reports the cycles it counted.
-/// Scratch buffers are display-irrelevant (zeroed palette); stepped
-/// frames are not published to any shared framebuffer here.
+/// Holds the console (not just the core): stepping reuses the exact `render_frame` path.
 pub struct NesDebugControl<'a> {
     console: &'a mut NesConsoleCore,
     frame_slot: FrameBuffer,
@@ -586,9 +575,8 @@ mod tests {
                 addr: 0x1FFF
             })
         );
-        // Instruction stepping advances exactly one instruction and
-        // reports real cycles; the program counter moves by the
-        // decoded instruction length.
+        // Instruction stepping advances one instruction with real cycles;
+        // the program counter moves by the decoded instruction length.
         let pc_of = |console: &NesConsoleCore| {
             console
                 .core_ref()

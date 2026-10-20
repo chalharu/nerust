@@ -57,9 +57,8 @@ impl AndroidStorageBackend {
 
     fn read(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, PersistenceError> {
         Self::validate_relative_path(relative)?;
-        // Chunked path bounds every JNI crossing to 64KB (no whole-file
-        // Base64 on the bridge thread); legacy whole-file read is the
-        // fallback for APKs predating the chunked methods.
+        // Chunked path bounds every JNI crossing to 64KB.
+        // Legacy whole-file read is the fallback for old APKs.
         match self.read_chunked(uri, relative) {
             Ok(bytes) => Ok(bytes),
             Err(error) => {
@@ -72,11 +71,8 @@ impl AndroidStorageBackend {
         }
     }
 
-    /// Streaming read: size probe then 64KB chunks appended into one
-    /// buffer. Runs on the session/persistence thread, never the UI thread;
-    /// the Kotlin side performs the I/O inline on the calling thread.
-    /// Prefers the `byte[]` bridge (no Base64); falls back to Base64
-    /// chunks, then to the whole-file read.
+    /// Streaming read: size probe then 64KB chunks into one buffer.
+    /// Prefers `byte[]`; falls back to Base64 chunks, then whole-file.
     fn read_chunked(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, PersistenceError> {
         match self.read_chunked_bytes(uri, relative) {
             Ok(bytes) => Ok(bytes),
@@ -87,9 +83,8 @@ impl AndroidStorageBackend {
         }
     }
 
-    /// `byte[]` chunked read: size probe then raw `byte[]` chunks, one JNI
-    /// crossing per 64KB with no Base64 anywhere. New bridge (v3); absence
-    /// (old APK) surfaces as `Err` and the caller falls back.
+    /// `byte[]` chunked read: size probe then raw chunks, one JNI crossing per 64KB.
+    /// Absence (old APK) surfaces as `Err`; the caller falls back.
     fn read_chunked_bytes(
         &self,
         uri: &str,
@@ -190,9 +185,8 @@ impl AndroidStorageBackend {
         }
     }
 
-    /// Streaming write: 64KB chunks, first chunk overwrites, the rest
-    /// append. Prefers the `byte[]` bridge (no Base64); falls back to
-    /// Base64 chunks, then to the whole-file write.
+    /// Streaming write: first chunk overwrites, the rest append.
+    /// Prefers `byte[]`; falls back to Base64 chunks, then whole-file.
     fn write_chunked(
         &self,
         uri: &str,
@@ -208,9 +202,8 @@ impl AndroidStorageBackend {
         }
     }
 
-    /// `byte[]` chunked write: raw 64KB chunks, first chunk overwrites
-    /// (`"rwt"`), the rest append (`"wa"`). New bridge (v3); absence (old
-    /// APK) surfaces as `Err` and the caller falls back.
+    /// `byte[]` chunked write: first chunk overwrites, the rest append.
+    /// Absence (old APK) surfaces as `Err`; the caller falls back.
     fn write_chunked_bytes(
         &self,
         uri: &str,
@@ -276,8 +269,7 @@ impl AndroidStorageBackend {
     }
 
     /// Streaming Base64 write (legacy chunked bridge for old APKs).
-    /// 64KB Base64 chunks, first chunk overwrites, the rest append
-    /// (`"rwt"` then `"wa"` on the Kotlin side).
+    /// First chunk overwrites, the rest append.
     fn write_chunked_base64(
         &self,
         uri: &str,
@@ -314,9 +306,8 @@ impl AndroidStorageBackend {
 
     fn list(&self, uri: &str, relative: &str) -> Result<Vec<String>, PersistenceError> {
         Self::validate_relative_path(relative)?;
-        // Sized batch avoids the scan N+1 (one size probe per entry);
-        // legacy name-only list + per-entry probes is the fallback for
-        // APKs predating `listSafFilesWithSizes`.
+        // Sized batch avoids the scan N+1; the name-only list is the fallback.
+        // Covers APKs predating `listSafFilesWithSizes`.
         if let Ok(entries) = self.list_with_sizes(uri, relative) {
             return Ok(entries.into_iter().map(|(name, _)| name).collect());
         }
@@ -343,10 +334,8 @@ impl AndroidStorageBackend {
             .collect())
     }
 
-    /// Whole-file read (legacy bridge for old APKs). Each verb below
-    /// carries its own JNI name + signature; the old generic
-    /// `call_string(method, ..)` ignored `method` on the write path and
-    /// always called `writeSafFile`.
+    /// Whole-file read (legacy bridge for old APKs).
+    /// Each verb below carries its own JNI name + signature.
     fn call_read(&self, uri: &str, relative: &str) -> Result<Option<String>, PersistenceError> {
         self.call_saf_string(SafStringOp::Read, uri, relative, None)
     }
@@ -458,9 +447,8 @@ impl AndroidStorageBackend {
         .map_err(Self::io_error)
     }
 
-    /// Size probe for the chunked read: bytes, or a negative value when
-    /// the document does not exist. New bridge (v2); absence (old APK)
-    /// surfaces as `Err` and the caller falls back to whole-file I/O.
+    /// Size probe for the chunked read: bytes, negative when missing.
+    /// Absence (old APK) surfaces as `Err`; the caller falls back.
     fn call_file_size(&self, uri: &str, relative: &str) -> Result<i64, PersistenceError> {
         let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
         super::bridge::with_java_env(&vm, |env| {
@@ -521,9 +509,8 @@ impl AndroidStorageBackend {
         .map_err(Self::io_error)
     }
 
-    /// One 64KB Base64 chunk write; `append` selects `"wa"` (append) over
-    /// `"rwt"` (overwrite). New bridge (v2); absence (old APK) surfaces
-    /// as `Err` and the caller falls back.
+    /// One 64KB Base64 chunk write; `append` selects append over overwrite.
+    /// Absence (old APK) surfaces as `Err`; the caller falls back.
     fn call_write_chunk(
         &self,
         uri: &str,
@@ -567,10 +554,8 @@ impl AndroidStorageBackend {
     }
 }
 
-/// Per-crossing SAF chunk: 64KB of raw bytes per JNI call bounds
-/// bridge memory without changing the legacy whole-file signatures.
-/// Contract: must equal `SafRepository.SAF_CHUNK_BYTES` in Kotlin
-/// (see `saf_chunk_bytes_matches_kotlin_contract` below).
+/// Per-crossing SAF chunk: 64KB of raw bytes per JNI call.
+/// Must equal `SafRepository.SAF_CHUNK_BYTES` in Kotlin.
 const SAF_CHUNK_BYTES: usize = 64 * 1024;
 
 /// String-bridge verbs. Each maps to exactly one JNI name + signature in
@@ -584,9 +569,8 @@ enum SafStringOp {
     ListWithSizes,
 }
 
-/// One entry of the `listSafFilesWithSizes` JSON batch:
-/// `[{"name": "...", "size": 123}]`. Sizes ride the same crossing as the
-/// names so `scan` needs no per-entry probe (no N+1).
+/// One entry of the `listSafFilesWithSizes` JSON batch.
+/// Sizes ride the same crossing as names; no per-entry probe.
 #[derive(Debug, serde::Deserialize)]
 struct SizedEntry {
     name: String,
@@ -595,10 +579,8 @@ struct SizedEntry {
 }
 
 impl SlotBackend for AndroidStorageBackend {
-    /// SAF scan runs on the session/persistence thread, never the event
-    /// loop or UI thread (like `read_uri_bytes`, the per-entry `read`
-    /// below blocks on the provider). The sized batch (`list_with_sizes`)
-    /// keeps it to one crossing per entry plus one listing.
+    /// SAF scan runs on the session/persistence thread, never the event loop or UI thread.
+    /// The sized batch keeps it to one crossing per entry plus one listing.
     fn scan(
         &self,
         dir: &Path,
@@ -766,9 +748,8 @@ mod tests {
         }
     }
 
-    /// Pin shared with the Kotlin side (`SafRepository.SAF_CHUNK_BYTES`)
-    /// and `packaging/android` docs: both crossings assume 64KB. Change
-    /// both together; this test fails loudly if Rust drifts.
+    /// Pin shared with the Kotlin side: both crossings assume 64KB.
+    /// Change both together; this test fails loudly on drift.
     #[test]
     fn saf_chunk_bytes_matches_kotlin_contract() {
         assert_eq!(super::SAF_CHUNK_BYTES, 64 * 1024);

@@ -1,7 +1,5 @@
-//! Frame texture domain: allocation-free initial uploads plus the
-//! NTSC kernel path. [`super::view::GlView`] coordinates; this module
-//! owns the TexImage calls so the view never host-memsets a null
-//! upload.
+//! Frame texture domain: allocation-free initial uploads plus the NTSC kernel path.
+//! This module owns the TexImage calls; [`super::view::GlView`] coordinates.
 
 use gl::types::{GLenum, GLint};
 use nerust_glwrap::raw::{active_texture, bind_texture, tex_image_2d, tex_parameteri};
@@ -75,23 +73,8 @@ pub(crate) fn allocate_texture_store(
     Ok(())
 }
 
-/// NTSC kernel texture (RGBA8) upload path.
-///
-/// # Canonical byte order
-///
-/// The packed kernel (`be_data`) is a sequence of big-endian `u32`
-/// words: bytes `[R, G, B, A]` in that order on the wire. The upload
-/// below copies those bytes verbatim into the RGBA8 texture, so the
-/// GPU samples exactly what the CPU packed: word
-/// `u32::from_be_bytes([R, G, B, A])`. This matches the softbuffer
-/// CPU path, which indexes the same packing with `to_be_bytes` (see
-/// `read_entry` there). A cross-check test
-/// (`ntsc_upload_bytes_match_cpu_order`) locks the identity: upload
-/// bytes must equal the CPU indexer order byte-for-byte.
-/// Pure pack step of the NTSC kernel upload: verbatim big-endian
-/// byte copy with zero padding, no GL. Returns `(actual_height,
-/// need)`; the caller uploads `scratch[..need]`.
-/// Unit-tested without a context (see `ntsc_pack_*` below).
+/// NTSC kernel texture (RGBA8) upload path: verbatim big-endian byte copy.
+/// Pure pack step, no GL; returns `(actual_height, need)`.
 pub(crate) fn pack_ntsc_bytes(
     width: usize,
     height: usize,
@@ -194,10 +177,8 @@ mod tests {
 
     #[test]
     fn ntsc_upload_bytes_match_cpu_order() {
-        // Canonical order lock: the GPU upload bytes equal the CPU
-        // indexer order byte-for-byte, i.e. word
-        // `u32::from_be_bytes([R, G, B, A])` and back via
-        // `to_be_bytes` (the softbuffer `read_entry` convention).
+        // Locks the canonical order: GPU upload bytes equal the CPU
+        // indexer order byte-for-byte.
         let word = u32::from_be_bytes([0x11, 0x22, 0x33, 0x44]);
         assert_eq!(word.to_be_bytes(), [0x11, 0x22, 0x33, 0x44]);
         let be = word.to_be_bytes();

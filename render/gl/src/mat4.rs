@@ -1,11 +1,5 @@
-//! Column-major 4x4 matrices for `glUniformMatrix4fv` with
-//! `transpose = FALSE` (required: GLES forbids `TRUE`).
-//!
-//! `_data` stores columns: `_data[col][row]`, so `as_ptr` points at
-//! the exact memory layout GL reads. Symmetric matrices (identity,
-//! axis scale) look identical either way, which is why the
-//! row-vs-column bug hides until the first non-symmetric matrix
-//! (translation, rotation); the test below locks a translation.
+//! Column-major 4x4 matrices for `glUniformMatrix4fv` (`transpose = FALSE`).
+//! `_data` stores columns: `_data[col][row]`.
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct Mat4 {
@@ -38,10 +32,8 @@ impl Mat4 {
         }
     }
 
-    /// Non-symmetric translation: translation lives in the fourth
-    /// *column* (`_data[3][0..3]`). Column-major memory is
-    /// `[1,0,0,0, 0,1,0,0, 0,0,1,0, tx,ty,tz,1]`.
-    /// Test-only until a camera/translate path needs it in production.
+    /// Test-only non-symmetric translation: translation lives in the fourth
+    /// *column* (`_data[3][0..3]`).
     #[cfg(test)]
     pub(crate) fn translate(tx: f32, ty: f32, tz: f32) -> Self {
         Self {
@@ -74,11 +66,8 @@ mod tests {
 
     #[test]
     fn translation_memory_is_column_major() {
-        // The bug this locks: storing rows but uploading with
-        // `transpose = FALSE` transposes translation into the last
-        // *row*, shifting `w` instead of `xyz`. Symmetric matrices
-        // (identity, scale) pass either way, so only a non-symmetric
-        // matrix proves the layout.
+        // Locks the layout: only a non-symmetric matrix proves it, since
+        // symmetric ones (identity, scale) pass either way.
         let m = Mat4::translate(2.0, 3.0, 4.0);
         let words = unsafe { std::slice::from_raw_parts(m.as_ptr(), 16) };
         assert_eq!(

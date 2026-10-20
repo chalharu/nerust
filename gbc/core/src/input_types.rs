@@ -1,8 +1,7 @@
 use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 
 /// Active-low state for the eight Game Boy buttons.
-///
-/// Bits 0-3 are A, B, Select, Start. Bits 4-7 are Right, Left, Up, Down.
+/// Bits 0-3 are A/B/Select/Start, bits 4-7 are Right/Left/Up/Down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GbcInputBuffer(pub u8);
 

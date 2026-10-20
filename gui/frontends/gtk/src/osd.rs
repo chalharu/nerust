@@ -1,6 +1,5 @@
 //! GTK OSD: in-frame layer, error modals, history.
-//! Policy lives in shell `session::osd`; rows rasterize to a layer
-//! the renderer composites, so no overlay widgets are needed.
+//! Policy lives in shell `session::osd`; this only rasterizes plans.
 
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
@@ -14,9 +13,8 @@ pub(crate) struct GtkOsd {
     manager: OsdManager,
     raster: nerust_render_osd::OsdRaster,
     last_strip: nerust_render_traits::ReservedStrip,
-    /// Owns the whole sync fingerprint (dirty flag, status gate,
-    /// surface size, layer liveness). Shared decision procedure
-    /// with the tao frontend; this struct only rasterizes.
+    /// Owns the whole sync fingerprint. Shared decision procedure with
+    /// the tao frontend; this struct only rasterizes.
     presenter: nerust_gui_shell::session::osd::OsdPresenter,
 }
 
@@ -37,9 +35,7 @@ impl GtkOsd {
     }
 
     /// Drain the session queue, show modals, and sync the OSD layer.
-    /// Called from the surface tick (every frame while running).
-    /// Takes `&mut State` directly: the tick already holds the
-    /// borrow, so re-borrowing the `Rc` would panic.
+    /// Takes `&mut State` directly: the tick already holds the borrow.
     pub(crate) fn poll(
         &mut self,
         surface: &super::surface::Surface,
@@ -76,9 +72,8 @@ impl GtkOsd {
                 }
             }
         }
-        // The batch take runs on the already-borrowed manager: the
-        // Surface Rc is only touched inside the ack closure, which
-        // runs after the tick borrow is long gone.
+        // The batch take runs on the already-borrowed manager: the Surface
+        // Rc is only touched inside the ack closure, after the tick borrow.
         if let Some(detail) = self.manager.take_modal_batch() {
             Self::present_modal(surface, window, detail, resume_after_modal);
         }
@@ -110,8 +105,7 @@ impl GtkOsd {
     }
 
     /// Rasterize on change and hand the layer to the renderer.
-    /// The sync decision (dirty flag, status gate, size, liveness)
-    /// lives in shell `OsdPresenter`; this only rasterizes plans.
+    /// The sync decision lives in shell `OsdPresenter`; this only rasterizes plans.
     fn sync_layer(
         &mut self,
         settings: &NotificationSettings,
@@ -173,10 +167,8 @@ impl GtkOsd {
                 gtk::ResponseType::Close,
             )],
         );
-        // Toolbar (the Console / DevTools / logcat pattern: filter
-        // plus clear live together at the top). 8 between controls.
-        // Every caption goes through the i18n table (same keys as the
-        // tao twin); level options reuse the settings level names.
+        // Toolbar: filter plus clear live together at the top. Every caption
+        // goes through the i18n table (same keys as the tao twin).
         use nerust_settings_core::i18n::{UiText, text as ui_text};
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let level_caption = gtk::Label::new(Some(ui_text(language, UiText::HistoryLevel)));
@@ -218,9 +210,8 @@ impl GtkOsd {
         body.append(&toolbar);
         body.append(&scrolled);
         dialog.content_area().append(&body);
-        // Same (seq, language, filter) gate as the tao twin: a refresh
-        // with unchanged inputs rebuilds nothing instead of
-        // re-allocating every row and label.
+        // Same (seq, language, filter) gate as the tao twin: a refresh with
+        // unchanged inputs rebuilds nothing instead of re-allocating rows.
         let last_sync = Rc::new(RefCell::new(None));
         let refresh = Rc::new({
             let state = Rc::clone(state);

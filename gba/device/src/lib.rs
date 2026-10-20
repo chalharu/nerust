@@ -10,10 +10,7 @@ pub fn gba_device_controller_profiles() -> impl Iterator<Item = Rc<dyn Controlle
 }
 
 /// GBA joypad bit assignments for the 2-byte input buffer.
-///
-/// Field indices 0-9 correspond to the bit positions used by
-/// `GbaInputBuffer::set()` to map each button to a KEYINPUT bit
-/// (GBATEK 4000130h: bit 8 = R, bit 9 = L).
+/// Field indices 0-9 map each button to a KEYINPUT bit.
 const FIELD_A: usize = 0;
 const FIELD_B: usize = 1;
 const FIELD_SELECT: usize = 2;

@@ -8,9 +8,7 @@ use nerust_input_traits::InputTopologyDescriptor;
 use nerust_keyboard::Key;
 
 /// Find key binding conflicts within a single system.
-///
-/// Only the implicit keyboard profile of the given `system` is
-/// checked. Shortcut conflicts across the same key are also detected.
+/// Only the implicit keyboard profile is checked; same-key shortcut conflicts included.
 pub fn conflicting_keys(
     settings: &DesktopSharedSettings,
     topology: &InputTopologyDescriptor,

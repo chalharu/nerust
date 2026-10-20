@@ -25,11 +25,8 @@ static PICKER_STATE: Mutex<PickerState> = Mutex::new(PickerState {
     in_flight: false,
 });
 
-/// Lock order for the three JNI-bridge mutexes (bridge, settings,
-/// picker): never nest `with_state` calls (enforced in debug by the
-/// shared re-entrancy guard), wake the looper after releasing.
-/// A panicking JNI callback must not wedge the process on
-/// the next lock, so a poisoned mutex recovers its state and logs.
+/// Lock order for the three JNI-bridge mutexes: never nest `with_state`.
+/// Poisoned mutexes recover state and log instead of wedging.
 fn with_state<T>(operation: impl FnOnce(&mut PickerState) -> T) -> T {
     // Same lock-order contract as the bridge mutex (see
     // `bridge::lock_reentrancy_guard`): never nest, wake after release.
@@ -60,9 +57,8 @@ pub(crate) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
     }) {
         return Ok(false);
     }
-    // Route every raw `run_on_java_main_thread` through the bridge helper
-    // so JNI failures share one log label (picker.rs owns no session to
-    // report to; the on_failure synthesis keeps the gate unwedged).
+    // Route JNI failures through the bridge helper for one shared log label.
+    // The on_failure synthesis keeps the gate unwedged.
     bridge::call_on_activity_or(
         app,
         "launch Android ROM picker",
@@ -114,10 +110,8 @@ pub(crate) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, Strin
     Ok(true)
 }
 
-/// Fetch the picked document off the event-loop thread. SAF/document I/O
-/// can block (slow providers, large ROMs); the event thread must only
-/// dispatch the completed buffer published here. Display-name lookup runs
-/// here too, for the same reason.
+/// Fetch the picked document off the event-loop thread; the event thread
+/// only dispatches the completed buffer published here.
 pub(crate) fn spawn_document_fetch(app: AndroidApp, uri: String) {
     let job = move || {
         let (display_name, extension) = infer_import_metadata(&app, &uri);

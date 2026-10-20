@@ -59,9 +59,7 @@ use crate::{
     settings,
 };
 
-/// Live PPU image batch. Canonical home is
-/// [`emu_core::images`](crate::emu_core::images); re-exported here so
-/// session-adjacent code keeps one import path.
+/// Live PPU image batch; canonical home is [`emu_core::images`](crate::emu_core::images).
 pub use crate::emu_core::images::LiveImages;
 
 struct CoreRuntime {
@@ -97,9 +95,8 @@ pub(super) struct LoadedMedia {
 pub enum KeyboardShortcut {
     Session(ShortcutAction),
     ToggleFullscreen,
-    /// Open the debugger window. Not a session command: frontends
-    /// route it to their debugger-open path (schema first, so a user
-    /// binding wins over the F4 default).
+    /// Open the debugger window, not a session command.
+    /// Frontends route it to their debugger-open path.
     OpenDebugger,
 }
 
@@ -112,9 +109,8 @@ struct InputDept {
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_keyboard::Key, usize>,
     pressed_keys: std::collections::HashSet<Key>,
-    /// Last served touch overlay, keyed by the caller's revision.
-    /// Callers bump the revision whenever assignments change, so a
-    /// repeat revision always means identical controls.
+    /// Last served touch overlay, keyed by the caller revision.
+    /// A repeat revision always means identical controls.
     touch_cache: Option<crate::session::input::TouchCache>,
     /// Empty overlay served if the cache write is ever lost. Keeps the
     /// cached accessor infallible without an `expect` on the hot path.
@@ -123,9 +119,7 @@ struct InputDept {
 
 impl InputDept {
     /// Rebuild the keyboard reverse map from the implicit profile.
-    /// Takes only the bindings it reads; the session resolves which
-    /// profile is active, so this department never reaches into
-    /// settings or the factory registry.
+    /// Takes only the bindings it reads; never reaches into settings or the registry.
     pub(crate) fn rebuild_key_field_map<B: crate::session::input_map::InputBinding<Id = Key>>(
         &mut self,
         bindings: Option<&[B]>,
@@ -146,9 +140,8 @@ impl InputDept {
         }
     }
 
-    /// Persistable projection of the live assignments. Lossy by design:
-    /// only slot and controller identifiers survive, never the profiles,
-    /// so this is an explicitly named projection, not a `From` conversion.
+    /// Persistable projection of the live assignments: only slot and controller ids survive.
+    /// An explicitly named projection, not a `From` conversion.
     fn persistable_pairs(&self) -> Vec<(String, Option<String>)> {
         self.current_assignments
             .slots()
@@ -190,10 +183,8 @@ impl MediaDept {
     }
 }
 
-/// Live emulation objects: the core plus its GUI input adapter. Single
-/// owner for the core domain: everything that touches the running core
-/// goes through these typed methods instead of reaching past the
-/// session into bare `Option` fields.
+/// Live emulation objects: the core plus its GUI input adapter.
+/// Everything touching the running core goes through these typed methods.
 struct EmuCluster {
     core: Option<EmuCore>,
     input: Option<GuiInput>,
@@ -484,9 +475,7 @@ impl SessionHandle {
     }
 
     /// Create a session with settings persisted at the given paths.
-    ///
-    /// On platforms where `ProjectDirs` is unavailable (e.g. Android),
-    /// the frontend provides an explicit settings root instead.
+    /// Where `ProjectDirs` is unavailable, the frontend provides an explicit settings root.
     pub fn new_with_settings_paths(
         capabilities: HostBackendCapabilities,
         registry: Arc<SystemRegistry>,
@@ -517,10 +506,8 @@ impl SessionHandle {
         self.emu.core().ok().map(|c| c.render_profile())
     }
 
-    /// Swap the display buffer, then report the fresh tick. One
-    /// metrics lock for the whole pass: callers that used to call
-    /// `swap_frame_buffer` and then `tick_metrics` pay two locks;
-    /// this path pays one.
+    /// Swap the display buffer, then report the fresh tick.
+    /// One metrics lock for the whole pass.
     pub fn swap_frame_buffer_tick(&mut self) -> osd::TickMetrics {
         self.swap_frame_buffer();
         self.tick_metrics()
@@ -535,17 +522,14 @@ impl SessionHandle {
         }
     }
 
-    /// Borrow the display buffer for one render call. Narrow port:
-    /// the closure sees the buffer without the session leaking the
-    /// render type by value. Prefer this over [`frame_buffer`](Self::frame_buffer).
+    /// Borrow the display buffer for one render call without leaking the render type.
+    /// Prefer this over [`frame_buffer`](Self::frame_buffer).
     pub fn with_frame_buffer<R>(&self, render: impl FnOnce(&FrameBuffer) -> R) -> Option<R> {
         self.emu.core().ok().map(|c| render(c.frame_buffer()))
     }
 
-    /// Infra escape hatch: raw display buffer. Frontends (tao/gtk/
-    /// android) still call this; new code prefers
-    /// [`with_frame_buffer`](Self::with_frame_buffer), which keeps the
-    /// render type behind a closure instead of a return value.
+    /// Infra escape hatch: raw display buffer.
+    /// New code prefers [`with_frame_buffer`](Self::with_frame_buffer); kept as a shim.
     pub fn frame_buffer(&self) -> Option<&FrameBuffer> {
         self.emu.core().ok().map(|c| c.frame_buffer())
     }
@@ -560,9 +544,7 @@ impl SessionHandle {
         &self.settings.snapshot
     }
 
-    /// Narrow chrome view for the OSD layer decision, adapted once at
-    /// the settings boundary. Decision code takes [`OsdChrome`], never
-    /// the settings manager.
+    /// Narrow chrome view for the OSD layer decision, adapted once at the settings boundary.
     pub fn chrome(&self) -> osd::OsdChrome {
         osd::OsdChrome::from(&self.settings.snapshot.local.notifications)
     }
@@ -597,9 +579,7 @@ impl SessionHandle {
         &self.media.loaded
     }
 
-    /// Infra escape hatch: full settings manager. Frontends (gtk)
-    /// still call this; new code uses [`settings_snapshot`](Self::settings_snapshot)
-    /// for reads and the session's own narrow writers for persistence.
+    /// Infra escape hatch: full settings manager; new code uses narrow readers and writers.
     /// Kept as a shim: removing it breaks out-of-crate frontends.
     pub fn settings_manager(&self) -> &SettingsManager {
         &self.settings.manager
@@ -611,10 +591,8 @@ impl SessionHandle {
         self.media.persistence.configure_backends(backends);
     }
 
-    /// Infra escape hatch: three positional backend boxes. The
-    /// Android frontend still calls this; new code prefers
-    /// [`configure_persistence_backends`](Self::configure_persistence_backends).
-    /// Kept as a shim: removing it breaks the out-of-crate frontend.
+    /// Infra escape hatch: three positional backend boxes.
+    /// New code prefers [`configure_persistence_backends`](Self::configure_persistence_backends).
     pub fn set_persistence_backends(
         &mut self,
         slot_backend: Box<dyn persistence::SlotBackend>,
@@ -647,9 +625,8 @@ impl SessionHandle {
             .cloned()
     }
 
-    /// Narrow active-factory query: run one closure against the live
-    /// factory. Same-crate orchestration uses this instead of holding
-    /// the factory across borrows.
+    /// Narrow active-factory query: run one closure against the live factory.
+    /// Same-crate orchestration uses this instead of holding the factory across borrows.
     pub(crate) fn with_active_factory<R>(
         &self,
         use_factory: impl FnOnce(&dyn CoreFactory) -> R,
@@ -671,21 +648,15 @@ impl SessionHandle {
         self.active_system_id.as_ref().map(|id| id.clone_box())
     }
 
-    /// Infra escape hatch: live factory behind the registry. Same-crate
-    /// code uses [`active_factory_cloned`](Self::active_factory_cloned)
-    /// or [`with_active_factory`](Self::with_active_factory); tests and
-    /// frontends keep this shim until they migrate.
-    /// Kept as a shim: removing it breaks out-of-crate callers.
+    /// Infra escape hatch: live factory behind the registry.
+    /// Same-crate code uses [`active_factory_cloned`](Self::active_factory_cloned) instead.
     pub fn active_factory(&self) -> Option<&Arc<dyn CoreFactory>> {
         self.active_system_id
             .as_ref()
             .and_then(|id| self.registry.find_by_id(id.as_ref()))
     }
 
-    /// Infra escape hatch: full system registry. Frontends (android/
-    /// gtk) still enumerate factories through this; new code uses the
-    /// `active_system_*` narrow queries.
-    /// Kept as a shim: removing it breaks out-of-crate frontends.
+    /// Infra escape hatch: full system registry; new code uses narrow `active_system_*` queries.
     pub fn registry(&self) -> &SystemRegistry {
         &self.registry
     }
@@ -701,9 +672,8 @@ impl SessionHandle {
         self.active_system_id.as_deref()
     }
 
-    /// Persistable projection of the live assignments. Lossy by design:
-    /// only slot and controller identifiers survive, never the profiles,
-    /// so this is an explicitly named projection, not a `From` conversion.
+    /// Persistable projection of the live assignments: only slot and controller ids survive.
+    /// An explicitly named projection, not a `From` conversion.
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
         self.input.persistable_pairs()
     }
@@ -712,9 +682,7 @@ impl SessionHandle {
         self.with_active_factory(|f| f.default_load_options())
     }
 
-    /// Cached window title for the current tick: rebuilds only when
-    /// the tick, slot selection, or system name changes, otherwise
-    /// serves the stored string without formatting.
+    /// Cached window title for the current tick; rebuilds only on tick, selection, or name change.
     pub fn window_title_cached(&mut self, tick: &osd::TickMetrics) -> &str {
         let name = self.active_system_display_name();
         let input = title::TitleInput {
@@ -727,9 +695,7 @@ impl SessionHandle {
         self.title_cache.title(input)
     }
 
-    /// Cached history rows: rebuilds only when the notification
-    /// history advanced or the language changed, otherwise serves the
-    /// stored rows without reformatting.
+    /// Cached history rows; rebuilds only on history advance or language change.
     pub fn notification_history_lines_cached(
         &mut self,
         language: nerust_settings_core::model::language::AppLanguage,
@@ -759,10 +725,8 @@ pub enum SessionError {
 use crate::load::SystemActivationError;
 
 impl SessionHandle {
-    /// Records the detected system before ROM load so the core is
-    /// rebuilt with the right factory. Entry point for lazy activation.
-    /// Inherent (not only via [`RomLoadTarget`]) because frontends
-    /// drive activation directly; the load adapter delegates here.
+    /// Records the detected system before ROM load so the core is rebuilt with the right factory.
+    /// Entry point for lazy activation; the load adapter delegates here.
     pub fn set_active_system(
         &mut self,
         system_id: &dyn SystemId,

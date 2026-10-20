@@ -6,10 +6,7 @@ import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
 
-/**
- * Drawer edge handle extracted from MainActivity. No lifecycle: the owning
- * ChromeManager attaches/detaches it with the drawer chrome popup.
- */
+/** Drawer edge handle extracted from MainActivity. No lifecycle: ChromeManager owns attach/detach. */
 @SuppressLint("ViewConstructor")
 internal class DrawerEdgeSwipeHandleView(
     context: Context,

@@ -1,12 +1,5 @@
-//! OSD display state shared by frontends: queue folding, expiry,
-//! burst caps, strip math, and modal aggregation. Frontends render
-//! `rows()` and honor `wakeup_deadline()`; all policy lives in the
-//! sibling modules so tao/gtk/android behave identically.
-//!
-//! [`OsdManager`] orchestrates here; queue discipline lives in
-//! [`osd_transient`](crate::session::osd_transient), modal pumping in
-//! [`osd_modal`](crate::session::osd_modal), and the sync decision in
-//! [`osd_presenter`](crate::session::osd_presenter).
+//! OSD display state shared by frontends: folding, expiry, burst caps, and modal aggregation.
+//! Frontends render `rows()` and honor `wakeup_deadline()`; all policy lives in sibling modules.
 
 use std::time::Instant;
 
@@ -30,10 +23,7 @@ use crate::session::osd_modal::{ModalCenter, ModalPump};
 use crate::session::osd_presenter::{ModalRoute, ModalRouter, status_key, status_text};
 use crate::session::osd_transient::{OsdItem, RouteEffect, TransientQueue, counted_row};
 
-/// Transient half of [`OsdManager`]: the single sequential display
-/// plus the pending queue. Queue discipline lives in
-/// [`TransientQueue`]; this center is the owned half the manager
-/// composes, so transient state is never a bare field again.
+/// Transient half of [`OsdManager`]: the single sequential display plus the pending queue.
 #[derive(Debug, Default)]
 pub(crate) struct TransientCenter {
     queue: TransientQueue,
@@ -66,8 +56,6 @@ impl TransientCenter {
 }
 
 /// Notification display state: transient in-frame rows plus modal batches.
-/// Queue discipline lives in [`TransientCenter`], modal pumping in
-/// [`ModalCenter`].
 #[derive(Debug, Default)]
 pub struct OsdManager {
     transient: TransientCenter,
@@ -77,9 +65,8 @@ pub struct OsdManager {
     generation: u64,
 }
 
-/// Bundled inputs for [`SessionHandle::pump_osd`]: the caller-owned
-/// half of the push. The tick is fetched once per pass and shared
-/// with the sync decision, so one pass costs one metrics lock.
+/// Bundled inputs for [`SessionHandle::pump_osd`]: the caller-owned half of the push.
+/// The tick is fetched once per pass and shared with the sync decision.
 pub struct PushInput {
     pub policy: TransientPolicy,
     pub language: AppLanguage,
@@ -99,11 +86,8 @@ impl OsdManager {
         Self::default()
     }
 
-    /// Push taking the narrow policy. Decision code here never
-    /// sees the full settings surface (see [`TransientPolicy`]).
+    /// Push taking the narrow policy; channel-to-modal routing lives in [`ModalRouter`].
     /// Callers adapt once at the settings boundary via `From`.
-    /// Channel-to-modal routing lives in [`ModalRouter`]; this only
-    /// renders the routed rows.
     pub fn push_all_with_policy(
         &mut self,
         notifications: impl IntoIterator<Item = UiNotification>,
@@ -172,11 +156,7 @@ impl OsdManager {
     }
 
     /// Drain the aggregated modal batch into the sequential queue.
-    /// Render-boundary adapter over the pure [`ModalCenter::pump`]:
-    /// bullet formatting happens here, so the box keeps raw lines,
-    /// and overflow warns once per episode (the flag re-arms when the
-    /// queue fully drains). Internal pump step for the pump target;
-    /// frontends present via the modal source, never this.
+    /// Bullet formatting happens here; overflow warns once per episode until the queue drains.
     pub(crate) fn pump_modal(&mut self) -> bool {
         let lines = self.modal.take_batch_text();
         if lines.is_empty() {
@@ -241,9 +221,7 @@ impl ModalSource for OsdManager {
     }
 }
 
-/// Narrow pump surface for [`SessionHandle::pump_osd`]. The manager
-/// implements this; the session programs against the trait, so the
-/// pump step stays decoupled from the orchestration type.
+/// Narrow pump surface for [`SessionHandle::pump_osd`], decoupled from the orchestration type.
 pub trait PumpTarget: OsdState + ModalSink {
     /// Route one drained batch through the transient/modal policy.
     fn push_notifications(
@@ -290,8 +268,6 @@ impl OsdManager {
     }
 
     /// Queued error batches awaiting a dialog, for the wake policy.
-    /// Inherent twin of the [`ModalSource`] read: frontends that own
-    /// the manager directly (no trait import) use this.
     pub fn modal_pending(&self) -> usize {
         self.modal.pending()
     }
@@ -304,11 +280,8 @@ impl OsdManager {
         self.transient.wakeup_deadline(now)
     }
 
-    /// The single showing row (empty when idle).
-    /// Status readout split into label and value. Frontends lay out
-    /// the label left and the value right-aligned in a fixed-width
-    /// pill, so the digits never shift when the label appears,
-    /// disappears, or changes language.
+    /// Status readout split into label and value for the fixed-width pill.
+    /// Digits never shift when the label appears, disappears, or changes language.
     pub fn status_parts(fps: f32, paused: bool, language: AppLanguage) -> (String, String) {
         (
             status_text(status_key(paused), language).to_string(),
@@ -996,10 +969,8 @@ mod tests {
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        // Showing Info with a Warning and an Info queued (full).
-        // Errors always preempt a showing Info, so a full Error
-        // queue behind it is unreachable; the demote victim here is
-        // the tail Info.
+        // Errors preempt a showing Info, so a full Error queue here is unreachable.
+        // The demote victim in this shape is the tail Info.
         manager.push_all_with_policy(
             vec![info(NotificationKind::Paused)],
             &TransientPolicy::from(&altered),
@@ -1218,10 +1189,8 @@ mod tests {
             at(1500),
             FrameChannel::Composited,
         );
-        // Full 2s slots in arrival order; promoted labels measure
-        // from promotion, not from push time. The cap drops the
-        // oldest pending (the first resume), so the legs read
-        // pause, pause, resume with no accumulation.
+        // Full 2s slots in arrival order; promoted labels measure from promotion, not push time.
+        // The cap drops the oldest pending, so the legs read pause, pause, resume.
         let base = manager.generation();
         manager.poll(at(2000));
         assert_ne!(manager.generation(), base);

@@ -86,31 +86,18 @@ pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
     fn port_groups(&self) -> &[&[ControlInfo]];
 
     /// Device kind identifier for a given port group index.
-    ///
-    /// Override when different port groups within the same profile
-    /// represent different device kinds (e.g. NES Famicom P2 has
-    /// a microphone that P1 doesn't).
+    /// Override when port groups in one profile are different device kinds.
     fn device_kind_for_group(&self, _group_index: usize) -> DeviceKindId {
         DeviceKindId::new(self.profile_id().as_str())
     }
 }
 
 /// System port layout query. Factory → Frontend.
-///
-/// `slots()` and `controllers()` describe static init-time topology:
-/// build them once during session setup and cache the result. The
-/// default `resolve_*` helpers linearly scan those lists, which is fine
-/// at init time but must not run per frame.
+/// `slots()`/`controllers()` describe init-time topology: build once and cache.
 pub trait InputPorts: std::fmt::Debug {
     fn slots(&self) -> &[SlotInfo];
     /// All controller profiles this system supports.
-    ///
-    /// Init-only: returns a boxed iterator so no `Vec` is allocated by the
-    /// callee; callers must invoke it during setup and cache the collected
-    /// result rather than polling it on the hot path. (Boxed — not `impl
-    /// Trait` — so the trait stays object-safe for `dyn InputSystemFactory`.)
-    /// `Rc` handles are `!Send + !Sync` by design: clone them only on the
-    /// setup thread, then share the cached collection read-only.
+    /// Init-only: call during setup and cache; never poll on the hot path.
     fn controllers(&self) -> Box<dyn Iterator<Item = Rc<dyn ControllerProfile>> + '_>;
 
     /// Resolve a persisted slot ID string to an AttachmentId.
@@ -126,14 +113,7 @@ pub trait InputPorts: std::fmt::Debug {
 }
 
 /// Slot-to-controller assignments.
-/// Uses Rc<dyn ControllerProfile> so callers can inspect profile methods directly
-/// without string-based lookups.
-///
-/// Equality is order-sensitive and structural: slots must appear in the same
-/// order with equal attachment ids, and each paired controller is compared by
-/// [`ProfileId`] (not by pointer identity). Persisting an `InputAssignments`
-/// must therefore preserve slot order for round-trip equality to hold.
-/// Construct with [`InputAssignments::new`]; read with [`InputAssignments::slots`].
+/// Equality is order-sensitive and structural (slot order + [`ProfileId`] compare).
 #[derive(Clone)]
 pub struct InputAssignments {
     slots: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>,
@@ -182,10 +162,7 @@ impl std::fmt::Debug for InputAssignments {
 }
 
 /// Order-sensitive structural equality: slot ids and controller profile ids
-/// compared pairwise in order. The persistable (stringly-typed) projection of
-/// these assignments lives in `SessionHandle::current_assignments_pairs`
-/// (gui shell); that projection must preserve slot order for round-trip
-/// equality to hold.
+/// compared pairwise; the persisted projection must preserve slot order.
 impl PartialEq for InputAssignments {
     fn eq(&self, other: &Self) -> bool {
         self.eq_ordered(other)
@@ -195,11 +172,7 @@ impl PartialEq for InputAssignments {
 impl Eq for InputAssignments {}
 
 /// Errors from create_split.
-///
-/// All identifiers are typed (`AttachmentId`/`ProfileId`), never free-form
-/// strings such as `"none"` or `"missing controller"`. Single policy:
-/// an empty collection yields `ControllerNotFound` (naming the expected
-/// profile); a wrong non-zero count yields `IncompatibleController`.
+/// All identifiers are typed; empty yields `ControllerNotFound`, wrong count yields `IncompatibleController`.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CreateSplitError {
     #[error("slot '{slot}' not found")]
@@ -225,11 +198,7 @@ pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
 }
 
 /// Output of create_split.
-///
-/// `field_map` uses the standard `HashMap` hasher deliberately: the map is
-/// built once at init time and probed on frontend key events, never on the
-/// per-frame hot path, so a cryptographic-random hasher costs nothing here
-/// while avoiding an extra hash dependency.
+/// `field_map` uses the standard `HashMap` hasher: init-time only, no extra dependency.
 #[derive(Debug)]
 pub struct InputResources {
     split: InputSplit,
@@ -259,10 +228,7 @@ impl InputResources {
 }
 
 /// Thread-shared state reference.
-///
-/// `Send + Sync`: the `shared` mutex plus the atomic flag are safe to share
-/// between the GUI producer and the emu consumer threads. The `new_buffer`
-/// factory itself is `Send + Sync` so either thread can mint fresh buffers.
+/// `Send + Sync`: safe to share between the GUI producer and emu consumer threads.
 pub struct InputSplit {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
     flag: Arc<AtomicBool>,
@@ -305,13 +271,7 @@ impl std::fmt::Debug for InputSplit {
 }
 
 /// GUI thread input delivery.
-///
-/// `Send` but `!Sync`: the staged `Box<dyn InputStateBuffer>` is `Send`
-/// (movable to the GUI thread) but not `Sync` (never shared by reference
-/// across threads). Keep each `GuiInput` on its owning GUI thread; the
-/// thread-safe handoff is the `InputSplit` mutex + flag.
-/// Maintains absolute input state in an internal buffer.
-/// On publish, copies state → write_buf → shared (swap), preserving held keys.
+/// `Send` but `!Sync`: keep each `GuiInput` on its owning GUI thread.
 #[derive(Debug)]
 pub struct GuiInput {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
@@ -350,10 +310,8 @@ impl GuiInput {
 
     /// Must be called every frame. Copies absolute state into shared.
     pub fn publish(&mut self) {
-        // Prepare write_buf from absolute state (fast concrete copy).
-        // Both buffers come from the same `new_buffer` factory, so a
-        // mismatch here is a programming error: panic loudly with both
-        // type names instead of silently dropping input.
+        // Both buffers come from the same factory; a mismatch is a programming
+        // error: panic loudly instead of silently dropping input.
         if let Err(error) = self.write_buf.copy_state(&*self.state) {
             unreachable!("GuiInput buffers must share a concrete type: {error}");
         }
@@ -373,11 +331,7 @@ impl GuiInput {
 }
 
 /// Emu thread input consumer.
-///
-/// `Send` but `!Sync`: the snapshot `read_buf` is `Send` (movable to the
-/// emu thread) but not `Sync` (never shared by reference). Keep each
-/// `EmuInput` on its owning emu thread; the thread-safe handoff is the
-/// `InputSplit` mutex + flag.
+/// `Send` but `!Sync`: keep each `EmuInput` on its owning emu thread.
 #[derive(Debug)]
 pub struct EmuInput {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
@@ -415,9 +369,8 @@ impl EmuInput {
     /// Must be called every frame start. Takes latest input from GUI.
     pub fn take(&mut self) {
         if self.flag.swap(false, Ordering::Acquire) {
-            // Only std::mem::swap (non-panicking) runs under the lock,
-            // so the mutex cannot be poisoned; recover the inner guard
-            // defensively anyway.
+            // Only non-panicking `swap` runs under the lock, so the mutex
+            // cannot poison; recover the guard defensively anyway.
             let mut lock = self
                 .shared
                 .lock()

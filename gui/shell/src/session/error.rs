@@ -1,6 +1,5 @@
 //! Machine-readable reason a state-slot save/load failed.
-//! Home for [`SlotOpFailure`]: persistence, command, and
-//! notification layers share it without depending on each other.
+//! Home for [`SlotOpFailure`], shared by persistence, command, and notification layers.
 
 /// Why a state-slot save/load did not execute.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

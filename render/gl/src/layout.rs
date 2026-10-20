@@ -1,7 +1,5 @@
-//! Validated frame geometry: the orchestration layer's shape check lives
-//! here, not in the view adapter. `FrameLayout::checked` returns a
-//! domain [`FrameError`]; the view wraps it via `#[from]` so renderer
-//! orchestration never names view internals.
+//! Validated frame geometry. `FrameLayout::checked` returns a domain
+//! [`FrameError`]; the view wraps it via `#[from]`.
 
 /// Frame validation faults. Structured so logs name the fault instead
 /// of a `&'static str` tag.
@@ -94,13 +92,8 @@ impl FrameLayout {
     }
 }
 
-/// Fit the game into the surface minus reserved OSD strips. Pure:
-/// returns the GL viewport box plus the scale matrix (row-major
-/// `[sx, 0, .., sy, ..]`, symmetric so row- and column-major agree).
-/// GL viewports start at the bottom-left, so the drawable rect sits
-/// `strip.bottom` above the surface base. Ratios run in `f64` and
-/// narrow to `f32` once, so large surfaces never lose precision to
-/// an early `as f32` division.
+/// Fit the game into the surface minus reserved OSD strips. Pure.
+/// GL viewports start at the bottom-left; ratios run in `f64`, narrowing once.
 pub(crate) fn fit_viewport(
     surface_w: i32,
     surface_h: i32,

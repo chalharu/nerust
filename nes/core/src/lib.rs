@@ -174,12 +174,8 @@ enum ApuBatchMode {
     SynchronizedExpansionAudio,
 }
 
-/// Core-owned mapper-save payload.
-///
-/// This payload is intentionally scoped to battery-backed mapper RAM/VRAM plus the ROM identity
-/// needed to reject incompatible imports. The `options` field is recorded for diagnostics and
-/// fixture visibility today, but mapper-save import compatibility is currently enforced only by
-/// `rom_identity`; changing that policy would require an explicit compatibility decision.
+/// Core-owned mapper-save payload: battery-backed mapper RAM/VRAM plus ROM identity.
+/// Import compatibility is enforced by `rom_identity` only.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MapperSavePayload {
     schema_version: u32,
@@ -191,11 +187,8 @@ struct MapperSavePayload {
     chr_ram: Vec<u8>,
 }
 
-/// Core-owned full machine-state payload.
-///
-/// This schema owns CPU/PPU/APU/cartridge runtime bytes and the import validation that protects
-/// them. Both `rom_identity` and `options` are part of the compatibility contract for imports, so
-/// any incompatible change here requires a `PERSISTENCE_SCHEMA_VERSION` bump.
+/// Core-owned full machine-state payload: CPU/PPU/APU/cartridge runtime bytes.
+/// `rom_identity` and `options` are part of the import compatibility contract.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MachineStatePayload {
     schema_version: u32,
@@ -240,10 +233,8 @@ impl Core {
         self.apu_state = None;
     }
 
-    /// Drop the cached rate-baked DSP (resampler + IIR coefficients) so
-    /// the next frame rebuilds it at the new rate. Voice state lives in
-    /// `apu` and is untouched — same split as `reset()`, minus the
-    /// machine reset. Called by the console's `set_audio_sample_rate`.
+    /// Drop the cached rate-baked DSP so the next frame rebuilds it at the new rate.
+    /// Voice state in `apu` is untouched. Called by the console's `set_audio_sample_rate`.
     pub(crate) fn drop_apu_state(&mut self) {
         self.apu_state = None;
     }
@@ -257,10 +248,7 @@ impl Core {
     }
 
     /// CPU registers as name → value pairs in ascending name order.
-    ///
-    /// Kernel contract shared with the other systems' debuggers.
-    /// Calls the existing `pub(crate)` getters only; `Register` itself
-    /// stays crate-private.
+    /// `Register` itself stays crate-private.
     pub fn cpu_registers(&self) -> [(&'static str, u64); 6] {
         let r = self.cpu.register();
         [
@@ -274,8 +262,7 @@ impl Core {
     }
 
     /// Debugger register poke. Values mask to the register width;
-    /// unknown names return `false`. Same `pub(crate)` setters the
-    /// core itself uses; `Register` stays crate-private.
+    /// unknown names return `false`.
     pub(crate) fn write_cpu_register(&mut self, name: &str, value: u64) -> bool {
         let r = self.cpu.register_mut();
         match name {
@@ -512,16 +499,12 @@ impl Core {
         }
     }
 
-    /// Cap for one instruction step: normal instructions retire in a
-    /// handful of cycles (DMA and interrupts extend into the
-    /// hundreds); a halted CPU (JAM) never reaches a boundary, so the
-    /// cap guarantees termination and the count stays honest.
+    /// Cap for one instruction step: a halted CPU (JAM) never reaches a boundary,
+    /// so the cap guarantees termination and the count stays honest.
     pub(crate) const MAX_INSTRUCTION_STEP_CYCLES: u64 = 1_000_000;
 
-    /// Advance to the next instruction boundary, reporting core
-    /// cycles. Uses the exact per-cycle path (`step_cycle`), so
-    /// PPU/APU stay in lockstep. Audio samples are dropped: stepping
-    /// is a paused debugger operation, never audible output.
+    /// Advance to the next instruction boundary, reporting core cycles.
+    /// PPU/APU stay in lockstep; audio samples are dropped (paused operation).
     pub(crate) fn step_instruction(
         &mut self,
         screen: &mut FrameBuffer,
@@ -687,9 +670,8 @@ impl Core {
         mixer_sample_rate: u32,
         cpu_cycles: u64,
     ) {
-        // MMC5 expansion audio is clocked by mapper CPU cycles and sampled by the APU.
-        // Advance the mapper before the APU for each sample-bounded segment to preserve
-        // the exact per-cycle order used by step_cycle.
+        // MMC5 expansion audio is clocked by mapper CPU cycles and sampled by the APU;
+        // the mapper advances before the APU for each sample-bounded segment.
         let mut remaining = cpu_cycles;
         while remaining > 0 {
             let segment = remaining.min(self.apu.cycles_until_next_sample(mixer_sample_rate));

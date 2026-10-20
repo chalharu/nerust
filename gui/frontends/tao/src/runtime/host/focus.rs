@@ -15,9 +15,6 @@ impl HostState {
     }
 
     /// Execute a still-armed auto-pause at the end of the event burst.
-    /// The coordinator commits the armed pause (`BurstEnd` ->
-    /// `Pause`); post-pause chrome sync keeps the menu/title truthful
-    /// (the blur path below only synced pre-pause truth).
     pub(crate) fn commit_pending_auto_pause(&mut self) {
         if self.focus_event(FocusEvent::BurstEnd) != Some(FocusEffect::Pause) {
             return;

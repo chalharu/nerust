@@ -1,6 +1,5 @@
-//! Debugger views: batched, paused-gated reads plus the shell-owned
-//! two-phase write transaction. Frontends render from snapshots and
-//! never touch the core.
+//! Debugger views: batched, paused-gated reads plus the shell-owned write transaction.
+//! Frontends render from snapshots and never touch the core.
 
 use std::sync::{Arc, MutexGuard};
 
@@ -12,10 +11,8 @@ use super::{SessionHandle, osd::TickMetrics};
 use crate::debug::{CoreFailure, ImageNeed, TrafficKind};
 
 impl SessionHandle {
-    /// Poison-recovering transaction lock. A poisoned mutex means a
-    /// previous holder panicked mid-edit; the transaction is plain
-    /// data, so recovering keeps the debugger usable instead of
-    /// wedging it. Exactly one logging point for the recovery.
+    /// Poison-recovering transaction lock: plain data survives a panicked holder.
+    /// Exactly one logging point for the recovery.
     fn lock_txn(&self) -> MutexGuard<'_, debug_vm::WriteTransaction> {
         self.debug_txn.lock().unwrap_or_else(|error| {
             log::error!("debug transaction mutex poisoned, recovering");
@@ -31,12 +28,8 @@ impl SessionHandle {
             .unwrap_or_default()
     }
 
-    /// Whether a debugger snapshot read is safe. True while paused,
-    /// and also with no core (nothing runs, so nothing can change
-    /// under the read). Deliberately different from [`paused`]:
-    /// that reports the emulation pause flag (`false` with no core),
-    /// this reports read safety (`true` with no core).
-    /// [`paused`]: SessionHandle::paused
+    /// Whether a debugger snapshot read is safe: true while paused, and with no core.
+    /// Deliberately different from `paused`, which reports the emulation pause flag.
     pub fn debug_snapshot_ready(&self) -> bool {
         self.debug_snapshot_ready_tick(&self.tick_metrics())
     }
@@ -56,9 +49,8 @@ impl SessionHandle {
         )
     }
 
-    /// Single batched snapshot for one drain: one inspect, one
-    /// disassembly, one images pass. Unavailable sections carry
-    /// degenerates; rows travel structured, frontends format.
+    /// Single batched snapshot for one drain: one inspect, one disassembly, one images pass.
+    /// Unavailable sections carry degenerates; rows travel structured for frontends to format.
     pub fn debug_snapshot(
         &self,
         space: Option<nerust_core_traits::debugger::SpaceId>,
@@ -75,9 +67,7 @@ impl SessionHandle {
             Some(core) => core,
             None => return snapshot,
         };
-        // One thread crossing for inspect + anchor + disassembly
-        // instead of three sequential timeouts on the UI thread.
-        // Per-part fallbacks below mirror the old individual calls.
+        // One thread crossing for inspect, anchor, and disassembly.
         let batch = match core.debug_snapshot_batch(SnapshotRequest {
             inspect: InspectRequest {
                 space,
@@ -132,9 +122,7 @@ impl SessionHandle {
     }
 
     /// Images-only refresh for the live PPU follow while the core runs.
-    /// It never touches inspect or disassembly (paused-gated) and leaves
-    /// the last paused sections alone. Blocking wrapper for tests only;
-    /// live ticks use the flight.
+    /// Blocking wrapper for tests only; live ticks use the flight.
     #[cfg(test)]
     pub fn debug_live_images(&self, need_images: ImageNeed) -> LiveImages {
         let mut flight = self.debug_live_images_begin(matches!(need_images, ImageNeed::Fetch));
@@ -256,11 +244,8 @@ impl SessionHandle {
         self.lock_txn().clear();
     }
 
-    /// Report drain traffic. `traffic` kills staged-but-uncommitted
-    /// values from previous drains (step, refresh, pause switches).
-    /// Select/stage/commit traffic passes [`TrafficKind::Transactional`]:
-    /// it builds the transaction this drain consumes. The frontend owns
-    /// request semantics; the session owns the kill.
+    /// Report drain traffic: kills staged-but-uncommitted values from previous drains.
+    /// Select/stage/commit traffic passes [`TrafficKind::Transactional`], consumed by this drain.
     pub fn debug_note_traffic(&self, traffic: TrafficKind) {
         if traffic == TrafficKind::StateChanging {
             self.lock_txn().on_state_changing_traffic();

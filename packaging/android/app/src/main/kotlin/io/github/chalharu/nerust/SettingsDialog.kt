@@ -42,14 +42,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 
-/**
- * Settings dialog UI extracted from MainActivity: cards
- * ([NerustSettingsDialogCard], [NerustErrorDialogCard]), section builders
- * ([buildSettingsSections]), same-edge filtering ([visibleSettingIndices]),
- * and selection state ([rememberSettingsSelections]). MainActivity keeps
- * the show/dismiss wiring ([MainActivity.showSettingsDialog]) and only
- * delegates content here.
- */
+/** Settings dialog UI: cards, section builders, same-edge filtering, and selection state. */
 internal data class AndroidSetting(
     val key: String,
     val section: String,
@@ -397,11 +390,8 @@ internal fun settingsSectionLabel(id: String): String =
 
 internal fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) "setting" else "settings"}"
 
-// Same-edge follow (mirrors desktop): the notification area mode
-// governs the edge, so the status row hides while both position
-// pickers share the top or bottom band. Edge classes come from the
-// Rust payload ("top"/"bottom" per choice); nothing here assumes
-// choice indices.
+// Same-edge follow: the notification area mode governs the edge.
+// Edge classes come from the Rust payload; nothing here assumes choice indices.
 internal fun visibleSettingIndices(
     settings: List<AndroidSetting>,
     section: AndroidSettingsSection,

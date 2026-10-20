@@ -1,6 +1,5 @@
-//! Persistence setup for the session: sidecar resolution, one-time
-//! reporting, and mapper-save wiring. `SessionHandle` delegates here so
-//! save-location policy lives next to the persistence backend.
+//! Persistence setup for the session: sidecar resolution and mapper-save wiring.
+//! `SessionHandle` delegates here so save-location policy lives next to the backend.
 
 use std::path::Path;
 
@@ -14,20 +13,16 @@ pub(crate) enum PersistenceSetup {
     Unavailable,
 }
 
-/// Whether the mapper save loads from disk during setup. `Load` on
-/// fresh ROM loads, `Skip` when the caller already restored runtime
-/// state (settings re-apply) and must not clobber it.
+/// Whether the mapper save loads from disk during setup.
+/// `Load` on fresh ROM loads; `Skip` when the caller already restored runtime state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MapperRestore {
     Load,
     Skip,
 }
 
-/// One-call persistence wiring: resolve sidecars, configure the
-/// manager, refresh slots, optionally load the mapper save, and
-/// report unavailability through the session notifications.
-/// Callers never touch the two phases separately, so a bound session
-/// cannot forget its notice.
+/// One-call persistence wiring: resolve sidecars, configure the manager, refresh slots.
+/// Optionally loads the mapper save and reports unavailability through notifications.
 pub(crate) struct PersistenceBinder;
 
 impl PersistenceBinder {

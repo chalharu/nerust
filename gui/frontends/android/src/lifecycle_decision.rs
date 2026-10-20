@@ -1,18 +1,14 @@
-//! Lifecycle pause/resume decisions as pure predicates. The
-//! JNI-bound call sites stay target-gated in `android`; this module
-//! compiles on host so the contract is unit-tested in CI.
+//! Lifecycle pause/resume decisions as pure predicates.
+//! Host-compiled so the contract is unit-tested.
 
-/// Lifecycle auto-pause fires only when no pause is pending and the
-/// session can pause (loaded and running). Pausing with no core fails
-/// into `CommandFailed` noise and an unasked modal; a manual pause
-/// needs no second pause.
+/// Lifecycle auto-pause fires only with no pending pause and a pausable session.
+/// A manual pause needs no second pause.
 pub(crate) fn should_lifecycle_pause(lifecycle_auto_paused: bool, can_pause: bool) -> bool {
     !lifecycle_auto_paused && can_pause
 }
 
-/// Resume after a ROM load: fresh loads always resume; lifecycle
-/// restores resume only our own auto-pause. A manual pause predates
-/// the suspend and must survive the round-trip.
+/// Resume after a ROM load: fresh loads always resume.
+/// Lifecycle restores resume only our own auto-pause; manual pauses survive.
 pub(crate) fn should_resume_after_restore(
     restore_hidden_state: bool,
     lifecycle_auto_paused: bool,
@@ -28,11 +24,8 @@ pub(crate) enum ResumeWant {
     LifecycleRetry,
 }
 
-/// Foreground/license resume gate shared by the restore path and the
-/// window-ready retry. An error auto-pause owns the paused state until
-/// its dialog is dismissed, so any concurrent resume (fresh load or
-/// lifecycle retry) stays suppressed while it holds. Named fields:
-/// positional bools transposed silently.
+/// Foreground resume gate for the restore path and the window-ready retry.
+/// Suppressed while an error auto-pause holds the paused state.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ForegroundResume {
     pub error_paused: bool,

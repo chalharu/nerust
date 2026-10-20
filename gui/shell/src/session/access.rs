@@ -4,10 +4,7 @@ use nerust_settings_core::model::input::ShortcutAction;
 use crate::session::SessionError;
 
 /// Summary of a settings-apply operation, visible to frontends.
-///
-/// Replaces the full `SettingsApplyPlan` (which contains implementation
-/// details like `session_rebuild_required`, etc.) with only the flags
-/// that frontends actually act on.
+/// Only the flags that frontends actually act on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SettingsResult {
     /// The emulation core's renderer (GPU surface) needs to be recreated.
@@ -19,19 +16,16 @@ pub struct SettingsResult {
     pub scaling_changed: bool,
 }
 
-/// Pause control: the only session operations the modal auto-pause
-/// path needs. Kept separate so callers (and test fakes) depend on
-/// three methods, not the whole session surface.
+/// Pause control: the only session operations the modal auto-pause path needs.
+/// Kept separate so callers depend on three methods, not the whole session surface.
 pub trait PauseControl {
     fn pause(&mut self);
     fn resume(&mut self);
     fn toggle_pause(&mut self);
 }
 
-/// Save/load/delete leg of slot control. Split from navigation so
-/// test fakes and frontends depend only on the half they use.
-/// Blanket-impl'd from `SlotControl` so existing implementors keep
-/// compiling; new code should bound on these narrow traits.
+/// Save/load/delete leg of slot control, split from navigation.
+/// Test fakes and frontends depend only on the half they use.
 pub trait SlotIo {
     fn load_slot(&mut self, slot_id: u64) -> bool;
     fn save_slot(&mut self, slot_id: u64);
@@ -53,12 +47,8 @@ pub trait ResetControl {
     fn reset(&mut self);
 }
 
-/// Save-slot control: slot CRUD plus reset. Legacy fat trait: the
-/// tao, gtk, and android frontends implement this out of crate, so it
-/// cannot be deleted without breaking them. New code implements the
-/// narrow [`SlotIo`]/[`SlotNav`]/[`ResetControl`] traits instead and
-/// reaches legacy implementors through [`SlotControlAdapter`].
-/// Kept as a shim: removing it breaks out-of-crate frontends.
+/// Save-slot control: slot CRUD plus reset. Legacy fat trait.
+/// New code implements the narrow [`SlotIo`]/[`SlotNav`]/[`ResetControl`] traits instead.
 pub trait SlotControl {
     fn save_active_slot(&mut self) -> bool;
     fn load_active_slot(&mut self) -> bool;
@@ -72,10 +62,8 @@ pub trait SlotControl {
     fn reset(&mut self);
 }
 
-/// Explicit adapter from the legacy fat [`SlotControl`] to the narrow
-/// ports. One named struct instead of blanket impls, so coherence
-/// never surprises a new narrow implementor: only this adapter
-/// bridges the two shapes.
+/// Explicit adapter from the legacy fat [`SlotControl`] to the narrow ports.
+/// Only this adapter bridges the two shapes.
 #[derive(Debug)]
 pub struct SlotControlAdapter<S>(pub S);
 
@@ -155,9 +143,7 @@ impl<S: SlotControl> ResetControl for SlotControlAdapter<S> {
 
 /// Session-level operations: teardown and settings application.
 pub trait SessionControl {
-    /// Unload the current ROM, flushing mapper saves. Closing the
-    /// ROM rides this trait like every other session operation so no
-    /// frontend bypasses the session behind its back.
+    /// Unload the current ROM, flushing mapper saves.
     fn unload(&mut self);
     fn apply_settings(
         &mut self,
@@ -292,10 +278,8 @@ mod tests {
 
     #[test]
     fn recorder_pins_each_slot_and_lifecycle_call() {
-        // The remaining Recorder methods are not reachable through
-        // dispatch; pin their recording through the explicit adapter,
-        // which is the only bridge from the legacy fat trait to the
-        // narrow ports. New code implements the narrow traits direct.
+        // Unreachable Recorder methods record through the explicit adapter,
+        // the only bridge from the legacy fat trait to the narrow ports.
         let mut recorder = Recorder::default();
         recorder.pause();
         recorder.resume();

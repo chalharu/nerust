@@ -26,9 +26,7 @@ impl HostState {
             .take_ppu_open_request()
     }
 
-    /// Live follow is active: both aux windows open on a running
-    /// loaded core. Single predicate for the tick, the wake backstop,
-    /// and the redraw pump below.
+    /// Live follow is active: both aux windows open on a running loaded core.
     pub(crate) fn live_follow_active(&self) -> bool {
         self.is_debug_open()
             && self.is_ppu_open()
@@ -37,19 +35,13 @@ impl HostState {
     }
 
     /// Live-follow pulse entry (timer thread via `UserEvent::LiveTick`).
-    /// Throttle-guarded inside; no-ops unless a running core has the
-    /// viewer open.
     pub(crate) fn live_tick(&mut self) {
         self.maybe_live_ppu();
     }
 
-    /// Live PPU follow while the core runs: images-only refresh each
-    /// interval. Never a full drain (paused-gated inspect would blank
-    /// the dump); paused cores need no periodic work; async flight.
+    /// Live PPU follow while the core runs: images-only refresh each interval.
     pub(crate) fn maybe_live_ppu(&mut self) {
-        // Settle any in-flight fetch first (non-blocking): a flight
-        // orphaned by pausing or closing still resolves harmlessly,
-        // and polling here needs no throttle gate.
+        // Settle any in-flight fetch first (non-blocking).
         if let Some(mut flight) = self.orchestrator_mut().take_live_flight() {
             match flight.poll() {
                 LiveImagesPoll::Done(live) => self.apply_live_images(live),
@@ -74,13 +66,8 @@ impl HostState {
         }
     }
 
-    /// Patch a finished live fetch into the viewer. Images apply when
-    /// newer regardless of pause (a paused frame is honest data); the
-    /// running chrome only applies while still running, so a
-    /// pause-in-flight never flips the status back to Running. Bridge
-    /// writes route through the handle narrow port
-    /// (`apply_live` over [`BridgeLock`]); the host never locks
-    /// `bridge.display` directly.
+    /// Patch a finished live fetch into the viewer: images land when newer.
+    /// Bridge writes route through the handle narrow port.
     fn apply_live_images(&mut self, live: LiveImages) {
         let Some((generation, images)) = live else {
             return;
@@ -89,9 +76,7 @@ impl HostState {
         let had_debug = self
             .with_debug_window(|handle| {
                 if handle.apply_live(generation, images, running) {
-                    // Rebuild, not just repaint: the patch lands in
-                    // bridge state, and only a rebuild re-reads it
-                    // into the widget tree.
+                    // Rebuild, not just repaint: only a rebuild re-reads bridge state.
                     handle.sync_from_bridge();
                 }
             })
@@ -103,10 +88,8 @@ impl HostState {
         }
     }
 
-    /// Open the debugger (idempotent), and the PPU viewer only for
-    /// the toolbar button. Closing never resumes. Opening drains
-    /// `[Pause, Refresh]` through the shared shell drain (pause first);
-    /// `focus_ppu` opens-or-focuses the viewer for the toolbar only.
+    /// Open the debugger (idempotent); the PPU viewer only for the toolbar button.
+    /// Closing never resumes; `focus_ppu` opens-or-focuses the viewer.
     pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         use nerust_gui_shell::debug::DebugAction;
         if !self.is_debug_open() {
@@ -142,9 +125,7 @@ impl HostState {
                 match opener.create_ppu(&bridge, position) {
                     Some(handle) => {
                         self.set_ppu_window(handle);
-                        // Populate the image cache immediately: the bridge
-                        // already carries images, but the viewer derives
-                        // its scaled cache only on Sync.
+                        // Populate the image cache immediately: the viewer derives on Sync.
                         self.with_ppu_window(|ppu| {
                             ppu.sync_from_bridge();
                         });
@@ -165,8 +146,6 @@ impl HostState {
     }
 
     /// Drain debugger requests and push one batched snapshot back.
-    /// Execution requests run before the re-read so one drain both
-    /// acts and refreshes.
     pub(crate) fn drain_debug_requests(&mut self) {
         self.poll_debug_flight();
         let Some((open_ppu, requests)) = self.take_debug_batch() else {
@@ -182,10 +161,7 @@ impl HostState {
     }
 
     /// Run one action batch through an async shell-drain flight.
-    /// Empty batches are pure re-reads. Sends only; the event loop
-    /// polls, so the UI thread never blocks. Bridge reads route
-    /// through `&dyn BridgeLock` (nav/watch/freeze/rows); the host
-    /// never locks `bridge` fields directly.
+    /// Sends only; the event loop polls, so the UI thread never blocks.
     pub(crate) fn run_debug_drain(&mut self, requests: &[nerust_gui_shell::debug::DebugAction]) {
         use crate::aux::bridge::BridgeLock;
         use nerust_gui_shell::debug::DebugDrainInput;
@@ -216,8 +192,7 @@ impl HostState {
             prev_dump_rows: &prev_rows,
             need_images,
         };
-        // Supersede: a newer batch replaces the stored flight; the
-        // FIFO command order keeps the newest view correct.
+        // Supersede: a newer batch replaces the stored flight.
         let mut flight = self.session().debug_drain_begin(requests, &input);
         match flight.poll() {
             DrainPoll::Done(output) => self.apply_drain_output(*output),
@@ -228,9 +203,7 @@ impl HostState {
     }
 
     /// Poll the stored drain flight once; applies on completion.
-    /// Called from the event loop (request sites and the control-flow
-    /// backstop) so every poll runs on the UI thread without ever
-    /// blocking it. Returns whether a flight is still pending.
+    /// Returns whether a flight is still pending.
     pub(crate) fn poll_debug_flight(&mut self) -> bool {
         let mut flight = match self.orchestrator_mut().take_drain_flight() {
             Some(flight) => flight,
@@ -248,16 +221,11 @@ impl HostState {
         }
     }
 
-    /// Apply a finished drain: selection, running-sections merge, PPU
-    /// follow, and the pause-truth agreement point (menu, title, and
-    /// the focus gate below all follow the drained state).
+    /// Apply a finished drain: selection, running-sections merge, PPU follow.
     fn apply_drain_output(&mut self, output: DebugDrainOutput) {
         let reselected = output.reselected;
         let display = output.display;
-        // Selection write plus paused-section restore live in the
-        // bridge narrow port; the host never holds a `display` guard.
-        // `apply_live` returns whether images are newer, but here the
-        // drain display always lands (see `apply_drain_display`).
+        // Selection write plus paused-section restore live in the bridge narrow port.
         self.with_debug_window(|handle| {
             handle.apply_drain_display(display, reselected);
             handle.sync_from_bridge();
@@ -266,21 +234,14 @@ impl HostState {
         self.with_ppu_window(|ppu| {
             ppu.sync_from_bridge();
         });
-        // The drain is the single pause-truth agreement point: the
-        // toolbar label follows the drained state, so the menu and the
-        // title sync here too instead of drifting apart (the reported
-        // "two Pause statuses" bug).
+        // The drain is the single pause-truth agreement point: menu and title sync here.
         self.sync_menu_state();
         self.refresh_window_title();
-        // Post-drain truth (the drain may itself pause/resume): focus
-        // flips compare against this to skip redundant emu
-        // round-trips (see `sync_debug_chrome`).
+        // Post-drain truth: focus flips compare against this to skip redundant round-trips.
         self.set_last_drain_paused(self.session().tick_metrics().paused);
     }
 
-    /// Focus-driven chrome sync. Menu/title refresh always runs; the
-    /// emu snapshot only runs when pause state moved, so focus bursts
-    /// never re-hit the thread. No redraw: focus alone paints nothing.
+    /// Focus-driven chrome sync. Menu/title refresh always runs; no redraw.
     pub(crate) fn sync_debug_chrome(&mut self) {
         self.sync_chrome(false);
         if chrome_drain_due(

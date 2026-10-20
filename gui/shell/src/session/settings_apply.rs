@@ -1,6 +1,5 @@
-//! Settings-driven session reconstruction: live swaps, full rebuilds,
-//! and rollback. `SessionHandle` delegates here so the plan/apply/undo
-//! protocol lives in one domain module.
+//! Settings-driven session reconstruction: live swaps, full rebuilds, and rollback.
+//! `SessionHandle` delegates here; the plan/apply/undo protocol lives in one domain module.
 
 use std::{path::Path, sync::Arc};
 
@@ -15,9 +14,8 @@ use crate::session::{
 };
 use nerust_settings_core::factory::settings_view;
 
-/// What `rollback_runtime_apply` undid. Failures are reported here,
-/// never swallowed: a failed rollback leaves the new runtime live,
-/// and the caller surfaces that alongside the original save error.
+/// What `rollback_runtime_apply` undid; failures are reported here, never swallowed.
+/// A failed rollback leaves the new runtime live for the caller to surface.
 #[derive(Debug, Default)]
 pub struct RollbackReport {
     pub restored_rebuild: bool,
@@ -35,18 +33,15 @@ impl RollbackReport {
     }
 }
 
-/// One snapshot of load-bearing runtime state, captured once per
-/// rebuild. Single source for the export/restore decision below, so
-/// the emu-side tick and the session-side record cannot disagree
-/// mid-rebuild.
+/// One snapshot of load-bearing runtime state, captured once per rebuild.
+/// Single source for the export/restore decision below.
 struct LoadedState {
     present: bool,
     core_bytes: Option<Vec<u8>>,
 }
 
-/// Derived apply inputs: the pure plan plus what the session resolved
-/// around it. Splits derivation (testable, no `&mut`) from the
-/// mutating apply below.
+/// Derived apply inputs: the pure plan plus what the session resolved around it.
+/// Splits derivation (testable, no `&mut`) from the mutating apply below.
 struct DerivedApply {
     plan: SettingsApplyPlan,
     strategy: LiveStrategy,
@@ -111,8 +106,7 @@ impl SessionHandle {
     }
 
     /// Derive the plan, strategy, and assignments for `next_settings`.
-    /// Pure read: no mutation, so tests can assert the strategy matrix
-    /// without a live core.
+    /// Pure read: no mutation, so tests can assert the strategy matrix without a live core.
     fn derive_apply(&self, next_settings: &SettingsSnapshot) -> DerivedApply {
         let previous_assignments = &self.input.current_assignments;
         let factory = self.active_factory_cloned();
@@ -138,9 +132,8 @@ impl SessionHandle {
         }
     }
 
-    /// Run one derived strategy against the live runtime, returning
-    /// the effective strategy for rollback. A refused presentation
-    /// swap falls back to a rebuild, which is what gets undone.
+    /// Run one derived strategy against the live runtime, returning the effective strategy.
+    /// A refused presentation swap falls back to a rebuild, which is what gets undone.
     fn apply_live_runtime(
         &mut self,
         input: LiveRuntimeInput<'_>,
@@ -251,8 +244,7 @@ impl SessionHandle {
     }
 
     /// Persist `next_settings` and absorb it into the live session.
-    /// Derivation, runtime apply, and input rebind run as named
-    /// stages so each can be read (and tested) in isolation.
+    /// Derivation, runtime apply, and input rebind run as named stages.
     pub fn apply_settings(
         &mut self,
         next_settings: SettingsSnapshot,
@@ -371,9 +363,8 @@ impl SessionHandle {
         let rebuilt =
             build_core_for_settings(&self.audio_registry, next_settings, &factory, assignments)?;
         let rebuilt_core = rebuilt.emu_core;
-        // The export decides the restore: a captured snapshot means
-        // the runtime round-trips (skip the disk mapper save); no
-        // capture means the disk save is the only continuity.
+        // The export decides the restore: a captured snapshot round-trips the runtime.
+        // No capture means the disk mapper save is the only continuity.
         let restored_runtime_state = loaded.core_bytes.is_some();
 
         if loaded.present
@@ -429,10 +420,8 @@ impl SessionHandle {
     }
 }
 
-/// Build a fresh core for `next_settings` plus `assignments`. Free
-/// function of exactly what the build consumes (speaker registry,
-/// settings view, assignments); no session borrowing, so callers can
-/// hold the session borrow for the install that follows.
+/// Build a fresh core for `next_settings` plus `assignments`, with no session borrowing.
+/// Free function of exactly what the build consumes, so callers hold the session borrow.
 fn build_core_for_settings(
     audio_registry: &AudioBackendRegistry,
     next_settings: &SettingsSnapshot,

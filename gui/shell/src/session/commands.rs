@@ -1,21 +1,15 @@
 pub use crate::session::error::SlotOpFailure;
 
-/// Data-driven command vocabulary: every per-command answer (stable
-/// name, slot affinity, success notification) lives on this trait, so
-/// the executor matches once and the notification mapping cannot
-/// drift across parallel `match` sites. [`SessionCommand`] is the
-/// sole implementor; the free functions below delegate to it for
-/// callers migrating off the old entry points.
+/// Data-driven command vocabulary: every per-command answer lives on this trait.
+/// The executor matches once; [`SessionCommand`] is the sole implementor.
 pub trait SessionCmd {
     /// Stable command name for logs and failure messages.
     fn cmd_name(&self) -> &'static str;
-    /// Slot carried for failure messages. Explicit-slot commands use
-    /// their own id; active-slot commands resolve to `active`, the
-    /// rest report `None`. New variants must pick an arm here.
+    /// Slot carried for failure messages: explicit-slot commands use their own id.
+    /// Active-slot commands resolve to `active`; the rest report `None`.
     fn slot_affinity(&self, active: Option<u64>) -> Option<u64>;
-    /// Success notification for an executed command. Slot failures
-    /// map to Warning/Error by reason; transport errors become a
-    /// generic Error. `None` means silence.
+    /// Success notification for an executed command. `None` means silence.
+    /// Slot failures map to Warning/Error by reason; transport errors become generic Error.
     fn success_notification(
         &self,
         outcome: &SessionCommandOutcome,
@@ -112,9 +106,8 @@ impl SessionCmd for SessionCommand {
 }
 
 impl SessionCommand {
-    /// Slot carried for failure messages. Explicit-slot commands use
-    /// their own id; active-slot commands resolve to `active`, the
-    /// rest report `None`. New variants must pick an arm here.
+    /// Slot carried for failure messages: explicit-slot commands use their own id.
+    /// Active-slot commands resolve to `active`; the rest report `None`.
     pub fn associated_slot(&self, active: Option<u64>) -> Option<u64> {
         SessionCmd::slot_affinity(self, active)
     }
@@ -124,15 +117,13 @@ impl SessionCommand {
 pub struct SessionCommandOutcome {
     pub executed: bool,
     pub needs_redraw: bool,
-    /// Why a slot save/load did not execute (`None` on success and for
-    /// commands that cannot fail this way). Frontends map this to a
-    /// user-facing message; the full detail stays in the logs.
+    /// Why a slot save/load did not execute.
+    /// `None` on success and for commands that cannot fail this way.
     pub slot_failure: Option<SlotOpFailure>,
 }
 
-/// Map a command outcome to its notification, if any. Success
-/// notifies Info; slot failures map to Warning/Error by reason;
-/// transport errors become a generic Error. `None` means silence.
+/// Map a command outcome to its notification, if any.
+/// Success notifies Info; slot failures map to Warning/Error by reason.
 pub fn outcome_notification(
     command: SessionCommand,
     outcome: &SessionCommandOutcome,

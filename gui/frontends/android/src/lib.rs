@@ -1,6 +1,5 @@
-// Root stays ungated so pure modules compile and test on host;
-// Android-bound items below stay target-gated. `import_metadata` is
-// used only by the gated picker, so it loads for tests too.
+// Root stays ungated so pure modules compile and test on host.
+// Android-bound items below stay target-gated.
 #[cfg(any(target_os = "android", test))]
 mod density;
 
@@ -77,9 +76,7 @@ fn create_system_registry() -> Arc<SystemRegistry> {
 }
 
 /// Inject the factory set from the composition root (`android_main`).
-/// Tests use this to build reduced registries; production passes the
-/// default set. Adding a system means extending `default_factories`,
-/// not touching call sites.
+/// Adding a system means extending `default_factories`, not touching call sites.
 #[cfg(any(target_os = "android", test))]
 fn create_system_registry_with(factories: Vec<Arc<dyn CoreFactory>>) -> Arc<SystemRegistry> {
     Arc::new(SystemRegistry::new(factories))
@@ -119,9 +116,8 @@ pub fn android_main(app: AndroidApp) {
             std::process::exit(0);
         }
         GuardOutcome::Completed(Err(error)) => {
-            // Init failures (e.g. corrupted settings) are already toasted
-            // and the activity finished inside `android::run`; this log is
-            // the record for post-loop failures.
+            // Init failures are already toasted and the activity finished inside `android::run`.
+            // This log is the record for post-loop failures.
             log::error!("android_main: frontend failed: {error:#}");
         }
         // Crash path: logged by the guard; return to the JVM instead
@@ -132,10 +128,8 @@ pub fn android_main(app: AndroidApp) {
 
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
-/// # Safety
-///
-/// Called by the JVM when the native library is loaded.  `vm` must be a valid
-/// pointer to the `JavaVM` instance provided by the runtime.
+/// Called by the JVM when the native library is loaded.
+/// # Safety: `vm` must be a valid `JavaVM` pointer from the runtime.
 pub unsafe extern "system" fn JNI_OnLoad(
     vm: *mut jni::sys::JavaVM,
     _reserved: *mut c_void,
@@ -143,9 +137,8 @@ pub unsafe extern "system" fn JNI_OnLoad(
     init_android_logging();
     log::info!("JNI_OnLoad: registering MainActivity natives");
     let vm = unsafe { JavaVM::from_raw(vm) };
-    // Register native method bindings.  This succeeds when the library is loaded
-    // via `System.loadLibrary("main")` in the companion-object init because the
-    // app classloader is on the call stack at that point.
+    // Register native method bindings; succeeds when loaded via `System.loadLibrary("main")`.
+    // The app classloader must be on the call stack at that point.
     if let Err(error) = vm.attach_current_thread(android::register_main_activity_natives) {
         log::error!("JNI_OnLoad: native registration failed: {error:?}");
     } else {

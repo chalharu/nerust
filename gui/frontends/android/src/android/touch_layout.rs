@@ -1,11 +1,5 @@
-//! Touch-overlay geometry owned by Rust.
-//!
-//! Single source of truth for hit zones: every fraction below mirrors
-//! `controlsLayout()` / `floatingJoystickLayout()` in MainActivity.kt.
-//! The resolved zones travel to Kotlin through the existing overlay
-//! update path (`configureControlsOverlay(..., zones)`); Kotlin draws
-//! the pushed zones and only falls back to its local copy when the
-//! payload is absent or malformed. Keep the fractions in sync.
+//! Touch-overlay geometry owned by Rust: single source of truth for hit zones.
+//! Kotlin draws the pushed zones, falling back to its local copy when the payload is absent or malformed.
 
 use nerust_core_traits::touch::{
     TouchControl, TouchControlRole, TouchPoint, TouchRect, clamp_floating_dpad_knob,
@@ -13,15 +7,12 @@ use nerust_core_traits::touch::{
 };
 use nerust_input_traits::{AttachmentId, DigitalControlId};
 
-// ---------------------------------------------------------------------------
-// Named layout fractions (were inline magic numbers in `android.rs`).
-// ---------------------------------------------------------------------------
+// Named layout fractions.
 
 /// Top of the touch-control band in portrait (fraction of height).
 pub(super) const PORTRAIT_CONTROL_TOP: f32 = 0.54;
-/// Fixed-capacity D-Pad target set: at most the four cardinal directions,
-/// `None` pads unused slots, so the touch-move path allocates nothing
-/// (no per-move `Vec`, no SmallVec/ArrayVec dependency).
+/// Fixed-capacity D-Pad target set: at most the four cardinal directions.
+/// `None` pads unused slots, so the touch-move path allocates nothing.
 pub(super) type DpadTargets = [Option<(AttachmentId, DigitalControlId)>; 4];
 
 /// Empty target set for D-Pad release paths.
@@ -66,14 +57,12 @@ pub(super) const LANDSCAPE_ACTIVATION_RIGHT: f32 = 0.45;
 /// Landscape D-Pad activation top (fraction of height).
 pub(super) const LANDSCAPE_ACTIVATION_TOP: f32 = 0.25;
 /// Floating-joystick knob radius as a fraction of the base radius.
-/// Kotlin draws the knob (`floatingJoystickLayout`), so Rust hit-testing
-/// never needs it; kept here so the shared fraction has one home.
+/// Rust hit-testing never needs it; the shared fraction lives here.
 #[allow(dead_code)]
 pub(super) const KNOB_RADIUS_OF_BASE: f32 = 0.48;
 
 /// Canonical zone table: role plus the label Kotlin draws.
-/// Pixel rects are size/scale dependent (see [`ProfileTouchOverlay`]);
-/// this table fixes the zone set and order both sides iterate.
+/// Fixes the zone set and order both sides iterate.
 pub(super) const TOUCH_ZONES: &[(TouchControlRole, &str)] = &[
     (TouchControlRole::FaceButton2, "B"),
     (TouchControlRole::FaceButton1, "A"),
@@ -122,9 +111,8 @@ pub(super) struct ProfileTouchOverlay {
 pub(super) struct FloatingDpadState {
     pub(super) touch_id: u64,
     pub(super) center: TouchPoint,
-    /// Fixed-capacity target set (at most the four cardinal directions):
-    /// `None` pads unused slots, so the touch-move path allocates nothing.
-    /// See `DpadTargets` in `input_router.rs`.
+    /// Fixed-capacity target set (at most the four cardinal directions).
+    /// `None` pads unused slots; see `DpadTargets`.
     pub(super) targets: DpadTargets,
 }
 
@@ -164,9 +152,7 @@ impl ProfileTouchOverlay {
         let center_width = base * CENTER_WIDTH_OF_BASE * scale;
         let center_height = base * CENTER_HEIGHT_OF_BASE * scale;
         // Shoulder strip above the D-Pad activation area and the center row.
-        // Must stay clear of both: dpad_activation starts at
-        // activation_top + dpad_radius, and the select/start row sits at
-        // center_top. Keep in sync with controlsLayout() in MainActivity.kt.
+        // Must stay clear of both; keep in sync with controlsLayout().
         let shoulder_width = base * SHOULDER_WIDTH_OF_BASE * scale;
         let shoulder_height = base * SHOULDER_HEIGHT_OF_BASE * scale;
         let shoulder_margin_x = width * SHOULDER_MARGIN_X_OF_WIDTH;
@@ -275,10 +261,8 @@ impl ProfileTouchOverlay {
             .collect()
     }
 
-    /// Compact encoding for the JNI overlay update path:
+    /// Compact encoding for the JNI overlay update path.
     /// `LABEL:x,y,w,h;...` with relative coordinates at 4 decimals.
-    /// Kotlin parses this with a fallback to its local layout when the
-    /// payload is absent or malformed.
     pub(super) fn encode_zones(zones: &[RelativeZone]) -> String {
         zones
             .iter()
@@ -446,10 +430,8 @@ mod tests {
         }
     }
 
-    /// CI-parseable geometry pin: `touch_geometry.json` is the canonical
-    /// table shared with the Kotlin fallback (`controlsLayout` /
-    /// `floatingJoystickLayout`). This test parses the JSON and asserts
-    /// every Rust fraction matches, so a one-side drift fails loudly.
+    /// Geometry pin: every Rust fraction must match the canonical `touch_geometry.json`.
+    /// A one-side drift fails loudly.
     #[test]
     fn geometry_fractions_match_canonical_json() {
         #[derive(serde::Deserialize)]

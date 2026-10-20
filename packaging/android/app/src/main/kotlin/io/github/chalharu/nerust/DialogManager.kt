@@ -24,16 +24,8 @@ internal class ComposeOwnerFrameLayout(
     }
 }
 
-/**
- * Full-screen Compose dialog host (settings + error dialogs).
- *
- * Extracted from MainActivity. Owns the dialog window and its dismiss
- * routing; the activity builds the per-dialog content and forwards the
- * test probes. Replacing a dialog never notifies the old dismiss
- * callback: the replacement owns the screen, and notifying would release
- * the new dialog's gate (e.g. an error ack dismissing just-opened
- * settings on the Rust side).
- */
+/** Full-screen Compose dialog host. Owns the window and dismiss routing; replacing a dialog
+ * never notifies the old dismiss callback. */
 class DialogManager(private val activity: MainActivity) {
     private var dialog: Dialog? = null
     private var rootView: View? = null

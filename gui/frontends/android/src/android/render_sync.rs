@@ -1,8 +1,5 @@
 //! RenderSync: window/renderer ownership and frame rendering.
-//!
-//! Split out of the `AndroidFrontend` god object. Owns the winit window
-//! and the GPU renderer; the OSD, session, and shell are borrowed per call
-//! so ownership stays obvious at the wiring site.
+//! The OSD, session, and shell are borrowed per call.
 
 use std::{rc::Rc, sync::Arc, time::Instant};
 
@@ -23,11 +20,8 @@ use winit::{
 
 use super::osd::{AndroidOsd, OsdSyncCtx};
 
-/// Per-frame input bundle, built once per pass (`RedrawRequested`) and
-/// passed to [`RenderSync::render`] (and from there to `Osd::sync`).
-/// Previously every layer re-locked the session (`tick_metrics`,
-/// `render_profile`, `settings_snapshot`, `frame_buffer`); the single
-/// build pays one borrow chain per frame and hands out owned/cloned data.
+/// Per-frame input bundle, built once per pass and passed to [`RenderSync::render`].
+/// One borrow chain per frame; hands out owned/cloned data.
 pub(super) struct FrameInput {
     pub tick: TickMetrics,
     pub notifications: NotificationSettings,
@@ -159,9 +153,8 @@ impl RenderSync {
         self.renderer = match renderer_result {
             Ok(renderer) => {
                 log::info!("rebuild_renderer: renderer ready");
-                // Fresh renderer, empty OSD state: force re-sync of the
-                // layer, the reserved strip, and the safe area on the
-                // next frame.
+                // Fresh renderer with empty OSD state: force re-sync next frame.
+                // Covers the layer, the reserved strip, and the safe area.
                 osd.reset();
                 self.request_redraw(shell);
                 Some(renderer)
@@ -199,10 +192,8 @@ impl RenderSync {
     /// Build the per-frame bundle once per pass. Owns the session borrow
     /// chain (clear/swap/clone) so `render` never touches the session.
     pub(super) fn build_frame_input(session: &mut SessionHandle) -> FrameInput {
-        // If the session has no loaded ROM, clear the display just before
-        // rendering to guard against a stale frame that the emuthread may
-        // have written into shared_fb between the last clear_display() call
-        // and now (race between Unload processing and render_frame completion).
+        // With no loaded ROM, clear the display just before rendering.
+        // Guards against a stale emuthread frame racing unload.
         if !session.tick_metrics().loaded {
             session.clear_display();
         }
@@ -243,9 +234,8 @@ impl RenderSync {
         }
         let scale_factor = window.scale_factor() as f32;
         let content = input.profile.as_ref().map(|profile| profile.physical_size);
-        // UI-thread push cache: render never blocks on JNI. The cache is
-        // refreshed from the UI-thread insets callback; the render thread
-        // only reads it (first frame falls back to a direct query).
+        // UI-thread push cache: render never blocks on JNI.
+        // First frame falls back to a direct query.
         let system = osd.system_insets(app, window_size, scale_factor);
         let insets = AndroidOsd::safe_insets(scale_factor, content, window_size, system);
         let settings = &input.notifications;

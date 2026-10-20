@@ -1,9 +1,5 @@
 //! InputRouter: touch overlay + physical controller routing.
-//!
-//! Split out of the `AndroidFrontend` god object. Owns all transient input
-//! state (overlay, active touches, floating D-Pad, held physical keys) and
-//! the overlay JNI push; the frontend keeps wiring (session, app) and passes
-//! them per call so ownership stays obvious.
+//! Owns all transient input state and the overlay JNI push.
 
 use std::collections::{HashMap, HashSet};
 
@@ -41,11 +37,8 @@ impl InputRouter {
         }
     }
 
-    /// Surface loss must not strand pressed buttons inside the
-    /// emulator: release everything still tracked before forgetting
-    /// it. A stranded extra bit breaks exact-equality key checks
-    /// such as Pokemon Emerald's evolution cancel
-    /// (heldKeys == B_BUTTON).
+    /// Surface loss must not strand pressed buttons: release everything tracked.
+    /// A stranded bit breaks exact-equality key checks (e.g. evolution cancel).
     pub(super) fn reset_touch_tracking(&mut self, session: &mut SessionHandle, app: &AndroidApp) {
         for (attachment, control) in self.active_touches.values() {
             session.apply_input_event(nerust_input_traits::DigitalInputEvent::released(
@@ -70,10 +63,8 @@ impl InputRouter {
         );
     }
 
-    /// Release every physically held button before forgetting it, so a
-    /// surface reset cannot strand pressed bits inside the emulator.
-    /// The overlay model is built once and shared by every key (not once
-    /// per key): model construction walks the whole input topology.
+    /// Release every physically held button before forgetting it.
+    /// The overlay model is built once and shared by every key.
     pub(super) fn release_physical_tracking(&mut self, session: &mut SessionHandle) {
         let model = session.touch_overlay_model(self.overlay_revision);
         for (_, key) in std::mem::take(&mut self.physical_pressed) {
@@ -91,9 +82,8 @@ impl InputRouter {
         self.physical_pressed.clear();
     }
 
-    /// Role lookup against a prebuilt overlay model. Callers build the
-    /// model once per pass/event and share it across keys; the model walk
-    /// is the expensive part, not the role match.
+    /// Role lookup against a prebuilt overlay model.
+    /// Callers build the model once per pass/event and share it across keys.
     fn control_for_physical_key(
         model: &TouchOverlayModel,
         key: AbstractKey,
@@ -149,9 +139,8 @@ impl InputRouter {
         session.apply_input_event(event);
     }
 
-    /// Rebuild the hit-zone overlay for the current window size and push
-    /// it (plus the resolved relative zones) to Kotlin through the
-    /// existing overlay update path.
+    /// Rebuild the hit-zone overlay for the current window size and push it to Kotlin.
+    /// Includes the resolved relative zones.
     pub(super) fn rebuild_overlay(
         &mut self,
         session: &SessionHandle,

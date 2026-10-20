@@ -24,9 +24,8 @@ use nerust_persistence::{
 
 use super::error::SlotOpFailure;
 
-/// Classify a persistence-layer failure for user-facing messages:
-/// missing files are `Missing`, other transport problems `Storage`,
-/// undecodable payloads `Corrupt`.
+/// Classify a persistence-layer failure for user-facing messages.
+/// Missing files are `Missing`; transport problems `Storage`; undecodable payloads `Corrupt`.
 fn classify(error: &PersistenceError) -> SlotOpFailure {
     match error {
         PersistenceError::Io(error) if error.kind() == ErrorKind::NotFound => {
@@ -37,12 +36,8 @@ fn classify(error: &PersistenceError) -> SlotOpFailure {
     }
 }
 
-/// Persistence-facing view of the live core. Defined here (not in
-/// `emu_core`) so this module programs against a narrow port instead
-/// of importing the concrete core or the state-format helpers: slot
-/// bytes are stored verbatim and the caller resolves the envelope
-/// (see `resolve` params below) at the session boundary. Implemented
-/// for the live core next to the core itself.
+/// Persistence-facing view of the live core: slot bytes are stored verbatim.
+/// The caller resolves the envelope at the session boundary; implemented for the live core.
 pub trait StateExporter {
     /// Export raw core state bytes for slot storage.
     fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure>;
@@ -73,8 +68,7 @@ pub enum SlotActivation {
 }
 
 /// One-bundle backend set for [`PersistenceManager::configure_backends`].
-/// Replaces the three-`Box` parameter list, which read as positional
-/// noise at every call site.
+/// Replaces the three-`Box` parameter list, which read as positional noise at every call site.
 pub struct PersistenceBackends {
     pub slot: Box<dyn SlotBackend>,
     pub autosave: Box<dyn AutoSaveBackend>,
@@ -130,10 +124,7 @@ pub trait AutoSaveBackend: Send {
     ) -> Result<Option<LoadedStateSlot>, PersistenceError>;
     fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError>;
     /// Quarantine the hidden autosave aside instead of deleting it.
-    /// Returns the quarantine path, or `None` when nothing was kept
-    /// (absent file, or a backend with no rename that deletes).
-    /// Default deletes; filesystem backends rename aside so a
-    /// version-skewed snapshot stays inspectable.
+    /// Returns the quarantine path, or `None` when nothing was kept.
     fn quarantine_autosave(&self, dir: &Path) -> Result<Option<PathBuf>, PersistenceError> {
         self.delete_autosave(dir).map(|_| None)
     }
@@ -152,9 +143,7 @@ pub trait MapperSaveBackend: Send {
 
 pub struct FsSlotBackend;
 
-/// A failing backend for testing error paths in persistence.
-///
-/// Always returns `Err` for all operations.
+/// A failing backend for testing error paths: always returns `Err` for all operations.
 #[derive(Debug)]
 pub struct FailingSlotBackend;
 
@@ -409,9 +398,7 @@ impl PersistenceManager {
         self.active_slot_id
     }
 
-    /// Configured save locations, if setup resolved them. Narrow
-    /// sidecar view for the session boundary: cloned paths, so no
-    /// caller reaches into manager state.
+    /// Configured save locations, if setup resolved them: cloned paths for the session boundary.
     pub(crate) fn configured_sidecars(&self) -> Option<(PathBuf, PathBuf)> {
         match (&self.states_dir, &self.mapper_save_path) {
             (Some(states), Some(mapper)) => Some((states.clone(), mapper.clone())),
@@ -507,10 +494,8 @@ impl PersistenceManager {
         }
     }
 
-    /// Load a slot through `emu`. The stored bytes reach the core
-    /// through `resolve`, which the caller supplies
-    /// ([`crate::state::resolve_state_format`]): the envelope lives
-    /// at the session boundary, never in this module.
+    /// Load a slot through `emu`; stored bytes reach the core via the caller-supplied `resolve`.
+    /// The envelope lives at the session boundary, never in this module.
     pub fn load_slot(
         &mut self,
         slot_id: u64,
@@ -643,11 +628,7 @@ impl PersistenceManager {
         &mut self,
         emu: &dyn StateExporter,
     ) -> Result<MapperFlush, PersistenceError> {
-        // No path configured means no save location exists, not a
-        // failure: `set_active_system` resets paths before every
-        // activation, so the first load and ROM-less system switches
-        // always flush here. Returning Skipped keeps those flows
-        // quiet. Only a configured path with a failing export errors.
+        // No path means no save location exists, not a failure: return Skipped, not an error.
         let Some(path) = self.mapper_save_path.as_ref() else {
             return Ok(MapperFlush::SkippedNoPath);
         };
@@ -800,9 +781,7 @@ impl PersistenceManager {
 }
 
 /// Decode the save-state envelope version from a stored blob.
-/// `None` means pre-header (or corrupt) data, which never matches the
-/// current version. Compares the envelope, not the build string: a
-/// version-skewed snapshot quarantines instead of loading.
+/// `None` means pre-header (or corrupt) data, which never matches the current version.
 fn state_header_version(blob: &[u8]) -> Option<u32> {
     // 12-byte `SaveStateHeader` (`NRST` magic + version + size).
     let buf: &[u8; 12] = blob.get(..12)?.try_into().ok()?;

@@ -23,9 +23,8 @@ pub(crate) fn request_show_error_dialog(app: &AndroidApp, message: &str) {
             Ok(())
         },
         || {
-            // No Kotlin dismiss will arrive: synthesize one so the gate
-            // and auto-pause do not wedge on a dead bridge. The
-            // controller drops duplicates, so this stays idempotent.
+            // Synthesize the dismiss a dead bridge cannot deliver.
+            // Duplicate-safe: the controller drops repeats.
             menu::publish_dialog_dismissed();
         },
     );

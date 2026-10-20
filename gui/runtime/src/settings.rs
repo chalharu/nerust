@@ -62,10 +62,7 @@ pub struct BackendPresentationCapabilities {
 }
 
 /// Frontend/backend capabilities, constructed directly by each frontend.
-///
-/// Replaces the closed `HostBackendProfile` enum. Each frontend specifies
-/// its own capabilities rather than being matched against a fixed set of
-/// (host_kind, render_backend_kind) pairs.
+/// Replaces the closed `HostBackendProfile` enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostBackendCapabilities {
     pub window: HostWindowCapabilities,
@@ -83,9 +80,7 @@ pub use manager::SettingsManager;
 pub use nerust_settings_core::model::snapshot::SettingsSnapshot;
 
 /// Lossless Serde representation of the settings file.
-///
-/// Unlike `SettingsSnapshot`, this retains entries that the running build does
-/// not know how to interpret, such as settings for an unknown system.
+/// Retains entries the running build does not interpret (e.g. unknown systems).
 #[derive(Debug, Clone)]
 pub struct SettingsDocument {
     value: serde_value::Value,

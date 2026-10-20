@@ -1,13 +1,5 @@
 //! MediaLoader: ROM/document loading owned by one module.
-//!
-//! Split out of the `AndroidFrontend` god object. Implements the media
-//! load paths (`load_from_library_with_autosave`, `load_document_uri`,
-//! `load_media`, `open_rom_from_*`, `notify_rom_loaded`,
-//! `finish_rom_load`) as an inherent impl block on the frontend; the
-//! frontend keeps wiring (events, dialogs, exec) only.
-//!
-//! Document fetch itself runs on a worker thread (`picker::
-//! spawn_document_fetch`); these methods dispatch the completed buffer.
+//! Dispatches completed worker-thread fetch buffers.
 
 use jni::{jni_sig, jni_str};
 use nerust_core_traits::factory::load::MediaObject;
@@ -194,15 +186,12 @@ impl super::AndroidFrontend {
             log::info!("finish_rom_load: clearing hidden lifecycle state");
             self.session.clear_hidden_lifecycle_state();
         }
-        // Stale batches straddle no ROM boundary: requeue the unacked
-        // head so the previous ROM's error never describes the new one.
-        // The pause flag survives, so the gate below holds the resume
-        // until the requeued dialog is dismissed.
+        // Requeue the unacked head: stale batches describe the previous ROM.
+        // The pause flag survives, holding resume until dismissal.
         self.osd
             .with_modal(|queue| self.dialogs.on_suspended(queue));
-        // Resume fresh loads and own auto-pauses, never across an error
-        // auto-pause (its dismiss owns that); a manual pause predates
-        // the suspend and must survive it.
+        // Resume fresh loads and own auto-pauses, never across an error auto-pause.
+        // Manual pauses survive.
         if self
             .lifecycle
             .resume_want_after_restore(restore_hidden_state, self.dialogs.auto_paused())

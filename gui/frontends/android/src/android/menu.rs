@@ -20,17 +20,14 @@ const ACTION_SAVE_STATE: &str = "save_state";
 const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
 const ACTION_UNLOAD: &str = "unload";
 
-/// Drain into a caller-owned buffer: priority lane (dialog acks) first,
-/// then the normal lane. Idle ticks reuse capacity instead of allocating
-/// a fresh vector per pass; no per-tick sort.
+/// Drain into a caller-owned buffer: priority lane first, then the normal lane.
+/// Idle ticks reuse capacity instead of allocating per pass.
 pub(crate) fn take_events_into(out: &mut Vec<FrontendEvent>) {
     bridge::take_events_into(out);
 }
 
-/// Versioned bridge event envelope. Kotlin sends either the legacy
-/// string IDs (`"open_rom"`, `"controller:7:button1:1"`) or v1 JSON
-/// (`{"v":1,"type":"menu","action":"open_rom"}`). Unknown versions and
-/// unknown actions decode to `None` with a warn log: never a silent drop.
+/// Versioned bridge event envelope: legacy string IDs or v1 JSON.
+/// Unknown versions and actions decode to `None` with a warn log.
 #[derive(Debug, serde::Deserialize)]
 struct BridgeEventV1 {
     #[allow(dead_code)]
@@ -180,10 +177,8 @@ fn decode_menu_action(raw: &str) -> Option<MenuAction> {
     }
 }
 
-/// Decode one raw bridge string into the typed event. v1 JSON takes the
-/// versioned path; anything else falls back to the legacy string IDs.
-/// Dialog dismissal bypasses menu decoding; menu IDs never produce
-/// dialog events.
+/// Decode one raw bridge string into the typed event.
+/// Dialog dismissal bypasses menu decoding; menu IDs never produce dialog events.
 fn decode_frontend_event(raw: &str) -> Option<FrontendEvent> {
     if raw == ACTION_ERROR_DIALOG_DISMISSED {
         return Some(FrontendEvent::ErrorDialogDismissed);
@@ -198,9 +193,8 @@ fn publish_event(event: FrontendEvent) {
     publish_all(core::slice::from_ref(&event));
 }
 
-/// Batch publish: one wake per JNI batch, not per event. Bursts from
-/// rapid menu taps share the wakeup instead of spamming the looper.
-/// Dialog dismissals take the priority lane (see `bridge`).
+/// Batch publish: one wake per JNI batch, not per event.
+/// Dialog dismissals take the priority lane.
 fn publish_all(events: &[FrontendEvent]) {
     if events.is_empty() {
         return;
@@ -213,9 +207,8 @@ fn publish_all(events: &[FrontendEvent]) {
     bridge::publish_all(events);
 }
 
-/// Failure synthesis path: a dead JNI bridge cannot deliver a Kotlin
-/// dismiss, so the gate, flag, and auto-pause are released here.
-/// Single writer alongside `publish_event` (see module docs).
+/// Failure synthesis path: releases the gate, flag, and auto-pause.
+/// Single writer alongside `publish_event`.
 pub(crate) fn publish_dialog_dismissed() {
     publish_event(FrontendEvent::ErrorDialogDismissed);
 }
@@ -244,9 +237,8 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
                             log::error!("sync settings dialog failed: {error}");
                         }
                     }
-                    // The dialog is already up: the follow-up request
-                    // no-ops on the bridge pending id (single
-                    // DialogOwnership truth, no cached flag).
+                    // The dialog is already up: the follow-up request no-ops.
+                    // The bridge pending id is the single truth.
                     return Ok(Some(FrontendEvent::Menu(MenuAction::OpenSettings)));
                 }
 
@@ -263,10 +255,8 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
     }
 }
 
-/// Dedicated error-dialog dismiss entry point. New APKs call this
-/// directly (`onErrorDialogDismissed`); the legacy `"error_dialog_dismissed"`
-/// menu-string path in [`decode_frontend_event`] stays as the decoder for
-/// old APKs that still send the dismiss over `onMenuAction`.
+/// Dedicated error-dialog dismiss entry point for new APKs.
+/// The legacy menu-string path stays as the decoder for old APKs.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onErrorDialogDismissed(
     mut env: jni::EnvUnowned<'_>,

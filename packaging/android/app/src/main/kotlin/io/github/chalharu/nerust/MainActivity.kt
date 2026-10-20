@@ -76,8 +76,7 @@ class MainActivity :
     internal var lastDialogStateForTest = "not requested"
 
     // Root-window safe insets in physical pixels, order [top, right, bottom, left].
-    // Observed only: the listener refreshes this cache and pushes it to Rust
-    // via onSystemInsetsChanged, so the render thread reads the cache only.
+    // Observed only: the listener refreshes and pushes this cache, so the render thread reads only.
     @Volatile private var cachedSafeInsetsPx: IntArray = intArrayOf(0, 0, 0, 0)
 
     @Volatile private var lastLoadedSystemForTest: String? = null
@@ -138,20 +137,11 @@ class MainActivity :
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         Log.i(TAG, "onConfigurationChanged: orientation=${newConfig.orientation}")
-        // The manifest handles rotation in-place (no Activity recreate),
-        // but PopupWindow chrome does not reliably survive it: the popup
-        // can keep a stale frame, lose its window, or fall behind the
-        // recreated native surface while still reporting isShowing=true,
-        // so the re-attach machinery never fires again and the touch
-        // controls stay invisible. Rebuild the popup chrome explicitly
-        // for the new configuration. The Compose settings dialog is a
-        // proper Dialog window that re-lays itself out, so it is left
-        // alone; an open navigation drawer is closed (one tap reopens).
+        // PopupWindow chrome does not reliably survive rotation: rebuild it explicitly.
+        // The Compose settings dialog re-lays itself out; an open drawer is closed.
         chromeManager.onConfigurationChanged()
-        // Tell Rust to rebuild its touch overlay (hit zones) for the new
-        // window size even if no winit Resized event arrives; the Rust
-        // side also re-pushes the overlay config, which converges with
-        // the re-attach above.
+        // Tell Rust to rebuild its touch overlay even if no winit Resized event arrives.
+        // The Rust re-push converges with the re-attach above.
         sendMenuAction("orientation_changed")
     }
 
@@ -317,15 +307,8 @@ class MainActivity :
         startActivityForResult(createDirectoryPickerIntent(), DIRECTORY_PICKER_REQUEST_CODE)
     }
 
-    /**
-     * Touch-overlay configuration pushed from Rust.
-     *
-     * Geometry (hit zones) is owned by Rust (`touch_layout.rs`): [zones]
-     * carries the resolved relative rects (`LABEL:x,y,w,h;...`) computed from
-     * the same scale/offset/visibility parameters. Kotlin draws the pushed
-     * zones and only falls back to its local `controlsLayout()` copy when
-     * the payload is absent or malformed. Keep the fractions in sync.
-     */
+    /** Touch-overlay configuration pushed from Rust. Kotlin draws the pushed zones,
+     * falling back to its local `controlsLayout()` copy when the payload is absent or malformed. */
     fun configureControlsOverlay(
         visibility: String,
         opacityPercent: Int,
@@ -375,23 +358,8 @@ class MainActivity :
 
     fun floatingDpadStateForTest(): FloatArray? = chromeManager.floatingDpadStateForTest()
 
-    /**
-     * Show or refresh the small FPS label at the bottom-right corner.
-     *
-     * Called from Rust at ~2Hz while emulating. `visible` is false when no
-     * ROM is loaded or emulation is paused, hiding the label instead of
-     * showing stale numbers. Runs on the Java main thread.
-     *
-     * Rendered in a dedicated non-touchable popup (like the other chrome):
-     * a plain decorView child is not reliably composited above the native
-     * game surface.
-     */
-    /**
-     * Cached root-window safe insets in physical pixels: [top, right, bottom, left].
-     * Read by Rust without JNI; the cache is refreshed on the UI thread by
-     * [installSafeInsetsListener], which also pushes to Rust natively, so
-     * the render thread never blocks on a JNI query.
-     */
+    /** Cached root-window safe insets in physical pixels: [top, right, bottom, left].
+     * Read by Rust without JNI; refreshed on the UI thread, so the render thread never blocks. */
     fun getSafeInsetsPx(): IntArray = cachedSafeInsetsPx.clone()
 
     private fun installSafeInsetsListener() {
@@ -435,15 +403,13 @@ class MainActivity :
         return intArrayOf(top, right, bottom, left)
     }
 
+    /** Show or refresh the small FPS label at the bottom-right corner. Runs on the Java main thread.
+     * `visible` is false when no ROM is loaded or emulation is paused. */
     fun updateFpsOverlay(fps: Float, visible: Boolean) {
         chromeManager.updateFpsOverlay(fps, visible)
     }
 
-    /**
-     * SAF bridge, delegated to [SafRepository]. The whole-file methods stay
-     * for APKs predating chunked I/O; the chunked methods bound every JNI
-     * crossing to 64KB (`writeSafFileChunk` appends with `"wa"`).
-     */
+    /** SAF bridge, delegated to [SafRepository]. Chunked methods bound every JNI crossing to 64KB. */
     fun readSafFile(
         treeUri: String,
         relativePath: String,
@@ -624,15 +590,8 @@ class MainActivity :
         )
     }
 
-    /**
-     * Show a modal Android settings dialog.
-     *
-     * Presents the versioned settings JSON supplied by Rust. Tapping a row opens
-     * a Compose choice picker. Save and dismiss return request-scoped JSON with
-     * values keyed by stable setting IDs.
-     *
-     * Called from the Rust JNI bridge on the Java main thread.
-     */
+    /** Show a modal Android settings dialog. Presents the versioned settings JSON from Rust.
+     * Save and dismiss return request-scoped JSON keyed by stable setting IDs. */
     fun showSettingsDialog(payload: String) {
         val document = JSONObject(payload)
         require(document.getInt("schemaVersion") == SETTINGS_SCHEMA_VERSION) {
@@ -776,20 +735,10 @@ class MainActivity :
         )
     }
 
-    /**
-     * Show a modal Android error dialog.
-     *
-     * Presents an aggregated OSD error batch as scrollable text with a single
-     * dismiss button. Called from the Rust JNI bridge on the Java main thread.
-     * Dismissal (including replacement by another dialog) reports back through
-     * the dedicated onErrorDialogDismissed native so Rust can resume its auto-pause and show the
-     * next queued error. A long batch scrolls instead of clipping.
-     */
+    /** Show a modal Android error dialog. Presents an aggregated OSD error batch as scrollable text.
+     * Dismissal reports back through onErrorDialogDismissed so Rust can resume and show the next error. */
     fun showErrorDialog(message: String) {
-        // Never evict the settings dialog: Rust gates on bridge truth,
-        // but a racing show must not destroy in-progress settings input
-        // either. Ack as dismissed so Rust keeps the batch queued behind
-        // settings instead of losing it.
+        // Never evict the settings dialog. Ack as dismissed so Rust keeps the batch queued.
         if (dialogManager.isShowing(SETTINGS_DIALOG_TAG)) {
             Log.i(TAG, "showErrorDialog: suppressed while settings dialog is showing")
             onErrorDialogDismissed()
@@ -851,11 +800,8 @@ class MainActivity :
         private const val SETTINGS_SCHEMA_VERSION = 1
 
         init {
-            // Load the native library via the app classloader so the JVM can
-            // resolve `external fun` declarations on this class.  NativeActivity
-            // loads the library later via native dlopen which bypasses Java's
-            // classloader registration; without this explicit load, standard JNI
-            // name lookup fails with UnsatisfiedLinkError.
+            // Load the native library via the app classloader so the JVM resolves `external fun`.
+            // NativeActivity's later dlopen bypasses Java's classloader registration.
             Log.i(TAG, "MainActivity companion: loading native library main")
             System.loadLibrary("main")
             Log.i(TAG, "MainActivity companion: loaded native library main")

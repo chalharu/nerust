@@ -12,9 +12,8 @@ use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_render_filters::FilterTypeExt;
 use nerust_render_traits::{VideoRenderProfile, filter::FilterType, logical::LogicalSize};
 
-/// Build controller devices from assignments, split input, and wrap
-/// the console in session parts. Profile-to-device mapping lives here
-/// (not in `lib.rs`), next to the console construction it feeds.
+/// Build controller devices from assignments and wrap the console in session parts.
+/// Profile-to-device mapping lives here, next to the console construction it feeds.
 pub(crate) fn create_core_and_adapter_with_assignments(
     view: &FactorySettingsView,
     speaker: Box<dyn AudioBackend>,
@@ -90,9 +89,7 @@ pub(crate) fn create_core_and_adapter(
 }
 
 /// Video assets for one filter choice, without building a core.
-/// Shared by core construction and the live presentation swap: both
-/// derive the profile + palette from the same function, so a swapped
-/// filter can never disagree with a rebuilt one.
+/// Shared by core construction and the live swap, so they can never disagree.
 pub(crate) fn video_assets_for_filter(filter: FilterType) -> (VideoRenderProfile, Box<[u32; 256]>) {
     let source_logical_size = LogicalSize {
         width: 256,

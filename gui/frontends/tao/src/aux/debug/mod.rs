@@ -1,6 +1,5 @@
-//! Debugger window: two-pane memory/disassembly probe plus register,
-//! watch, freeze, and bookmark state. Pure view; the host drain runs
-//! requests and refreshes the display cache.
+//! Debugger window: memory/disassembly probe plus register, watch, freeze, bookmarks.
+//! Pure view; the host drain runs requests and refreshes the display cache.
 
 #[cfg(test)]
 mod tests;
@@ -156,16 +155,12 @@ impl Program for DebugProgram {
             reg_target,
             reg_input,
         } = views::capture_view(&state.bridge);
-        // Button hierarchy: one primary per flow (the Phase E
-        // Confirm), secondary for toolbar/nav, text for list rows
-        // and escape actions.
+        // Button hierarchy: one primary per flow, secondary for toolbar/nav.
         let toolbar = views::view_toolbar(paused, language);
         // Settings form language: fixed label column + stepper.
         let space_row = views::view_space_row(selected_name.as_deref().unwrap_or(""), language);
         let mem_nav = views::view_mem_nav(&mem_input, language);
-        // Heavy lists ride `lazy` so unrelated keystrokes only rebuild
-        // headers. Keep every visual input in the dependency tuples or
-        // its highlight freezes.
+        // Heavy lists ride `lazy`; keep every visual input in the dependency tuples.
         let dump_col = lazy((dump_rows, diff, selected), |(rows, diff, selected)| {
             views::view_dump_col(rows, diff, *selected)
         });
@@ -183,10 +178,7 @@ impl Program for DebugProgram {
         // a text escape. The drain owns the authoritative text.
         let confirm_row = views::view_confirm_row(pending, language);
         let dis_nav = views::view_dis_nav(follow_pc, back_len, anchor, &dis_input, language);
-        // Per-line disassembly: line click pins the anchor (the
-        // pinned row carries `@`, the PC row `>`), and structured
-        // targets offer follow buttons. In follow-PC mode nothing
-        // is pinned, so no `@` shows.
+        // Per-line disassembly: line click pins the anchor; targets offer follow buttons.
         let pinned = if follow_pc { None } else { Some(anchor) };
         let dis_col = lazy(
             (disasm_lines, pinned, language),
@@ -220,10 +212,7 @@ impl Program for DebugProgram {
             right: 16.0,
             ..Default::default()
         });
-        // Tall state (GBA: 17 registers) scrolls inside the panes
-        // instead of pushing Bookmarks and Memory out of view. The
-        // panes row takes the remaining window height so the scroll
-        // viewport is bounded; Refresh stays pinned at the bottom.
+        // Tall state scrolls inside the panes; Refresh stays pinned at the bottom.
         let right_scroll = scrollable(right_col).height(Length::Fill);
         let content = column![
             row![left_col, right_scroll]
@@ -259,17 +248,13 @@ pub(crate) struct DebugWindowHandle {
 }
 
 impl DebugWindowHandle {
-    /// Narrow bridge port for the host drain: `&dyn BridgeLock`
-    /// snapshot/apply surface. `drain.rs` routes through this, never
-    /// through `handle.bridge` fields or locks.
+    /// Narrow bridge port for the host drain: `&dyn BridgeLock` snapshot/apply surface.
     pub(crate) fn bridge_lock(&self) -> &(dyn crate::aux::bridge::BridgeLock + '_) {
         &*self.bridge
     }
 
-    /// Narrow live-images apply for the PPU follow tick. Replaces
-    /// images when newer regardless of pause; running chrome only
-    /// applies while still running. Returns whether the viewer needs
-    /// a rebuild.
+    /// Narrow live-images apply for the PPU follow tick: images land when newer.
+    /// Returns whether the viewer needs a rebuild.
     pub(crate) fn apply_live(
         &mut self,
         generation: u64,
@@ -279,9 +264,7 @@ impl DebugWindowHandle {
         self.bridge.apply_live_images(generation, images, running)
     }
 
-    /// Share the bridge for PPU-viewer creation (the viewer renders
-    /// the same live images). Narrow: creation only, never display
-    /// locks; all drain traffic routes through the methods above.
+    /// Share the bridge for PPU-viewer creation. Narrow: creation only, never display locks.
     pub(crate) fn shared_bridge(&self) -> &Arc<DebugBridge> {
         &self.bridge
     }
@@ -297,9 +280,7 @@ impl DebugWindowHandle {
     }
 }
 
-/// Window-scoped shortcuts on physical codes: F6 steps a frame,
-/// F7 an instruction, F9 toggles pause. Pure mapping shared by the
-/// event handler and the tests below.
+/// Window-scoped shortcuts on physical codes: F6 frame, F7 instruction, F9 pause.
 fn shortcut_request(physical: &iced::keyboard::key::Physical) -> Option<DebugAction> {
     use iced::keyboard::key::{Code, Physical};
     match *physical {
@@ -341,9 +322,7 @@ impl DebugWindowHandle {
             "debugger window",
         )
         .map_err(|error| {
-            // Typed scaffold failures carry the window tag plus the
-            // native detail; surface them here since the opener seam
-            // is Option-based.
+            // Typed scaffold failure: surface the tagged native detail here.
             log::error!("{error}");
             error
         })
@@ -360,9 +339,7 @@ impl DebugWindowHandle {
         Some(Self { shell, bridge })
     }
 
-    /// Narrow batch take for the host drain: toolbar PPU-open flag
-    /// plus queued actions. Routes through [`BridgeLock`] so the
-    /// orchestrator never touches `bridge.open_ppu` directly.
+    /// Narrow batch take for the host drain: PPU-open flag plus queued actions.
     pub(crate) fn take_debug_batch(&self) -> (bool, Vec<DebugAction>) {
         use crate::aux::bridge::BridgeLock;
         self.bridge.take_debug_batch()
@@ -423,10 +400,7 @@ impl super::focus::AuxEvents for DebugWindowHandle {
         {
             self.bridge.push(request);
         }
-        // Cursor keys page the dump (Up = toward lower addresses).
-        // Left/Right stay with the widgets: hijacking them would break
-        // caret movement in every text input. Computed before `mapped`
-        // moves into the UI update below.
+        // Cursor keys page the dump; Left/Right stay with the widgets.
         let page = if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
             physical_key,
             repeat: false,

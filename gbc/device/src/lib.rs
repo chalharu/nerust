@@ -10,9 +10,7 @@ pub fn gbc_device_controller_profiles() -> impl Iterator<Item = Rc<dyn Controlle
 }
 
 /// GBC joypad bit assignments for the 1-byte input buffer.
-///
-/// Field indices 0-7 correspond to the bit positions used by
-/// `GbcInputBuffer::set()` to map each button to a joypad register bit.
+/// Field indices 0-7 map each button to a joypad register bit.
 const FIELD_A: usize = 0;
 const FIELD_B: usize = 1;
 const FIELD_SELECT: usize = 2;

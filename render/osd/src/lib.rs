@@ -7,10 +7,7 @@ use nerust_render_traits::renderer::{
     OsdAnchor, OsdContent, OsdLayer, OsdStatus, SafeInsets, osd_font_px,
 };
 
-/// System font preference: the shaping database doubles as the
-/// query source, so one scan serves both. Extra scan roots are a
-/// frontend concern: fontdb excludes some platforms (e.g. Android)
-/// from its system scan, so the outer layer passes them via
+/// System font preference. Extra scan roots arrive via
 /// [`OsdRaster::with_font_dirs`].
 fn best_sans_name(db: &fontdb::Database) -> Option<String> {
     for name in [
@@ -80,9 +77,8 @@ impl OsdRaster {
         Self::with_font_dirs(&[])
     }
 
-    /// Extra font scan roots plus one scan total: the shaping
-    /// database doubles as the query source. Platform font paths
-    /// (e.g. Android's `/system/fonts`) are the caller's vocabulary.
+    /// Extra font scan roots; still one scan total.
+    /// Platform font paths (e.g. Android's `/system/fonts`) are the caller's vocabulary.
     pub fn with_font_dirs(dirs: &[&str]) -> Self {
         let mut font_system = FontSystem::new();
         for dir in dirs {
@@ -110,9 +106,8 @@ impl OsdRaster {
         self.ui_scale = scale.clamp(0.25, 4.0);
     }
 
-    /// Extra edge padding for rounded corners, notches, or gesture
-    /// bars. Added to the layout margin on placement; zero by default
-    /// so desktop output is unchanged.
+    /// Extra edge padding for rounded corners, notches, or gesture bars.
+    /// Zero by default so desktop output is unchanged.
     pub fn set_safe_insets(&mut self, insets: SafeInsets) {
         self.safe_insets = insets;
     }
@@ -235,8 +230,7 @@ impl OsdRaster {
     }
 
     /// Split transient rows and the status readout by vertical edge.
-    /// Same-corner entries stack in push order; the status otherwise
-    /// joins its own edge.
+    /// Same-corner entries stack in push order.
     fn collect_entries(content: &OsdContent) -> (Vec<Entry>, Vec<Entry>) {
         let same_corner = content.position == content.status_position;
         let transient_top = content.position.is_top();
@@ -272,9 +266,8 @@ impl OsdRaster {
         (top, bottom)
     }
 
-    /// Shape one edge: opposite sides sharing the edge sit side by
-    /// side on one row instead of stacking, so a status on the right
-    /// no longer stacks under a notification on the left.
+    /// Shape one edge: opposite sides sharing the edge sit side by side
+    /// on one row instead of stacking.
     fn place_entries(
         &mut self,
         list: Vec<Entry>,
@@ -383,12 +376,8 @@ impl OsdRaster {
         }
     }
 
-    /// Shape the status readout: solo value pill, or a label/value
-    /// pair with the value on the margin side so the digits never
-    /// shift. Either way the value pill's outer edge pins to the
-    /// margin, so a Paused flip or a language change only grows the
-    /// inner label pill (left anchors read "value label", right
-    /// anchors "label value").
+    /// Shape the status readout: solo value pill, or a label/value pair.
+    /// The value pill's outer edge pins to the margin either way.
     fn shape_status(&mut self, status: OsdStatus, anchor: OsdAnchor, font_px: u32) -> Shaped {
         let label = self.shape_line(&status.label, font_px);
         let value = self.shape_line(&status.value, font_px);
@@ -481,8 +470,7 @@ impl OsdRaster {
     }
 
     /// Blit one shaped span at an integer base position.
-    /// Glyph images come from the shared swash cache, keyed by
-    /// shaping output, so hinting stays consistent everywhere.
+    /// Glyph images come from the shared swash cache.
     fn draw_span(
         &mut self,
         rgba: &mut [u8],
@@ -736,9 +724,8 @@ mod tests {
             eprintln!("SKIP: no system fonts");
             return;
         }
-        // Full GPOS shaping must tighten kerned pairs versus the
-        // sum of isolated advances. Skip when the system font
-        // lacks this pair instead of asserting font specifics.
+        // Full GPOS shaping must tighten kerned pairs versus isolated advances.
+        // Skip when the system font lacks this pair; font specifics are not asserted.
         let pair = raster.shape_line("AV", 16).width;
         let isolated = raster.shape_line("A", 16).width + raster.shape_line("V", 16).width;
         if pair >= isolated {
@@ -854,10 +841,8 @@ mod tests {
         let expect = pair_w(value_w, label_w);
         assert_eq!(paused_left.width, expect);
         assert_eq!(paused_right.width, expect);
-        // The margin between the pills stays transparent: a full-height
-        // seam with zero alpha separates value and label. Left anchors
-        // read "value label", right anchors "label value" (the value
-        // pill stays on the margin side either way).
+        // The margin between the pills stays transparent (zero-alpha seam).
+        // The value pill stays on the margin side either way.
         let seam_left = value_w.ceil() as u32 + super::PILL_PAD_X * 2 + super::ROW_GAP / 2;
         for y in 0..paused_left.height {
             let alpha = paused_left.rgba
@@ -879,9 +864,8 @@ mod tests {
             eprintln!("SKIP: no system fonts");
             return;
         }
-        // Right anchors keep the value pill on the margin side: the
-        // layer's outer edge never moves when Paused appears, so the
-        // fps digits hold still instead of sliding with the label.
+        // Right anchors keep the value pill on the margin side, so the fps
+        // digits hold still instead of sliding with the label.
         let content = |label: &str| OsdContent {
             rows: Vec::new(),
             status: Some(OsdStatus {
@@ -908,8 +892,7 @@ mod tests {
             return;
         }
         // Notification bottom-left plus status bottom-right: one row,
-        // the status sits beside the transient instead of stacking
-        // under it, spanning margin to margin.
+        // spanning margin to margin instead of stacking.
         let content = OsdContent {
             rows: vec![OsdRow {
                 tag: "[INFO]",

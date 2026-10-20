@@ -29,9 +29,8 @@ pub fn gba_device_controller_profiles() -> impl Iterator<Item = Rc<dyn Controlle
 pub struct GbaFactory;
 
 impl GbaFactory {
-    /// Boxed `dyn CoreFactory` for generic drivers. Construction
-    /// selects the system once here; everything downstream drives
-    /// through `dyn CoreFactory` without naming this type.
+    /// Boxed `dyn CoreFactory` for generic drivers. The system is
+    /// selected once here.
     pub fn boxed() -> Box<dyn CoreFactory> {
         Box::new(Self)
     }

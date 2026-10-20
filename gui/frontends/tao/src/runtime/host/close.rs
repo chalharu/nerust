@@ -1,14 +1,9 @@
 //! Window liveness plus close idempotence in one owned guard.
-//! `HostState` delegates instead of threading three flags through
-//! every close-adjacent method.
 
 use std::sync::Arc;
 use tao::window::Window as TaoWindow;
 
-/// Native liveness state. `Live` is the only handle-touchable state;
-/// `Closed` is the idempotent terminal state for normal teardown;
-/// `Failed` is terminal for creation failure and never transitions to
-/// `Closed` (a failed handle was never live).
+/// Native liveness state. Only `Live` is handle-touchable; `Failed` never becomes `Closed`.
 #[derive(Debug, Clone)]
 pub(crate) enum Liveness {
     Live,
@@ -26,9 +21,7 @@ impl Liveness {
     }
 }
 
-/// Fatal window-creation failure, tracked apart from liveness. The
-/// detail explains *why* the loop must exit; liveness says whether a
-/// native handle may still be touched.
+/// Fatal window-creation failure, tracked apart from liveness.
 #[derive(Debug, Default)]
 pub(crate) struct FatalError {
     detail: Option<Arc<str>>,
@@ -50,8 +43,6 @@ impl FatalError {
 }
 
 /// One-shot close token: `arm` succeeds exactly once per process.
-/// Separate from [`CloseGuard`] so call sites that only need
-/// idempotence do not touch liveness.
 #[derive(Debug, Default)]
 pub(crate) struct CloseOnce {
     fired: bool,
@@ -77,9 +68,7 @@ impl CloseOnce {
     }
 }
 
-/// Owned native window handle. All dead-handle checks flow through
-/// here: callers request redraws or sizes via this wrapper instead of
-/// holding a bare `Arc<TaoWindow>`.
+/// Owned native window handle; all dead-handle checks flow through here.
 #[derive(Debug, Clone)]
 pub(crate) struct LiveWindow {
     inner: Arc<TaoWindow>,
@@ -132,9 +121,7 @@ impl LiveWindow {
 }
 
 /// Fatal creation failure, close idempotence, and native liveness.
-/// Constructed live; `fail` moves to `Failed`, `begin_close` moves
-/// `Live` to `Closed` exactly once. Query liveness only through
-/// [`CloseGuard::is_usable`].
+/// Query liveness only through [`CloseGuard::is_usable`].
 #[derive(Debug)]
 pub(crate) struct CloseGuard {
     fatal: FatalError,
@@ -151,10 +138,8 @@ impl CloseGuard {
         }
     }
 
-    /// Record a window-creation failure and retire liveness: no dead
-    /// handle may be touched afterwards. The loop exits gracefully.
-    /// `Failed` is terminal: a later `begin_close` still flushes once
-    /// but the state stays `Failed`, never `Closed`.
+    /// Record a window-creation failure and retire liveness.
+    /// `Failed` is terminal: the state stays `Failed`, never `Closed`.
     pub(crate) fn fail(&mut self, detail: String) {
         let detail: Arc<str> = Arc::from(detail);
         self.fatal.set(Arc::clone(&detail));
@@ -166,16 +151,12 @@ impl CloseGuard {
         self.fatal.message().or_else(|| self.state.failure())
     }
 
-    /// Native window still usable for redraws and surfaces: live, not
-    /// yet closed, and never failed. Single liveness predicate for
-    /// every close-adjacent path.
+    /// Native window still usable for redraws and surfaces.
     pub(crate) fn is_usable(&self) -> bool {
         matches!(self.state, Liveness::Live) && !self.fatal.is_set()
     }
 
-    /// Idempotent close entry: true exactly once, retiring liveness
-    /// from `Live` to `Closed`. `Failed` stays `Failed` (the detail
-    /// survives); `Closed` stays `Closed`.
+    /// Idempotent close entry: true exactly once, retiring `Live` to `Closed`.
     pub(crate) fn begin_close(&mut self) -> bool {
         if !self.once.arm() {
             return false;

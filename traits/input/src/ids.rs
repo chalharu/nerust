@@ -1,9 +1,7 @@
 //! Static string identifiers for ports, attachments, devices, and controls.
 
 /// Define a `&'static str` newtype with `new`/`as_str`/`Display`/`From`.
-///
-/// Each identifier is a distinct type so mismatched kinds fail at compile
-/// time instead of aliasing through raw `&str` equality.
+/// Distinct types so mismatched kinds fail at compile time.
 macro_rules! static_id {
     ($name:ident) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -1,11 +1,5 @@
 //! DialogCoordinator: frontend-owned dialog flow, no OSD pass-through.
-//!
-//! Previously `AndroidOsd` wrapped the `ErrorDialogController` behind five
-//! delegating methods while also owning raster/strip/insets state. The
-//! coordinator owns the controller directly on the frontend; `AndroidOsd`
-//! keeps raster/strip/insets (plus the notification manager, borrowed per
-//! call) only. Screen gates come from [`DialogOwnership`] (bridge truth),
-//! never from a cached flag.
+//! Screen gates come from [`DialogOwnership`] (bridge truth).
 
 use nerust_gui_shell::session::osd::{ModalSink, ModalSource, TickMetrics};
 
@@ -53,9 +47,8 @@ impl DialogCoordinator {
         )
     }
 
-    /// Show the oldest queued error unless suspended, already showing,
-    /// or settings owns the screen. Takes the pass tick so the caller
-    /// pays one metrics lock, not one per dialog gate.
+    /// Show the oldest queued error unless suspended, showing,
+    /// or settings owns the screen. Takes the pass tick.
     pub(super) fn poll_error_dialog(
         &mut self,
         queue: &mut (impl ModalSink + ModalSource),

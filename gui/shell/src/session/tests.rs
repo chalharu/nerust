@@ -231,9 +231,8 @@ fn session_rebuild_reuses_previously_resolved_load_request() {
     assert!(session.tick_metrics().loaded);
 }
 
-/// `MockFactory` delegate answering the presentation query.
-/// Direction-aware by entry presence (absent→present wide,
-/// present→absent narrow); pins the session's `(before, after)` order.
+/// `MockFactory` delegate answering the presentation query, direction-aware by entry presence.
+/// Pins the session's `(before, after)` order.
 struct LiveSwapFactory;
 impl CoreFactory for LiveSwapFactory {
     fn system_id(&self) -> Box<dyn SystemId> {
@@ -1029,10 +1028,8 @@ fn debug_live_images_follow_running_without_snapshot() {
         running.display.dump_rows.is_empty(),
         "inspect refuses while running"
     );
-    // ...but the live images path still flows, so the PPU follow
-    // never needs (or blanks) the snapshot sections. Identical
-    // content reports the served generation with no payload (the
-    // content-hash skip): same pixels, same generation, zero UI work.
+    // The live images path still flows here, so the PPU follow needs no snapshot sections.
+    // Identical content reports the served generation with no payload (content-hash skip).
     let live = session.debug_live_images(crate::debug::ImageNeed::Fetch);
     let (running_gen, running_images) = live.expect("running fetch serves");
     assert_eq!(
@@ -1058,9 +1055,7 @@ fn debug_drain_happy_path_reports_success() {
         "pause round-trips status"
     );
     let stepped = session.debug_drain(&[DebugAction::StepFrame], &input);
-    // Frame steps report the barrier frame counter (free-run may
-    // precede the pause), so only the variant is pinned; wording is
-    // the frontend's job (covered in the viewmodel render test).
+    // Frame steps report the barrier frame counter, so only the variant is pinned here.
     assert!(matches!(stepped.display.status, StatusMessage::Stepped(_)));
     // Memory write round-trips through the thread: stage, commit,
     // then read back the staged byte.
@@ -1226,9 +1221,7 @@ fn drain_flight_no_core_completes_on_first_poll() {
         prev_dump_rows: &[],
         need_images: false,
     };
-    // No thread crossings exist without a core: every phase resolves
-    // locally, so one poll finishes (widget tests rely on this to
-    // keep `act` synchronous in the coreless harness).
+    // No thread crossings exist without a core: every phase resolves locally.
     let mut flight = session.debug_drain_begin(&[DebugAction::Pause, DebugAction::Refresh], &input);
     let DrainPoll::Done(output) = flight.poll() else {
         panic!("coreless flight must complete on the first poll");
@@ -1271,11 +1264,8 @@ fn live_images_flight_completes_and_resolves_locally() {
 fn live_images_flight_refetches_while_running() {
     use crate::debug::LiveImagesPoll;
     use std::time::{Duration, Instant};
-    // Regression: consecutive begins on a running core must refetch,
-    // not serve the first stored decode forever (live-freeze). The
-    // mock tiles never change, so the refetch collapses to the served
-    // generation with an empty payload — while the stale-cache bug
-    // would serve one converted image at the same generation.
+    // Regression: consecutive begins on a running core must refetch, not serve the first decode.
+    // The mock tiles never change, so the refetch collapses to the served generation.
     let session = loaded_debug_session();
     session.debug_resume();
     assert!(!session.debug_snapshot_ready());
@@ -1449,9 +1439,7 @@ fn pump_osd_drops_info_without_frame() {
     assert_eq!(manager.modal_pending(), 1);
 }
 
-/// Cached frame data: the window title, history rows, and touch
-/// overlay rebuild only when their keys change, otherwise the stored
-/// values serve without formatting.
+/// Cached frame data (title, history rows, touch overlay) rebuilds only on key change.
 #[test]
 fn cached_frame_data_rebuilds_only_on_key_change() {
     use crate::session::notification::NotificationKind;

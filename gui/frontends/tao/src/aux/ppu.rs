@@ -1,6 +1,5 @@
-//! PPU viewer: fixed 2x system pattern images plus panels and
-//! tile hover info. Display-only content scrolls; scaled pictures
-//! derive once per drain, hover clones cached handles.
+//! PPU viewer: 2x system pattern images plus panels and tile hover info.
+//! Scaled pictures derive once per drain; hover clones cached handles.
 
 use std::sync::{
     Arc, Mutex,
@@ -47,13 +46,8 @@ pub(crate) enum PpuMessage {
 
 pub(crate) struct PpuState {
     bridge: Arc<DebugBridge>,
-    /// Hot/cold split behind one mutex-protected `Arc`: `scaled`
-    /// (Sync-derived pictures, shared `Arc` so hover rebuilds never
-    /// re-copy) vs `hover` (per-mouse-move `Arc<str>`). Sync swaps the
-    /// whole snapshot once per drain; hover clones only the `Arc`s and
-    /// replaces the hover line. Readers take one lock and hold the
-    /// `Arc`; a single mutex (lock-order doc in `bridge.rs`) covers
-    /// the snapshot so hover never contends the drain.
+    /// Hot pictures plus cold text, shared by `Arc`; Sync swaps the whole
+    /// snapshot once per drain while hover clones only the `Arc`s.
     snapshot: Mutex<Arc<PpuSnapshot>>,
 }
 
@@ -68,9 +62,8 @@ struct PpuSnapshot {
     scaled: ScaledPictures,
     panels: Arc<str>,
     hover: Arc<str>,
-    /// Generation of the source images behind `scaled`. Starts
-    /// impossibly high so the first Sync always derives (generation
-    /// zero is a valid first fetch).
+    /// Generation of the source images behind `scaled`.
+    /// Starts at `u64::MAX` so the first Sync always derives.
     source_gen: u64,
 }
 
@@ -128,8 +121,7 @@ impl Program for PpuProgram {
             PpuMessage::Hovered(line) => {
                 *lock_recovered(&bridge.ppu_hover) = line.clone();
                 let current = Arc::clone(&lock_recovered(&state.snapshot));
-                // Hover touches only the hover `Arc<str>`; the scaled
-                // `Arc` is cloned, never re-derived.
+                // Hover swaps only the hover line; the scaled `Arc` is cloned.
                 *lock_recovered(&state.snapshot) = Arc::new(PpuSnapshot {
                     scaled: Arc::clone(&current.scaled),
                     panels: Arc::clone(&current.panels),
@@ -259,9 +251,7 @@ impl PpuWindowHandle {
             "PPU viewer window",
         )
         .map_err(|error| {
-            // Typed scaffold failures carry the window tag plus the
-            // native detail; surface them here since the opener seam
-            // is Option-based.
+            // Typed scaffold failure: surface the tagged native detail here.
             log::error!("{error}");
             error
         })
@@ -282,15 +272,11 @@ impl PpuWindowHandle {
     }
 
     pub(crate) fn sync_from_bridge(&mut self) {
-        // Derive cached bytes first (one scale per drain), then
-        // rebuild the view from cache. The Sync message rides the
-        // process pass so `instance` mutates only under take→rebuild.
+        // Derive cached bytes first, then rebuild the view from cache.
         self.bridge.ppu_invalidated.store(true, Ordering::Release);
         self.shell
             .process(vec![PpuMessage::Sync], &self.bridge.ppu_invalidated);
-        // Deterministic pixels per drain: render synchronously
-        // instead of depending on the next window event, so the
-        // viewer never sits on a stale or blank frame.
+        // Render synchronously so the viewer never sits on a stale frame.
         self.render();
     }
 }

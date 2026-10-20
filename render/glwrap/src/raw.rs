@@ -240,8 +240,7 @@ pub fn viewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei) -> Result<(
 }
 
 /// Read back the current viewport box `[x, y, width, height]`.
-/// Callers save this around composites that temporarily widen the
-/// viewport (e.g. the full-surface OSD blit) and restore it after.
+/// Callers save/restore this around viewport-widening composites.
 pub fn get_viewport(viewport: &mut [GLint; 4]) -> Result<(), Error> {
     let out = viewport.as_mut_ptr();
     gl_error_handle(|| unsafe { gl::GetIntegerv(gl::VIEWPORT, out) })
@@ -270,9 +269,8 @@ pub fn get_integer(pname: GLenum) -> Result<GLint, Error> {
     })
 }
 
-/// Checked `u32` variant for GL names (program, VAO, buffer, blend
-/// factors): negative values refuse as `InvalidValue` instead of
-/// wrapping through `as u32` at the restore site.
+/// Checked `u32` variant for GL names (program, VAO, buffer, blend factors).
+/// Negatives refuse as `InvalidValue` instead of wrapping through `as u32`.
 pub fn get_integer_u32(pname: GLenum) -> Result<GLuint, Error> {
     let value = get_integer(pname)?;
     u32::try_from(value).map_err(|_| Error::new(vec![ErrorKind::InvalidValue]))

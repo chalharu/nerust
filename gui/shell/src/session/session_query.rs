@@ -1,9 +1,5 @@
-//! Read-only session queries for frontends: metrics, titles, slots,
-//! and history views. No mutation, no orchestration.
-//!
-//! Tick discipline: [`SessionHandle::tick_metrics`] is the single
-//! metrics lock per pass. Callers fetch one [`TickMetrics`] and thread
-//! it through these queries instead of combining per-call predicates.
+//! Read-only session queries for frontends: metrics, titles, slots, and history views.
+//! Callers fetch one `TickMetrics` and thread it through instead of combining predicates.
 
 use nerust_emu_thread::ConsoleMetrics;
 
@@ -16,9 +12,8 @@ pub struct WindowSize {
     pub height: f32,
 }
 
-/// Per-frame history cache: rebuilds only when the notification
-/// history advanced or the language changed, otherwise serves the
-/// stored rows without reformatting.
+/// Per-frame history cache: rebuilds on history advance or language change;
+/// otherwise serves the stored rows without reformatting.
 #[derive(Debug, Default)]
 pub struct HistoryView {
     last_seq: Option<(u64, nerust_settings_core::model::language::AppLanguage)>,
@@ -30,9 +25,8 @@ impl HistoryView {
         Self::default()
     }
 
-    /// Borrowed history rows for `history` at `seq`/`language`.
-    /// The caller passes the already-drained iterator plus the
-    /// current [`history_seq`](super::notification::NotificationCenter::history_seq).
+    /// Borrowed history rows for `history` at `seq`/`language`, from the drained iterator.
+    /// The caller passes the current `history_seq`.
     pub fn lines<'a>(
         &mut self,
         history: impl Iterator<Item = &'a super::notification::UiNotification>,
@@ -49,9 +43,7 @@ impl HistoryView {
 }
 
 impl SessionHandle {
-    /// Infra escape hatch: raw console metrics. Frontends (tao) still
-    /// read the frame counter through this; new code threads one
-    /// [`TickMetrics`] per pass instead of locking per predicate.
+    /// Infra escape hatch: raw console metrics; new code threads one `TickMetrics` per pass.
     /// Kept as a shim: removing it breaks the out-of-crate frontend.
     pub fn metrics(&self) -> ConsoleMetrics {
         self.emu

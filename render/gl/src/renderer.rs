@@ -49,9 +49,6 @@ impl std::fmt::Debug for GlRenderer {
     }
 }
 
-// ---------------------------------------------------------------------------
-// GlContext owner: view construction plus explicit teardown.
-// ---------------------------------------------------------------------------
 impl GlRenderer {
     /// Fresh view with shaders compiled and the staged layer applied.
     /// Single construction site for attach and profile rebuilds.
@@ -65,10 +62,8 @@ impl GlRenderer {
         Ok(view)
     }
 
-    /// Tear down the live view, warning once per failure streak.
-    /// Best-effort: a failed delete must not fail the rebuild that
-    /// triggered it. A later clean teardown re-arms the warning so a
-    /// new failure streak warns again instead of staying silent.
+    /// Tear down the live view, warning once per failure streak. Best-effort:
+    /// a failed delete must not fail the rebuild; later clean teardown re-arms.
     fn close_live_view(&mut self) {
         if let Some(ref mut v) = self.view {
             let current = self
@@ -81,9 +76,8 @@ impl GlRenderer {
         }
     }
 
-    /// Warn-once sink shared by the rebuild and detach teardowns: the
-    /// first failure of a streak warns, repeats stay quiet, and a
-    /// clean teardown re-arms for the next streak.
+    /// Warn-once sink shared by the rebuild and detach teardowns.
+    /// A clean teardown re-arms for the next streak.
     fn log_close_report(&mut self, report: &crate::view::CloseReport) {
         if report.is_ok() {
             self.close_warned = false;
@@ -104,8 +98,7 @@ impl GlRenderer {
     }
 
     /// Validated surface size as `i32` for the GL viewport path.
-    /// `u32 -> i32` via `try_from`: values above `i32::MAX` skip the
-    /// frame instead of truncating negative.
+    /// Values above `i32::MAX` skip the frame instead of truncating.
     fn validated_surface_size(&self) -> Option<(i32, i32)> {
         let w = i32::try_from(self.size.width).ok()?;
         let h = i32::try_from(self.size.height).ok()?;
@@ -187,9 +180,6 @@ impl GlRenderer {
     }
 }
 
-// ---------------------------------------------------------------------------
-// RenderOrchestration: resize, profile rebuild, per-frame drive.
-// ---------------------------------------------------------------------------
 impl GlRenderer {
     /// Per-frame orchestration: viewport, palette, upload, OSD, swap.
     fn orchestrate_render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
@@ -344,10 +334,8 @@ impl GpuRenderer for GlRenderer {
     }
 }
 
-/// Upload one frame through the three stride paths (direct,
-/// exact, repacked). Length failures refuse as Frame errors.
-/// `layout.width` is validated `usize`; the `i32` upload width goes
-/// through `try_from` so absurd widths error instead of truncating.
+/// Upload one frame through the three stride paths (direct, exact, repacked).
+/// Length failures refuse as Frame errors; absurd widths error instead of truncating.
 fn upload_frame(
     view: &mut GlView,
     tight: &mut Vec<u8>,
@@ -380,10 +368,6 @@ fn upload_frame(
         view.on_update(tight, width_i32)
     }
 }
-
-// ---------------------------------------------------------------------------
-// GlFactory
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Default)]
 pub struct GlFactory;
@@ -461,10 +445,8 @@ impl GpuFactory for GlFactory {
     }
 }
 
-/// Strip source row padding into a tight destination, mirroring
-/// wgpu's `pack_frame_rows` pitch-mismatch path. Callers guarantee
-/// `source.len() >= source_stride * height`, `destination.len() >=
-/// `row_bytes * height`, and nonzero pitches.
+/// Strip source row padding into a tight destination.
+/// Callers guarantee lengths and nonzero pitches.
 fn pack_rows_stripped(
     source: &[u8],
     source_stride: usize,
