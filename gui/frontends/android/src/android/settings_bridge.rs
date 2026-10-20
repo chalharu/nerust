@@ -192,7 +192,6 @@ fn resolve_pending_as_dismissed() {
 }
 
 /// Id-conditional variant: a stale callback must not clear the live flight.
-
 fn resolve_pending_as_dismissed_for(request_id: u64) {
     let cleared = bridge::with_settings(|state| {
         if state.pending_request_id != Some(request_id) {

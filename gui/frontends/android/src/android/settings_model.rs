@@ -192,7 +192,6 @@ impl AndroidSettings {
     }
 
     /// Write the Android-relevant fields back into a full settings snapshot.
-
     pub(super) fn apply_to_snapshot(
         &self,
         snapshot: &mut SettingsSnapshot,
@@ -240,7 +239,6 @@ impl AndroidSettings {
     // Dialog encoding.
 
     /// One settings row: key, label, choices, and current index in one struct.
-
     pub(super) fn setting_defs(&self) -> Vec<SettingDef> {
         let off_on = || vec!["Off".to_string(), "On".to_string()];
         // Same-edge rule resolved here: the area row hides when both
