@@ -4,7 +4,15 @@
 use std::ptr;
 
 use gl::types::GLint;
-use nerust_glwrap::{CurrentContext, DeletionPolicy, Shader, raw::*};
+use nerust_glwrap::{
+    CurrentContext, DeletionPolicy, Shader,
+    raw::{
+        active_texture, bind_buffer, bind_vertex_array, blend_func, blend_func_separate,
+        delete_textures, disable, draw_arrays, enable, gen_textures, get_integer_u32, get_viewport,
+        is_enabled, tex_image_2d, tex_sub_image_2d, uniform_1i, uniform_matrix_4fv, use_program,
+        viewport,
+    },
+};
 use nerust_render_traits::renderer::{OsdLayer, UploadCache};
 
 use crate::error::ViewError;

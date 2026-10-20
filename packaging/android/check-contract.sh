@@ -13,10 +13,12 @@ fail() {
 }
 
 rust_const() {
-    grep -oE "const $1[^=]*= *[0-9]+" "$2" | grep -oE '[0-9]+$'
+    local name="$1"
+    local file="$2"
+    grep -oE "const ${name}[^=]*= *[0-9]+" "${file}" | grep -oE '[0-9]+$'
 }
 
-bridge_rs="$(rust_const BRIDGE_EVENT_VERSION "${RUST_DIR}/src/android/menu.rs")"
+bridge_rs="$(rust_const BRIDGE_EVENT_VERSION "${RUST_DIR}/src/bridge_events.rs")"
 bridge_kt="$(grep -oE 'const val BRIDGE_EVENT_VERSION = [0-9]+' "${KT_DIR}/BridgeContract.kt" | grep -oE '[0-9]+')"
 bridge_json="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["definitions"]["menuEvent"]["properties"]["v"]["const"])' "${RUST_DIR}/bridge_events.v1.json")"
 [[ "${bridge_rs}" == "${bridge_kt}" && "${bridge_kt}" == "${bridge_json}" ]] \

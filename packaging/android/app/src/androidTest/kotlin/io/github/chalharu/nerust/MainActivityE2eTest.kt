@@ -68,7 +68,7 @@ class MainActivityE2eTest {
 
         val stateFilesBefore = stateSlotFiles()
         runOnActivityThread(activity) {
-            activity.dispatchMenuActionForTest(menuEventJson("save_state"))
+            activity.dispatchMenuActionForTest("save_state")
         }
         assertTrue(
             "GBC Save State should create a state archive",
@@ -210,7 +210,7 @@ class MainActivityE2eTest {
     fun exitTerminatesApplicationProcess() {
         val activity = launchActivity()
         runOnActivityThread(activity) {
-            activity.dispatchMenuActionForTest(menuEventJson("exit"))
+            activity.dispatchMenuActionForTest("exit")
         }
         SystemClock.sleep(STARTUP_TIMEOUT_MS)
         fail("Exit should terminate the application process")
@@ -260,7 +260,7 @@ class MainActivityE2eTest {
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching $action" }
-            activity.dispatchMenuActionForTest(menuEventJson(action))
+            activity.dispatchMenuActionForTest(action)
         }
         assertChromeViewAvailable(activity, expectedDialogTag, DIALOG_TIMEOUT_MS, expectedDialogMessage)
         runOnActivityThread(activity) {
