@@ -423,7 +423,7 @@ pub(super) fn configure_controls_overlay(
             env.call_method(
                 &activity,
                 jni_str!("configureControlsOverlay"),
-                jni_sig!("(Ljava/lang/String;IZZLjava/lang/String;Ljava/lang/String;)V"),
+                jni_sig!("(Ljava/lang/String;IZLjava/lang/String;Ljava/lang/String;)V"),
                 &[
                     jni::objects::JValue::Object(visibility.as_ref()),
                     jni::objects::JValue::Int(opacity),

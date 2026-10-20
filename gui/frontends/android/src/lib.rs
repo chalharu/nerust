@@ -1,6 +1,8 @@
 // Root stays ungated so pure modules compile and test on host.
 // Android-bound items below stay target-gated.
 #[cfg(any(target_os = "android", test))]
+mod bridge_events;
+#[cfg(any(target_os = "android", test))]
 mod density;
 
 #[cfg(any(target_os = "android", test))]
