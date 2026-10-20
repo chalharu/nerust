@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::{FrameBuffer, ReservedStrip, SurfaceSize, VideoRenderProfile};
@@ -70,8 +72,8 @@ impl std::error::Error for RendererError {
     }
 }
 
-/// In-frame OSD layer: cropped straight-alpha RGBA composited
-/// over the game image at surface size. Origin is top-left.
+/// In-frame OSD layer, cropped over the game image. `rgba` is shared;
+/// `generation` orders re-stages without a memcmp.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OsdLayer {
     /// Top-left corner in physical surface pixels.
@@ -80,15 +82,43 @@ pub struct OsdLayer {
     pub width: u32,
     pub height: u32,
     /// Row-major straight-alpha RGBA, `width * height * 4` bytes.
-    pub rgba: Vec<u8>,
+    pub rgba: Rc<[u8]>,
+    /// Monotonic stage counter; zero means "unset" (struct literals, tests).
+    pub generation: u64,
 }
 
+/// Next OSD stage counter. Wraps only after 2^64 stages.
+static OSD_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 impl OsdLayer {
-    /// Cheap content equality: header check before the byte memcmp.
+    /// Build a layer with a fresh generation for the equality fast path.
+    pub fn new(x: u32, y: u32, width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+            rgba: Rc::from(rgba),
+            generation: OSD_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// Cheap content equality: identity, then generation, then header, then bytes.
     pub fn same_content(&self, other: Option<&Self>) -> bool {
         let Some(other) = other else {
             return false;
         };
+        if Rc::ptr_eq(&self.rgba, &other.rgba)
+            && self.x == other.x
+            && self.y == other.y
+            && self.width == other.width
+            && self.height == other.height
+        {
+            return true;
+        }
+        if self.generation != 0 && other.generation != 0 && self.generation == other.generation {
+            return true;
+        }
         self.x == other.x
             && self.y == other.y
             && self.width == other.width
@@ -136,33 +166,6 @@ impl OsdAnchor {
     }
 }
 
-/// One raster pill row: tag plus body in a single color.
-/// The tag is a static level marker: no per-frame allocation at the shell boundary.
-#[derive(Debug, Clone)]
-pub struct OsdRow {
-    pub tag: &'static str,
-    pub text: String,
-    pub rgb: (u8, u8, u8),
-}
-
-/// Status readout: label plus right-aligned value in a fixed-width
-/// pill so digits never shift.
-#[derive(Debug, Clone)]
-pub struct OsdStatus {
-    pub label: String,
-    pub value: String,
-    pub rgb: (u8, u8, u8),
-}
-
-/// Raster input: transient rows plus optional status, with corners.
-#[derive(Debug, Clone, Default)]
-pub struct OsdContent {
-    pub rows: Vec<OsdRow>,
-    pub status: Option<OsdStatus>,
-    pub position: OsdAnchor,
-    pub status_position: OsdAnchor,
-}
-
 /// Viewport edge padding in physical pixels, on top of the layout margin.
 /// [`SafeInsets`] is the historical alias.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -200,7 +203,7 @@ pub fn strip_pixels(client_height: u32, rows: u32, ui_scale: f32) -> u32 {
     rows.saturating_mul(row) + margin + gap * rows.saturating_sub(1)
 }
 
-/// Outcome reported by [`GpuRenderer::render`].
+/// Outcome reported by [`Present::render`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RenderResult {
     Presented,
@@ -208,9 +211,9 @@ pub enum RenderResult {
     Error,
 }
 
-/// GPU device + pipeline + surface. Single unified trait.
-/// Lifecycle: GpuFactory::create_renderer() → attach() → render() → detach() → drop
-pub trait GpuRenderer: std::fmt::Debug {
+/// Frame presentation: surface lifecycle plus per-frame blit.
+/// Backends implement this without any OSD vocabulary.
+pub trait Present: std::fmt::Debug {
     /// Current output size.
     fn size(&self) -> SurfaceSize;
 
@@ -239,19 +242,82 @@ pub trait GpuRenderer: std::fmt::Debug {
     /// Resize the output (swapchain for wgpu; stored for GL).
     fn resize(&mut self, size: SurfaceSize);
 
-    /// Reserve edge strips for OSD labels. The game viewport fits into
-    /// the remaining rect; default ignores the reservation.
-    fn set_reserved_strip(&mut self, _strip: ReservedStrip) {}
+    /// Render a frame.  attach() must have been called.
+    fn render(&mut self, frame: &FrameBuffer) -> RenderResult;
+}
 
+/// OSD overlay sink: ownership moves in, never clones out.
+pub trait OsdSink: std::fmt::Debug {
     /// Overlay an OSD layer over the game image on the next render.
     /// Backends composite after filters at surface size; `None` clears.
     fn set_osd_layer(&mut self, layer: Option<OsdLayer>);
+}
 
+/// Reserved-strip sink: the game viewport fits into the remaining rect.
+pub trait StripSink: std::fmt::Debug {
+    /// Reserve edge strips for OSD labels. Default ignores the reservation.
+    fn set_reserved_strip(&mut self, _strip: ReservedStrip) {}
+}
+
+/// Single OSD upload policy for every backend.
+/// Bounded retries: transient blips survive, dead drivers drop the layer.
+pub trait OsdUploadPolicy: std::fmt::Debug {
+    /// Record one failed upload. Returns true when the layer must drop.
+    fn record_failure(&mut self) -> bool;
+    /// A successful upload re-arms the budget.
+    fn reset(&mut self);
+}
+
+/// Single policy implementation: floor of one attempt, saturating counter.
+#[derive(Debug)]
+pub struct BoundedUploadPolicy {
+    max: u8,
+    fails: u8,
+}
+
+impl BoundedUploadPolicy {
+    /// Zero would drop live layers on the first transient failure, so
+    /// the floor is one attempt: the constructor clamps, not callers.
+    pub fn new(max: u8) -> Self {
+        Self {
+            max: max.max(1),
+            fails: 0,
+        }
+    }
+}
+
+impl OsdUploadPolicy for BoundedUploadPolicy {
+    fn record_failure(&mut self) -> bool {
+        self.fails = self.fails.saturating_add(1);
+        self.fails >= self.max
+    }
+
+    fn reset(&mut self) {
+        self.fails = 0;
+    }
+}
+
+/// Grow-only byte staging for texture uploads.
+/// One implementation (`Vec<u8>`) serves every backend; no steady allocs.
+pub trait UploadCache {
+    /// Grow-only staging of at least `need` bytes, zero-filled on growth.
+    fn staging(&mut self, need: usize) -> &mut [u8];
+}
+
+impl UploadCache for Vec<u8> {
+    fn staging(&mut self, need: usize) -> &mut [u8] {
+        if self.len() < need {
+            self.resize(need, 0);
+        }
+        &mut self[..need]
+    }
+}
+
+/// GPU device + pipeline + surface. Composition of the three sinks.
+/// Lifecycle: GpuFactory::create_renderer() → attach() → render() → detach() → drop
+pub trait GpuRenderer: Present + OsdSink + StripSink {
     /// Update the render pipeline for a new render profile.
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;
-
-    /// Render a frame.  attach() must have been called.
-    fn render(&mut self, frame: &FrameBuffer) -> RenderResult;
 }
 
 /// Common parameters for [`GpuFactory::create_renderer`].
@@ -297,24 +363,24 @@ mod tests {
 
     #[test]
     fn layer_equality_gates_on_header_before_bytes() {
-        let base = OsdLayer {
-            x: 1,
-            y: 2,
-            width: 2,
-            height: 1,
-            rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
-        };
+        let base = OsdLayer::new(1, 2, 2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(OsdLayer::same_option(None, None));
         assert!(base.same_content(Some(&base.clone())));
         assert!(!base.same_content(None));
         assert!(!OsdLayer::same_option(Some(&base), None));
-        let shifted = OsdLayer {
-            x: 9,
-            ..base.clone()
-        };
+        let shifted = OsdLayer::new(9, 2, 2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(!base.same_content(Some(&shifted)));
-        let mut edited = base.clone();
-        edited.rgba[7] = 9;
+        let mut bytes = base.rgba.to_vec();
+        bytes[7] = 9;
+        let edited = OsdLayer::new(1, 2, 2, 1, bytes);
         assert!(!base.same_content(Some(&edited)));
+    }
+
+    #[test]
+    fn layer_generation_skips_memcmp_for_shared_handles() {
+        let base = OsdLayer::new(0, 0, 2, 1, vec![9; 8]);
+        let shared = base.clone();
+        assert!(Rc::ptr_eq(&base.rgba, &shared.rgba));
+        assert!(base.same_content(Some(&shared)));
     }
 }

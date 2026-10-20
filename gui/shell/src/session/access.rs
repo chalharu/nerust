@@ -47,7 +47,47 @@ pub trait ResetControl {
     fn reset(&mut self);
 }
 
-/// Save-slot control: slot CRUD plus reset. Legacy fat trait.
+/// Blanket narrow ports over the legacy fat trait; new code depends on narrow traits.
+impl<T: SlotControl + ?Sized> SlotIo for T {
+    fn load_slot(&mut self, slot_id: u64) -> bool {
+        SlotControl::load_slot(self, slot_id)
+    }
+    fn save_slot(&mut self, slot_id: u64) {
+        SlotControl::save_slot(self, slot_id)
+    }
+    fn delete_slot(&mut self, slot_id: u64) {
+        SlotControl::delete_slot(self, slot_id)
+    }
+    fn save_active_slot(&mut self) -> bool {
+        SlotControl::save_active_slot(self)
+    }
+    fn load_active_slot(&mut self) -> bool {
+        SlotControl::load_active_slot(self)
+    }
+}
+
+impl<T: SlotControl + ?Sized> SlotNav for T {
+    fn select_slot(&mut self, slot_id: u64) {
+        SlotControl::select_slot(self, slot_id)
+    }
+    fn select_next_slot(&mut self) {
+        SlotControl::select_next_slot(self)
+    }
+    fn select_previous_slot(&mut self) {
+        SlotControl::select_previous_slot(self)
+    }
+    fn create_slot(&mut self) {
+        SlotControl::create_slot(self)
+    }
+}
+
+impl<T: SlotControl + ?Sized> ResetControl for T {
+    fn reset(&mut self) {
+        SlotControl::reset(self)
+    }
+}
+
+/// Save-slot control: slot CRUD plus reset. Compatibility shim for out-of-crate frontends.
 /// New code implements the narrow [`SlotIo`]/[`SlotNav`]/[`ResetControl`] traits instead.
 pub trait SlotControl {
     fn save_active_slot(&mut self) -> bool;
@@ -61,11 +101,6 @@ pub trait SlotControl {
     fn create_slot(&mut self);
     fn reset(&mut self);
 }
-
-/// Explicit adapter from the legacy fat [`SlotControl`] to the narrow ports.
-/// Only this adapter bridges the two shapes.
-#[derive(Debug)]
-pub struct SlotControlAdapter<S>(pub S);
 
 /// Reference forwarding: `&mut T` speaks `SlotControl` whenever `T`
 /// does, so adapters compose without consuming the recorder.
@@ -102,45 +137,6 @@ impl<T: SlotControl> SlotControl for &mut T {
     }
 }
 
-impl<S: SlotControl> SlotIo for SlotControlAdapter<S> {
-    fn load_slot(&mut self, slot_id: u64) -> bool {
-        SlotControl::load_slot(&mut self.0, slot_id)
-    }
-    fn save_slot(&mut self, slot_id: u64) {
-        SlotControl::save_slot(&mut self.0, slot_id)
-    }
-    fn delete_slot(&mut self, slot_id: u64) {
-        SlotControl::delete_slot(&mut self.0, slot_id)
-    }
-    fn save_active_slot(&mut self) -> bool {
-        SlotControl::save_active_slot(&mut self.0)
-    }
-    fn load_active_slot(&mut self) -> bool {
-        SlotControl::load_active_slot(&mut self.0)
-    }
-}
-
-impl<S: SlotControl> SlotNav for SlotControlAdapter<S> {
-    fn select_slot(&mut self, slot_id: u64) {
-        SlotControl::select_slot(&mut self.0, slot_id)
-    }
-    fn select_next_slot(&mut self) {
-        SlotControl::select_next_slot(&mut self.0)
-    }
-    fn select_previous_slot(&mut self) {
-        SlotControl::select_previous_slot(&mut self.0)
-    }
-    fn create_slot(&mut self) {
-        SlotControl::create_slot(&mut self.0)
-    }
-}
-
-impl<S: SlotControl> ResetControl for SlotControlAdapter<S> {
-    fn reset(&mut self) {
-        SlotControl::reset(&mut self.0)
-    }
-}
-
 /// Session-level operations: teardown and settings application.
 pub trait SessionControl {
     /// Unload the current ROM, flushing mapper saves.
@@ -152,15 +148,11 @@ pub trait SessionControl {
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError>;
 }
 
-/// Frontend-facing session operations.
-/// Hides command/outcome/plan types; blanket impl assembles the port.
-pub trait FrontendSession: PauseControl + SlotControl + SessionControl {}
-
-impl<T> FrontendSession for T where T: PauseControl + SlotControl + SessionControl {}
-
-/// Dispatch one schema session action to any frontend session.
-/// Window-chrome actions never arrive here (dedicated variants).
-pub fn dispatch_session_action(target: &mut dyn FrontendSession, action: ShortcutAction) {
+/// Dispatch one schema session action; chrome actions use dedicated variants.
+pub fn dispatch_session_action<T>(target: &mut T, action: ShortcutAction)
+where
+    T: PauseControl + SlotIo + SlotNav + ResetControl + ?Sized,
+{
     match action {
         ShortcutAction::TogglePause => target.toggle_pause(),
         ShortcutAction::SaveActiveSlot => {
@@ -182,7 +174,7 @@ pub fn dispatch_session_action(target: &mut dyn FrontendSession, action: Shortcu
 mod tests {
     use super::*;
 
-    /// Records dispatched calls. Every `FrontendSession` method lands
+    /// Records dispatched calls. Every narrow-port method lands
     /// here so the routing test below pins each action exactly once.
     #[derive(Default)]
     struct Recorder {
@@ -278,21 +270,27 @@ mod tests {
 
     #[test]
     fn recorder_pins_each_slot_and_lifecycle_call() {
-        // Unreachable Recorder methods record through the explicit adapter,
-        // the only bridge from the legacy fat trait to the narrow ports.
+        // Narrow ports reach the recorder through the blanket impls:
+        // no adapter stands between the fat trait and its halves.
         let mut recorder = Recorder::default();
         recorder.pause();
         recorder.resume();
         {
-            let mut adapted = SlotControlAdapter(&mut recorder);
-            assert!(SlotIo::save_active_slot(&mut adapted));
-            assert!(SlotIo::load_active_slot(&mut adapted));
-            SlotIo::save_slot(&mut adapted, 1);
-            SlotIo::load_slot(&mut adapted, 1);
-            SlotIo::delete_slot(&mut adapted, 1);
-            SlotNav::select_slot(&mut adapted, 1);
-            SlotNav::create_slot(&mut adapted);
-            ResetControl::reset(&mut adapted);
+            let narrow: &mut dyn SlotIo = &mut recorder;
+            assert!(narrow.save_active_slot());
+            assert!(narrow.load_active_slot());
+            narrow.save_slot(1);
+            narrow.load_slot(1);
+            narrow.delete_slot(1);
+        }
+        {
+            let narrow: &mut dyn SlotNav = &mut recorder;
+            narrow.select_slot(1);
+            narrow.create_slot();
+        }
+        {
+            let narrow: &mut dyn ResetControl = &mut recorder;
+            narrow.reset();
         }
         recorder.unload();
         for name in [

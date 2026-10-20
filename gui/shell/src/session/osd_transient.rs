@@ -21,8 +21,8 @@ pub struct OsdRow {
 pub(crate) struct OsdItem {
     pub(crate) row: OsdRow,
     pub(crate) level: NotificationLevel,
-    /// Identity for coalescing (text before the `×N` suffix).
-    pub(crate) key: String,
+    /// Identity for coalescing (text before the `×N` suffix); shared, never re-allocated per merge.
+    pub(crate) key: std::rc::Rc<str>,
     pub(crate) count: u32,
     /// Display duration, stamped at promotion so a queued label always shows its full duration.
     pub(crate) duration: Duration,
@@ -147,14 +147,9 @@ impl TransientPolicy {
     }
 }
 
-pub(crate) fn counted_row(
-    base: String,
-    count: u32,
-    rgb: (u8, u8, u8),
-    tag: &'static str,
-) -> OsdRow {
+pub(crate) fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: &'static str) -> OsdRow {
     OsdRow {
-        text: append_count(base, count),
+        text: append_count(base.to_string(), count),
         rgb,
         tag,
     }
@@ -213,7 +208,7 @@ impl TransientQueue {
             // The tail was confirmed non-empty above; the `else` only covers the impossible case.
             let back = self.pending.back_mut()?;
             back.count += item.count;
-            back.row = counted_row(item.key.clone(), back.count, item.row.rgb, item.row.tag);
+            back.row = counted_row(&item.key, back.count, item.row.rgb, item.row.tag);
             back.deadline = item.deadline;
             return Some(MergeTarget::Queued);
         }
@@ -222,7 +217,7 @@ impl TransientQueue {
             return None;
         }
         current.count += item.count;
-        current.row = counted_row(item.key.clone(), current.count, item.row.rgb, item.row.tag);
+        current.row = counted_row(&item.key, current.count, item.row.rgb, item.row.tag);
         current.deadline = item.deadline;
         Some(MergeTarget::Showing)
     }
@@ -438,9 +433,9 @@ mod tests {
 
     fn test_item(level: NotificationLevel, key: &str, now: Instant) -> OsdItem {
         OsdItem {
-            row: counted_row(key.to_string(), 1, (200, 200, 200), "[I]"),
+            row: counted_row(key, 1, (200, 200, 200), "[I]"),
             level,
-            key: key.to_string(),
+            key: key.into(),
             count: 1,
             duration: Duration::from_millis(2_000),
             deadline: now + Duration::from_millis(2_000),
@@ -561,10 +556,10 @@ mod tests {
         pending.push_back(test_item(NotificationLevel::Warning, "w1", now));
         pending.push_back(test_item(NotificationLevel::Error, "e1", now));
         TransientQueue::evict_overflow(&mut pending, VictimEdge::Oldest);
-        assert!(pending.iter().all(|item| item.key != "i1"));
+        assert!(pending.iter().all(|item| item.key.as_ref() != "i1"));
         assert_eq!(pending.len(), 2);
         TransientQueue::evict_overflow(&mut pending, VictimEdge::Newest);
-        assert!(pending.iter().all(|item| item.key != "w1"));
+        assert!(pending.iter().all(|item| item.key.as_ref() != "w1"));
     }
 
     #[test]

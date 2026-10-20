@@ -54,17 +54,19 @@ impl SessionHandle {
     }
 
     pub fn tick_metrics(&self) -> TickMetrics {
-        let metrics = self
+        // Single lock-free snapshot per pass: pause/load truth rides the
+        // stamped atomics, counters read the thread side directly.
+        let (fps, paused, loaded, frame_counter) = self
             .emu
             .core()
             .ok()
-            .map(|c| c.metrics())
-            .unwrap_or_default();
+            .map(|c| c.tick_snapshot())
+            .unwrap_or((0.0, false, false, 0));
         TickMetrics {
-            fps: metrics.emulation_fps,
-            paused: metrics.paused,
-            loaded: metrics.loaded,
-            frame_counter: metrics.frame_counter,
+            fps,
+            paused,
+            loaded,
+            frame_counter,
         }
     }
 
@@ -83,7 +85,7 @@ impl SessionHandle {
     /// here, so per-frame title refreshes share the pass tick.
     pub fn window_title(&self, tick: &TickMetrics) -> String {
         let name = self.active_system_display_name();
-        super::title::window_title_input(TitleInput {
+        super::title::title(TitleInput {
             paused: tick.paused,
             loaded: tick.loaded,
             system_name: name,

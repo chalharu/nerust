@@ -1,11 +1,13 @@
-//! Native window lifecycle, surface targets, and loop control flow.
+//! Native window cluster, surface targets, and loop control flow.
 
 use super::HostState;
 use super::{
     create_window_builder, default_fit_window_size, logical_size_from_remembered,
     logical_window_size, window_is_fullscreen, window_surface_size,
 };
+use nerust_gui_runtime::shell::NativeShellState;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 use tao::{dpi::LogicalSize as TaoLogicalSize, event_loop::ControlFlow, window::WindowId};
 
@@ -14,80 +16,88 @@ use nerust_render_traits::{SurfaceSize, renderer::RenderResult};
 use nerust_settings_core::model::app_state::RememberedWindowSize;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-use crate::aux::focus::AuxWindow;
 use crate::ports::WindowOpener;
 
-/// Wake inputs for one control-flow pass. Plain data, no tao import:
-/// the host assembles it, [`earliest_wake`] folds it.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct WakeInput {
-    pub live_tick: Option<Instant>,
-    pub flight_pending: bool,
-    pub osd_deadline: Option<Instant>,
+/// Main window cluster: handle, liveness, surface target, fullscreen sync.
+/// All primary-window state lives here; `HostState` dispatches to it.
+pub(crate) struct WindowCluster {
+    window: Option<super::close::LiveWindow>,
+    close: super::close::CloseGuard,
+    pending_fullscreen_sync: Option<bool>,
+    /// Linux render target below the muda menubar (`None` elsewhere).
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    content_area: Option<crate::gtk_embed::ContentArea>,
 }
 
-/// Poll latency for an in-flight drain/live fetch: the backstop that
-/// bounds reply latency when the loop would otherwise sleep.
-pub(crate) fn flight_backstop(now: Instant) -> Instant {
-    now + std::time::Duration::from_millis(30)
-}
-
-/// Earliest deadline wins; no deadline sleeps. Pure (no tao import);
-/// the runtime maps the result to `ControlFlow`.
-pub(crate) fn earliest_wake(input: WakeInput, now: Instant) -> Option<Instant> {
-    [
-        input.live_tick,
-        input.flight_pending.then(|| flight_backstop(now)),
-        input.osd_deadline,
-    ]
-    .into_iter()
-    .flatten()
-    .min()
-}
-
-/// Pure control-flow decision with injected clock: wake deadline plus repaint flag.
-/// Repaint while focused, while the PPU follows a running core, or while the session runs.
-pub(crate) fn update_flow(
-    now: Instant,
-    tick_loaded: bool,
-    tick_paused: bool,
-    main_active: bool,
-    live_follow: bool,
-    input: WakeInput,
-) -> (Option<Instant>, bool) {
-    let running = tick_loaded && !tick_paused;
-    (
-        earliest_wake(input, now),
-        main_active || live_follow || running,
-    )
-}
-
-impl HostState {
-    pub(crate) fn ensure_window(&mut self, opener: &dyn WindowOpener) {
-        if self.window.is_some() {
-            return;
+impl WindowCluster {
+    pub(super) fn new() -> Self {
+        Self {
+            window: None,
+            close: super::close::CloseGuard::new(),
+            pending_fullscreen_sync: None,
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd"
+            ))]
+            content_area: None,
         }
+    }
 
-        let fullscreen = self
-            .session
-            .settings_snapshot()
-            .local
-            .video
-            .window
-            .fullscreen_default;
-        let window = match opener.create_main(create_window_builder(
-            self.startup_window_size(),
-            self.session.window_title(&self.session.tick_metrics()),
-            fullscreen,
-        )) {
-            Ok(window) => window,
-            Err(detail) => {
-                log::error!("failed to create window: {detail}");
-                self.close.fail(detail);
-                return;
-            }
-        };
-        self.app_menu.init_for_window(&window);
+    pub(super) fn is_some(&self) -> bool {
+        self.window.is_some()
+    }
+
+    pub(super) fn live(&self) -> Option<&super::close::LiveWindow> {
+        self.window.as_ref()
+    }
+
+    pub(super) fn is_window(&self, window_id: WindowId) -> bool {
+        self.window
+            .as_ref()
+            .is_some_and(|window| window.id() == window_id)
+    }
+
+    /// Record a window-creation failure and retire liveness.
+    pub(super) fn fail(&mut self, detail: String) {
+        self.close.fail(detail);
+    }
+
+    /// Creation failure, if any.
+    pub(super) fn fatal_message(&self) -> Option<&str> {
+        self.close.fatal_message()
+    }
+
+    /// Idempotent close entry: true exactly once.
+    pub(super) fn begin_close(&mut self) -> bool {
+        self.close.begin_close()
+    }
+
+    /// Close teardown already ran (test read of the guard).
+    #[cfg(test)]
+    pub(super) fn close_exited(&self) -> bool {
+        self.close.exited()
+    }
+
+    /// Pending native fullscreen transition, if one is in flight.
+    pub(super) fn pending_fullscreen_sync(&self) -> Option<bool> {
+        self.pending_fullscreen_sync
+    }
+
+    pub(super) fn set_pending_fullscreen_sync(&mut self, pending: Option<bool>) {
+        self.pending_fullscreen_sync = pending;
+    }
+
+    /// Seat a newly created window, wiring the menubar content area.
+    pub(super) fn seat(&mut self, window: Arc<tao::window::Window>) {
         #[cfg(any(
             target_os = "linux",
             target_os = "dragonfly",
@@ -102,36 +112,17 @@ impl HostState {
                 .map(|vbox| crate::gtk_embed::ContentArea::new(vbox, window.gtk_window(), &window));
         }
         self.window = Some(super::close::LiveWindow::new(window));
-        self.sync_fullscreen_from_settings();
-        self.sync_chrome(true);
-    }
-
-    pub(crate) fn is_window(&self, window_id: WindowId) -> bool {
-        self.window
-            .as_ref()
-            .is_some_and(|window| window.id() == window_id)
-    }
-
-    pub(crate) fn is_settings_window(&self, window_id: WindowId) -> bool {
-        self.settings
-            .window
-            .as_ref()
-            .is_some_and(|h| h.tao_window_id() == window_id)
-    }
-
-    pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
-        self.surface_target().map(|(_, size, _)| size)
     }
 
     /// Native attach target for the game renderer: content area below the menubar, else toplevel.
     /// The xid tags the target so a target change recreates the surface.
-    pub(crate) fn surface_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
+    pub(super) fn surface_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
         let (handle, size, xid) = self.attach_target()?;
         Some((handle, size, xid))
     }
 
     /// Xid the surface is currently attached to (`None` = toplevel fallback).
-    pub(crate) fn surface_xid(&self) -> Option<u64> {
+    pub(super) fn surface_xid(&self) -> Option<u64> {
         let (_, _, xid) = self.attach_target()?;
         xid
     }
@@ -173,13 +164,153 @@ impl HostState {
         None
     }
 
+    pub(super) fn request_redraw(&mut self, shell: &mut NativeShellState) {
+        // Liveness gates all dead-handle use: check first, so closed
+        // or failed hosts never flag a redraw that cannot land.
+        if !self.close.is_usable() {
+            log::trace!("tao redraw dropped: no usable window");
+            return;
+        }
+        shell.needs_redraw = true;
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+}
+
+/// Wake inputs for one control-flow pass. Plain data, no tao import:
+/// the host assembles it, [`earliest_wake`] folds it.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct WakeInput {
+    pub live_tick: Option<Instant>,
+    pub flight_pending: bool,
+    pub osd_deadline: Option<Instant>,
+}
+
+/// Per-pump wake contribution. Each `tick_*` pump returns one;
+/// `update_control_flow` folds them into a single [`WakeInput`].
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct WakeNeed {
+    pub live_tick: Option<Instant>,
+    pub flight_pending: bool,
+    pub osd_deadline: Option<Instant>,
+}
+
+impl WakeNeed {
+    pub(crate) fn fold(self, other: Self) -> Self {
+        Self {
+            live_tick: match (self.live_tick, other.live_tick) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (Some(a), None) => Some(a),
+                (None, b) => b,
+            },
+            flight_pending: self.flight_pending || other.flight_pending,
+            osd_deadline: match (self.osd_deadline, other.osd_deadline) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (Some(a), None) => Some(a),
+                (None, b) => b,
+            },
+        }
+    }
+}
+
+/// Poll latency for an in-flight drain/live fetch: the backstop that
+/// bounds reply latency when the loop would otherwise sleep.
+pub(crate) fn flight_backstop(now: Instant) -> Instant {
+    now + std::time::Duration::from_millis(30)
+}
+
+/// Earliest deadline wins; no deadline sleeps. Pure (no tao import);
+/// the runtime maps the result to `ControlFlow`.
+pub(crate) fn earliest_wake(input: WakeInput, now: Instant) -> Option<Instant> {
+    [
+        input.live_tick,
+        input.flight_pending.then(|| flight_backstop(now)),
+        input.osd_deadline,
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+}
+
+/// Pure control-flow decision with injected clock: wake deadline plus repaint flag.
+/// Repaint while focused, while the PPU follows a running core, or while the session runs.
+pub(crate) fn update_flow(
+    now: Instant,
+    tick_loaded: bool,
+    tick_paused: bool,
+    main_active: bool,
+    live_follow: bool,
+    input: WakeInput,
+) -> (Option<Instant>, bool) {
+    let running = tick_loaded && !tick_paused;
+    (
+        earliest_wake(input, now),
+        main_active || live_follow || running,
+    )
+}
+
+impl HostState {
+    pub(crate) fn ensure_window(&mut self, opener: &dyn WindowOpener) {
+        if self.windows.is_some() {
+            return;
+        }
+
+        let fullscreen = self
+            .session
+            .settings_snapshot()
+            .local
+            .video
+            .window
+            .fullscreen_default;
+        let tick = self.session.tick_metrics();
+        let title = self.session.window_title_cached(&tick).to_owned();
+        let window = match opener.create_main(create_window_builder(
+            self.startup_window_size(),
+            title,
+            fullscreen,
+        )) {
+            Ok(window) => window,
+            Err(detail) => {
+                log::error!("failed to create window: {detail}");
+                self.windows.fail(detail);
+                return;
+            }
+        };
+        self.app_menu.init_for_window(&window);
+        self.windows.seat(window);
+        self.sync_fullscreen_from_settings();
+        let ctx = self.frame_ctx();
+        self.sync_chrome(&ctx, true);
+    }
+
+    pub(crate) fn is_window(&self, window_id: WindowId) -> bool {
+        self.windows.is_window(window_id)
+    }
+
+    pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
+        self.windows.surface_target().map(|(_, size, _)| size)
+    }
+
+    /// Native attach target for the game renderer: content area below the menubar, else toplevel.
+    /// The xid tags the target so a target change recreates the surface.
+    pub(crate) fn surface_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
+        self.windows.surface_target()
+    }
+
+    /// Xid the surface is currently attached to (`None` = toplevel fallback).
+    pub(crate) fn surface_xid(&self) -> Option<u64> {
+        self.windows.surface_xid()
+    }
+
     /// Load a ROM, syncing menu/title/redraw on success. Returns the failure detail on error.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
         let mut target =
             nerust_gui_shell::session::load_adapter::SessionLoadAdapter::new(&mut self.session);
         match self.ctx.rom_loader.load_rom(path, &mut target) {
             Ok(()) => {
-                self.after_rom_load();
+                let ctx = self.frame_ctx();
+                self.after_rom_load(&ctx);
                 Ok(())
             }
             Err(error) => {
@@ -191,50 +322,30 @@ impl HostState {
 
     pub(crate) fn update_control_flow(&mut self, control_flow: &mut ControlFlow) {
         // Window creation failed: exit instead of running headless.
-        if let Some(detail) = self.close.fatal_message() {
+        if let Some(detail) = self.windows.fatal_message() {
             log::error!("exiting after window creation failure: {detail}");
             *control_flow = ControlFlow::Exit;
             return;
         }
         // End-of-burst auto-pause first: pause state settles before
         // the title/live/drain logic below reads it.
-        self.commit_pending_auto_pause();
-        self.sync_fullscreen_default_from_window();
-        self.maybe_refresh_window_title(Instant::now());
-        self.maybe_live_ppu();
-        // Poll a pending drain flight (non-blocking); the backstop bounds the latency.
-        let drain_pending = self.poll_debug_flight();
-        // While the PPU follows a running core, wake for the next tick.
-        let live_follow = self.live_follow_active();
-        let live_tick = if live_follow {
-            self.next_live_tick()
-        } else {
-            None
-        };
-        // While a flight is pending, wake soon to poll it (~30ms backstop).
-        let flight_pending = drain_pending || self.live_flight_pending();
-
-        // Drain notifications here, not only in on_update: paused unfocused loops need them.
-        let frame = self.frame_snapshot();
-        self.poll_notifications(&frame);
-        // Post-pump the deadline implies a showing label: one call drives expiry and wait.
-        let osd_deadline = self.osd_wakeup();
-        if osd_deadline.is_some() {
-            // Redraw while labels show so expiry applies even paused.
-            self.request_redraw();
-        }
-        let tick = self.session.tick_metrics();
+        self.tick_focus_sync();
+        // One capture for the whole pass: chrome, debug, and OSD pumps share it.
+        let ctx = self.frame_ctx();
+        self.tick_chrome_sync(&ctx);
+        let wake = self.tick_debug_pump().fold(self.tick_osd_pump(&ctx));
+        let tick = ctx.tick;
         let now = Instant::now();
         let (deadline, wants_redraw) = update_flow(
             now,
             tick.loaded,
             tick.paused,
             self.main_active(),
-            live_follow,
+            self.live_follow_active(),
             WakeInput {
-                live_tick,
-                flight_pending,
-                osd_deadline,
+                live_tick: wake.live_tick,
+                flight_pending: wake.flight_pending,
+                osd_deadline: wake.osd_deadline,
             },
         );
         *control_flow = deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil);
@@ -250,7 +361,8 @@ impl HostState {
             RenderResult::Presented => {
                 self.shell
                     .on_frame_presented(self.session.tick_metrics().frame_counter);
-                self.maybe_refresh_window_title(Instant::now());
+                let ctx = self.frame_ctx();
+                self.maybe_refresh_window_title(&ctx, Instant::now());
             }
             RenderResult::Skipped | RenderResult::Error => {}
         }
@@ -261,21 +373,12 @@ impl HostState {
     }
 
     pub(crate) fn request_redraw(&mut self) {
-        // Liveness gates all dead-handle use: check first, so closed
-        // or failed hosts never flag a redraw that cannot land.
-        if !self.close.is_usable() {
-            log::trace!("tao redraw dropped: no usable window");
-            return;
-        }
-        self.shell.needs_redraw = true;
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
-        }
+        self.windows.request_redraw(&mut self.shell);
     }
     /// Idempotent close teardown: the guard makes flush run exactly once.
     /// Handles stay alive: dropping them in a destroy handler re-enters the dying window.
     pub(crate) fn prepare_close(&mut self) {
-        if !self.close.begin_close() {
+        if !self.windows.begin_close() {
             return;
         }
         self.remember_fit_window_size();
@@ -283,7 +386,8 @@ impl HostState {
         // resume flags: no history/modal/resume leaks past close.
         self.settings.close_all();
         self.osd.close_all();
-        self.debug.close_all();
+        self.aux.close_all();
+        self.debug.close_flights();
         self.session.flush_before_exit();
     }
     pub(super) fn startup_window_size(&self) -> TaoLogicalSize<f64> {
@@ -297,7 +401,7 @@ impl HostState {
     }
 
     pub(super) fn update_window_size_for_scaling(&self) {
-        let Some(window) = self.window.as_ref() else {
+        let Some(window) = self.windows.live() else {
             return;
         };
         let Some(scale) =
@@ -316,7 +420,7 @@ impl HostState {
     }
 
     pub(super) fn remember_fit_window_size(&self) {
-        let Some(window) = self.window.as_ref() else {
+        let Some(window) = self.windows.live() else {
             return;
         };
         if window_is_fullscreen(window.raw())
@@ -357,7 +461,6 @@ mod tests {
         assert!(!host.settings_open());
         // Liveness gates all dead-handle use; the native handles stay
         // for natural post-loop teardown (no re-entrant destroy).
-        assert!(!host.close.is_usable());
         assert!(host.surface_target().is_none());
         assert!(host.surface_xid().is_none());
         // Second delivery (Destroyed after CloseRequested) is a

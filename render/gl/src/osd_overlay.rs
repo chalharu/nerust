@@ -1,7 +1,7 @@
 //! OSD overlay domain: validation, retry, and GL row addressing.
 //! [`OsdOverlay`] owns the retry budget plus the grow-only staging scratches.
 
-use nerust_render_traits::renderer::OsdLayer;
+use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
 
 /// Bounded OSD retry: transient blips survive, dead drivers drop.
 /// Pure counter; the renderer owns warn-once logging.
@@ -15,6 +15,16 @@ pub(crate) struct RetryBudget {
 pub(crate) enum RetryDecision {
     Retry,
     DropLayer,
+}
+
+impl OsdUploadPolicy for RetryBudget {
+    fn record_failure(&mut self) -> bool {
+        matches!(self.record_failure(), RetryDecision::DropLayer)
+    }
+
+    fn reset(&mut self) {
+        RetryBudget::reset(self);
+    }
 }
 
 impl RetryBudget {
@@ -173,25 +183,13 @@ mod tests {
 
     #[test]
     fn checked_math_rejects_overflow_and_wrap() {
-        let huge = OsdLayer {
-            x: 0,
-            y: 0,
-            width: u32::MAX,
-            height: u32::MAX,
-            rgba: vec![],
-        };
+        let huge = OsdLayer::new(0, 0, u32::MAX, u32::MAX, vec![]);
         assert_eq!(
             checked_osd_rect(&huge, i32::MAX, i32::MAX),
             Err(OsdReject::Empty)
         );
         // lx + lw overflow refuses instead of wrapping.
-        let edge = OsdLayer {
-            x: u32::MAX,
-            y: 0,
-            width: 2,
-            height: 1,
-            rgba: vec![0; 8],
-        };
+        let edge = OsdLayer::new(u32::MAX, 0, 2, 1, vec![0; 8]);
         assert_eq!(
             checked_osd_rect(&edge, i32::MAX, i32::MAX),
             Err(OsdReject::OutOfBounds)

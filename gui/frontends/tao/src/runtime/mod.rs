@@ -128,13 +128,20 @@ impl WindowRuntime {
             .take()
             .expect("WindowRuntime::run() called more than once");
 
-        // Live-follow pulse: nudges the loop each interval. Throttled; exits with the loop.
+        // Live-follow pulse: parked (1s cadence, no wakeups) unless a
+        // viewer wants live ticks; the host sets interest every pass.
         let tick_proxy = event_loop.create_proxy();
+        let tick_wanted = self.host.live_tick_wanted();
         std::thread::spawn(move || {
+            use std::sync::atomic::Ordering;
             loop {
-                std::thread::sleep(std::time::Duration::from_millis(250));
-                if tick_proxy.send_event(UserEvent::LiveTick).is_err() {
-                    break;
+                if tick_wanted.load(Ordering::Acquire) {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    if tick_proxy.send_event(UserEvent::LiveTick).is_err() {
+                        break;
+                    }
+                } else {
+                    std::thread::sleep(std::time::Duration::from_millis(1000));
                 }
             }
         });
@@ -154,38 +161,23 @@ impl WindowRuntime {
             }
             Event::WindowEvent {
                 event, window_id, ..
-            } if self.host.is_settings_window(window_id) => {
-                self.on_settings_event(event);
+            } => {
+                if let Some(kind) = self.host.aux_kind_of(window_id) {
+                    let opener = TaoWindowOpener::new(event_loop);
+                    self.on_aux_event(kind, event, &opener);
+                }
             }
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
-            Event::RedrawRequested(window_id) if self.host.is_settings_window(window_id) => {
-                self.host.render_settings_window();
-            }
-            Event::WindowEvent {
-                event, window_id, ..
-            } if self.host.is_debug_window(window_id) => {
-                let opener = TaoWindowOpener::new(event_loop);
-                self.on_debug_event(&opener, event);
-            }
-            Event::RedrawRequested(window_id) if self.host.is_debug_window(window_id) => {
-                let opener = TaoWindowOpener::new(event_loop);
-                self.on_debug_redrawn(&opener);
-            }
-            Event::WindowEvent {
-                event, window_id, ..
-            } if self.host.is_ppu_window(window_id) => {
-                self.on_ppu_event(event);
-            }
-            Event::WindowEvent {
-                event, window_id, ..
-            } if self.host.is_history_window(window_id) => {
-                self.host.on_history_event(event);
-            }
-            Event::RedrawRequested(window_id) if self.host.is_history_window(window_id) => {
-                self.host.render_history_window();
-            }
-            Event::RedrawRequested(window_id) if self.host.is_ppu_window(window_id) => {
-                self.host.render_ppu_window();
+            Event::RedrawRequested(window_id) => {
+                // Debugger redraws also drain; the rest only render.
+                if let Some(kind) = self.host.aux_kind_of(window_id) {
+                    if kind == crate::aux::focus::AuxKind::Debug {
+                        let opener = TaoWindowOpener::new(event_loop);
+                        self.on_debug_redrawn(&opener);
+                    } else {
+                        self.host.render_aux(kind);
+                    }
+                }
             }
             Event::MainEventsCleared => self.host.update_control_flow(control_flow),
             Event::UserEvent(command) => match command {
@@ -227,9 +219,9 @@ impl WindowRuntime {
 
         // No notification drain here: `update_control_flow` drains every pass.
         // One capture for the whole redraw: strips and layer sync share the frame.
-        let frame = self.host.frame_snapshot();
+        let ctx = self.host.frame_ctx();
         self.host
-            .render_osd_frame(renderer.as_mut(), window_size, &frame);
+            .render_osd_frame(renderer.as_mut(), window_size, &ctx);
 
         self.host.session_mut().swap_frame_buffer();
         if let Some(fb) = self.host.session_mut().frame_buffer() {

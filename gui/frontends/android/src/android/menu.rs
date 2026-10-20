@@ -7,9 +7,8 @@ use super::{
     settings,
 };
 
-/// Kotlin→Rust event IDs. Despite the name this is the general event
-/// confluence, not menu-only (dialog dismissals ride the same bridge).
-const ACTION_ERROR_DIALOG_DISMISSED: &str = "error_dialog_dismissed";
+/// Kotlin→Rust event IDs. This is the general event bridge;
+/// menu taps and dialog acks share the envelope but decode separately.
 const ACTION_EXIT: &str = "exit";
 const ACTION_LOAD_STATE: &str = "load_state";
 const ACTION_OPEN_ROM: &str = "open_rom";
@@ -26,8 +25,7 @@ pub(crate) fn take_events_into(out: &mut Vec<FrontendEvent>) {
     bridge::take_events_into(out);
 }
 
-/// Versioned bridge event envelope: legacy string IDs or v1 JSON.
-/// Unknown versions and actions decode to `None` with a warn log.
+/// Versioned bridge event envelope: v1 JSON only; anything else decodes to `None`.
 #[derive(Debug, serde::Deserialize)]
 struct BridgeEventV1 {
     #[allow(dead_code)]
@@ -85,12 +83,7 @@ fn decode_json_menu_action(
                 return None;
             }
         };
-        return decode_controller_parts(
-            &device_id.to_string(),
-            key,
-            if pressed { "1" } else { "0" },
-        )
-        .map(FrontendEvent::Menu);
+        return decode_controller_parts(device_id, key, pressed).map(FrontendEvent::Menu);
     }
     match action {
         ACTION_EXIT => Some(FrontendEvent::Menu(MenuAction::Exit)),
@@ -113,8 +106,7 @@ fn decode_json_menu_action(
 /// shape; the decoder rejects anything else with a warn, never silently.
 const BRIDGE_EVENT_VERSION: u32 = 1;
 
-fn decode_controller_parts(device_id: &str, key: &str, pressed: &str) -> Option<MenuAction> {
-    let device_id = device_id.parse().ok()?;
+fn decode_controller_parts(device_id: i32, key: &str, pressed: bool) -> Option<MenuAction> {
     let key = match key {
         "button1" => AbstractKey::Button1,
         "button2" => AbstractKey::Button2,
@@ -131,14 +123,6 @@ fn decode_controller_parts(device_id: &str, key: &str, pressed: &str) -> Option<
             return None;
         }
     };
-    let pressed = match pressed {
-        "1" => true,
-        "0" => false,
-        unknown => {
-            log::warn!("ignoring Android controller press with bad state: {unknown}");
-            return None;
-        }
-    };
     Some(MenuAction::ControllerInput {
         device_id,
         key,
@@ -146,47 +130,17 @@ fn decode_controller_parts(device_id: &str, key: &str, pressed: &str) -> Option<
     })
 }
 
-/// Legacy string IDs (`"open_rom"`, `"controller:7:button1:1"`).
-/// Unknown IDs log a warn and decode to `None`: never a silent drop.
-fn decode_menu_action(raw: &str) -> Option<MenuAction> {
-    if let Some(payload) = raw.strip_prefix("controller:") {
-        let mut parts = payload.split(':');
-        let device_id = parts.next()?;
-        let key = parts.next()?;
-        let pressed = parts.next()?;
-        if parts.next().is_some() {
-            log::warn!("ignoring malformed Android controller event: {raw}");
-            return None;
-        }
-        return decode_controller_parts(device_id, key, pressed);
-    }
-    match raw {
-        ACTION_EXIT => Some(MenuAction::Exit),
-        ACTION_LOAD_STATE => Some(MenuAction::LoadState),
-        ACTION_OPEN_ROM => Some(MenuAction::OpenRom),
-        ACTION_OPEN_SETTINGS => Some(MenuAction::OpenSettings),
-        ACTION_ORIENTATION_CHANGED => Some(MenuAction::OrientationChanged),
-        ACTION_RESET => Some(MenuAction::Reset),
-        ACTION_SAVE_STATE => Some(MenuAction::SaveState),
-        ACTION_TOGGLE_PAUSE => Some(MenuAction::TogglePause),
-        ACTION_UNLOAD => Some(MenuAction::Unload),
-        _ => {
-            log::warn!("ignoring unknown Android menu action: {raw}");
-            None
-        }
-    }
-}
+/// Legacy bare-string IDs are gone: Kotlin emits v1 JSON only.
+/// The dedicated `onErrorDialogDismissed` native covers the dialog ack.
 
 /// Decode one raw bridge string into the typed event.
-/// Dialog dismissal bypasses menu decoding; menu IDs never produce dialog events.
+/// Only v1 JSON decodes; anything else logs a warn, never a silent drop.
 fn decode_frontend_event(raw: &str) -> Option<FrontendEvent> {
-    if raw == ACTION_ERROR_DIALOG_DISMISSED {
-        return Some(FrontendEvent::ErrorDialogDismissed);
+    if !raw.trim_start().starts_with('{') {
+        log::warn!("ignoring non-JSON Android bridge event");
+        return None;
     }
-    if raw.trim_start().starts_with('{') {
-        return decode_json_event(raw);
-    }
-    decode_menu_action(raw).map(FrontendEvent::Menu)
+    decode_json_event(raw)
 }
 
 fn publish_event(event: FrontendEvent) {
@@ -255,8 +209,8 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
     }
 }
 
-/// Dedicated error-dialog dismiss entry point for new APKs.
-/// The legacy menu-string path stays as the decoder for old APKs.
+/// Dedicated error-dialog dismiss entry point.
+/// Every Kotlin sender calls this; no menu-string fallback remains.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onErrorDialogDismissed(
     mut env: jni::EnvUnowned<'_>,
@@ -276,75 +230,10 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onErrorDialog
 #[cfg(test)]
 mod tests {
     use super::{
-        ACTION_ERROR_DIALOG_DISMISSED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM,
-        ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE,
-        ACTION_TOGGLE_PAUSE, ACTION_UNLOAD, FrontendEvent, MenuAction, decode_frontend_event,
-        decode_menu_action,
+        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
+        ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE,
+        ACTION_UNLOAD, BRIDGE_EVENT_VERSION, FrontendEvent, MenuAction, decode_frontend_event,
     };
-
-    #[test]
-    fn decode_menu_action_maps_known_ids() {
-        assert_eq!(
-            decode_menu_action(ACTION_OPEN_ROM),
-            Some(MenuAction::OpenRom)
-        );
-        assert_eq!(
-            decode_menu_action(ACTION_OPEN_SETTINGS),
-            Some(MenuAction::OpenSettings)
-        );
-        assert_eq!(
-            decode_menu_action(ACTION_TOGGLE_PAUSE),
-            Some(MenuAction::TogglePause)
-        );
-        assert_eq!(
-            decode_menu_action(ACTION_SAVE_STATE),
-            Some(MenuAction::SaveState)
-        );
-        assert_eq!(
-            decode_menu_action(ACTION_LOAD_STATE),
-            Some(MenuAction::LoadState)
-        );
-        assert_eq!(decode_menu_action(ACTION_RESET), Some(MenuAction::Reset));
-        assert_eq!(decode_menu_action(ACTION_EXIT), Some(MenuAction::Exit));
-        assert_eq!(decode_menu_action(ACTION_UNLOAD), Some(MenuAction::Unload));
-        assert_eq!(
-            decode_menu_action(ACTION_ORIENTATION_CHANGED),
-            Some(MenuAction::OrientationChanged)
-        );
-    }
-
-    #[test]
-    fn decode_menu_action_rejects_unknown_and_dialog_ids() {
-        assert_eq!(decode_menu_action("mystery"), None);
-        // Dialog dismissal is not a menu ID.
-        assert_eq!(decode_menu_action(ACTION_ERROR_DIALOG_DISMISSED), None);
-    }
-
-    #[test]
-    fn decode_menu_action_maps_controller_input() {
-        assert_eq!(
-            decode_menu_action("controller:7:button1:1"),
-            Some(MenuAction::ControllerInput {
-                device_id: 7,
-                key: nerust_input_traits::AbstractKey::Button1,
-                pressed: true,
-            })
-        );
-        assert_eq!(decode_menu_action("controller:7:unknown:1"), None);
-    }
-
-    #[test]
-    fn decode_frontend_event_separates_dialog_from_menu() {
-        assert_eq!(
-            decode_frontend_event(ACTION_ERROR_DIALOG_DISMISSED),
-            Some(FrontendEvent::ErrorDialogDismissed)
-        );
-        assert_eq!(
-            decode_frontend_event(ACTION_OPEN_ROM),
-            Some(FrontendEvent::Menu(MenuAction::OpenRom))
-        );
-        assert_eq!(decode_frontend_event("mystery"), None);
-    }
 
     #[test]
     fn decode_json_event_maps_versioned_menu() {
@@ -382,5 +271,59 @@ mod tests {
             decode_frontend_event(r#"{"v":1,"type":"menu","action":"controller","device_id":7}"#),
             None
         );
+        // Legacy bare strings no longer decode: Kotlin emits v1 JSON only.
+        for legacy in [
+            ACTION_OPEN_ROM,
+            ACTION_OPEN_SETTINGS,
+            ACTION_TOGGLE_PAUSE,
+            ACTION_SAVE_STATE,
+            ACTION_LOAD_STATE,
+            ACTION_RESET,
+            ACTION_EXIT,
+            ACTION_UNLOAD,
+            ACTION_ORIENTATION_CHANGED,
+            "controller:7:button1:1",
+            "error_dialog_dismissed",
+        ] {
+            assert_eq!(decode_frontend_event(legacy), None);
+        }
+    }
+
+    /// Contract pin: the JSON schema and the Rust decoder share one version
+    /// and one action table; a one-side drift fails loudly.
+    #[test]
+    fn bridge_schema_matches_versioned_contract() {
+        let doc: serde_json::Value =
+            serde_json::from_str(include_str!("../../bridge_events.v1.json"))
+                .expect("bridge schema must parse");
+        assert_eq!(
+            doc["definitions"]["menuEvent"]["properties"]["v"]["const"],
+            BRIDGE_EVENT_VERSION
+        );
+        assert_eq!(
+            doc["definitions"]["errorDialogDismissedEvent"]["properties"]["v"]["const"],
+            BRIDGE_EVENT_VERSION
+        );
+        let actions = doc["definitions"]["menuEvent"]["properties"]["action"]["enum"]
+            .as_array()
+            .expect("action enum must list every menu action");
+        let names: Vec<&str> = actions
+            .iter()
+            .map(|value| value.as_str().expect("action enum entries are strings"))
+            .collect();
+        for action in [
+            ACTION_EXIT,
+            ACTION_LOAD_STATE,
+            ACTION_OPEN_ROM,
+            ACTION_OPEN_SETTINGS,
+            ACTION_ORIENTATION_CHANGED,
+            ACTION_RESET,
+            ACTION_SAVE_STATE,
+            ACTION_TOGGLE_PAUSE,
+            ACTION_UNLOAD,
+            "controller",
+        ] {
+            assert!(names.contains(&action), "schema is missing action {action}");
+        }
     }
 }

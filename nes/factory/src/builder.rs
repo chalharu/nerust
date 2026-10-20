@@ -4,9 +4,9 @@ use nerust_core_traits::{
     audio::AudioBackend,
     factory::{CoreParts, FactoryError, settings::FactorySettingsView},
 };
+use nerust_emu_thread::{EmuInput, InputPort};
 use nerust_input_traits::{
-    AttachmentId, Controller, ControllerCollection, EmuInput, GuiInput, InputAssignments,
-    InputSystemFactory, ProfileId,
+    AttachmentId, Controller, ControllerCollection, InputAssignments, InputSystemFactory, ProfileId,
 };
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_render_filters::FilterTypeExt;
@@ -41,22 +41,21 @@ pub(crate) fn create_core_and_adapter_with_assignments(
     let resources = input_factory
         .create_split(&controller_collection)
         .map_err(|e| FactoryError::Create(e.to_string()))?;
-    let gui_input = GuiInput::from_split(resources.split());
-    let emu_input = EmuInput::from_split(resources.split());
-    // Project the unified (attachment, ControlId) map onto the legacy
-    // CoreParts digital-only key until CoreParts migrates to ControlId.
-    let field_map = resources
+    let field_map_projection = resources
         .field_map()
         .iter()
-        .filter_map(|((attachment, control), field)| match control {
-            nerust_input_traits::ControlId::Digital(id) => Some(((*attachment, *id), *field)),
-            _ => None,
+        .filter_map(|((attachment, control), field)| {
+            control.as_digital().map(|id| ((*attachment, id), *field))
         })
         .collect();
+    let split = nerust_emu_thread::InputSplit::spawn(resources.take_factory());
+    let gui_input = split.gui_endpoint();
+    let emu_input = split.emu_endpoint();
+    let field_map = field_map_projection;
     create_core_and_adapter(
         view,
         speaker,
-        gui_input,
+        Box::new(gui_input),
         emu_input,
         field_map,
         controller_collection,
@@ -66,7 +65,7 @@ pub(crate) fn create_core_and_adapter_with_assignments(
 pub(crate) fn create_core_and_adapter(
     view: &FactorySettingsView,
     speaker: Box<dyn AudioBackend>,
-    gui_input: GuiInput,
+    gui_input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
     emu_input: EmuInput,
     field_map: HashMap<(AttachmentId, nerust_input_traits::DigitalControlId), usize>,
     controller_collection: ControllerCollection,

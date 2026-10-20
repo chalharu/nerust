@@ -5,14 +5,10 @@ import android.net.Uri
 import android.util.Base64
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
 /** SAF document I/O behind the JNI bridge. All methods run synchronously on the calling thread.
  * Large files cross in 64KB `byte[]` chunks; legacy whole-file and Base64 methods stay for old APKs. */
 class SafRepository(private val context: Context) {
-
-    private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     fun readSafFile(treeUri: String, relativePath: String): String? {
         val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return null
@@ -145,26 +141,10 @@ class SafRepository(private val context: Context) {
         val array = org.json.JSONArray()
         for (file in directory.listFiles()) {
             val name = file.name ?: continue
-            array.put(org.json.JSONObject().put("name", name).put("size", file.length()))
+            val size = file.length().takeIf { it >= 0 } ?: -1L
+            array.put(org.json.JSONObject().put("name", name).put("size", size))
         }
         return array.toString()
-    }
-
-    fun readSafFileAsync(treeUri: String, relativePath: String, callback: (String?) -> Unit) {
-        ioExecutor.execute { callback(readSafFile(treeUri, relativePath)) }
-    }
-
-    fun writeSafFileAsync(
-        treeUri: String,
-        relativePath: String,
-        encoded: String,
-        callback: (String) -> Unit,
-    ) {
-        ioExecutor.execute { callback(writeSafFile(treeUri, relativePath, encoded)) }
-    }
-
-    fun listSafFilesAsync(treeUri: String, relativePath: String, callback: (String) -> Unit) {
-        ioExecutor.execute { callback(listSafFiles(treeUri, relativePath)) }
     }
 
     private fun resolveSafDocument(

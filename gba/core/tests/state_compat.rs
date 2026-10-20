@@ -5,9 +5,10 @@
 //! the new fields fall back to live-OAM seeding and an unrestricted
 //! wake mask respectively.
 use nerust_core_traits::{ConsoleCore, CoreConfig};
+use nerust_emu_thread::EmuInput;
 use nerust_gba_core::console_core::GbaConsoleCore;
 use nerust_gba_core::input_types::GbaInputBuffer;
-use nerust_input_traits::{EmuInput, InputStateBuffer};
+use nerust_input_traits::InputStateBuffer;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};

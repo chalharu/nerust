@@ -1,6 +1,6 @@
 use nerust_input_traits::{
     AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, Controller, ControllerProfile,
-    DigitalControlId, FieldEntry, OpenBusReadResult, Port, PortSet, ProfileId,
+    DigitalControlId, FieldEntry, OpenBusReadResult, Port, PortSet, ProfileId, StrobeTarget,
 };
 
 /// NES Standard Controller: full 8-button pad for a single port.
@@ -44,6 +44,12 @@ impl Default for StandardPad {
     }
 }
 
+impl StrobeTarget for StandardPad {
+    fn strobe(&mut self, value: u8) {
+        self.apply_strobe(value);
+    }
+}
+
 impl Controller for StandardPad {
     fn sync_input(&mut self, state: &[u8]) {
         if let Some(s) = state.get(..2) {
@@ -64,64 +70,61 @@ impl Controller for StandardPad {
     fn write(&mut self, _port: &dyn Port, value: u8) {
         self.apply_strobe(value);
     }
-    fn strobe(&mut self, value: u8) {
-        self.apply_strobe(value);
-    }
-    fn field_map(&self, port: &dyn Port, out: &mut Vec<FieldEntry>) {
+    fn field_entries(&self, port: &dyn Port) -> Vec<FieldEntry> {
         let attachment = port.attachment_id();
         let base = port.index() * 8;
-        out.extend([
+        vec![
             FieldEntry::new(
                 attachment,
-                ControlId::Digital(nerust_input_traits::DigitalControlId::new("nes.control.a")),
+                ControlId::from(nerust_input_traits::DigitalControlId::new("nes.control.a")),
                 base,
             ),
             FieldEntry::new(
                 attachment,
-                ControlId::Digital(nerust_input_traits::DigitalControlId::new("nes.control.b")),
+                ControlId::from(nerust_input_traits::DigitalControlId::new("nes.control.b")),
                 base + 1,
             ),
             FieldEntry::new(
                 attachment,
-                ControlId::Digital(nerust_input_traits::DigitalControlId::new(
+                ControlId::from(nerust_input_traits::DigitalControlId::new(
                     "nes.control.select",
                 )),
                 base + 2,
             ),
             FieldEntry::new(
                 attachment,
-                ControlId::Digital(nerust_input_traits::DigitalControlId::new(
+                ControlId::from(nerust_input_traits::DigitalControlId::new(
                     "nes.control.start",
                 )),
                 base + 3,
             ),
             FieldEntry::new(
                 attachment,
-                ControlId::Digital(nerust_input_traits::DigitalControlId::new("nes.control.up")),
+                ControlId::from(nerust_input_traits::DigitalControlId::new("nes.control.up")),
                 base + 4,
             ),
             FieldEntry::new(
                 attachment,
-                ControlId::Digital(nerust_input_traits::DigitalControlId::new(
+                ControlId::from(nerust_input_traits::DigitalControlId::new(
                     "nes.control.down",
                 )),
                 base + 5,
             ),
             FieldEntry::new(
                 attachment,
-                ControlId::Digital(nerust_input_traits::DigitalControlId::new(
+                ControlId::from(nerust_input_traits::DigitalControlId::new(
                     "nes.control.left",
                 )),
                 base + 6,
             ),
             FieldEntry::new(
                 attachment,
-                ControlId::Digital(nerust_input_traits::DigitalControlId::new(
+                ControlId::from(nerust_input_traits::DigitalControlId::new(
                     "nes.control.right",
                 )),
                 base + 7,
             ),
-        ]);
+        ]
     }
 }
 
@@ -145,49 +148,49 @@ impl ControllerProfile for StandardPadProfile {
         use ControlKind::*;
         const C: &[ControlInfo] = &[
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("nes.control.a")),
+                id: ControlId::digital(DigitalControlId::new("nes.control.a")),
                 label: "A",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button1),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("nes.control.b")),
+                id: ControlId::digital(DigitalControlId::new("nes.control.b")),
                 label: "B",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button2),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("nes.control.select")),
+                id: ControlId::digital(DigitalControlId::new("nes.control.select")),
                 label: "Select",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Select),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("nes.control.start")),
+                id: ControlId::digital(DigitalControlId::new("nes.control.start")),
                 label: "Start",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Start),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("nes.control.up")),
+                id: ControlId::digital(DigitalControlId::new("nes.control.up")),
                 label: "Up",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadUp),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("nes.control.down")),
+                id: ControlId::digital(DigitalControlId::new("nes.control.down")),
                 label: "Down",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadDown),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("nes.control.left")),
+                id: ControlId::digital(DigitalControlId::new("nes.control.left")),
                 label: "Left",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadLeft),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("nes.control.right")),
+                id: ControlId::digital(DigitalControlId::new("nes.control.right")),
                 label: "Right",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadRight),
@@ -260,15 +263,8 @@ mod tests {
     #[test]
     fn field_map_covers_eight_buttons_in_order() {
         let pad = StandardPad::default();
-        let mut map = Vec::new();
-        pad.field_map(&player1(), &mut map);
-        let ids: Vec<&str> = map
-            .iter()
-            .map(|entry| match entry.control {
-                nerust_input_traits::ControlId::Digital(id) => id.as_str(),
-                nerust_input_traits::ControlId::Analog(id) => id.as_str(),
-            })
-            .collect();
+        let map = pad.field_entries(&player1());
+        let ids: Vec<&str> = map.iter().map(|entry| entry.control.as_str()).collect();
         assert_eq!(
             ids,
             [

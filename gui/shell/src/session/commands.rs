@@ -1,5 +1,22 @@
 pub use crate::session::error::SlotOpFailure;
 
+use crate::session::{SessionHandle, osd::TickMetrics};
+
+/// Handler behind one registration-table entry: the command plus the pass tick in.
+pub type CommandHandler = fn(
+    &mut SessionHandle,
+    SessionCommand,
+    &TickMetrics,
+) -> Result<SessionCommandOutcome, super::SessionError>;
+
+/// Registration-table dispatch: the sole mapping from command to handler.
+/// Implemented once in `command_exec`; all dispatch goes through it.
+pub trait SessionCommandHandler {
+    /// Handler for this command from the registration table.
+    /// `TogglePause` callers resolve through [`TogglePauseDecorator`] first.
+    fn handler(self) -> CommandHandler;
+}
+
 /// Data-driven command vocabulary: every per-command answer lives on this trait.
 /// The executor matches once; [`SessionCommand`] is the sole implementor.
 pub trait SessionCmd {
@@ -144,13 +161,33 @@ pub fn outcome_notifications(
         .collect()
 }
 
+/// Decorator resolving `TogglePause` to the steady arm entered from the pass tick.
+/// Both dispatch and notification resolve through here, never inline.
+pub struct TogglePauseDecorator;
+
+impl TogglePauseDecorator {
+    /// Resolve `TogglePause` against the pass tick; other commands pass through.
+    pub fn resolve(
+        command: SessionCommand,
+        tick: &crate::session::osd::TickMetrics,
+    ) -> SessionCommand {
+        match (command, tick.paused) {
+            (SessionCommand::TogglePause, false) => SessionCommand::Pause,
+            (SessionCommand::TogglePause, true) => SessionCommand::Resume,
+            (other, _) => other,
+        }
+    }
+}
+
 /// Resolve TogglePause to the steady arm entered from `was_paused`.
 pub fn resolve_toggle(command: SessionCommand, was_paused: bool) -> SessionCommand {
-    match (command, was_paused) {
-        (SessionCommand::TogglePause, false) => SessionCommand::Pause,
-        (SessionCommand::TogglePause, true) => SessionCommand::Resume,
-        (other, _) => other,
-    }
+    TogglePauseDecorator::resolve(
+        command,
+        &crate::session::osd::TickMetrics {
+            paused: was_paused,
+            ..crate::session::osd::TickMetrics::default()
+        },
+    )
 }
 
 #[cfg(test)]

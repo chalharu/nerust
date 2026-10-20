@@ -2,10 +2,7 @@
 
 use downcast_rs::Downcast;
 
-use super::{
-    ids::{AttachmentId, DigitalControlId},
-    topology::ControlId,
-};
+use super::ids::{AttachmentId, ControlId, DigitalControlId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DigitalInputState {
@@ -49,7 +46,7 @@ impl DigitalInputEvent {
     pub const fn to_general(self) -> InputEvent {
         InputEvent {
             attachment: self.attachment,
-            control: ControlId::Digital(self.control),
+            control: ControlId::digital(self.control),
             value: match self.state {
                 DigitalInputState::Pressed => InputValue::Digital(true),
                 DigitalInputState::Released => InputValue::Digital(false),
@@ -78,13 +75,18 @@ impl InputEvent {
 
     /// Narrow back to a digital event when the control and value are digital.
     pub fn as_digital(self) -> Option<DigitalInputEvent> {
-        match (self.control, self.value) {
-            (ControlId::Digital(control), InputValue::Digital(true)) => Some(
-                DigitalInputEvent::new(self.attachment, control, DigitalInputState::Pressed),
-            ),
-            (ControlId::Digital(control), InputValue::Digital(false)) => Some(
-                DigitalInputEvent::new(self.attachment, control, DigitalInputState::Released),
-            ),
+        let control = self.control.as_digital()?;
+        match self.value {
+            InputValue::Digital(true) => Some(DigitalInputEvent::new(
+                self.attachment,
+                control,
+                DigitalInputState::Pressed,
+            )),
+            InputValue::Digital(false) => Some(DigitalInputEvent::new(
+                self.attachment,
+                control,
+                DigitalInputState::Released,
+            )),
             _ => None,
         }
     }

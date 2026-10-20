@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc,
     },
 };
@@ -19,7 +19,7 @@ use nerust_core_traits::{
     identity::SystemIdentity,
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
-use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput};
+use nerust_input_traits::{AttachmentId, DigitalControlId};
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, PixelFormat, VideoFrameFormat, VideoRenderProfile};
 
@@ -28,6 +28,38 @@ use crate::session::error::SlotOpFailure;
 pub(crate) mod images;
 
 use self::images::CachedImages;
+
+/// Shell-owned preview frame: width plus packed RGBA bytes.
+/// The core names only this type; the persistence envelope adapts at the boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewRgba {
+    /// Frame width in pixels.
+    pub width: u32,
+    /// Frame height in pixels.
+    pub height: u32,
+    /// Packed RGBA bytes, `width * height * 4` long.
+    pub rgba: Vec<u8>,
+}
+
+impl From<PreviewRgba> for crate::state::PreviewFrame {
+    fn from(preview: PreviewRgba) -> Self {
+        Self {
+            width: preview.width,
+            height: preview.height,
+            rgba: preview.rgba,
+        }
+    }
+}
+
+impl From<crate::state::PreviewFrame> for PreviewRgba {
+    fn from(frame: crate::state::PreviewFrame) -> Self {
+        Self {
+            width: frame.width,
+            height: frame.height,
+            rgba: frame.rgba,
+        }
+    }
+}
 
 /// Errors from core operations invoked by the persistence layer.
 #[derive(Debug, thiserror::Error)]
@@ -41,20 +73,21 @@ pub enum CorePersistenceError {
 }
 
 impl CorePersistenceError {
-    /// Best-effort UX classification of a state import/export failure.
-    /// Only drives the user-facing message; the full detail stays in the error itself.
+    /// Best-UX classification of a state import/export failure.
+    /// Single conversion: thread loss reads `Unavailable`, core refusals map by message.
     pub fn slot_failure(&self) -> SlotOpFailure {
+        use crate::session::error::StateCodecError;
         match self {
-            Self::WorkerUnavailable | Self::NoReply => SlotOpFailure::Unavailable,
+            Self::WorkerUnavailable | Self::NoReply => StateCodecError::Unavailable.into(),
             Self::Core(message) => {
                 let message = message.to_lowercase();
                 if message.contains("mismatch")
                     || message.contains("unsupported")
                     || message.contains("version")
                 {
-                    SlotOpFailure::Incompatible
+                    StateCodecError::Incompatible.into()
                 } else {
-                    SlotOpFailure::Corrupt
+                    StateCodecError::Corrupt.into()
                 }
             }
         }
@@ -80,7 +113,7 @@ fn recv_debug_reply<T>(reply_rx: std::sync::mpsc::Receiver<T>) -> Result<T, Oper
 pub trait CorePersistence {
     fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError>;
     fn load_state_raw(&self, data: Vec<u8>) -> Result<(), CorePersistenceError>;
-    fn generate_preview(&self) -> Option<crate::state::PreviewFrame>;
+    fn generate_preview(&self) -> Option<PreviewRgba>;
     fn canonical_media_identity(&self) -> Option<SystemIdentity>;
     fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, CorePersistenceError>;
     fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError>;
@@ -99,6 +132,8 @@ pub trait LiveCore: CorePersistence + crate::session::persistence::StateExporter
     ) -> Result<(), OperationError>;
     fn unload(&self) -> Result<(), OperationError>;
     fn metrics(&self) -> ConsoleMetrics;
+    /// Lock-free tick snapshot for per-frame passes (see [`EmuCore::tick_snapshot`]).
+    fn tick_snapshot(&self) -> (f32, bool, bool, u64);
     fn render_profile(&self) -> &VideoRenderProfile;
     fn swap_frame_buffer(&mut self);
     fn frame_buffer(&self) -> &FrameBuffer;
@@ -178,10 +213,23 @@ impl Clone for EmuCore {
             disp_fb: FrameBuffer::with_capacity(0, 0, PixelFormat::Rgba),
             frame_ready: Arc::clone(&self.frame_ready),
             metrics: Arc::clone(&self.metrics),
+            tick_paused: Arc::clone(&self.tick_paused),
+            tick_loaded: Arc::clone(&self.tick_loaded),
+            tick_frames: Arc::clone(&self.tick_frames),
+            tick_fps_bits: Arc::clone(&self.tick_fps_bits),
             image_cache: Arc::clone(&self.image_cache),
         }
     }
 }
+
+/// Parts returned when spawning a core: the core plus its input
+/// adapter, field map, and host peripheral handles.
+pub type CoreSpawnParts = (
+    EmuCore,
+    Box<dyn nerust_core_traits::factory::GuiInputPort>,
+    std::collections::HashMap<(AttachmentId, DigitalControlId), usize>,
+    nerust_core_traits::peripheral::HostPeripheralHandles,
+);
 
 pub struct EmuCore {
     emu: Arc<dyn EmuThreadPort>,
@@ -190,6 +238,12 @@ pub struct EmuCore {
     disp_fb: FrameBuffer,
     frame_ready: Arc<AtomicBool>,
     metrics: Arc<Mutex<ConsoleMetrics>>,
+    /// Lock-free tick mirror: per-frame readers never touch the mutex.
+    /// Every mutex write below also stamps these; `metrics()` refreshes them on read.
+    tick_paused: Arc<AtomicBool>,
+    tick_loaded: Arc<AtomicBool>,
+    tick_frames: Arc<AtomicU64>,
+    tick_fps_bits: Arc<AtomicU32>,
     image_cache: Arc<Mutex<CachedImages>>,
 }
 
@@ -213,10 +267,14 @@ impl EmuCore {
             disp_fb,
             frame_ready,
             metrics,
+            tick_paused: Arc::new(AtomicBool::new(true)),
+            tick_loaded: Arc::new(AtomicBool::new(false)),
+            tick_frames: Arc::new(AtomicU64::new(0)),
+            tick_fps_bits: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             image_cache: Arc::new(Mutex::new(CachedImages {
                 dirty: true,
                 generation: 0,
-                images: Vec::new(),
+                images: Arc::new(Vec::new()),
                 served_hash: None,
                 served_generation: 0,
             })),
@@ -225,14 +283,7 @@ impl EmuCore {
 
     /// Wrap `CoreParts` into an `EmuCore`. Buffer geometry comes from
     /// the factory render profile so all buffers agree pre-swap.
-    pub fn from_parts(
-        parts: CoreParts,
-    ) -> (
-        Self,
-        GuiInput,
-        std::collections::HashMap<(AttachmentId, DigitalControlId), usize>,
-        nerust_core_traits::peripheral::HostPeripheralHandles,
-    ) {
+    pub fn from_parts(parts: CoreParts) -> CoreSpawnParts {
         let field_map = parts.field_map;
         use std::sync::Mutex;
         let new_buffer = || fresh_frame_buffer(&parts.render_profile, &parts.palette);
@@ -259,10 +310,14 @@ impl EmuCore {
                     paused: true,
                     ..ConsoleMetrics::default()
                 })),
+                tick_paused: Arc::new(AtomicBool::new(true)),
+                tick_loaded: Arc::new(AtomicBool::new(false)),
+                tick_frames: Arc::new(AtomicU64::new(0)),
+                tick_fps_bits: Arc::new(AtomicU32::new(0.0f32.to_bits())),
                 image_cache: Arc::new(Mutex::new(CachedImages {
                     dirty: true,
                     generation: 0,
-                    images: Vec::new(),
+                    images: Arc::new(Vec::new()),
                     served_hash: None,
                     served_generation: 0,
                 })),
@@ -284,8 +339,10 @@ impl EmuCore {
         {
             std::mem::swap(&mut *guard, &mut self.disp_fb);
         }
+        let frames = self.emu.frame_count();
+        self.tick_frames.store(frames, Ordering::Relaxed);
         if let Ok(mut guard) = self.metrics.lock() {
-            guard.frame_counter = self.emu.frame_count();
+            guard.frame_counter = frames;
         } else {
             log::warn!("metrics lock poisoned in swap_frame_buffer");
         }
@@ -312,7 +369,36 @@ impl EmuCore {
         });
         guard.frame_counter = self.emu.frame_count();
         guard.emulation_fps = self.emu.fps();
+        self.stamp_tick(&guard);
         *guard
+    }
+
+    /// Stamp the lock-free tick mirror from one consistent snapshot.
+    /// Every mutex write path calls this so per-frame readers stay lock-free.
+    fn stamp_tick(&self, metrics: &ConsoleMetrics) {
+        self.tick_paused.store(metrics.paused, Ordering::Relaxed);
+        self.tick_loaded.store(metrics.loaded, Ordering::Relaxed);
+        self.tick_frames
+            .store(metrics.frame_counter, Ordering::Relaxed);
+        self.tick_fps_bits
+            .store(metrics.emulation_fps.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Lock-free tick snapshot for per-frame passes: no mutex, no thread query.
+    /// Stamped by every metrics write; `metrics()` refreshes it on lock reads.
+    pub fn tick_snapshot(&self) -> (f32, bool, bool, u64) {
+        // Live counters ride the thread-side atomics directly; pause/load
+        // truth rides the stamp (every transition writes it).
+        let frames = self.emu.frame_count();
+        let fps = self.emu.fps();
+        self.tick_frames.store(frames, Ordering::Relaxed);
+        self.tick_fps_bits.store(fps.to_bits(), Ordering::Relaxed);
+        (
+            fps,
+            self.tick_paused.load(Ordering::Relaxed),
+            self.tick_loaded.load(Ordering::Relaxed),
+            frames,
+        )
     }
 
     pub fn set_volume(&self, volume: f32) -> Result<(), OperationError> {
@@ -413,7 +499,10 @@ impl EmuCore {
             .send(EmuCommand::Resume)
             .map_err(|_| OperationError::WorkerUnavailable)?;
         match self.metrics.lock() {
-            Ok(mut guard) => guard.paused = false,
+            Ok(mut guard) => {
+                guard.paused = false;
+                self.stamp_tick(&guard);
+            }
             Err(e) => log::warn!("metrics lock poisoned in resume: {e}"),
         }
         Ok(())
@@ -424,7 +513,10 @@ impl EmuCore {
             .send(EmuCommand::Pause)
             .map_err(|_| OperationError::WorkerUnavailable)?;
         match self.metrics.lock() {
-            Ok(mut guard) => guard.paused = true,
+            Ok(mut guard) => {
+                guard.paused = true;
+                self.stamp_tick(&guard);
+            }
             Err(e) => log::warn!("metrics lock poisoned in pause: {e}"),
         }
         Ok(())
@@ -482,6 +574,7 @@ impl EmuCore {
                 Ok(mut guard) => {
                     guard.loaded = true;
                     guard.paused = start_paused;
+                    self.stamp_tick(&guard);
                 }
                 Err(e) => log::warn!("metrics lock poisoned in load: {e}"),
             }
@@ -495,7 +588,10 @@ impl EmuCore {
             .send(EmuCommand::Unload)
             .map_err(|_| OperationError::WorkerUnavailable)?;
         match self.metrics.lock() {
-            Ok(mut guard) => guard.loaded = false,
+            Ok(mut guard) => {
+                guard.loaded = false;
+                self.stamp_tick(&guard);
+            }
             Err(e) => log::warn!("metrics lock poisoned in unload: {e}"),
         }
         self.mark_images_dirty();
@@ -554,8 +650,8 @@ impl EmuCore {
             .map_err(|e| OperationError::Reply(e.to_string()))
     }
 
-    /// Generate a preview frame from the EmuThread's shared frame buffer.
-    pub fn generate_preview(&self) -> Option<crate::state::PreviewFrame> {
+    /// Preview frame from the shared buffer; `None` without a frame.
+    fn generate_preview(&self) -> Option<PreviewRgba> {
         generate_preview_frame(&*self.emu)
     }
 
@@ -833,8 +929,8 @@ impl CorePersistence for EmuCore {
         self.load_state_raw(data).map_err(op_to_persistence)
     }
 
-    fn generate_preview(&self) -> Option<crate::state::PreviewFrame> {
-        self.generate_preview()
+    fn generate_preview(&self) -> Option<PreviewRgba> {
+        EmuCore::generate_preview(self)
     }
 
     fn canonical_media_identity(&self) -> Option<SystemIdentity> {
@@ -876,10 +972,6 @@ impl crate::session::persistence::StateExporter for EmuCore {
     }
 
     fn export_identity(&self) -> Option<SystemIdentity> {
-        CorePersistence::canonical_media_identity(self)
-    }
-
-    fn canonical_media_identity(&self) -> Option<SystemIdentity> {
         CorePersistence::canonical_media_identity(self)
     }
 
@@ -925,6 +1017,10 @@ impl LiveCore for EmuCore {
 
     fn metrics(&self) -> ConsoleMetrics {
         self.metrics()
+    }
+
+    fn tick_snapshot(&self) -> (f32, bool, bool, u64) {
+        self.tick_snapshot()
     }
 
     fn render_profile(&self) -> &VideoRenderProfile {
@@ -1051,7 +1147,7 @@ fn fresh_frame_buffer(profile: &VideoRenderProfile, palette: &[u32]) -> FrameBuf
 
 /// Preview frame from the port's shared frame buffer. Caller holds
 /// no lock on it. Lives here to keep the module graph acyclic.
-fn generate_preview_frame(emu: &dyn EmuThreadPort) -> Option<crate::state::PreviewFrame> {
+fn generate_preview_frame(emu: &dyn EmuThreadPort) -> Option<PreviewRgba> {
     let Ok(guard) = emu.shared_frame_buffer().lock() else {
         log::warn!("generate_preview: shared frame buffer lock failed");
         return None;
@@ -1076,7 +1172,7 @@ fn generate_preview_frame(emu: &dyn EmuThreadPort) -> Option<crate::state::Previ
         compact_rgba(&guard)?
     };
     drop(guard);
-    Some(crate::state::PreviewFrame {
+    Some(PreviewRgba {
         width: w as u32,
         height: h as u32,
         rgba,

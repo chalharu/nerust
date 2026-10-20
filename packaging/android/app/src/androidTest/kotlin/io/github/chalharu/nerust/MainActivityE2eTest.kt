@@ -68,7 +68,7 @@ class MainActivityE2eTest {
 
         val stateFilesBefore = stateSlotFiles()
         runOnActivityThread(activity) {
-            activity.dispatchMenuActionForTest("save_state")
+            activity.dispatchMenuActionForTest(menuEventJson("save_state"))
         }
         assertTrue(
             "GBC Save State should create a state archive",
@@ -210,7 +210,7 @@ class MainActivityE2eTest {
     fun exitTerminatesApplicationProcess() {
         val activity = launchActivity()
         runOnActivityThread(activity) {
-            activity.dispatchMenuActionForTest("exit")
+            activity.dispatchMenuActionForTest(menuEventJson("exit"))
         }
         SystemClock.sleep(STARTUP_TIMEOUT_MS)
         fail("Exit should terminate the application process")
@@ -260,7 +260,7 @@ class MainActivityE2eTest {
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching $action" }
-            activity.dispatchMenuActionForTest(action)
+            activity.dispatchMenuActionForTest(menuEventJson(action))
         }
         assertChromeViewAvailable(activity, expectedDialogTag, DIALOG_TIMEOUT_MS, expectedDialogMessage)
         runOnActivityThread(activity) {
@@ -275,48 +275,27 @@ class MainActivityE2eTest {
     }
 
     @Test
-    fun portraitControlsOverlayMatchesExpectedArrangement() {
-        val zones = controlsLayout(1080f, 1920f).associateBy { it.label }
-        val joystick = floatingJoystickLayout(1080f, 1920f)
-        val select = requireNotNull(zones["SELECT"])
-        val start = requireNotNull(zones["START"])
-        val b = requireNotNull(zones["B"])
-        val a = requireNotNull(zones["A"])
-        val l = requireNotNull(zones["L"])
-        val r = requireNotNull(zones["R"])
-
-        assertEquals(6, zones.size)
-        assertTrue(joystick.activationBounds.contains(joystick.centerX, joystick.centerY))
-        assertTrue(joystick.centerX - joystick.baseRadius >= 0f)
-        assertTrue(joystick.centerY + joystick.baseRadius <= 1920f)
-        assertEquals(a.y, b.y, 0.01f)
-        assertEquals(a.height, b.height, 0.01f)
-        assertTrue("B should sit to the right of the joystick", b.x > joystick.activationBounds.right)
+    fun pushedZonesParseToDrawableRects() {
+        // Geometry lives in Rust; Kotlin only parses the pushed payload.
+        val zones = parsePushedZones("B:0.70,0.60,0.10,0.10;A:0.85,0.60,0.10,0.10")
+        assertEquals(2, zones.size)
+        val byLabel = zones.associateBy { it.label }
+        val b = requireNotNull(byLabel["B"])
+        val a = requireNotNull(byLabel["A"])
+        assertEquals(a.y, b.y, 0.0001f)
+        assertEquals(a.height, b.height, 0.0001f)
         assertTrue("A should sit to the right of B", a.x > b.x + b.width)
-        assertTrue("Select should sit above the face buttons", select.y + select.height < b.y)
-        assertTrue("Start should sit above the face buttons", start.y + start.height < a.y)
-        assertTrue("Select should sit between the joystick and face buttons", select.x > joystick.centerX)
-        assertTrue("Start should sit between the D-pad and face buttons", start.x + start.width < b.x)
-        assertTrue("L should sit left of R", l.x + l.width < r.x)
-        assertTrue("Shoulders should sit above the face buttons", l.y + l.height < b.y)
-        assertTrue("Shoulders should sit above the face buttons", r.y + r.height < a.y)
+        assertTrue(parsePushedZones("B:bad;A:0.85,0.60,0.10").isEmpty())
+        assertTrue(parsePushedZones("").isEmpty())
     }
 
     @Test
-    fun landscapeControlsStayInsideSafeScreenBounds() {
-        val width = 1920f
-        val height = 1080f
-        val zones = controlsLayout(width, height)
-        val joystick = floatingJoystickLayout(width, height)
-        assertEquals(6, zones.size)
-        zones.forEach { zone ->
-            assertTrue(zone.x >= 0f && zone.y >= 0f)
-            assertTrue(zone.x + zone.width <= width)
-            assertTrue(zone.y + zone.height <= height)
-        }
-        val byLabel = zones.associateBy { it.label }
-        assertTrue(joystick.activationBounds.contains(joystick.centerX, joystick.centerY))
-        assertTrue(joystick.activationBounds.right < requireNotNull(byLabel["B"]).x)
+    fun pushedJoystickParsesHomeGeometry() {
+        val joystick = requireNotNull(parsePushedJoystick("0.20,0.70,0.12,0.06"))
+        assertTrue(joystick.baseRadius > joystick.knobRadius)
+        assertTrue(joystick.knobRadius > 0f)
+        assertNull(parsePushedJoystick("0.20,0.70,0.12"))
+        assertNull(parsePushedJoystick(""))
     }
 
     private fun assertChromeViewAvailable(

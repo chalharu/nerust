@@ -11,7 +11,7 @@ use nerust_settings_core::{
 };
 use tao::event_loop::EventLoopWindowTarget;
 
-use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
+use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
 
 #[derive(Debug, Clone)]
 pub(crate) enum HistoryMessage {
@@ -80,10 +80,26 @@ impl HistoryFilter {
     }
 }
 
+/// Localized filter labels for the toolbar dropdown.
+/// Built on Sync only; the view borrows them.
+fn filter_options(language: AppLanguage) -> Vec<String> {
+    [
+        HistoryFilter::All,
+        HistoryFilter::Info,
+        HistoryFilter::Warning,
+        HistoryFilter::Error,
+    ]
+    .iter()
+    .map(|filter| filter.label(language).to_string())
+    .collect()
+}
+
 pub(crate) struct HistoryState {
     lines: std::sync::Arc<[HistoryLine]>,
     filter: HistoryFilter,
     language: AppLanguage,
+    /// Localized filter labels: rebuilt on Sync only, borrowed by the view.
+    options: Vec<String>,
     clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -116,11 +132,13 @@ impl Program for HistoryProgram {
     }
 
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
+        let language = self.language;
         (
             HistoryState {
                 lines: std::sync::Arc::from([]),
                 filter: HistoryFilter::All,
-                language: self.language,
+                language,
+                options: filter_options(language),
                 clear_requested: std::sync::Arc::clone(&self.clear_requested),
             },
             Task::none(),
@@ -132,6 +150,7 @@ impl Program for HistoryProgram {
             HistoryMessage::Sync { lines, language } => {
                 state.lines = lines;
                 state.language = language;
+                state.options = filter_options(language);
                 Task::none()
             }
             HistoryMessage::SetFilter(filter) => {
@@ -156,25 +175,16 @@ impl Program for HistoryProgram {
         use iced::widget::{button, column, pick_list, row, rule, scrollable, text};
         use nerust_gui_shell::session::osd::level_label;
         let language = state.language;
-        let visible: Vec<&HistoryLine> = state
+        let shown = state
             .lines
             .iter()
-            .filter(|line| state.filter.matches(line.level))
-            .collect();
+            .filter(|line| state.filter.matches(line.level));
+        let shown_count = shown.clone().count();
         // Toolbar: filter plus clear on top; count trails right.
-        let options: Vec<String> = [
-            HistoryFilter::All,
-            HistoryFilter::Info,
-            HistoryFilter::Warning,
-            HistoryFilter::Error,
-        ]
-        .iter()
-        .map(|filter| filter.label(language).to_string())
-        .collect();
         let toolbar: iced::Element<'_, HistoryMessage> = row![
             text(ui_text(language, UiText::HistoryLevel)).size(12),
             pick_list(
-                options,
+                state.options.as_slice(),
                 state.filter.label(language).to_string().into(),
                 move |label: String| HistoryMessage::SetFilter(
                     HistoryFilter::from_label(&label, language).unwrap_or_default()
@@ -184,7 +194,7 @@ impl Program for HistoryProgram {
             button(text(ui_text(language, UiText::HistoryClear)).size(12))
                 .on_press(HistoryMessage::Clear),
             iced::widget::Space::new().width(Length::Fill),
-            text(history_count(language, visible.len())).size(12),
+            text(history_count(language, shown_count)).size(12),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center)
@@ -209,22 +219,19 @@ impl Program for HistoryProgram {
             .spacing(12),
         );
         items = items.push(rule::horizontal(1));
-        if visible.is_empty() {
+        if shown_count == 0 {
             items = items.push(text(ui_text(language, UiText::HistoryEmpty)).size(13));
         }
-        for line in visible {
+        for line in shown {
             let level_color = match line.level {
                 NotificationLevel::Info => iced::Color::from_rgb8(70, 70, 70),
                 NotificationLevel::Warning => iced::Color::from_rgb8(170, 110, 0),
                 NotificationLevel::Error => iced::Color::from_rgb8(190, 30, 30),
             };
-            // `HistoryLine.text` already carries the `×N` suffix when
-            // merged (see `history_lines`); use it as-is.
-            let message = line.text.clone();
             // Cells wrap inside their column; no clip containers.
             items = items.push(
                 row![
-                    text(line.datetime.clone())
+                    text(line.datetime.as_str())
                         .size(12)
                         .font(iced::Font::MONOSPACE)
                         .width(Length::Fixed(150.0)),
@@ -237,7 +244,9 @@ impl Program for HistoryProgram {
                         .font(iced::Font::MONOSPACE)
                         .wrapping(iced::advanced::text::Wrapping::WordOrGlyph)
                         .width(Length::Fixed(220.0)),
-                    text(message)
+                    // `HistoryLine.text` already carries the `×N`
+                    // suffix when merged; use it as-is.
+                    text(line.text.as_str())
                         .size(13)
                         .wrapping(iced::advanced::text::Wrapping::WordOrGlyph)
                         .width(Length::Fill),
@@ -267,13 +276,14 @@ impl HistoryWindowHandle {
         language: AppLanguage,
     ) -> Option<Self> {
         let title = ui_text(language, UiText::NotificationHistory);
-        let scaffold = WindowScaffold::open(
+        let surface = AuxSurface::open(
             event_loop,
             title,
             (720.0, 360.0),
             None,
             None,
             "history window",
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .map_err(|error| {
             // Typed scaffold failure: surface the tagged native detail here.
@@ -287,11 +297,7 @@ impl HistoryWindowHandle {
             language,
             clear_requested: std::sync::Arc::clone(&clear_requested),
         });
-        let shell = crate::aux::shell::AuxShell::assemble(
-            scaffold,
-            instance,
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        );
+        let shell = crate::aux::shell::AuxShell::assemble(surface, instance);
         Some(Self {
             shell,
             clear_requested,
@@ -312,46 +318,33 @@ impl HistoryWindowHandle {
     }
 }
 
-impl super::focus::AuxWindow for HistoryWindowHandle {
+impl super::focus::AuxShellRef for HistoryWindowHandle {
     fn kind(&self) -> super::focus::AuxKind {
         super::focus::AuxKind::History
     }
 
-    fn tao_window_id(&self) -> tao::window::WindowId {
-        self.shell.tao_window_id()
+    fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
+        &self.shell
     }
 
-    fn close_requested(&self) -> bool {
-        self.shell.close_requested()
+    fn shell_mut(&mut self) -> &mut dyn crate::aux::shell::AuxShellOps {
+        &mut self.shell
+    }
+}
+
+impl super::registry::AuxController for HistoryWindowHandle {
+    fn take_history_clear(&mut self) -> bool {
+        self.take_clear_request()
     }
 
-    fn focus_window(&self) {
-        self.shell.focus_window();
-    }
-
-    fn request_redraw(&self) {
-        self.shell.request_redraw();
-    }
-
-    fn handle_common(&mut self, event: &tao::event::WindowEvent) {
-        self.shell.handle_common_event(event);
-    }
-
-    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
-        self.shell.feed_tao_event(event)
-    }
-
-    fn render(&mut self) {
-        let tag = self.kind().log_tag();
-        self.shell.render(tag);
+    fn sync_history(&mut self, lines: std::sync::Arc<[HistoryLine]>, language: AppLanguage) {
+        self.sync(lines, language);
     }
 }
 
 impl super::focus::AuxEvents for HistoryWindowHandle {
     fn handle(&mut self, mapped: iced::Event) -> bool {
-        let mut messages = Vec::new();
-        let outcome = self.shell.pump_frame(mapped, &mut messages);
-        self.shell.finish(outcome, messages, &self.view_invalidated)
+        self.shell.pump_finish(mapped, None, &self.view_invalidated)
     }
 }
 

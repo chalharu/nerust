@@ -23,42 +23,10 @@ use crate::session::osd_modal::{ModalCenter, ModalPump};
 use crate::session::osd_presenter::{ModalRoute, ModalRouter, status_key, status_text};
 use crate::session::osd_transient::{OsdItem, RouteEffect, TransientQueue, counted_row};
 
-/// Transient half of [`OsdManager`]: the single sequential display plus the pending queue.
-#[derive(Debug, Default)]
-pub(crate) struct TransientCenter {
-    queue: TransientQueue,
-}
-
-impl TransientCenter {
-    fn route_row(&mut self, item: OsdItem) -> RouteEffect {
-        self.queue.route_row(item)
-    }
-
-    fn poll(&mut self, now: Instant) -> bool {
-        self.queue.poll(now)
-    }
-
-    fn rows(&self) -> &[OsdRow] {
-        self.queue.rows()
-    }
-
-    fn visible_row(&self) -> Option<&OsdRow> {
-        self.queue.visible_row()
-    }
-
-    fn has_visible(&self) -> bool {
-        self.queue.has_visible()
-    }
-
-    fn wakeup_deadline(&self, now: Instant) -> Option<Instant> {
-        self.queue.wakeup_deadline(now)
-    }
-}
-
 /// Notification display state: transient in-frame rows plus modal batches.
 #[derive(Debug, Default)]
 pub struct OsdManager {
-    transient: TransientCenter,
+    transient: TransientQueue,
     modal: ModalCenter,
     /// Monotonic display-generation. Presenters remember the last
     /// generation they synced; inequality means re-render.
@@ -113,14 +81,9 @@ impl OsdManager {
                 }
                 ModalRoute::Transient => {}
             }
-            let base = n.kind.text(language);
+            let base: std::rc::Rc<str> = n.kind.text(language).into();
             let item = OsdItem {
-                row: counted_row(
-                    base.clone(),
-                    n.count,
-                    policy.color(n.level),
-                    level_tag(n.level),
-                ),
+                row: counted_row(&base, n.count, policy.color(n.level), level_tag(n.level)),
                 level: n.level,
                 key: base,
                 count: n.count,

@@ -1,16 +1,28 @@
 use std::num::NonZeroU32;
 
-use log::{error, warn};
+use log::warn;
 use nerust_render_traits::{
     FrameBuffer, PixelFormat, SurfaceSize, VideoRenderProfile,
-    filter::BLACK_PALETTE_INDEX,
-    renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
+    renderer::{
+        GpuFactory, GpuRenderer, OpaqueError, OsdSink, Present, RenderResult, RendererConfig,
+        RendererError, StripSink,
+    },
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WindowHandle,
 };
 use softbuffer::{Context, Surface};
+
+mod blend;
+mod lut;
+mod ntsc;
+mod pixel;
+mod validate;
+
+use lut::{LutEntry, ResizeKernel};
+use ntsc::Ntsc;
+use validate::ValidatedFrame;
 
 #[derive(Debug, Clone)]
 struct WindowHandlePair {
@@ -32,25 +44,25 @@ impl HasDisplayHandle for WindowHandlePair {
 
 #[derive(Debug)]
 pub struct SoftbufferRenderer {
-    ctx: Option<Context<WindowHandlePair>>,
-    surface: Option<Surface<WindowHandlePair, WindowHandlePair>>,
-    render_profile: VideoRenderProfile,
-    size: SurfaceSize,
-    reserved: nerust_render_traits::ReservedStrip,
-    lut: LutEntry,
-    resize_buffer: Vec<u32>,
-    ntsc_buffer: Vec<u32>,
-    osd: Option<nerust_render_traits::renderer::OsdLayer>,
-    /// Last tap-coverage verdict with its inputs; skips the scan on a key match.
-    taps_cache: Option<(TapKey, bool)>,
+    pub(crate) ctx: Option<Context<WindowHandlePair>>,
+    pub(crate) surface: Option<Surface<WindowHandlePair, WindowHandlePair>>,
+    pub(crate) render_profile: VideoRenderProfile,
+    pub(crate) size: SurfaceSize,
+    pub(crate) reserved: nerust_render_traits::ReservedStrip,
+    pub(crate) lut: LutEntry,
+    pub(crate) resize_buffer: Vec<u32>,
+    pub(crate) ntsc_buffer: Vec<u32>,
+    pub(crate) osd: Option<nerust_render_traits::renderer::OsdLayer>,
+    /// Last tap-coverage verdict keyed by a u64 fingerprint; skips the scan on a key match.
+    pub(crate) taps_cache: Option<(u64, TapKey, bool)>,
     /// Frame counter for the periodic full-rescan revalidation.
-    scan_counter: u64,
+    pub(crate) scan_counter: u64,
 }
 
 /// Tap-coverage inputs for one frame shape. Caches negative verdicts too.
 /// `dst_h` is deliberately *not* stored: it always equals `avail_h + height_loss`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TapKey {
+pub(crate) struct TapKey {
     dst_w: usize,
     avail_h: usize,
     src_w: usize,
@@ -68,248 +80,80 @@ struct TapKey {
     reserved_bottom: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResizeKernel {
-    // No selection knob yet: Bilinear is hardcoded; kept so the nearest
-    // path stays compilable beside the bilinear one.
-    #[expect(unused)]
-    NearestNeighbor,
-    Bilinear,
+impl TapKey {
+    /// FNV-1a fingerprint over every key field: the u64 cache key.
+    /// Full struct equality backs the debug rescan, never the hot path.
+    pub(crate) fn fingerprint(&self) -> u64 {
+        let mut hash: u64 = 0x0cbf_29ce_4842_2325;
+        let mut mix = |word: u64| {
+            hash ^= word;
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        };
+        mix(self.dst_w as u64);
+        mix(self.avail_h as u64);
+        mix(self.src_w as u64);
+        mix(self.src_h as u64);
+        mix(self.src_stride as u64);
+        mix(self.tap_stride as u64);
+        mix(self.resize_len as u64);
+        mix(self.ntsc_writes as u64);
+        mix(self.ntsc_len as u64);
+        mix(self.lut_rev);
+        mix(self.kernel_bilinear as u64);
+        mix(u64::from(self.reserved_top));
+        mix(u64::from(self.reserved_bottom));
+        hash
+    }
 }
 
-// LUT (Look-Up Table) entry
-#[derive(Debug)]
-struct LutEntry {
-    x_lut: Vec<Option<(u16, u16)>>,
-    y_lut: Vec<Option<(u16, u16)>>,
-    kernel: ResizeKernel,
-    rev: u64,
+/// Monomorphic pixel source for the resize passes.
+/// One enum replaces three closures, so the hot loop never monomorphizes.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum PixelIndexer<'a> {
+    /// Tight RGBA bytes; short rows fall back to opaque black.
+    Rgba { src: &'a [u8] },
+    /// Palette indices plus the console palette (u32 `0xRRGGBBAA` words).
+    Palette { src: &'a [u8], palette: &'a [u32] },
+    /// Pre-simulated NTSC words (`0xRRGGBBAA` layout, see [`Ntsc`]).
+    Ntsc { buf: &'a [u32] },
 }
 
-impl LutEntry {
-    fn new() -> Self {
-        Self {
-            x_lut: Vec::new(),
-            y_lut: Vec::new(),
-            // kernel: ResizeKernel::NearestNeighbor,
-            kernel: ResizeKernel::Bilinear,
-            rev: 0,
-        }
-    }
-
-    /// Generation counter: any LUT rebuild invalidates tap verdicts.
-    fn bump_rev(&mut self) {
-        self.rev = self.rev.wrapping_add(1);
-    }
-
-    fn inv_scale(
-        source_size: SurfaceSize,
-        physical_aspect_ratio: f32,
-        destination_size: SurfaceSize,
-    ) -> (f32, f32) {
-        let window_aspect = destination_size.width as f32 / destination_size.height as f32;
-        let source_aspect = source_size.width as f32 / source_size.height as f32;
-
-        if window_aspect > physical_aspect_ratio {
-            // Window is wider than content → letterbox (black bars on sides)
-            (
-                source_size.height as f32 / destination_size.height as f32
-                    * (source_aspect / physical_aspect_ratio),
-                source_size.height as f32 / destination_size.height as f32,
-            )
-        } else {
-            (
-                source_size.width as f32 / destination_size.width as f32,
-                source_size.width as f32 / destination_size.width as f32
-                    * (physical_aspect_ratio / source_aspect),
-            )
-        }
-    }
-
-    fn lut_reserve(lut: &mut Vec<Option<(u16, u16)>>, len: usize) {
-        lut.clear();
-        lut.reserve_exact(len);
-    }
-
-    fn resize_lut_nearest_neighbor(
-        &mut self,
-        dst_w: usize,
-        dst_h: usize,
-        src_w: usize,
-        src_h: usize,
-        scale: (f32, f32),
-    ) {
-        self.bump_rev();
-        Self::lut_reserve(&mut self.x_lut, dst_w);
-        Self::lut_reserve(&mut self.y_lut, dst_h);
-
-        for x in 0..dst_w {
-            // Center the source pixel coordinates based on the destination size and scaling factors
-            let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale.0 + 0.5) as isize
-                + (src_w >> 1) as isize;
-            if src_x < 0 || src_x >= src_w as isize {
-                self.x_lut.push(None);
-            } else {
-                self.x_lut.push(Some((src_x as u16, 256)));
+impl PixelIndexer<'_> {
+    /// One `[R, G, B, A]` texel. Out-of-range reads render opaque black,
+    /// never panic the UI thread.
+    pub(crate) fn pixel(&self, i: usize) -> [u8; 4] {
+        match *self {
+            Self::Rgba { src } => {
+                let base = i.saturating_mul(4);
+                src.get(base..base.saturating_add(4))
+                    .and_then(|s| s.try_into().ok())
+                    .unwrap_or([0, 0, 0, 255])
             }
-        }
-        for y in 0..dst_h {
-            // Center the source pixel coordinates based on the destination size and scaling factors
-            let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale.1 + 0.5) as isize
-                + (src_h >> 1) as isize;
-            if src_y < 0 || src_y >= src_h as isize {
-                self.y_lut.push(None);
-            } else {
-                self.y_lut.push(Some((src_y as u16, 256)));
+            Self::Palette { src, palette } => {
+                let index = src.get(i).copied().unwrap_or(0) as usize;
+                let word = palette.get(index).copied().unwrap_or(0);
+                [
+                    (word >> 24) as u8,
+                    (word >> 16) as u8,
+                    (word >> 8) as u8,
+                    word as u8,
+                ]
             }
-        }
-    }
-
-    fn resize_lut_bilinear(
-        &mut self,
-        dst_w: usize,
-        dst_h: usize,
-        src_w: usize,
-        src_h: usize,
-        scale: (f32, f32),
-    ) {
-        self.bump_rev();
-        Self::lut_reserve(&mut self.x_lut, dst_w * 2);
-        Self::lut_reserve(&mut self.y_lut, dst_h * 2);
-
-        for x in 0..dst_w {
-            // Center the source pixel coordinates based on the destination size and scaling factors
-            let src_x =
-                ((x as isize - (dst_w >> 1) as isize) as f32 * scale.0 + 0.5) + (src_w >> 1) as f32;
-            let src_x_floor = src_x.floor() as isize;
-            let src_x_ceil = src_x.ceil() as isize;
-            let (mut weight_floor, mut weight_ceil) = if src_x_ceil == src_x_floor {
-                (256, 0) // 同一のピクセルに対しては、floor側に全ての重みを割り当てる
-            } else {
-                (
-                    ((src_x_ceil as f32 - src_x) * 256.0 + 0.5) as u16,
-                    ((src_x - src_x_floor as f32) * 256.0 + 0.5) as u16,
-                )
-            };
-
-            if src_x_floor < 0 || src_x_floor >= src_w as isize {
-                weight_floor = 0;
-                if weight_ceil != 0 {
-                    weight_ceil = 256;
-                }
+            Self::Ntsc { buf } => {
+                let word = buf.get(i).copied().unwrap_or(0);
+                [
+                    (word >> 24) as u8,
+                    (word >> 16) as u8,
+                    (word >> 8) as u8,
+                    word as u8,
+                ]
             }
-            if src_x_ceil < 0 || src_x_ceil >= src_w as isize {
-                if weight_floor != 0 {
-                    weight_floor = 256;
-                }
-                weight_ceil = 0;
-            }
-
-            if weight_floor == 0 {
-                self.x_lut.push(None);
-            } else {
-                self.x_lut.push(Some((src_x_floor as u16, weight_floor)));
-            }
-            if weight_ceil == 0 {
-                self.x_lut.push(None);
-            } else {
-                self.x_lut.push(Some((src_x_ceil as u16, weight_ceil)));
-            }
-        }
-        for y in 0..dst_h {
-            // Center the source pixel coordinates based on the destination size and scaling factors
-            let src_y =
-                ((y as isize - (dst_h >> 1) as isize) as f32 * scale.1 + 0.5) + (src_h >> 1) as f32;
-            let src_y_floor = src_y.floor() as isize;
-            let src_y_ceil = src_y.ceil() as isize;
-            let (mut weight_floor, mut weight_ceil) = if src_y_ceil == src_y_floor {
-                (256, 0) // 同一のピクセルに対しては、floor側に全ての重みを割り当てる
-            } else {
-                (
-                    ((src_y_ceil as f32 - src_y) * 256.0 + 0.5) as u16,
-                    ((src_y - src_y_floor as f32) * 256.0 + 0.5) as u16,
-                )
-            };
-
-            if src_y_floor < 0 || src_y_floor >= src_h as isize {
-                weight_floor = 0;
-                if weight_ceil != 0 {
-                    weight_ceil = 256;
-                }
-            }
-            if src_y_ceil < 0 || src_y_ceil >= src_h as isize {
-                if weight_floor != 0 {
-                    weight_floor = 256;
-                }
-                weight_ceil = 0;
-            }
-
-            if weight_floor == 0 {
-                self.y_lut.push(None);
-            } else {
-                self.y_lut.push(Some((src_y_floor as u16, weight_floor)));
-            }
-            if weight_ceil == 0 {
-                self.y_lut.push(None);
-            } else {
-                self.y_lut.push(Some((src_y_ceil as u16, weight_ceil)));
-            }
-        }
-    }
-
-    fn resize_lut(
-        &mut self,
-        source_size: SurfaceSize,
-        physical_aspect_ratio: f32,
-        destination_size: SurfaceSize,
-    ) {
-        self.bump_rev();
-        let dst_w = destination_size.width as usize;
-        let dst_h = destination_size.height as usize;
-        let src_w = source_size.width as usize;
-        let src_h = source_size.height as usize;
-
-        let scale = Self::inv_scale(source_size, physical_aspect_ratio, destination_size);
-
-        match self.kernel {
-            ResizeKernel::NearestNeighbor => {
-                self.resize_lut_nearest_neighbor(dst_w, dst_h, src_w, src_h, scale);
-            }
-            ResizeKernel::Bilinear => {
-                self.resize_lut_bilinear(dst_w, dst_h, src_w, src_h, scale);
-            }
-        }
-    }
-
-    fn lut_pixel_size(&self) -> usize {
-        match self.kernel {
-            ResizeKernel::NearestNeighbor => 1,
-            ResizeKernel::Bilinear => 2,
         }
     }
 }
 
 unsafe impl Send for SoftbufferRenderer {}
 unsafe impl Sync for SoftbufferRenderer {}
-
-const NTSC_ROW_OFFSETS: [[usize; 6]; 7] = [
-    [0, 19, 31, 7, 26, 38],
-    [1, 20, 32, 8, 27, 39],
-    [2, 14, 33, 9, 21, 40],
-    [3, 15, 34, 10, 22, 41],
-    [4, 16, 28, 11, 23, 35],
-    [5, 17, 29, 12, 24, 36],
-    [6, 18, 30, 13, 25, 37],
-];
-const NTSC_SOURCE_OFFSETS: [[i32; 6]; 7] = [
-    [1, -1, 0, -2, -4, -3],
-    [1, -1, 0, -2, -4, -3],
-    [1, 2, 0, -2, -1, -3],
-    [1, 2, 0, -2, -1, -3],
-    [1, 2, 3, -2, -1, 0],
-    [1, 2, 3, -2, -1, 0],
-    [1, 2, 3, -2, -1, 0],
-];
 
 impl SoftbufferRenderer {
     fn new(profile: &VideoRenderProfile) -> Self {
@@ -353,29 +197,29 @@ impl SoftbufferRenderer {
     }
 
     #[expect(clippy::too_many_arguments)]
-    fn rendering<F: Fn(usize) -> [u8; 4]>(
+    fn rendering(
         dst: &mut [u32],
         src_stride: usize,
         src_h: usize,
         dst_w: usize,
         dst_h: usize,
-        src_f: F,
+        indexer: &PixelIndexer<'_>,
         lut: &LutEntry,
         resize_buffer: &mut [u32],
     ) {
         // Hoisted tap width: no per-pixel method call on the hot path.
         let px = lut.lut_pixel_size();
-        Self::horizontal_pass(src_stride, src_h, dst_w, &src_f, lut, px, resize_buffer);
+        Self::horizontal_pass(src_stride, src_h, dst_w, indexer, lut, px, resize_buffer);
         Self::vertical_pass(dst, dst_w, dst_h, lut, px, resize_buffer);
     }
 
-    /// Horizontal two-tap loop with consistent LE packing.
+    /// Horizontal two-tap loop with native-endian word packing (see [`pixel`]).
     /// Weights sum to one in the interior; edges go black where taps fall outside.
-    fn horizontal_pass<F: Fn(usize) -> [u8; 4]>(
+    fn horizontal_pass(
         src_stride: usize,
         src_h: usize,
         dst_w: usize,
-        src_f: &F,
+        indexer: &PixelIndexer<'_>,
         lut: &LutEntry,
         px: usize,
         resize_buffer: &mut [u32],
@@ -394,7 +238,7 @@ impl SoftbufferRenderer {
                 for tap in lut.x_lut.get(base..base + px).unwrap_or(&[]) {
                     let Some((i, w)) = tap else { continue };
                     let src_index = src_y_index + *i as usize;
-                    let src_val = src_f(src_index);
+                    let src_val = indexer.pixel(src_index);
                     let w = *w;
                     acc[0] = acc[0].saturating_add((src_val[2] as u16 * w + 0x80) >> 8);
                     acc[1] = acc[1].saturating_add((src_val[1] as u16 * w + 0x80) >> 8);
@@ -403,12 +247,12 @@ impl SoftbufferRenderer {
                     touched = true;
                 }
                 let word = if touched {
-                    u32::from_le_bytes([
+                    pixel::pack_word(
                         acc[0].min(255) as u8,
                         acc[1].min(255) as u8,
                         acc[2].min(255) as u8,
                         acc[3].min(255) as u8,
-                    ])
+                    )
                 } else {
                     0
                 };
@@ -420,7 +264,7 @@ impl SoftbufferRenderer {
     }
 
     /// Vertical pass over the horizontal result. Taps are at most 2.
-    /// Reads buffer words back with `to_le_bytes`, the inverse of the horizontal pack.
+    /// Reads buffer words back with `to_ne_bytes`, the inverse of the horizontal pack.
     fn vertical_pass(
         dst: &mut [u32],
         dst_w: usize,
@@ -457,7 +301,7 @@ impl SoftbufferRenderer {
                     let Some(word) = resize_buffer.get(src_index) else {
                         continue;
                     };
-                    let src_val = word.to_le_bytes();
+                    let src_val = pixel::unpack_word(*word);
                     acc[0] = acc[0].saturating_add((src_val[0] as u16 * w + 0x80) >> 8);
                     acc[1] = acc[1].saturating_add((src_val[1] as u16 * w + 0x80) >> 8);
                     acc[2] = acc[2].saturating_add((src_val[2] as u16 * w + 0x80) >> 8);
@@ -465,12 +309,12 @@ impl SoftbufferRenderer {
                     touched = true;
                 }
                 dst[dst_index] = if touched {
-                    u32::from_le_bytes([
+                    pixel::pack_word(
                         acc[0].min(255) as u8,
                         acc[1].min(255) as u8,
                         acc[2].min(255) as u8,
                         acc[3].min(255) as u8,
-                    ])
+                    )
                 } else {
                     0
                 };
@@ -536,8 +380,9 @@ impl SoftbufferRenderer {
             reserved_top: self.reserved.top,
             reserved_bottom: self.reserved.bottom,
         };
-        if let Some((cached_key, covered)) = &self.taps_cache
-            && *cached_key == key
+        let fingerprint = key.fingerprint();
+        if let Some((cached_fp, cached_key, covered)) = &self.taps_cache
+            && *cached_fp == fingerprint
         {
             self.scan_counter = self.scan_counter.wrapping_add(1);
             if self.scan_counter.is_multiple_of(256) {
@@ -554,6 +399,7 @@ impl SoftbufferRenderer {
                     fresh, *covered,
                     "tap cache stale-true: periodic rescan disagrees"
                 );
+                debug_assert_eq!(*cached_key, key, "tap fingerprint collision: keys disagree");
                 return fresh;
             }
             return *covered;
@@ -568,214 +414,12 @@ impl SoftbufferRenderer {
             ntsc_writes,
         );
         self.scan_counter = self.scan_counter.wrapping_add(1);
-        self.taps_cache = Some((key, covered));
+        self.taps_cache = Some((fingerprint, key, covered));
         covered
     }
-
-    fn palette_index(source_frame: &[u8], width: usize, x: i32, y: usize) -> u8 {
-        if x < 0 || x as usize >= width {
-            return BLACK_PALETTE_INDEX;
-        }
-        // Short rows render black instead of panicking the UI thread.
-        source_frame
-            .get(y.saturating_mul(width).saturating_add(x as usize))
-            .copied()
-            .unwrap_or(BLACK_PALETTE_INDEX)
-    }
-
-    fn clamp_impl(io: u32) -> u32 {
-        const NTSC_CLAMP_MASK: u32 = 0x300c03;
-        const NTSC_CLAMP_ADD: u32 = 0x20280a02;
-
-        let sub = (io >> 9) & NTSC_CLAMP_MASK;
-        let clamp = NTSC_CLAMP_ADD.wrapping_sub(sub);
-        (io | clamp) & clamp.wrapping_sub(sub)
-    }
-
-    fn rgb_out_impl(raw: u32) -> u32 {
-        let rgb = ((raw >> 5) & 0x00ff0000) | ((raw >> 3) & 0x0000ff00) | ((raw >> 1) & 0x000000ff);
-        (rgb << 8) | 0xff
-    }
-
-    fn read_entry(buf: &[u8], color: u8, row: usize) -> u32 {
-        const PALETTE_WIDTH: usize = 64;
-        let offset = (row
-            .saturating_mul(PALETTE_WIDTH)
-            .saturating_add(color as usize))
-        .saturating_mul(4);
-        // Out-of-range palette data renders black instead of
-        // panicking the UI thread; valid entries are untouched.
-        buf.get(offset..offset.saturating_add(4))
-            .and_then(|s| s.try_into().ok())
-            .map(u32::from_be_bytes)
-            .unwrap_or(0)
-    }
-
-    fn simulate_gpu_ntsc_rgba(
-        src_h: usize,
-        source_frame: &[u8],
-        render_profile: &VideoRenderProfile,
-        ntsc_buffer: &mut [u32],
-    ) {
-        let packed_entries = render_profile.ntsc_packed_rgba8.as_ref().unwrap();
-        let src_w = render_profile.logical_size.width;
-
-        for y in 0..src_h {
-            let phase_row = (y % 3) * 42;
-            for x in 0..src_w {
-                let chunk = x / 7;
-                let sample = x - chunk * 7;
-                let base = (chunk * 3) as i32;
-                let row_offsets = NTSC_ROW_OFFSETS[sample];
-                let source_offsets = NTSC_SOURCE_OFFSETS[sample];
-                let mut sum = 0_u32;
-
-                for (source_offset, row_offset) in source_offsets.into_iter().zip(row_offsets) {
-                    let color = Self::palette_index(
-                        source_frame,
-                        render_profile.source_logical_size.width,
-                        base + source_offset,
-                        y,
-                    );
-                    sum = sum.wrapping_add(Self::read_entry(
-                        packed_entries,
-                        color,
-                        phase_row + row_offset,
-                    ));
-                }
-
-                ntsc_buffer[y * src_w + x] = Self::rgb_out_impl(Self::clamp_impl(sum));
-            }
-        }
-    }
 }
 
-/// Validated frame geometry shared by the blit path. Computed once, so the
-/// guards and indexer setup share a single scan.
-struct ValidatedFrame {
-    dst_w: usize,
-    dst_h: usize,
-    avail_h: usize,
-    src_stride: usize,
-    src_h: usize,
-    tap_stride: usize,
-    ntsc_writes: usize,
-}
-
-impl SoftbufferRenderer {
-    /// Validate dimensions without touching the surface or the tap cache.
-    /// Pre-validates `stride >= width * bpp` so indexers never read out of bounds.
-    fn validate_frame(&self, frame: &FrameBuffer) -> Option<ValidatedFrame> {
-        if frame.width() != self.render_profile.source_logical_size.width
-            || frame.height() != self.render_profile.source_logical_size.height
-        {
-            error!(
-                "Frame size mismatch: expected {}x{}, got {}x{}",
-                self.render_profile.source_logical_size.width,
-                self.render_profile.source_logical_size.height,
-                frame.width(),
-                frame.height()
-            );
-            return None;
-        }
-        let dst_w = self.size.width as usize;
-        let dst_h = self.size.height as usize;
-        if dst_w == 0 || dst_h == 0 || self.surface.is_none() {
-            return None;
-        }
-        let avail_h = dst_h.saturating_sub(self.reserved.height_loss(self.size.height) as usize);
-        let src_stride = frame.stride();
-        let src_h = self.render_profile.source_logical_size.height;
-        let src_w = self.render_profile.source_logical_size.width;
-        let bpp = frame.format().bytes_per_pixel();
-        // Stride must cover one tight row; otherwise the pixel indexer
-        // would read past the source on the UI thread.
-        if src_stride < src_w.saturating_mul(bpp) {
-            warn!(
-                "softbuffer stride too small: have {}, need {}",
-                src_stride,
-                src_w.saturating_mul(bpp)
-            );
-            return None;
-        }
-        let use_ntsc = matches!(frame.format(), PixelFormat::PaletteIndex { .. })
-            && self.render_profile.ntsc_packed_rgba8.is_some();
-        let tap_stride = if matches!(frame.format(), PixelFormat::Rgba) {
-            src_stride / 4
-        } else if use_ntsc {
-            self.render_profile.logical_size.width
-        } else {
-            src_stride
-        };
-        if tap_stride == 0 {
-            return None;
-        }
-        let ntsc_writes = if use_ntsc {
-            src_h.saturating_mul(self.render_profile.logical_size.width)
-        } else {
-            0
-        };
-        Some(ValidatedFrame {
-            dst_w,
-            dst_h,
-            avail_h,
-            src_stride,
-            src_h,
-            tap_stride,
-            ntsc_writes,
-        })
-    }
-
-    /// Straight-alpha blend of the OSD layer, clipped to the buffer.
-    fn blend_osd(
-        buffer: &mut [u32],
-        dst_w: usize,
-        dst_h: usize,
-        layer: &nerust_render_traits::renderer::OsdLayer,
-    ) {
-        let src_w = layer.width as usize;
-        let src_h = layer.height as usize;
-        let need = src_w.checked_mul(src_h).and_then(|px| px.checked_mul(4));
-        let Some(need) = need else { return };
-        if src_w == 0 || src_h == 0 || layer.rgba.len() < need {
-            return;
-        }
-        for row in 0..src_h {
-            let dst_y = layer.y as usize + row;
-            if dst_y >= dst_h {
-                break;
-            }
-            for col in 0..src_w {
-                let dst_x = layer.x as usize + col;
-                if dst_x >= dst_w {
-                    break;
-                }
-                let s = (row * src_w + col) * 4;
-                let alpha = u32::from(layer.rgba[s + 3]);
-                if alpha == 0 {
-                    continue;
-                }
-                // Buffer words are 0xAARRGGBB. Shift out channels
-                // directly instead of `to_be_bytes` round-trips.
-                let dst_word = buffer[dst_y * dst_w + dst_x];
-                let (dr, dg, db) = (
-                    ((dst_word >> 16) & 0xff) as u8,
-                    ((dst_word >> 8) & 0xff) as u8,
-                    (dst_word & 0xff) as u8,
-                );
-                let blend = |src: u8, dst: u8| {
-                    ((u32::from(src) * alpha + u32::from(dst) * (255 - alpha) + 127) / 255) as u8
-                };
-                buffer[dst_y * dst_w + dst_x] = 0xff00_0000
-                    | (u32::from(blend(layer.rgba[s], dr)) << 16)
-                    | (u32::from(blend(layer.rgba[s + 1], dg)) << 8)
-                    | u32::from(blend(layer.rgba[s + 2], db));
-            }
-        }
-    }
-}
-
-impl GpuRenderer for SoftbufferRenderer {
+impl Present for SoftbufferRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
     }
@@ -819,25 +463,6 @@ impl GpuRenderer for SoftbufferRenderer {
             }
         }
         self.resize_lut();
-    }
-
-    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
-        self.reserved = strip;
-        self.resize_lut();
-    }
-
-    fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
-        use nerust_render_traits::renderer::OsdLayer;
-        if OsdLayer::same_option(self.osd.as_ref(), layer.as_ref()) {
-            return;
-        }
-        self.osd = layer;
-    }
-
-    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        self.render_profile = profile.clone();
-        self.resize_lut();
-        Ok(())
     }
 
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
@@ -914,57 +539,54 @@ impl GpuRenderer for SoftbufferRenderer {
             return RenderResult::Skipped;
         }
 
+        // Monomorphic indexers: one enum replaces three closures, so the
+        // hot loop never monomorphizes. Fallible reads render opaque black.
         match frame.format() {
             PixelFormat::Rgba => {
-                // Fallible indexer: `get(..)` renders opaque black on
-                // short rows instead of `unwrap()` panicking the UI.
+                let indexer = PixelIndexer::Rgba { src };
                 Self::rendering(
                     dst,
                     src_stride / 4,
                     src_h,
                     dst_w,
                     avail_h,
-                    |i| {
-                        let base = i.saturating_mul(4);
-                        src.get(base..base.saturating_add(4))
-                            .and_then(|s| s.try_into().ok())
-                            .unwrap_or([0, 0, 0, 255])
-                    },
+                    &indexer,
                     &self.lut,
                     &mut self.resize_buffer,
                 );
             }
             PixelFormat::PaletteIndex { palette } => {
                 if self.render_profile.ntsc_packed_rgba8.is_some() {
-                    Self::simulate_gpu_ntsc_rgba(
+                    Ntsc::simulate_gpu_ntsc_rgba(
                         src_h,
                         src,
                         &self.render_profile,
                         &mut self.ntsc_buffer,
                     );
+                    let indexer = PixelIndexer::Ntsc {
+                        buf: &self.ntsc_buffer,
+                    };
                     Self::rendering(
                         dst,
                         self.render_profile.logical_size.width,
                         src_h,
                         dst_w,
                         avail_h,
-                        |i| self.ntsc_buffer.get(i).copied().unwrap_or(0).to_be_bytes(),
+                        &indexer,
                         &self.lut,
                         &mut self.resize_buffer,
                     );
                 } else {
                     // Out-of-range indices render black instead of
                     // panicking the UI thread (see mismatch guard).
+                    let indexer = PixelIndexer::Palette { src, palette };
                     Self::rendering(
                         dst,
                         src_stride,
                         src_h,
                         dst_w,
                         avail_h,
-                        |i| {
-                            let idx = src.get(i).copied().unwrap_or(0) as usize;
-                            palette.get(idx).copied().unwrap_or(0).to_be_bytes()
-                        },
+                        &indexer,
                         &self.lut,
                         &mut self.resize_buffer,
                     );
@@ -985,6 +607,31 @@ impl GpuRenderer for SoftbufferRenderer {
     }
 }
 
+impl OsdSink for SoftbufferRenderer {
+    fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
+        use nerust_render_traits::renderer::OsdLayer;
+        if OsdLayer::same_option(self.osd.as_ref(), layer.as_ref()) {
+            return;
+        }
+        self.osd = layer;
+    }
+}
+
+impl StripSink for SoftbufferRenderer {
+    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
+        self.reserved = strip;
+        self.resize_lut();
+    }
+}
+
+impl GpuRenderer for SoftbufferRenderer {
+    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
+        self.render_profile = profile.clone();
+        self.resize_lut();
+        Ok(())
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct SoftbufferFactory;
 
@@ -1001,22 +648,27 @@ impl GpuFactory for SoftbufferFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        lut::{LutEntry, ResizeKernel},
+        ntsc::Ntsc,
+    };
+    use nerust_render_traits::filter::BLACK_PALETTE_INDEX;
     use nerust_render_traits::{VideoFrameFormat, logical::LogicalSize, physical::PhysicalSize};
 
     #[test]
     fn blend_osd_writes_argb_words() {
         // Buffers are 0xAARRGGBB: opaque red over opaque black stays red.
         let mut buffer = vec![0xFF00_0000u32; 4];
-        let layer = nerust_render_traits::renderer::OsdLayer {
-            x: 0,
-            y: 0,
-            width: 2,
-            height: 1,
-            rgba: vec![
+        let layer = nerust_render_traits::renderer::OsdLayer::new(
+            0,
+            0,
+            2,
+            1,
+            vec![
                 255, 0, 0, 255, // opaque red
                 0, 0, 0, 0, // transparent keeps dst
             ],
-        };
+        );
         SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &layer);
         assert_eq!(buffer[0], 0xFFFF_0000);
         assert_eq!(buffer[1], 0xFF00_0000);
@@ -1027,13 +679,7 @@ mod tests {
         // Half red over black: (255*128 + 0*127 + 127) / 255 = 128.
         // Integer fixed-point with round-half-up, no FPU per pixel.
         let mut buffer = vec![0xFF00_0000u32; 1];
-        let layer = nerust_render_traits::renderer::OsdLayer {
-            x: 0,
-            y: 0,
-            width: 1,
-            height: 1,
-            rgba: vec![255, 0, 0, 128],
-        };
+        let layer = nerust_render_traits::renderer::OsdLayer::new(0, 0, 1, 1, vec![255, 0, 0, 128]);
         SoftbufferRenderer::blend_osd(&mut buffer, 1, 1, &layer);
         assert_eq!(buffer[0], 0xFF80_0000);
     }
@@ -1103,18 +749,14 @@ mod tests {
         }
         let mut resize_buffer = vec![0u32; 8 * 4];
         let mut dst = vec![0u32; 8 * 8];
+        let indexer = PixelIndexer::Rgba { src: &src };
         SoftbufferRenderer::rendering(
             &mut dst,
             stride / 4,
             4,
             8,
             8,
-            |i| {
-                let base = i.saturating_mul(4);
-                src.get(base..base.saturating_add(4))
-                    .and_then(|s| s.try_into().ok())
-                    .unwrap_or([0, 0, 0, 255])
-            },
+            &indexer,
             &lut,
             &mut resize_buffer,
         );
@@ -1156,21 +798,8 @@ mod tests {
             }
             let mut resize_buffer = vec![0u32; 8 * 4];
             let mut dst = vec![0u32; 8 * 8];
-            SoftbufferRenderer::rendering(
-                &mut dst,
-                4,
-                4,
-                8,
-                8,
-                |i| {
-                    let base = i.saturating_mul(4);
-                    src.get(base..base.saturating_add(4))
-                        .and_then(|s| s.try_into().ok())
-                        .unwrap_or([0, 0, 0, 255])
-                },
-                &lut,
-                &mut resize_buffer,
-            );
+            let indexer = PixelIndexer::Rgba { src: &src };
+            SoftbufferRenderer::rendering(&mut dst, 4, 4, 8, 8, &indexer, &lut, &mut resize_buffer);
             for y in 2..6 {
                 for x in 2..6 {
                     assert_eq!(dst[y * 8 + x], expected, "input {input:02X?}");
@@ -1182,28 +811,19 @@ mod tests {
     #[test]
     fn palette_index_out_of_range_renders_black() {
         let frame = vec![0x01u8; 4 * 4];
-        assert_eq!(SoftbufferRenderer::palette_index(&frame, 4, 1, 1), 0x01);
-        assert_eq!(
-            SoftbufferRenderer::palette_index(&frame, 4, -1, 1),
-            BLACK_PALETTE_INDEX
-        );
-        assert_eq!(
-            SoftbufferRenderer::palette_index(&frame, 4, 4, 1),
-            BLACK_PALETTE_INDEX
-        );
-        assert_eq!(
-            SoftbufferRenderer::palette_index(&frame, 4, 1, 4),
-            BLACK_PALETTE_INDEX
-        );
+        assert_eq!(Ntsc::palette_index(&frame, 4, 1, 1), 0x01);
+        assert_eq!(Ntsc::palette_index(&frame, 4, -1, 1), BLACK_PALETTE_INDEX);
+        assert_eq!(Ntsc::palette_index(&frame, 4, 4, 1), BLACK_PALETTE_INDEX);
+        assert_eq!(Ntsc::palette_index(&frame, 4, 1, 4), BLACK_PALETTE_INDEX);
     }
 
     #[test]
     fn read_entry_out_of_range_renders_black() {
         let buf = vec![0xABu8; 64 * 64 * 4];
-        assert_eq!(SoftbufferRenderer::read_entry(&buf, 0, 0), 0xABAB_ABAB);
-        assert_eq!(SoftbufferRenderer::read_entry(&buf, 63, 63), 0xABAB_ABAB);
-        assert_eq!(SoftbufferRenderer::read_entry(&buf, 255, 63), 0);
-        assert_eq!(SoftbufferRenderer::read_entry(&buf, 0, 10_000), 0);
+        assert_eq!(Ntsc::read_entry(&buf, 0, 0), 0xABAB_ABAB);
+        assert_eq!(Ntsc::read_entry(&buf, 63, 63), 0xABAB_ABAB);
+        assert_eq!(Ntsc::read_entry(&buf, 255, 63), 0);
+        assert_eq!(Ntsc::read_entry(&buf, 0, 10_000), 0);
     }
 
     #[test]
@@ -1256,7 +876,7 @@ mod tests {
         // Same lengths, bumped rev: verdict must rescan, not hit cache.
         renderer.lut.bump_rev();
         assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
-        let (key, covered) = renderer.taps_cache.as_ref().unwrap();
+        let (_fp, key, covered) = renderer.taps_cache.as_ref().unwrap();
         assert_eq!(key.lut_rev, renderer.lut.rev);
         assert!(*covered);
     }
@@ -1326,12 +946,12 @@ mod tests {
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
         assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
-        let first_key = renderer.taps_cache.as_ref().unwrap().0;
+        let first_key = renderer.taps_cache.as_ref().unwrap().1;
         // Reserved strip change flips the key.
         renderer.reserved.top = 2;
         renderer.resize_lut();
         assert!(renderer.taps_covered(8, 6, 1024, 256, 0));
-        let second_key = renderer.taps_cache.as_ref().unwrap().0;
+        let second_key = renderer.taps_cache.as_ref().unwrap().1;
         assert_ne!(first_key, second_key);
         assert_eq!(second_key.reserved_top, 2);
         assert_eq!(second_key.avail_h, 6);
@@ -1346,14 +966,8 @@ mod tests {
         // Short source rows never panic: missing texels fall back to
         // opaque black instead of `unwrap()` on the UI thread.
         let short: Vec<u8> = vec![0x10, 0x20];
-        let px = |i: usize| {
-            let base = i.saturating_mul(4);
-            short
-                .get(base..base.saturating_add(4))
-                .and_then(|s| s.try_into().ok())
-                .unwrap_or([0, 0, 0, 255])
-        };
-        assert_eq!(px(0), [0, 0, 0, 255]);
-        assert_eq!(px(99), [0, 0, 0, 255]);
+        let indexer = PixelIndexer::Rgba { src: &short };
+        assert_eq!(indexer.pixel(0), [0, 0, 0, 255]);
+        assert_eq!(indexer.pixel(99), [0, 0, 0, 255]);
     }
 }

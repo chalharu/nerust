@@ -6,6 +6,7 @@ use jni::{
     refs::Global,
     sys::jobject,
 };
+use sha2::{Digest, Sha256};
 use winit::platform::android::activity::AndroidApp;
 
 use crate::{
@@ -13,7 +14,7 @@ use crate::{
     import_metadata,
 };
 
-const ROM_PICKER_BUFFER_CAPACITY: usize = 8 * 1024;
+const ROM_PICKER_BUFFER_CAPACITY: usize = 64 * 1024;
 
 struct PickerState {
     result: Option<RomPickerResult>,
@@ -121,11 +122,17 @@ pub(crate) fn spawn_document_fetch(app: AndroidApp, uri: String) {
             format!("{display_name}.{extension}")
         };
         match read_uri_bytes(&app, &uri) {
-            Ok(bytes) => publish_result(RomPickerResult::RomBytes {
-                uri,
-                file_name,
-                bytes,
-            }),
+            Ok(bytes) => {
+                // Hash off the event thread; the digest rides the
+                // buffer so the event thread never hashes.
+                let digest: [u8; 32] = Sha256::digest(&bytes).into();
+                publish_result(RomPickerResult::RomBytes {
+                    uri,
+                    file_name,
+                    bytes,
+                    digest,
+                })
+            }
             Err(error) => {
                 log::error!("{error}");
                 publish_result(RomPickerResult::Failed(error));
@@ -194,8 +201,10 @@ pub(crate) fn read_uri_bytes(app: &AndroidApp, uri: &str) -> Result<Vec<u8>, Str
                     if read == 0 {
                         continue;
                     }
-                    let chunk = env.convert_byte_array(&buffer)?;
-                    bytes.extend_from_slice(&chunk[..read as usize]);
+                    // Copy only the bytes read, not the whole 64KB scratch.
+                    let mut chunk = vec![0i8; read as usize];
+                    buffer.get_region(env, 0, &mut chunk)?;
+                    bytes.extend(chunk.iter().map(|byte| *byte as u8));
                 }
                 Ok::<(), jni::errors::Error>(())
             })();

@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use nerust_input_traits::{
     AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, Controller, ControllerProfile,
-    DigitalControlId, FieldEntry, OpenBusReadResult, Port, PortSet, ProfileId,
+    DigitalControlId, FieldEntry, OpenBusReadResult, Port, PortSet, ProfileId, StrobeTarget,
 };
 
 pub fn gba_device_controller_profiles() -> impl Iterator<Item = Rc<dyn ControllerProfile>> {
@@ -40,6 +40,10 @@ impl Default for StandardPad {
     }
 }
 
+impl StrobeTarget for StandardPad {
+    fn strobe(&mut self, _value: u8) {}
+}
+
 impl Controller for StandardPad {
     fn sync_input(&mut self, state: &[u8]) {
         if state.len() >= 2 {
@@ -56,18 +60,16 @@ impl Controller for StandardPad {
 
     fn write(&mut self, _port: &dyn Port, _value: u8) {}
 
-    fn strobe(&mut self, _value: u8) {}
-
-    fn field_map(&self, port: &dyn Port, out: &mut Vec<FieldEntry>) {
+    fn field_entries(&self, port: &dyn Port) -> Vec<FieldEntry> {
         let attachment = port.attachment_id();
         let digital = |id: &'static str, field: usize| {
             FieldEntry::new(
                 attachment,
-                ControlId::Digital(DigitalControlId::new(id)),
+                ControlId::digital(DigitalControlId::new(id)),
                 field,
             )
         };
-        out.extend([
+        vec![
             digital("gba.control.a", FIELD_A),
             digital("gba.control.b", FIELD_B),
             digital("gba.control.select", FIELD_SELECT),
@@ -78,7 +80,7 @@ impl Controller for StandardPad {
             digital("gba.control.down", FIELD_DOWN),
             digital("gba.control.l", FIELD_L),
             digital("gba.control.r", FIELD_R),
-        ]);
+        ]
     }
 }
 
@@ -104,61 +106,61 @@ impl ControllerProfile for StandardPadProfile {
         use ControlKind::Digital;
         const C: &[ControlInfo] = &[
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("gba.control.a")),
+                id: ControlId::digital(DigitalControlId::new("gba.control.a")),
                 label: "A",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button1),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("gba.control.b")),
+                id: ControlId::digital(DigitalControlId::new("gba.control.b")),
                 label: "B",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button2),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("gba.control.select")),
+                id: ControlId::digital(DigitalControlId::new("gba.control.select")),
                 label: "Select",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Select),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("gba.control.start")),
+                id: ControlId::digital(DigitalControlId::new("gba.control.start")),
                 label: "Start",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Start),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("gba.control.up")),
+                id: ControlId::digital(DigitalControlId::new("gba.control.up")),
                 label: "Up",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadUp),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("gba.control.down")),
+                id: ControlId::digital(DigitalControlId::new("gba.control.down")),
                 label: "Down",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadDown),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("gba.control.left")),
+                id: ControlId::digital(DigitalControlId::new("gba.control.left")),
                 label: "Left",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadLeft),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("gba.control.right")),
+                id: ControlId::digital(DigitalControlId::new("gba.control.right")),
                 label: "Right",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadRight),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("gba.control.l")),
+                id: ControlId::digital(DigitalControlId::new("gba.control.l")),
                 label: "L",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button5),
             },
             ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("gba.control.r")),
+                id: ControlId::digital(DigitalControlId::new("gba.control.r")),
                 label: "R",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button6),
@@ -204,16 +206,14 @@ mod tests {
     #[test]
     fn field_map_has_ten_entries() {
         let pad = StandardPad::default();
-        let mut map = Vec::new();
-        pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"), &mut map);
+        let map = pad.field_entries(&nerust_input_traits::SimplePort::new(0, "test"));
         assert_eq!(map.len(), 10);
     }
 
     #[test]
     fn field_map_indices_are_unique_and_in_range() {
         let pad = StandardPad::default();
-        let mut map = Vec::new();
-        pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"), &mut map);
+        let map = pad.field_entries(&nerust_input_traits::SimplePort::new(0, "test"));
         let indices: Vec<usize> = map.iter().map(|entry| entry.field).collect();
         let mut sorted = indices.clone();
         sorted.sort();
@@ -228,14 +228,10 @@ mod tests {
     fn field_map_matches_keyinput_bits() {
         // GBATEK KEYINPUT 4000130h: bit 8 = R, bit 9 = L.
         let pad = StandardPad::default();
-        let mut map = Vec::new();
-        pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"), &mut map);
+        let map = pad.field_entries(&nerust_input_traits::SimplePort::new(0, "test"));
         let bit = |id: &str| {
             map.iter()
-                .find(|entry| match entry.control {
-                    nerust_input_traits::ControlId::Digital(control) => control.as_str() == id,
-                    nerust_input_traits::ControlId::Analog(control) => control.as_str() == id,
-                })
+                .find(|entry| entry.control.as_str() == id)
                 .map(|entry| entry.field)
                 .expect("control must be mapped")
         };

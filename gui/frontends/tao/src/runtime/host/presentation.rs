@@ -1,20 +1,18 @@
 //! Session presentation sync: menu, title, and fullscreen state.
-use super::HostState;
-use super::{
-    ChromeScalars, MenuSig, derive_native_fullscreen_sync, set_window_fullscreen,
-    window_is_fullscreen,
-};
+use super::{ChromeScalars, FrameCtx, HostState, MenuSig};
+use super::{derive_native_fullscreen_sync, set_window_fullscreen, window_is_fullscreen};
+use nerust_gui_shell::session::osd::TickMetrics;
 use nerust_gui_shell::session::{SessionError, access::SettingsResult};
 use std::time::Instant;
 
 impl HostState {
     pub(crate) fn sync_fullscreen_default_from_window(&mut self) {
-        let Some(window) = self.window.as_ref() else {
+        let Some(window) = self.windows.live() else {
             return;
         };
         let fullscreen = window_is_fullscreen(window.raw());
         let sync = derive_native_fullscreen_sync(
-            self.pending_fullscreen_sync,
+            self.windows.pending_fullscreen_sync(),
             fullscreen,
             self.session
                 .settings_snapshot()
@@ -23,57 +21,54 @@ impl HostState {
                 .window
                 .fullscreen_default,
         );
-        self.pending_fullscreen_sync = sync.pending_target;
+        self.windows
+            .set_pending_fullscreen_sync(sync.pending_target);
         if !sync.persist_setting {
             return;
         }
         match self.session.set_fullscreen_default(fullscreen) {
             Ok(plan) if plan.fullscreen_default_changed => {
-                self.sync_menu_state();
-                self.refresh_window_title();
-                self.request_redraw();
+                let ctx = self.frame_ctx();
+                self.sync_chrome(&ctx, true);
+                self.refresh_window_title(&ctx.tick);
             }
             Ok(_) => (),
             Err(error) => log::warn!("failed to persist fullscreen setting: {error}"),
         }
     }
 
-    pub(crate) fn sync_menu_state(&mut self) {
+    /// Menu sync against one pass capture: scalars, then one
+    /// fingerprint, then the exact slice compare. No per-call clones.
+    pub(crate) fn sync_menu_state(&mut self, ctx: &FrameCtx) {
         let settings_open = self.settings_open();
-        let snapshot = self.session.settings_snapshot();
-        let language = snapshot.shared.general.language;
+        let language = ctx.settings.shared.general.language;
         let active_slot = self.session.active_slot_id();
-        let tick = self.session.tick_metrics();
-        let title = self.session.window_title(&tick);
-        let slots = self.session.slots();
-        let shortcuts = &snapshot.shared.input.shortcuts.keyboard;
-        // Cheap gate first: scalars plus lengths, no `Arc` clones.
-        if self.chrome.cheap_same(&ChromeScalars {
-            loaded: tick.loaded,
-            paused: tick.paused,
+        let scalars = ChromeScalars {
+            loaded: ctx.tick.loaded,
+            paused: ctx.tick.paused,
             settings_open,
             language,
             active_slot,
-            slots_len: slots.len(),
-            shortcuts_len: shortcuts.len(),
-            title: &title,
-        }) {
-            let generation = MenuSig::fingerprint(slots, shortcuts);
-            if self.chrome.menu_same(generation, slots, shortcuts) {
-                return;
-            }
+            slots_len: ctx.slots.len(),
+            shortcuts_len: ctx.shortcuts.len(),
+        };
+        // Computed once per call: the cheap gate usually skips the IPC below.
+        let generation = MenuSig::fingerprint(&ctx.slots, &ctx.shortcuts);
+        if self.chrome.cheap_same(&scalars)
+            && self
+                .chrome
+                .menu_same(generation, &ctx.slots, &ctx.shortcuts)
+        {
+            return;
         }
-        // Changed: clone the slices into `Arc`s once and push both
-        // halves through their own gates.
-        let generation = MenuSig::fingerprint(slots, shortcuts);
         let sig = MenuSig {
-            loaded: tick.loaded,
-            paused: tick.paused,
+            loaded: scalars.loaded,
+            paused: scalars.paused,
             settings_open,
             language,
             active_slot,
-            slots: slots.to_vec().into(),
-            shortcuts: shortcuts.to_vec().into(),
+            slots: std::sync::Arc::clone(&ctx.slots),
+            shortcuts: std::sync::Arc::clone(&ctx.shortcuts),
             generation,
         };
         self.app_menu.update(crate::menu::MenuSync {
@@ -86,44 +81,43 @@ impl HostState {
             shortcuts: &sig.shortcuts,
         });
         self.chrome.push_menu(sig);
-        if !self.chrome.title_same(&title) {
-            self.chrome.push_title(title.clone());
-            self.push_title(&title);
-        }
+        self.refresh_window_title(&ctx.tick);
     }
 
     fn push_title(&mut self, title: &str) {
-        if let Some(window) = self.window.as_ref() {
+        if let Some(window) = self.windows.live() {
             window.set_title(title);
         }
     }
 
-    pub(crate) fn refresh_window_title(&mut self) {
-        // Title-only gate: never touches the menu signature, so the
-        // 500ms throttle path cannot mark menu state it did not push.
-        let tick = self.session.tick_metrics();
-        let title = self.session.window_title(&tick);
-        if !self.chrome.title_same(&title) {
+    /// Title-only gate over the cached session title: no formatting on a repeat.
+    pub(crate) fn refresh_window_title(&mut self, tick: &TickMetrics) {
+        let changed = {
+            let title = self.session.window_title_cached(tick);
+            !self.chrome.title_same(title)
+        };
+        if changed {
+            let title = self.session.window_title_cached(tick).to_owned();
             self.chrome.push_title(title.clone());
             self.push_title(&title);
         }
     }
 
-    pub(super) fn maybe_refresh_window_title(&mut self, now: Instant) {
+    pub(super) fn maybe_refresh_window_title(&mut self, ctx: &FrameCtx, now: Instant) {
         if self.shell.should_refresh_title(now) {
-            self.refresh_window_title();
+            self.refresh_window_title(&ctx.tick);
         }
     }
 
     pub(super) fn toggle_fullscreen(&mut self) {
-        let fullscreen = if let Some(window) = self.window.as_ref() {
+        let fullscreen = if let Some(window) = self.windows.live() {
             !window_is_fullscreen(window.raw())
         } else {
             return;
         };
         if let Err(error) = self.persist_fullscreen_default(fullscreen) {
             log::warn!("failed to persist fullscreen setting: {error}");
-            if let Some(window) = self.window.as_ref() {
+            if let Some(window) = self.windows.live() {
                 set_window_fullscreen(window.raw(), fullscreen);
             }
             self.request_redraw();
@@ -131,23 +125,26 @@ impl HostState {
     }
 
     /// Refresh chrome after a ROM (re)load: menu, title, frame.
-    pub(super) fn after_rom_load(&mut self) {
-        self.sync_chrome(true);
+    pub(super) fn after_rom_load(&mut self, ctx: &FrameCtx) {
+        self.sync_chrome(ctx, true);
     }
 
     /// Single chrome-sync choke point: menu, title, and optionally a frame.
-    pub(crate) fn sync_chrome(&mut self, redraw: bool) {
-        self.sync_menu_state();
-        self.refresh_window_title();
+    pub(crate) fn sync_chrome(&mut self, ctx: &FrameCtx, redraw: bool) {
+        self.sync_menu_state(ctx);
+        self.refresh_window_title(&ctx.tick);
         if redraw {
             self.request_redraw();
         }
     }
 
+    /// Chrome pump for the control-flow pass: native state plus throttled title.
+    pub(super) fn tick_chrome_sync(&mut self, ctx: &FrameCtx) {
+        self.sync_fullscreen_default_from_window();
+        self.maybe_refresh_window_title(ctx, Instant::now());
+    }
+
     pub(super) fn sync_fullscreen_from_settings(&mut self) {
-        let Some(window) = self.window.as_ref() else {
-            return;
-        };
         let fullscreen = self
             .session
             .settings_snapshot()
@@ -155,12 +152,18 @@ impl HostState {
             .video
             .window
             .fullscreen_default;
-        if window_is_fullscreen(window.raw()) == fullscreen {
-            self.pending_fullscreen_sync = None;
+        let is_fullscreen = self
+            .windows
+            .live()
+            .is_some_and(|window| window_is_fullscreen(window.raw()));
+        if is_fullscreen == fullscreen {
+            self.windows.set_pending_fullscreen_sync(None);
             return;
         }
-        self.pending_fullscreen_sync = Some(fullscreen);
-        set_window_fullscreen(window.raw(), fullscreen);
+        self.windows.set_pending_fullscreen_sync(Some(fullscreen));
+        if let Some(window) = self.windows.live() {
+            set_window_fullscreen(window.raw(), fullscreen);
+        }
     }
 
     pub(super) fn persist_fullscreen_default(
@@ -169,7 +172,8 @@ impl HostState {
     ) -> Result<SettingsResult, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
         self.sync_fullscreen_from_settings();
-        self.sync_chrome(true);
+        let ctx = self.frame_ctx();
+        self.sync_chrome(&ctx, true);
         Ok(SettingsResult {
             renderer_needs_rebuild: plan.renderer_rebuild_required
                 || plan.session_rebuild_required

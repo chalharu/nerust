@@ -59,6 +59,7 @@ impl SessionHandle {
         need_images: ImageNeed,
         watch: Option<u32>,
     ) -> debug_vm::DebugSnapshot {
+        use super::debug_snapshot::{assemble_snapshot_parts, fold_watch_byte};
         use nerust_core_traits::debugger::{
             DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, InspectRequest, SnapshotRequest,
         };
@@ -80,24 +81,18 @@ impl SessionHandle {
             Ok(Ok(batch)) => batch,
             Ok(Err(_)) | Err(_) => return snapshot,
         };
-        let inspected = match batch.inspect {
-            Ok(inspected) => inspected,
-            Err(_) => return snapshot,
+        let Some(parts) = assemble_snapshot_parts(batch) else {
+            return snapshot;
         };
         snapshot.available = true;
-        snapshot.regs = inspected
-            .registers
-            .iter()
-            .map(|&(name, value)| (name, value))
-            .collect();
-        snapshot.reg_names = inspected.registers.iter().map(|(name, _)| *name).collect();
-        snapshot.dump_rows = inspected.dump.rows.iter().copied().collect();
-        snapshot.panels = inspected.panels.iter().cloned().collect();
+        snapshot.regs = parts.regs;
+        snapshot.reg_names = parts.reg_names;
+        snapshot.dump_rows = parts.dump_rows;
+        snapshot.panels = parts.panels;
         // Anchor without name-scanning: explicit pin wins, otherwise
         // the batched program counter (follow mode only).
-        let anchor = batch.anchor;
-        snapshot.pc = anchor;
-        snapshot.disasm_lines = batch.disasm;
+        snapshot.pc = parts.anchor;
+        snapshot.disasm_lines = parts.disasm;
         let (images_gen, images) = if need_images == ImageNeed::Fetch {
             match core.debug_images() {
                 Ok(Ok((generation, images))) => (generation, images),
@@ -110,14 +105,7 @@ impl SessionHandle {
         snapshot.images = images.iter().map(debug_vm::rgba_image).collect();
         // Watch folded into the page read when it lands on it;
         // off-page watches still fall back to a single-byte inspect.
-        snapshot.watch = watch.and_then(|addr| {
-            inspected
-                .dump
-                .rows
-                .iter()
-                .find(|row| addr >= row.addr && addr < row.addr + u32::from(row.valid))
-                .map(|row| row.bytes[(addr - row.addr) as usize])
-        });
+        snapshot.watch = watch.and_then(|addr| fold_watch_byte(&snapshot.dump_rows, addr));
         snapshot
     }
 

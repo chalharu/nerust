@@ -3,7 +3,7 @@
 
 use nerust_settings_core::model::language::AppLanguage;
 
-use crate::session::notification::{NotificationLevel, UiNotification};
+use crate::session::notification::{NotificationLevel, NotificationRenderer, UiNotification};
 
 /// Level tag prefixing OSD labels: text carries severity; grid names come from [`level_name`].
 /// Single source for level text so a new level cannot update one side and forget the other.
@@ -44,12 +44,7 @@ pub fn level_label(
     level: NotificationLevel,
     language: nerust_settings_core::model::language::AppLanguage,
 ) -> &'static str {
-    use nerust_settings_core::i18n::{UiText, text as ui_text};
-    match level {
-        NotificationLevel::Info => ui_text(language, UiText::NotificationInfo),
-        NotificationLevel::Warning => ui_text(language, UiText::NotificationWarning),
-        NotificationLevel::Error => ui_text(language, UiText::Error),
-    }
+    NotificationRenderer { language }.level_name(level)
 }
 
 /// One rendered history line: datetime plus grid columns.

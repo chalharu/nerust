@@ -1,12 +1,10 @@
-use std::{
-    rc::Rc,
-    sync::{Arc, Mutex, atomic::AtomicBool},
-};
+use std::rc::Rc;
 
+use nerust_emu_thread::{GuiInput, InputPort, InputSplit};
 use nerust_input_traits::{
-    BufferError, ControlInfo, ControllerCollection, ControllerProfile, CreateSplitError, GuiInput,
-    InputAssignments, InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory,
-    InputValue, PortSet, ProfileId, SlotInfo,
+    BufferError, ControlInfo, ControllerCollection, ControllerProfile, CreateSplitError,
+    InputAssignments, InputPorts, InputResources, InputStateBuffer, InputSystemFactory, InputValue,
+    PortSet, ProfileId, SlotInfo,
 };
 
 use crate::test_helpers::TEST_SLOT_P1;
@@ -35,19 +33,8 @@ impl InputStateBuffer for TestInputBuffer {
 }
 
 pub(crate) fn test_input_resources() -> (GuiInput, InputSplit) {
-    let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-        Arc::new(Mutex::new(Box::<TestInputBuffer>::default()));
-    let flag = Arc::new(AtomicBool::new(false));
-    let gui = GuiInput::new(
-        Arc::clone(&shared),
-        Arc::clone(&flag),
-        Box::new(|| Box::<TestInputBuffer>::default()),
-    );
-    let split = InputSplit::new(
-        Arc::clone(&shared),
-        Arc::clone(&flag),
-        Box::new(|| Box::<TestInputBuffer>::default()),
-    );
+    let split = InputSplit::spawn(Box::new(|| Box::<TestInputBuffer>::default()));
+    let gui = split.gui_endpoint();
     (gui, split)
 }
 
@@ -93,16 +80,9 @@ impl InputSystemFactory for MockInputFactory {
         InputAssignments::new(vec![(TEST_SLOT_P1, None)])
     }
     fn create_split(&self, _: &ControllerCollection) -> Result<InputResources, CreateSplitError> {
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-            Arc::new(Mutex::new(Box::<TestInputBuffer>::default()));
-        let flag = Arc::new(AtomicBool::new(false));
         Ok(InputResources::new(
-            InputSplit::new(
-                Arc::clone(&shared),
-                Arc::clone(&flag),
-                Box::new(|| Box::<TestInputBuffer>::default()),
-            ),
             std::collections::HashMap::new(),
+            Box::new(|| Box::<TestInputBuffer>::default()),
         ))
     }
 }

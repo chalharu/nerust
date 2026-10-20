@@ -15,6 +15,7 @@ pub(crate) mod state;
 mod system;
 #[cfg(test)]
 pub(crate) mod test_support;
+mod topology_adapter;
 mod validation;
 mod video;
 
@@ -32,4 +33,5 @@ pub use general::GeneralSettingsViewModel;
 pub use input::InputSettingsViewModel;
 pub use notification::NotificationSettingsViewModel;
 pub use system::SystemSettingsViewModel;
+pub use topology_adapter::{build_topology, device_kind};
 pub use video::VideoSettingsViewModel;

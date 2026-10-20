@@ -1,7 +1,8 @@
 use nerust_render_traits::{
     FrameBuffer, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
     renderer::{
-        GpuFactory, GpuRenderer, OpaqueError, OsdLayer, RenderResult, RendererConfig, RendererError,
+        GpuFactory, GpuRenderer, OpaqueError, OsdLayer, OsdSink, Present, RenderResult,
+        RendererConfig, RendererError, StripSink,
     },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -77,7 +78,7 @@ impl WgpuRenderer {
     }
 }
 
-impl GpuRenderer for WgpuRenderer {
+impl Present for WgpuRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
     }
@@ -109,17 +110,6 @@ impl GpuRenderer for WgpuRenderer {
         self.pipeline = None;
     }
 
-    fn set_reserved_strip(&mut self, strip: ReservedStrip) {
-        if let Some(ref mut pipeline) = self.pipeline {
-            pipeline.set_reserved_strip(strip);
-        }
-    }
-
-    fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
-        self.osd = layer;
-        self.osd_dirty = true;
-    }
-
     fn resize(&mut self, size: SurfaceSize) {
         self.size = size;
         let Some(ref surface) = self.surface else {
@@ -129,24 +119,6 @@ impl GpuRenderer for WgpuRenderer {
             return;
         };
         pipeline.reconfigure_surface(surface, size);
-    }
-
-    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        let Some(ref surface) = self.surface else {
-            return Err(RendererError::new(
-                "update: not attached",
-                Box::new(OpaqueError("".to_string())),
-            ));
-        };
-        self.pipeline = Some(Self::build_pipeline(
-            &self.instance,
-            surface,
-            self.size,
-            profile,
-            true,
-        )?);
-        self.reapply_osd();
-        Ok(())
     }
 
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
@@ -183,6 +155,41 @@ impl GpuRenderer for WgpuRenderer {
                 RenderResult::Error
             }
         }
+    }
+}
+
+impl OsdSink for WgpuRenderer {
+    fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
+        self.osd = layer;
+        self.osd_dirty = true;
+    }
+}
+
+impl StripSink for WgpuRenderer {
+    fn set_reserved_strip(&mut self, strip: ReservedStrip) {
+        if let Some(ref mut pipeline) = self.pipeline {
+            pipeline.set_reserved_strip(strip);
+        }
+    }
+}
+
+impl GpuRenderer for WgpuRenderer {
+    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
+        let Some(ref surface) = self.surface else {
+            return Err(RendererError::new(
+                "update: not attached",
+                Box::new(OpaqueError("wgpu renderer has no surface".to_string())),
+            ));
+        };
+        self.pipeline = Some(Self::build_pipeline(
+            &self.instance,
+            surface,
+            self.size,
+            profile,
+            true,
+        )?);
+        self.reapply_osd();
+        Ok(())
     }
 }
 

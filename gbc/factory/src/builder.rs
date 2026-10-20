@@ -3,11 +3,10 @@ use nerust_core_traits::{
     factory::{CoreParts, FactoryError, settings::FactorySettingsView},
     peripheral::{HostPeripheralHandles, accelerometer_channel, rumble_channel},
 };
+use nerust_emu_thread::InputPort;
 use nerust_gbc_core::console_core::GbcConsoleCore;
 use nerust_gbc_settings::GbcSettings;
-use nerust_input_traits::{
-    ControllerCollection, EmuInput, GuiInput, InputAssignments, InputSystemFactory, ProfileId,
-};
+use nerust_input_traits::{ControllerCollection, InputAssignments, InputSystemFactory, ProfileId};
 use nerust_render_traits::{
     VideoFrameFormat, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
@@ -44,18 +43,18 @@ pub(crate) fn create_core_and_adapter(
     let resources = crate::GbcFactory
         .create_split(&controllers)
         .map_err(|error| FactoryError::Create(error.to_string()))?;
-    let gui_input = GuiInput::from_split(resources.split());
-    let emu_input = EmuInput::from_split(resources.split());
     // Project the unified (attachment, ControlId) map onto the legacy
     // CoreParts digital-only key until CoreParts migrates to ControlId.
     let field_map = resources
         .field_map()
         .iter()
-        .filter_map(|((attachment, control), field)| match control {
-            nerust_input_traits::ControlId::Digital(id) => Some(((*attachment, *id), *field)),
-            _ => None,
+        .filter_map(|((attachment, control), field)| {
+            control.as_digital().map(|id| ((*attachment, id), *field))
         })
         .collect();
+    let split = nerust_emu_thread::InputSplit::spawn(resources.take_factory());
+    let gui_input = split.gui_endpoint();
+    let emu_input = split.emu_endpoint();
     speaker.start();
     let (accelerometer_handle, accelerometer_port) = accelerometer_channel();
     let (rumble_handle, rumble_port) = rumble_channel();
@@ -67,7 +66,7 @@ pub(crate) fn create_core_and_adapter(
     Ok(CoreParts {
         core: Box::new(core),
         audio: speaker,
-        gui_input,
+        gui_input: Box::new(gui_input),
         // Project the unified (attachment, ControlId) map onto the legacy
         // CoreParts digital-only key until CoreParts migrates to ControlId.
         field_map,

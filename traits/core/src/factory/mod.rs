@@ -5,7 +5,7 @@ pub mod settings;
 use std::collections::HashMap;
 
 use nerust_input_traits::{
-    AttachmentId, DigitalControlId, GuiInput, InputAssignments, InputSystemFactory,
+    AttachmentId, DigitalControlId, InputAssignments, InputSystemFactory, InputValue,
 };
 use thiserror::Error;
 
@@ -29,6 +29,22 @@ pub enum FactoryError {
     InvalidSettings,
 }
 
+/// Session-owned GUI input endpoint, behind a port for ISP.
+/// Concrete double-buffering lives in `nerust_emu_thread`; cores and
+/// shells program to this narrow surface only.
+pub trait GuiInputPort: Send {
+    /// Write one absolute field of the staged GUI state.
+    fn set(
+        &mut self,
+        field: usize,
+        value: InputValue,
+    ) -> Result<(), nerust_input_traits::BufferError>;
+    /// Must be called every frame. Copies absolute state into shared.
+    fn publish(&mut self);
+    /// Reset staged state to neutral.
+    fn clear(&mut self);
+}
+
 /// Raw parts produced by a system factory before EmuCore wrapping.
 pub struct CoreParts {
     pub core: Box<dyn crate::ConsoleCore>,
@@ -36,7 +52,7 @@ pub struct CoreParts {
     /// through the rate-control filter into this. Factories start it;
     /// cores never see it.
     pub audio: Box<dyn crate::audio::AudioBackend>,
-    pub gui_input: GuiInput,
+    pub gui_input: Box<dyn GuiInputPort>,
     /// (attachment, control) → absolute field index
     pub field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     pub render_profile: nerust_render_traits::VideoRenderProfile,

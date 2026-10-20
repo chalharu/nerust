@@ -21,7 +21,7 @@ use nerust_settings_core::i18n::{UiText, text as ui_text};
 use nerust_settings_core::model::language::AppLanguage;
 use tao::event_loop::EventLoopWindowTarget;
 
-use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
+use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
 
 use super::bridge::DebugBridge;
 #[cfg(test)]
@@ -248,11 +248,6 @@ pub(crate) struct DebugWindowHandle {
 }
 
 impl DebugWindowHandle {
-    /// Narrow bridge port for the host drain: `&dyn BridgeLock` snapshot/apply surface.
-    pub(crate) fn bridge_lock(&self) -> &(dyn crate::aux::bridge::BridgeLock + '_) {
-        &*self.bridge
-    }
-
     /// Narrow live-images apply for the PPU follow tick: images land when newer.
     /// Returns whether the viewer needs a rebuild.
     pub(crate) fn apply_live(
@@ -313,13 +308,14 @@ impl DebugWindowHandle {
     ) -> Option<Self> {
         let bridge = Arc::new(DebugBridge::new(display, spaces, mem_addr, language));
         let title = ui_text(language, UiText::Debugger).to_string();
-        let scaffold = WindowScaffold::open(
+        let surface = AuxSurface::open(
             event_loop,
             &title,
             DEBUG_WINDOW_SIZE,
             Some(DEBUG_WINDOW_MIN_SIZE),
             position,
             "debugger window",
+            Arc::new(AtomicBool::new(false)),
         )
         .map_err(|error| {
             // Typed scaffold failure: surface the tagged native detail here.
@@ -331,18 +327,8 @@ impl DebugWindowHandle {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let shell = crate::aux::shell::AuxShell::assemble(
-            scaffold,
-            instance,
-            Arc::new(AtomicBool::new(false)),
-        );
+        let shell = crate::aux::shell::AuxShell::assemble(surface, instance);
         Some(Self { shell, bridge })
-    }
-
-    /// Narrow batch take for the host drain: PPU-open flag plus queued actions.
-    pub(crate) fn take_debug_batch(&self) -> (bool, Vec<DebugAction>) {
-        use crate::aux::bridge::BridgeLock;
-        self.bridge.take_debug_batch()
     }
 
     pub(crate) fn sync_from_bridge(&mut self) {
@@ -352,38 +338,55 @@ impl DebugWindowHandle {
     }
 }
 
-impl super::focus::AuxWindow for DebugWindowHandle {
+impl super::focus::AuxShellRef for DebugWindowHandle {
     fn kind(&self) -> super::focus::AuxKind {
         super::focus::AuxKind::Debug
     }
 
-    fn tao_window_id(&self) -> tao::window::WindowId {
-        self.shell.tao_window_id()
+    fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
+        &self.shell
     }
 
-    fn close_requested(&self) -> bool {
-        self.shell.close_requested()
+    fn shell_mut(&mut self) -> &mut dyn crate::aux::shell::AuxShellOps {
+        &mut self.shell
+    }
+}
+
+impl super::registry::AuxController for DebugWindowHandle {
+    fn take_debug_requests(&mut self) -> Option<(bool, Vec<DebugAction>)> {
+        use crate::aux::bridge::BridgeLock;
+        Some(self.bridge.take_debug_batch())
     }
 
-    fn focus_window(&self) {
-        self.shell.focus_window();
+    fn drain_snapshot(&self, ppu_open: bool) -> Option<super::bridge::DrainSnapshot> {
+        use crate::aux::bridge::BridgeLock;
+        let lock: &dyn BridgeLock = &*self.bridge;
+        Some(lock.drain_snapshot(ppu_open))
     }
 
-    fn request_redraw(&self) {
-        self.shell.request_redraw();
+    fn apply_drain(&mut self, display: DisplayCache, reselected: Option<(u32, Option<u8>)>) {
+        self.apply_drain_display(display, reselected);
     }
 
-    fn handle_common(&mut self, event: &tao::event::WindowEvent) {
-        self.shell.handle_common_event(event);
+    fn apply_live(
+        &mut self,
+        generation: u64,
+        images: Vec<(String, u32, u32, Vec<u8>)>,
+        running: bool,
+    ) -> bool {
+        self.apply_live(generation, images, running)
     }
 
-    fn feed_event(&mut self, event: tao::event::WindowEvent) -> Option<iced::Event> {
-        self.shell.feed_tao_event(event)
+    fn sync_view(&mut self) {
+        self.sync_from_bridge();
     }
 
-    fn render(&mut self) {
-        let tag = self.kind().log_tag();
-        self.shell.render(tag);
+    fn shared_bridge(&self) -> Option<std::sync::Arc<super::bridge::DebugBridge>> {
+        Some(std::sync::Arc::clone(self.shared_bridge()))
+    }
+
+    fn debug_lock_audit(&self) -> Vec<&'static str> {
+        self.bridge.try_lock_audit()
     }
 }
 
@@ -411,10 +414,7 @@ impl super::focus::AuxEvents for DebugWindowHandle {
         } else {
             None
         };
-        let mut messages = Vec::new();
-        let outcome = self.shell.pump_frame(mapped, &mut messages);
-        messages.extend(page);
         self.shell
-            .finish(outcome, messages, &self.bridge.view_invalidated)
+            .pump_finish(mapped, page, &self.bridge.view_invalidated)
     }
 }

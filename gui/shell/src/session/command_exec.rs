@@ -4,7 +4,8 @@
 use crate::session::{
     SessionError, SessionHandle,
     commands::{
-        SessionCmd, SessionCommand, SessionCommandOutcome, outcome_notification, resolve_toggle,
+        CommandHandler, SessionCmd, SessionCommand, SessionCommandHandler, SessionCommandOutcome,
+        TogglePauseDecorator, outcome_notification,
     },
     error::SlotOpFailure,
     osd::TickMetrics,
@@ -27,6 +28,167 @@ enum SaveOp {
 enum LoadOp {
     LoadActiveSlot,
     LoadSlot(u64),
+}
+
+/// One table row: stable name plus its handler. Lookup is by name;
+/// [`SessionCommandHandler::handler`] is the sole dispatch point.
+struct CommandEntry {
+    name: &'static str,
+    run: CommandHandler,
+}
+
+fn run_pause(
+    session: &mut SessionHandle,
+    _: SessionCommand,
+    tick: &TickMetrics,
+) -> Result<SessionCommandOutcome, SessionError> {
+    session.cmd_pause(tick)
+}
+
+fn run_resume(
+    session: &mut SessionHandle,
+    _: SessionCommand,
+    tick: &TickMetrics,
+) -> Result<SessionCommandOutcome, SessionError> {
+    session.cmd_resume(tick)
+}
+
+/// TogglePause arm: resolves through the decorator, then delegates to the steady handler.
+fn run_toggle(
+    session: &mut SessionHandle,
+    command: SessionCommand,
+    tick: &TickMetrics,
+) -> Result<SessionCommandOutcome, SessionError> {
+    let resolved = TogglePauseDecorator::resolve(command, tick);
+    resolved.handler()(session, resolved, tick)
+}
+
+fn run_reset(
+    session: &mut SessionHandle,
+    _: SessionCommand,
+    _: &TickMetrics,
+) -> Result<SessionCommandOutcome, SessionError> {
+    session.cmd_reset()
+}
+
+fn run_select_active(
+    session: &mut SessionHandle,
+    command: SessionCommand,
+    _: &TickMetrics,
+) -> Result<SessionCommandOutcome, SessionError> {
+    let SessionCommand::SelectActiveSlot(id) = command else {
+        return Ok(unreachable_outcome());
+    };
+    Ok(session.cmd_select_active_slot(id))
+}
+
+fn run_adjacent_next(
+    session: &mut SessionHandle,
+    _: SessionCommand,
+    _: &TickMetrics,
+) -> Result<SessionCommandOutcome, SessionError> {
+    Ok(session.cmd_adjacent_slot(SlotDirection::Next))
+}
+
+fn run_adjacent_previous(
+    session: &mut SessionHandle,
+    _: SessionCommand,
+    _: &TickMetrics,
+) -> Result<SessionCommandOutcome, SessionError> {
+    Ok(session.cmd_adjacent_slot(SlotDirection::Previous))
+}
+
+fn run_slot_command(
+    session: &mut SessionHandle,
+    command: SessionCommand,
+    tick: &TickMetrics,
+) -> Result<SessionCommandOutcome, SessionError> {
+    if let Some(op) = command.as_save_op() {
+        return Ok(session.run_save_op(op));
+    }
+    if let Some(op) = command.as_load_op() {
+        return Ok(session.run_load_op(op, tick));
+    }
+    Ok(unreachable_outcome())
+}
+
+/// Fallback for slot commands missing their half: total in release, loud in debug.
+fn unreachable_outcome() -> SessionCommandOutcome {
+    debug_assert!(false, "slot command missing its save/load half");
+    SessionCommandOutcome {
+        executed: false,
+        needs_redraw: false,
+        slot_failure: Some(SlotOpFailure::Unavailable),
+    }
+}
+
+/// Registration table: every command resolves to exactly one handler by stable name.
+static COMMAND_TABLE: &[CommandEntry] = &[
+    CommandEntry {
+        name: "Pause",
+        run: run_pause,
+    },
+    CommandEntry {
+        name: "Resume",
+        run: run_resume,
+    },
+    CommandEntry {
+        name: "TogglePause",
+        run: run_toggle,
+    },
+    CommandEntry {
+        name: "Reset",
+        run: run_reset,
+    },
+    CommandEntry {
+        name: "CreateSlot",
+        run: run_slot_command,
+    },
+    CommandEntry {
+        name: "SaveActiveSlotOrNew",
+        run: run_slot_command,
+    },
+    CommandEntry {
+        name: "LoadActiveSlot",
+        run: run_slot_command,
+    },
+    CommandEntry {
+        name: "SelectActiveSlot",
+        run: run_select_active,
+    },
+    CommandEntry {
+        name: "SaveSlot",
+        run: run_slot_command,
+    },
+    CommandEntry {
+        name: "LoadSlot",
+        run: run_slot_command,
+    },
+    CommandEntry {
+        name: "DeleteSlot",
+        run: run_slot_command,
+    },
+    CommandEntry {
+        name: "SelectNextSlot",
+        run: run_adjacent_next,
+    },
+    CommandEntry {
+        name: "SelectPreviousSlot",
+        run: run_adjacent_previous,
+    },
+];
+
+impl SessionCommandHandler for SessionCommand {
+    /// Handler for this command from the registration table.
+    /// `TogglePause` callers resolve through [`TogglePauseDecorator`] first.
+    fn handler(self) -> CommandHandler {
+        let name = self.cmd_name();
+        COMMAND_TABLE
+            .iter()
+            .find(|entry| entry.name == name)
+            .map(|entry| entry.run)
+            .expect("every SessionCommand registers exactly one handler")
+    }
 }
 
 impl SessionCommand {
@@ -56,8 +218,7 @@ impl SessionHandle {
         &mut self,
         command: SessionCommand,
     ) -> Result<SessionCommandOutcome, SessionError> {
-        // One metrics lock per command: the tick threads through the executor and notification.
-        // Loads fetch once more on success for the redraw decision.
+        // One lock-free tick per command, threaded through the executor and notification.
         let tick = self.tick_metrics();
         let result = self.run_command_inner(command, &tick);
         match &result {
@@ -65,10 +226,7 @@ impl SessionHandle {
                 let active = self.active_slot_id();
                 // Notify the entered state: TogglePause from paused
                 // must read Resumed, not the invoked command name.
-                let notified = match command {
-                    SessionCommand::TogglePause => resolve_toggle(command, tick.paused),
-                    other => other,
-                };
+                let notified = TogglePauseDecorator::resolve(command, &tick);
                 if let Some(kind) = outcome_notification(notified, outcome, active) {
                     self.notifications.push(kind);
                 }
@@ -95,45 +253,8 @@ impl SessionHandle {
         command: SessionCommand,
         tick: &TickMetrics,
     ) -> Result<SessionCommandOutcome, SessionError> {
-        // Slot commands dispatch through their save/load half: one
-        // match, no second dispatch inside the runners.
-        if let Some(op) = command.as_save_op() {
-            return Ok(self.run_save_op(op));
-        }
-        if let Some(op) = command.as_load_op() {
-            // The redraw decision needs the post-load pause state, threaded in by the caller.
-            let post_tick = self.tick_metrics();
-            return Ok(self.run_load_op(op, tick, &post_tick));
-        }
-        match command {
-            SessionCommand::Pause => self.cmd_pause(tick),
-            SessionCommand::Resume => self.cmd_resume(tick),
-            SessionCommand::TogglePause => self.cmd_toggle_pause(tick),
-            SessionCommand::Reset => self.cmd_reset(),
-            SessionCommand::SelectActiveSlot(id) => Ok(self.cmd_select_active_slot(id)),
-            SessionCommand::SelectNextSlot => Ok(self.cmd_adjacent_slot(SlotDirection::Next)),
-            SessionCommand::SelectPreviousSlot => {
-                Ok(self.cmd_adjacent_slot(SlotDirection::Previous))
-            }
-            // Save/load arms return above; reaching here means the halves disagree.
-            // The assert pins the invariant; the fallback keeps the command total in release.
-            SessionCommand::CreateSlot
-            | SessionCommand::SaveActiveSlotOrNew
-            | SessionCommand::SaveSlot(_)
-            | SessionCommand::DeleteSlot(_)
-            | SessionCommand::LoadActiveSlot
-            | SessionCommand::LoadSlot(_) => {
-                debug_assert!(
-                    command.as_save_op().is_some() || command.as_load_op().is_some(),
-                    "slot command missing its save/load half",
-                );
-                Ok(SessionCommandOutcome {
-                    executed: false,
-                    needs_redraw: false,
-                    slot_failure: Some(SlotOpFailure::Unavailable),
-                })
-            }
-        }
+        // Single dispatch: the registration table owns the command-to-handler mapping.
+        command.handler()(self, command, tick)
     }
 
     fn cmd_pause(&mut self, tick: &TickMetrics) -> Result<SessionCommandOutcome, SessionError> {
@@ -158,17 +279,6 @@ impl SessionHandle {
             needs_redraw: tick.loaded,
             slot_failure: None,
         })
-    }
-
-    fn cmd_toggle_pause(
-        &mut self,
-        tick: &TickMetrics,
-    ) -> Result<SessionCommandOutcome, SessionError> {
-        if tick.paused {
-            self.cmd_resume(tick)
-        } else {
-            self.cmd_pause(tick)
-        }
     }
 
     fn cmd_reset(&mut self) -> Result<SessionCommandOutcome, SessionError> {
@@ -230,13 +340,8 @@ impl SessionHandle {
     }
 
     /// Load variant of [`run_save_op`](Self::run_save_op): a cleared stale pause needs a redraw.
-    /// The comparison uses the caller-threaded `post_tick`, so this runner never re-locks.
-    fn run_load_op(
-        &mut self,
-        op: LoadOp,
-        tick: &TickMetrics,
-        post_tick: &TickMetrics,
-    ) -> SessionCommandOutcome {
+    /// One tick per command: the post-load pause re-reads only when a paused load succeeded.
+    fn run_load_op(&mut self, op: LoadOp, tick: &TickMetrics) -> SessionCommandOutcome {
         let exporter = self.emu.exporter().ok();
         let slot_failure = match exporter {
             Some(core) => {
@@ -251,9 +356,9 @@ impl SessionHandle {
             None => Some(SlotOpFailure::Empty),
         };
         let executed = slot_failure.is_none();
-        // A successful load that clears a stale pause needs a redraw: compare against post tick.
-        let now_paused = if executed {
-            post_tick.paused
+        // A successful load that clears a stale pause needs a redraw: re-read pause only then.
+        let now_paused = if executed && tick.paused {
+            self.tick_metrics().paused
         } else {
             tick.paused
         };

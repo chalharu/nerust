@@ -40,11 +40,7 @@ impl DialogCoordinator {
     }
 
     fn screen(&self, is_resumed: bool, tick: TickMetrics) -> Screen {
-        Screen::show_gate(
-            is_resumed,
-            self.ownership.is_settings_open(),
-            tick.can_pause(),
-        )
+        self.ownership.screen(is_resumed, tick.can_pause())
     }
 
     /// Show the oldest queued error unless suspended, showing,
@@ -68,7 +64,7 @@ impl DialogCoordinator {
     ) -> DismissTransition {
         // Bridge truth here: a settings dialog may have opened over the
         // error between the cached flag's last event-driven update.
-        let screen = Screen::show_gate(is_resumed, self.ownership.is_settings_open(), false);
+        let screen = self.ownership.screen(is_resumed, false);
         self.controller.on_dismissed(queue, screen)
     }
 
@@ -86,11 +82,7 @@ impl DialogCoordinator {
         is_resumed: bool,
         tick: TickMetrics,
     ) -> SettingsClosedTransition {
-        let screen = Screen::show_gate(
-            is_resumed,
-            self.ownership.is_settings_open(),
-            tick.can_pause(),
-        );
+        let screen = self.ownership.screen(is_resumed, tick.can_pause());
         self.controller.on_settings_closed(queue, screen)
     }
 }

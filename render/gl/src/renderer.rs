@@ -12,8 +12,8 @@ use glutin::{
 use nerust_render_traits::{
     FrameBuffer, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
     renderer::{
-        GpuFactory, GpuRenderer, OsdLayer, RenderResult, RendererConfig, RendererError,
-        RendererErrorKind,
+        GpuFactory, GpuRenderer, OsdLayer, OsdSink, Present, RenderResult, RendererConfig,
+        RendererError, RendererErrorKind, StripSink,
     },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -90,10 +90,10 @@ impl GlRenderer {
         log::warn!(
             "GlRenderer: view teardown failed ({} names: textures={}, programs={}, arrays={}, buffers={})",
             report.failed_names(),
-            report.failed_textures,
-            report.failed_programs,
-            report.failed_arrays,
-            report.failed_buffers,
+            report.failed_textures(),
+            report.failed_programs(),
+            report.failed_arrays(),
+            report.failed_buffers(),
         );
     }
 
@@ -266,7 +266,7 @@ impl GlRenderer {
     }
 }
 
-impl GpuRenderer for GlRenderer {
+impl Present for GlRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
     }
@@ -292,10 +292,12 @@ impl GpuRenderer for GlRenderer {
         self.context_detach();
     }
 
-    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
-        self.reserved = strip;
+    fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
+        self.orchestrate_render(frame_buffer)
     }
+}
 
+impl OsdSink for GlRenderer {
     /// Stage an OSD layer; header gate skips the clone on equality.
     /// Keeps the stored copy needed for profile rebuilds.
     fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
@@ -309,7 +311,15 @@ impl GpuRenderer for GlRenderer {
         // A fresh stage re-arms the give-up warning.
         self.osd_drop_warned = false;
     }
+}
 
+impl StripSink for GlRenderer {
+    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
+        self.reserved = strip;
+    }
+}
+
+impl GpuRenderer for GlRenderer {
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
         self.render_profile = profile.clone();
         // The pre-GLES3 pack buffer only ever grows per frame; a
@@ -327,10 +337,6 @@ impl GpuRenderer for GlRenderer {
         self.close_live_view();
         self.view = Some(fresh);
         Ok(())
-    }
-
-    fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
-        self.orchestrate_render(frame_buffer)
     }
 }
 
@@ -534,20 +540,11 @@ mod tests {
     #[test]
     fn osd_gate_skips_identical_layers() {
         use nerust_render_traits::renderer::OsdLayer;
-        let layer = OsdLayer {
-            x: 0,
-            y: 0,
-            width: 2,
-            height: 1,
-            rgba: vec![1; 8],
-        };
+        let layer = OsdLayer::new(0, 0, 2, 1, vec![1; 8]);
         assert!(OsdLayer::same_option(Some(&layer), Some(&layer.clone())));
         assert!(!OsdLayer::same_option(
             Some(&layer),
-            Some(&OsdLayer {
-                x: 1,
-                ..layer.clone()
-            })
+            Some(&OsdLayer::new(1, 0, 2, 1, layer.rgba.to_vec()))
         ));
         assert!(OsdLayer::same_option(None, None));
         assert!(!OsdLayer::same_option(Some(&layer), None));
@@ -587,6 +584,7 @@ mod tests {
     fn gl_renderer_rebuild_and_detach() {
         use glutin::context::PossiblyCurrentGlContext as _;
         use glutin::display::GlDisplay as _;
+        use nerust_render_traits::renderer::{OsdSink as _, Present as _};
         use nerust_render_traits::{
             SurfaceSize,
             renderer::{GpuRenderer as _, OsdLayer, RenderResult},
@@ -631,20 +629,8 @@ mod tests {
         );
         assert!(matches!(renderer.render(&empty), RenderResult::Skipped));
         assert!(renderer.update_render_profile(&profile).is_err());
-        renderer.set_osd_layer(Some(OsdLayer {
-            x: 0,
-            y: 0,
-            width: 2,
-            height: 1,
-            rgba: vec![255; 8],
-        }));
-        renderer.set_osd_layer(Some(OsdLayer {
-            x: 0,
-            y: 0,
-            width: 2,
-            height: 1,
-            rgba: vec![255; 8],
-        }));
+        renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
+        renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
         let view = renderer.fresh_view(&profile).unwrap();
         renderer.view = Some(view);
         renderer.context = Some(current.context);

@@ -1,5 +1,7 @@
 //! Touch-overlay geometry owned by Rust: single source of truth for hit zones.
-//! Kotlin draws the pushed zones, falling back to its local copy when the payload is absent or malformed.
+//! Kotlin draws the pushed zones and joystick only; it keeps no local copy.
+
+// Named layout fractions.
 
 use nerust_core_traits::touch::{
     TouchControl, TouchControlRole, TouchPoint, TouchRect, clamp_floating_dpad_knob,
@@ -11,6 +13,10 @@ use nerust_input_traits::{AttachmentId, DigitalControlId};
 
 /// Top of the touch-control band in portrait (fraction of height).
 pub(super) const PORTRAIT_CONTROL_TOP: f32 = 0.54;
+/// Joystick idle center X as a fraction of the minor axis.
+/// Rust pushes the idle home; Kotlin never recomputes it.
+pub(super) const JOY_HOME_X_OF_BASE: f32 = 0.08;
+
 /// Fixed-capacity D-Pad target set: at most the four cardinal directions.
 /// `None` pads unused slots, so the touch-move path allocates nothing.
 pub(super) type DpadTargets = [Option<(AttachmentId, DigitalControlId)>; 4];
@@ -57,8 +63,7 @@ pub(super) const LANDSCAPE_ACTIVATION_RIGHT: f32 = 0.45;
 /// Landscape D-Pad activation top (fraction of height).
 pub(super) const LANDSCAPE_ACTIVATION_TOP: f32 = 0.25;
 /// Floating-joystick knob radius as a fraction of the base radius.
-/// Rust hit-testing never needs it; the shared fraction lives here.
-#[allow(dead_code)]
+/// Pushed to Kotlin with the joystick home; hit-testing never needs it.
 pub(super) const KNOB_RADIUS_OF_BASE: f32 = 0.48;
 
 /// Canonical zone table: role plus the label Kotlin draws.
@@ -99,12 +104,23 @@ pub(super) struct TouchZone {
     pub(super) bounds: TouchRect,
 }
 
+/// One pushed joystick home: idle center plus base/knob radii.
+/// Relative: center over surface size, radii over the minor axis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct RelativeJoystick {
+    pub x: f32,
+    pub y: f32,
+    pub base_radius: f32,
+    pub knob_radius: f32,
+}
+
 #[derive(Debug)]
 pub(super) struct ProfileTouchOverlay {
     pub(super) zones: Vec<TouchZone>,
     pub(super) dpad_controls: Vec<TouchControl>,
     pub(super) dpad_activation: TouchRect,
     pub(super) dpad_radius: f32,
+    pub(super) joystick_home: TouchPoint,
 }
 
 #[derive(Debug)]
@@ -220,6 +236,11 @@ impl ProfileTouchOverlay {
         } else {
             height * LANDSCAPE_ACTIVATION_TOP
         };
+        // Idle joystick home, pushed so Kotlin never recomputes geometry.
+        let joystick_home = TouchPoint {
+            x: base * JOY_HOME_X_OF_BASE + dpad_size * 0.5,
+            y: dpad_center_y,
+        };
         Self {
             zones: button_controls
                 .into_iter()
@@ -236,6 +257,7 @@ impl ProfileTouchOverlay {
                 height: (height - activation_top - dpad_radius * 2.0).max(0.0),
             },
             dpad_radius,
+            joystick_home,
         }
     }
 
@@ -278,6 +300,26 @@ impl ProfileTouchOverlay {
             })
             .collect::<Vec<_>>()
             .join(";")
+    }
+
+    /// Joystick home in relative coordinates for the JNI overlay update.
+    /// Center over surface size, radii over the minor axis.
+    pub(super) fn relative_joystick(&self, width: f32, height: f32) -> RelativeJoystick {
+        let base = width.max(1.0).min(height.max(1.0));
+        RelativeJoystick {
+            x: self.joystick_home.x / width.max(1.0),
+            y: self.joystick_home.y / height.max(1.0),
+            base_radius: self.dpad_radius / base,
+            knob_radius: self.dpad_radius * KNOB_RADIUS_OF_BASE / base,
+        }
+    }
+
+    /// Compact joystick encoding: `cx,cy,baseR,knobR` at 4 decimals.
+    pub(super) fn encode_joystick(joystick: &RelativeJoystick) -> String {
+        format!(
+            "{:.4},{:.4},{:.4},{:.4}",
+            joystick.x, joystick.y, joystick.base_radius, joystick.knob_radius,
+        )
     }
 
     fn is_dpad_role(role: TouchControlRole) -> bool {
@@ -430,157 +472,19 @@ mod tests {
         }
     }
 
-    /// Geometry pin: every Rust fraction must match the canonical `touch_geometry.json`.
-    /// A one-side drift fails loudly.
+    /// Joystick push: home stays inside the surface, radii stay positive,
+    /// and the wire form parses as four floats.
     #[test]
-    fn geometry_fractions_match_canonical_json() {
-        #[derive(serde::Deserialize)]
-        struct GeometryPin {
-            portrait_control_top: f32,
-            dpad_size_of_base: f32,
-            dpad_radius_of_size: f32,
-            action_size_of_base: f32,
-            action_gap_of_base: f32,
-            portrait_action_left: f32,
-            landscape_action_margin_of_base: f32,
-            center_width_of_base: f32,
-            center_height_of_base: f32,
-            center_gap_of_base: f32,
-            portrait_center_top_of_control: f32,
-            landscape_center_top: f32,
-            portrait_dpad_center_of_control: f32,
-            landscape_dpad_center: f32,
-            shoulder_width_of_base: f32,
-            shoulder_height_of_base: f32,
-            shoulder_margin_x_of_width: f32,
-            shoulder_top_nudge_of_base: f32,
-            portrait_activation_right: f32,
-            landscape_activation_right: f32,
-            landscape_activation_top: f32,
-            knob_radius_of_base: f32,
-            zone_labels: Vec<String>,
-        }
-        let raw = include_str!("../../touch_geometry.json");
-        let pin: GeometryPin = serde_json::from_str(raw).expect("touch_geometry.json must parse");
-        for (name, actual, expected) in [
-            (
-                "portrait_control_top",
-                PORTRAIT_CONTROL_TOP,
-                pin.portrait_control_top,
-            ),
-            (
-                "dpad_size_of_base",
-                DPAD_SIZE_OF_BASE,
-                pin.dpad_size_of_base,
-            ),
-            (
-                "dpad_radius_of_size",
-                DPAD_RADIUS_OF_SIZE,
-                pin.dpad_radius_of_size,
-            ),
-            (
-                "action_size_of_base",
-                ACTION_SIZE_OF_BASE,
-                pin.action_size_of_base,
-            ),
-            (
-                "action_gap_of_base",
-                ACTION_GAP_OF_BASE,
-                pin.action_gap_of_base,
-            ),
-            (
-                "portrait_action_left",
-                PORTRAIT_ACTION_LEFT,
-                pin.portrait_action_left,
-            ),
-            (
-                "landscape_action_margin_of_base",
-                LANDSCAPE_ACTION_MARGIN_OF_BASE,
-                pin.landscape_action_margin_of_base,
-            ),
-            (
-                "center_width_of_base",
-                CENTER_WIDTH_OF_BASE,
-                pin.center_width_of_base,
-            ),
-            (
-                "center_height_of_base",
-                CENTER_HEIGHT_OF_BASE,
-                pin.center_height_of_base,
-            ),
-            (
-                "center_gap_of_base",
-                CENTER_GAP_OF_BASE,
-                pin.center_gap_of_base,
-            ),
-            (
-                "portrait_center_top_of_control",
-                PORTRAIT_CENTER_TOP_OF_CONTROL,
-                pin.portrait_center_top_of_control,
-            ),
-            (
-                "landscape_center_top",
-                LANDSCAPE_CENTER_TOP,
-                pin.landscape_center_top,
-            ),
-            (
-                "portrait_dpad_center_of_control",
-                PORTRAIT_DPAD_CENTER_OF_CONTROL,
-                pin.portrait_dpad_center_of_control,
-            ),
-            (
-                "landscape_dpad_center",
-                LANDSCAPE_DPAD_CENTER,
-                pin.landscape_dpad_center,
-            ),
-            (
-                "shoulder_width_of_base",
-                SHOULDER_WIDTH_OF_BASE,
-                pin.shoulder_width_of_base,
-            ),
-            (
-                "shoulder_height_of_base",
-                SHOULDER_HEIGHT_OF_BASE,
-                pin.shoulder_height_of_base,
-            ),
-            (
-                "shoulder_margin_x_of_width",
-                SHOULDER_MARGIN_X_OF_WIDTH,
-                pin.shoulder_margin_x_of_width,
-            ),
-            (
-                "shoulder_top_nudge_of_base",
-                SHOULDER_TOP_NUDGE_OF_BASE,
-                pin.shoulder_top_nudge_of_base,
-            ),
-            (
-                "portrait_activation_right",
-                PORTRAIT_ACTIVATION_RIGHT,
-                pin.portrait_activation_right,
-            ),
-            (
-                "landscape_activation_right",
-                LANDSCAPE_ACTIVATION_RIGHT,
-                pin.landscape_activation_right,
-            ),
-            (
-                "landscape_activation_top",
-                LANDSCAPE_ACTIVATION_TOP,
-                pin.landscape_activation_top,
-            ),
-            (
-                "knob_radius_of_base",
-                KNOB_RADIUS_OF_BASE,
-                pin.knob_radius_of_base,
-            ),
-        ] {
-            assert!(
-                (actual - expected).abs() < 1e-6,
-                "{name} drifted: Rust {actual} vs canonical {expected}"
-            );
-        }
-        let rust_labels: Vec<&str> = TOUCH_ZONES.iter().map(|(_, label)| *label).collect();
-        let pin_labels: Vec<&str> = pin.zone_labels.iter().map(String::as_str).collect();
-        assert_eq!(rust_labels, pin_labels, "zone order drifted");
+    fn joystick_home_encodes_inside_surface() {
+        let overlay = portrait_overlay();
+        let joystick = overlay.relative_joystick(1080.0, 1920.0);
+        assert!((0.0..1.0).contains(&joystick.x));
+        assert!((0.0..1.0).contains(&joystick.y));
+        assert!(joystick.base_radius > 0.0);
+        assert!(joystick.knob_radius > 0.0);
+        assert!(joystick.knob_radius < joystick.base_radius);
+        let encoded = ProfileTouchOverlay::encode_joystick(&joystick);
+        let coords: Vec<f32> = encoded.split(',').map(|c| c.parse().unwrap()).collect();
+        assert_eq!(coords.len(), 4);
     }
 }

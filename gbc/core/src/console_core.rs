@@ -10,7 +10,7 @@ use nerust_core_traits::{
         rumble_channel,
     },
 };
-use nerust_input_traits::EmuInput;
+use nerust_emu_thread::EmuInput;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{

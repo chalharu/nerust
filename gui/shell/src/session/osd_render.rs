@@ -1,6 +1,7 @@
 //! Render adapter: the single point where OSD decisions cross into render vocabulary.
 //! Only this module names `nerust_render_traits` types and maps settings corners to anchors.
 
+use nerust_render_osd::{OsdContent, OsdRow, OsdStatus};
 use nerust_render_traits::renderer::{OsdAnchor, SafeInsets};
 use nerust_settings_core::model::local::NotificationPosition;
 
@@ -34,8 +35,7 @@ impl From<SafeInsets> for UiInsets {
 impl OsdPlan {
     /// Single construction shared by every frontend: rows plus the status pill.
     /// Takes ownership; row tags ride through as static markers with no per-frame allocation.
-    pub fn into_content(self) -> nerust_render_traits::renderer::OsdContent {
-        use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
+    pub fn into_content(self) -> OsdContent {
         OsdContent {
             rows: self
                 .rows

@@ -95,11 +95,9 @@ class ChromeManager(private val activity: MainActivity) {
     private var controllerOverlayHiddenUntil = 0L
     private var controlsVisibility = "auto"
     private var controlsOpacityPercent = 65
-    private var controlsScalePercent = 100
-    private var controlsVerticalOffsetPercent = 0
     private var controlsHaptics = true
-    private var controlsShouldersVisible = true
     private var controlsPushedZones: List<PushedOverlayZone> = emptyList()
+    private var controlsPushedJoystick: PushedJoystick? = null
     private var drawerChromePopup: PopupWindow? = null
     private var drawerEdgeHandleView: View? = null
     private var drawerShowing = false
@@ -111,6 +109,8 @@ class ChromeManager(private val activity: MainActivity) {
     private var fpsValue: Float = 0f
     private var fpsVisible: Boolean = false
     var lastDrawerStateForTest = "not requested"
+        private set
+    var chromeAttachGiveUps = 0
         private set
 
     fun onResume() {
@@ -166,19 +166,15 @@ class ChromeManager(private val activity: MainActivity) {
     fun configureControlsOverlay(
         visibility: String,
         opacityPercent: Int,
-        scalePercent: Int,
-        verticalOffsetPercent: Int,
         haptics: Boolean,
-        shouldersVisible: Boolean,
         zones: String,
+        joystick: String,
     ) {
         controlsVisibility = visibility
         controlsOpacityPercent = opacityPercent.coerceIn(0, 100)
-        controlsScalePercent = scalePercent.coerceIn(50, 150)
-        controlsVerticalOffsetPercent = verticalOffsetPercent.coerceIn(-30, 30)
         controlsHaptics = haptics
-        controlsShouldersVisible = shouldersVisible
         controlsPushedZones = parsePushedZones(zones)
+        controlsPushedJoystick = parsePushedJoystick(joystick)
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
@@ -325,7 +321,8 @@ class ChromeManager(private val activity: MainActivity) {
 
     fun dispatchMenuAction(action: String) {
         removeDrawerOverlay()
-        activity.sendMenuAction(action)
+        // Kotlin builds the v1 envelope; Rust decodes JSON only.
+        activity.sendMenuAction(menuEventJson(action))
     }
 
     fun dismissChromePopups() {
@@ -380,7 +377,7 @@ class ChromeManager(private val activity: MainActivity) {
         }
 
     fun debugStateForTest(): String =
-        "chromeAttachEnabled=$chromeAttachEnabled, attachAttempts=$chromeAttachAttempts, " +
+        "chromeAttachEnabled=$chromeAttachEnabled, attachAttempts=$chromeAttachAttempts, attachGiveUps=$chromeAttachGiveUps, " +
             "controlsPopup=${controlsOverlayPopup.debugPopupState()}, controlsView=${controlsOverlayView.debugViewState()}, " +
             "drawerPopup=${drawerChromePopup.debugPopupState()}, drawerHandle=${drawerEdgeHandleView.debugViewState()}, " +
             "drawerShowing=$drawerShowing, drawerFullScreenPopup=${drawerFullScreenPopup.debugPopupState()}, " +
@@ -432,6 +429,7 @@ class ChromeManager(private val activity: MainActivity) {
 
     private fun retryChromeAttach() {
         if (chromeAttachAttempts >= MENU_CHROME_MAX_ATTACH_ATTEMPTS) {
+            chromeAttachGiveUps += 1
             Log.w(TAG, "Chrome attach skipped because Android window token was unavailable")
             return
         }
@@ -544,10 +542,8 @@ class ChromeManager(private val activity: MainActivity) {
         ControlsOverlayView(
             activity,
             controlsOpacityPercent,
-            controlsScalePercent,
-            controlsVerticalOffsetPercent,
-            controlsShouldersVisible,
             controlsPushedZones,
+            controlsPushedJoystick,
         ).apply {
             tag = CONTROLS_OVERLAY_TAG
             layoutParams =
@@ -555,8 +551,7 @@ class ChromeManager(private val activity: MainActivity) {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
-            isClickable = false
-            isFocusable = false
+            // Clickability is owned by the view itself; see its init contract.
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
 

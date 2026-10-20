@@ -3,6 +3,8 @@
 
 use tao::event::WindowEvent;
 
+use crate::aux::shell::AuxShellOps;
+
 /// Which aux window changed focus. Interactive viewers may report a resume;
 /// read-only viewers (settings, history) only cancel a pending pause.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,36 +25,6 @@ impl AuxKind {
             AuxKind::History => "history window",
             AuxKind::Settings => "settings",
         }
-    }
-}
-
-/// Ad-hoc memo gate: remembers the last pushed value and reports whether it differs.
-#[derive(Debug, Default)]
-pub(crate) struct Memo<T: PartialEq> {
-    last: Option<T>,
-}
-
-impl<T: PartialEq + Clone> Memo<T> {
-    pub(crate) fn new() -> Self {
-        Self { last: None }
-    }
-
-    /// Returns true when `value` differs from the remembered one (or
-    /// nothing was remembered), updating the memory. False means skip.
-    pub(crate) fn check(&mut self, value: &T) -> bool {
-        if self.last.as_ref() == Some(value) {
-            return false;
-        }
-        self.last = Some(value.clone());
-        true
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.last = None;
-    }
-
-    pub(crate) fn get(&self) -> Option<&T> {
-        self.last.as_ref()
     }
 }
 
@@ -239,9 +211,8 @@ pub(crate) fn on_aux_focus(focus: &mut FocusState, kind: AuxKind, focused: bool)
     }
 }
 
-/// Uniform aux-window identity + close + render surface. Narrow:
-/// no shell access leaks; event handling lives in [`AuxEvents`].
-pub(crate) trait AuxWindow {
+/// Identity half: routing, liveness, and redraw requests.
+pub(crate) trait AuxIdentity {
     fn kind(&self) -> AuxKind;
     /// Native window identity for event routing.
     fn tao_window_id(&self) -> tao::window::WindowId;
@@ -251,12 +222,65 @@ pub(crate) trait AuxWindow {
     fn focus_window(&self);
     /// Native redraw request without reaching into the window.
     fn request_redraw(&self);
+}
+
+/// Render half: event prelude, conversion, and full render.
+pub(crate) trait AuxRender {
     /// Shared event prelude: resize/scale/modifiers/close.
     fn handle_common(&mut self, event: &WindowEvent);
     /// Convert one native event for the window's own dispatcher.
     fn feed_event(&mut self, event: WindowEvent) -> Option<iced::Event>;
     /// Full render through the shared pump; only the log tag differs.
     fn render(&mut self);
+}
+
+/// Combined pump surface: every aux window speaks both halves.
+pub(crate) trait AuxWindow: AuxIdentity + AuxRender {}
+impl<T: AuxIdentity + AuxRender + ?Sized> AuxWindow for T {}
+
+/// Single shell accessor behind every aux handle.
+/// Blanket [`AuxIdentity`]/[`AuxRender`] impls delegate here.
+pub(crate) trait AuxShellRef {
+    fn kind(&self) -> AuxKind;
+    fn shell(&self) -> &dyn AuxShellOps;
+    fn shell_mut(&mut self) -> &mut dyn AuxShellOps;
+}
+
+impl<T: AuxShellRef + ?Sized> AuxIdentity for T {
+    fn kind(&self) -> AuxKind {
+        AuxShellRef::kind(self)
+    }
+
+    fn tao_window_id(&self) -> tao::window::WindowId {
+        self.shell().tao_window_id()
+    }
+
+    fn close_requested(&self) -> bool {
+        self.shell().close_requested()
+    }
+
+    fn focus_window(&self) {
+        self.shell().focus_window();
+    }
+
+    fn request_redraw(&self) {
+        self.shell().request_redraw();
+    }
+}
+
+impl<T: AuxShellRef + ?Sized> AuxRender for T {
+    fn handle_common(&mut self, event: &WindowEvent) {
+        self.shell_mut().handle_common(event);
+    }
+
+    fn feed_event(&mut self, event: WindowEvent) -> Option<iced::Event> {
+        self.shell_mut().feed_event(event)
+    }
+
+    fn render(&mut self) {
+        let tag = self.kind().log_tag();
+        self.shell_mut().render_tagged(tag);
+    }
 }
 
 /// Uniform aux-window event handling: one converted event in.
@@ -266,7 +290,7 @@ pub(crate) trait AuxEvents {
 }
 
 /// Feed one native event through the shared prelude + program dispatch + redraw.
-pub(crate) fn pump_aux<W: AuxWindow + AuxEvents>(window: &mut W, event: WindowEvent) {
+pub(crate) fn pump_aux<W: AuxWindow + AuxEvents + ?Sized>(window: &mut W, event: WindowEvent) {
     window.handle_common(&event);
     match window.feed_event(event) {
         Some(mapped) => {
@@ -338,16 +362,6 @@ mod tests {
             assert!(!coord.on_aux(kind, true));
             assert!(coord.state_mut().arrive_main());
         }
-    }
-
-    #[test]
-    fn memo_check_gates_repeats() {
-        let mut memo: Memo<(u64, u8)> = Memo::new();
-        assert!(memo.check(&(1, 2)));
-        assert!(!memo.check(&(1, 2)));
-        assert!(memo.check(&(1, 3)));
-        memo.clear();
-        assert!(memo.check(&(1, 3)));
     }
 
     #[test]

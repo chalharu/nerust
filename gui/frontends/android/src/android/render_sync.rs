@@ -21,13 +21,13 @@ use winit::{
 use super::osd::{AndroidOsd, OsdSyncCtx};
 
 /// Per-frame input bundle, built once per pass and passed to [`RenderSync::render`].
-/// One borrow chain per frame; hands out owned/cloned data.
-pub(super) struct FrameInput {
+/// Borrows the session buffer instead of cloning the `Vec` every frame.
+pub(super) struct FrameInput<'session> {
     pub tick: TickMetrics,
     pub notifications: NotificationSettings,
     pub language: AppLanguage,
     pub profile: Option<VideoRenderProfile>,
-    pub fb: Option<FrameBuffer>,
+    pub fb: Option<&'session FrameBuffer>,
 }
 
 /// Window + renderer pair. Everything frame-related that used to live on
@@ -189,9 +189,9 @@ impl RenderSync {
         }
     }
 
-    /// Build the per-frame bundle once per pass. Owns the session borrow
-    /// chain (clear/swap/clone) so `render` never touches the session.
-    pub(super) fn build_frame_input(session: &mut SessionHandle) -> FrameInput {
+    /// Build the per-frame bundle once per pass. The buffer borrows the
+    /// session; `render` fans out from it without re-locking or cloning.
+    pub(super) fn build_frame_input(session: &mut SessionHandle) -> FrameInput<'_> {
         // With no loaded ROM, clear the display just before rendering.
         // Guards against a stale emuthread frame racing unload.
         if !session.tick_metrics().loaded {
@@ -202,7 +202,7 @@ impl RenderSync {
         let profile = session.render_profile().cloned();
         let notifications = session.settings_snapshot().local.notifications.clone();
         let language = session.settings_snapshot().shared.general.language;
-        let fb = session.frame_buffer().cloned();
+        let fb = session.frame_buffer();
         FrameInput {
             tick,
             notifications,
@@ -218,7 +218,7 @@ impl RenderSync {
         osd: &mut AndroidOsd,
         shell: &mut NativeShellState,
         now: Instant,
-        input: &FrameInput,
+        input: &FrameInput<'_>,
     ) {
         let Some(window) = self.window.as_ref() else {
             shell.needs_redraw = false;

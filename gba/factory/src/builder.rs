@@ -2,11 +2,10 @@ use nerust_core_traits::{
     audio::AudioBackend,
     factory::{CoreParts, FactoryError, settings::FactorySettingsView},
 };
+use nerust_emu_thread::{EmuInput, InputPort};
 use nerust_gba_core::console_core::GbaConsoleCore;
 use nerust_gba_settings::GbaSettings;
-use nerust_input_traits::{
-    ControllerCollection, EmuInput, GuiInput, InputAssignments, InputSystemFactory,
-};
+use nerust_input_traits::{ControllerCollection, InputAssignments, InputSystemFactory};
 use nerust_render_traits::{
     VideoFrameFormat, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
@@ -43,25 +42,32 @@ pub(crate) fn create_core_and_adapter(
     let resources =
         <crate::GbaFactory as InputSystemFactory>::create_split(&crate::GbaFactory, &controllers)
             .map_err(|e| FactoryError::Create(e.to_string()))?;
-    let gui_input = GuiInput::from_split(resources.split());
-    let emu_input = EmuInput::from_split(resources.split());
     // Project the unified (attachment, ControlId) map onto the legacy
     // CoreParts digital-only key until CoreParts migrates to ControlId.
     let field_map = resources
         .field_map()
         .iter()
-        .filter_map(|((attachment, control), field)| match control {
-            nerust_input_traits::ControlId::Digital(id) => Some(((*attachment, *id), *field)),
-            _ => None,
+        .filter_map(|((attachment, control), field)| {
+            control.as_digital().map(|id| ((*attachment, id), *field))
         })
         .collect();
-    create_core_and_adapter_with_inputs(view, speaker, gui_input, emu_input, field_map, controllers)
+    let split = nerust_emu_thread::InputSplit::spawn(resources.take_factory());
+    let gui_input = split.gui_endpoint();
+    let emu_input = split.emu_endpoint();
+    create_core_and_adapter_with_inputs(
+        view,
+        speaker,
+        Box::new(gui_input),
+        emu_input,
+        field_map,
+        controllers,
+    )
 }
 
 pub(crate) fn create_core_and_adapter_with_inputs(
     _view: &FactorySettingsView,
     mut speaker: Box<dyn AudioBackend>,
-    gui_input: GuiInput,
+    gui_input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
     emu_input: EmuInput,
     field_map: std::collections::HashMap<
         (

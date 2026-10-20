@@ -8,7 +8,8 @@ use crate::{
     settings::bindings::events::shortcut::shortcut_action_for_key,
 };
 
-pub use nerust_settings_core::input::{build_topology, clear_multi_port_conflicts, device_kind};
+pub use nerust_gui_viewmodel::settings::{build_topology, device_kind};
+pub use nerust_settings_core::input::clear_multi_port_conflicts;
 
 fn touch_role_for_abstract_key(key: AbstractKey) -> Option<TouchControlRole> {
     match key {
@@ -91,7 +92,7 @@ fn build_touch_overlay(
             continue;
         };
         for info in *group {
-            let nerust_input_traits::ControlId::Digital(control_id) = info.id else {
+            let Some(control_id) = info.id.as_digital() else {
                 continue;
             };
             let Some(role) = info.abstract_key.and_then(touch_role_for_abstract_key) else {
@@ -245,7 +246,7 @@ mod tests {
 
         fn port_groups(&self) -> &[&[ControlInfo]] {
             static CONTROLS: &[ControlInfo] = &[ControlInfo {
-                id: ControlId::Digital(DigitalControlId::new("test.topology.a")),
+                id: ControlId::digital(DigitalControlId::new("test.topology.a")),
                 label: "A",
                 kind: ControlKind::Digital,
                 abstract_key: Some(AbstractKey::Button1),

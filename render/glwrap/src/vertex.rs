@@ -307,3 +307,21 @@ impl IndexBuffer {
 pub struct Attrib {
     pub id: GLuint,
 }
+
+impl super::context::GlObject for VertexArray {
+    fn destroy_if_current(&mut self, current: Option<CurrentContext>) -> bool {
+        VertexArray::destroy_if_current(self, current)
+    }
+}
+
+impl super::context::GlObject for VertexBuffer {
+    fn destroy_if_current(&mut self, current: Option<CurrentContext>) -> bool {
+        VertexBuffer::destroy_if_current(self, current)
+    }
+}
+
+impl super::context::GlObject for IndexBuffer {
+    fn destroy_if_current(&mut self, current: Option<CurrentContext>) -> bool {
+        IndexBuffer::destroy_if_current(self, current)
+    }
+}

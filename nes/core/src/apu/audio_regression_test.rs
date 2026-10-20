@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use nerust_core_traits::audio::{AudioBackend, StereoSample};
-use nerust_input_traits::{Controller, ControllerHub, OpenBusReadResult, Port};
+use nerust_input_traits::{Controller, ControllerHub, OpenBusReadResult, Port, StrobeTarget};
 use nerust_render_traits::FrameBuffer;
 
 use super::fft_test::CPU_CLOCK_HZ;
@@ -42,14 +42,16 @@ fn null_fb() -> FrameBuffer {
 #[derive(Debug, Default)]
 struct NullController;
 
+impl StrobeTarget for NullController {
+    fn strobe(&mut self, _value: u8) {}
+}
+
 impl Controller for NullController {
     fn read(&mut self, _port: &dyn Port) -> OpenBusReadResult {
         OpenBusReadResult::new(0, 0)
     }
 
     fn write(&mut self, _port: &dyn Port, _value: u8) {}
-
-    fn strobe(&mut self, _value: u8) {}
 }
 
 impl ControllerHub for NullController {

@@ -13,25 +13,6 @@ import android.view.View
 import kotlin.math.max
 import kotlin.math.min
 
-/** Touch-overlay chrome. Geometry is owned by Rust; this view draws pushed zones,
- * falling back to its local `controlsLayout()` copy when the payload is absent or malformed. */
-internal data class OverlayZoneSpec(
-    val x: Float,
-    val y: Float,
-    val width: Float,
-    val height: Float,
-    val label: String,
-)
-
-internal data class FloatingJoystickSpec(
-    val centerX: Float,
-    val centerY: Float,
-    val baseRadius: Float,
-    val knobRadius: Float,
-    val activationBounds: RectF,
-)
-
-@SuppressLint("ViewConstructor")
 /** One touch zone pushed from Rust, in relative (0.0..1.0) surface coordinates. */
 internal data class PushedOverlayZone(
     val x: Float,
@@ -41,14 +22,27 @@ internal data class PushedOverlayZone(
     val label: String,
 )
 
+/** Joystick home pushed from Rust: center over surface, radii over minor axis. */
+internal data class PushedJoystick(
+    val x: Float,
+    val y: Float,
+    val baseRadius: Float,
+    val knobRadius: Float,
+)
+
+@SuppressLint("ViewConstructor")
 internal class ControlsOverlayView(
     context: Context,
     opacityPercent: Int,
-    private val scalePercent: Int,
-    private val verticalOffsetPercent: Int,
-    private val shouldersVisible: Boolean,
     private var pushedZones: List<PushedOverlayZone> = emptyList(),
+    private var pushedJoystick: PushedJoystick? = null,
 ) : View(context) {
+    init {
+        // Touches belong to winit via NativeActivity; this view never consumes them.
+        isClickable = false
+        isFocusable = false
+    }
+
     private val opacity = opacityPercent.coerceIn(0, 100) / 100f
     private val fillPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -107,6 +101,11 @@ internal class ControlsOverlayView(
         invalidate()
     }
 
+    fun setPushedJoystick(joystick: PushedJoystick?) {
+        pushedJoystick = joystick
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val viewWidth = width.toFloat()
@@ -114,39 +113,45 @@ internal class ControlsOverlayView(
         if (viewWidth <= 0f || viewHeight <= 0f) {
             return
         }
-
-        val joystick = floatingJoystickLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent)
-        drawFloatingJoystick(canvas, joystick)
-        // Prefer the pushed zones; the local controlsLayout() copy is the fallback.
-        // Both sides render from one source of truth.
-        val zones =
-            pushedZones.takeIf(List<PushedOverlayZone>::isNotEmpty)?.map { zone ->
-                OverlayZoneSpec(
-                    x = zone.x * viewWidth,
-                    y = zone.y * viewHeight,
-                    width = zone.width * viewWidth,
-                    height = zone.height * viewHeight,
-                    label = zone.label,
-                )
-            }
-                ?: controlsLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent, shouldersVisible)
-        zones.forEach { zone ->
-            drawZone(canvas, zone.x, zone.y, zone.width, zone.height, zone.label)
+        // Rust owns all geometry; absent pushes draw nothing, never a local copy.
+        val joystick = pushedJoystick
+        if (joystick != null) {
+            val base = min(viewWidth, viewHeight)
+            drawFloatingJoystick(
+                canvas,
+                centerX = if (floatingDpadActive) floatingDpadCenterX else joystick.x * viewWidth,
+                centerY = if (floatingDpadActive) floatingDpadCenterY else joystick.y * viewHeight,
+                knobX = if (floatingDpadActive) floatingDpadKnobX else joystick.x * viewWidth,
+                knobY = if (floatingDpadActive) floatingDpadKnobY else joystick.y * viewHeight,
+                baseRadius = joystick.baseRadius * base,
+                knobRadius = joystick.knobRadius * base,
+            )
+        }
+        pushedZones.forEach { zone ->
+            drawZone(
+                canvas,
+                zone.x * viewWidth,
+                zone.y * viewHeight,
+                zone.width * viewWidth,
+                zone.height * viewHeight,
+                zone.label,
+            )
         }
     }
 
     private fun drawFloatingJoystick(
         canvas: Canvas,
-        spec: FloatingJoystickSpec,
+        centerX: Float,
+        centerY: Float,
+        knobX: Float,
+        knobY: Float,
+        baseRadius: Float,
+        knobRadius: Float,
     ) {
-        val centerX = if (floatingDpadActive) floatingDpadCenterX else spec.centerX
-        val centerY = if (floatingDpadActive) floatingDpadCenterY else spec.centerY
-        val knobX = if (floatingDpadActive) floatingDpadKnobX else centerX
-        val knobY = if (floatingDpadActive) floatingDpadKnobY else centerY
-        canvas.drawCircle(centerX, centerY, spec.baseRadius, fillPaint)
-        canvas.drawCircle(centerX, centerY, spec.baseRadius, strokePaint)
-        canvas.drawCircle(knobX, knobY, spec.knobRadius, knobPaint)
-        canvas.drawCircle(knobX, knobY, spec.knobRadius, strokePaint)
+        canvas.drawCircle(centerX, centerY, baseRadius, fillPaint)
+        canvas.drawCircle(centerX, centerY, baseRadius, strokePaint)
+        canvas.drawCircle(knobX, knobY, knobRadius, knobPaint)
+        canvas.drawCircle(knobX, knobY, knobRadius, strokePaint)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -169,134 +174,6 @@ internal class ControlsOverlayView(
         val centerY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
         canvas.drawText(label, rect.centerX(), centerY, textPaint)
     }
-}
-
-internal fun controlsLayout(
-    width: Float,
-    height: Float,
-    scalePercent: Int = 100,
-    verticalOffsetPercent: Int = 0,
-    shouldersVisible: Boolean = true,
-): List<OverlayZoneSpec> {
-    // Local fallback copy; only draws when no payload arrived.
-    // Geometry is owned and pushed by Rust.
-    val portrait = height >= width
-    val base = min(width, height)
-    val scale = scalePercent.coerceIn(50, 150) / 100f
-    val verticalOffset = height * verticalOffsetPercent.coerceIn(-30, 30) / 100f
-    val controlTop = if (portrait) height * 0.54f else 0f
-    val controlHeight = height - controlTop
-    val joystick = floatingJoystickLayout(width, height, scalePercent, verticalOffsetPercent)
-    val actionSize = base * 0.14f * scale
-    val actionGap = base * 0.04f
-    val actionLeft = if (portrait) width * 0.64f else width - base * 0.08f - actionSize * 2f - actionGap
-    val actionTop = joystick.centerY - actionSize * 0.5f
-    val centerButtonWidth = base * 0.10f * scale
-    val centerButtonHeight = base * 0.068f * scale
-    val centerGap = base * 0.03f
-    val centerRowWidth = centerButtonWidth * 2f + centerGap
-    val centerStartX = (width - centerRowWidth) * 0.5f
-    val centerTop =
-        (if (portrait) controlTop + controlHeight * 0.16f else height * 0.82f) + verticalOffset
-    // Shoulder strip above the D-Pad activation area and the center row.
-    // Mirrors ProfileTouchOverlay in android.rs; keep the fractions in sync.
-    val shoulderWidth = base * 0.20f * scale
-    val shoulderHeight = base * 0.08f * scale
-    val shoulderMarginX = width * 0.02f
-    val shoulderTop = controlTop + base * 0.015f + verticalOffset
-
-    return buildList {
-        add(
-            OverlayZoneSpec(
-                x = actionLeft,
-                y = actionTop,
-                width = actionSize,
-                height = actionSize,
-                label = "B",
-            ),
-        )
-        add(
-            OverlayZoneSpec(
-                x = actionLeft + actionSize + actionGap,
-                y = actionTop,
-                width = actionSize,
-                height = actionSize,
-                label = "A",
-            ),
-        )
-        if (shouldersVisible) {
-            add(
-                OverlayZoneSpec(
-                    x = shoulderMarginX,
-                    y = shoulderTop,
-                    width = shoulderWidth,
-                    height = shoulderHeight,
-                    label = "L",
-                ),
-            )
-            add(
-                OverlayZoneSpec(
-                    x = width - shoulderMarginX - shoulderWidth,
-                    y = shoulderTop,
-                    width = shoulderWidth,
-                    height = shoulderHeight,
-                    label = "R",
-                ),
-            )
-        }
-        add(
-            OverlayZoneSpec(
-                x = centerStartX,
-                y = centerTop,
-                width = centerButtonWidth,
-                height = centerButtonHeight,
-                label = "SELECT",
-            ),
-        )
-        add(
-            OverlayZoneSpec(
-                x = centerStartX + centerButtonWidth + centerGap,
-                y = centerTop,
-                width = centerButtonWidth,
-                height = centerButtonHeight,
-                label = "START",
-            ),
-        )
-    }
-}
-
-internal fun floatingJoystickLayout(
-    width: Float,
-    height: Float,
-    scalePercent: Int = 100,
-    verticalOffsetPercent: Int = 0,
-): FloatingJoystickSpec {
-    val portrait = height >= width
-    val base = min(width, height)
-    val scale = scalePercent.coerceIn(50, 150) / 100f
-    val verticalOffset = height * verticalOffsetPercent.coerceIn(-30, 30) / 100f
-    val controlTop = if (portrait) height * 0.54f else 0f
-    val controlHeight = height - controlTop
-    val dpadSize = base * 0.28f * scale
-    val baseRadius = dpadSize * 0.42f
-    val centerX = base * 0.08f + dpadSize * 0.5f
-    val centerY =
-        (if (portrait) controlTop + controlHeight * 0.58f else height * 0.65f) + verticalOffset
-    val activationRight = if (portrait) width * 0.52f else width * 0.45f
-    val activationTop = if (portrait) controlTop else height * 0.25f
-    return FloatingJoystickSpec(
-        centerX = centerX,
-        centerY = centerY,
-        baseRadius = baseRadius,
-        knobRadius = baseRadius * 0.48f,
-        activationBounds =
-            RectF(
-                baseRadius,
-                activationTop + baseRadius,
-                activationRight - baseRadius,
-                height - baseRadius,
-            ),
-    )
 }
 
 /** Parse the Rust-pushed zone payload (`LABEL:x,y,w,h;...`, relative coordinates).
@@ -329,6 +206,21 @@ internal fun parsePushedZones(payload: String): List<PushedOverlayZone> {
         Log.w(TAG, "parsePushedZones: payload yielded no zones: '$payload'")
     }
     return zones
+}
+
+/** Parse the Rust-pushed joystick payload (`cx,cy,baseR,knobR`); null when malformed. */
+internal fun parsePushedJoystick(payload: String): PushedJoystick? {
+    val coords = payload.split(',').mapNotNull { it.toFloatOrNull() }
+    if (coords.size != 4) {
+        Log.w(TAG, "parsePushedJoystick: dropping malformed payload: '$payload'")
+        return null
+    }
+    return PushedJoystick(
+        x = coords[0],
+        y = coords[1],
+        baseRadius = coords[2],
+        knobRadius = coords[3],
+    )
 }
 
 private const val TAG = "Nerust"

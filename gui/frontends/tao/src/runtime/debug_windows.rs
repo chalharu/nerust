@@ -1,17 +1,16 @@
-//! Debugger and PPU-viewer window state: handles, positions, open flags, throttle.
-//! `HostState` orchestrates; this struct owns.
+//! Debugger and PPU-viewer window state: positions, open flags, throttle.
+//! Handles live in the aux registry; `HostState` orchestrates.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
-
-use crate::aux::focus::AuxWindow;
-use tao::window::WindowId;
 
 /// Live PPU cadence while the core runs: images-only ticks, never full drains.
 pub(super) const PPU_LIVE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(super) struct DebugWindows {
-    debug_window: Option<crate::aux::debug::DebugWindowHandle>,
-    ppu_window: Option<crate::aux::ppu::PpuWindowHandle>,
     debug_open_requested: bool,
     ppu_open_requested: bool,
     debug_window_pos: Option<(i32, i32)>,
@@ -20,73 +19,31 @@ pub(super) struct DebugWindows {
     /// Pause state at the last completed debug drain, for focus
     /// coalescing. `None` before the first drain.
     last_drain_paused: Option<bool>,
+    /// Live-tick interest: set every pass; the tick thread parks when clear.
+    live_wanted: Arc<AtomicBool>,
 }
 
 impl DebugWindows {
     pub(crate) fn new() -> Self {
         Self {
-            debug_window: None,
-            ppu_window: None,
             debug_open_requested: false,
             ppu_open_requested: false,
             debug_window_pos: None,
             ppu_window_pos: None,
             last_ppu_live: None,
             last_drain_paused: None,
+            live_wanted: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// Borrow the debugger window for event routing, if open.
-    /// Narrow port: the borrow never escapes the closure caller.
-    pub(super) fn debug_window_mut(&mut self) -> Option<&mut crate::aux::debug::DebugWindowHandle> {
-        self.debug_window.as_mut()
+    /// Live-tick interest handle for the tick thread.
+    pub(super) fn live_wanted(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.live_wanted)
     }
 
-    /// Borrow the PPU viewer for event routing, if open.
-    /// Narrow port: the borrow never escapes the closure caller.
-    pub(super) fn ppu_window_mut(&mut self) -> Option<&mut crate::aux::ppu::PpuWindowHandle> {
-        self.ppu_window.as_mut()
-    }
-
-    /// Share the debugger bridge for PPU-viewer creation (the viewer
-    /// renders the same live images). Cloned `Arc`, never a lock.
-    pub(super) fn shared_bridge_for_ppu(
-        &self,
-    ) -> Option<std::sync::Arc<crate::aux::bridge::DebugBridge>> {
-        let handle = self.debug_window.as_ref()?;
-        Some(std::sync::Arc::clone(handle.shared_bridge()))
-    }
-
-    /// Seat a newly created debugger window (single writer: the open path).
-    pub(super) fn set_debug_window(&mut self, handle: crate::aux::debug::DebugWindowHandle) {
-        self.debug_window = Some(handle);
-    }
-
-    /// Seat a newly created PPU viewer (single writer: the open path).
-    pub(super) fn set_ppu_window(&mut self, handle: crate::aux::ppu::PpuWindowHandle) {
-        self.ppu_window = Some(handle);
-    }
-
-    /// Whether the debugger window is currently open.
-    pub(super) fn is_debug_open(&self) -> bool {
-        self.debug_window.is_some()
-    }
-
-    /// Same guard for the PPU viewer.
-    pub(super) fn is_ppu_open(&self) -> bool {
-        self.ppu_window.is_some()
-    }
-
-    pub(crate) fn is_debug_window(&self, window_id: WindowId) -> bool {
-        self.debug_window
-            .as_ref()
-            .is_some_and(|h| h.tao_window_id() == window_id)
-    }
-
-    pub(crate) fn is_ppu_window(&self, window_id: WindowId) -> bool {
-        self.ppu_window
-            .as_ref()
-            .is_some_and(|h| h.tao_window_id() == window_id)
+    /// Record whether any open viewer wants live ticks now.
+    pub(super) fn set_live_wanted(&self, wanted: bool) {
+        self.live_wanted.store(wanted, Ordering::Release);
     }
 
     pub(crate) fn request_debug_open(&mut self) {
@@ -113,14 +70,6 @@ impl DebugWindows {
         self.last_drain_paused = Some(paused);
     }
 
-    /// Drain one batch from the debugger window (`None` when closed).
-    pub(super) fn take_debug_batch(
-        &mut self,
-    ) -> Option<(bool, Vec<nerust_gui_shell::debug::DebugAction>)> {
-        let handle = self.debug_window.as_ref()?;
-        Some(handle.take_debug_batch())
-    }
-
     pub(crate) fn debug_window_pos(&self) -> Option<(i32, i32)> {
         self.debug_window_pos
     }
@@ -135,11 +84,6 @@ impl DebugWindows {
 
     pub(crate) fn remember_ppu_window_pos(&mut self, x: i32, y: i32) {
         self.ppu_window_pos = Some((x, y));
-    }
-
-    pub(crate) fn close_all(&mut self) {
-        self.debug_window.take();
-        self.ppu_window.take();
     }
 
     /// Throttle gate for the live follow: true at most once per [`PPU_LIVE_INTERVAL`].
@@ -159,31 +103,6 @@ impl DebugWindows {
     pub(crate) fn next_live_tick(&self) -> Option<Instant> {
         self.last_ppu_live.map(|last| last + PPU_LIVE_INTERVAL)
     }
-
-    /// Drop a dead handle (external destroy without CloseRequested):
-    /// a stale handle must not linger and block reopening.
-    pub(super) fn drop_debug_window(&mut self) {
-        self.debug_window.take();
-    }
-
-    /// Same guard for the PPU viewer.
-    pub(super) fn drop_ppu_window(&mut self) {
-        self.ppu_window.take();
-    }
-
-    /// Close-request flag raised by the debugger window itself.
-    pub(super) fn debug_close_requested(&self) -> bool {
-        self.debug_window
-            .as_ref()
-            .is_some_and(|h| h.close_requested())
-    }
-
-    /// Same flag for the PPU viewer.
-    pub(super) fn ppu_close_requested(&self) -> bool {
-        self.ppu_window
-            .as_ref()
-            .is_some_and(|h| h.close_requested())
-    }
 }
 #[cfg(test)]
 mod tests {
@@ -200,17 +119,6 @@ mod tests {
         assert!(windows.take_ppu_open_request());
         assert!(!windows.take_debug_open_request());
         assert!(!windows.take_ppu_open_request());
-    }
-
-    #[test]
-    fn close_all_clears_without_windows() {
-        // Headless: no windows open, so this only proves the call
-        // is total and keeps the rest of the state intact.
-        let mut windows = DebugWindows::new();
-        windows.remember_debug_window_pos(1, 2);
-        windows.close_all();
-        assert_eq!(windows.debug_window_pos(), Some((1, 2)));
-        assert!(!windows.take_debug_open_request());
     }
 
     #[test]
@@ -237,13 +145,13 @@ mod tests {
     }
 
     #[test]
-    fn drop_and_close_flags_total_on_empty() {
-        // Headless: no windows open; drops are no-ops and no close
-        // is ever reported.
-        let mut windows = DebugWindows::new();
-        windows.drop_debug_window();
-        windows.drop_ppu_window();
-        assert!(!windows.debug_close_requested());
-        assert!(!windows.ppu_close_requested());
+    fn live_wanted_tracks_follow_interest() {
+        let windows = DebugWindows::new();
+        let wanted = windows.live_wanted();
+        assert!(!wanted.load(Ordering::Acquire));
+        windows.set_live_wanted(true);
+        assert!(wanted.load(Ordering::Acquire));
+        windows.set_live_wanted(false);
+        assert!(!wanted.load(Ordering::Acquire));
     }
 }

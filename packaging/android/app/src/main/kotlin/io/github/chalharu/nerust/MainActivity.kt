@@ -142,7 +142,7 @@ class MainActivity :
         chromeManager.onConfigurationChanged()
         // Tell Rust to rebuild its touch overlay even if no winit Resized event arrives.
         // The Rust re-push converges with the re-attach above.
-        sendMenuAction("orientation_changed")
+        sendMenuAction(menuEventJson("orientation_changed"))
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -205,13 +205,13 @@ class MainActivity :
             chromeManager.noteControllerInput()
             sensorController.noteControllerInput()
         }
-        sendMenuAction("controller:$deviceId:$key:${if (pressed) 1 else 0}")
+        sendMenuAction(controllerEventJson(deviceId, key, pressed))
         if (keys.isEmpty()) controllerPressed.remove(deviceId)
     }
 
     private fun releaseController(deviceId: Int) {
         controllerPressed.remove(deviceId)?.toList()?.forEach { key ->
-            sendMenuAction("controller:$deviceId:$key:0")
+            sendMenuAction(controllerEventJson(deviceId, key, false))
         }
     }
 
@@ -307,25 +307,21 @@ class MainActivity :
         startActivityForResult(createDirectoryPickerIntent(), DIRECTORY_PICKER_REQUEST_CODE)
     }
 
-    /** Touch-overlay configuration pushed from Rust. Kotlin draws the pushed zones,
-     * falling back to its local `controlsLayout()` copy when the payload is absent or malformed. */
+    /** Touch-overlay configuration pushed from Rust. Kotlin draws the pushed
+     * zones and joystick only; it keeps no geometry of its own. */
     fun configureControlsOverlay(
         visibility: String,
         opacityPercent: Int,
-        scalePercent: Int,
-        verticalOffsetPercent: Int,
         haptics: Boolean,
-        shouldersVisible: Boolean,
         zones: String,
+        joystick: String,
     ) {
         chromeManager.configureControlsOverlay(
             visibility,
             opacityPercent,
-            scalePercent,
-            verticalOffsetPercent,
             haptics,
-            shouldersVisible,
             zones,
+            joystick,
         )
     }
 
@@ -365,8 +361,12 @@ class MainActivity :
     private fun installSafeInsetsListener() {
         val decor = window?.decorView ?: return
         decor.setOnApplyWindowInsetsListener { _, insets ->
-            cachedSafeInsetsPx = windowInsetsToSafePx(insets)
-            onSystemInsetsChanged(cachedSafeInsetsPx)
+            // Unthrottled layout passes flood JNI; push only on change.
+            val next = windowInsetsToSafePx(insets)
+            if (!cachedSafeInsetsPx.contentEquals(next)) {
+                cachedSafeInsetsPx = next
+                onSystemInsetsChanged(next)
+            }
             insets
         }
         decor.requestApplyInsets()
@@ -573,7 +573,7 @@ class MainActivity :
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
         sections: Array<String> = emptyArray(),
-        edgeStrings: Array<String> = emptyArray(),
+        visibleFlags: Array<Boolean> = emptyArray(),
     ) {
         showSettingsDialogInternal(
             content =
@@ -583,7 +583,7 @@ class MainActivity :
                     choiceStrings = choiceStrings.toList(),
                     currentIndices = currentIndices.toList(),
                     sections = sections.toList(),
-                    edgeStrings = edgeStrings.toList(),
+                    visibleFlags = visibleFlags.toList(),
                 ),
             requestId = null,
             ownedByTest = true,
@@ -613,16 +613,23 @@ class MainActivity :
         val sections = Array(fieldDocuments.size) { fieldDocuments[it].first }
         val choiceStrings =
             Array(fieldDocuments.size) { index ->
-                val options = fieldDocuments[index].second.getJSONArray("options")
-                (0 until options.length()).joinToString("\t") { options.getString(it) }
+                val field = fieldDocuments[index].second
+                if (field.has("options")) {
+                    val options = field.getJSONArray("options")
+                    (0 until options.length()).joinToString("\t") { options.getString(it) }
+                } else {
+                    // Ranged int: expand min..max locally with the unit suffix.
+                    val min = field.getInt("min")
+                    val max = field.getInt("max")
+                    val unit = field.optString("unit", "")
+                    (min..max).joinToString("\t") { "$it$unit" }
+                }
             }
         val currentIndices =
             Array(fieldDocuments.size) { fieldDocuments[it].second.getInt("value").toString() }
-        val edgeStrings =
+        val visibleFlags =
             Array(fieldDocuments.size) { index ->
-                fieldDocuments[index].second.optJSONArray("edges")?.let { edges ->
-                    (0 until edges.length()).joinToString("\t") { edges.getString(it) }
-                } ?: ""
+                fieldDocuments[index].second.optBoolean("visible", true)
             }
         showSettingsDialogInternal(
             content =
@@ -632,7 +639,7 @@ class MainActivity :
                     choiceStrings = choiceStrings.toList(),
                     currentIndices = currentIndices.toList(),
                     sections = sections.toList(),
-                    edgeStrings = edgeStrings.toList(),
+                    visibleFlags = visibleFlags.toList(),
                 ),
             requestId = requestId,
             ownedByTest = false,
@@ -660,7 +667,7 @@ class MainActivity :
         val choiceStrings = content.choiceStrings
         val currentIndices = content.currentIndices
         val sections = content.sections
-        val edgeStrings = content.edgeStrings
+        val visibleFlags = content.visibleFlags
         val settings =
             labels.indices.map { index ->
                 AndroidSetting(
@@ -674,12 +681,7 @@ class MainActivity :
                             ?.filter(String::isNotEmpty)
                             ?.ifEmpty { listOf("?") }
                             ?: listOf("?"),
-                    edges =
-                        edgeStrings
-                            .getOrNull(index)
-                            ?.split('\t')
-                            ?.filter(String::isNotEmpty)
-                            ?: emptyList(),
+                    visible = visibleFlags.getOrElse(index) { true },
                 )
             }
         val initialSelections =
@@ -735,14 +737,11 @@ class MainActivity :
         )
     }
 
-    /** Show a modal Android error dialog. Presents an aggregated OSD error batch as scrollable text.
-     * Dismissal reports back through onErrorDialogDismissed so Rust can resume and show the next error. */
+    /** Dumb host for the Rust dialog gate: always present what Rust requests.
+     * A showing settings dialog is dismissed with notify so Rust resolves it. */
     fun showErrorDialog(message: String) {
-        // Never evict the settings dialog. Ack as dismissed so Rust keeps the batch queued.
         if (dialogManager.isShowing(SETTINGS_DIALOG_TAG)) {
-            Log.i(TAG, "showErrorDialog: suppressed while settings dialog is showing")
-            onErrorDialogDismissed()
-            return
+            dialogManager.dismissForStop()
         }
         dialogManager.show(
             dialogTag = ERROR_DIALOG_TAG,
@@ -797,7 +796,6 @@ class MainActivity :
 
     companion object {
         private const val TAG = "Nerust"
-        private const val SETTINGS_SCHEMA_VERSION = 1
 
         init {
             // Load the native library via the app classloader so the JVM resolves `external fun`.

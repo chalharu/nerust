@@ -152,10 +152,12 @@ impl super::AndroidFrontend {
         uri: &str,
         file_name: &str,
         bytes: Vec<u8>,
+        digest: [u8; 32],
     ) -> Result<(), String> {
         log::info!("open_rom_from_bytes: opening {uri} ({} bytes)", bytes.len());
+        // Carried from the fetch worker: no second hash on this thread.
         if let Some(expected) = self.pending_legacy_digest
-            && <[u8; 32]>::from(Sha256::digest(&bytes)) != expected
+            && expected != digest
         {
             return Err("selected ROM does not match the legacy library entry".to_string());
         }

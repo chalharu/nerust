@@ -6,5 +6,6 @@ pub(crate) mod debug;
 pub(crate) mod focus;
 pub(crate) mod osd;
 pub(crate) mod ppu;
+pub(crate) mod registry;
 pub(crate) mod settings;
 pub(crate) mod shell;

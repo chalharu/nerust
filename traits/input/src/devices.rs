@@ -2,8 +2,7 @@
 
 use super::{
     events::OpenBusReadResult,
-    ids::{AttachmentId, PortId},
-    topology::ControlId,
+    ids::{AttachmentId, ControlId, PortId},
 };
 
 /// Port identifier used by controllers and hubs.
@@ -69,17 +68,28 @@ impl FieldEntry {
     }
 }
 
+/// Broadcast strobe endpoint, split from [`Controller`] reads.
+/// Hubs fan one value out to every port; index 0 is the broadcast convention.
+pub trait StrobeTarget: std::fmt::Debug + Send {
+    /// Broadcast strobe write to this controller.
+    fn strobe(&mut self, value: u8);
+}
+
 /// Single physical controller (shift register logic).
-pub trait Controller: std::fmt::Debug + Send {
+pub trait Controller: StrobeTarget {
     fn read(&mut self, port: &dyn Port) -> OpenBusReadResult;
     fn write(&mut self, port: &dyn Port, value: u8);
-    /// Broadcast strobe write to this controller.
-    /// Index 0 is the broadcast convention: hubs fan one value out to all.
-    fn strobe(&mut self, value: u8);
     fn sync_input(&mut self, _state: &[u8]) {}
     /// Append field entries for this controller at the given port.
     /// Default appends nothing; implementations must only push to `out`.
     fn field_map(&self, _port: &dyn Port, _out: &mut Vec<FieldEntry>) {}
+    /// Owned field entries without an out-param.
+    /// Default forwards to [`Controller::field_map`]; override for direct builds.
+    fn field_entries(&self, port: &dyn Port) -> Vec<FieldEntry> {
+        let mut out = Vec::new();
+        self.field_map(port, &mut out);
+        out
+    }
 }
 
 /// Multi-port controller hub routing reads/writes to per-port controllers.
