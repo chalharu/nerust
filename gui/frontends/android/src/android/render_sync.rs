@@ -13,7 +13,6 @@ use nerust_settings_core::model::{language::AppLanguage, local::NotificationSett
 use winit::{
     dpi::LogicalSize,
     event_loop::ActiveEventLoop,
-    platform::android::activity::AndroidApp,
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
     window::{Window, WindowId},
 };
@@ -155,7 +154,7 @@ impl RenderSync {
                 log::info!("rebuild_renderer: renderer ready");
                 // Fresh renderer with empty OSD state: force re-sync next frame.
                 // Covers the layer, the reserved strip, and the safe area.
-                osd.reset();
+                osd.invalidate();
                 self.request_redraw(shell);
                 Some(renderer)
             }
@@ -193,15 +192,16 @@ impl RenderSync {
     /// session; `render` fans out from it without re-locking or cloning.
     pub(super) fn build_frame_input(session: &mut SessionHandle) -> FrameInput<'_> {
         // With no loaded ROM, clear the display just before rendering.
-        // Guards against a stale emuthread frame racing unload.
-        if !session.tick_metrics().loaded {
+        // One metrics lock per pass: poll and render share this tick.
+        let tick = session.tick_metrics();
+        if !tick.loaded {
             session.clear_display();
         }
         session.swap_frame_buffer();
-        let tick = session.tick_metrics();
         let profile = session.render_profile().cloned();
-        let notifications = session.settings_snapshot().local.notifications.clone();
-        let language = session.settings_snapshot().shared.general.language;
+        let snapshot = session.settings_snapshot();
+        let notifications = snapshot.local.notifications.clone();
+        let language = snapshot.shared.general.language;
         let fb = session.frame_buffer();
         FrameInput {
             tick,
@@ -214,7 +214,6 @@ impl RenderSync {
 
     pub(super) fn render(
         &mut self,
-        app: &AndroidApp,
         osd: &mut AndroidOsd,
         shell: &mut NativeShellState,
         now: Instant,
@@ -235,8 +234,8 @@ impl RenderSync {
         let scale_factor = window.scale_factor() as f32;
         let content = input.profile.as_ref().map(|profile| profile.physical_size);
         // UI-thread push cache: render never blocks on JNI.
-        // First frame falls back to a direct query.
-        let system = osd.system_insets(app, window_size, scale_factor);
+        // First frames use the default until Kotlin pushes.
+        let system = osd.system_insets(window_size, scale_factor);
         let insets = AndroidOsd::safe_insets(scale_factor, content, window_size, system);
         let settings = &input.notifications;
         let language = input.language;

@@ -356,12 +356,6 @@ impl super::registry::DebugDrainPort for DebugWindowHandle {
         Some(self.bridge.take_debug_batch())
     }
 
-    fn drain_snapshot(&self, ppu_open: bool) -> Option<super::bridge::DrainSnapshot> {
-        use crate::aux::bridge::BridgeLock;
-        let lock: &dyn BridgeLock = &*self.bridge;
-        Some(lock.drain_snapshot(ppu_open))
-    }
-
     fn apply_drain(&mut self, display: DisplayCache, reselected: Option<(u32, Option<u8>)>) {
         self.apply_drain_display(display, reselected);
     }
@@ -378,22 +372,31 @@ impl super::registry::LiveImagesPort for DebugWindowHandle {
     }
 }
 
-impl super::registry::BridgeSharePort for DebugWindowHandle {
+impl super::registry::AuxController for DebugWindowHandle {
+    fn sync_view(&mut self) {
+        self.sync_from_bridge();
+    }
+
+    fn as_debug(&mut self) -> Option<&mut dyn super::registry::DebugDrainPort> {
+        Some(self)
+    }
+
+    fn debug_snapshot_of(&self, ppu_open: bool) -> Option<super::bridge::DrainSnapshot> {
+        use crate::aux::bridge::BridgeLock;
+        let lock: &dyn BridgeLock = &*self.bridge;
+        Some(lock.drain_snapshot(ppu_open))
+    }
+
+    fn as_live(&mut self) -> Option<&mut dyn super::registry::LiveImagesPort> {
+        Some(self)
+    }
+
     fn shared_bridge(&self) -> Option<std::sync::Arc<super::bridge::DebugBridge>> {
         Some(std::sync::Arc::clone(self.shared_bridge()))
     }
 
     fn debug_lock_audit(&self) -> Vec<&'static str> {
         self.bridge.try_lock_audit()
-    }
-}
-
-impl super::registry::SettingsClosePort for DebugWindowHandle {}
-impl super::registry::HistorySyncPort for DebugWindowHandle {}
-
-impl super::registry::AuxController for DebugWindowHandle {
-    fn sync_view(&mut self) {
-        self.sync_from_bridge();
     }
 }
 

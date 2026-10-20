@@ -3,7 +3,6 @@
 use nerust_gui_shell::registry::SystemRegistry;
 
 use super::HostState;
-use super::services::{ChromeService, DebugOrchestratorService, SettingsService};
 use super::{HostAction, element_state_to_pressed};
 use tao::event::KeyEvent;
 
@@ -24,7 +23,7 @@ impl HostState {
         command: MenuCommand,
         opener: &dyn WindowOpener,
     ) -> HostAction {
-        if SettingsService::settings_open(self) {
+        if self.settings_open() {
             return match command {
                 MenuCommand::Quit => {
                     self.prepare_close();
@@ -46,11 +45,11 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Settings => {
-                SettingsService::open_settings(self, opener);
+                self.open_settings_window(opener);
                 HostAction::None
             }
             MenuCommand::Debugger => {
-                DebugOrchestratorService::open_debug_windows(self, opener, false);
+                self.open_debug_windows(opener, false);
                 HostAction::None
             }
             MenuCommand::NotificationHistory => {
@@ -60,7 +59,7 @@ impl HostState {
             MenuCommand::Session(command) => {
                 let _ = self.session.run_command(command);
                 let ctx = self.frame_ctx();
-                ChromeService::sync_chrome(self, &ctx, false);
+                self.sync_chrome(&ctx, false);
                 HostAction::None
             }
             MenuCommand::Quit => {
@@ -119,7 +118,7 @@ impl HostState {
     fn close_rom(&mut self) {
         SessionControl::unload(self);
         let ctx = self.frame_ctx();
-        ChromeService::sync_chrome(self, &ctx, true);
+        self.sync_chrome(&ctx, true);
     }
 
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
@@ -130,7 +129,9 @@ impl HostState {
                 self.request_debug_open();
                 return;
             }
-            KeyboardShortcut::Session(action) => dispatch_session_action(self, action),
+            KeyboardShortcut::Session(action) => {
+                let _ = dispatch_session_action(self, action);
+            }
             KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
         }
         let ctx = self.frame_ctx();
@@ -236,6 +237,7 @@ mod tests {
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
     use crate::test_session::FakeRomLoader;
+    use crate::testkit::StubAux;
     use nerust_gui_shell::registry::SystemRegistry;
     use nerust_gui_shell::session::commands::SessionCommand;
 
@@ -288,50 +290,11 @@ mod tests {
         assert!(support.loader.attempted().is_empty());
     }
 
-    struct OpenAux;
-
-    impl crate::aux::focus::AuxIdentity for OpenAux {
-        fn kind(&self) -> crate::aux::focus::AuxKind {
-            crate::aux::focus::AuxKind::Settings
-        }
-        fn native_id(&self) -> crate::aux::native::NativeWindowId {
-            crate::aux::native::NativeWindowId::dummy()
-        }
-        fn close_requested(&self) -> bool {
-            false
-        }
-        fn focus_window(&self) {}
-        fn request_redraw(&self) {}
-    }
-
-    impl crate::aux::focus::AuxRender for OpenAux {
-        fn handle_common(&mut self, _event: &crate::aux::native::AuxNativeEvent) {}
-        fn feed_event(
-            &mut self,
-            _event: crate::aux::native::AuxNativeEvent,
-        ) -> Option<iced::Event> {
-            None
-        }
-        fn render(&mut self) {}
-    }
-
-    impl crate::aux::focus::AuxEvents for OpenAux {
-        fn handle(&mut self, _mapped: iced::Event) -> bool {
-            false
-        }
-    }
-
-    impl crate::aux::registry::DebugDrainPort for OpenAux {}
-    impl crate::aux::registry::LiveImagesPort for OpenAux {}
-    impl crate::aux::registry::SettingsClosePort for OpenAux {}
-    impl crate::aux::registry::HistorySyncPort for OpenAux {}
-    impl crate::aux::registry::BridgeSharePort for OpenAux {}
-    impl crate::aux::registry::AuxController for OpenAux {}
-
     fn settings_blocked_host() -> TestHost {
         let support = TestHost::new();
         let mut host = support.host;
-        host.aux.insert(Box::new(OpenAux));
+        host.aux
+            .insert(Box::new(StubAux::new(crate::aux::focus::AuxKind::Settings)));
         assert!(host.settings_open());
         TestHost {
             host,

@@ -12,8 +12,8 @@ use glutin::{
 use nerust_render_traits::{
     FrameBuffer, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
     renderer::{
-        FrameSink, GpuFactory, GpuRenderer, OsdLayer, OsdSink, OsdUploadPolicy, Present,
-        ProfileSwitch, RenderResult, RendererConfig, RendererError, RendererErrorKind, StripSink,
+        FrameSink, GpuFactory, GpuRenderer, OsdLayer, OsdSink, Present, ProfileSwitch,
+        RenderResult, RendererConfig, RendererError, RendererErrorKind, StripSink,
         SurfaceLifecycle,
     },
 };
@@ -42,7 +42,7 @@ pub struct GlRenderer {
     gl_config: glutin::config::Config,
     render_profile: VideoRenderProfile,
     /// Fresh upload policies for rebuilt overlay views (injectable for tests).
-    osd_policy: Box<dyn Fn() -> Box<dyn OsdUploadPolicy>>,
+    osd_policy: Box<dyn nerust_render_traits::renderer::OsdUploadPolicyFactory>,
     frame: FrameView,
     osd: crate::osd_view::OsdView,
     surface: crate::surface_view::SurfaceView,
@@ -79,9 +79,9 @@ impl GlRenderer {
         frame.set_use_vao(true);
         let is_gles = frame
             .load_frame(profile)
-            .map_err(|e| RendererError::new("view", Box::new(e)))?;
+            .map_err(nerust_render_traits::renderer::RendererError::from)?;
         let mut osd = crate::osd_view::OsdView::new();
-        osd.set_osd_policy((self.osd_policy)());
+        osd.set_osd_policy(self.osd_policy.create_policy());
         osd.reset_for_load();
         osd.init_osd(is_gles);
         osd.set_osd_layer(self.osd_staged.clone());
@@ -163,7 +163,7 @@ impl GlRenderer {
                         .with_context_api(ContextApi::OpenGl(Some(Version::new(3, 3))))
                         .build(Some(wh)),
                 )
-                .map_err(|e| RendererError::new("context", Box::new(e)))?
+                .map_err(|e| RendererError::attach("gl", "context", Box::new(e)))?
         };
         let (w, h) = Self::nonzero_extent(size);
         let surf = unsafe {
@@ -172,11 +172,11 @@ impl GlRenderer {
                     &self.gl_config,
                     &SurfaceAttributesBuilder::<WindowSurface>::new().build(wh, w, h),
                 )
-                .map_err(|e| RendererError::new("surface", Box::new(e)))?
+                .map_err(|e| RendererError::attach("gl", "surface", Box::new(e)))?
         };
         let ctx = nc
             .make_current(&surf)
-            .map_err(|e| RendererError::new("make_current", Box::new(e)))?;
+            .map_err(|e| RendererError::attach("gl", "make_current", Box::new(e)))?;
 
         FrameView::load_with(proc_loader(&self.display));
         self.on_load(&self.render_profile.clone())?;
@@ -512,7 +512,11 @@ fn upload_frame(
         }
     } else {
         if tight.len() < layout.need {
-            tight.resize(layout.need, 0);
+            tight.reserve_exact(layout.need - tight.len());
+            // SAFETY: `pack_rows_stripped` overwrites all `need` bytes below.
+            unsafe {
+                tight.set_len(layout.need);
+            }
         }
         pack_rows_stripped(data, layout.stride, layout.height, tight, layout.row_bytes);
         frame.on_update(tight, width_i32)
@@ -558,31 +562,37 @@ impl GlFactory {
     }
 }
 
-impl GpuFactory for GlFactory {
-    fn create_renderer(
-        &self,
+impl GlFactory {
+    /// Shared construction for both the legacy and the narrow factories.
+    fn build(
         config: &RendererConfig,
         display_handle: RawDisplayHandle,
-    ) -> Result<Box<dyn GpuRenderer>, RendererError> {
+    ) -> Result<GlRenderer, RendererError> {
         let display = Self::create_display(display_handle)
-            .map_err(|e| RendererError::new("display", Box::new(e)))?;
+            .map_err(|e| RendererError::attach("gl", "display", Box::new(e)))?;
         let template = ConfigTemplateBuilder::new().with_alpha_size(8).build();
         let gl_config = unsafe {
             display
                 .find_configs(template)
-                .map_err(|e| RendererError::new("configs", Box::new(e)))?
+                .map_err(|e| RendererError::attach("gl", "configs", Box::new(e)))?
                 .next()
                 .ok_or_else(|| {
-                    RendererError::new("no config", Box::new(RendererErrorKind::NoConfig))
+                    RendererError::with_kind(
+                        "no config",
+                        RendererErrorKind::NoConfig,
+                        Box::new(RendererErrorKind::NoConfig),
+                    )
                 })?
         };
-        Ok(Box::new(GlRenderer {
+        Ok(GlRenderer {
             display,
             gl_config,
             render_profile: config.render_profile.clone(),
             // Injected policy factory: every rebuilt overlay view mints its
-            // own budget from the single config knob (see `osd_upload_policy`).
-            osd_policy: config.osd_upload_policy_factory(),
+            // own budget from the single config knob (impl-owned policy).
+            osd_policy: Box::new(crate::upload::RetryPolicyFactory::new(
+                config.max_osd_upload_retries,
+            )),
             frame: FrameView::new(),
             osd: crate::osd_view::OsdView::new(),
             surface: crate::surface_view::SurfaceView::new(),
@@ -594,7 +604,28 @@ impl GpuFactory for GlFactory {
             osd_drop_warned: false,
             close_warned: false,
             tight: Vec::new(),
-        }))
+        })
+    }
+}
+
+impl GpuFactory for GlFactory {
+    fn create_renderer(
+        &self,
+        config: &RendererConfig,
+        display_handle: RawDisplayHandle,
+    ) -> Result<Box<dyn GpuRenderer>, RendererError> {
+        Ok(Box::new(Self::build(config, display_handle)?))
+    }
+}
+
+impl nerust_render_traits::renderer::PipelineFactory for GlFactory {
+    /// Per-use-site composition; same renderer, narrow object.
+    fn create_pipeline(
+        &self,
+        config: &RendererConfig,
+        display_handle: RawDisplayHandle,
+    ) -> Result<Box<dyn nerust_render_traits::renderer::RenderPipeline>, RendererError> {
+        Ok(Box::new(Self::build(config, display_handle)?))
     }
 }
 
@@ -671,11 +702,20 @@ mod tests {
     #[test]
     fn lifecycle_split_seams_are_object_safe() {
         use nerust_render_traits::renderer::{
-            FrameSink, GpuRenderer, Present, ProfileSwitch, SurfaceLifecycle,
+            FrameSink, GpuRenderer, PipelineFactory, Present, ProfileSwitch, RenderPipeline,
+            SurfaceLifecycle,
         };
         fn assert_seams<T: SurfaceLifecycle + FrameSink + ProfileSwitch + Present + GpuRenderer>() {
         }
         assert_seams::<super::GlRenderer>();
+        // Per-use-site composition: the same renderer behind narrow traits,
+        // minted by the narrow factory entry point.
+        fn assert_pipeline<T: RenderPipeline>() {}
+        assert_pipeline::<super::GlRenderer>();
+        fn assert_factory<T: PipelineFactory>() {}
+        assert_factory::<super::GlFactory>();
+        fn narrow_only(_: &mut dyn RenderPipeline) {}
+        let _ = narrow_only;
     }
 
     #[test]
@@ -943,18 +983,21 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn osd_policy_factory_mints_independent_budgets() {
-        use nerust_render_traits::renderer::{DEFAULT_OSD_UPLOAD_RETRIES, RendererConfig};
+        use crate::upload::RetryPolicyFactory;
+        use nerust_render_traits::renderer::{
+            DEFAULT_OSD_UPLOAD_RETRIES, OsdUploadPolicyFactory as _, RendererConfig,
+        };
         let config = RendererConfig {
             render_profile: gl_test_profile(),
             vsync: true,
             max_osd_upload_retries: DEFAULT_OSD_UPLOAD_RETRIES,
         };
-        let factory = config.osd_upload_policy_factory();
-        let mut first = factory();
+        let factory = RetryPolicyFactory::new(config.upload_budget());
+        let mut first = factory.create_policy();
         assert!(!first.record_failure());
         assert!(!first.record_failure());
         // A second view starts with a fresh budget, not the spent one.
-        let mut second = factory();
+        let mut second = factory.create_policy();
         assert!(!second.record_failure());
         assert!(!second.record_failure());
         assert!(first.record_failure());
@@ -989,13 +1032,10 @@ mod tests {
 
     /// Fresh-budget factory for renderer literals in tests (mirrors `GlFactory`).
     #[cfg(unix)]
-    fn test_policy_factory()
-    -> Box<dyn Fn() -> Box<dyn nerust_render_traits::renderer::OsdUploadPolicy>> {
-        use nerust_render_traits::renderer::{BoundedUploadPolicy, DEFAULT_OSD_UPLOAD_RETRIES};
-        Box::new(|| {
-            Box::new(BoundedUploadPolicy::new(DEFAULT_OSD_UPLOAD_RETRIES))
-                as Box<dyn nerust_render_traits::renderer::OsdUploadPolicy>
-        })
+    fn test_policy_factory() -> Box<dyn nerust_render_traits::renderer::OsdUploadPolicyFactory> {
+        use crate::upload::RetryPolicyFactory;
+        use nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES;
+        Box::new(RetryPolicyFactory::new(DEFAULT_OSD_UPLOAD_RETRIES))
     }
 
     /// Renderer rebuild on a real context (Xvfb + llvmpipe in CI).
@@ -1185,7 +1225,7 @@ mod tests {
     fn osd_flip_and_ntsc_readback() {
         use crate::frame_textures::{configure_ntsc_texture, upload_texture_bytes, use_texture};
         use crate::osd_view::OsdView;
-        use nerust_render_traits::renderer::StagingBuf;
+        use crate::upload::StagingBuf;
 
         let _serial = crate::test_display::lock_display();
         let Some(display) = crate::test_display::TestDisplay::connect() else {

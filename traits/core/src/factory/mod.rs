@@ -5,7 +5,8 @@ pub mod settings;
 use std::collections::HashMap;
 
 use nerust_input_traits::{
-    AttachmentId, ControlId, DigitalControlId, InputAssignments, InputSystemFactory, InputValue,
+    AttachmentId, ControlId, DigitalControlId, FieldId, InputAssignments, InputSystemFactory,
+    InputValue, UnifiedFieldMap,
 };
 use thiserror::Error;
 
@@ -38,6 +39,14 @@ pub trait GuiInputPort: Send {
         field: usize,
         value: InputValue,
     ) -> Result<(), nerust_input_traits::BufferError>;
+    /// Typed write; defaults to [`Self::set`].
+    fn set_field(
+        &mut self,
+        field: FieldId,
+        value: InputValue,
+    ) -> Result<(), nerust_input_traits::BufferError> {
+        self.set(field.index(), value)
+    }
     /// Publish staged state when dirty; clean calls skip the handoff.
     fn publish(&mut self);
     /// Reset staged state to neutral.
@@ -50,8 +59,19 @@ pub type DigitalFieldMap = HashMap<(AttachmentId, DigitalControlId), usize>;
 /// Unified `(attachment, ControlId)` entries dropped by the digital projection.
 pub type DroppedAnalogFields = Vec<(AttachmentId, ControlId)>;
 
+/// Lossless lookup over the unified map: the end-to-end (attachment, control)
+/// path that never passes through the lossy digital projection.
+pub fn resolve_unified_field(
+    map: &UnifiedFieldMap,
+    attachment: AttachmentId,
+    control: impl Into<ControlId>,
+) -> Option<usize> {
+    map.get(&(attachment, control.into())).copied()
+}
+
+#[must_use]
 pub fn split_digital_field_map(
-    unified: &HashMap<(AttachmentId, ControlId), usize>,
+    unified: &UnifiedFieldMap,
 ) -> (DigitalFieldMap, DroppedAnalogFields) {
     let mut digital = HashMap::with_capacity(unified.len());
     let mut dropped = Vec::new();
@@ -183,6 +203,27 @@ pub trait SystemDefaults: Send + Sync {
 mod tests {
     use super::*;
     use nerust_input_traits::AnalogControlId;
+
+    #[test]
+    fn unified_lookup_never_passes_the_lossy_projection() {
+        use nerust_input_traits::AnalogControlId;
+        let digital = DigitalControlId::new("test.a");
+        let analog = AnalogControlId::new("test.x");
+        let attachment = AttachmentId::new("test.pad");
+        let unified = HashMap::from([
+            ((attachment, ControlId::digital(digital)), 0),
+            ((attachment, ControlId::analog(analog)), 1),
+        ]);
+        assert_eq!(
+            resolve_unified_field(&unified, attachment, digital),
+            Some(0)
+        );
+        assert_eq!(resolve_unified_field(&unified, attachment, analog), Some(1));
+        assert_eq!(
+            resolve_unified_field(&unified, attachment, DigitalControlId::new("test.z")),
+            None
+        );
+    }
 
     #[test]
     fn projection_keeps_digital_and_reports_analog() {

@@ -21,7 +21,7 @@ use crate::ports::WindowOpener;
 /// Main window cluster: handle, liveness, surface target, fullscreen sync.
 /// All primary-window state lives here; `HostState` dispatches to it.
 pub(crate) struct WindowCluster {
-    window: Option<super::close::LiveWindow>,
+    window: Option<Arc<tao::window::Window>>,
     close: super::close::CloseGuard,
     pending_fullscreen_sync: Option<bool>,
     /// Linux render target below the muda menubar (`None` elsewhere).
@@ -56,7 +56,7 @@ impl WindowCluster {
         self.window.is_some()
     }
 
-    pub(super) fn live(&self) -> Option<&super::close::LiveWindow> {
+    pub(super) fn live(&self) -> Option<&Arc<tao::window::Window>> {
         self.window.as_ref()
     }
 
@@ -111,7 +111,7 @@ impl WindowCluster {
                 .default_vbox()
                 .map(|vbox| crate::gtk_embed::ContentArea::new(vbox, window.gtk_window(), &window));
         }
-        self.window = Some(super::close::LiveWindow::new(window));
+        self.window = Some(window);
     }
 
     /// Native attach target for the game renderer: content area below the menubar, else toplevel.
@@ -140,7 +140,7 @@ impl WindowCluster {
         if !self.close.is_usable() {
             return None;
         }
-        self.window.as_ref().map(|w| w.with_native(f))
+        self.window.as_ref().map(|w| f(w))
     }
 
     /// Drop the native handle after close teardown: post-loop code
@@ -158,8 +158,10 @@ impl WindowCluster {
         if let Some((handle, size, xid)) = self.content_target() {
             return Some((handle, size, Some(xid)));
         }
-        let handle = window.attach_handle()?.0;
-        Some((handle, window_surface_size(window.inner_size()), None))
+        // Native attach handle plus current surface size, if available.
+        use raw_window_handle::HasWindowHandle;
+        let raw = window.window_handle().ok()?.as_raw();
+        Some((raw, window_surface_size(window.inner_size()), None))
     }
 
     /// Content-area target below the menubar (`None` where unsupported or not yet laid out).
@@ -346,8 +348,11 @@ impl HostState {
         // One capture for the whole pass: chrome, debug, and OSD pumps share it.
         let ctx = self.frame_ctx();
         self.tick_chrome_sync(&ctx);
+        // Deferred focus effects land here: one gated sync covers menu,
+        // title, and drain-due instead of per-event round-trips.
+        self.sync_debug_chrome(&ctx);
         let wake = self.tick_debug_pump().fold(self.tick_osd_pump(&ctx));
-        let tick = ctx.tick;
+        let tick = ctx.tick();
         let now = Instant::now();
         let (deadline, wants_redraw) = update_flow(
             now,
@@ -433,7 +438,7 @@ impl HostState {
         let Some(window) = self.windows.live() else {
             return;
         };
-        if window.is_fullscreen()
+        if window.fullscreen().is_some()
             || scaling_factor(self.session.settings_snapshot().local.video.window.scaling).is_some()
         {
             return;
@@ -511,14 +516,19 @@ mod tests {
     }
 
     #[test]
-    fn update_control_flow_waits_quietly_without_windows() {
+    fn update_control_flow_syncs_chrome_once_then_holds() {
         let support = TestHost::new();
         let mut host = support.host;
         let mut flow = ControlFlow::Wait;
+        // Deferred focus effects land in the burst: the first pass
+        // pushes through the empty gate, the repeat holds.
         host.update_control_flow(&mut flow);
         assert_eq!(flow, ControlFlow::Wait);
+        assert_eq!(support.menu.updates().len(), 1);
+        host.update_control_flow(&mut flow);
+        assert_eq!(flow, ControlFlow::Wait);
+        assert_eq!(support.menu.updates().len(), 1);
         // No window, no flights, no follows: nothing to present.
-        assert!(support.menu.updates().is_empty());
     }
 
     #[test]

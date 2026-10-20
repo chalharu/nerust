@@ -13,7 +13,6 @@ use nerust_render_traits::{
     renderer::{GpuRenderer, SafeInsets, strip_pixels},
 };
 use nerust_settings_core::model::{language::AppLanguage, local::NotificationSettings};
-use winit::platform::android::activity::AndroidApp;
 
 /// Display-density scale for the in-frame OSD (desktop verifies at
 /// 1.0; phone screens halve it). Shared with strip reservation.
@@ -30,17 +29,84 @@ const EDGE_SAFE_DP: f32 = 24.0;
 /// That axis has dead bar space, so the shift stays readable.
 const BAR_AXIS_EXTRA_DP: f32 = 16.0;
 
-/// OSD display state plus the sync fingerprint. One field on the frontend.
-/// Keeps raster, strip, insets, and the notification manager only.
-pub(super) struct AndroidOsd {
+/// Display state: notification queue, rasterizer, and strip sync.
+/// Fonts and the manager survive an `invalidate`.
+struct OsdState {
     manager: OsdManager,
     raster: nerust_render_osd::OsdRaster,
     presenter: OsdPresenter,
     last_strip: ReservedStrip,
-    last_system_size: SurfaceSize,
-    last_system_scale_key: u32,
-    last_pushed: Option<[i32; 4]>,
-    last_system: SafeInsets,
+}
+
+impl OsdState {
+    fn new() -> Self {
+        let mut raster = nerust_render_osd::OsdRaster::with_font_dirs(&ANDROID_FONT_DIRS);
+        raster.set_ui_scale(OSD_UI_SCALE);
+        Self {
+            manager: OsdManager::new(),
+            raster,
+            presenter: OsdPresenter::new(),
+            last_strip: ReservedStrip::default(),
+        }
+    }
+
+    /// Forget sync state after a renderer rebuild.
+    fn invalidate(&mut self) {
+        self.presenter.invalidate();
+        self.last_strip = ReservedStrip::default();
+    }
+}
+
+/// Java window-insets cache: size, density, and push generation.
+/// Stale pushes never re-query; the render thread never blocks on JNI.
+struct InsetsCache {
+    size: SurfaceSize,
+    scale_key: u32,
+    version: u64,
+    system: SafeInsets,
+}
+
+impl InsetsCache {
+    fn new() -> Self {
+        Self {
+            size: SurfaceSize::new(0, 0),
+            scale_key: u32::MAX,
+            version: u64::MAX,
+            system: SafeInsets::default(),
+        }
+    }
+
+    /// Forget size and push tracking; the next frame re-reads the cache.
+    fn invalidate(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Cached push or default: default-until-push, never a blocking query.
+    fn refresh(&mut self, size: SurfaceSize, scale: f32) -> SafeInsets {
+        let scale_key = crate::density::density_key(scale);
+        let version = super::bridge::insets_version();
+        if size != self.size || scale_key != self.scale_key || version != self.version {
+            self.size = size;
+            self.scale_key = scale_key;
+            self.version = version;
+            self.system = super::bridge::cached_system_insets()
+                .map(|[top, right, bottom, left]| SafeInsets {
+                    top: top.max(0) as u32,
+                    right: right.max(0) as u32,
+                    bottom: bottom.max(0) as u32,
+                    left: left.max(0) as u32,
+                })
+                .unwrap_or_default();
+        }
+        self.system
+    }
+}
+
+/// OSD display state plus the sync fingerprint. One field on the frontend.
+/// Keeps raster, strip, insets, and the notification manager only.
+pub(super) struct AndroidOsd {
+    state: OsdState,
+    insets: InsetsCache,
 }
 
 /// Per-frame sync context for the rasterizer handoff.
@@ -57,40 +123,23 @@ pub(super) struct OsdSyncCtx<'a> {
 
 impl AndroidOsd {
     pub(super) fn new() -> Self {
-        let mut raster = nerust_render_osd::OsdRaster::with_font_dirs(&ANDROID_FONT_DIRS);
-        raster.set_ui_scale(OSD_UI_SCALE);
         Self {
-            manager: OsdManager::new(),
-            raster,
-            presenter: OsdPresenter::new(),
-            last_strip: ReservedStrip::default(),
-            last_system_size: SurfaceSize::new(0, 0),
-            last_system_scale_key: u32::MAX,
-            last_pushed: None,
-            last_system: SafeInsets::default(),
+            state: OsdState::new(),
+            insets: InsetsCache::new(),
         }
     }
 
     /// Borrow the notification queue for the frontend-owned dialog coordinator.
     /// The borrow ends when the closure returns.
     pub(super) fn with_modal<R>(&mut self, operation: impl FnOnce(&mut OsdManager) -> R) -> R {
-        operation(&mut self.manager)
+        operation(&mut self.state.manager)
     }
 
     /// Forget sync state after a renderer rebuild.
-    /// Fonts and scale survive; insets re-query on the next frame.
-    pub(super) fn reset(&mut self) {
-        self.presenter.invalidate();
-        self.last_strip = ReservedStrip::default();
-        self.invalidate_system_insets();
-    }
-
-    /// Force a fresh platform inset query on the next frame. Called
-    /// from the renderer rebuild/reset paths via `reset`.
-    pub(super) fn invalidate_system_insets(&mut self) {
-        self.last_system_size = SurfaceSize::new(0, 0);
-        self.last_system_scale_key = u32::MAX;
-        self.last_pushed = None;
+    /// Fonts and scale survive; insets re-read on the next frame.
+    pub(super) fn invalidate(&mut self) {
+        self.state.invalidate();
+        self.insets.invalidate();
     }
 
     // Frontend-owned modal flow lives in `DialogCoordinator`; `with_modal`
@@ -107,7 +156,7 @@ impl AndroidOsd {
         tick: nerust_gui_shell::session::osd::TickMetrics,
     ) -> bool {
         let report = session.pump_osd(
-            &mut self.manager,
+            &mut self.state.manager,
             nerust_gui_shell::session::osd::PushInput {
                 policy: nerust_gui_shell::session::osd::TransientPolicy::from(settings),
                 language,
@@ -120,7 +169,7 @@ impl AndroidOsd {
 
     /// OSD expiry deadline for the event-loop wait, if any labels are visible.
     pub(super) fn wakeup(&self, now: Instant) -> Option<Instant> {
-        self.manager.wakeup_deadline(now)
+        self.state.manager.wakeup_deadline(now)
     }
 
     /// Reserved edge strips in physical pixels. Static per settings
@@ -170,76 +219,10 @@ impl AndroidOsd {
         }
     }
 
-    /// Java window insets, re-queried only on size/density change.
-    /// Prefers the UI-thread push cache; the direct query covers the first frame.
-    pub(super) fn system_insets(
-        &mut self,
-        app: &AndroidApp,
-        size: SurfaceSize,
-        scale: f32,
-    ) -> SafeInsets {
-        let scale_key = crate::density::density_key(scale);
-        // Push-gated: a changed Kotlin push refreshes without a blind invalidate.
-        let pushed = super::bridge::cached_system_insets();
-        if size != self.last_system_size
-            || scale_key != self.last_system_scale_key
-            || pushed != self.last_pushed
-        {
-            self.last_system_size = size;
-            self.last_system_scale_key = scale_key;
-            self.last_pushed = pushed;
-            self.last_system = Self::cached_or_queried(app);
-        }
-        self.last_system
-    }
-
-    fn cached_or_queried(app: &AndroidApp) -> SafeInsets {
-        if let Some([top, right, bottom, left]) = super::bridge::cached_system_insets() {
-            return SafeInsets {
-                top: top.max(0) as u32,
-                right: right.max(0) as u32,
-                bottom: bottom.max(0) as u32,
-                left: left.max(0) as u32,
-            };
-        }
-        Self::query_system_insets(app)
-    }
-
-    /// Root-window safe insets in physical pixels, cached on the Java side.
-    /// Falls back to zeros when the bridge is unavailable.
-    pub(super) fn query_system_insets(app: &AndroidApp) -> SafeInsets {
-        let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
-        let insets: Option<[i32; 4]> = super::bridge::with_java_env(&vm, |env| {
-            let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-            let values = env.call_method(
-                &activity,
-                jni::jni_str!("getSafeInsetsPx"),
-                jni::jni_sig!("()[I"),
-                &[],
-            )?;
-            let array = env.cast_local::<jni::objects::JIntArray>(values.l()?)?;
-            let mut out = [0i32; 4];
-            array.get_region(env, 0, &mut out)?;
-            Ok::<_, jni::errors::Error>(out)
-        })
-        .map_err(|error| {
-            log::warn!("system insets query failed: {error:?}");
-            error
-        })
-        .ok();
-        match insets {
-            Some([top, right, bottom, left]) => SafeInsets {
-                top: top.max(0) as u32,
-                right: right.max(0) as u32,
-                bottom: bottom.max(0) as u32,
-                left: left.max(0) as u32,
-            },
-            None => {
-                log::debug!("system insets unavailable; using dp heuristics");
-                SafeInsets::default()
-            }
-        }
+    /// Java window insets, refreshed only on size/density/push change.
+    /// Default-until-push: no frame ever blocks on a JNI query.
+    pub(super) fn system_insets(&mut self, size: SurfaceSize, scale: f32) -> SafeInsets {
+        self.insets.refresh(size, scale)
     }
 
     /// Rasterize the OSD layer on change and hand it to the renderer.
@@ -255,12 +238,12 @@ impl AndroidOsd {
             now,
         } = ctx;
         let strip = Self::reserved_strip(settings, size.height);
-        if strip != self.last_strip {
-            self.last_strip = strip;
+        if strip != self.state.last_strip {
+            self.state.last_strip = strip;
             renderer.set_reserved_strip(strip);
         }
-        let decision = self.presenter.sync(
-            &self.manager,
+        let decision = self.state.presenter.sync(
+            &self.state.manager,
             OsdSyncInput {
                 tick,
                 chrome: nerust_gui_shell::session::osd::OsdChrome::from(settings),
@@ -278,8 +261,8 @@ impl AndroidOsd {
             OsdSync::Render(plan) => {
                 let (width, height) = (plan.width, plan.height);
                 let content = plan.into_content();
-                self.raster.set_safe_insets(insets);
-                renderer.set_osd_layer(self.raster.rasterize(&content, width, height));
+                self.state.raster.set_safe_insets(insets);
+                renderer.set_osd_layer(self.state.raster.rasterize(&content, width, height));
             }
         }
     }

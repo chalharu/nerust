@@ -97,12 +97,6 @@ impl ModalCenter {
     pub(crate) fn requeue_direct(&mut self, detail: String) -> bool {
         self.modal_box.requeue_front(detail)
     }
-
-    /// Total modal overflow losses (test hook for the warn-once path).
-    #[cfg(test)]
-    pub(crate) fn dropped_total(&self) -> u64 {
-        self.modal_box.dropped_total
-    }
 }
 
 /// Modal error batches with sequential display pumping.
@@ -255,11 +249,11 @@ mod tests {
         assert_eq!(center.take_batch().as_deref(), Some("raw line"));
         assert_eq!(center.pending(), 0);
         center.closed();
-        // Overflow records the drop for the caller to log.
-        for i in 0..9 {
-            center.queue_direct(format!("batch {i}"));
+        // Overflow records the drop for the caller to log: the ninth batch overflows.
+        for i in 0..8 {
+            assert!(!center.queue_direct(format!("batch {i}")));
         }
-        assert_eq!(center.dropped_total(), 1);
+        assert!(center.queue_direct("batch 8".to_string()));
     }
 
     #[test]

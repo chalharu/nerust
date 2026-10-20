@@ -1,7 +1,6 @@
 //! Main-window liveness plus close idempotence in one owned guard.
 
 use std::sync::Arc;
-use tao::window::Window as TaoWindow;
 
 /// Single liveness truth. Only `Live` is handle-touchable.
 #[derive(Debug, Clone)]
@@ -49,79 +48,6 @@ impl CloseOnce {
     #[cfg(test)]
     pub(crate) fn fired(&self) -> bool {
         self.fired
-    }
-}
-
-/// Owned native window handle; all dead-handle checks flow through here.
-#[derive(Debug, Clone)]
-pub(crate) struct LiveWindow {
-    inner: Arc<TaoWindow>,
-}
-
-impl LiveWindow {
-    pub(crate) fn new(window: Arc<TaoWindow>) -> Self {
-        Self { inner: window }
-    }
-
-    /// Native redraw request for the owned window.
-    pub(crate) fn request_redraw(&self) {
-        self.inner.request_redraw();
-    }
-
-    /// Current physical size of the owned window.
-    pub(crate) fn inner_size(&self) -> tao::dpi::PhysicalSize<u32> {
-        self.inner.inner_size()
-    }
-
-    /// Native identity for event routing.
-    pub(crate) fn id(&self) -> tao::window::WindowId {
-        self.inner.id()
-    }
-
-    /// Set the window title.
-    pub(crate) fn set_title(&self, title: &str) {
-        self.inner.set_title(title);
-    }
-
-    /// Resize the window (scaling changes).
-    pub(crate) fn set_inner_size(&self, size: tao::dpi::LogicalSize<f64>) {
-        self.inner.set_inner_size(size);
-    }
-
-    /// Current scale factor for logical-size math.
-    pub(crate) fn scale_factor(&self) -> f64 {
-        self.inner.scale_factor()
-    }
-
-    /// Narrow native borrow: surface attach and size queries only.
-    pub(crate) fn with_native<R>(&self, f: impl FnOnce(&TaoWindow) -> R) -> R {
-        f(&self.inner)
-    }
-
-    /// Whether the native window is currently fullscreen.
-    pub(crate) fn is_fullscreen(&self) -> bool {
-        self.inner.fullscreen().is_some()
-    }
-
-    /// Apply a fullscreen transition on the native window.
-    pub(crate) fn set_fullscreen(&self, fullscreen: bool) {
-        use tao::window::Fullscreen;
-        self.inner
-            .set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
-    }
-
-    /// Native attach handle plus current surface size, if available.
-    pub(crate) fn attach_handle(
-        &self,
-    ) -> Option<(
-        raw_window_handle::RawWindowHandle,
-        nerust_render_traits::SurfaceSize,
-    )> {
-        use nerust_render_traits::SurfaceSize;
-        use raw_window_handle::HasWindowHandle;
-        let raw = self.inner.window_handle().ok()?.as_raw();
-        let size = self.inner.inner_size();
-        Some((raw, SurfaceSize::new(size.width, size.height)))
     }
 }
 

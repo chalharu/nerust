@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use nerust_settings_core::model::language::AppLanguage;
 
-use super::notification::UiNotification;
+use super::notification::{UiNotification, render_text};
 
 pub use super::osd_history::{
     HistoryLine, format_datetime, format_datetime_with_offset, format_time, history_lines,
@@ -70,24 +70,26 @@ impl OsdManager {
         let mut changed = false;
         let router = ModalRouter { policy, channel };
         for n in notifications {
+            // One message build per event: the row and the key share it, never re-rendered.
+            let message = n.kind.message();
             match router.route(&n.kind) {
                 // No composited frame and not modal-worthy: drop.
                 // Disabled levels never display.
                 ModalRoute::Drop => continue,
                 ModalRoute::Modal => {
                     self.modal
-                        .push_text(super::notification::render_text(&n.kind, n.count, language));
+                        .push_text(render_text(&n.kind, n.count, language));
                     changed = true;
                     continue;
                 }
                 ModalRoute::Transient => {}
             }
             let renderer = super::notification::NotificationRenderer { language };
-            let base: std::rc::Rc<str> = renderer.render(&n.kind).into();
+            let base: std::rc::Rc<str> = renderer.render_message(&message).into();
             let item = OsdItem {
                 row: counted_row(&base, n.count, policy.color(n.level), level_tag(n.level)),
                 level: n.level,
-                message: n.kind.message(),
+                message,
                 base,
                 count: n.count,
                 duration: policy.duration(n.level),
@@ -145,11 +147,6 @@ impl OsdManager {
                 true
             }
         }
-    }
-
-    #[cfg(test)]
-    fn take_modal_text(&mut self) -> Vec<String> {
-        self.modal.take_batch_text()
     }
 
     /// Monotonic change count. `dirty`/`take_dirty` stay for the
@@ -227,12 +224,6 @@ impl PumpTarget for OsdManager {
 }
 
 impl OsdManager {
-    /// Total modal overflow losses (test hook for the warn-once path).
-    #[cfg(test)]
-    pub fn overflow_dropped(&self) -> u64 {
-        self.modal.dropped_total()
-    }
-
     /// Queued error batches awaiting a dialog, for the wake policy.
     pub fn modal_pending(&self) -> usize {
         self.modal.pending()
@@ -356,7 +347,8 @@ mod tests {
             FrameChannel::Unpresented,
         );
         assert!(manager.rows().is_empty());
-        assert!(!manager.take_modal_text().is_empty());
+        assert!(manager.pump_modal());
+        assert!(manager.take_modal_batch().is_some());
     }
 
     #[test]
@@ -380,7 +372,8 @@ mod tests {
             FrameChannel::Composited,
         );
         assert!(manager.rows().is_empty());
-        assert!(!manager.take_modal_text().is_empty());
+        assert!(manager.pump_modal());
+        assert!(manager.take_modal_batch().is_some());
     }
 
     #[test]
@@ -422,9 +415,10 @@ mod tests {
         }
         assert!(manager.rows().is_empty());
         // Info is dropped without a frame: only two modal lines.
-        let batch = manager.take_modal_text();
-        assert_eq!(batch.len(), 2);
-        assert!(batch.iter().all(|line| !line.contains("Paused")));
+        assert!(manager.pump_modal());
+        let batch = manager.take_modal_batch().expect("modal batch");
+        assert_eq!(batch.lines().count(), 2);
+        assert!(!batch.contains("Paused"));
     }
 
     #[test]
@@ -447,7 +441,8 @@ mod tests {
         );
         assert_eq!(manager.generation(), base);
         assert!(manager.rows().is_empty());
-        assert!(manager.take_modal_text().is_empty());
+        assert!(!manager.pump_modal());
+        assert!(manager.take_modal_batch().is_none());
         assert_eq!(manager.modal_pending(), 0);
     }
 
@@ -1360,7 +1355,7 @@ mod osd_cov_tests {
         assert!(!manager.has_visible());
         assert!(manager.wakeup_deadline(now).is_none());
         assert!(!manager.pump_modal());
-        assert_eq!(manager.overflow_dropped(), 0);
+        assert_eq!(manager.modal_pending(), 0);
         assert!(manager.visible_row().is_none());
         manager.requeue_front("head".to_string());
         assert_eq!(manager.take_modal_batch().as_deref(), Some("head"));

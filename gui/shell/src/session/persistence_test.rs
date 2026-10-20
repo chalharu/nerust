@@ -30,12 +30,9 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
         .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
         .unwrap();
 
-    let mapper_save_path = session
-        .media
-        .persistence
-        .mapper_save_path()
-        .expect("load should configure mapper_save_path")
-        .clone();
+    let (_, mapper_save_path) = session
+        .sidecars()
+        .expect("load should configure mapper_save_path");
     fs::write(&mapper_save_path, [9, 8, 7, 6]).expect("mapper save should write");
 
     let mut next = session.settings_snapshot().clone();
@@ -67,13 +64,10 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
         .unwrap();
 
     assert!(session.save_hidden_lifecycle_state());
-    let autosave_path = autosave_state_slot_path(
-        session
-            .media
-            .persistence
-            .states_dir()
-            .expect("load should configure states_dir"),
-    );
+    let (states_dir, _) = session
+        .sidecars()
+        .expect("load should configure states_dir");
+    let autosave_path = autosave_state_slot_path(&states_dir);
     assert!(autosave_path.is_file());
     assert!(session.slots().is_empty());
     assert_eq!(session.active_slot_id(), None);
@@ -109,13 +103,10 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
         .unwrap();
 
     assert!(session.save_hidden_lifecycle_state());
-    let autosave_path = autosave_state_slot_path(
-        session
-            .media
-            .persistence
-            .states_dir()
-            .expect("load should configure states_dir"),
-    );
+    let (states_dir, _) = session
+        .sidecars()
+        .expect("load should configure states_dir");
+    let autosave_path = autosave_state_slot_path(&states_dir);
     assert!(autosave_path.is_file());
 
     fs::write(&autosave_path, [0xFF, 0xFF, 0xFF]).expect("corrupt state");
@@ -147,13 +138,10 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
         .unwrap();
     assert!(session.save_hidden_lifecycle_state());
 
-    let autosave_path = autosave_state_slot_path(
-        session
-            .media
-            .persistence
-            .states_dir()
-            .expect("load should configure states_dir"),
-    );
+    let (states_dir, _) = session
+        .sidecars()
+        .expect("load should configure states_dir");
+    let autosave_path = autosave_state_slot_path(&states_dir);
     assert!(autosave_path.is_file());
     drop(session);
 
@@ -331,8 +319,6 @@ impl StateExporter for FailingExportCore {
 
 #[test]
 fn flush_mapper_save_propagates_export_failure() {
-    use nerust_persistence::error::PersistenceError;
-
     use crate::session::persistence::PersistenceManager;
 
     let temp_dir = unique_temp_dir("flush-export-failure");
@@ -344,7 +330,9 @@ fn flush_mapper_save_propagates_export_failure() {
     manager.configure(temp_dir.clone(), temp_dir.join("test.sav"));
     assert!(matches!(
         manager.flush_mapper_save(&FailingExportCore),
-        Err(PersistenceError::Export(_))
+        Err(crate::session::persistence::MapperFlushError {
+            fault: SlotOpFailure::Unavailable
+        })
     ));
     let _ = fs::remove_dir_all(temp_dir);
 }

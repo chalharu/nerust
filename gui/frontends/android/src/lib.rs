@@ -9,10 +9,19 @@ mod density;
 mod error_dialog_controller;
 
 #[cfg(any(target_os = "android", test))]
+mod fetch_seq;
+
+#[cfg(any(target_os = "android", test))]
 mod import_metadata;
 
 #[cfg(any(target_os = "android", test))]
 mod lifecycle_decision;
+
+#[cfg(any(target_os = "android", test))]
+mod saf_decision;
+
+#[cfg(any(target_os = "android", test))]
+mod settings_sections;
 
 #[cfg(any(target_os = "android", test))]
 // Initializer is already const; the lint misfires on the macro span.

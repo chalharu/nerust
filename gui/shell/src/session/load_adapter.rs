@@ -12,14 +12,10 @@ use crate::{
     session::SessionHandle,
 };
 
-/// SessionPorts implementation behind the narrow loader port.
-impl super::ports::SessionPorts for SessionHandle {
+/// Narrow load-leg implementation behind the loader port.
+impl super::ports::LoadPorts for SessionHandle {
     fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
         SessionHandle::default_load_options(self)
-    }
-
-    fn settings_snapshot(&self) -> &SettingsSnapshot {
-        SessionHandle::settings_snapshot(self)
     }
 
     fn load_resolved(
@@ -39,8 +35,18 @@ impl super::ports::SessionPorts for SessionHandle {
     }
 }
 
-/// Loader-facing view of a live session. Borrows the port for the
-/// duration of one load; frontends keep using the inherent methods.
+/// Narrow snapshot-leg implementation behind the loader port.
+impl super::ports::SnapshotPort for SessionHandle {
+    fn settings_snapshot(&self) -> &SettingsSnapshot {
+        SessionHandle::settings_snapshot(self)
+    }
+}
+
+/// Union implementation over the two narrow legs; no blanket impl involved.
+impl super::ports::SessionPorts for SessionHandle {}
+
+/// Loader-facing view of a live session over the narrow load legs.
+/// Orchestrates one activation plus load plus resume per call.
 pub struct SessionLoadAdapter<'a> {
     port: &'a mut dyn super::ports::SessionPorts,
 }
@@ -54,6 +60,24 @@ impl<'a> SessionLoadAdapter<'a> {
     /// Narrow-port constructor; tests and frontends inject fakes here.
     pub fn from_port(port: &'a mut dyn super::ports::SessionPorts) -> Self {
         Self { port }
+    }
+}
+
+impl SessionLoadAdapter<'_> {
+    /// One orchestrated load: activate the system, load the media, then resume.
+    /// Errors short-circuit; the port stays borrowed for the whole sequence.
+    pub fn activate_and_load(
+        &mut self,
+        system_id: &dyn SystemId,
+        media: MediaObject,
+        resolved: ResolvedLoadRequest,
+    ) -> Result<(), RomLoaderError> {
+        self.port
+            .set_active_system(system_id)
+            .map_err(|error| RomLoaderError::Load(error.to_string()))?;
+        self.port.load_resolved(media, resolved)?;
+        self.port.resume();
+        Ok(())
     }
 }
 
@@ -86,87 +110,98 @@ impl RomLoadTarget for SessionLoadAdapter<'_> {
 #[cfg(test)]
 mod tests {
     use crate::session::load_adapter::*;
+    use crate::session::ports::{LoadPorts, SessionPorts, SnapshotPort};
 
     struct FakePorts {
-        resumed: bool,
+        calls: Vec<&'static str>,
     }
 
-    impl super::super::ports::SessionPorts for FakePorts {
+    impl LoadPorts for FakePorts {
         fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
             None
-        }
-        fn settings_snapshot(&self) -> &SettingsSnapshot {
-            panic!("no snapshot in fake")
         }
         fn load_resolved(
             &mut self,
             _media: MediaObject,
             _resolved: ResolvedLoadRequest,
         ) -> Result<(), RomLoaderError> {
+            self.calls.push("load_resolved");
             Ok(())
         }
         fn resume(&mut self) {
-            self.resumed = true;
+            self.calls.push("resume");
         }
         fn set_active_system(
             &mut self,
             _system_id: &dyn SystemId,
         ) -> Result<(), SystemActivationError> {
+            self.calls.push("set_active_system");
             Ok(())
         }
     }
 
+    impl SnapshotPort for FakePorts {
+        fn settings_snapshot(&self) -> &SettingsSnapshot {
+            panic!("no snapshot in fake")
+        }
+    }
+
+    impl SessionPorts for FakePorts {}
+
     #[test]
     fn adapter_depends_on_narrow_ports_only() {
-        let mut fake = FakePorts { resumed: false };
+        fn bound<T: LoadPorts + SnapshotPort>() {}
+        bound::<FakePorts>();
+        bound::<super::super::SessionHandle>();
+        let mut fake = FakePorts { calls: vec![] };
         let mut adapter = SessionLoadAdapter::from_port(&mut fake);
         adapter.resume();
-        assert!(fake.resumed);
+        assert_eq!(fake.calls, vec!["resume"]);
     }
 
     #[test]
-    fn adapter_forwards_load_options_snapshot_and_errors() {
+    fn activate_and_load_sequences_once_against_the_port() {
         use crate::session::test_util::{test_session, test_view};
         let mut session = test_session();
-        let (bad, resolved) = {
-            let factory = session.factory().unwrap();
-            let options = factory.default_load_options();
-            let view = test_view(&session);
-            let resolved = factory.resolve_load_request(&view, options).unwrap();
-            (MediaObject::new(None, vec![]), resolved)
-        };
+        let media = MediaObject::new(None, vec![]);
         {
             let adapter = SessionLoadAdapter::new(&mut session);
             assert!(adapter.default_load_options().is_some());
             let _ = adapter.settings_snapshot();
         }
-        let mut fake = FakePorts { resumed: false };
+        let mut fake = FakePorts { calls: vec![] };
         let mut adapter = SessionLoadAdapter::from_port(&mut fake);
-        assert!(adapter.load_resolved(bad, resolved).is_ok());
         let id = crate::test_helpers::DummySystemId;
-        assert!(adapter.set_active_system(&id).is_ok());
-        adapter.resume();
-        assert!(fake.resumed);
-    }
-
-    #[test]
-    fn session_ports_impl_delegates_without_recursion() {
-        use super::super::ports::SessionPorts;
-        use crate::session::test_util::{test_session, test_view};
-        let mut session = test_session();
-        assert!(SessionPorts::default_load_options(&session).is_some());
-        let _ = SessionPorts::settings_snapshot(&session);
-        SessionPorts::resume(&mut session);
-        let id = crate::test_helpers::DummySystemId;
-        assert!(SessionPorts::set_active_system(&mut session, &id).is_ok());
         let resolved = {
             let factory = session.factory().unwrap();
             let options = factory.default_load_options();
             let view = test_view(&session);
             factory.resolve_load_request(&view, options).unwrap()
         };
-        let err =
-            SessionPorts::load_resolved(&mut session, MediaObject::new(None, vec![]), resolved);
+        assert!(adapter.activate_and_load(&id, media, resolved).is_ok());
+        // One orchestrated pass: activate, then load, then resume.
+        assert_eq!(
+            fake.calls,
+            vec!["set_active_system", "load_resolved", "resume"]
+        );
+    }
+
+    #[test]
+    fn session_ports_impl_delegates_without_recursion() {
+        use crate::session::test_util::{test_session, test_view};
+        let mut session = test_session();
+        assert!(LoadPorts::default_load_options(&session).is_some());
+        let _ = SnapshotPort::settings_snapshot(&session);
+        LoadPorts::resume(&mut session);
+        let id = crate::test_helpers::DummySystemId;
+        assert!(LoadPorts::set_active_system(&mut session, &id).is_ok());
+        let resolved = {
+            let factory = session.factory().unwrap();
+            let options = factory.default_load_options();
+            let view = test_view(&session);
+            factory.resolve_load_request(&view, options).unwrap()
+        };
+        let err = LoadPorts::load_resolved(&mut session, MediaObject::new(None, vec![]), resolved);
         assert!(err.is_err() || err.is_ok());
     }
 }

@@ -7,6 +7,7 @@ mod osd_overlay;
 pub(crate) mod osd_view;
 mod shader_compiler;
 pub(crate) mod surface_view;
+pub mod upload;
 mod vec2d;
 mod vertex_data;
 

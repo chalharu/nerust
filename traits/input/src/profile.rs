@@ -8,6 +8,13 @@ use super::{
     ids::{AttachmentId, ControlId, DeviceKindId, ProfileId},
 };
 
+/// Unified session field map: (attachment, control) → absolute field.
+/// End-to-end lookup key; the digital-only projection derives from this.
+pub type UnifiedFieldMap = HashMap<(AttachmentId, ControlId), usize>;
+
+/// Factory minting one input buffer per call; shared by every endpoint.
+pub type BufferFactory = Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>;
+
 /// A set of port identifiers a controller can occupy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PortSet {
@@ -120,8 +127,39 @@ impl InputAssignments {
         &self.slots
     }
 
-    pub fn slots_mut(&mut self) -> &mut [(AttachmentId, Option<Rc<dyn ControllerProfile>>)] {
-        &mut self.slots
+    /// Assign a controller to a known slot; unknown slots refuse instead of
+    /// growing the topology behind the factory's back.
+    pub fn set_assignment(
+        &mut self,
+        slot: AttachmentId,
+        controller: Option<Rc<dyn ControllerProfile>>,
+    ) -> Result<(), CreateSplitError> {
+        let Some(entry) = self.slots.iter_mut().find(|(id, _)| *id == slot) else {
+            return Err(CreateSplitError::SlotNotFound { slot });
+        };
+        entry.1 = controller;
+        Ok(())
+    }
+
+    /// Clear every other slot sharing a multi-port set with `slot`.
+    /// Single owner for slot-topology mutation; settings layers delegate here.
+    pub fn clear_multi_port_conflicts(
+        &mut self,
+        slot: AttachmentId,
+        profile: &dyn ControllerProfile,
+    ) {
+        for ps in profile.port_sets() {
+            if ps.ports.len() <= 1 || !ps.ports.contains(&slot) {
+                continue;
+            }
+            for &port in ps.ports {
+                if port != slot
+                    && let Some(other) = self.slots.iter_mut().find(|(s, _)| *s == port)
+                {
+                    other.1 = None;
+                }
+            }
+        }
     }
 
     /// Explicit order-sensitive structural comparison used by `PartialEq`.
@@ -192,8 +230,8 @@ pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
 /// Init-time factory output: field map plus a buffer factory.
 /// Thread endpoints live behind `nerust_emu_thread::InputPort`; this stays thread-free.
 pub struct InputResources {
-    field_map: HashMap<(AttachmentId, ControlId), usize>,
-    new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
+    field_map: UnifiedFieldMap,
+    new_buffer: BufferFactory,
 }
 
 impl std::fmt::Debug for InputResources {
@@ -205,30 +243,40 @@ impl std::fmt::Debug for InputResources {
 }
 
 impl InputResources {
-    pub fn new(
-        field_map: HashMap<(AttachmentId, ControlId), usize>,
-        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
-    ) -> Self {
+    pub fn new(field_map: UnifiedFieldMap, new_buffer: BufferFactory) -> Self {
         Self {
             field_map,
             new_buffer,
         }
     }
 
-    pub fn field_map(&self) -> &HashMap<(AttachmentId, ControlId), usize> {
+    pub fn field_map(&self) -> &UnifiedFieldMap {
         &self.field_map
     }
 
-    pub fn field_map_mut(&mut self) -> &mut HashMap<(AttachmentId, ControlId), usize> {
-        &mut self.field_map
+    /// Replace the field map with revalidation: field indices must be
+    /// unique, so two controls can never alias one absolute field.
+    pub fn replace_field_map(
+        &mut self,
+        next: HashMap<(AttachmentId, ControlId), usize>,
+    ) -> Result<(), CreateSplitError> {
+        let mut owner = std::collections::HashMap::with_capacity(next.len());
+        for ((attachment, _), field) in &next {
+            if let Some(first) = owner.insert(*field, *attachment) {
+                return Err(CreateSplitError::SlotConflict {
+                    a: first,
+                    b: *attachment,
+                });
+            }
+        }
+        self.field_map = next;
+        Ok(())
     }
 
-    pub fn new_buffer(&self) -> &(dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync) {
-        &*self.new_buffer
-    }
-
-    pub fn take_factory(self) -> Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync> {
-        self.new_buffer
+    /// Single move-out for the endpoint constructor: the map plus the
+    /// factory travel together into `InputSplit`, never separately.
+    pub fn into_parts(self) -> (UnifiedFieldMap, BufferFactory) {
+        (self.field_map, self.new_buffer)
     }
 
     /// Write one absolute field through a fresh buffer (init-time helper).
@@ -362,9 +410,51 @@ mod tests {
         ]);
         assert!(!first.eq_ordered(&dropped));
         let mut mutable = first.clone();
-        mutable.slots_mut()[1].1 = Some(Rc::clone(&profile));
+        mutable
+            .set_assignment(AttachmentId::new("test.p2"), Some(Rc::clone(&profile)))
+            .unwrap();
         assert_eq!(mutable.slots().len(), 2);
         assert!(format!("{mutable:?}").contains("test.probe"));
+        // Unknown slots refuse instead of growing the topology.
+        assert!(
+            mutable
+                .set_assignment(AttachmentId::new("test.missing"), None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn assignments_own_multi_port_clearing() {
+        use super::PortSet;
+        #[derive(Debug)]
+        struct Multi;
+        impl ControllerProfile for Multi {
+            fn profile_id(&self) -> ProfileId {
+                ProfileId::new("test.multi")
+            }
+            fn label(&self) -> &'static str {
+                "Multi"
+            }
+            fn port_sets(&self) -> &[PortSet] {
+                static SETS: &[PortSet] = &[PortSet {
+                    ports: &[AttachmentId::new("test.p1"), AttachmentId::new("test.p2")],
+                }];
+                SETS
+            }
+            fn port_groups(&self) -> &[&[ControlInfo]] {
+                const EMPTY: &[ControlInfo] = &[];
+                const GROUPS: [&[ControlInfo]; 1] = [EMPTY];
+                &GROUPS
+            }
+        }
+        let pad: Rc<dyn ControllerProfile> = Rc::new(Multi);
+        let mut assignments = InputAssignments::new(vec![
+            (AttachmentId::new("test.p1"), Some(Rc::clone(&pad))),
+            (AttachmentId::new("test.p2"), Some(Rc::clone(&pad))),
+        ]);
+        assignments.clear_multi_port_conflicts(AttachmentId::new("test.p1"), pad.as_ref());
+        assert!(assignments.slots()[0].1.is_some());
+        assert!(assignments.slots()[1].1.is_none());
     }
 
     #[test]
@@ -446,9 +536,33 @@ mod tests {
         assert!(resources.probe_set(0, InputValue::Digital(true)).is_ok());
         assert!(resources.probe_set(9, InputValue::Digital(true)).is_err());
         assert_eq!(resources.field_map().len(), 1);
-        resources.field_map_mut().clear();
-        assert!(resources.field_map().is_empty());
-        let factory = resources.take_factory();
+        // Revalidation refuses aliased fields; disjoint maps replace cleanly.
+        let mut dup = HashMap::from([
+            (
+                (
+                    AttachmentId::new("test.p1"),
+                    ControlId::digital(DigitalControlId::new("test.a")),
+                ),
+                0,
+            ),
+            (
+                (
+                    AttachmentId::new("test.p1"),
+                    ControlId::digital(DigitalControlId::new("test.b")),
+                ),
+                0,
+            ),
+        ]);
+        assert!(resources.replace_field_map(dup.clone()).is_err());
+        dup.remove(&(
+            AttachmentId::new("test.p1"),
+            ControlId::digital(DigitalControlId::new("test.b")),
+        ));
+        resources.replace_field_map(dup).unwrap();
+        assert_eq!(resources.field_map().len(), 1);
+        // Single move-out: the map plus the factory travel together.
+        let (map, factory) = resources.into_parts();
+        assert_eq!(map.len(), 1);
         assert!((factory)().downcast_ref::<Bit>().is_some());
         let port = SimplePort::new(0, "test.p1");
         let _ = (&port as &dyn Port).port_id();

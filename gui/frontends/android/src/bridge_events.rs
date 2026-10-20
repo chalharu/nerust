@@ -57,43 +57,6 @@ pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, AbstractKey)] = &[
     ("right", AbstractKey::DpadRight),
 ];
 
-/// Canonical settings section ids in payload order; Rust owns the
-/// id→label mapping and pushes the label per section.
-pub(crate) const SETTINGS_SECTION_IDS: &[&str] = &[
-    "audio",
-    "video",
-    "controls",
-    "storage",
-    "notifications",
-    "system.nes",
-    "system.gbc",
-    "system.gba",
-];
-
-/// Canonical section id→label table, owned by Rust and pushed per
-/// section; Kotlin renders the pushed label and keeps its map as fallback.
-pub(crate) fn section_label(id: &str) -> String {
-    match id {
-        "audio" => "Audio".to_string(),
-        "video" => "Video".to_string(),
-        "controls" => "Controls".to_string(),
-        "storage" => "Storage".to_string(),
-        "notifications" => "Notifications".to_string(),
-        "general" => "General".to_string(),
-        "system.nes" => "Nintendo Entertainment System".to_string(),
-        "system.gbc" => "Game Boy Color".to_string(),
-        "system.gba" => "Game Boy Advance".to_string(),
-        other => {
-            let base = other.rsplit('.').next().unwrap_or(other).replace('_', " ");
-            let mut chars = base.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-            }
-        }
-    }
-}
-
 /// Versioned bridge event envelope: v1 JSON only; anything else is `None`.
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -355,22 +318,5 @@ mod tests {
             ),
             None
         );
-    }
-
-    /// Section taxonomy: ids stay unique and every id owns a label.
-    /// Kotlin renders the pushed label; its map is a fallback only.
-    #[test]
-    fn section_ids_own_labels() {
-        use super::{SETTINGS_SECTION_IDS, section_label};
-        let mut seen = std::collections::BTreeSet::new();
-        for id in SETTINGS_SECTION_IDS {
-            assert!(seen.insert(*id), "duplicate section id {id}");
-            assert!(!section_label(id).is_empty(), "section {id} needs a label");
-        }
-        assert_eq!(section_label("audio"), "Audio");
-        assert_eq!(section_label("notifications"), "Notifications");
-        assert_eq!(section_label("system.gbc"), "Game Boy Color");
-        assert_eq!(section_label("system.unknown"), "Unknown");
-        assert_eq!(section_label("foo_bar"), "Foo bar");
     }
 }

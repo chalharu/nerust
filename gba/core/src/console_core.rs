@@ -382,26 +382,16 @@ impl DebugControl for GbaDebugControl<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex, atomic::AtomicBool},
-    };
+    use std::collections::HashMap;
 
     use nerust_core_traits::CoreConfig;
-    use nerust_emu_thread::EmuInput;
-    use nerust_input_traits::InputStateBuffer;
+    use nerust_emu_thread::{EmuInput, InputPort as _, InputSplit};
 
     use super::*;
     use crate::{debugger::SPACE_MEMORY, input_types::GbaInputBuffer};
 
     fn test_emu_input() -> EmuInput {
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-            Arc::new(Mutex::new(Box::<GbaInputBuffer>::default()));
-        EmuInput::new(
-            shared,
-            Arc::new(AtomicBool::new(false)),
-            Box::new(|| Box::<GbaInputBuffer>::default()),
-        )
+        InputSplit::spawn_typed(GbaInputBuffer::default).emu_endpoint()
     }
 
     #[test]

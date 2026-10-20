@@ -91,7 +91,8 @@ mod tests {
         let controllers = ControllerCollection::new(vec![Box::new(StandardPad::new())]);
         let resources = crate::GbcFactory.create_split(&controllers).unwrap();
         assert_eq!(resources.field_map().len(), 8);
-        let buffer = (resources.new_buffer())();
+        let (_, factory) = resources.into_parts();
+        let buffer = factory();
         assert!(buffer.downcast_ref::<GbcInputBuffer>().is_some());
     }
 

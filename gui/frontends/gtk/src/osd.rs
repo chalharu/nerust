@@ -202,7 +202,12 @@ impl GtkOsd {
         }
     }
 
-    pub(crate) fn show_history(window: &gtk::ApplicationWindow, state: &Rc<RefCell<State>>) {
+    /// Build the history dialog without presenting: the caller owns
+    /// presentation and lifetime (parity with the debugger window).
+    pub(crate) fn build_history(
+        window: &gtk::ApplicationWindow,
+        state: &Rc<RefCell<State>>,
+    ) -> gtk::Dialog {
         use nerust_gui_shell::session::notification::NotificationLevel;
         let language = state.borrow().settings_snapshot().shared.general.language;
         let dialog = gtk::Dialog::with_buttons(
@@ -303,7 +308,9 @@ impl GtkOsd {
                 };
                 let visible: Vec<_> = lines
                     .iter()
-                    .filter(|line| line.level.severity() >= minimum)
+                    .filter(|line| {
+                        nerust_frontend_kernel::level_visible(minimum, line.level.severity())
+                    })
                     .collect();
                 count.set_text(&nerust_settings_core::i18n::history_count(
                     language,
@@ -403,7 +410,7 @@ impl GtkOsd {
             close.set_margin_bottom(16);
         }
         dialog.connect_response(|dialog, _| dialog.destroy());
-        dialog.present();
+        dialog
     }
 }
 impl GtkOsd {

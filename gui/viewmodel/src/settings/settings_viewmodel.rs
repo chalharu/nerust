@@ -3,7 +3,7 @@ use std::{collections::HashMap, rc::Rc, sync::Arc};
 use crate::settings::catalog::FactoryCatalog;
 use crate::settings::topology_adapter::build_topology;
 use nerust_core_traits::factory::CoreFactory;
-use nerust_settings_core::bindings::conflicting_keys;
+use nerust_settings_core::bindings::{BindingIndex, conflicting_keys_indexed};
 use nerust_settings_core::model::shared::StoragePolicy;
 use nerust_settings_core::model::snapshot::SettingsSnapshot;
 
@@ -248,7 +248,22 @@ fn validate_factory_settings(
         });
     }
     let topology = build_topology(&assignments, input_factory.slots());
-    let conflicts = conflicting_keys(&state.draft.shared, &topology, factory.system_id().as_ref());
+    // Profile index built once per validation pass, probed per descriptor.
+    let index = state
+        .draft
+        .shared
+        .input
+        .systems
+        .get(factory.system_id().as_ref())
+        .and_then(|s| s.implicit_keyboard_profile())
+        .map(BindingIndex::for_profile)
+        .unwrap_or_default();
+    let conflicts = conflicting_keys_indexed(
+        &state.draft.shared,
+        &topology,
+        factory.system_id().as_ref(),
+        &index,
+    );
     {
         let mut cache = state.conflicts_cache.borrow_mut();
         let cache = cache.get_or_insert_with(HashMap::new);

@@ -61,111 +61,126 @@ pub(crate) fn open_headless_system(
     options: Vec<String>,
     audio_sample_rate: u32,
 ) -> Result<TestSystem, RomTestError> {
-    let construction = |message: String| RomTestError::CoreConstruction {
+    let factory = probe_factory(factories, case_id, rom_bytes)?;
+    let view = headless_view(factory, case_id)?;
+    let resolved = resolve_case_options(factory, case_id, &view, &options)?;
+    let parts = create_core_parts(factory, case_id, &view, resolved, audio_sample_rate)?;
+    assemble_test_system(factory, case_id, parts, rom_bytes)
+}
+
+/// Single construction error mapper: every failure carries the case id.
+fn construction(case_id: &str, message: String) -> RomTestError {
+    RomTestError::CoreConstruction {
         case_id: case_id.to_string(),
         message,
-    };
+    }
+}
+
+/// Probe the factory table: first match owns the ROM, no match is eligibility.
+fn probe_factory<'a>(
+    factories: &'a [Box<dyn CoreFactory>],
+    case_id: &str,
+    rom_bytes: &[u8],
+) -> Result<&'a dyn CoreFactory, RomTestError> {
     let media = nerust_core_traits::factory::load::MediaObject::new(None, rom_bytes.to_vec());
-    let factory = factories
+    factories
         .iter()
         .find(|factory| factory.probe_media(&media))
         .map(|factory| factory.as_ref())
         .ok_or_else(|| RomTestError::NoMatchingSystem {
             case_id: case_id.to_string(),
-        })?;
+        })
+}
 
-    let view = headless_view(factory, case_id)?;
-    // Case options pass straight through to the factory CLI schema as argv.
-    // Explicit options keep beating saved settings inside `resolve_load_request`.
+/// Resolve case options through the factory CLI schema as argv.
+/// Explicit options beat saved settings inside `resolve_load_request`.
+fn resolve_case_options(
+    factory: &dyn CoreFactory,
+    case_id: &str,
+    view: &FactorySettingsView,
+    options: &[String],
+) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, RomTestError> {
     let mut argv = Vec::with_capacity(options.len() + 1);
     argv.push("headless".to_string());
-    argv.extend(options);
+    argv.extend(options.iter().cloned());
     let load_options = {
         let schema = factory.load_options_schema();
         let matches = schema
             .augment_args(clap::Command::new("headless"))
             .try_get_matches_from(argv)
-            .map_err(|error| construction(format!("test option: {error}")))?;
+            .map_err(|error| construction(case_id, format!("test option: {error}")))?;
         schema
             .arg_matches(&matches)
-            .map_err(|error| construction(format!("test option: {error}")))?
+            .map_err(|error| construction(case_id, format!("test option: {error}")))?
     };
-    let resolved = factory
-        .resolve_load_request(&view, load_options)
-        .map_err(|error| construction(format!("resolve options: {error:?}")))?;
+    factory
+        .resolve_load_request(view, load_options)
+        .map_err(|error| construction(case_id, format!("resolve options: {error:?}")))
+}
 
+/// Create the core plus adapter against the factory default assignments.
+/// P2 runs the P1 profile clone: the suite drives both pads plus the microphone.
+fn create_core_parts(
+    factory: &dyn CoreFactory,
+    case_id: &str,
+    view: &FactorySettingsView,
+    resolved: nerust_core_traits::factory::load::ResolvedLoadRequest,
+    audio_sample_rate: u32,
+) -> Result<LoadedCoreParts, RomTestError> {
     let base = factory.input_system_factory().default_assignments();
-    let assignments = duplicate_p1_to_p2(&base)
-        .ok_or_else(|| construction("factory default assigns no P1 profile".to_string()))?;
-
+    let assignments = duplicate_p1_to_p2(&base).ok_or_else(|| {
+        construction(case_id, "factory default assigns no P1 profile".to_string())
+    })?;
     let speaker: Box<dyn AudioBackend> = Box::new(NullAudioBackend(audio_sample_rate));
     let parts = factory
-        .create_core_and_adapter_with_assignments(&view, speaker, &assignments)
-        .map_err(|error| construction(format!("create_core: {error:?}")))?;
+        .create_core_and_adapter_with_assignments(view, speaker, &assignments)
+        .map_err(|error| construction(case_id, format!("create_core: {error:?}")))?;
+    Ok(LoadedCoreParts {
+        parts,
+        assignments,
+        options: Some(resolved.options),
+    })
+}
 
+/// Loaded core plus assignments plus resolved options for assembly.
+struct LoadedCoreParts {
+    parts: nerust_core_traits::factory::CoreParts,
+    assignments: InputAssignments,
+    options: Option<Box<dyn nerust_core_traits::CoreOptions>>,
+}
+
+/// Assemble the session engine: paused load, table-driven pad map, core taps.
+fn assemble_test_system(
+    factory: &dyn CoreFactory,
+    case_id: &str,
+    core: LoadedCoreParts,
+    rom_bytes: &[u8],
+) -> Result<TestSystem, RomTestError> {
+    let LoadedCoreParts {
+        parts,
+        assignments,
+        options,
+    } = core;
     let config = CoreConfig {
         region: None,
         bios_paths: HashMap::new(),
         controllers: HashMap::new(),
-        core_options: Some(resolved.options),
+        core_options: options,
         audio_sample_rate: None,
     };
     let (emu, gui_input, field_map, _) = EmuCore::from_parts(parts);
     // Paused load: power-on state survives to frame zero (no free-run
     // frames, no compensating reset that would destroy it).
+    let media = nerust_core_traits::factory::load::MediaObject::new(None, rom_bytes.to_vec());
     emu.load_paused(&media, config.core_options)
-        .map_err(|error| construction(format!("load: {error:?}")))?;
-
+        .map_err(|error| construction(case_id, format!("load: {error:?}")))?;
     // Resolve test ids through the injected map, never from positions.
     // Space roles against the table snapshot, pad bits against the field map.
     let spaces = emu
         .memory_spaces()
-        .map_err(|error| construction(format!("memory spaces: {error:?}")))?;
-    // Pad buttons resolve through the slot profiles to buffer fields.
-    // Absent from the group is a silent no-op; present but unmapped is loud drift.
-    let mut pad_buttons = Vec::with_capacity(assignments.slots().len());
-    for (pad, (attachment, profile)) in assignments.slots().iter().enumerate() {
-        let profile = profile
-            .as_ref()
-            .ok_or_else(|| construction(format!("slot {pad} assigns no controller profile")))?;
-        let group = profile
-            .port_groups()
-            .get(pad)
-            .ok_or_else(|| construction(format!("slot {pad} has no control group")))?;
-        let mut buttons = Vec::with_capacity(group.len());
-        for info in group.iter() {
-            let Some(control_id) = info.id.as_digital() else {
-                continue;
-            };
-            let field = field_map
-                .get(&(*attachment, control_id))
-                .copied()
-                .ok_or_else(|| {
-                    construction(format!(
-                        "test input field missing: {attachment}/{control_id}",
-                    ))
-                })?;
-            buttons.push((control_id.as_str(), field));
-        }
-        pad_buttons.push(buttons);
-    }
-
-    let tap = Arc::new(Mutex::new(Vec::new()));
-    emu.tap_nominal_audio(Arc::clone(&tap))
-        .map_err(|error| construction(format!("tap: {error:?}")))?;
-    // Core-driven taps: one per channel the core lists. Unknown yaml
-    // channels fail at read time, never here.
-    let channels = emu
-        .output_channels()
-        .map_err(|error| construction(format!("channels: {error:?}")))?;
-    let mut serial_taps = std::collections::HashMap::new();
-    for channel in &channels {
-        let serial_tap = Arc::new(Mutex::new(Vec::new()));
-        emu.tap_serial_output(channel, Arc::clone(&serial_tap))
-            .map_err(|error| construction(format!("serial tap: {error:?}")))?;
-        serial_taps.insert(channel.clone(), serial_tap);
-    }
-
+        .map_err(|error| construction(case_id, format!("memory spaces: {error:?}")))?;
+    let pad_buttons = resolve_pad_buttons(case_id, &assignments, &field_map)?;
+    let (tap, channels, serial_taps) = attach_taps(case_id, &emu)?;
     Ok(TestSystem {
         emu,
         gui_input,
@@ -176,6 +191,69 @@ pub(crate) fn open_headless_system(
         serial_taps,
         system: factory.display_name(),
     })
+}
+
+/// Pad buttons resolve through the slot profiles to buffer fields.
+/// Present but unmapped is loud drift; digital-only controls pass through.
+fn resolve_pad_buttons(
+    case_id: &str,
+    assignments: &InputAssignments,
+    field_map: &nerust_core_traits::factory::DigitalFieldMap,
+) -> Result<Vec<Vec<(&'static str, usize)>>, RomTestError> {
+    let mut pad_buttons = Vec::with_capacity(assignments.slots().len());
+    for (pad, (attachment, profile)) in assignments.slots().iter().enumerate() {
+        let profile = profile.as_ref().ok_or_else(|| {
+            construction(case_id, format!("slot {pad} assigns no controller profile"))
+        })?;
+        let group = profile
+            .port_groups()
+            .get(pad)
+            .ok_or_else(|| construction(case_id, format!("slot {pad} has no control group")))?;
+        let mut buttons = Vec::with_capacity(group.len());
+        for info in group.iter() {
+            let Some(control_id) = info.id.as_digital() else {
+                continue;
+            };
+            let field = field_map
+                .get(&(*attachment, control_id))
+                .copied()
+                .ok_or_else(|| {
+                    construction(
+                        case_id,
+                        format!("test input field missing: {attachment}/{control_id}"),
+                    )
+                })?;
+            buttons.push((control_id.as_str(), field));
+        }
+        pad_buttons.push(buttons);
+    }
+    Ok(pad_buttons)
+}
+
+/// Attached output taps: nominal audio, channel names, and serial taps.
+type AttachedTaps = (
+    Arc<Mutex<Vec<StereoSample>>>,
+    Vec<String>,
+    std::collections::HashMap<String, Arc<Mutex<Vec<u8>>>>,
+);
+
+/// Core-driven taps: nominal audio plus one serial tap per listed channel.
+/// Unknown yaml channels fail at read time, never here.
+fn attach_taps(case_id: &str, emu: &EmuCore) -> Result<AttachedTaps, RomTestError> {
+    let tap = Arc::new(Mutex::new(Vec::new()));
+    emu.tap_nominal_audio(Arc::clone(&tap))
+        .map_err(|error| construction(case_id, format!("tap: {error:?}")))?;
+    let channels = emu
+        .output_channels()
+        .map_err(|error| construction(case_id, format!("channels: {error:?}")))?;
+    let mut serial_taps = std::collections::HashMap::new();
+    for channel in &channels {
+        let serial_tap = Arc::new(Mutex::new(Vec::new()));
+        emu.tap_serial_output(channel, Arc::clone(&serial_tap))
+            .map_err(|error| construction(case_id, format!("serial tap: {error:?}")))?;
+        serial_taps.insert(channel.clone(), serial_tap);
+    }
+    Ok((tap, channels, serial_taps))
 }
 
 /// Deterministic settings view: factory defaults plus English.
@@ -197,8 +275,7 @@ fn headless_view(
     })
 }
 
-/// Clone the P1 profile onto P2. The suite drives both pads plus the
-/// microphone, so an unassigned P2 is insufficient here.
+/// Clone the P1 profile onto P2: the suite drives both pads.
 fn duplicate_p1_to_p2(base: &InputAssignments) -> Option<InputAssignments> {
     let p1 = base.slots().first()?.1.clone()?;
     let mut slots = base.slots().to_vec();
@@ -264,8 +341,7 @@ pub(crate) struct SystemControl<'a> {
 }
 
 impl SystemControl<'_> {
-    /// Drive one button for the next frame, addressed by the slot profile's id.
-    /// Unknown to every pad is loud; absent from this pad is a silent no-op.
+    /// Drive one button: strict pad map, missing controls error loudly.
     pub fn set_button(
         &mut self,
         pad: usize,
@@ -276,29 +352,21 @@ impl SystemControl<'_> {
             .pad_buttons
             .get(pad)
             .ok_or_else(|| RomTestError::EmuThread(format!("no such pad: {pad}")))?;
-        if let Some(field) = buttons
+        let Some(field) = buttons
             .iter()
             .find(|(id, _)| *id == control)
             .map(|(_, field)| *field)
-        {
-            self.gui_input
-                .set(field, InputValue::Digital(pressed))
-                .map_err(|error| RomTestError::EmuThread(format!("seed input: {error}")))?;
-            self.gui_input.publish();
-            return Ok(());
-        }
-        let known = self
-            .pad_buttons
-            .iter()
-            .flatten()
-            .any(|(id, _)| *id == control);
-        if known {
-            Ok(())
-        } else {
-            Err(RomTestError::EmuThread(format!(
-                "unknown button: {control}"
-            )))
-        }
+        else {
+            let known: Vec<&str> = buttons.iter().map(|(id, _)| *id).collect();
+            return Err(RomTestError::EmuThread(format!(
+                "unknown button `{control}` for pad {pad} (known: {known:?})"
+            )));
+        };
+        self.gui_input
+            .set(field, InputValue::Digital(pressed))
+            .map_err(|error| RomTestError::EmuThread(format!("seed input: {error}")))?;
+        self.gui_input.publish();
+        Ok(())
     }
 
     /// Advance exactly one frame. The reply is the barrier: it arrives
@@ -434,6 +502,7 @@ impl AudioBackend for NullAudioBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_input_traits::AttachmentId;
 
     #[test]
     fn empty_factories_yield_no_matching_system() {
@@ -443,6 +512,55 @@ mod tests {
             Err(RomTestError::NoMatchingSystem { .. }) => {}
             Err(error) => panic!("unexpected error: {error:?}"),
             Ok(_) => panic!("empty factories must not open a system"),
+        }
+    }
+
+    #[test]
+    fn construction_error_carries_case_id() {
+        match construction("case-7", "boom".to_string()) {
+            RomTestError::CoreConstruction { case_id, message } => {
+                assert_eq!(case_id, "case-7");
+                assert_eq!(message, "boom");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_p1_needs_a_profile_to_clone() {
+        use nerust_input_traits::InputAssignments;
+        // Empty table: nothing to clone.
+        assert!(duplicate_p1_to_p2(&InputAssignments::new(Vec::new())).is_none());
+        // P1 without a profile: no source, no clone.
+        let attachment = AttachmentId::new("test.pad");
+        let lonely = InputAssignments::new(vec![(attachment, None)]);
+        assert!(duplicate_p1_to_p2(&lonely).is_none());
+    }
+
+    #[test]
+    fn pad_map_resolves_empty_and_rejects_unprofiled_slots() {
+        use nerust_input_traits::InputAssignments;
+        // Empty table resolves to an empty map.
+        let empty = resolve_pad_buttons(
+            "case",
+            &InputAssignments::new(Vec::new()),
+            &Default::default(),
+        )
+        .expect("empty table resolves");
+        assert!(empty.is_empty());
+        // A slot without a profile fails loudly, naming the slot.
+        let attachment = AttachmentId::new("test.pad");
+        let unprofiled = InputAssignments::new(vec![(attachment, None)]);
+        match resolve_pad_buttons("case", &unprofiled, &Default::default()) {
+            Err(RomTestError::CoreConstruction { case_id, message }) => {
+                assert_eq!(case_id, "case");
+                assert!(
+                    message.contains("slot 0 assigns no controller profile"),
+                    "{message}"
+                );
+            }
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("unprofiled slot must fail"),
         }
     }
 }

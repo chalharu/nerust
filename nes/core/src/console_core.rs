@@ -312,13 +312,10 @@ impl DebugControl for NesDebugControl<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex, atomic::AtomicBool},
-    };
+    use std::collections::HashMap;
 
     use nerust_core_traits::{CoreConfig, debugger::Debugger as _};
-    use nerust_emu_thread::EmuInput;
+    use nerust_emu_thread::{EmuInput, InputPort as _, InputSplit};
     use nerust_input_traits::{
         Controller, ControllerCollection, OpenBusReadResult, Port, StrobeTarget,
     };
@@ -332,14 +329,7 @@ mod tests {
     };
 
     fn test_emu_input() -> EmuInput {
-        use nerust_input_traits::InputStateBuffer;
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-            Arc::new(Mutex::new(Box::<NesInputBuffer>::default()));
-        EmuInput::new(
-            shared,
-            Arc::new(AtomicBool::new(false)),
-            Box::new(|| Box::<NesInputBuffer>::default()),
-        )
+        InputSplit::spawn_typed(NesInputBuffer::default).emu_endpoint()
     }
 
     #[derive(Debug)]

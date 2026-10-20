@@ -10,9 +10,7 @@ use nerust_core_traits::{
     },
     identity::SystemId,
 };
-use nerust_gui_runtime::settings::{
-    HostBackendCapabilities, SettingsApplyPlan, SettingsManager, SettingsSnapshot,
-};
+use nerust_gui_runtime::settings::{HostBackendCapabilities, SettingsApplyPlan, SettingsSnapshot};
 use nerust_gui_viewmodel::debugger::{PendingWrite, StatusMessage};
 use nerust_input_traits::{InputAssignments, InputSystemFactory};
 use nerust_settings_core::factory::settings_view;
@@ -345,6 +343,48 @@ fn live_swap_session() -> SessionHandle {
     session
 }
 
+/// Loaded session with an unwritable settings file, built through the
+/// public constructor: every settings save fails, so rollback paths run.
+fn live_swap_session_with_failing_settings() -> (SessionHandle, std::path::PathBuf) {
+    use nerust_gui_runtime::settings::SettingsPaths;
+    let factory: Arc<dyn CoreFactory> = Arc::new(LiveSwapFactory);
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
+    let dir = crate::test_helpers::unique_temp_dir("failing-swap-settings");
+    let blocker = dir.join("blocker");
+    std::fs::write(&blocker, b"not a dir").expect("blocker file should write");
+    let paths = SettingsPaths {
+        settings_file: blocker.join("settings.toml"),
+        central_storage_root: dir.join("storage"),
+    };
+    let mut session = SessionHandle::new_with_settings_paths(
+        test_capabilities(),
+        registry,
+        audio_registry,
+        paths,
+    )
+    .expect("construction falls back to ephemeral settings");
+    session
+        .set_active_system(factory.system_id().as_ref())
+        .unwrap();
+    let resolved = session
+        .factory()
+        .expect("no active system")
+        .resolve_load_request(
+            &test_view(&session),
+            session
+                .factory()
+                .expect("no active system")
+                .default_load_options(),
+        )
+        .unwrap();
+    session
+        .load_resolved(MediaObject::new(None, test_rom()), resolved)
+        .unwrap();
+    assert!(session.tick_metrics().loaded);
+    (session, dir)
+}
+
 /// Visual delta used by the presentation-swap tests: the active
 /// system gains settings it didn't have (absent → present).
 fn with_visual_delta(session: &SessionHandle) -> SettingsSnapshot {
@@ -389,23 +429,8 @@ fn apply_settings_swaps_presentation_without_rebuild_on_visual_delta() {
 
 #[test]
 fn apply_settings_rolls_back_presentation_swap_on_save_failure() {
-    use crate::settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
-    };
-    use nerust_gui_runtime::settings::repository::FailingStore;
-
-    let mut session = live_swap_session();
+    let (mut session, dir) = live_swap_session_with_failing_settings();
     let next = with_visual_delta(&session);
-
-    // Replace settings manager with one using a FailingStore.
-    let registry = crate::registry::SystemRegistry::new(vec![]);
-    let shared = default_shared_settings(registry.all());
-    session.set_settings(SettingsManager::with_store(
-        shared,
-        default_local_settings(),
-        default_app_state(),
-        Box::new(FailingStore),
-    ));
 
     // Save fails after the swap: the error surfaces and the previous
     // assets swap back behind a fresh reply (narrow profile again).
@@ -435,6 +460,7 @@ fn apply_settings_rolls_back_presentation_swap_on_save_failure() {
         session.tick_metrics().loaded,
         "rollback keeps the loaded ROM"
     );
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -484,26 +510,13 @@ fn apply_settings_swaps_audio_without_rebuild_when_latency_changes() {
 
 #[test]
 fn apply_settings_rolls_back_on_save_failure() {
-    use crate::settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
-    };
-    use nerust_gui_runtime::settings::repository::FailingStore;
+    use crate::session::test_util::test_session_with_failing_settings;
 
-    let mut session = test_session();
+    let (mut session, dir) = test_session_with_failing_settings();
     let original = session.settings_snapshot().clone();
     let original_assignments = session.input.current_assignments.clone();
     let mut modified = original.clone();
     modified.local.audio.latency_ms = 90;
-
-    // Replace settings manager with one using a FailingStore
-    let registry = crate::registry::SystemRegistry::new(vec![]);
-    let shared = default_shared_settings(registry.all());
-    session.set_settings(SettingsManager::with_store(
-        shared,
-        default_local_settings(),
-        default_app_state(),
-        Box::new(FailingStore),
-    ));
 
     // Save fails → rollback should restore core state
     let err = session.apply_settings(modified).unwrap_err();
@@ -531,6 +544,7 @@ fn apply_settings_rolls_back_on_save_failure() {
         session.emu.core().is_ok(),
         "core should be restored after rollback"
     );
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -625,7 +639,7 @@ fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
             ("nes.attachment.player2".to_string(), None),
         ],
     );
-    session.set_settings_snapshot(snapshot);
+    session.apply_settings(snapshot).unwrap();
     session
         .set_active_system(system_id.as_ref())
         .expect("fallback core creation should succeed");
@@ -685,7 +699,10 @@ fn switching_system_discards_previous_loaded_runtime_state() {
 
     assert_eq!(session.active_system_id(), Some(second_id.as_ref()));
     assert!(!session.tick_metrics().loaded);
-    assert!(session.loaded_media_ref().is_none());
+    {
+        use crate::session::services::MediaService as _;
+        assert!(!session.has_loaded_media());
+    }
     assert!(session.slots().is_empty());
 }
 
@@ -1008,14 +1025,17 @@ fn debug_live_images_follow_running_without_snapshot() {
     let paused = session.debug_drain(&[DebugAction::Refresh], &input);
     assert!(!paused.display.dump_rows.is_empty());
     assert!(
-        session
-            .debug_live_images(crate::debug::ImageNeed::Skip)
+        crate::session::test_util::poll_live_images(&session, crate::debug::ImageNeed::Skip)
             .is_none()
     );
-    let paused_live = session.debug_live_images(crate::debug::ImageNeed::Fetch);
-    let paused_gen = paused_live.as_ref().expect("paused fetch serves").0;
+    let paused_live =
+        crate::session::test_util::poll_live_images(&session, crate::debug::ImageNeed::Fetch);
+    let paused_gen = paused_live
+        .as_ref()
+        .expect("paused fetch serves")
+        .generation;
     assert_eq!(
-        paused_live.map(|(_, images)| images.len()),
+        paused_live.map(|batch| batch.images.len()),
         Some(1),
         "paused baseline converts the decode"
     );
@@ -1030,8 +1050,10 @@ fn debug_live_images_follow_running_without_snapshot() {
     );
     // The live images path still flows here, so the PPU follow needs no snapshot sections.
     // Identical content reports the served generation with no payload (content-hash skip).
-    let live = session.debug_live_images(crate::debug::ImageNeed::Fetch);
-    let (running_gen, running_images) = live.expect("running fetch serves");
+    let live =
+        crate::session::test_util::poll_live_images(&session, crate::debug::ImageNeed::Fetch);
+    let batch = live.expect("running fetch serves");
+    let (running_gen, running_images) = (batch.generation, batch.images);
     assert_eq!(
         running_gen, paused_gen,
         "static tiles keep one generation while running"
@@ -1247,7 +1269,7 @@ fn live_images_flight_completes_and_resolves_locally() {
             }
         }
     };
-    assert!(live.is_some_and(|(_, images)| images.len() == 1));
+    assert!(live.is_some_and(|batch| batch.images.len() == 1));
     // Not requested: the first poll resolves without crossings.
     let mut idle = session.debug_live_images_begin(false);
     assert!(matches!(idle.poll(), LiveImagesPoll::Done(None)));
@@ -1275,7 +1297,7 @@ fn live_images_flight_refetches_while_running() {
         loop {
             match flight.poll() {
                 LiveImagesPoll::Done(live) => {
-                    break live.map(|(generation, images)| (generation, images.len()));
+                    break live.map(|batch| (batch.generation, batch.images.len()));
                 }
                 LiveImagesPoll::Pending => {
                     assert!(Instant::now() < deadline, "flight always terminates");

@@ -1,15 +1,216 @@
-use std::{collections::VecDeque, sync::Mutex};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use jni::objects::JIntArray;
 use nerust_core_traits::peripheral::{AccelerationSample, AccelerometerInputHandle};
 use winit::{event_loop::EventLoopProxy, platform::android::activity::AndroidApp};
 
-use super::messages::FrontendEvent;
+use super::settings_model::{AndroidSettings, SettingDef};
+use crate::bridge_events::FrontendEvent;
+
+/// Worker-thread completion produced by the single picker fetch worker.
+/// Bytes ride along so the event thread never touches I/O.
+pub(super) enum RomPickerResult {
+    Cancelled,
+    Selected(String),
+    TreeSelected(String),
+    /// Document buffer fetched off-thread; digest rides along.
+    /// `restore_hidden_state` replays a lifecycle restore instead of a fresh load.
+    RomBytes {
+        uri: String,
+        file_name: String,
+        bytes: Vec<u8>,
+        digest: [u8; 32],
+        restore_hidden_state: bool,
+    },
+    /// Worker-thread library completion: same dispatch shape as `RomBytes`.
+    LibraryBytes {
+        id: String,
+        bytes: Vec<u8>,
+        digest: [u8; 32],
+    },
+    /// Worker-thread failure: surfaces on the event thread through the
+    /// normal picker-error path (error dialog queue).
+    Failed(String),
+    /// Lifecycle-restore fetch failure: document URI gone, hidden state kept.
+    RestoreDocumentFailed(String),
+    /// Lifecycle-restore fetch failure: library entry gone, restore dropped.
+    RestoreLibraryFailed(String),
+}
+
+/// Picker slot in the unified bridge vault: result plus the open gate.
+pub(super) struct PickerSlot {
+    pub(super) result: Option<RomPickerResult>,
+    pub(super) in_flight: bool,
+}
+
+impl PickerSlot {
+    pub(super) const fn empty() -> Self {
+        Self {
+            result: None,
+            in_flight: false,
+        }
+    }
+}
+
+/// Keyed dialog outcome produced by the settings bridge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum SettingsDialogResult {
+    Dismissed,
+    Applied(BTreeMap<String, usize>),
+}
+
+/// Single-flight dialog state; lives in the unified bridge vault.
+pub(super) struct SettingsSlot {
+    pub(super) result: Option<SettingsDialogResult>,
+    pub(super) cache: Option<AndroidSettings>,
+    pub(super) next_request_id: u64,
+    pub(super) pending_request_id: Option<u64>,
+    pub(super) defs_cache: Option<(u64, Arc<Vec<SettingDef>>)>,
+}
+
+impl SettingsSlot {
+    pub(super) const fn empty() -> Self {
+        Self {
+            result: None,
+            cache: None,
+            next_request_id: 1,
+            pending_request_id: None,
+            defs_cache: None,
+        }
+    }
+}
+
+/// Canonical JNI bridge table: one name+signature pair per method.
+/// Call sites reference these consts; literals live here only.
+pub(super) mod methods {
+    use jni::{jni_sig, jni_str, signature::MethodSignature, strings::JNIStr};
+
+    /// One bridge method: compile-checked name plus signature.
+    pub(crate) struct BridgeMethod {
+        pub name: &'static JNIStr,
+        pub sig: MethodSignature<'static, 'static>,
+    }
+
+    macro_rules! bridge_method {
+        ($ident:ident, $name:literal, $sig:literal) => {
+            pub(crate) const $ident: BridgeMethod = BridgeMethod {
+                name: jni_str!($name),
+                sig: jni_sig!($sig),
+            };
+        };
+    }
+
+    bridge_method!(START_ROM_PICKER, "startRomPicker", "()V");
+    bridge_method!(START_DIRECTORY_PICKER, "startDirectoryPicker", "()V");
+    bridge_method!(
+        SHOW_SETTINGS_DIALOG,
+        "showSettingsDialog",
+        "(Ljava/lang/String;)V"
+    );
+    bridge_method!(
+        SHOW_ERROR_DIALOG,
+        "showErrorDialog",
+        "(Ljava/lang/String;)V"
+    );
+    bridge_method!(
+        NOTIFY_ROM_LOADED,
+        "notifyRomLoaded",
+        "(Ljava/lang/String;)V"
+    );
+    bridge_method!(FINISH_ACTIVITY, "finish", "()V");
+    bridge_method!(
+        CONFIGURE_CONTROLS_OVERLAY,
+        "configureControlsOverlay",
+        "(Ljava/lang/String;IZLjava/lang/String;Ljava/lang/String;)V"
+    );
+    bridge_method!(PERFORM_CONTROL_HAPTIC, "performControlHaptic", "()V");
+    bridge_method!(UPDATE_FLOATING_DPAD, "updateFloatingDpad", "(ZFFFF)V");
+    bridge_method!(
+        CONFIGURE_CARTRIDGE_PERIPHERALS,
+        "configureCartridgePeripherals",
+        "(ZZILjava/lang/String;)V"
+    );
+    bridge_method!(SET_CARTRIDGE_RUMBLE, "setCartridgeRumble", "(I)V");
+    bridge_method!(APPLY_SCREEN_ORIENTATION, "applyScreenOrientation", "(I)V");
+    bridge_method!(
+        READ_SAF_FILE,
+        "readSafFile",
+        "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
+    );
+    bridge_method!(
+        WRITE_SAF_FILE,
+        "writeSafFile",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
+    );
+    bridge_method!(
+        DELETE_SAF_FILE,
+        "deleteSafFile",
+        "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
+    );
+    bridge_method!(
+        LIST_SAF_FILES,
+        "listSafFiles",
+        "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
+    );
+    bridge_method!(
+        LIST_SAF_FILES_WITH_SIZES,
+        "listSafFilesWithSizes",
+        "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
+    );
+    bridge_method!(
+        GET_SAF_FILE_SIZE,
+        "getSafFileSize",
+        "(Ljava/lang/String;Ljava/lang/String;)J"
+    );
+    bridge_method!(
+        READ_SAF_FILE_CHUNK,
+        "readSafFileChunk",
+        "(Ljava/lang/String;Ljava/lang/String;JJ)Ljava/lang/String;"
+    );
+    bridge_method!(
+        WRITE_SAF_FILE_CHUNK,
+        "writeSafFileChunk",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;"
+    );
+    bridge_method!(
+        READ_SAF_FILE_CHUNK_BYTES,
+        "readSafFileChunkBytes",
+        "(Ljava/lang/String;Ljava/lang/String;JJ)[B"
+    );
+    bridge_method!(
+        WRITE_SAF_FILE_CHUNK_BYTES,
+        "writeSafFileChunkBytes",
+        "(Ljava/lang/String;Ljava/lang/String;[BZ)Ljava/lang/String;"
+    );
+    bridge_method!(
+        OPEN_SAF_READ_SESSION,
+        "openSafReadSession",
+        "(Ljava/lang/String;Ljava/lang/String;)J"
+    );
+    bridge_method!(READ_SAF_READ_SESSION, "readSafReadSession", "(JI)[B");
+    bridge_method!(CLOSE_SAF_READ_SESSION, "closeSafReadSession", "(J)V");
+}
+
+/// Call one tabled bridge method on the activity.
+/// Lifetimes stay independent: the handle outlives the argument frame.
+pub(super) fn call_bridge_method<'env, 'obj, 'arg>(
+    env: &mut jni::Env<'env>,
+    activity: &jni::objects::JObject<'obj>,
+    method: &methods::BridgeMethod,
+    args: &[jni::objects::JValue<'arg>],
+) -> jni::errors::Result<jni::objects::JValueOwned<'env>> {
+    env.call_method(activity.as_ref(), method.name, method.sig.clone(), args)
+}
 
 pub(super) struct AndroidBridgeState {
-    pub(super) event_loop_proxy: Option<EventLoopProxy<()>>,
-    /// Priority lane: dialog acks (dismissals) jump ahead of the input
-    /// burst so a modal gate release never waits behind menu taps.
+    event_loop_proxy: Option<EventLoopProxy<()>>,
+    /// Priority lane: dialog acks jump ahead of the menu burst.
     priority_events: VecDeque<FrontendEvent>,
     normal_events: VecDeque<FrontendEvent>,
     exit_requested: bool,
@@ -30,10 +231,31 @@ impl AndroidBridgeState {
     }
 }
 
-static ANDROID_BRIDGE: Mutex<AndroidBridgeState> = Mutex::new(AndroidBridgeState::empty());
+/// Single bridge vault: queue, picker, and settings share one mutex.
+/// One lock kills cross-thread order; same-thread nesting still panics.
+struct BridgeVault {
+    queue: AndroidBridgeState,
+    picker: PickerSlot,
+    settings: SettingsSlot,
+}
 
-/// Accelerometer handle on its own lock: per-sample sensor pushes
-/// never contend with the event-queue mutex, which stays queue-only.
+impl BridgeVault {
+    const fn empty() -> Self {
+        Self {
+            queue: AndroidBridgeState::empty(),
+            picker: PickerSlot::empty(),
+            settings: SettingsSlot::empty(),
+        }
+    }
+}
+
+static BRIDGE: Mutex<BridgeVault> = Mutex::new(BridgeVault::empty());
+
+/// Monotonic insets generation: readers skip the lock when unchanged.
+static INSETS_VERSION: AtomicU64 = AtomicU64::new(0);
+
+/// Accelerometer leaf lock: sensor pushes never contend with the vault.
+/// Never take the vault while holding it.
 static ACCEL_HANDLE: Mutex<Option<AccelerometerInputHandle>> = Mutex::new(None);
 
 fn lock_accel() -> std::sync::MutexGuard<'static, Option<AccelerometerInputHandle>> {
@@ -43,9 +265,42 @@ fn lock_accel() -> std::sync::MutexGuard<'static, Option<AccelerometerInputHandl
     })
 }
 
+fn lock_vault() -> std::sync::MutexGuard<'static, BridgeVault> {
+    // Single vault mutex: nesting panics loudly, never deadlocks.
+    let _guard = crate::reentrancy::lock_reentrancy_guard();
+    BRIDGE.lock().unwrap_or_else(|poison| {
+        log::error!("Android bridge mutex poisoned; recovering state");
+        poison.into_inner()
+    })
+}
+
+pub(super) fn with_queue<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T) -> T {
+    operation(&mut lock_vault().queue)
+}
+
+pub(super) fn with_picker<T>(operation: impl FnOnce(&mut PickerSlot) -> T) -> T {
+    operation(&mut lock_vault().picker)
+}
+
+pub(super) fn with_settings<T>(operation: impl FnOnce(&mut SettingsSlot) -> T) -> T {
+    operation(&mut lock_vault().settings)
+}
+
+/// Set the event proxy once at construction; rebinds only warn.
+/// Queue state is never cleared here; call `clear_queues` explicitly.
 pub(super) fn bind_event_loop(event_loop_proxy: EventLoopProxy<()>) {
-    with_state(|state| {
+    with_queue(|state| {
+        if state.event_loop_proxy.is_some() {
+            log::warn!("Android event proxy already bound; ignoring rebind");
+            return;
+        }
         state.event_loop_proxy = Some(event_loop_proxy);
+    });
+}
+
+/// Explicit queue reset: suspend and construction paths call this.
+pub(super) fn clear_queues() {
+    with_queue(|state| {
         state.priority_events.clear();
         state.normal_events.clear();
         state.exit_requested = false;
@@ -53,10 +308,7 @@ pub(super) fn bind_event_loop(event_loop_proxy: EventLoopProxy<()>) {
 }
 
 pub(super) fn reset_transient() {
-    with_state(|state| {
-        state.priority_events.clear();
-        state.normal_events.clear();
-    });
+    clear_queues();
     *lock_accel() = None;
 }
 
@@ -65,43 +317,33 @@ pub(super) fn bind_accelerometer(handle: Option<AccelerometerInputHandle>) {
 }
 
 pub(super) fn request_exit() {
-    with_state(|state| state.exit_requested = true);
+    with_queue(|state| state.exit_requested = true);
     wake();
 }
 
 pub(super) fn take_exit_request() -> bool {
-    with_state(|state| std::mem::take(&mut state.exit_requested))
+    with_queue(|state| std::mem::take(&mut state.exit_requested))
 }
-
-pub(super) fn with_state<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T) -> T {
-    // Lock order for the three bridge mutexes: never nest `with_state`;
-    // wake the looper after releasing. Poison recovers state, never wedges.
-    let _guard = lock_reentrancy_guard();
-    let mut guard = ANDROID_BRIDGE.lock().unwrap_or_else(|poison| {
-        log::error!("Android bridge mutex poisoned; recovering state");
-        poison.into_inner()
-    });
-    operation(&mut guard)
-}
-
-/// Re-entrancy guard for the three bridge mutexes.
-/// `with_state` must never nest; every profile panics, never silently nests.
-pub(super) use crate::reentrancy::lock_reentrancy_guard;
 
 pub(super) fn wake() {
-    let event_loop_proxy = with_state(|state| state.event_loop_proxy.clone());
+    let event_loop_proxy = with_queue(|state| state.event_loop_proxy.clone());
     if let Some(event_loop_proxy) = event_loop_proxy {
         let _ = event_loop_proxy.send_event(());
     }
 }
 
 /// Batch publish: one wake per JNI batch, not per event.
-/// Dialog dismissals take the priority lane; everything else keeps arrival order.
+/// Dialog dismissals take the priority lane; the rest keeps arrival order.
 pub(super) fn publish_all(events: &[FrontendEvent]) {
     if events.is_empty() {
         return;
     }
-    with_state(|state| {
+    if log::log_enabled!(log::Level::Debug) {
+        for event in events {
+            log::debug!("Android bridge: published event: {event:?}");
+        }
+    }
+    with_queue(|state| {
         for event in events {
             if matches!(event, FrontendEvent::ErrorDialogDismissed) {
                 state.priority_events.push_back(*event);
@@ -116,22 +358,28 @@ pub(super) fn publish_all(events: &[FrontendEvent]) {
 /// Drain into a caller-owned buffer: priority lane first, then the normal lane.
 /// Idle ticks reuse capacity instead of allocating per pass.
 pub(super) fn take_events_into(out: &mut Vec<FrontendEvent>) {
-    with_state(|state| {
+    with_queue(|state| {
         out.extend(state.priority_events.drain(..));
         out.extend(state.normal_events.drain(..));
     });
 }
 
 /// UI-thread insets push from the Kotlin layout listener.
-/// The render thread reads the cached value without another JNI round-trip.
+/// Bumps the generation so readers skip the lock when unchanged.
 pub(super) fn push_system_insets(values: [i32; 4]) {
-    with_state(|state| {
+    with_queue(|state| {
         state.insets_cache = Some(values);
     });
+    INSETS_VERSION.fetch_add(1, Ordering::Release);
+}
+
+/// Current insets generation for lock-free change checks.
+pub(super) fn insets_version() -> u64 {
+    INSETS_VERSION.load(Ordering::Acquire)
 }
 
 pub(super) fn cached_system_insets() -> Option<[i32; 4]> {
-    with_state(|state| state.insets_cache)
+    with_queue(|state| state.insets_cache)
 }
 
 /// Run a JNI closure, always clearing a pending Java exception.
@@ -175,14 +423,15 @@ pub(super) fn with_callback_env<T>(
     outcome
 }
 
-/// Marshal to the Java main thread, run the operation, log failures with the label.
-/// JNI failures are reported to the session by the caller.
-pub(super) fn call_on_activity(
+/// Post to the Java main thread: fire-and-forget, never blocks the caller.
+/// `on_failure` runs on the Java thread when the JNI call fails.
+pub(super) fn post_to_activity(
     app: &AndroidApp,
     label: &'static str,
     operation: impl FnOnce(&mut jni::Env<'_>, jni::objects::JObject<'_>) -> jni::errors::Result<()>
     + Send
     + 'static,
+    on_failure: Option<Box<dyn FnOnce() + Send + 'static>>,
 ) {
     let callback_app = app.clone();
     let owned = app.clone();
@@ -195,32 +444,9 @@ pub(super) fn call_on_activity(
         });
         if let Err(error) = result {
             log::warn!("{label} failed: {error:?}");
-        }
-    }));
-}
-
-/// Fallible variant: `on_failure` runs on the Java main thread on JNI failure.
-/// Logging matches `call_on_activity`.
-pub(super) fn call_on_activity_or(
-    app: &AndroidApp,
-    label: &'static str,
-    operation: impl FnOnce(&mut jni::Env<'_>, jni::objects::JObject<'_>) -> jni::errors::Result<()>
-    + Send
-    + 'static,
-    on_failure: impl FnOnce() + Send + 'static,
-) {
-    let callback_app = app.clone();
-    let owned = app.clone();
-    owned.run_on_java_main_thread(Box::new(move || {
-        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
-        let result = with_java_env(&vm, |env| {
-            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-            operation(env, activity)
-        });
-        if let Err(error) = result {
-            log::warn!("{label} failed: {error:?}");
-            on_failure();
+            if let Some(on_failure) = on_failure {
+                on_failure();
+            }
         }
     }));
 }
@@ -247,7 +473,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onCartridgeAc
 }
 
 /// UI-thread push for the insets cache, called on every layout pass.
-/// The render thread reads the cache without a blocking JNI query.
+/// The render thread reads the cached generation without blocking on JNI.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSystemInsetsChanged(
     mut env: jni::EnvUnowned<'_>,

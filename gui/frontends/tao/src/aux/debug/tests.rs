@@ -10,9 +10,9 @@ fn freeze_bridge() -> Arc<DebugBridge> {
         0,
         AppLanguage::English,
     ));
-    bridge.write().selected = Some((0x0200_0010, Some(0x00)));
-    bridge.write().freeze_input = "FF".to_string();
-    bridge.write().edit_input = "AA".to_string();
+    bridge.set_selected_for_test(Some((0x0200_0010, Some(0x00))));
+    bridge.set_freeze_input("FF".to_string());
+    bridge.set_edit_input("AA".to_string());
     bridge
 }
 
@@ -54,9 +54,9 @@ fn input_echo_never_queues_drain_traffic() {
 fn edit_freeze_set_reads_edit_input() {
     let bridge = freeze_bridge();
     drive(&bridge, DebugMessage::EditFreezeSet);
-    assert_eq!(bridge.write().freeze, Some((0x0200_0010, 0xAA)));
+    assert_eq!(bridge.freeze(), Some((0x0200_0010, 0xAA)));
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("frozen 0x02000010=AA".to_string())
     );
 }
@@ -65,9 +65,9 @@ fn edit_freeze_set_reads_edit_input() {
 fn freeze_set_reads_top_input() {
     let bridge = freeze_bridge();
     drive(&bridge, DebugMessage::FreezeSet);
-    assert_eq!(bridge.write().freeze, Some((0x0200_0010, 0xFF)));
+    assert_eq!(bridge.freeze(), Some((0x0200_0010, 0xFF)));
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("frozen 0x02000010=FF".to_string())
     );
 }
@@ -116,10 +116,10 @@ fn full_bridge() -> Arc<DebugBridge> {
         0,
         AppLanguage::English,
     ));
-    bridge.write().selected = Some((0x100, Some(0xAB)));
-    bridge.write().edit_input = "42".to_string();
-    bridge.write().reg_input = "7".to_string();
-    bridge.write().freeze_input = "FF".to_string();
+    bridge.set_selected_for_test(Some((0x100, Some(0xAB))));
+    bridge.set_edit_input("42".to_string());
+    bridge.set_reg_input("7".to_string());
+    bridge.set_freeze_input("FF".to_string());
     bridge
 }
 
@@ -143,16 +143,16 @@ fn update_drives_toolbar_and_nav() {
     assert!(bridge.outbox_len() != 0);
     // Space stepper with one space cycles and clears selection.
     drive(&bridge, DebugMessage::SpaceNext);
-    assert!(bridge.write().selected.is_none());
+    assert!(bridge.selected().is_none());
     drive(&bridge, DebugMessage::SpacePrev);
     // Memory Go resolves valid hex, rejects the rest.
     drive(&bridge, DebugMessage::MemInputChanged("100".to_string()));
     drive(&bridge, DebugMessage::MemGo);
-    assert_eq!(bridge.write().nav.mem_addr(), 0x100);
+    assert_eq!(bridge.mem_addr(), 0x100);
     drive(&bridge, DebugMessage::MemInputChanged("zz".to_string()));
     drive(&bridge, DebugMessage::MemGo);
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("parse failed: zz".to_string())
     );
 }
@@ -162,28 +162,28 @@ fn update_drives_disassembly_pin_and_back() {
     let bridge = full_bridge();
     // Line click pins the anchor and leaves follow mode.
     drive(&bridge, DebugMessage::DisLineClicked(0x300));
-    assert!(!bridge.write().nav.follow_pc());
+    assert!(!bridge.following_pc());
     drive(&bridge, DebugMessage::FollowTarget(0x308));
     // Back pops twice, then reports the empty stack.
     drive(&bridge, DebugMessage::DisBack);
     drive(&bridge, DebugMessage::DisBack);
     drive(&bridge, DebugMessage::DisBack);
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("back stack is empty".to_string())
     );
     // Go resolves valid hex, rejects the rest.
     drive(&bridge, DebugMessage::DisInputChanged("200".to_string()));
     drive(&bridge, DebugMessage::DisGo);
-    assert!(!bridge.write().nav.follow_pc());
+    assert!(!bridge.following_pc());
     drive(&bridge, DebugMessage::DisInputChanged("zz".to_string()));
     drive(&bridge, DebugMessage::DisGo);
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("parse failed: zz".to_string())
     );
     drive(&bridge, DebugMessage::FollowPcToggle);
-    assert!(bridge.write().nav.follow_pc());
+    assert!(bridge.following_pc());
 }
 
 #[test]
@@ -194,51 +194,50 @@ fn update_drives_bookmarks_watch_and_freeze() {
         DebugMessage::BookmarkInputChanged("start".to_string()),
     );
     drive(&bridge, DebugMessage::BookmarkAdd);
-    assert_eq!(bridge.write().bookmarks.len(), 1);
+    assert_eq!(bridge.bookmarks().len(), 1);
     // PC row anchors the bookmark while following.
-    assert_eq!(bridge.write().bookmarks[0].0, 0x0800_27D2);
+    assert_eq!(bridge.bookmarks()[0].0, 0x0800_27D2);
     drive(&bridge, DebugMessage::BookmarkJump(0x0800_27D2));
     drive(&bridge, DebugMessage::BookmarkDelete(0x0800_27D2));
-    assert!(bridge.write().bookmarks.is_empty());
+    assert!(bridge.bookmarks().is_empty());
     // A full list refuses loudly.
-    bridge
-        .write()
-        .bookmarks
-        .extend((0..8).map(|i| (0x100 + i, format!("BM{i}"))));
+    for i in 0..8 {
+        bridge.push_bookmark(0x100 + i, format!("BM{i}"), usize::MAX);
+    }
     drive(&bridge, DebugMessage::BookmarkAdd);
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("bookmark list full".to_string())
     );
     // Watch follows the selection, then clears.
     drive(&bridge, DebugMessage::WatchSet);
-    assert_eq!(bridge.write().watch, Some(0x100));
+    assert_eq!(bridge.watch(), Some(0x100));
     drive(&bridge, DebugMessage::WatchClear);
-    assert!(bridge.write().watch.is_none());
-    bridge.write().selected = None;
+    assert!(bridge.watch().is_none());
+    bridge.set_selected_for_test(None);
     drive(&bridge, DebugMessage::WatchSet);
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("watch needs a selection".to_string())
     );
     // Freeze reads the top input, the edit input, then clears.
-    bridge.write().selected = Some((0x100, Some(0xAB)));
+    bridge.set_selected_for_test(Some((0x100, Some(0xAB))));
     drive(&bridge, DebugMessage::FreezeInputChanged("00".to_string()));
     drive(&bridge, DebugMessage::FreezeSet);
-    assert_eq!(bridge.write().freeze, Some((0x100, 0x00)));
+    assert_eq!(bridge.freeze(), Some((0x100, 0x00)));
     drive(&bridge, DebugMessage::EditFreezeSet);
-    assert_eq!(bridge.write().freeze, Some((0x100, 0x42)));
+    assert_eq!(bridge.freeze(), Some((0x100, 0x42)));
     drive(&bridge, DebugMessage::FreezeClear);
-    assert!(bridge.write().freeze.is_none());
+    assert!(bridge.freeze().is_none());
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("freeze cleared".to_string())
     );
     // Rejections stay loud.
-    bridge.write().selected = None;
+    bridge.set_selected_for_test(None);
     drive(&bridge, DebugMessage::FreezeSet);
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("freeze needs a selected row and hex byte".to_string())
     );
 }
@@ -252,34 +251,34 @@ fn update_drives_write_and_register_flow() {
     assert_eq!(bridge.outbox_len(), 2);
     // Confirm consumes the transaction and clears the input.
     drive(&bridge, DebugMessage::ConfirmWrite);
-    assert!(bridge.write().edit_input.is_empty());
+    assert!(bridge.edit_input().is_empty());
     // Cancel clears the optimistic text.
     drive(&bridge, DebugMessage::CancelWrite);
-    assert!(bridge.write().display.pending.is_none());
+    assert!(bridge.display_snapshot().pending.is_none());
     // Register pick then Set pushes one register write.
     drive(&bridge, DebugMessage::RegSelected("r0"));
-    assert_eq!(bridge.write().reg_target, Some("r0"));
+    assert_eq!(bridge.reg_target(), Some("r0"));
     drive(&bridge, DebugMessage::RegInputChanged("7".to_string()));
     drive(&bridge, DebugMessage::RegSet);
     assert_eq!(bridge.outbox_len(), 5);
     // Rejections stay loud.
-    bridge.write().reg_target = None;
+    bridge.set_reg_target(None);
     drive(&bridge, DebugMessage::RegSet);
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("register write needs a register".to_string())
     );
-    bridge.write().selected = None;
+    bridge.set_selected_for_test(None);
     drive(&bridge, DebugMessage::EditWrite);
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("write needs a selection".to_string())
     );
     drive(&bridge, DebugMessage::RegInputChanged("zz".to_string()));
-    bridge.write().reg_target = Some("r0");
+    bridge.set_reg_target(Some("r0"));
     drive(&bridge, DebugMessage::RegSet);
     assert_eq!(
-        bridge.write().display.status,
+        bridge.display_snapshot().status,
         StatusMessage::Local("parse failed: zz".to_string())
     );
 }
@@ -288,8 +287,8 @@ fn update_drives_write_and_register_flow() {
 fn view_builders_construct_every_section() {
     let bridge = full_bridge();
     let language = AppLanguage::English;
-    let display = bridge.write().display.clone_without_images();
-    let selected = bridge.write().selected;
+    let display = bridge.display_snapshot().clone_without_images();
+    let selected = bridge.selected();
     let _ = view_toolbar(true, language);
     let _ = view_toolbar(false, language);
     let _ = view_space_row("Memory", language);
@@ -478,7 +477,7 @@ fn capture_view_anchors_to_first_line_in_follow_mode() {
 #[test]
 fn capture_view_anchors_to_pin_once_navigated() {
     let bridge = full_bridge();
-    bridge.write().nav.navigate(0x0800_27D2, 0x0300);
+    bridge.navigate(0x0800_27D2, 0x0300);
     let snap = views::capture_view(&bridge);
     assert_eq!(snap.anchor, 0x0300);
     // Snapshot carries the window contents through untouched.

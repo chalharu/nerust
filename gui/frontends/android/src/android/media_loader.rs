@@ -1,9 +1,8 @@
 //! MediaLoader: ROM/document loading owned by one module.
 //! Dispatches completed worker-thread fetch buffers.
 
-use jni::{jni_sig, jni_str};
 use nerust_core_traits::factory::load::MediaObject;
-use nerust_gui_shell::session::{access::PauseControl as _, notification::FailureOrigin};
+use nerust_gui_shell::session::access::PauseControl as _;
 use winit::event_loop::ActiveEventLoop;
 
 use super::{bridge, storage::LastMediaReference};
@@ -23,17 +22,14 @@ impl super::AndroidFrontend {
             bytes.len()
         );
         let path = self
+            .core
             .storage
-            .rom_library
-            .rom_path(id)
+            .resolve_library_path(id)
             .ok_or_else(|| format!("ROM {id} was not found in the library"))?;
         let media = MediaObject::new(Some(path), bytes);
         self.load_media(event_loop, media, None, true)?;
         self.pending_legacy_digest = Some(digest);
-        super::show_toast(
-            &self.app,
-            "Legacy ROM restored; use Open ROM to reconnect its document",
-        );
+        log::info!("open_library_from_bytes: legacy ROM restored without its document");
         Ok(())
     }
 
@@ -63,6 +59,7 @@ impl super::AndroidFrontend {
     ) -> Result<(), String> {
         let (factory, system_id) = {
             let f = self
+                .core
                 .session
                 .registry()
                 .detect(&media)
@@ -81,31 +78,34 @@ impl super::AndroidFrontend {
             ));
         }
 
-        self.session.clear_input();
-        self.input
-            .reset_touch_tracking(&mut self.session, &self.app);
-        self.input.forget_physical_pressed();
-        self.session
+        self.core.session.clear_input();
+        self.chrome
+            .input
+            .reset_touch_tracking(&mut self.core.session, &self.app);
+        self.chrome.input.forget_physical_pressed();
+        self.core
+            .session
             .set_active_system(system_id.as_ref())
             .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
 
         let options = self
+            .core
             .session
             .default_load_options()
             .ok_or_else(|| "no active system".to_string())?;
         let view = nerust_settings_core::factory::settings_view(
-            self.session.settings_snapshot(),
+            self.core.session.settings_snapshot(),
             system_id.as_ref(),
         );
         let resolved = factory
             .resolve_load_request(&view, options)
             .map_err(|e| format!("failed to resolve ROM load request: {e}"))?;
 
-        if let Err(error) = self.session.load_resolved(media, resolved) {
+        if let Err(error) = self.core.session.load_resolved(media, resolved) {
             return Err(format!("failed to start ROM: {error}"));
         }
         let restore_document_on_restart = document_reference.as_ref().is_some_and(|reference| {
-            if let Err(error) = self.storage.save_last_media_reference(reference) {
+            if let Err(error) = self.core.storage.save_last_media_reference(reference) {
                 log::warn!("{error}");
                 false
             } else {
@@ -114,36 +114,32 @@ impl super::AndroidFrontend {
         });
         self.finish_rom_load(event_loop, restore_hidden_state);
         if restore_document_on_restart {
-            self.storage.touch_restore_pending();
+            self.core.storage.touch_restore_pending();
         }
         self.notify_rom_loaded(&system_id.to_string());
         log::info!("load_media: session ready for system={system_id}");
         Ok(())
     }
 
-    /// Tell Kotlin a ROM loaded. JNI failures route to the error dialog
-    /// queue (Bridge origin) instead of staying log-only.
+    /// Tell Kotlin a ROM loaded. Fire-and-forget: the event thread
+    /// never blocks on the notify round-trip.
     pub(super) fn notify_rom_loaded(&mut self, system_id: &str) {
-        let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
-        let result = bridge::with_java_env(&vm, |env| {
-            let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-            let system_id = env.new_string(system_id)?;
-            env.call_method(
-                &activity,
-                jni_str!("notifyRomLoaded"),
-                jni_sig!("(Ljava/lang/String;)V"),
-                &[jni::objects::JValue::Object(system_id.as_ref())],
-            )?;
-            Ok::<(), jni::errors::Error>(())
-        });
-        if let Err(error) = result {
-            log::warn!("failed to notify Android ROM load: {error:?}");
-            self.session.report_external_error(
-                FailureOrigin::Bridge,
-                format!("failed to notify Android ROM load: {error:?}"),
-            );
-        }
+        let system_id = system_id.to_string();
+        bridge::post_to_activity(
+            &self.app,
+            "notify Android ROM load",
+            move |env, activity| {
+                let system_id = env.new_string(&system_id)?;
+                bridge::call_bridge_method(
+                    env,
+                    &activity,
+                    &bridge::methods::NOTIFY_ROM_LOADED,
+                    &[jni::objects::JValue::Object(system_id.as_ref())],
+                )?;
+                Ok(())
+            },
+            None,
+        );
     }
 
     pub(super) fn open_rom_from_bytes(
@@ -167,6 +163,7 @@ impl super::AndroidFrontend {
         }
         let media = MediaObject::from_document_uri(uri, file_name, bytes);
         let detected_system = self
+            .core
             .session
             .registry()
             .detect(&media)
@@ -188,68 +185,75 @@ impl super::AndroidFrontend {
     ) {
         if restore_hidden_state {
             log::info!("finish_rom_load: restoring hidden lifecycle state");
-            self.session.load_hidden_lifecycle_state();
+            self.core.session.load_hidden_lifecycle_state();
         } else {
             log::info!("finish_rom_load: clearing hidden lifecycle state");
-            self.session.clear_hidden_lifecycle_state();
+            self.core.session.clear_hidden_lifecycle_state();
         }
         // Requeue the unacked head: stale batches describe the previous ROM.
         // The pause flag survives, holding resume until dismissal.
-        self.osd
-            .with_modal(|queue| self.dialogs.on_suspended(queue));
+        self.chrome
+            .osd
+            .with_modal(|queue| self.flow.dialogs.on_suspended(queue));
         // Resume fresh loads and own auto-pauses, never across an error auto-pause.
         // Manual pauses survive.
-        if self
-            .lifecycle
-            .resume_want_after_restore(restore_hidden_state, self.dialogs.auto_paused())
-        {
-            self.lifecycle.set_auto_paused(false);
+        let policy = self.flow.lifecycle.policy(
+            restore_hidden_state,
+            self.flow.dialogs.auto_paused(),
+            false,
+            false,
+        );
+        if policy.should_resume() {
+            self.flow.lifecycle.set_auto_paused(false);
             self.resume();
         }
-        self.lifecycle.clear_restore_pending();
-        self.storage.clear_restore_pending();
+        self.flow.lifecycle.clear_restore_pending();
+        self.core.storage.clear_restore_pending();
 
         // Ensure a window and renderer exist immediately when resuming so that
         // request_redraw() takes effect without requiring a user tap.
-        if !self.render_sync.has_window() && self.is_resumed {
-            match self.render_sync.ensure_window(
+        if !self.flow.render_sync.has_window() && self.is_resumed {
+            match self.flow.render_sync.ensure_window(
                 event_loop,
-                &self.session,
-                &self.gpu_factory,
-                &mut self.osd,
-                &mut self.shell,
+                &self.core.session,
+                &self.core.gpu_factory,
+                &mut self.chrome.osd,
+                &mut self.core.shell,
             ) {
                 Ok(()) => {
                     log::info!("finish_rom_load: ensured window/renderer after ROM load");
-                    self.input.rebuild_overlay(
-                        &self.session,
+                    self.chrome.input.rebuild_overlay(
+                        &self.core.session,
                         &self.app,
-                        self.render_sync.window_size(),
+                        self.flow.render_sync.window_size(),
                     );
                 }
                 Err(error) => {
                     log::warn!(
                         "finish_rom_load: ensure_window failed: {error}; scheduling foreground resume"
                     );
-                    self.lifecycle.begin_foreground_resume();
+                    self.flow.lifecycle.begin_foreground_resume();
                 }
             }
-        } else if let Some(window) = self.render_sync.cloned_window() {
+        } else if let Some(window) = self.flow.render_sync.cloned_window() {
             // Rebuild renderer to ensure the underlying surface is fresh; dialogs or
             // system UI may have invalidated the previous surface.
             log::info!("finish_rom_load: rebuilding renderer to ensure visible surface");
-            self.render_sync.rebuild_renderer(
+            self.flow.render_sync.rebuild_renderer(
                 window,
-                &self.session,
-                &self.gpu_factory,
-                &mut self.osd,
-                &mut self.shell,
+                &self.core.session,
+                &self.core.gpu_factory,
+                &mut self.chrome.osd,
+                &mut self.core.shell,
             );
-            self.input
-                .rebuild_overlay(&self.session, &self.app, self.render_sync.window_size());
+            self.chrome.input.rebuild_overlay(
+                &self.core.session,
+                &self.app,
+                self.flow.render_sync.window_size(),
+            );
         }
 
         self.refresh_dialog_caches();
-        self.render_sync.request_redraw(&mut self.shell);
+        self.flow.render_sync.request_redraw(&mut self.core.shell);
     }
 }

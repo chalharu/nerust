@@ -1,7 +1,7 @@
 //! Settings dialog lifecycle: open/close plus applying snapshots.
 //! Owned by `HostState`; the iced side lives in `crate::aux::settings`.
 use super::HostState;
-use super::services::{ChromeService, SettingsService};
+
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
     SessionError,
@@ -23,12 +23,12 @@ impl HostState {
             self.update_window_size_for_scaling();
         }
         let ctx = self.frame_ctx();
-        ChromeService::sync_chrome(self, &ctx, true);
+        self.sync_chrome(&ctx, true);
         Ok(result)
     }
 
     pub(crate) fn on_settings_closed(&mut self) {
-        if !SettingsService::settings_open(self) {
+        if !self.settings_open() {
             return;
         }
         let should_resume = self.settings.take_resume_after();
@@ -37,7 +37,7 @@ impl HostState {
             self.resume();
         } else {
             let ctx = self.frame_ctx();
-            ChromeService::sync_chrome(self, &ctx, false);
+            self.sync_chrome(&ctx, false);
         }
     }
 
@@ -104,6 +104,7 @@ impl HostState {
 mod tests {
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
+    use crate::testkit::StubAux;
 
     #[test]
     fn open_settings_attempt_records_request_and_stays_closed() {
@@ -158,56 +159,12 @@ mod tests {
         assert!(support.menu.updates().is_empty());
     }
 
-    struct OpenAux {
-        kind: crate::aux::focus::AuxKind,
-    }
-
-    impl crate::aux::focus::AuxIdentity for OpenAux {
-        fn kind(&self) -> crate::aux::focus::AuxKind {
-            self.kind
-        }
-        fn native_id(&self) -> crate::aux::native::NativeWindowId {
-            crate::aux::native::NativeWindowId::dummy()
-        }
-        fn close_requested(&self) -> bool {
-            false
-        }
-        fn focus_window(&self) {}
-        fn request_redraw(&self) {}
-    }
-
-    impl crate::aux::focus::AuxRender for OpenAux {
-        fn handle_common(&mut self, _event: &crate::aux::native::AuxNativeEvent) {}
-        fn feed_event(
-            &mut self,
-            _event: crate::aux::native::AuxNativeEvent,
-        ) -> Option<iced::Event> {
-            None
-        }
-        fn render(&mut self) {}
-    }
-
-    impl crate::aux::focus::AuxEvents for OpenAux {
-        fn handle(&mut self, _mapped: iced::Event) -> bool {
-            false
-        }
-    }
-
-    impl crate::aux::registry::DebugDrainPort for OpenAux {}
-    impl crate::aux::registry::LiveImagesPort for OpenAux {}
-    impl crate::aux::registry::SettingsClosePort for OpenAux {}
-    impl crate::aux::registry::HistorySyncPort for OpenAux {}
-    impl crate::aux::registry::BridgeSharePort for OpenAux {}
-    impl crate::aux::registry::AuxController for OpenAux {}
-
     #[test]
     fn settings_close_with_open_window_syncs_chrome() {
         use crate::aux::focus::AuxKind;
         let support = TestHost::new();
         let mut host = support.host;
-        host.aux.insert(Box::new(OpenAux {
-            kind: AuxKind::Settings,
-        }));
+        host.aux.insert(Box::new(StubAux::new(AuxKind::Settings)));
         assert!(host.settings_open());
         // Registry removal is the caller's job; close teardown only
         // clears the resume flag and syncs chrome while still open.
@@ -222,9 +179,7 @@ mod tests {
         use crate::aux::focus::AuxKind;
         let support = TestHost::new();
         let mut host = support.host;
-        host.aux.insert(Box::new(OpenAux {
-            kind: AuxKind::Settings,
-        }));
+        host.aux.insert(Box::new(StubAux::new(AuxKind::Settings)));
         host.settings.set_resume_after(true);
         host.on_settings_closed();
         assert!(host.settings_open());

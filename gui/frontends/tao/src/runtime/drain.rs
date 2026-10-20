@@ -6,7 +6,6 @@ use std::time::Instant;
 use nerust_gui_shell::{debug::DebugDrainOutput, session::LiveImages};
 use nerust_gui_viewmodel::debugger as debug_vm;
 
-use super::host::services::{ChromeService, DebugOrchestratorService};
 use super::host::{HostState, WakeNeed};
 use crate::aux::focus::AuxKind;
 use crate::aux::registry::debug_spaces;
@@ -45,7 +44,7 @@ impl HostState {
         let drain_pending = self.poll_debug_flight();
         // While the PPU follows a running core, wake for the next tick.
         let live_follow = self.live_follow_active();
-        self.debug.windows_mut().set_live_wanted(live_follow);
+        self.set_live_wanted(live_follow);
         WakeNeed {
             live_tick: live_follow.then(|| self.next_live_tick()).flatten(),
             flight_pending: drain_pending || self.live_flight_pending(),
@@ -83,11 +82,16 @@ impl HostState {
     /// Patch a finished live fetch into the viewer: images land when newer.
     /// Bridge writes route through the registry narrow ports.
     fn apply_live_images(&mut self, live: LiveImages) {
-        let Some((generation, images)) = live else {
+        let Some(batch) = live else {
             return;
         };
         let running = !self.session().tick_metrics().paused;
-        if self.aux.debug_apply_live(generation, images, running) {
+        let images = batch
+            .images
+            .into_iter()
+            .map(|image| (image.label, image.width, image.height, image.rgba))
+            .collect();
+        if self.aux.debug_apply_live(batch.generation, images, running) {
             self.aux.ppu_sync();
         }
     }
@@ -96,7 +100,7 @@ impl HostState {
     /// Closing never resumes; `focus_ppu` opens-or-focuses the viewer.
     pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         use nerust_gui_shell::debug::DebugAction;
-        if !DebugOrchestratorService::is_aux_open(self, AuxKind::Debug) {
+        if !self.is_debug_open() {
             let spaces = debug_spaces(self.session());
             if spaces.is_empty() {
                 log::warn!("debugger: no spaces (no core)");
@@ -151,7 +155,7 @@ impl HostState {
     /// Drain debugger requests and push one batched snapshot back.
     pub(crate) fn drain_debug_requests(&mut self) {
         self.poll_debug_flight();
-        let Some((open_ppu, requests)) = DebugOrchestratorService::take_debug_batch(self) else {
+        let Some((open_ppu, requests)) = self.take_debug_batch() else {
             return;
         };
         if open_ppu {
@@ -227,7 +231,7 @@ impl HostState {
         self.aux.debug_apply(display, reselected);
         // The drain is the single pause-truth agreement point: menu and title sync here.
         let ctx = self.frame_ctx();
-        ChromeService::sync_chrome(self, &ctx, false);
+        self.sync_chrome(&ctx, false);
         // Post-drain truth: focus flips compare against this to skip redundant round-trips.
         self.set_last_drain_paused(self.session().tick_metrics().paused);
     }
@@ -366,62 +370,20 @@ mod tests {
         assert_eq!(host.last_drain_paused(), None);
     }
 
-    struct BatchAux {
-        batch: Option<(bool, Vec<nerust_gui_shell::debug::DebugAction>)>,
-    }
+    use crate::testkit::StubAux;
 
-    impl crate::aux::focus::AuxIdentity for BatchAux {
-        fn kind(&self) -> crate::aux::focus::AuxKind {
-            crate::aux::focus::AuxKind::Debug
-        }
-        fn native_id(&self) -> crate::aux::native::NativeWindowId {
-            crate::aux::native::NativeWindowId::dummy()
-        }
-        fn close_requested(&self) -> bool {
-            false
-        }
-        fn focus_window(&self) {}
-        fn request_redraw(&self) {}
+    fn batch_stub(open_ppu: bool, batch: Vec<nerust_gui_shell::debug::DebugAction>) -> StubAux {
+        let mut stub = StubAux::new(crate::aux::focus::AuxKind::Debug);
+        stub.drain_open = open_ppu;
+        stub.debug_batch = batch;
+        stub
     }
-
-    impl crate::aux::focus::AuxRender for BatchAux {
-        fn handle_common(&mut self, _event: &crate::aux::native::AuxNativeEvent) {}
-        fn feed_event(
-            &mut self,
-            _event: crate::aux::native::AuxNativeEvent,
-        ) -> Option<iced::Event> {
-            None
-        }
-        fn render(&mut self) {}
-    }
-
-    impl crate::aux::focus::AuxEvents for BatchAux {
-        fn handle(&mut self, _mapped: iced::Event) -> bool {
-            false
-        }
-    }
-
-    impl crate::aux::registry::DebugDrainPort for BatchAux {
-        fn take_debug_requests(
-            &mut self,
-        ) -> Option<(bool, Vec<nerust_gui_shell::debug::DebugAction>)> {
-            self.batch.take()
-        }
-    }
-
-    impl crate::aux::registry::LiveImagesPort for BatchAux {}
-    impl crate::aux::registry::SettingsClosePort for BatchAux {}
-    impl crate::aux::registry::HistorySyncPort for BatchAux {}
-    impl crate::aux::registry::BridgeSharePort for BatchAux {}
-    impl crate::aux::registry::AuxController for BatchAux {}
 
     #[test]
     fn empty_batch_with_ppu_flag_arms_viewer_open() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.aux.insert(Box::new(BatchAux {
-            batch: Some((true, Vec::new())),
-        }));
+        host.aux.insert(Box::new(batch_stub(true, Vec::new())));
         host.drain_debug_requests();
         assert!(host.take_ppu_open_request());
         assert!(support.menu.updates().is_empty());
@@ -432,9 +394,8 @@ mod tests {
         use nerust_gui_shell::debug::DebugAction;
         let support = TestHost::new();
         let mut host = support.host;
-        host.aux.insert(Box::new(BatchAux {
-            batch: Some((false, vec![DebugAction::Refresh])),
-        }));
+        host.aux
+            .insert(Box::new(batch_stub(false, vec![DebugAction::Refresh])));
         // Stub snapshot stays None, so the round trip never runs.
         assert!(host.aux.debug_locks_free());
         host.drain_debug_requests();

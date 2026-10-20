@@ -1,64 +1,24 @@
-//! Shared change gate: remembers the last pushed value plus a version.
+//! Shared change gate + content hash: single home in the frontend kernel.
+//! Both native frontends share these; see `nerust_frontend_kernel`.
 
-/// Versioned change gate: true when `value` differs from memory.
-/// False means the downstream push can be skipped.
-#[derive(Debug, Default)]
-pub(crate) struct Versioned<T: PartialEq> {
-    last: Option<T>,
-    version: u64,
-}
-
-impl<T: PartialEq> Versioned<T> {
-    pub(crate) fn new() -> Self {
-        Self {
-            last: None,
-            version: 0,
-        }
-    }
-
-    /// Monotonic change count: bumped once per accepted value.
-    pub(crate) fn version(&self) -> u64 {
-        self.version
-    }
-
-    /// True on change (recording `value`); false on repeat.
-    pub(crate) fn check(&mut self, value: &T) -> bool
-    where
-        T: Clone,
-    {
-        if self.last.as_ref() == Some(value) {
-            return false;
-        }
-        self.last = Some(value.clone());
-        self.version += 1;
-        true
-    }
-
-    /// Single-op take-gate: records `value`, reports whether it changed.
-    pub(crate) fn should_sync(&mut self, value: T) -> bool
-    where
-        T: Clone,
-    {
-        if self.last.as_ref() == Some(&value) {
-            return false;
-        }
-        self.last = Some(value);
-        self.version += 1;
-        true
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.last = None;
-    }
-
-    pub(crate) fn get(&self) -> Option<&T> {
-        self.last.as_ref()
-    }
-}
+pub(crate) use nerust_frontend_kernel::{Fnv1a, Versioned, level_visible};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fnv_is_stable_and_content_sensitive() {
+        use core::hash::Hash;
+        let mut a = Fnv1a::new();
+        7u64.hash(&mut a);
+        let mut b = Fnv1a::new();
+        7u64.hash(&mut b);
+        assert_eq!(a.finish(), b.finish());
+        let mut c = Fnv1a::new();
+        8u64.hash(&mut c);
+        assert_ne!(a.finish(), c.finish());
+    }
 
     #[test]
     fn check_gates_repeats() {
@@ -78,19 +38,19 @@ mod tests {
         assert_eq!(memo.version(), 1);
         assert!(!memo.check(&"a".to_string()));
         assert_eq!(memo.version(), 1);
-        assert!(memo.should_sync("b".to_string()));
+        assert!(memo.check(&"b".to_string()));
         assert_eq!(memo.version(), 2);
-        assert!(!memo.should_sync("b".to_string()));
+        assert!(!memo.check(&"b".to_string()));
         assert_eq!(memo.version(), 2);
     }
 
     #[test]
-    fn should_sync_takes_ownership_atomically() {
+    fn check_takes_reference_and_gates_repeats() {
         let mut memo: Versioned<u32> = Versioned::new();
-        assert!(memo.should_sync(7));
+        assert!(memo.check(&7));
         assert_eq!(memo.get(), Some(&7));
-        assert!(!memo.should_sync(7));
+        assert!(!memo.check(&7));
         memo.clear();
-        assert!(memo.should_sync(7));
+        assert!(memo.check(&7));
     }
 }

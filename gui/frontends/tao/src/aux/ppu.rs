@@ -2,7 +2,7 @@
 //! Scaled pictures derive once per drain; hover clones cached handles.
 
 use std::sync::{
-    Arc, Mutex,
+    Arc, RwLock,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -11,7 +11,27 @@ use iced_winit::program::{self, Program};
 
 use tao::event_loop::EventLoopWindowTarget;
 
-use super::bridge::{DebugBridge, lock_recovered};
+use super::bridge::DebugBridge;
+
+/// Poison-safe snapshot read: recovers the last snapshot after a panic.
+fn snapshot_read(
+    snapshot: &RwLock<Arc<PpuSnapshot>>,
+) -> std::sync::RwLockReadGuard<'_, Arc<PpuSnapshot>> {
+    snapshot.read().unwrap_or_else(|e| {
+        log::warn!("ppu snapshot recovered after poisoning; state may be stale");
+        e.into_inner()
+    })
+}
+
+/// Poison-safe snapshot write: recovers the last snapshot after a panic.
+fn snapshot_write(
+    snapshot: &RwLock<Arc<PpuSnapshot>>,
+) -> std::sync::RwLockWriteGuard<'_, Arc<PpuSnapshot>> {
+    snapshot.write().unwrap_or_else(|e| {
+        log::warn!("ppu snapshot recovered after poisoning; state may be stale");
+        e.into_inner()
+    })
+}
 use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
 
 /// Initial PPU viewer window size (verified Xvfb fit).
@@ -48,9 +68,8 @@ pub(crate) enum PpuMessage {
 
 pub(crate) struct PpuState {
     bridge: Arc<DebugBridge>,
-    /// Hot pictures plus cold text, shared by `Arc`; Sync swaps the whole
-    /// snapshot once per drain while hover clones only the `Arc`s.
-    snapshot: Mutex<Arc<PpuSnapshot>>,
+    /// Hot pictures plus cold text, shared by `Arc`; `RwLock` for read-mostly sharing.
+    snapshot: RwLock<Arc<PpuSnapshot>>,
 }
 
 /// Hot pictures plus cold text, shared by `Arc` so hover-driven
@@ -111,7 +130,7 @@ impl Program for PpuProgram {
         (
             PpuState {
                 bridge: Arc::clone(&self.bridge),
-                snapshot: Mutex::new(PpuSnapshot::empty()),
+                snapshot: RwLock::new(PpuSnapshot::empty()),
             },
             Task::none(),
         )
@@ -121,10 +140,15 @@ impl Program for PpuProgram {
         let bridge = &state.bridge;
         match message {
             PpuMessage::Hovered(line) => {
-                bridge.write().ppu_hover = line.clone();
-                let current = Arc::clone(&lock_recovered(&state.snapshot));
+                // Same-line hovers skip everything: no bridge write,
+                // no snapshot alloc, no redraw.
+                if snapshot_read(&state.snapshot).hover.as_ref() == line {
+                    return Task::none();
+                }
+                bridge.set_hover(line.clone());
+                let current = Arc::clone(&snapshot_read(&state.snapshot));
                 // Hover swaps only the hover line; the scaled `Arc` is cloned.
-                *lock_recovered(&state.snapshot) = Arc::new(PpuSnapshot {
+                *snapshot_write(&state.snapshot) = Arc::new(PpuSnapshot {
                     scaled: Arc::clone(&current.scaled),
                     panels: Arc::clone(&current.panels),
                     hover: Arc::from(line),
@@ -133,17 +157,15 @@ impl Program for PpuProgram {
                 bridge.ppu_invalidated.store(true, Ordering::Release);
             }
             PpuMessage::Sync => {
-                // Clone the source under the lock, then scale lock-free:
+                // `Arc::clone` under a read guard, then scale lock-free:
                 // the 2x derivation must never hold the display guard.
-                let (images, generation, panels) = {
-                    let state = bridge.read();
-                    (
-                        state.display.images.clone(),
-                        state.display.images_gen,
-                        nerust_gui_viewmodel::debugger::format_panels(&state.display.panels),
-                    )
-                };
-                let current = Arc::clone(&lock_recovered(&state.snapshot));
+                let display = bridge.display_snapshot();
+                let (images, generation, panels) = (
+                    display.images.clone(),
+                    display.images_gen,
+                    nerust_gui_viewmodel::debugger::format_panels(&display.panels),
+                );
+                let current = Arc::clone(&snapshot_read(&state.snapshot));
                 // Sync swaps once per drain: scaled re-derived only on
                 // generation change, hover preserved as-is.
                 let scaled: ScaledPictures = if current.source_gen != generation {
@@ -162,7 +184,7 @@ impl Program for PpuProgram {
                     Arc::clone(&current.scaled)
                 };
                 let panels: Arc<str> = Arc::from(panels);
-                *lock_recovered(&state.snapshot) = Arc::new(PpuSnapshot {
+                *snapshot_write(&state.snapshot) = Arc::new(PpuSnapshot {
                     scaled,
                     panels,
                     hover: Arc::clone(&current.hover),
@@ -183,7 +205,7 @@ impl Program for PpuProgram {
         // Single coherent capture: one lock, one `Arc`; scaled bytes
         // come from the Sync cache, never re-derived here.
         let language = state.bridge.language();
-        let snapshot = Arc::clone(&lock_recovered(&state.snapshot));
+        let snapshot = Arc::clone(&snapshot_read(&state.snapshot));
         // Borrow the scaled `Arc` (handles clone per row, cheap Arc). Cold text borrows first:
         // owned copies materialize only for shown sections, never for hidden or empty ones.
         let scaled = &snapshot.scaled;
@@ -303,11 +325,6 @@ impl AuxShellRef for PpuWindowHandle {
     }
 }
 
-impl super::registry::DebugDrainPort for PpuWindowHandle {}
-impl super::registry::LiveImagesPort for PpuWindowHandle {}
-impl super::registry::SettingsClosePort for PpuWindowHandle {}
-impl super::registry::HistorySyncPort for PpuWindowHandle {}
-impl super::registry::BridgeSharePort for PpuWindowHandle {}
 impl AuxController for PpuWindowHandle {
     fn sync_view(&mut self) {
         self.sync_from_bridge();
@@ -370,7 +387,7 @@ mod tests {
     fn ppu_state(bridge: &Arc<DebugBridge>) -> PpuState {
         PpuState {
             bridge: Arc::clone(bridge),
-            snapshot: Mutex::new(PpuSnapshot::empty()),
+            snapshot: RwLock::new(PpuSnapshot::empty()),
         }
     }
 
@@ -383,23 +400,40 @@ mod tests {
         let mut state = ppu_state(&bridge);
         let _ = program.update(&mut state, PpuMessage::Sync);
         // First sync derives: one 2x image plus the generation.
-        assert_eq!(lock_recovered(&state.snapshot).scaled.len(), 1);
-        assert_eq!(lock_recovered(&state.snapshot).source_gen, 5);
-        assert_eq!(lock_recovered(&state.snapshot).scaled[0].1, 4);
-        assert_eq!(lock_recovered(&state.snapshot).scaled[0].2, 2);
+        assert_eq!(snapshot_read(&state.snapshot).scaled.len(), 1);
+        assert_eq!(snapshot_read(&state.snapshot).source_gen, 5);
+        assert_eq!(snapshot_read(&state.snapshot).scaled[0].1, 4);
+        assert_eq!(snapshot_read(&state.snapshot).scaled[0].2, 2);
         // Identical generation re-runs Sync without re-deriving.
         let _ = program.update(&mut state, PpuMessage::Sync);
-        assert_eq!(lock_recovered(&state.snapshot).source_gen, 5);
+        assert_eq!(snapshot_read(&state.snapshot).source_gen, 5);
         // Hover only records the line, never re-derives.
         let _ = program.update(
             &mut state,
             PpuMessage::Hovered("Tiles tile #0 (px 0,0, +0000)".to_string()),
         );
         assert_eq!(
-            &*lock_recovered(&state.snapshot).hover,
+            &*snapshot_read(&state.snapshot).hover,
             "Tiles tile #0 (px 0,0, +0000)"
         );
         assert!(bridge.ppu_invalidated.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn same_line_hover_skips_bridge_and_snapshot() {
+        let bridge = ppu_bridge();
+        let program = PpuProgram {
+            bridge: Arc::clone(&bridge),
+        };
+        let mut state = ppu_state(&bridge);
+        // First hover records and invalidates.
+        let _ = program.update(&mut state, PpuMessage::Hovered("row".to_string()));
+        bridge.ppu_invalidated.store(false, Ordering::Release);
+        // Same line again: no bridge write, no snapshot swap, no redraw flag.
+        let _ = program.update(&mut state, PpuMessage::Hovered("row".to_string()));
+        assert!(!bridge.ppu_invalidated.load(Ordering::Acquire));
+        assert_eq!(&*snapshot_read(&state.snapshot).hover, "row");
+        assert_eq!(bridge.hover(), "row");
     }
 
     #[test]
@@ -455,8 +489,8 @@ mod tests {
         // Generation zero differs from the empty sentinel: sync
         // records it without deriving any pictures.
         let _ = program.update(&mut state, PpuMessage::Sync);
-        assert!(lock_recovered(&state.snapshot).scaled.is_empty());
-        assert_eq!(lock_recovered(&state.snapshot).source_gen, 0);
+        assert!(snapshot_read(&state.snapshot).scaled.is_empty());
+        assert_eq!(snapshot_read(&state.snapshot).source_gen, 0);
     }
 
     #[test]
@@ -469,10 +503,12 @@ mod tests {
         let _ = program.update(&mut state, PpuMessage::Sync);
         let _ = program.update(&mut state, PpuMessage::Hovered("Tiles hover".to_string()));
         // New images plus new generation: scaled re-derived, hover kept.
-        bridge.write().display.images = vec![("Map".to_string(), 1, 1, vec![0x00; 4])];
-        bridge.write().display.images_gen = 6;
+        bridge.update_display(|display| {
+            display.images = vec![("Map".to_string(), 1, 1, vec![0x00; 4])];
+            display.images_gen = 6;
+        });
         let _ = program.update(&mut state, PpuMessage::Sync);
-        let snapshot = lock_recovered(&state.snapshot);
+        let snapshot = snapshot_read(&state.snapshot);
         assert_eq!(snapshot.scaled.len(), 1);
         assert_eq!(snapshot.scaled[0].0, "Map");
         assert_eq!(snapshot.source_gen, 6);
@@ -512,7 +548,7 @@ mod tests {
         let _full = program.view(&state, iced::window::Id::unique());
         drop(_full);
         assert!(nerust_gui_viewmodel::debugger::panels_visible(
-            &lock_recovered(&state.snapshot).panels
+            &snapshot_read(&state.snapshot).panels
         ));
     }
 }

@@ -45,13 +45,13 @@ pub(crate) fn create_core_and_adapter(
         .map_err(|error| FactoryError::Create(error.to_string()))?;
     // Digital-only session projection: analog drops warn and debug-trap
     // so a future analog device migrates `CoreParts` instead of vanishing.
-    let (field_map, dropped) =
-        nerust_core_traits::factory::split_digital_field_map(resources.field_map());
+    let (split, unified) = nerust_emu_thread::InputSplit::from_resources(resources);
+    let (field_map, dropped) = nerust_core_traits::factory::split_digital_field_map(&unified);
     if !dropped.is_empty() {
         log::warn!("gbc input: dropping {} analog field(s)", dropped.len());
     }
     debug_assert!(dropped.is_empty(), "analog fields dropped: {dropped:?}");
-    let split = nerust_emu_thread::InputSplit::spawn(resources.take_factory());
+
     let gui_input = split.gui_endpoint();
     let emu_input = split.emu_endpoint();
     speaker.start();

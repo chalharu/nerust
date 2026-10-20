@@ -7,16 +7,8 @@ pub struct PreviewFrame {
     pub rgba: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeStateExport {
-    pub state_blob: Vec<u8>,
-    pub preview: Option<PreviewFrame>,
-}
-
-/// Pre-Phase-7b save-state format. No longer written, but existing
-/// archives must remain loadable. Only `core_state` is extracted;
-/// all other fields (`rom_identity`, `options`, etc.) are ignored
-/// by serde's default unknown-field handling.
+/// Pre-Phase-7b save-state format: no longer written, still loadable.
+/// Only `core_state` is extracted; other fields use serde defaults.
 #[derive(serde::Deserialize)]
 struct ConsoleStatePayload {
     #[serde(default)]

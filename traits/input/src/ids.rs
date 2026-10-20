@@ -45,39 +45,54 @@ static_id!(ProfileId);
 static_id!(AnalogControlId);
 
 /// Unified control identifier across digital and analog controls.
-/// Opaque wrapper: construct via `From`/`From` for each side, match via accessors.
+/// Enum shape: the side is structural, never a raw discriminant byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ControlId(u8, &'static str);
+pub enum ControlId {
+    Digital(DigitalControlId),
+    Analog(AnalogControlId),
+}
 
 impl ControlId {
     /// Digital side constructor.
     pub const fn digital(id: DigitalControlId) -> Self {
-        Self(0, id.as_str())
+        Self::Digital(id)
     }
 
     /// Analog side constructor.
     pub const fn analog(id: AnalogControlId) -> Self {
-        Self(1, id.as_str())
+        Self::Analog(id)
     }
 
     /// Raw discriminant plus static id string for maps and logs.
     pub const fn as_parts(self) -> (u8, &'static str) {
-        (self.0, self.1)
+        match self {
+            Self::Digital(id) => (0, id.as_str()),
+            Self::Analog(id) => (1, id.as_str()),
+        }
     }
 
     /// Static id string.
     pub const fn as_str(self) -> &'static str {
-        self.1
+        match self {
+            Self::Digital(id) => id.as_str(),
+            Self::Analog(id) => id.as_str(),
+        }
     }
 
     /// Digital side, when constructed via [`ControlId::digital`].
     pub fn as_digital(self) -> Option<DigitalControlId> {
-        (self.0 == 0).then(|| DigitalControlId::new(self.1))
+        match self {
+            Self::Digital(id) => Some(id),
+            Self::Analog(_) => None,
+        }
     }
 
     /// Analog side, when constructed via [`ControlId::analog`].
     pub fn as_analog(self) -> Option<AnalogControlId> {
-        (self.0 == 1).then(|| AnalogControlId::new(self.1))
+        match self {
+            Self::Analog(id) => Some(id),
+            Self::Digital(_) => None,
+        }
     }
 }
 
@@ -120,6 +135,17 @@ mod tests {
         assert_eq!(digital.as_str(), "test.a");
         assert_eq!(digital.to_string(), "test.a");
         assert_eq!(back, "test.pad");
+    }
+
+    #[test]
+    fn control_id_sides_are_structural() {
+        let digital = DigitalControlId::new("test.a");
+        // Enum shape: sides match structurally, never via a byte tag.
+        assert!(matches!(ControlId::digital(digital), ControlId::Digital(_)));
+        assert!(matches!(
+            ControlId::analog(AnalogControlId::new("test.x")),
+            ControlId::Analog(_)
+        ));
     }
 
     #[test]

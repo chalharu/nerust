@@ -47,8 +47,8 @@ impl OsdPlan {
                 })
                 .collect(),
             status: self.status.map(|(label, value)| OsdStatus {
-                label,
-                value,
+                label: label.to_string(),
+                value: value.to_string(),
                 rgb: OSD_STATUS_RGB,
             }),
             position: osd_anchor(self.position),
@@ -100,7 +100,7 @@ mod render_cov_tests {
         use nerust_settings_core::model::local::NotificationPosition as P;
         let plan = OsdPlan {
             rows: vec![],
-            status: Some(("FPS".to_string(), "60".to_string())),
+            status: Some(("FPS".into(), "60".into())),
             position: P::TopLeft,
             status_position: P::BottomRight,
             width: 0,

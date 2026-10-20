@@ -18,7 +18,6 @@ use tao::{
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
 
-use self::host::services::{MainWindowService, SettingsService};
 use self::host::{HostAction, HostState};
 use crate::event::UserEvent;
 use crate::menu::imp::AppMenu;
@@ -82,7 +81,7 @@ impl WindowRuntime {
         &mut self,
         raw_display_handle: raw_window_handle::RawDisplayHandle,
     ) -> Option<()> {
-        let (raw_window_handle, size, xid) = MainWindowService::surface_target(&self.host)?;
+        let (raw_window_handle, size, xid) = self.host.surface_target()?;
         let session = self.host.session();
         let vsync = session.settings_snapshot().local.video.presentation.vsync;
         let render_profile = session.render_profile().cloned()?;
@@ -193,7 +192,7 @@ impl WindowRuntime {
                 UserEvent::LiveTick => self.host.live_tick(),
                 UserEvent::Menu(command) => {
                     let opener = TaoWindowOpener::new(event_loop);
-                    let action = SettingsService::on_menu_command(&mut self.host, command, &opener);
+                    let action = self.host.on_menu_command(command, &opener);
                     match action {
                         HostAction::None => (),
                         HostAction::RomLoaded => self.recreate_renderer(),
@@ -240,9 +239,9 @@ impl WindowRuntime {
     fn recreate_renderer(&mut self) {
         self.renderer = None;
         // Owned display handle out; the attach below only borrows the host.
-        let display = MainWindowService::with_main_window(&self.host, |window| {
-            window.display_handle().ok().map(|handle| handle.as_raw())
-        });
+        let display = self
+            .host
+            .with_main_window(|window| window.display_handle().ok().map(|handle| handle.as_raw()));
         if let Some(Some(raw_display)) = display {
             self.build_renderer_and_surface(raw_display);
         } else if display.is_some() {

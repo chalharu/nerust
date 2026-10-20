@@ -94,7 +94,7 @@ impl SessionHandle {
         self.notifications.drain()
     }
 
-    pub fn pump_osd(&mut self, osd: &mut impl PumpTarget, input: PushInput) -> PumpReport {
+    pub fn pump_osd(&mut self, osd: &mut dyn PumpTarget, input: PushInput) -> PumpReport {
         let PushInput {
             policy,
             language,
@@ -126,7 +126,12 @@ impl SessionHandle {
         origin: super::notification::FailureOrigin,
         detail: String,
     ) {
-        debug_assert!(origin != super::notification::FailureOrigin::Command);
+        // Hard invariant: `Command` failures enter through `run_command`; external
+        // reporters must pick a non-command origin. Rejected loudly in all builds.
+        if origin == super::notification::FailureOrigin::Command {
+            log::error!("report_external_error rejected Command origin");
+            return;
+        }
         self.notifications
             .push(super::notification::NotificationKind::command_failure(
                 origin, "", detail,
@@ -167,6 +172,12 @@ mod lifecycle_cov_tests {
             "x".into(),
         );
         assert_eq!(session.drain_notifications().len(), 1);
+        // Hard invariant holds in all builds: `Command` origin is rejected, not recorded.
+        session.report_external_error(
+            super::super::notification::FailureOrigin::Command,
+            "y".into(),
+        );
+        assert!(session.drain_notifications().is_empty());
     }
 
     #[test]

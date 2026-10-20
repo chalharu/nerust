@@ -58,12 +58,58 @@ impl InputStateBuffer for NesInputBuffer {
             })
         }
     }
+
+    /// Merge only staged bits: untouched bytes survive without a full copy.
+    fn copy_dirty_from(
+        &mut self,
+        other: &dyn nerust_input_traits::InputStateBuffer,
+        dirty: &[usize],
+    ) -> Result<(), nerust_input_traits::BufferError> {
+        use nerust_input_traits::BufferError;
+        let Some(src) = other.downcast_ref::<NesInputBuffer>() else {
+            return Err(BufferError::MismatchedBuffer {
+                expected: std::any::type_name::<Self>(),
+                actual: std::any::type_name_of_val(other),
+            });
+        };
+        for &field in dirty {
+            match field {
+                0..=7 => {
+                    let mask = 1 << field;
+                    self.0[0] = (self.0[0] & !mask) | (src.0[0] & mask);
+                }
+                8..=15 => {
+                    let mask = 1 << (field - 8);
+                    self.0[1] = (self.0[1] & !mask) | (src.0[1] & mask);
+                }
+                16 => self.0[2] = src.0[2],
+                _ => return Err(BufferError::FieldNotFound { field }),
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::NesInputBuffer;
     use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
+
+    #[test]
+    fn dirty_merge_keeps_unstaged_bytes() {
+        use nerust_input_traits::InputValue;
+        let mut staged = NesInputBuffer::default();
+        staged.set(0, InputValue::Digital(true)).unwrap();
+        staged.set(16, InputValue::Digital(true)).unwrap();
+        let mut working = NesInputBuffer::default();
+        working.set(8, InputValue::Digital(true)).unwrap();
+        // Only staged fields merge; working P2 bit survives.
+        working.copy_dirty_from(&staged, &[0, 16]).unwrap();
+        assert_eq!(working.0, [0x01, 0x01, 1]);
+        // Empty list merges nothing; unknown fields refuse.
+        working.copy_dirty_from(&staged, &[]).unwrap();
+        assert!(working.copy_dirty_from(&staged, &[17]).is_err());
+    }
 
     #[test]
     fn p1_and_p2_fields_set_and_clear_bits() {

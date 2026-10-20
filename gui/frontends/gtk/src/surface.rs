@@ -14,6 +14,8 @@ pub(crate) struct SurfaceCore {
     pub(crate) state: Rc<RefCell<State>>,
     pub(crate) osd: RefCell<super::osd::GtkOsd>,
     last_size: Cell<SurfaceSize>,
+    /// First realize done: resizes reattach only after this.
+    attached: Cell<bool>,
 }
 
 pub(crate) type Surface = Rc<RefCell<SurfaceCore>>;
@@ -42,6 +44,7 @@ impl SurfaceExtend for Surface {
             state,
             osd: RefCell::new(osd),
             last_size: Cell::new(SurfaceSize::new(0, 0)),
+            attached: Cell::new(false),
         }));
         {
             let result = result.clone();
@@ -54,8 +57,10 @@ impl SurfaceExtend for Surface {
 
     fn tick(&self) -> bool {
         let s = self.borrow();
-        let width = s.window.width() as u32;
-        let height = s.window.height() as u32;
+        // Clamp negatives: minimized/hidden windows report -1, and a
+        // negative `as u32` cast would explode the surface size.
+        let width = s.window.width().max(0) as u32;
+        let height = s.window.height().max(0) as u32;
         if width == 0 || height == 0 {
             return true;
         }
@@ -63,47 +68,56 @@ impl SurfaceExtend for Surface {
         let physical_size =
             SurfaceSize::new(width.saturating_mul(scale), height.saturating_mul(scale));
 
-        if let Ok(mut state) = s.state.try_borrow_mut() {
-            // Recreate the wgpu surface on resize (GDK may recreate the native
-            // surface, invalidating the old wgpu surface).  OpenGL is unaffected.
-            if physical_size != s.last_size.get() {
-                s.last_size.set(physical_size);
-                if let Some(surf) = s.window.surface()
-                    && let Some(display) = gdk::Display::default()
-                {
-                    super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
-                        let _ = s.renderer.borrow_mut().reattach(wh, dh, physical_size);
-                    });
-                }
+        // Contended borrows skip loudly: the next tick retries (backoff),
+        // never a silent dropped frame.
+        let mut state = match s.state.try_borrow_mut() {
+            Ok(state) => state,
+            Err(_) => {
+                log::warn!("gtk tick: state busy, skipping frame");
+                return true;
             }
-
-            state.swap_frame_buffer();
-
-            if state.take_renderer_reload_pending() {
-                log::info!("reinit physical={:?}", physical_size);
-                if let Some(surf) = s.window.surface()
-                    && let Some(display) = gdk::Display::default()
-                    && let Some(profile) = state.render_profile()
-                {
-                    super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
-                        s.renderer
-                            .borrow_mut()
-                            .realize(wh, dh, physical_size, profile);
-                    });
-                    // Fresh renderer holds no layer; re-push next sync.
-                    s.osd.borrow_mut().invalidate();
-                }
+        };
+        // Recreate the wgpu surface on resize; OpenGL is unaffected.
+        // First tick never reattaches: the realize path owns it.
+        if physical_size != s.last_size.get() {
+            s.last_size.set(physical_size);
+            if s.attached.get()
+                && let Some(surf) = s.window.surface()
+                && let Some(display) = gdk::Display::default()
+            {
+                super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
+                    let _ = s.renderer.borrow_mut().reattach(wh, dh, physical_size);
+                });
             }
-
-            if let Some(fb) = state.frame_buffer() {
-                s.renderer.borrow_mut().render(fb, physical_size);
-            }
-
-            let surface = self.clone();
-            s.osd
-                .borrow_mut()
-                .poll(&surface, &mut state, &s.renderer, &s.window);
         }
+
+        state.swap_frame_buffer();
+
+        if state.take_renderer_reload_pending() {
+            log::info!("reinit physical={physical_size:?}");
+            if let Some(surf) = s.window.surface()
+                && let Some(display) = gdk::Display::default()
+                && let Some(profile) = state.render_profile()
+            {
+                super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
+                    s.renderer
+                        .borrow_mut()
+                        .realize(wh, dh, physical_size, profile);
+                });
+                // Fresh renderer holds no layer; re-push next sync.
+                s.osd.borrow_mut().invalidate();
+            }
+            s.attached.set(true);
+        }
+
+        if let Some(fb) = state.frame_buffer() {
+            s.renderer.borrow_mut().render(fb, physical_size);
+        }
+
+        let surface = self.clone();
+        s.osd
+            .borrow_mut()
+            .poll(&surface, &mut state, &s.renderer, &s.window);
 
         true
     }

@@ -4,7 +4,6 @@ use nerust_gui_runtime::{
 };
 use nerust_gui_shell::{
     context::FrontendContext,
-    debug::{DrainFlight, LiveImagesFlight},
     session::{SessionHandle, session_query::WindowSize},
 };
 use nerust_render_traits::{SurfaceSize, renderer::GpuFactory};
@@ -20,26 +19,29 @@ use tao::{
 
 use crate::menu::MenuSink;
 
-use super::debug_windows::DebugWindows;
 use crate::aux::focus::{AuxKind, FocusCoordinator, FocusEffect, FocusEvent};
 use crate::aux::registry::AuxRegistry;
-use crate::util::Versioned;
 
+mod chrome;
 pub(crate) mod close;
 mod commands;
+mod debug;
 mod focus;
+mod frame;
 mod osd;
-use osd::{FrameSnapshot, ModalFlight};
+mod osd_state;
 mod presentation;
-pub(crate) mod services;
 mod settings;
 mod window;
+use chrome::ChromeSync;
+use debug::DebugOrchestrator;
+use frame::FrameCache;
+pub(crate) use frame::FrameCtx;
+use osd_state::OsdService;
 
 pub(crate) use window::{WakeNeed, WindowCluster};
 
 use crate::ports::DialogPorts;
-use nerust_gui_shell::session::osd::ModalSource as _;
-use nerust_gui_shell::session::osd::OsdManager;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {
@@ -107,126 +109,6 @@ fn backend_capabilities() -> HostBackendCapabilities {
     }
 }
 
-/// Menu signature for the chrome dirty gate; `generation` fingerprints content.
-/// The window title keeps its own gate, so title-only moves never touch the menu path.
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct MenuSig {
-    pub(super) loaded: bool,
-    pub(super) paused: bool,
-    pub(super) settings_open: bool,
-    pub(super) language: nerust_settings_core::model::language::AppLanguage,
-    pub(super) active_slot: Option<u64>,
-    pub(super) slots: std::sync::Arc<[nerust_persistence::model::StateSlotSummary]>,
-    pub(super) shortcuts: std::sync::Arc<[nerust_settings_core::model::input::ShortcutBinding]>,
-    pub(super) generation: u64,
-}
-
-impl MenuSig {
-    /// Cheap content fingerprint: FNV-1a over slot ids/timestamps and shortcut codes.
-    /// Integers and hashes only, never `format!`.
-    pub(super) fn fingerprint(
-        slots: &[nerust_persistence::model::StateSlotSummary],
-        shortcuts: &[nerust_settings_core::model::input::ShortcutBinding],
-    ) -> u64 {
-        use std::hash::{Hash, Hasher};
-        struct Fnv(u64);
-        impl Hasher for Fnv {
-            fn write(&mut self, bytes: &[u8]) {
-                for byte in bytes {
-                    self.0 ^= u64::from(*byte);
-                    self.0 = self.0.wrapping_mul(0x100000001b3);
-                }
-            }
-            fn finish(&self) -> u64 {
-                self.0
-            }
-        }
-        let mut hasher = Fnv(0xcbf29ce484222325);
-        for slot in slots {
-            slot.slot_id.hash(&mut hasher);
-            if let Ok(age) = slot.saved_at.duration_since(std::time::UNIX_EPOCH) {
-                age.as_secs().hash(&mut hasher);
-            }
-            slot.emulator_version.hash(&mut hasher);
-        }
-        for shortcut in shortcuts {
-            shortcut.action.hash(&mut hasher);
-            shortcut.key.hash(&mut hasher);
-        }
-        hasher.finish()
-    }
-}
-
-/// Scalar snapshot for the cheap chrome gate: title is gated
-/// separately, so it never blocks here.
-pub(super) struct ChromeScalars {
-    pub(super) loaded: bool,
-    pub(super) paused: bool,
-    pub(super) settings_open: bool,
-    pub(super) language: nerust_settings_core::model::language::AppLanguage,
-    pub(super) active_slot: Option<u64>,
-    pub(super) slots_len: usize,
-    pub(super) shortcuts_len: usize,
-}
-
-/// Chrome sync state: last pushed menu signature plus last pushed window title.
-#[derive(Debug, Default)]
-pub(super) struct ChromeSync {
-    last_menu_sig: Option<MenuSig>,
-    last_title: Versioned<String>,
-}
-
-impl ChromeSync {
-    fn new() -> Self {
-        Self {
-            last_menu_sig: None,
-            last_title: Versioned::new(),
-        }
-    }
-
-    /// Cheap scalar gate: proves change without touching slices.
-    /// A match falls through to the exact fingerprint/slice compare.
-    pub(super) fn cheap_same(&self, scalars: &ChromeScalars) -> bool {
-        self.last_menu_sig.as_ref().is_some_and(|sig| {
-            sig.loaded == scalars.loaded
-                && sig.paused == scalars.paused
-                && sig.settings_open == scalars.settings_open
-                && sig.language == scalars.language
-                && sig.active_slot == scalars.active_slot
-                && sig.slots.len() == scalars.slots_len
-                && sig.shortcuts.len() == scalars.shortcuts_len
-        })
-    }
-
-    /// Exact gate: generation first, then slice compare. True means
-    /// the menu IPC can be skipped.
-    pub(super) fn menu_same(
-        &self,
-        generation: u64,
-        slots: &[nerust_persistence::model::StateSlotSummary],
-        shortcuts: &[nerust_settings_core::model::input::ShortcutBinding],
-    ) -> bool {
-        self.last_menu_sig.as_ref().is_some_and(|sig| {
-            sig.generation == generation
-                && slots == sig.slots.as_ref()
-                && shortcuts == sig.shortcuts.as_ref()
-        })
-    }
-
-    pub(super) fn push_menu(&mut self, sig: MenuSig) {
-        self.last_menu_sig = Some(sig);
-    }
-
-    /// Title-only gate: never touches the menu signature.
-    pub(super) fn title_same(&self, title: &str) -> bool {
-        self.last_title.get().is_some_and(|last| last == title)
-    }
-
-    pub(super) fn push_title(&mut self, title: String) {
-        self.last_title.check(&title);
-    }
-}
-
 /// Settings-window cluster: the resume protocol only. The window
 /// itself lives in the aux registry; open truth is `contains(Settings)`.
 pub(super) struct SettingsHost {
@@ -259,272 +141,6 @@ impl SettingsHost {
     }
 }
 
-/// OSD layer sync: rasterizer, presenter, and live-layer state.
-pub(super) struct OsdLayerSync {
-    pub(super) raster: nerust_render_osd::OsdRaster,
-    pub(super) presenter: nerust_gui_shell::session::osd::OsdPresenter,
-    pub(super) layer_live: bool,
-    pub(super) last_strip: Versioned<nerust_render_traits::ReservedStrip>,
-    pub(super) last_sync_geometry: Versioned<(u32, u32, nerust_gui_shell::session::osd::OsdChrome)>,
-}
-
-/// History viewer sync: content key only. The window lives in the registry.
-pub(super) struct HistoryViewer {
-    pub(super) sync_key: Versioned<(u64, nerust_settings_core::model::language::AppLanguage)>,
-}
-
-/// Modal queue: error batches plus the in-flight dialog.
-pub(super) struct ModalQueue {
-    pub(super) manager: OsdManager,
-    pub(super) flight: Option<ModalFlight>,
-    pub(super) resume_after_modal: bool,
-}
-
-/// OSD service: layer sync plus history plus modal queue.
-pub(super) struct OsdService {
-    pub(super) layer: OsdLayerSync,
-    pub(super) history: HistoryViewer,
-    pub(super) modal: ModalQueue,
-}
-
-impl OsdService {
-    /// Close teardown: sync memos, dialog, and resume flag.
-    pub(super) fn close_all(&mut self) {
-        self.history.sync_key.clear();
-        self.modal.flight.take();
-        self.modal.resume_after_modal = false;
-    }
-
-    /// Queued error batches awaiting a dialog (test read;
-    /// production drains through the modal ports).
-    #[cfg(test)]
-    pub(super) fn modal_pending(&self) -> usize {
-        self.modal.manager.modal_pending()
-    }
-
-    /// Test seam: simulate a dialog thread that died before acking.
-    #[cfg(test)]
-    pub(super) fn inject_modal_flight_for_test(&mut self, flight: ModalFlight) {
-        self.modal.flight = Some(flight);
-    }
-
-    /// Whether an error dialog is currently showing (test read).
-    #[cfg(test)]
-    pub(super) fn modal_showing(&self) -> bool {
-        self.modal.flight.is_some()
-    }
-
-    /// Last synced history content key (test read).
-    #[cfg(test)]
-    pub(super) fn history_key(
-        &self,
-    ) -> Option<(u64, nerust_settings_core::model::language::AppLanguage)> {
-        self.history.sync_key.get().copied()
-    }
-
-    /// Port for the modal drain: next queued error batch, if any and
-    /// no dialog is showing.
-    pub(super) fn take_modal_batch(&mut self) -> Option<String> {
-        if self.modal.flight.is_some() {
-            return None;
-        }
-        self.modal.manager.take_modal_batch()
-    }
-
-    /// Port for the modal drain: close the acked batch.
-    pub(super) fn modal_closed(&mut self) {
-        self.modal.manager.modal_closed();
-    }
-
-    /// Port for the modal drain: queued batch count.
-    pub(super) fn modal_queue_len(&self) -> usize {
-        self.modal.manager.modal_pending()
-    }
-
-    fn new() -> Self {
-        Self {
-            layer: OsdLayerSync {
-                raster: nerust_render_osd::OsdRaster::new(),
-                presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
-                layer_live: false,
-                last_strip: Versioned::new(),
-                last_sync_geometry: Versioned::new(),
-            },
-            history: HistoryViewer {
-                sync_key: Versioned::new(),
-            },
-            modal: ModalQueue {
-                manager: OsdManager::new(),
-                flight: None,
-                resume_after_modal: false,
-            },
-        }
-    }
-}
-
-/// One capture per entry point: settings, tick, slots, shortcuts, plus the OSD frame.
-/// Shared by `Arc`: hot passes reuse the cached capture, never re-clone.
-pub(crate) struct FrameCtx {
-    pub(super) generation: u64,
-    pub(super) settings: nerust_gui_runtime::settings::SettingsSnapshot,
-    pub(super) tick: nerust_gui_shell::session::osd::TickMetrics,
-    pub(super) slots: Arc<[nerust_persistence::model::StateSlotSummary]>,
-    pub(super) shortcuts: Arc<[nerust_settings_core::model::input::ShortcutBinding]>,
-    pub(super) frame: FrameSnapshot,
-}
-
-/// Cheap content key for the frame cache: scalars plus allocation-free
-/// content hashes. A hit reuses the cached `Arc`; only a miss clones.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FrameCacheKey {
-    loaded: bool,
-    paused: bool,
-    frame_counter: u64,
-    active_slot: Option<u64>,
-    slots_hash: u64,
-    shortcuts_hash: u64,
-    language: nerust_settings_core::model::language::AppLanguage,
-    fullscreen_default: bool,
-    scaling: nerust_settings_core::model::local::ScalingMode,
-    notifications_hash: u64,
-}
-
-impl FrameCacheKey {
-    fn capture(session: &SessionHandle) -> Self {
-        use std::hash::{Hash, Hasher};
-        struct Fnv(u64);
-        impl Hasher for Fnv {
-            fn write(&mut self, bytes: &[u8]) {
-                for byte in bytes {
-                    self.0 ^= u64::from(*byte);
-                    self.0 = self.0.wrapping_mul(0x100000001b3);
-                }
-            }
-            fn finish(&self) -> u64 {
-                self.0
-            }
-        }
-        let tick = session.tick_metrics();
-        let mut slots = Fnv(0xcbf29ce484222325);
-        for slot in session.slots() {
-            slot.slot_id.hash(&mut slots);
-            if let Ok(age) = slot.saved_at.duration_since(std::time::UNIX_EPOCH) {
-                age.as_secs().hash(&mut slots);
-            }
-        }
-        let snapshot = session.settings_snapshot();
-        let mut shortcuts = Fnv(0xcbf29ce484222325);
-        for binding in snapshot.shared.input.shortcuts.keyboard.iter() {
-            binding.action.hash(&mut shortcuts);
-            binding.key.hash(&mut shortcuts);
-        }
-        let mut notifications = Fnv(0xcbf29ce484222325);
-        snapshot
-            .local
-            .notifications
-            .status_enabled
-            .hash(&mut notifications);
-        snapshot
-            .local
-            .notifications
-            .info_enabled
-            .hash(&mut notifications);
-        snapshot
-            .local
-            .notifications
-            .error_modal
-            .hash(&mut notifications);
-        Self {
-            loaded: tick.loaded,
-            paused: tick.paused,
-            frame_counter: tick.frame_counter,
-            active_slot: session.active_slot_id(),
-            slots_hash: slots.finish(),
-            shortcuts_hash: shortcuts.finish(),
-            language: snapshot.shared.general.language,
-            fullscreen_default: snapshot.local.video.window.fullscreen_default,
-            scaling: snapshot.local.video.window.scaling,
-            notifications_hash: notifications.finish(),
-        }
-    }
-}
-
-impl FrameCtx {
-    fn capture(generation: u64, session: &SessionHandle) -> Self {
-        let settings = session.settings_snapshot().clone();
-        let tick = session.tick_metrics();
-        let slots: Arc<[nerust_persistence::model::StateSlotSummary]> =
-            session.slots().to_vec().into();
-        let shortcuts: Arc<[nerust_settings_core::model::input::ShortcutBinding]> =
-            settings.shared.input.shortcuts.keyboard.clone().into();
-        let frame = FrameSnapshot::capture(session);
-        Self {
-            generation,
-            settings,
-            tick,
-            slots,
-            shortcuts,
-            frame,
-        }
-    }
-}
-
-/// Debug orchestrator: owns the aux-window cluster plus the in-flight async flights.
-/// `drain.rs` routes through these narrow methods, never through `host.debug` fields.
-pub(super) struct DebugOrchestrator {
-    windows: DebugWindows,
-    drain_flight: Option<DrainFlight>,
-    live_flight: Option<LiveImagesFlight>,
-}
-
-impl DebugOrchestrator {
-    fn new() -> Self {
-        Self {
-            windows: DebugWindows::new(),
-            drain_flight: None,
-            live_flight: None,
-        }
-    }
-
-    pub(super) fn windows(&self) -> &DebugWindows {
-        &self.windows
-    }
-
-    pub(super) fn windows_mut(&mut self) -> &mut DebugWindows {
-        &mut self.windows
-    }
-
-    /// Take the stored drain flight for polling.
-    pub(super) fn take_drain_flight(&mut self) -> Option<DrainFlight> {
-        self.drain_flight.take()
-    }
-
-    /// Store a still-pending drain flight (supersedes any older one).
-    pub(super) fn store_drain_flight(&mut self, flight: DrainFlight) {
-        self.drain_flight = Some(flight);
-    }
-
-    /// Take the stored live-images flight for polling.
-    pub(super) fn take_live_flight(&mut self) -> Option<LiveImagesFlight> {
-        self.live_flight.take()
-    }
-
-    /// Store a still-pending live-images flight.
-    pub(super) fn store_live_flight(&mut self, flight: LiveImagesFlight) {
-        self.live_flight = Some(flight);
-    }
-
-    pub(super) fn live_flight_pending(&self) -> bool {
-        self.live_flight.is_some()
-    }
-
-    /// Drop in-flight async fetches (close teardown; handles live in the registry).
-    pub(super) fn close_flights(&mut self) {
-        self.drain_flight.take();
-        self.live_flight.take();
-    }
-}
-
 pub(crate) struct HostState {
     /// Main window cluster: handle, liveness, surface target.
     pub(super) windows: WindowCluster,
@@ -547,9 +163,7 @@ pub(crate) struct HostState {
     /// Last pushed menu signature plus window title, each with its own gate.
     chrome: ChromeSync,
     /// Versioned frame cache: hot passes reuse the cached `Arc`.
-    frame_cache: Option<(FrameCacheKey, Arc<FrameCtx>)>,
-    /// Frame generation: bumped once per cache miss.
-    frame_generation: u64,
+    frame_cache: FrameCache,
 }
 
 impl HostState {
@@ -597,25 +211,14 @@ impl HostState {
             debug: DebugOrchestrator::new(),
             osd: OsdService::new(),
             chrome: ChromeSync::new(),
-            frame_cache: None,
-            frame_generation: 0,
+            frame_cache: FrameCache::new(),
         })
     }
 
     /// One capture per pass, versioned: hot passes reuse the cached
     /// `Arc`, so per-frame clones happen only on content change.
     pub(crate) fn frame_ctx(&mut self) -> Arc<FrameCtx> {
-        let key = FrameCacheKey::capture(&self.session);
-        if let Some((cached_key, cached)) = self.frame_cache.as_ref()
-            && *cached_key == key
-        {
-            return Arc::clone(cached);
-        }
-        self.frame_generation += 1;
-        let fresh = Arc::new(FrameCtx::capture(self.frame_generation, &self.session));
-        log::trace!("frame cache miss: generation {}", fresh.generation);
-        self.frame_cache = Some((key, Arc::clone(&fresh)));
-        fresh
+        self.frame_cache.frame_ctx(&self.session)
     }
 
     pub(crate) fn gpu_factory(&self) -> &Rc<dyn GpuFactory> {
@@ -631,7 +234,7 @@ impl HostState {
     }
 
     #[cfg(test)]
-    pub(crate) fn window(&self) -> Option<&close::LiveWindow> {
+    pub(crate) fn window(&self) -> Option<&std::sync::Arc<tao::window::Window>> {
         self.windows.live()
     }
 
@@ -679,14 +282,14 @@ impl HostState {
     /// Kind of the aux window behind this id, if registered.
     pub(super) fn aux_kind_of(&self, id: WindowId) -> Option<AuxKind> {
         self.aux
-            .kind_of(crate::aux::native::NativeWindowId::new(id))
+            .kind_of(crate::aux::domain::NativeWindowId::new(id))
     }
 
     /// Pump one domain event through the matching aux entry.
     pub(super) fn aux_on_event(
         &mut self,
         kind: AuxKind,
-        event: crate::aux::native::AuxNativeEvent,
+        event: crate::aux::domain::AuxNativeEvent,
     ) -> Option<crate::aux::registry::AuxOutcome> {
         self.aux.on_event(kind, event)
     }
@@ -1027,102 +630,8 @@ mod tests {
     }
 
     #[test]
-    fn frame_cache_key_repeats_on_steady_session() {
-        use super::FrameCacheKey;
-        let support = TestHost::new();
-        let host = support.host;
-        assert_eq!(
-            FrameCacheKey::capture(host.session()),
-            FrameCacheKey::capture(host.session())
-        );
-    }
-
-    #[test]
-    fn menu_fingerprint_is_stable_and_content_sensitive() {
-        use super::MenuSig;
-        let support = TestHost::new();
-        let mut host = support.host;
-        let empty = MenuSig::fingerprint(&[], &[]);
-        assert_eq!(empty, MenuSig::fingerprint(&[], &[]));
-        let ctx = host.frame_ctx();
-        assert_eq!(empty, MenuSig::fingerprint(&ctx.slots, &[]));
-        assert_ne!(empty, MenuSig::fingerprint(&ctx.slots, &ctx.shortcuts));
-    }
-
-    #[test]
-    fn chrome_gates_skip_repeat_pushes() {
-        use super::{ChromeScalars, MenuSig};
-        let support = TestHost::new();
-        let mut host = support.host;
-        let scalars = |host: &super::HostState, ctx: &super::FrameCtx| ChromeScalars {
-            loaded: ctx.tick.loaded,
-            paused: ctx.tick.paused,
-            settings_open: host.settings_open(),
-            language: ctx.settings.shared.general.language,
-            active_slot: None,
-            slots_len: ctx.slots.len(),
-            shortcuts_len: ctx.shortcuts.len(),
-        };
-        let ctx = host.frame_ctx();
-        assert!(!host.chrome.cheap_same(&scalars(&host, &ctx)));
-        host.sync_menu_state(&ctx);
-        assert_eq!(support.menu.updates().len(), 1);
-        let ctx = host.frame_ctx();
-        assert!(host.chrome.cheap_same(&scalars(&host, &ctx)));
-        let fresh = MenuSig::fingerprint(&ctx.slots, &ctx.shortcuts);
-        assert!(host.chrome.menu_same(fresh, &ctx.slots, &ctx.shortcuts));
-        assert!(
-            !host
-                .chrome
-                .menu_same(fresh.wrapping_add(1), &ctx.slots, &ctx.shortcuts)
-        );
-        assert!(!host.chrome.title_same("nerust"));
-        let tick = ctx.tick;
-        host.refresh_window_title(&tick);
-        let title = host.session_mut().window_title_cached(&tick).to_owned();
-        assert!(host.chrome.title_same(&title));
-    }
-
-    #[test]
-    fn settings_resume_flag_round_trips_and_clears() {
-        let support = TestHost::new();
-        let mut host = support.host;
-        host.settings.set_resume_after(true);
-        assert!(host.settings.take_resume_after());
-        assert!(!host.settings.take_resume_after());
-        host.settings.set_resume_after(true);
-        host.settings.close_all();
-        assert!(!host.settings.take_resume_after());
-    }
-
-    #[test]
-    fn osd_service_ports_stay_total_while_idle() {
-        let support = TestHost::new();
-        let mut host = support.host;
-        assert_eq!(host.osd.modal_pending(), 0);
-        assert_eq!(host.osd.modal_queue_len(), 0);
-        assert!(host.osd.take_modal_batch().is_none());
-        host.osd.modal_closed();
-        assert!(!host.osd.modal_showing());
-        assert!(host.osd.history_key().is_none());
-        host.osd.close_all();
-        assert_eq!(host.osd.modal_pending(), 0);
-    }
-
-    #[test]
-    fn debug_orchestrator_flights_start_empty_and_close_clean() {
-        let support = TestHost::new();
-        let mut host = support.host;
-        assert!(host.orchestrator_mut().take_drain_flight().is_none());
-        assert!(host.orchestrator_mut().take_live_flight().is_none());
-        assert!(!host.live_flight_pending());
-        host.orchestrator_mut().close_flights();
-        assert!(!host.live_flight_pending());
-    }
-
-    #[test]
     fn aux_routing_stays_total_without_windows() {
-        use crate::aux::native::NativeWindowId;
+        use crate::aux::domain::NativeWindowId;
         let support = TestHost::new();
         let mut host = support.host;
         let id = unsafe { tao::window::WindowId::dummy() };

@@ -3,16 +3,25 @@
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use cosmic_text::{CacheKey, SwashContent};
-use nerust_render_traits::renderer::{OsdAnchor, OsdLayer, SafeInsets, osd_font_px};
+use nerust_render_traits::renderer::{
+    GenerationClock, OsdAnchor, OsdLayer, SafeInsets, osd_font_px,
+};
 use std::{collections::HashMap, rc::Rc};
 
-/// One raster pill row: tag plus body in a single color.
-/// Tag is a static level marker: no per-frame allocation at the shell boundary.
+/// One raster pill row: tag plus body in a single color; tag stays static (zero-alloc).
 #[derive(Debug, Clone)]
 pub struct OsdRow {
     pub tag: &'static str,
     pub text: String,
     pub rgb: (u8, u8, u8),
+}
+
+impl OsdRow {
+    /// Interned tag handle for cache-side sharing; one allocation per
+    /// distinct tag, then `Rc` clones forever.
+    pub fn tag_shared(&self) -> Rc<str> {
+        Rc::from(self.tag)
+    }
 }
 
 /// Status readout: label plus right-aligned value in a fixed-width
@@ -91,7 +100,7 @@ struct ShapedSpan {
 }
 
 /// Cache key for one shaped line: interned text plus pixel size.
-/// `Rc<str>` lookups borrow as `str`, so hits never allocate.
+/// Single flat map (no nested maps, no linear rescan): hits never allocate.
 type ShapeKey = (Rc<str>, u32);
 
 /// Interned gap and empty spans: every pill shares one allocation.
@@ -99,8 +108,7 @@ type ShapeKey = (Rc<str>, u32);
 const GAP_STR: &str = " ";
 const EMPTY_STR: &str = "";
 
-/// Bounded line-shape cache: identical OSD lines shape once per size.
-/// LRU order evicts the colder half past the cap; OSD text has a tiny live set.
+/// Bounded line-shape cache: single-eviction LRU; OSD text has a tiny live set.
 const SHAPE_CACHE_CAP: usize = 256;
 
 /// Rasterizer backed by cosmic-text shaping. Pixels are device pixels.
@@ -111,8 +119,11 @@ pub struct OsdRaster {
     has_fonts: bool,
     ui_scale: f32,
     safe_insets: SafeInsets,
-    shape_cache: HashMap<Rc<str>, HashMap<u32, Rc<ShapedSpan>>>,
+    /// Flat shape cache keyed by (text, size); LRU order in `shape_lru`.
+    shape_cache: HashMap<ShapeKey, Rc<ShapedSpan>>,
     shape_lru: std::collections::VecDeque<ShapeKey>,
+    /// Staging-owner generation clock: rasterized layers mint here, never globally.
+    clock: GenerationClock,
 }
 
 impl OsdRaster {
@@ -142,6 +153,7 @@ impl OsdRaster {
             safe_insets: SafeInsets::default(),
             shape_cache: HashMap::new(),
             shape_lru: std::collections::VecDeque::new(),
+            clock: GenerationClock::new(),
         }
     }
 
@@ -250,7 +262,14 @@ impl OsdRaster {
                 }
             }
         }
-        Some(OsdLayer::new(min_x, min_y, width, height, rgba))
+        Some(OsdLayer::with_generation(
+            min_x,
+            min_y,
+            width,
+            height,
+            rgba,
+            self.clock.next(),
+        ))
     }
 
     fn layout(
@@ -486,36 +505,31 @@ impl OsdRaster {
     }
 
     /// Cached shape: identical lines shape once per pixel size.
-    /// Borrowed lookup hits without allocating; misses intern one `Rc<str>`.
+    /// Flat-key lookup hits without allocating; misses intern one `Rc<str>`.
     fn shape_cached(&mut self, line: &str, font_px: u32) -> Rc<ShapedSpan> {
-        if let Some(hit) = self
-            .shape_cache
-            .get(line)
-            .and_then(|sizes| sizes.get(&font_px))
-            .cloned()
-        {
-            self.touch_lru(line, font_px);
+        let key: Rc<str> = Rc::from(line);
+        if let Some(hit) = self.shape_cache.get(&(Rc::clone(&key), font_px)).cloned() {
+            self.touch_lru(&key, font_px);
             return hit;
         }
-        let key: Rc<str> = Rc::from(line);
         let span = Rc::new(self.shape_uncached(line, font_px));
-        self.insert_lru(Rc::clone(&key), font_px, Rc::clone(&span));
+        self.insert_lru(key, font_px, Rc::clone(&span));
         span
     }
 
     /// Interned-key variant: gap and empty spans share one allocation.
     fn shape_cached_rc(&mut self, key: &'static str, font_px: u32) -> Rc<ShapedSpan> {
+        let interned: Rc<str> = Rc::from(key);
         if let Some(hit) = self
             .shape_cache
-            .get(key)
-            .and_then(|sizes| sizes.get(&font_px))
+            .get(&(Rc::clone(&interned), font_px))
             .cloned()
         {
-            self.touch_lru(key, font_px);
+            self.touch_lru(&interned, font_px);
             return hit;
         }
         let span = Rc::new(self.shape_uncached(key, font_px));
-        self.insert_lru(Rc::from(key), font_px, Rc::clone(&span));
+        self.insert_lru(interned, font_px, Rc::clone(&span));
         span
     }
 
@@ -526,41 +540,31 @@ impl OsdRaster {
     }
 
     /// Mark a hit most-recently-used; linear move, cap is tiny.
-    fn touch_lru(&mut self, line: &str, font_px: u32) {
+    /// Content compare: callers pass a freshly interned key each lookup.
+    fn touch_lru(&mut self, text: &Rc<str>, font_px: u32) {
         if let Some(pos) = self
             .shape_lru
             .iter()
-            .position(|(text, size)| &**text == line && *size == font_px)
+            .position(|(cached, size)| cached == text && *size == font_px)
         {
             let key = self.shape_lru.remove(pos).expect("lru position");
             self.shape_lru.push_back(key);
         }
     }
 
-    /// Record a miss; evict the colder half past the cap.
+    /// Record a miss; past the cap evict the single oldest entry (proper LRU).
     fn insert_lru(&mut self, key: Rc<str>, font_px: u32, span: Rc<ShapedSpan>) {
-        self.shape_cache
-            .entry(Rc::clone(&key))
-            .or_default()
-            .insert(font_px, span);
+        self.shape_cache.insert((Rc::clone(&key), font_px), span);
         self.shape_lru.push_back((key, font_px));
         while self.shape_lru.len() > SHAPE_CACHE_CAP {
-            let drop = self.shape_lru.len() - SHAPE_CACHE_CAP + SHAPE_CACHE_CAP / 2;
-            for _ in 0..drop {
-                let Some((text, size)) = self.shape_lru.pop_front() else {
-                    break;
-                };
-                let empty = self
-                    .shape_cache
-                    .get_mut(&text)
-                    .map(|sizes| {
-                        sizes.remove(&size);
-                        sizes.is_empty()
-                    })
-                    .unwrap_or(true);
-                if empty {
-                    self.shape_cache.remove(&text);
+            if let Some(oldest) = self.shape_lru.pop_front() {
+                // Only the map entry minted by this insert is eviction-
+                // eligible, so older duplicates never drop live entries.
+                if self.shape_lru.iter().all(|live| *live != oldest) {
+                    self.shape_cache.remove(&oldest);
                 }
+            } else {
+                break;
             }
         }
     }
@@ -1113,6 +1117,39 @@ mod tests {
         let empty_again = raster.shape_cached_rc(EMPTY_STR, 16);
         assert!(Rc::ptr_eq(&empty, &empty_again));
         assert!(!Rc::ptr_eq(&gap, &empty));
+    }
+
+    #[test]
+    fn tag_handles_share_one_allocation() {
+        let row = OsdRow {
+            tag: "[INFO]",
+            text: "Paused".to_string(),
+            rgb: (255, 255, 255),
+        };
+        // Same contents, distinct `Rc`s by value; interning collapses them.
+        assert_eq!(&*row.tag_shared(), "[INFO]");
+        let mut raster = OsdRaster::new();
+        let first = raster.shape_line("[INFO]", 16);
+        let second = raster.shape_line("[INFO]", 16);
+        assert!(Rc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn staged_layers_mint_distinct_generations_but_dedup_by_hash() {
+        let mut raster = OsdRaster::new();
+        if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
+            return;
+        }
+        // Staging owner mints: consecutive rasterizes never share a generation.
+        let first = raster.rasterize(&content(), 960, 720).expect("first");
+        let second = raster.rasterize(&content(), 960, 720).expect("second");
+        assert_ne!(first.generation, second.generation);
+        assert_ne!(first.generation, 0);
+        // Identical bytes hash equal: backends skip the re-upload.
+        assert_eq!(first.content_hash(), second.content_hash());
+        assert!(first.same_content(Some(&second)));
+        assert!(OsdLayer::same_option(Some(&first), Some(&second)));
     }
 
     #[test]

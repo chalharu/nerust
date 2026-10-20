@@ -8,18 +8,6 @@ use crate::ports::WindowOpener;
 use super::WindowRuntime;
 use crate::aux::focus::{AuxKind, FocusEffect, FocusEvent};
 
-/// Map a native window event to a focus-domain event: only `Focused` maps.
-fn focus_event_of(kind: Option<AuxKind>, event: &WindowEvent) -> Option<FocusEvent> {
-    if let WindowEvent::Focused(focused) = event {
-        Some(match kind {
-            None => FocusEvent::Main(*focused),
-            Some(kind) => FocusEvent::Aux(kind, *focused),
-        })
-    } else {
-        None
-    }
-}
-
 impl WindowRuntime {
     pub(super) fn on_main_event(
         &mut self,
@@ -36,24 +24,17 @@ impl WindowRuntime {
                 *control_flow = ControlFlow::Exit;
             }
             WindowEvent::Focused(true) => {
-                // FocusEvent only; the coordinator decides whether to resume.
+                // Focus truth plus resume only; chrome sync and drains
+                // stay deferred to the tick burst (one pass, one capture).
                 if self.host.focus_event(FocusEvent::Main(true)) == Some(FocusEffect::Resume) {
                     self.host.resume_session();
                 }
                 self.host.request_redraw();
-                // Keep the debugger toolbar truthful without
-                // re-hitting the emu thread when nothing moved.
-                let ctx = self.host.frame_ctx();
-                self.host.sync_debug_chrome(&ctx);
             }
             WindowEvent::Focused(false) => {
                 // Deferred: the pause lands at MainEventsCleared only if focus truly left.
                 let _ = self.host.focus_event(FocusEvent::Main(false));
                 self.host.clear_keys();
-                // Same agreement in the other direction, still
-                // without redundant round-trips.
-                let ctx = self.host.frame_ctx();
-                self.host.sync_debug_chrome(&ctx);
             }
             WindowEvent::Resized(_) => {
                 self.host.sync_fullscreen_default_from_window();
@@ -109,19 +90,13 @@ impl WindowRuntime {
         }
     }
 
-    /// Focus-only drive shared by every aux path: maps `Focused` to
-    /// the domain event, resumes on `Resume`, and reports arrival.
+    /// Focus-only drive shared by every aux path: routes through the
+    /// host focus port, which resumes on `Resume` and reports arrival.
     fn drive_focus(&mut self, kind: AuxKind, event: &WindowEvent) -> bool {
-        let mut resume = false;
-        if let Some(focus) = focus_event_of(Some(kind), event)
-            && let Some(effect) = self.host.focus_event(focus)
-        {
-            resume = effect == FocusEffect::Resume;
+        match event {
+            WindowEvent::Focused(focused) => self.host.drive_aux_focus(kind, *focused),
+            _ => false,
         }
-        if resume {
-            self.host.resume_session();
-        }
-        matches!(event, WindowEvent::Focused(true))
     }
 
     pub(super) fn on_debug_event(&mut self, opener: &dyn WindowOpener, event: WindowEvent) {
@@ -134,15 +109,11 @@ impl WindowRuntime {
             self.host.request_redraw();
             return;
         }
-        let focused = self.drive_focus(AuxKind::Debug, &event);
+        let _ = self.drive_focus(AuxKind::Debug, &event);
         let domain = crate::aux::native::adapt_event(&event);
         let Some(outcome) = self.host.aux_on_event(AuxKind::Debug, domain) else {
             return;
         };
-        if focused {
-            let ctx = self.host.frame_ctx();
-            self.host.sync_debug_chrome(&ctx);
-        }
         self.drain_and_maybe_open_ppu(opener);
         // Closing never resumes: resume is always explicit.
         if self.host.is_debug_open() {
@@ -254,7 +225,9 @@ mod tests {
     }
 
     #[test]
-    fn main_focus_arms_syncs_chrome() {
+    fn main_focus_arms_without_syncing() {
+        // Focus handlers only drive focus truth now: no chrome sync,
+        // no drain. The tick burst performs the single sync pass.
         let (mut runtime, menu) = test_runtime();
         let opener = FakeOpener::failing("no display");
         let mut flow = ControlFlow::Wait;
@@ -262,8 +235,9 @@ mod tests {
         assert!(!runtime.host.main_active());
         runtime.on_main_event(&opener, WindowEvent::Focused(true), &mut flow);
         assert!(runtime.host.main_active());
-        // dirty gate: departure pushes once, arrival with identical
-        // chrome skips the duplicate IPC.
+        assert!(menu.updates().is_empty());
+        // Tick burst commits the armed pause state and syncs chrome once.
+        runtime.host.update_control_flow(&mut flow);
         assert_eq!(menu.updates().len(), 1);
     }
 
@@ -401,22 +375,14 @@ mod tests {
     }
 
     #[test]
-    fn focus_event_of_maps_only_focused() {
-        use super::focus_event_of;
-        use crate::aux::focus::FocusEvent;
-        assert_eq!(
-            focus_event_of(None, &WindowEvent::Focused(true)),
-            Some(FocusEvent::Main(true))
-        );
-        assert_eq!(
-            focus_event_of(Some(AuxKind::Ppu), &WindowEvent::Focused(false)),
-            Some(FocusEvent::Aux(AuxKind::Ppu, false))
-        );
-        // Moved/Resized never arm or cancel the deferred pause.
-        assert_eq!(
-            focus_event_of(None, &WindowEvent::Moved(PhysicalPosition::new(1, 2))),
-            None
-        );
+    fn host_focus_drive_reports_arrival_only() {
+        // Shared host port: arrival reports true, departure and
+        // non-focus events report false, without touching the menu.
+        let (mut runtime, menu) = test_runtime();
+        assert!(runtime.host.drive_aux_focus(AuxKind::Debug, true));
+        assert!(!runtime.host.drive_aux_focus(AuxKind::Debug, false));
+        runtime.on_settings_event(WindowEvent::Moved(PhysicalPosition::new(1, 2)));
+        assert!(menu.updates().is_empty());
     }
 
     #[test]
@@ -463,6 +429,7 @@ mod tests {
         let mut flow = ControlFlow::Wait;
         runtime.host.update_control_flow(&mut flow);
         assert_eq!(flow, ControlFlow::Wait);
-        assert!(menu.updates().is_empty());
+        // Burst-end chrome sync pushes once through the empty gate.
+        assert_eq!(menu.updates().len(), 1);
     }
 }

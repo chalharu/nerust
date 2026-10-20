@@ -4,9 +4,11 @@ use log::warn;
 use nerust_render_traits::{
     FrameBuffer, PixelFormat, SurfaceSize, VideoRenderProfile,
     renderer::{
-        AttachError, FrameSink, GpuFactory, GpuRenderer, OsdSink, Present, ProfileSwitch,
-        RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle,
+        FrameSink, GpuFactory, GpuRenderer, OpaqueError, OsdSink, PipelineFactory, Present,
+        ProfileSwitch, RenderPipeline, RenderResult, RendererConfig, RendererError, StripSink,
+        SurfaceLifecycle,
     },
+    rgb::RgbaWord,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -17,7 +19,6 @@ use softbuffer::{Context, Surface};
 mod blend;
 mod lut;
 mod ntsc;
-mod pixel;
 mod validate;
 
 use lut::{LutEntry, ResizeKernel};
@@ -44,24 +45,23 @@ impl HasDisplayHandle for WindowHandlePair {
 
 #[derive(Debug)]
 pub struct SoftbufferRenderer {
-    pub(crate) ctx: Option<Context<WindowHandlePair>>,
-    pub(crate) surface: Option<Surface<WindowHandlePair, WindowHandlePair>>,
-    pub(crate) render_profile: VideoRenderProfile,
-    pub(crate) size: SurfaceSize,
-    pub(crate) reserved: nerust_render_traits::ReservedStrip,
-    pub(crate) lut: LutEntry,
-    pub(crate) resize_buffer: Vec<u32>,
-    pub(crate) ntsc_buffer: Vec<u32>,
-    pub(crate) osd: Option<nerust_render_traits::renderer::OsdLayer>,
-    /// Last tap-coverage verdict keyed by a u64 fingerprint; skips the scan on a key match.
-    pub(crate) taps_cache: Option<(u64, TapKey, bool)>,
-    /// Frame counter for the periodic full-rescan revalidation.
-    pub(crate) scan_counter: u64,
+    ctx: Option<Context<WindowHandlePair>>,
+    surface: Option<Surface<WindowHandlePair, WindowHandlePair>>,
+    render_profile: VideoRenderProfile,
+    size: SurfaceSize,
+    reserved: nerust_render_traits::ReservedStrip,
+    lut: LutEntry,
+    resize_buffer: Vec<u32>,
+    ntsc_buffer: Vec<u32>,
+    osd: Option<nerust_render_traits::renderer::OsdLayer>,
+    /// Last tap-coverage verdict keyed by the full struct; a key match
+    /// skips the scan, and the `lut_rev` epoch invalidates on rebuild.
+    taps_cache: Option<(TapKey, bool)>,
 }
 
 /// Tap-coverage inputs for one frame shape. Caches negative verdicts too.
 /// `dst_h` is deliberately *not* stored: it always equals `avail_h + height_loss`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct TapKey {
     dst_w: usize,
     avail_h: usize,
@@ -80,31 +80,7 @@ pub(crate) struct TapKey {
     reserved_bottom: u32,
 }
 
-impl TapKey {
-    /// FNV-1a fingerprint over every key field: the u64 cache key.
-    /// Full struct equality backs the debug rescan, never the hot path.
-    pub(crate) fn fingerprint(&self) -> u64 {
-        let mut hash: u64 = 0x0cbf_29ce_4842_2325;
-        let mut mix = |word: u64| {
-            hash ^= word;
-            hash = hash.wrapping_mul(0x100_0000_01b3);
-        };
-        mix(self.dst_w as u64);
-        mix(self.avail_h as u64);
-        mix(self.src_w as u64);
-        mix(self.src_h as u64);
-        mix(self.src_stride as u64);
-        mix(self.tap_stride as u64);
-        mix(self.resize_len as u64);
-        mix(self.ntsc_writes as u64);
-        mix(self.ntsc_len as u64);
-        mix(self.lut_rev);
-        mix(self.kernel_bilinear as u64);
-        mix(u64::from(self.reserved_top));
-        mix(u64::from(self.reserved_bottom));
-        hash
-    }
-}
+impl TapKey {}
 
 /// Monomorphic pixel source for the resize passes.
 /// One enum replaces three closures, so the hot loop never monomorphizes.
@@ -118,36 +94,36 @@ pub(crate) enum PixelIndexer<'a> {
     Ntsc { buf: &'a [u32] },
 }
 
+/// Opaque-black fallback for short rows; never panics the UI thread.
+const OOB_TEXEL: [u8; 4] = [0, 0, 0, 255];
+
+/// Tight RGBA row texel at pixel `i` past a hoisted row base.
+fn rgba_texel(src: &[u8], row_base: usize, i: usize) -> [u8; 4] {
+    let base = row_base.saturating_add(i.saturating_mul(4));
+    src.get(base..base.saturating_add(4))
+        .and_then(|s| s.try_into().ok())
+        .unwrap_or(OOB_TEXEL)
+}
+
+/// Palette-index texel at `i` past a hoisted row base.
+fn palette_texel(src: &[u8], palette: &[u32], row_base: usize, i: usize) -> [u8; 4] {
+    let index = src.get(row_base.saturating_add(i)).copied().unwrap_or(0) as usize;
+    RgbaWord::from_u32(palette.get(index).copied().unwrap_or(0)).to_bytes_be()
+}
+
+/// Pre-simulated NTSC word texel at `i` past a hoisted row base.
+fn ntsc_texel(buf: &[u32], row_base: usize, i: usize) -> [u8; 4] {
+    RgbaWord::from_u32(buf.get(row_base.saturating_add(i)).copied().unwrap_or(0)).to_bytes_be()
+}
+
 impl PixelIndexer<'_> {
-    /// One `[R, G, B, A]` texel. Out-of-range reads render opaque black,
-    /// never panic the UI thread.
+    /// One texel with opaque-black fallback; test seam (hot path uses row helpers).
+    #[cfg(test)]
     pub(crate) fn pixel(&self, i: usize) -> [u8; 4] {
         match *self {
-            Self::Rgba { src } => {
-                let base = i.saturating_mul(4);
-                src.get(base..base.saturating_add(4))
-                    .and_then(|s| s.try_into().ok())
-                    .unwrap_or([0, 0, 0, 255])
-            }
-            Self::Palette { src, palette } => {
-                let index = src.get(i).copied().unwrap_or(0) as usize;
-                let word = palette.get(index).copied().unwrap_or(0);
-                [
-                    (word >> 24) as u8,
-                    (word >> 16) as u8,
-                    (word >> 8) as u8,
-                    word as u8,
-                ]
-            }
-            Self::Ntsc { buf } => {
-                let word = buf.get(i).copied().unwrap_or(0);
-                [
-                    (word >> 24) as u8,
-                    (word >> 16) as u8,
-                    (word >> 8) as u8,
-                    word as u8,
-                ]
-            }
+            Self::Rgba { src } => rgba_texel(src, 0, i),
+            Self::Palette { src, palette } => palette_texel(src, palette, 0, i),
+            Self::Ntsc { buf } => ntsc_texel(buf, 0, i),
         }
     }
 }
@@ -168,7 +144,6 @@ impl SoftbufferRenderer {
             resize_buffer: Vec::new(),
             ntsc_buffer: Vec::new(),
             taps_cache: None,
-            scan_counter: 0,
         }
     }
 
@@ -213,7 +188,7 @@ impl SoftbufferRenderer {
         Self::vertical_pass(dst, dst_w, dst_h, lut, px, resize_buffer);
     }
 
-    /// Horizontal two-tap loop with native-endian word packing (see [`pixel`]).
+    /// Horizontal two-tap loop: variant dispatches once per row, taps hoist per pixel.
     /// Weights sum to one in the interior; edges go black where taps fall outside.
     fn horizontal_pass(
         src_stride: usize,
@@ -227,38 +202,75 @@ impl SoftbufferRenderer {
         for y in 0..src_h {
             let dst_y_index = y * dst_w;
             let src_y_index = y * src_stride;
-            for x in 0..dst_w {
-                let dst_index = dst_y_index + x;
-                let base = x * px;
-                // Covered by `taps_cover`; a short LUT here would
-                // silently black out the row via the `unwrap_or` below.
-                debug_assert!(lut.x_lut.len() >= base + px);
-                let mut acc = [0u16; 4];
-                let mut touched = false;
-                for tap in lut.x_lut.get(base..base + px).unwrap_or(&[]) {
-                    let Some((i, w)) = tap else { continue };
-                    let src_index = src_y_index + *i as usize;
-                    let src_val = indexer.pixel(src_index);
-                    let w = *w;
-                    acc[0] = acc[0].saturating_add((src_val[0] as u16 * w + 0x80) >> 8);
-                    acc[1] = acc[1].saturating_add((src_val[1] as u16 * w + 0x80) >> 8);
-                    acc[2] = acc[2].saturating_add((src_val[2] as u16 * w + 0x80) >> 8);
-                    acc[3] = acc[3].saturating_add((src_val[3] as u16 * w + 0x80) >> 8);
-                    touched = true;
+            match *indexer {
+                PixelIndexer::Rgba { src } => {
+                    let row_base = src_y_index.saturating_mul(4);
+                    Self::horizontal_row(dst_y_index, dst_w, lut, px, resize_buffer, |i| {
+                        rgba_texel(src, row_base, i)
+                    });
                 }
-                let word = if touched {
-                    pixel::pack_word(
-                        acc[0].min(255) as u8,
-                        acc[1].min(255) as u8,
-                        acc[2].min(255) as u8,
-                        acc[3].min(255) as u8,
-                    )
-                } else {
-                    0
-                };
-                if dst_index < resize_buffer.len() {
-                    resize_buffer[dst_index] = word;
+                PixelIndexer::Palette { src, palette } => {
+                    Self::horizontal_row(dst_y_index, dst_w, lut, px, resize_buffer, |i| {
+                        palette_texel(src, palette, src_y_index, i)
+                    });
                 }
+                PixelIndexer::Ntsc { buf } => {
+                    Self::horizontal_row(dst_y_index, dst_w, lut, px, resize_buffer, |i| {
+                        ntsc_texel(buf, src_y_index, i)
+                    });
+                }
+            }
+        }
+    }
+
+    /// One monomorphic destination row: hoisted tap pair per pixel.
+    /// `fetch` inlines per source variant; the LUT slice checks once per pixel.
+    fn horizontal_row(
+        dst_y_index: usize,
+        dst_w: usize,
+        lut: &LutEntry,
+        px: usize,
+        resize_buffer: &mut [u32],
+        fetch: impl Fn(usize) -> [u8; 4] + Copy,
+    ) {
+        for x in 0..dst_w {
+            let dst_index = dst_y_index + x;
+            let base = x * px;
+            // Covered by `taps_cover`; a short LUT here would
+            // silently black out the row via the `get` below.
+            debug_assert!(lut.x_lut.len() >= base + px);
+            let mut taps = [(0u16, 0u16); 2];
+            let mut tap_count = 0;
+            if let Some(slice) = lut.x_lut.get(base..base + px) {
+                for tap in slice.iter().flatten() {
+                    if tap_count < 2 {
+                        taps[tap_count] = *tap;
+                        tap_count += 1;
+                    }
+                }
+            }
+            let mut acc = [0u16; 4];
+            let mut touched = false;
+            for (i, w) in taps[..tap_count].iter().copied() {
+                let src_val = fetch(i as usize);
+                acc[0] = acc[0].saturating_add((src_val[0] as u16 * w + 0x80) >> 8);
+                acc[1] = acc[1].saturating_add((src_val[1] as u16 * w + 0x80) >> 8);
+                acc[2] = acc[2].saturating_add((src_val[2] as u16 * w + 0x80) >> 8);
+                acc[3] = acc[3].saturating_add((src_val[3] as u16 * w + 0x80) >> 8);
+                touched = true;
+            }
+            let word = if touched {
+                RgbaWord::pack_argb(
+                    acc[0].min(255) as u8,
+                    acc[1].min(255) as u8,
+                    acc[2].min(255) as u8,
+                    acc[3].min(255) as u8,
+                )
+            } else {
+                0
+            };
+            if dst_index < resize_buffer.len() {
+                resize_buffer[dst_index] = word;
             }
         }
     }
@@ -289,6 +301,18 @@ impl SoftbufferRenderer {
                 }
             }
             let taps = &taps[..tap_count];
+            // Hoisted source rows: one bounds check per tap row, not per texel.
+            // Covered by `taps_cover`; a short buffer degrades to empty rows.
+            let rows: [Option<&[u32]>; 2] = [
+                taps.first().and_then(|&(i, _)| {
+                    let base = (i as usize).saturating_mul(dst_w);
+                    resize_buffer.get(base..base.saturating_add(dst_w))
+                }),
+                taps.get(1).and_then(|&(i, _)| {
+                    let base = (i as usize).saturating_mul(dst_w);
+                    resize_buffer.get(base..base.saturating_add(dst_w))
+                }),
+            ];
             for x in 0..dst_w {
                 let dst_index = y * dst_w + x;
                 if dst_index >= dst.len() {
@@ -296,12 +320,11 @@ impl SoftbufferRenderer {
                 }
                 let mut acc = [0u16; 4];
                 let mut touched = false;
-                for (i, w) in taps.iter().copied() {
-                    let src_index = i as usize * dst_w + x;
-                    let Some(word) = resize_buffer.get(src_index) else {
+                for (slot, &(_, w)) in taps.iter().enumerate() {
+                    let Some(word) = rows[slot].and_then(|row| row.get(x)).copied() else {
                         continue;
                     };
-                    let src_val = pixel::unpack_word(*word);
+                    let src_val = RgbaWord::unpack_argb(word);
                     acc[0] = acc[0].saturating_add((src_val[0] as u16 * w + 0x80) >> 8);
                     acc[1] = acc[1].saturating_add((src_val[1] as u16 * w + 0x80) >> 8);
                     acc[2] = acc[2].saturating_add((src_val[2] as u16 * w + 0x80) >> 8);
@@ -309,7 +332,7 @@ impl SoftbufferRenderer {
                     touched = true;
                 }
                 dst[dst_index] = if touched {
-                    pixel::pack_word(
+                    RgbaWord::pack_argb(
                         acc[0].min(255) as u8,
                         acc[1].min(255) as u8,
                         acc[2].min(255) as u8,
@@ -355,8 +378,8 @@ impl SoftbufferRenderer {
         ntsc_writes <= ntsc_len
     }
 
-    /// Cached [`Self::taps_cover`]: a key match skips the per-frame LUT scan.
-    /// Every 256th hit forces a full rescan; release keeps the cached verdict.
+    /// Cached [`Self::taps_cover`]: a struct-key match skips the per-frame scan.
+    /// The `lut_rev` epoch invalidates on every rebuild; no hash, no rescan timer.
     fn taps_covered(
         &mut self,
         dst_w: usize,
@@ -380,28 +403,9 @@ impl SoftbufferRenderer {
             reserved_top: self.reserved.top,
             reserved_bottom: self.reserved.bottom,
         };
-        let fingerprint = key.fingerprint();
-        if let Some((cached_fp, cached_key, covered)) = &self.taps_cache
-            && *cached_fp == fingerprint
+        if let Some((cached_key, covered)) = &self.taps_cache
+            && *cached_key == key
         {
-            self.scan_counter = self.scan_counter.wrapping_add(1);
-            if self.scan_counter.is_multiple_of(256) {
-                let fresh = Self::taps_cover(
-                    &self.lut,
-                    self.resize_buffer.len(),
-                    self.ntsc_buffer.len(),
-                    dst_w,
-                    avail_h,
-                    tap_stride,
-                    ntsc_writes,
-                );
-                debug_assert_eq!(
-                    fresh, *covered,
-                    "tap cache stale-true: periodic rescan disagrees"
-                );
-                debug_assert_eq!(*cached_key, key, "tap fingerprint collision: keys disagree");
-                return fresh;
-            }
             return *covered;
         }
         let covered = Self::taps_cover(
@@ -413,9 +417,29 @@ impl SoftbufferRenderer {
             tap_stride,
             ntsc_writes,
         );
-        self.scan_counter = self.scan_counter.wrapping_add(1);
-        self.taps_cache = Some((fingerprint, key, covered));
+        self.taps_cache = Some((key, covered));
         covered
+    }
+
+    /// Narrow cross-module accessors; fields stay private to this module.
+    /// `validate` reads geometry through these, never the fields directly.
+    pub(crate) fn profile(&self) -> &VideoRenderProfile {
+        &self.render_profile
+    }
+
+    /// Output size without exposing the field.
+    pub(crate) fn output_size(&self) -> SurfaceSize {
+        self.size
+    }
+
+    /// Surface presence for the geometry gate.
+    pub(crate) fn surface_attached(&self) -> bool {
+        self.surface.is_some()
+    }
+
+    /// Reserved strips for the viewport computation.
+    pub(crate) fn reserved_strip(&self) -> nerust_render_traits::ReservedStrip {
+        self.reserved
     }
 }
 
@@ -434,22 +458,20 @@ impl SurfaceLifecycle for SoftbufferRenderer {
             window: window_handle,
             display: display_handle,
         };
+        // `softbuffer::Error` borrows raw display handles (`!Send`);
+        // the kind stays structured, the message crosses as `OpaqueError`.
         let ctx = Context::new(pair.clone()).map_err(|e| {
-            RendererError::new(
-                "softbuffer context",
-                Box::new(AttachError::Context {
-                    backend: "softbuffer",
-                    detail: e.to_string(),
-                }),
+            RendererError::attach(
+                "softbuffer",
+                "context",
+                Box::new(OpaqueError(e.to_string())),
             )
         })?;
         let surface = Surface::new(&ctx, pair).map_err(|e| {
-            RendererError::new(
-                "softbuffer surface",
-                Box::new(AttachError::Surface {
-                    backend: "softbuffer",
-                    detail: e.to_string(),
-                }),
+            RendererError::attach(
+                "softbuffer",
+                "surface",
+                Box::new(OpaqueError(e.to_string())),
             )
         })?;
         self.ctx = Some(ctx);
@@ -692,6 +714,17 @@ impl GpuFactory for SoftbufferFactory {
     }
 }
 
+impl PipelineFactory for SoftbufferFactory {
+    /// Per-use-site composition; same renderer, narrow object.
+    fn create_pipeline(
+        &self,
+        config: &RendererConfig,
+        _display_handle: raw_window_handle::RawDisplayHandle,
+    ) -> Result<Box<dyn RenderPipeline>, RendererError> {
+        Ok(Box::new(SoftbufferRenderer::new(&config.render_profile)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -891,17 +924,17 @@ mod tests {
     }
 
     #[test]
-    fn taps_cache_invalidates_on_lut_rebuild() {
+    fn taps_cache_stays_hot_on_identical_rebuild() {
         let mut renderer = SoftbufferRenderer::new(&test_profile());
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
         assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
         assert!(renderer.taps_cache.is_some());
-        // Same-size rebuild bumps the generation: the cached verdict
-        // misses on rev even though every length matches.
+        // Identical rebuild skips work and keeps the epoch: the cached
+        // verdict stays valid even though every length matches.
         let rev_before = renderer.lut.rev;
         renderer.resize_lut();
-        assert!(renderer.lut.rev != rev_before);
+        assert_eq!(renderer.lut.rev, rev_before);
         assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
         assert!(renderer.taps_cache.is_some());
     }
@@ -918,6 +951,13 @@ mod tests {
         let rev2 = lut.rev;
         lut.resize_lut(SurfaceSize::new(2, 2), 1.0, SurfaceSize::new(2, 2));
         assert!(lut.rev != rev2);
+        // Identical rebuild skips: dims compare first, epoch never moves.
+        let rev3 = lut.rev;
+        lut.resize_lut(SurfaceSize::new(2, 2), 1.0, SurfaceSize::new(2, 2));
+        assert_eq!(lut.rev, rev3);
+        // Changed dims rebuild and bump.
+        lut.resize_lut(SurfaceSize::new(2, 2), 1.0, SurfaceSize::new(4, 4));
+        assert!(lut.rev != rev3);
     }
 
     #[test]
@@ -926,10 +966,11 @@ mod tests {
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
         assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
-        // Same lengths, bumped rev: verdict must rescan, not hit cache.
+        // Same lengths, bumped epoch: verdict must rescan, not hit cache.
         renderer.lut.bump_rev();
         assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
-        let (_fp, key, covered) = renderer.taps_cache.as_ref().unwrap();
+        let (key, covered) = renderer.taps_cache.as_ref().unwrap();
+        // The LUT revision is the cache epoch: any rebuild invalidates.
         assert_eq!(key.lut_rev, renderer.lut.rev);
         assert!(*covered);
     }
@@ -964,6 +1005,7 @@ mod tests {
             y_lut: vec![None, None],
             kernel: ResizeKernel::Bilinear,
             rev: 1,
+            last_build: None,
         };
         renderer.resize_buffer = vec![0; 8];
         assert!(!renderer.taps_covered(1, 1, 4, 4, 0));
@@ -973,6 +1015,7 @@ mod tests {
             y_lut: vec![Some((99, 1)), None],
             kernel: ResizeKernel::Bilinear,
             rev: 2,
+            last_build: None,
         };
         renderer.resize_buffer = vec![0; 8 * 4];
         assert!(!renderer.taps_covered(8, 1, 32, 4, 0));
@@ -1002,12 +1045,12 @@ mod tests {
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
         assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
-        let first_key = renderer.taps_cache.as_ref().unwrap().1;
+        let first_key = renderer.taps_cache.as_ref().unwrap().0;
         // Reserved strip change flips the key.
         renderer.reserved.top = 2;
         renderer.resize_lut();
         assert!(renderer.taps_covered(8, 6, 1024, 256, 0));
-        let second_key = renderer.taps_cache.as_ref().unwrap().1;
+        let second_key = renderer.taps_cache.as_ref().unwrap().0;
         assert_ne!(first_key, second_key);
         assert_eq!(second_key.reserved_top, 2);
         assert_eq!(second_key.avail_h, 6);
@@ -1025,6 +1068,41 @@ mod tests {
         let indexer = PixelIndexer::Rgba { src: &short };
         assert_eq!(indexer.pixel(0), [0, 0, 0, 255]);
         assert_eq!(indexer.pixel(99), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn private_state_exposes_narrow_accessors() {
+        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        renderer.size = SurfaceSize::new(8, 8);
+        renderer.resize_lut();
+        assert_eq!(renderer.output_size(), SurfaceSize::new(8, 8));
+        assert!(!renderer.surface_attached());
+        assert_eq!(
+            renderer.reserved_strip(),
+            nerust_render_traits::ReservedStrip::default()
+        );
+        assert_eq!(renderer.profile().source_logical_size.width, 256);
+        // OSD payload is thread-safe: no Rc forces the Send/Sync impls.
+        fn assert_thread_safe<T: Send + Sync>() {}
+        assert_thread_safe::<nerust_render_traits::renderer::OsdLayer>();
+    }
+
+    #[test]
+    fn pipeline_factory_returns_narrow_composition() {
+        use nerust_render_traits::renderer::{PipelineFactory, RendererConfig};
+        let factory = SoftbufferFactory;
+        let config = RendererConfig {
+            render_profile: test_profile(),
+            vsync: true,
+            max_osd_upload_retries: 3,
+        };
+        // Never dereferenced: the softbuffer factory ignores the handle.
+        let handle: raw_window_handle::RawDisplayHandle = unsafe { std::mem::zeroed() };
+        let pipeline = factory.create_pipeline(&config, handle).unwrap();
+        assert_eq!(
+            nerust_render_traits::renderer::SurfaceLifecycle::size(&*pipeline),
+            SurfaceSize::new(0, 0)
+        );
     }
 
     #[test]
@@ -1064,7 +1142,8 @@ mod tests {
     }
 
     #[test]
-    fn tap_key_fingerprint_changes_with_any_field() {
+    fn tap_key_struct_distinguishes_every_field() {
+        use std::collections::HashSet;
         let base = TapKey {
             dst_w: 8,
             avail_h: 8,
@@ -1080,19 +1159,24 @@ mod tests {
             reserved_top: 0,
             reserved_bottom: 0,
         };
-        let fp = base.fingerprint();
+        // Derived Hash works as a keyed-cache index: identical keys collide.
+        let mut set = HashSet::new();
+        set.insert(base);
+        assert!(set.contains(&base));
         let mut varied = base;
         varied.dst_w = 9;
-        assert_ne!(varied.fingerprint(), fp);
+        assert_ne!(varied, base);
+        assert!(!set.contains(&varied));
         let mut varied = base;
         varied.lut_rev = 2;
-        assert_ne!(varied.fingerprint(), fp);
+        assert_ne!(varied, base);
+        assert_eq!(varied.lut_rev, 2);
         let mut varied = base;
         varied.kernel_bilinear = false;
-        assert_ne!(varied.fingerprint(), fp);
+        assert_ne!(varied, base);
         let mut varied = base;
         varied.reserved_bottom = 3;
-        assert_ne!(varied.fingerprint(), fp);
+        assert_ne!(varied, base);
         assert_eq!(base, base);
     }
 

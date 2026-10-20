@@ -19,6 +19,7 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
+use nerust_frontend_kernel::SnapshotCache;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
@@ -46,27 +47,7 @@ pub(crate) struct State {
     session: SessionHandle,
     ctx: FrontendContext,
     renderer_reload_pending: bool,
-    snapshot_cache: SnapshotCache,
-}
-
-/// Eq-gated snapshot share: clones the session snapshot only when it
-/// changed since the last frame; steady frames reuse one `Arc`.
-#[derive(Debug, Default)]
-pub(crate) struct SnapshotCache {
-    last: Option<Arc<SettingsSnapshot>>,
-}
-
-impl SnapshotCache {
-    pub(crate) fn get(&mut self, current: &SettingsSnapshot) -> Arc<SettingsSnapshot> {
-        if let Some(last) = &self.last
-            && last.as_ref() == current
-        {
-            return Arc::clone(last);
-        }
-        let fresh = Arc::new(current.clone());
-        self.last = Some(Arc::clone(&fresh));
-        fresh
-    }
+    snapshot_cache: SnapshotCache<SettingsSnapshot>,
 }
 
 impl State {

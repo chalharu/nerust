@@ -1,63 +1,10 @@
-//! Single tao boundary: native ids plus one event adapter.
-//! Domain layers speak domain types only; tao never crosses outward.
+//! Tao event adapter: native window events to domain events.
+//! Toolkit-independent vocabulary lives in `super::domain`.
 
-use tao::{event::WindowEvent, window::WindowId};
+use tao::event::WindowEvent;
 
-/// Opaque native window identity for registry routing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct NativeWindowId(WindowId);
-
-impl NativeWindowId {
-    pub(crate) fn new(id: WindowId) -> Self {
-        Self(id)
-    }
-
-    /// Test-only dummy id: distinctness across dummies is not guaranteed.
-    #[cfg(test)]
-    pub(crate) fn dummy() -> Self {
-        Self(unsafe { WindowId::dummy() })
-    }
-}
-
-/// Registry-assigned aux entry handle. Routing keys on this.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct AuxId(u64);
-
-impl AuxId {
-    pub(crate) fn new(raw: u64) -> Self {
-        Self(raw)
-    }
-}
-
-/// Domain-level aux event: plain data, no tao import outward.
-/// Unmapped keys and buttons are dropped by the adapter.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum AuxNativeEvent {
-    Focused(bool),
-    CloseRequested,
-    Destroyed,
-    Moved(i32, i32),
-    Resized(u32, u32),
-    ScaleChanged(f32),
-    ModifiersChanged(iced::keyboard::Modifiers),
-    CursorMoved(f64, f64),
-    CursorLeft,
-    MousePressed(super::tao_map::AuxButton),
-    MouseReleased(super::tao_map::AuxButton),
-    WheelLines(f32, f32),
-    WheelPixels(f32, f32),
-    KeyPressed {
-        key: iced::keyboard::Key,
-        physical: iced::keyboard::key::Physical,
-        text: Option<String>,
-        repeat: bool,
-    },
-    KeyReleased {
-        key: iced::keyboard::Key,
-        physical: iced::keyboard::key::Physical,
-    },
-    Other,
-}
+use super::domain::AuxNativeEvent;
+use super::tao_map::{keycode_to_key, tao_button_to_aux, tao_modifiers_to_domain};
 
 /// Map one native event to the domain event. Cursor and wheel
 /// pixels stay physical: the shell divides by its live scale.
@@ -66,13 +13,14 @@ pub(crate) fn adapt_event(event: &WindowEvent) -> AuxNativeEvent {
         WindowEvent::Focused(focused) => AuxNativeEvent::Focused(*focused),
         WindowEvent::CloseRequested => AuxNativeEvent::CloseRequested,
         WindowEvent::Destroyed => AuxNativeEvent::Destroyed,
+        WindowEvent::ReceivedImeText(text) => AuxNativeEvent::TextCommit(text.clone()),
         WindowEvent::Moved(position) => AuxNativeEvent::Moved(position.x, position.y),
         WindowEvent::Resized(size) => AuxNativeEvent::Resized(size.width, size.height),
         WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
             AuxNativeEvent::ScaleChanged(*scale_factor as f32)
         }
         WindowEvent::ModifiersChanged(state) => {
-            AuxNativeEvent::ModifiersChanged(super::tao_map::tao_modifiers_to_iced(*state))
+            AuxNativeEvent::ModifiersChanged(tao_modifiers_to_domain(*state))
         }
         WindowEvent::CursorMoved { position, .. } => {
             AuxNativeEvent::CursorMoved(position.x, position.y)
@@ -84,7 +32,7 @@ pub(crate) fn adapt_event(event: &WindowEvent) -> AuxNativeEvent {
                 tao::event::ElementState::Released => false,
                 _ => return AuxNativeEvent::Other,
             };
-            match super::tao_map::tao_button_to_aux(*button) {
+            match tao_button_to_aux(*button) {
                 Some(button) if pressed => AuxNativeEvent::MousePressed(button),
                 Some(button) => AuxNativeEvent::MouseReleased(button),
                 None => AuxNativeEvent::Other,
@@ -98,19 +46,16 @@ pub(crate) fn adapt_event(event: &WindowEvent) -> AuxNativeEvent {
             _ => AuxNativeEvent::Other,
         },
         WindowEvent::KeyboardInput { event: ke, .. } => {
-            let Some(physical) = super::tao_map::tao_keycode_to_iced_code(ke.physical_key) else {
+            let Some(key) = keycode_to_key(ke.physical_key) else {
                 return AuxNativeEvent::Other;
             };
-            let physical = iced::keyboard::key::Physical::Code(physical);
-            let key = super::tao_map::tao_key_to_iced_key(&ke.logical_key);
             match ke.state {
                 tao::event::ElementState::Pressed => AuxNativeEvent::KeyPressed {
-                    key: key.clone(),
-                    physical,
+                    key,
                     text: ke.text.as_ref().map(|s| s.to_string()),
                     repeat: ke.repeat,
                 },
-                tao::event::ElementState::Released => AuxNativeEvent::KeyReleased { key, physical },
+                tao::event::ElementState::Released => AuxNativeEvent::KeyReleased { key },
                 _ => AuxNativeEvent::Other,
             }
         }
@@ -121,11 +66,19 @@ pub(crate) fn adapt_event(event: &WindowEvent) -> AuxNativeEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aux::domain::{AuxButton, AuxId, AuxModifiers};
 
     #[test]
     fn aux_ids_compare_by_value() {
         assert_eq!(AuxId::new(1), AuxId::new(1));
         assert_ne!(AuxId::new(1), AuxId::new(2));
+    }
+
+    #[test]
+    fn button_and_modifier_domain_types_cover_each_flag() {
+        let mods = AuxModifiers::empty();
+        assert!(!mods.shift() && !mods.ctrl() && !mods.alt() && !mods.logo());
+        assert_eq!(AuxModifiers::default(), AuxModifiers::empty());
     }
 
     #[test]
@@ -145,6 +98,16 @@ mod tests {
         assert_eq!(
             adapt_event(&WindowEvent::Resized(tao::dpi::PhysicalSize::new(800, 600))),
             AuxNativeEvent::Resized(800, 600)
+        );
+    }
+
+    #[test]
+    fn adapter_carries_ime_text_without_a_key() {
+        // IME commits arrive tao-side with no physical key; the
+        // domain event carries the text on its own variant.
+        assert_eq!(
+            adapt_event(&WindowEvent::ReceivedImeText("あ".to_string())),
+            AuxNativeEvent::TextCommit("あ".to_string())
         );
     }
 
@@ -179,7 +142,7 @@ mod tests {
         };
         assert_eq!(
             adapt_event(&left),
-            AuxNativeEvent::MouseReleased(crate::aux::tao_map::AuxButton::Left)
+            AuxNativeEvent::MouseReleased(AuxButton::Left)
         );
     }
 
@@ -201,7 +164,7 @@ mod tests {
             adapt_event(&WindowEvent::ModifiersChanged(
                 tao::keyboard::ModifiersState::SHIFT
             )),
-            AuxNativeEvent::ModifiersChanged(crate::aux::tao_map::tao_modifiers_to_iced(
+            AuxNativeEvent::ModifiersChanged(crate::aux::tao_map::tao_modifiers_to_domain(
                 tao::keyboard::ModifiersState::SHIFT
             ))
         );
@@ -209,7 +172,7 @@ mod tests {
             adapt_event(&WindowEvent::ModifiersChanged(
                 tao::keyboard::ModifiersState::empty()
             )),
-            AuxNativeEvent::ModifiersChanged(iced::keyboard::Modifiers::empty())
+            AuxNativeEvent::ModifiersChanged(AuxModifiers::empty())
         );
         assert_eq!(
             adapt_event(&WindowEvent::CursorLeft {
@@ -221,7 +184,6 @@ mod tests {
 
     #[test]
     fn adapter_maps_each_mapped_button_press() {
-        use crate::aux::tao_map::AuxButton;
         for (native, domain) in [
             (tao::event::MouseButton::Left, AuxButton::Left),
             (tao::event::MouseButton::Right, AuxButton::Right),
@@ -266,6 +228,19 @@ mod tests {
             modifiers: tao::keyboard::ModifiersState::default(),
         };
         assert_eq!(adapt_event(&pixels), AuxNativeEvent::WheelPixels(0.0, 24.0));
+    }
+
+    #[test]
+    fn adapter_drops_unmapped_physical_codes() {
+        // Unidentified codes have no domain mapping; `KeyboardInput`
+        // itself is non-exhaustive tao-side and unconstructible here.
+        use nerust_keyboard::Key as K;
+        for (code, key) in [
+            (tao::keyboard::KeyCode::KeyA, K::KeyA),
+            (tao::keyboard::KeyCode::Enter, K::Enter),
+        ] {
+            assert_eq!(super::keycode_to_key(code), Some(key));
+        }
     }
 
     #[test]

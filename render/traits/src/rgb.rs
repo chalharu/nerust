@@ -68,6 +68,21 @@ impl RgbaWord {
         )
     }
 
+    /// Canonical `0xRRGGBBAA` value (palette words, NTSC words, kernel sums).
+    pub const fn from_u32(value: u32) -> Self {
+        Self(value)
+    }
+
+    /// Pack one tapped texel (`[R, G, B, A]` channels) into a native buffer word.
+    pub const fn pack_argb(r: u8, g: u8, b: u8, a: u8) -> u32 {
+        Self::from_rgba(r, g, b, a).as_argb_word()
+    }
+
+    /// Split one buffer word back into `[R, G, B, A]` channels.
+    pub const fn unpack_argb(word: u32) -> [u8; 4] {
+        Self::from_argb_word(word).to_bytes_be()
+    }
+
     pub const fn r(self) -> u8 {
         (self.0 >> 24) as u8
     }
@@ -162,6 +177,18 @@ mod tests {
             };
             assert_eq!(got.to_bytes_be(), [er, eg, eb, 255], "alpha={alpha}");
         }
+    }
+
+    #[test]
+    fn pack_helpers_pin_native_argb_layout() {
+        // Opaque red over opaque black stays red; alpha byte stays set.
+        assert_eq!(RgbaWord::pack_argb(255, 0, 0, 255), 0xFFFF_0000);
+        assert_eq!(RgbaWord::unpack_argb(0xFFFF_0000), [255, 0, 0, 255]);
+        // Half red over black: (255*128 + 0*127 + 127) / 255 = 128.
+        assert_eq!(RgbaWord::pack_argb(128, 0, 0, 255), 0xFF80_0000);
+        // `RgbaWord` round-trips on every host by construction.
+        assert_eq!(RgbaWord::pack_argb(0x12, 0x34, 0x56, 0x78), 0x7812_3456);
+        assert_eq!(RgbaWord::unpack_argb(0x7812_3456), [0x12, 0x34, 0x56, 0x78]);
     }
 
     #[test]

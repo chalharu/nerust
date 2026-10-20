@@ -11,8 +11,8 @@ use nerust_gui_viewmodel::debugger::DisplayCache;
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::bridge::{DebugBridge, DrainSnapshot};
+use super::domain::{AuxId, AuxNativeEvent, NativeWindowId};
 use super::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender, pump_aux};
-use super::native::{AuxId, AuxNativeEvent, NativeWindowId};
 
 /// Effects one aux event produced: computed in the entry, applied by the host.
 #[derive(Debug, Clone, Copy, Default)]
@@ -23,23 +23,17 @@ pub(crate) struct AuxOutcome {
     pub cleared: bool,
 }
 
-/// Debug-drain port: batch take plus snapshot/apply for one drain.
+/// Debug-drain port: batch take plus apply for one drain.
 pub(crate) trait DebugDrainPort {
     /// Debugger batch take (debug only).
-    fn take_debug_requests(&mut self) -> Option<(bool, Vec<DebugAction>)> {
-        None
-    }
-
-    /// Drain snapshot for the debug drain (debug only).
-    fn drain_snapshot(&self, _ppu_open: bool) -> Option<DrainSnapshot> {
-        None
-    }
+    fn take_debug_requests(&mut self) -> Option<(bool, Vec<DebugAction>)>;
 
     /// Apply a finished drain (debug only).
-    fn apply_drain(&mut self, _display: DisplayCache, _reselected: Option<(u32, Option<u8>)>) {}
+    fn apply_drain(&mut self, display: DisplayCache, reselected: Option<(u32, Option<u8>)>);
 }
 
 /// Live-images port: finished live fetches land here.
+/// Only the debugger implements this; see `AuxController::as_live`.
 pub(crate) trait LiveImagesPort {
     /// Apply finished live images (debug only).
     fn apply_live(
@@ -47,54 +41,24 @@ pub(crate) trait LiveImagesPort {
         _generation: u64,
         _images: Vec<(String, u32, u32, Vec<u8>)>,
         _running: bool,
-    ) -> bool {
-        false
-    }
+    ) -> bool;
 }
 
 /// Settings-close port: pending apply staged for close teardown.
+/// Only settings implements this; see `AuxController::as_settings`.
 pub(crate) trait SettingsClosePort {
     /// Take the pending settings apply on close (settings only).
-    fn take_pending_settings(&mut self) -> Option<SettingsSnapshot> {
-        None
-    }
+    fn take_pending_settings(&mut self) -> Option<SettingsSnapshot>;
 }
 
-/// History-sync port: content push plus clear requests.
+/// History-sync port: content push for the history viewer.
 pub(crate) trait HistorySyncPort {
-    /// Take a history clear request (history only).
-    fn take_history_clear(&mut self) -> bool {
-        false
-    }
-
     /// Push fresh history content (history only).
-    fn sync_history(&mut self, _lines: Arc<[HistoryLine]>, _language: AppLanguage) {}
+    fn sync_history(&mut self, lines: Arc<[HistoryLine]>, language: AppLanguage);
 }
 
-/// Bridge-share port: viewer creation plus lock audit.
-pub(crate) trait BridgeSharePort {
-    /// Share the debugger bridge for viewer creation (debug only).
-    fn shared_bridge(&self) -> Option<Arc<DebugBridge>> {
-        None
-    }
-
-    /// Contended lock names, if any (debug only).
-    fn debug_lock_audit(&self) -> Vec<&'static str> {
-        Vec::new()
-    }
-}
-
-/// Uniform aux controller: identity plus render plus one port per capability.
-pub(crate) trait AuxController:
-    AuxIdentity
-    + AuxRender
-    + AuxEvents
-    + DebugDrainPort
-    + LiveImagesPort
-    + SettingsClosePort
-    + HistorySyncPort
-    + BridgeSharePort
-{
+/// Uniform aux controller: identity plus render plus capability queries.
+pub(crate) trait AuxController: AuxIdentity + AuxRender + AuxEvents {
     /// Pump one domain event: prelude, dispatch, outcome.
     fn on_event(&mut self, event: AuxNativeEvent) -> AuxOutcome {
         pump_aux(self, event);
@@ -111,6 +75,47 @@ pub(crate) trait AuxController:
 
     /// Rebuild the view from the bridge (debug/PPU only).
     fn sync_view(&mut self) {}
+
+    /// Debug-drain capability (debugger only).
+    fn as_debug(&mut self) -> Option<&mut dyn DebugDrainPort> {
+        None
+    }
+
+    /// Read-only drain snapshot (`None` unless debugger).
+    fn debug_snapshot_of(&self, _ppu_open: bool) -> Option<DrainSnapshot> {
+        None
+    }
+
+    /// Live-images capability (debugger only).
+    fn as_live(&mut self) -> Option<&mut dyn LiveImagesPort> {
+        None
+    }
+
+    /// Settings-close capability (settings only).
+    fn as_settings(&mut self) -> Option<&mut dyn SettingsClosePort> {
+        None
+    }
+
+    /// History-sync capability (history only).
+    fn as_history(&mut self) -> Option<&mut dyn HistorySyncPort> {
+        None
+    }
+
+    /// Take a history clear request (history only; routed here so the
+    /// default pump needs no port bound).
+    fn take_history_clear(&mut self) -> bool {
+        false
+    }
+
+    /// Share the debugger bridge for viewer creation (debug only).
+    fn shared_bridge(&self) -> Option<Arc<DebugBridge>> {
+        None
+    }
+
+    /// Contended lock names, if any (debug only).
+    fn debug_lock_audit(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
 }
 
 /// One routed entry: registry id plus native id plus the controller.
@@ -207,13 +212,16 @@ impl AuxRegistry {
     /// Debugger batch take (`None` when the debugger is closed).
     pub(crate) fn debug_take_requests(&mut self) -> Option<(bool, Vec<DebugAction>)> {
         self.entry_mut(AuxKind::Debug)
+            .and_then(AuxController::as_debug)
             .and_then(DebugDrainPort::take_debug_requests)
     }
 
     /// Drain snapshot (`None` when the debugger is closed).
     pub(crate) fn debug_snapshot(&self, ppu_open: bool) -> Option<DrainSnapshot> {
-        self.entry(AuxKind::Debug)
-            .and_then(|entry| entry.drain_snapshot(ppu_open))
+        // Read-only query behind a shared borrow: the snapshot clones small fields only.
+        self.entries
+            .get(&AuxKind::Debug)
+            .and_then(|entry| entry.controller.debug_snapshot_of(ppu_open))
     }
 
     /// Apply a finished drain, then rebuild the viewers.
@@ -222,10 +230,13 @@ impl AuxRegistry {
         display: DisplayCache,
         reselected: Option<(u32, Option<u8>)>,
     ) {
-        if let Some(entry) = self.entry_mut(AuxKind::Debug) {
-            entry.apply_drain(display, reselected);
-            entry.sync_view();
+        if let Some(port) = self
+            .entry_mut(AuxKind::Debug)
+            .and_then(AuxController::as_debug)
+        {
+            port.apply_drain(display, reselected);
         }
+        self.debug_sync();
         self.ppu_sync();
     }
 
@@ -238,6 +249,7 @@ impl AuxRegistry {
     ) -> bool {
         let rebuilt = self
             .entry_mut(AuxKind::Debug)
+            .and_then(AuxController::as_live)
             .is_some_and(|entry| entry.apply_live(generation, images, running));
         if rebuilt {
             self.debug_sync();
@@ -255,7 +267,7 @@ impl AuxRegistry {
     /// Share the debugger bridge for viewer creation.
     pub(crate) fn debug_bridge(&self) -> Option<Arc<DebugBridge>> {
         self.entry(AuxKind::Debug)
-            .and_then(BridgeSharePort::shared_bridge)
+            .and_then(AuxController::shared_bridge)
     }
 
     /// Rebuild the PPU viewer from the bridge.
@@ -267,14 +279,18 @@ impl AuxRegistry {
 
     /// Push fresh history content.
     pub(crate) fn history_sync(&mut self, lines: Arc<[HistoryLine]>, language: AppLanguage) {
-        if let Some(entry) = self.entry_mut(AuxKind::History) {
-            entry.sync_history(lines, language);
+        if let Some(port) = self
+            .entry_mut(AuxKind::History)
+            .and_then(AuxController::as_history)
+        {
+            port.sync_history(lines, language);
         }
     }
 
     /// Take the pending settings apply on close.
     pub(crate) fn settings_take_pending(&mut self) -> Option<SettingsSnapshot> {
         self.entry_mut(AuxKind::Settings)
+            .and_then(AuxController::as_settings)
             .and_then(SettingsClosePort::take_pending_settings)
     }
 
@@ -304,11 +320,47 @@ pub(crate) fn debug_spaces(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod test_double {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::sync::Arc;
 
-    struct StubAux {
-        kind: AuxKind,
+    use nerust_gui_shell::debug::DebugAction;
+
+    use crate::aux::bridge::{DebugBridge, DrainSnapshot};
+    use crate::aux::domain::{AuxNativeEvent, NativeWindowId};
+    use crate::aux::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender};
+
+    use super::{
+        AuxController, DebugDrainPort, HistorySyncPort, LiveImagesPort, SettingsClosePort,
+    };
+    /// Configurable stub aux: answers only the capability its kind owns.
+    pub(crate) struct StubAux {
+        pub kind: AuxKind,
+        pub close: bool,
+        pub clear_history: bool,
+        pub live_rebuild: bool,
+        pub applied_drain: Rc<Cell<bool>>,
+        pub bridge: Option<Arc<DebugBridge>>,
+        pub drain_open: bool,
+        pub debug_batch: Vec<DebugAction>,
+        pub pending_settings: Option<nerust_gui_runtime::settings::SettingsSnapshot>,
+    }
+
+    impl StubAux {
+        pub(crate) fn new(kind: AuxKind) -> Self {
+            Self {
+                kind,
+                close: false,
+                clear_history: false,
+                live_rebuild: false,
+                applied_drain: Rc::new(Cell::new(false)),
+                bridge: None,
+                drain_open: false,
+                debug_batch: Vec::new(),
+                pending_settings: None,
+            }
+        }
     }
 
     impl AuxIdentity for StubAux {
@@ -321,7 +373,7 @@ mod tests {
         }
 
         fn close_requested(&self) -> bool {
-            false
+            self.close
         }
 
         fn focus_window(&self) {}
@@ -342,20 +394,103 @@ mod tests {
         }
     }
 
-    impl DebugDrainPort for StubAux {}
-    impl LiveImagesPort for StubAux {}
-    impl SettingsClosePort for StubAux {}
-    impl HistorySyncPort for StubAux {}
-    impl BridgeSharePort for StubAux {}
-    impl AuxController for StubAux {}
+    impl DebugDrainPort for StubAux {
+        fn take_debug_requests(&mut self) -> Option<(bool, Vec<DebugAction>)> {
+            (self.kind == AuxKind::Debug)
+                .then(|| (self.drain_open, std::mem::take(&mut self.debug_batch)))
+        }
+
+        fn apply_drain(
+            &mut self,
+            _display: nerust_gui_viewmodel::debugger::DisplayCache,
+            _reselected: Option<(u32, Option<u8>)>,
+        ) {
+            self.applied_drain.set(true);
+        }
+    }
+
+    impl LiveImagesPort for StubAux {
+        fn apply_live(
+            &mut self,
+            _generation: u64,
+            _images: Vec<(String, u32, u32, Vec<u8>)>,
+            _running: bool,
+        ) -> bool {
+            self.live_rebuild
+        }
+    }
+
+    impl SettingsClosePort for StubAux {
+        fn take_pending_settings(
+            &mut self,
+        ) -> Option<nerust_gui_runtime::settings::SettingsSnapshot> {
+            (self.kind == AuxKind::Settings).then(|| self.pending_settings.take())?
+        }
+    }
+
+    impl HistorySyncPort for StubAux {
+        fn sync_history(
+            &mut self,
+            _lines: Arc<[nerust_gui_shell::session::osd::HistoryLine]>,
+            _language: nerust_settings_core::model::language::AppLanguage,
+        ) {
+        }
+    }
+
+    impl AuxController for StubAux {
+        fn as_debug(&mut self) -> Option<&mut dyn DebugDrainPort> {
+            (self.kind == AuxKind::Debug).then_some(self as &mut dyn DebugDrainPort)
+        }
+
+        fn debug_snapshot_of(&self, ppu_open: bool) -> Option<DrainSnapshot> {
+            (self.kind == AuxKind::Debug).then(|| DrainSnapshot {
+                space: None,
+                mem_addr: 0,
+                dis_addr: None,
+                watch: None,
+                freeze: None,
+                reg_target: None,
+                prev_rows: Arc::from([]),
+                ppu_open,
+            })
+        }
+
+        fn as_live(&mut self) -> Option<&mut dyn LiveImagesPort> {
+            (self.kind == AuxKind::Debug).then_some(self as &mut dyn LiveImagesPort)
+        }
+
+        fn as_settings(&mut self) -> Option<&mut dyn SettingsClosePort> {
+            (self.kind == AuxKind::Settings).then_some(self as &mut dyn SettingsClosePort)
+        }
+
+        fn as_history(&mut self) -> Option<&mut dyn HistorySyncPort> {
+            (self.kind == AuxKind::History).then_some(self as &mut dyn HistorySyncPort)
+        }
+
+        fn take_history_clear(&mut self) -> bool {
+            self.clear_history
+        }
+
+        fn shared_bridge(&self) -> Option<Arc<DebugBridge>> {
+            (self.kind == AuxKind::Debug).then(|| self.bridge.clone())?
+        }
+
+        fn debug_lock_audit(&self) -> Vec<&'static str> {
+            Vec::new()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_double::StubAux;
+    use super::*;
 
     #[test]
     fn registry_routes_by_map_without_scans() {
         let mut registry = AuxRegistry::new();
         assert!(!registry.contains(AuxKind::Debug));
-        let id = registry.insert(Box::new(StubAux {
-            kind: AuxKind::Debug,
-        }));
+        let id = registry.insert(Box::new(StubAux::new(AuxKind::Debug)));
         assert_eq!(registry.route_id(AuxKind::Debug), Some(id));
         assert!(registry.contains(AuxKind::Debug));
         // Event and render route by kind; close flag stays clear.
@@ -368,139 +503,15 @@ mod tests {
         // Removal drops the route; re-insert assigns a fresh id.
         assert!(registry.remove_kind(AuxKind::Debug).is_some());
         assert!(!registry.contains(AuxKind::Debug));
-        let second = registry.insert(Box::new(StubAux {
-            kind: AuxKind::Debug,
-        }));
+        let second = registry.insert(Box::new(StubAux::new(AuxKind::Debug)));
         assert_ne!(id, second);
-    }
-
-    #[test]
-    fn ports_default_to_closed_quiet() {
-        let mut stub = StubAux {
-            kind: AuxKind::History,
-        };
-        assert!(DebugDrainPort::take_debug_requests(&mut stub).is_none());
-        assert!(DebugDrainPort::drain_snapshot(&stub, false).is_none());
-        assert!(!LiveImagesPort::apply_live(&mut stub, 1, Vec::new(), false));
-        assert!(SettingsClosePort::take_pending_settings(&mut stub).is_none());
-        assert!(!HistorySyncPort::take_history_clear(&mut stub));
-        assert!(BridgeSharePort::shared_bridge(&stub).is_none());
-        assert!(BridgeSharePort::debug_lock_audit(&stub).is_empty());
-    }
-
-    use std::cell::Cell;
-    use std::rc::Rc;
-
-    /// Stub with overridable ports: records drain/apply calls.
-    struct CfgStub {
-        kind: AuxKind,
-        close: bool,
-        clear: bool,
-        live: bool,
-        applied: Rc<Cell<bool>>,
-        bridge: Option<Arc<DebugBridge>>,
-    }
-
-    impl AuxIdentity for CfgStub {
-        fn kind(&self) -> AuxKind {
-            self.kind
-        }
-
-        fn native_id(&self) -> NativeWindowId {
-            NativeWindowId::dummy()
-        }
-
-        fn close_requested(&self) -> bool {
-            self.close
-        }
-
-        fn focus_window(&self) {}
-        fn request_redraw(&self) {}
-    }
-
-    impl AuxRender for CfgStub {
-        fn handle_common(&mut self, _event: &AuxNativeEvent) {}
-        fn feed_event(&mut self, _event: AuxNativeEvent) -> Option<iced::Event> {
-            None
-        }
-        fn render(&mut self) {}
-    }
-
-    impl AuxEvents for CfgStub {
-        fn handle(&mut self, _mapped: iced::Event) -> bool {
-            false
-        }
-    }
-
-    impl DebugDrainPort for CfgStub {
-        fn take_debug_requests(&mut self) -> Option<(bool, Vec<DebugAction>)> {
-            Some((true, vec![DebugAction::Refresh]))
-        }
-
-        fn drain_snapshot(&self, ppu_open: bool) -> Option<DrainSnapshot> {
-            Some(DrainSnapshot {
-                space: None,
-                mem_addr: 0,
-                dis_addr: None,
-                watch: None,
-                freeze: None,
-                reg_target: None,
-                prev_rows: Arc::from([]),
-                ppu_open,
-            })
-        }
-
-        fn apply_drain(&mut self, _display: DisplayCache, _reselected: Option<(u32, Option<u8>)>) {
-            self.applied.set(true);
-        }
-    }
-
-    impl LiveImagesPort for CfgStub {
-        fn apply_live(
-            &mut self,
-            _generation: u64,
-            _images: Vec<(String, u32, u32, Vec<u8>)>,
-            _running: bool,
-        ) -> bool {
-            self.live
-        }
-    }
-
-    impl SettingsClosePort for CfgStub {}
-    impl HistorySyncPort for CfgStub {
-        fn take_history_clear(&mut self) -> bool {
-            self.clear
-        }
-    }
-    impl BridgeSharePort for CfgStub {
-        fn shared_bridge(&self) -> Option<Arc<DebugBridge>> {
-            self.bridge.clone()
-        }
-    }
-    impl AuxController for CfgStub {}
-
-    fn cfg_stub(kind: AuxKind) -> (CfgStub, Rc<Cell<bool>>) {
-        let applied = Rc::new(Cell::new(false));
-        (
-            CfgStub {
-                kind,
-                close: false,
-                clear: false,
-                live: false,
-                applied: Rc::clone(&applied),
-                bridge: None,
-            },
-            applied,
-        )
     }
 
     #[test]
     fn registry_tracks_native_ids_and_clears_all() {
         let mut registry = AuxRegistry::new();
         assert_eq!(registry.kind_of(NativeWindowId::dummy()), None);
-        registry.insert(Box::new(StubAux {
-            kind: AuxKind::History,
-        }));
+        registry.insert(Box::new(StubAux::new(AuxKind::History)));
         // Dummy ids route back to the seated kind.
         assert_eq!(
             registry.kind_of(NativeWindowId::dummy()),
@@ -523,8 +534,8 @@ mod tests {
     #[test]
     fn on_event_reports_close_and_clear_flags() {
         let mut registry = AuxRegistry::new();
-        let (mut stub, _) = cfg_stub(AuxKind::History);
-        stub.clear = true;
+        let mut stub = StubAux::new(AuxKind::History);
+        stub.clear_history = true;
         stub.close = true;
         registry.insert(Box::new(stub));
         let outcome = registry
@@ -535,9 +546,7 @@ mod tests {
         // Default controller hooks stay quiet.
         registry.render_kind(AuxKind::History);
         registry.focus_kind(AuxKind::History);
-        let mut bare = StubAux {
-            kind: AuxKind::History,
-        };
+        let mut bare = StubAux::new(AuxKind::History);
         bare.sync_view();
         AuxController::on_redraw(&mut bare);
     }
@@ -558,13 +567,16 @@ mod tests {
         assert!(registry.settings_take_pending().is_none());
         registry.history_sync(Arc::from([]), AppLanguage::English);
         // Open debugger: batch, snapshot, and bridge delegate.
-        let (mut stub, applied) = cfg_stub(AuxKind::Debug);
+        let mut stub = StubAux::new(AuxKind::Debug);
+        stub.drain_open = true;
+        stub.debug_batch = vec![DebugAction::Refresh];
         stub.bridge = Some(Arc::new(DebugBridge::new(
             DisplayCache::default(),
             vec![(SpaceId(0), "Memory".to_string(), 0)],
             0,
             AppLanguage::English,
         )));
+        let applied = std::rc::Rc::clone(&stub.applied_drain);
         registry.insert(Box::new(stub));
         let (open, batch) = registry.debug_take_requests().expect("debug routes");
         assert!(open);
@@ -587,9 +599,20 @@ mod tests {
     #[test]
     fn debug_apply_live_rebuilds_through_sync() {
         let mut registry = AuxRegistry::new();
-        let (mut stub, _) = cfg_stub(AuxKind::Debug);
-        stub.live = true;
+        let mut stub = StubAux::new(AuxKind::Debug);
+        stub.live_rebuild = true;
         registry.insert(Box::new(stub));
         assert!(registry.debug_apply_live(7, Vec::new(), true));
+    }
+
+    #[test]
+    fn wrong_kind_never_answers_debug_batch() {
+        // Kind gating (not just routing) keeps a seated settings
+        // window from answering debugger-only ports.
+        let mut registry = AuxRegistry::new();
+        registry.insert(Box::new(StubAux::new(AuxKind::Settings)));
+        assert!(registry.debug_take_requests().is_none());
+        assert!(registry.debug_snapshot(false).is_none());
+        assert!(registry.settings_take_pending().is_none());
     }
 }

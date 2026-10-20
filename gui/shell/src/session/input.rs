@@ -31,45 +31,19 @@ impl SessionHandle {
     /// Last served touch overlay, keyed by the caller's revision.
     /// Rebuilds only when the revision changes; otherwise serves the stored model.
     pub fn touch_overlay_model_cached(&mut self, revision: u64) -> &TouchOverlayModel {
-        let stale = self
-            .input
-            .touch_cache
-            .as_ref()
-            .is_none_or(|cached| cached.rev != revision);
-        if stale {
+        if self.input.touch_cache.rev != Some(revision) {
             let model = build_touch_overlay(revision, &self.input.current_assignments);
-            self.input.touch_cache = Some(TouchCache {
-                rev: revision,
+            self.input.touch_cache = super::TouchCache {
+                rev: Some(revision),
                 model,
-            });
+            };
         }
-        // `stale` guarantees presence; the fallback below is unreachable
-        // and exists only so no `expect` guards the hot path.
-        debug_assert!(
-            self.input.touch_cache.is_some(),
-            "touch cache populated above"
-        );
-        self.input
-            .touch_cache
-            .as_ref()
-            .map(|cached| &cached.model)
-            .unwrap_or_else(|| {
-                log::error!("touch cache miss after rebuild; serving empty model");
-                &self.input.fallback_model
-            })
+        &self.input.touch_cache.model
     }
 
     pub fn touch_overlay_model(&self, revision: u64) -> TouchOverlayModel {
         build_touch_overlay(revision, &self.input.current_assignments)
     }
-}
-
-/// Cached touch overlay: revision plus the model served for it.
-/// Stored on the input department; see [`SessionHandle::touch_overlay_model_cached`].
-#[derive(Debug)]
-pub(crate) struct TouchCache {
-    pub(crate) rev: u64,
-    pub(crate) model: TouchOverlayModel,
 }
 
 /// Pure overlay builder: assignments in, model out.
@@ -78,7 +52,7 @@ fn build_touch_overlay(
     revision: u64,
     assignments: &nerust_input_traits::InputAssignments,
 ) -> TouchOverlayModel {
-    let mut controls = Vec::new();
+    let mut controls = Vec::with_capacity(assignments.slots().len());
     for (attachment_id, profile) in assignments.slots() {
         let Some(profile) = profile else {
             continue;
@@ -381,14 +355,13 @@ mod tests {
 
     #[test]
     fn touch_overlay_uses_assigned_profile_controls() {
-        let mut session = crate::session::test_util::test_session();
+        // Pure builder under test: assignments in, model out. The session
+        // entry points delegate here, so no session mutation is needed.
         let slot = AttachmentId::new("test.topology.slot");
-        session.set_test_assignments(InputAssignments::new(vec![(
-            slot,
-            Some(Rc::new(MockTopologyProfile)),
-        )]));
-
-        let overlay = session.touch_overlay_model(42);
+        let overlay = super::build_touch_overlay(
+            42,
+            &InputAssignments::new(vec![(slot, Some(Rc::new(MockTopologyProfile)))]),
+        );
 
         assert_eq!(overlay.revision, 42);
         assert_eq!(overlay.controls.len(), 1);
@@ -396,6 +369,11 @@ mod tests {
         assert_eq!(overlay.controls[0].control_id.as_str(), "test.topology.a");
         assert_eq!(overlay.controls[0].role, TouchControlRole::FaceButton1);
         assert_eq!(overlay.controls[0].label, "A");
+
+        // Empty assignments serve the empty overlay without a session.
+        let empty = super::build_touch_overlay(7, &InputAssignments::new(vec![]));
+        assert_eq!(empty.revision, 7);
+        assert!(empty.controls.is_empty());
     }
 
     #[test]

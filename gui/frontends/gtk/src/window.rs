@@ -33,23 +33,80 @@ pub(crate) struct WindowCore {
     state: Rc<RefCell<State>>,
     open_dialog: Option<gtk::FileChooserNative>,
     debugger_window: Option<crate::debugger::DebuggerWindow>,
-    close_action: gio::SimpleAction,
-    pause_action: gio::SimpleAction,
-    resume_action: gio::SimpleAction,
-    reset_action: gio::SimpleAction,
-    debugger_action: gio::SimpleAction,
-    history_action: gio::SimpleAction,
-    state_create_action: gio::SimpleAction,
-    state_save_active_action: gio::SimpleAction,
-    state_load_active_action: gio::SimpleAction,
-    state_select_slot_action: gio::SimpleAction,
-    state_save_slot_action: gio::SimpleAction,
-    state_load_slot_action: gio::SimpleAction,
-    state_delete_slot_action: gio::SimpleAction,
+    history_dialog: Option<gtk::Dialog>,
+    actions: WindowActions,
     select_active_slot_menu: gio::Menu,
     save_slot_menu: gio::Menu,
     load_slot_menu: gio::Menu,
     delete_slot_menu: gio::Menu,
+}
+
+/// Window action cluster: every menu/toolbar command in one place.
+/// `WindowCore` owns one; wiring and gating go through these narrow ports.
+pub(crate) struct WindowActions {
+    pub close: gio::SimpleAction,
+    pub pause: gio::SimpleAction,
+    pub resume: gio::SimpleAction,
+    pub reset: gio::SimpleAction,
+    pub debugger: gio::SimpleAction,
+    pub history: gio::SimpleAction,
+    pub state_create: gio::SimpleAction,
+    pub state_save_active: gio::SimpleAction,
+    pub state_load_active: gio::SimpleAction,
+    pub state_select_slot: gio::SimpleAction,
+    pub state_save_slot: gio::SimpleAction,
+    pub state_load_slot: gio::SimpleAction,
+    pub state_delete_slot: gio::SimpleAction,
+}
+
+impl WindowActions {
+    /// Fresh disabled-by-default actions; `update` gates them per tick.
+    pub fn new() -> Self {
+        Self {
+            close: gio::SimpleAction::new("close", None),
+            pause: gio::SimpleAction::new("pause", None),
+            resume: gio::SimpleAction::new("resume", None),
+            reset: gio::SimpleAction::new("reset", None),
+            debugger: gio::SimpleAction::new("debugger", None),
+            history: gio::SimpleAction::new("history", None),
+            state_create: gio::SimpleAction::new("state-create", None),
+            state_save_active: gio::SimpleAction::new("state-save-active", None),
+            state_load_active: gio::SimpleAction::new("state-load-active", None),
+            state_select_slot: gio::SimpleAction::new(
+                "state-select-slot",
+                Some(&u64::static_variant_type()),
+            ),
+            state_save_slot: gio::SimpleAction::new(
+                "state-save-slot",
+                Some(&u64::static_variant_type()),
+            ),
+            state_load_slot: gio::SimpleAction::new(
+                "state-load-slot",
+                Some(&u64::static_variant_type()),
+            ),
+            state_delete_slot: gio::SimpleAction::new(
+                "state-delete-slot",
+                Some(&u64::static_variant_type()),
+            ),
+        }
+    }
+
+    /// Seat every action on the window: one call instead of twelve.
+    pub fn add_to(&self, window: &gtk::ApplicationWindow) {
+        window.add_action(&self.close);
+        window.add_action(&self.pause);
+        window.add_action(&self.resume);
+        window.add_action(&self.reset);
+        window.add_action(&self.debugger);
+        window.add_action(&self.history);
+        window.add_action(&self.state_create);
+        window.add_action(&self.state_save_active);
+        window.add_action(&self.state_load_active);
+        window.add_action(&self.state_select_slot);
+        window.add_action(&self.state_save_slot);
+        window.add_action(&self.state_load_slot);
+        window.add_action(&self.state_delete_slot);
+    }
 }
 
 pub(crate) type Window = Rc<RefCell<WindowCore>>;
@@ -107,44 +164,31 @@ impl WindowExtend for Window {
         factory: Rc<dyn GpuFactory>,
         state_menus: StateMenus,
     ) -> Window {
-        let close_action = gio::SimpleAction::new("close", None);
-        let pause_action = gio::SimpleAction::new("pause", None);
-        let resume_action = gio::SimpleAction::new("resume", None);
-        let reset_action = gio::SimpleAction::new("reset", None);
-        let debugger_action = gio::SimpleAction::new("debugger", None);
-        let history_action = gio::SimpleAction::new("history", None);
-        let state_create_action = gio::SimpleAction::new("state-create", None);
-        let state_save_active_action = gio::SimpleAction::new("state-save-active", None);
-        let state_load_active_action = gio::SimpleAction::new("state-load-active", None);
-        let state_select_slot_action =
-            gio::SimpleAction::new("state-select-slot", Some(&u64::static_variant_type()));
-        let state_save_slot_action =
-            gio::SimpleAction::new("state-save-slot", Some(&u64::static_variant_type()));
-        let state_load_slot_action =
-            gio::SimpleAction::new("state-load-slot", Some(&u64::static_variant_type()));
-        let state_delete_slot_action =
-            gio::SimpleAction::new("state-delete-slot", Some(&u64::static_variant_type()));
+        let actions = WindowActions::new();
+        let close_action = actions.close.clone();
+        let pause_action = actions.pause.clone();
+        let resume_action = actions.resume.clone();
+        let reset_action = actions.reset.clone();
+        let debugger_action = actions.debugger.clone();
+        let history_action = actions.history.clone();
+        let state_create_action = actions.state_create.clone();
+        let state_save_active_action = actions.state_save_active.clone();
+        let state_load_active_action = actions.state_load_active.clone();
+        let state_select_slot_action = actions.state_select_slot.clone();
+        let state_save_slot_action = actions.state_save_slot.clone();
+        let state_load_slot_action = actions.state_load_slot.clone();
+        let state_delete_slot_action = actions.state_delete_slot.clone();
         let settings_action = gio::SimpleAction::new("settings", None);
         let _ = Surface::bind(&window, state.clone(), factory);
+        actions.add_to(&window);
         let result = Rc::new(RefCell::new(WindowCore {
             application,
             window: window.clone(),
             state,
             open_dialog: None,
             debugger_window: None,
-            close_action: close_action.clone(),
-            pause_action: pause_action.clone(),
-            resume_action: resume_action.clone(),
-            reset_action: reset_action.clone(),
-            debugger_action: debugger_action.clone(),
-            history_action: history_action.clone(),
-            state_create_action: state_create_action.clone(),
-            state_save_active_action: state_save_active_action.clone(),
-            state_load_active_action: state_load_active_action.clone(),
-            state_select_slot_action: state_select_slot_action.clone(),
-            state_save_slot_action: state_save_slot_action.clone(),
-            state_load_slot_action: state_load_slot_action.clone(),
-            state_delete_slot_action: state_delete_slot_action.clone(),
+            history_dialog: None,
+            actions,
             select_active_slot_menu: state_menus.select_active_slot_menu,
             save_slot_menu: state_menus.save_slot_menu,
             load_slot_menu: state_menus.load_slot_menu,
@@ -205,7 +249,6 @@ impl WindowExtend for Window {
                 result.close();
             });
         }
-        window.add_action(&close_action);
 
         {
             let result = result.clone();
@@ -214,7 +257,6 @@ impl WindowExtend for Window {
                 result.update_actions();
             });
         }
-        window.add_action(&pause_action);
 
         {
             let result = result.clone();
@@ -223,7 +265,6 @@ impl WindowExtend for Window {
                 result.update_actions();
             });
         }
-        window.add_action(&resume_action);
 
         {
             let result = result.clone();
@@ -232,7 +273,6 @@ impl WindowExtend for Window {
                 result.update_actions();
             });
         }
-        window.add_action(&reset_action);
 
         {
             let result = result.clone();
@@ -240,7 +280,6 @@ impl WindowExtend for Window {
                 result.open_debugger();
             });
         }
-        window.add_action(&debugger_action);
 
         {
             let result = result.clone();
@@ -248,7 +287,6 @@ impl WindowExtend for Window {
                 result.open_history();
             });
         }
-        window.add_action(&history_action);
 
         {
             let result = result.clone();
@@ -257,7 +295,6 @@ impl WindowExtend for Window {
                 result.update_actions();
             });
         }
-        window.add_action(&state_create_action);
 
         {
             let result = result.clone();
@@ -266,7 +303,6 @@ impl WindowExtend for Window {
                 result.update_actions();
             });
         }
-        window.add_action(&state_save_active_action);
 
         {
             let result = result.clone();
@@ -277,7 +313,6 @@ impl WindowExtend for Window {
                 }
             });
         }
-        window.add_action(&state_load_active_action);
 
         {
             let result = result.clone();
@@ -288,7 +323,6 @@ impl WindowExtend for Window {
                 }
             });
         }
-        window.add_action(&state_select_slot_action);
 
         {
             let result = result.clone();
@@ -299,7 +333,6 @@ impl WindowExtend for Window {
                 }
             });
         }
-        window.add_action(&state_save_slot_action);
 
         {
             let result = result.clone();
@@ -310,7 +343,6 @@ impl WindowExtend for Window {
                 }
             });
         }
-        window.add_action(&state_load_slot_action);
 
         {
             let result = result.clone();
@@ -321,7 +353,6 @@ impl WindowExtend for Window {
                 }
             });
         }
-        window.add_action(&state_delete_slot_action);
 
         {
             let result = result.clone();
@@ -360,7 +391,21 @@ impl WindowExtend for Window {
     }
 
     fn open_history(&self) {
-        crate::osd::GtkOsd::show_history(&self.window(), &self.state());
+        // Parity with the debugger: an existing dialog presents
+        // instead of duplicating; destroy clears the slot.
+        if let Some(existing) = self.borrow().history_dialog.clone() {
+            existing.present();
+            return;
+        }
+        let dialog = crate::osd::GtkOsd::build_history(&self.window(), &self.state());
+        {
+            let result = self.clone();
+            dialog.connect_destroy(move |_| {
+                result.borrow_mut().history_dialog = None;
+            });
+        }
+        self.borrow_mut().history_dialog = Some(dialog.clone());
+        dialog.present();
     }
 
     fn open_debugger(&self) {
@@ -468,32 +513,38 @@ impl WindowExtend for Window {
         let state = self.state();
         let state = state.borrow();
         let tick = state.session.tick_metrics();
-        self.borrow().close_action.set_enabled(tick.loaded);
-        self.borrow().pause_action.set_enabled(tick.can_pause());
-        self.borrow().resume_action.set_enabled(tick.can_resume());
-        self.borrow().reset_action.set_enabled(tick.loaded);
+        self.borrow().actions.close.set_enabled(tick.loaded);
+        self.borrow().actions.pause.set_enabled(tick.can_pause());
+        self.borrow().actions.resume.set_enabled(tick.can_resume());
+        self.borrow().actions.reset.set_enabled(tick.loaded);
         // Coreless open is a designed state: gating on `loaded` would disagree
         // with the shortcut, so the action stays enabled.
-        self.borrow().debugger_action.set_enabled(true);
-        self.borrow().history_action.set_enabled(true);
-        self.borrow().state_create_action.set_enabled(tick.loaded);
+        self.borrow().actions.debugger.set_enabled(true);
+        self.borrow().actions.history.set_enabled(true);
+        self.borrow().actions.state_create.set_enabled(tick.loaded);
         self.borrow()
-            .state_save_active_action
+            .actions
+            .state_save_active
             .set_enabled(tick.loaded);
         self.borrow()
-            .state_load_active_action
+            .actions
+            .state_load_active
             .set_enabled(state.active_slot_id().is_some());
         self.borrow()
-            .state_select_slot_action
+            .actions
+            .state_select_slot
             .set_enabled(tick.loaded && !state.slots().is_empty());
         self.borrow()
-            .state_save_slot_action
+            .actions
+            .state_save_slot
             .set_enabled(tick.loaded && !state.slots().is_empty());
         self.borrow()
-            .state_load_slot_action
+            .actions
+            .state_load_slot
             .set_enabled(tick.loaded && !state.slots().is_empty());
         self.borrow()
-            .state_delete_slot_action
+            .actions
+            .state_delete_slot
             .set_enabled(tick.loaded && !state.slots().is_empty());
 
         let language = state.settings_snapshot().shared.general.language;
@@ -586,7 +637,7 @@ impl WindowExtend for Window {
         use nerust_gui_shell::session::access::dispatch_session_action;
         match shortcut {
             KeyboardShortcut::Session(action) => {
-                dispatch_session_action(&mut *self.state().borrow_mut(), action)
+                let _ = dispatch_session_action(&mut *self.state().borrow_mut(), action);
             }
             KeyboardShortcut::ToggleFullscreen => {
                 toggle_window_fullscreen(self);
@@ -683,12 +734,38 @@ fn show_rom_load_error(parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>
 
 #[cfg(test)]
 mod tests {
-    use super::{KeyEventState, key_event_pressed, rebuild_slot_menu};
+    use gio::prelude::ActionExt as _;
+
+    use super::{KeyEventState, WindowActions, key_event_pressed, rebuild_slot_menu};
 
     #[test]
     fn key_press_state_maps_to_pressed_flag() {
         assert!(key_event_pressed(KeyEventState::Press));
         assert!(!key_event_pressed(KeyEventState::Release));
+    }
+
+    #[test]
+    fn action_cluster_names_every_command() {
+        // One home for all command names: renaming a command updates
+        // construction and wiring together, never just one side.
+        let actions = WindowActions::new();
+        for (action, name) in [
+            (&actions.close, "close"),
+            (&actions.pause, "pause"),
+            (&actions.resume, "resume"),
+            (&actions.reset, "reset"),
+            (&actions.debugger, "debugger"),
+            (&actions.history, "history"),
+            (&actions.state_create, "state-create"),
+            (&actions.state_save_active, "state-save-active"),
+            (&actions.state_load_active, "state-load-active"),
+            (&actions.state_select_slot, "state-select-slot"),
+            (&actions.state_save_slot, "state-save-slot"),
+            (&actions.state_load_slot, "state-load-slot"),
+            (&actions.state_delete_slot, "state-delete-slot"),
+        ] {
+            assert_eq!(action.name().as_str(), name);
+        }
     }
 
     fn slot_menu_count(menu: &gio::Menu) -> i32 {

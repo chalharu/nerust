@@ -24,6 +24,8 @@ pub(crate) mod test_menu;
 pub(crate) mod test_opener;
 #[cfg(test)]
 pub(crate) mod test_session;
+#[cfg(test)]
+pub(crate) mod testkit;
 
 pub(crate) mod aux;
 pub(crate) mod runtime;
@@ -32,7 +34,6 @@ pub(crate) mod util;
 use nerust_crash_guard::{CRASH_EXIT_CODE, GuardOutcome};
 use nerust_gui_shell::context::FrontendContext;
 use nerust_run_options::RunOptions;
-use nerust_settings_core::model::language::AppLanguage;
 
 pub fn run(ctx: FrontendContext, options: RunOptions) {
     // A crash must never look like a clean exit; the dialog runs first.
@@ -44,11 +45,13 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
     ) {
         GuardOutcome::Completed(()) => {}
         GuardOutcome::Crashed(report) => {
-            // External portal dialog; stderr stays the log home. Inline literals only.
-            let language = AppLanguage::SystemDefault;
+            // Always English: crash copy must not depend on the settings
+            // stack that may have just died. Stderr stays the log home.
+            let dialog = crash_dialog_text(report.message());
+            eprintln!("{dialog}");
             rfd::MessageDialog::new()
                 .set_title(crash_title())
-                .set_description(crash_dialog_text(language, report.message()))
+                .set_description(&dialog)
                 .set_level(rfd::MessageLevel::Error)
                 .set_buttons(rfd::MessageButtons::Ok)
                 .show();
@@ -62,20 +65,9 @@ fn crash_title() -> &'static str {
     "nerust"
 }
 
-fn crash_dialog_text(language: AppLanguage, message: &str) -> String {
-    // English default; Japanese only when explicitly selected.
-    let (body, details) = if matches!(language, AppLanguage::Japanese) {
-        (
-            "アプリケーションがクラッシュしました",
-            "詳細はログ（stderr）に記録されました。",
-        )
-    } else {
-        (
-            "The application crashed",
-            "Details were written to the log (stderr).",
-        )
-    };
-    format!("{body}: {message}\n\n{details}")
+/// Always English: crash copy must not depend on the settings stack.
+fn crash_dialog_text(message: &str) -> String {
+    format!("The application crashed: {message}\n\nDetails were written to the log (stderr).")
 }
 
 fn run_inner(ctx: FrontendContext, options: RunOptions) {
@@ -104,10 +96,11 @@ fn run_inner(ctx: FrontendContext, options: RunOptions) {
 mod tests {
     use super::*;
     use nerust_settings_core::i18n::{UiText, text};
+    use nerust_settings_core::model::language::AppLanguage;
 
     #[test]
     fn crash_dialog_points_at_stderr_in_english() {
-        let dialog = crash_dialog_text(AppLanguage::English, "boom");
+        let dialog = crash_dialog_text("boom");
         assert!(dialog.contains("boom"), "{dialog}");
         assert!(dialog.contains("The application crashed"), "{dialog}");
         assert!(dialog.contains("stderr"), "{dialog}");
@@ -119,25 +112,14 @@ mod tests {
     }
 
     #[test]
-    fn crash_dialog_points_at_stderr_in_japanese() {
-        let dialog = crash_dialog_text(AppLanguage::Japanese, "boom");
-        assert!(dialog.contains("boom"), "{dialog}");
-        assert!(
-            dialog.contains("アプリケーションがクラッシュしました"),
-            "{dialog}"
-        );
+    fn crash_dialog_is_english_without_language_input() {
+        // No language param: the settings stack may have just died.
+        let dialog = crash_dialog_text("boom");
+        assert!(!dialog.contains("クラッシュ"), "{dialog}");
         assert!(dialog.contains("stderr"), "{dialog}");
         assert_eq!(
             text(AppLanguage::Japanese, UiText::CrashTitle),
             crash_title()
         );
-    }
-
-    #[test]
-    fn crash_dialog_defaults_to_english() {
-        let dialog = crash_dialog_text(AppLanguage::SystemDefault, "boom");
-        assert!(dialog.contains("boom"), "{dialog}");
-        assert!(dialog.contains("The application crashed"), "{dialog}");
-        assert!(dialog.contains("stderr"), "{dialog}");
     }
 }

@@ -14,6 +14,19 @@ use crate::session::{
 };
 use nerust_settings_core::factory::settings_view;
 
+/// Summary of a settings-apply operation: only flags frontends act on.
+/// Home for the `SessionControl` result; `access` re-exports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SettingsResult {
+    /// The emulation core's renderer (GPU surface) needs to be recreated.
+    pub renderer_needs_rebuild: bool,
+    /// The fullscreen-default setting changed; frontend should sync the
+    /// window's fullscreen state.
+    pub fullscreen_default_changed: bool,
+    /// The window-scaling mode changed; frontend should resize the window.
+    pub scaling_changed: bool,
+}
+
 /// What [`ApplyRevert::revert`] undid; failures are reported here, never swallowed.
 /// A failed rollback leaves the new runtime live for the caller to surface.
 #[derive(Debug, Default)]
@@ -407,7 +420,7 @@ impl SessionHandle {
                     use crate::emu_core::LivePersistPort;
                     let core = self.emu.core().ok().ok_or(SessionError::NoCore)?;
                     LivePersistPort::save_state_raw(core)
-                        .map_err(nerust_persistence::error::PersistenceError::from)
+                        .map_err(|error| error.slot_failure())
                         .map_err(SessionError::from)
                 })
                 .transpose()?,
@@ -436,7 +449,7 @@ impl SessionHandle {
             }
         }
 
-        self.emu.install(rebuilt_core, rebuilt.gui_input);
+        self.emu.install(Box::new(rebuilt_core), rebuilt.gui_input);
         self.input.field_map = rebuilt.field_map;
         if loaded.present {
             let rom_path = self

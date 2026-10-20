@@ -623,9 +623,15 @@ impl DebuggerWindowCore {
     /// Patch finished live images into the display. Images apply when newer
     /// regardless of pause; running chrome only applies while still running.
     fn apply_live_images(win: &DebuggerWindow, live: nerust_gui_shell::session::LiveImages) {
-        let Some((generation, images)) = live else {
+        let Some(batch) = live else {
             return;
         };
+        let images = batch
+            .images
+            .into_iter()
+            .map(|image| (image.label, image.width, image.height, image.rgba))
+            .collect();
+        let generation = batch.generation;
         let (language, running) = {
             let this = win.borrow();
             let running = {

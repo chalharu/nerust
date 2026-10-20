@@ -12,12 +12,24 @@ pub(crate) enum ResizeKernel {
     Bilinear,
 }
 
+/// Last build inputs; identical rebuilds skip work and keep `rev`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BuildKey {
+    dst_w: usize,
+    dst_h: usize,
+    src_w: usize,
+    src_h: usize,
+    aspect_bits: u32,
+    kernel_bilinear: bool,
+}
+
 #[derive(Debug)]
 pub(crate) struct LutEntry {
     pub(crate) x_lut: Vec<Option<(u16, u16)>>,
     pub(crate) y_lut: Vec<Option<(u16, u16)>>,
     pub(crate) kernel: ResizeKernel,
     pub(crate) rev: u64,
+    pub(crate) last_build: Option<BuildKey>,
 }
 
 /// One bilinear tap: source index plus its 8.8 fixed-point weight.
@@ -31,6 +43,7 @@ impl LutEntry {
             // kernel: ResizeKernel::NearestNeighbor,
             kernel: ResizeKernel::Bilinear,
             rev: 0,
+            last_build: None,
         }
     }
 
@@ -165,22 +178,31 @@ impl LutEntry {
         physical_aspect_ratio: f32,
         destination_size: SurfaceSize,
     ) {
+        let key = BuildKey {
+            dst_w: destination_size.width as usize,
+            dst_h: destination_size.height as usize,
+            src_w: source_size.width as usize,
+            src_h: source_size.height as usize,
+            aspect_bits: physical_aspect_ratio.to_bits(),
+            kernel_bilinear: matches!(self.kernel, ResizeKernel::Bilinear),
+        };
+        // Dims compare first: an identical rebuild keeps `rev`, so the
+        // tap-coverage cache stays hot instead of rescanning every resize.
+        if self.last_build == Some(key) && !self.x_lut.is_empty() {
+            return;
+        }
         self.bump_rev();
-        let dst_w = destination_size.width as usize;
-        let dst_h = destination_size.height as usize;
-        let src_w = source_size.width as usize;
-        let src_h = source_size.height as usize;
-
         let scale = Self::inv_scale(source_size, physical_aspect_ratio, destination_size);
 
         match self.kernel {
             ResizeKernel::NearestNeighbor => {
-                self.resize_lut_nearest_neighbor(dst_w, dst_h, src_w, src_h, scale);
+                self.resize_lut_nearest_neighbor(key.dst_w, key.dst_h, key.src_w, key.src_h, scale);
             }
             ResizeKernel::Bilinear => {
-                self.resize_lut_bilinear(dst_w, dst_h, src_w, src_h, scale);
+                self.resize_lut_bilinear(key.dst_w, key.dst_h, key.src_w, key.src_h, scale);
             }
         }
+        self.last_build = Some(key);
     }
 
     pub(crate) fn lut_pixel_size(&self) -> usize {

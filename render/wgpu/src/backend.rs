@@ -1,7 +1,7 @@
 use nerust_render_traits::{
     FrameBuffer, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
     renderer::{
-        AttachError, FrameSink, GpuFactory, GpuRenderer, OsdLayer, OsdSink, Present, ProfileSwitch,
+        FrameSink, GpuFactory, GpuRenderer, OpaqueError, OsdLayer, OsdSink, Present, ProfileSwitch,
         RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle,
     },
 };
@@ -64,12 +64,10 @@ impl WgpuRenderer {
             dl,
         ))
         .map_err(|e| {
-            RendererError::new(
+            RendererError::attach(
+                "wgpu",
                 "pipeline",
-                Box::new(AttachError::Pipeline {
-                    backend: "wgpu",
-                    detail: e.to_string(),
-                }),
+                Box::new(OpaqueError(format!("pipeline: {e}"))),
             )
         })
     }
@@ -97,15 +95,8 @@ impl SurfaceLifecycle for WgpuRenderer {
         size: SurfaceSize,
     ) -> Result<(), RendererError> {
         self.size = size;
-        let wgpu_surface = surface::create_wgpu_surface(&self.instance, wh, dh).map_err(|e| {
-            RendererError::new(
-                "surface",
-                Box::new(AttachError::Surface {
-                    backend: "wgpu",
-                    detail: e.to_string(),
-                }),
-            )
-        })?;
+        let wgpu_surface = surface::create_wgpu_surface(&self.instance, wh, dh)
+            .map_err(|e| RendererError::attach("wgpu", "surface", Box::new(OpaqueError(e))))?;
         let pipeline = Self::build_pipeline(
             &self.instance,
             &wgpu_surface,
@@ -258,12 +249,9 @@ impl WgpuFactory {
     }
 }
 
-impl GpuFactory for WgpuFactory {
-    fn create_renderer(
-        &self,
-        config: &RendererConfig,
-        _display_handle: RawDisplayHandle,
-    ) -> Result<Box<dyn GpuRenderer>, RendererError> {
+impl WgpuFactory {
+    /// Shared construction for both the legacy and the narrow factories.
+    fn build(config: &RendererConfig) -> Result<WgpuRenderer, RendererError> {
         let instance = surface::default_instance();
 
         // Create a headless device + queue.  The pipeline and surface are
@@ -274,15 +262,7 @@ impl GpuFactory for WgpuFactory {
             force_fallback_adapter: false,
             apply_limit_buckets: false,
         }))
-        .map_err(|e| {
-            RendererError::new(
-                "request adapter",
-                Box::new(AttachError::Adapter {
-                    backend: "wgpu",
-                    detail: e.to_string(),
-                }),
-            )
-        })?;
+        .map_err(|e| RendererError::attach("wgpu", "adapter", Box::new(e)))?;
         let limits = Self::device_limit_profile().required_limits();
         let (_device, _queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -291,17 +271,9 @@ impl GpuFactory for WgpuFactory {
                 required_limits: limits,
                 ..Default::default()
             }))
-            .map_err(|e| {
-                RendererError::new(
-                    "device",
-                    Box::new(AttachError::Device {
-                        backend: "wgpu",
-                        detail: e.to_string(),
-                    }),
-                )
-            })?;
+            .map_err(|e| RendererError::attach("wgpu", "device", Box::new(e)))?;
 
-        Ok(Box::new(WgpuRenderer {
+        Ok(WgpuRenderer {
             instance,
             render_profile: config.render_profile.clone(),
             pipeline: None,
@@ -310,7 +282,28 @@ impl GpuFactory for WgpuFactory {
             last_render_error: None,
             osd: None,
             osd_dirty: false,
-        }))
+        })
+    }
+}
+
+impl GpuFactory for WgpuFactory {
+    fn create_renderer(
+        &self,
+        config: &RendererConfig,
+        _display_handle: RawDisplayHandle,
+    ) -> Result<Box<dyn GpuRenderer>, RendererError> {
+        Ok(Box::new(Self::build(config)?))
+    }
+}
+
+impl nerust_render_traits::renderer::PipelineFactory for WgpuFactory {
+    /// Per-use-site composition; same renderer, narrow object.
+    fn create_pipeline(
+        &self,
+        config: &RendererConfig,
+        _display_handle: RawDisplayHandle,
+    ) -> Result<Box<dyn nerust_render_traits::renderer::RenderPipeline>, RendererError> {
+        Ok(Box::new(Self::build(config)?))
     }
 }
 
@@ -319,43 +312,36 @@ mod tests {
     #[test]
     fn lifecycle_split_seams_hold() {
         use nerust_render_traits::renderer::{
-            FrameSink, GpuRenderer, Present, ProfileSwitch, SurfaceLifecycle,
+            FrameSink, GpuRenderer, PipelineFactory, Present, ProfileSwitch, RenderPipeline,
+            SurfaceLifecycle,
         };
         fn assert_seams<T: SurfaceLifecycle + FrameSink + ProfileSwitch + Present + GpuRenderer>() {
         }
         assert_seams::<super::WgpuRenderer>();
+        // Per-use-site composition: the same renderer behind narrow traits,
+        // minted by the narrow factory entry point.
+        fn assert_pipeline<T: RenderPipeline>() {}
+        assert_pipeline::<super::WgpuRenderer>();
+        fn assert_factory<T: PipelineFactory>() {}
+        assert_factory::<super::WgpuFactory>();
     }
 
     #[test]
     fn attach_errors_name_backend_and_stage() {
-        use nerust_render_traits::renderer::AttachError;
-        let err = AttachError::Adapter {
-            backend: "wgpu",
-            detail: "no adapter".to_string(),
-        };
-        assert!(err.to_string().contains("wgpu"));
-        assert!(err.to_string().contains("adapter"));
-        let err = AttachError::Pipeline {
-            backend: "wgpu",
-            detail: "compile failed".to_string(),
-        };
-        assert!(err.to_string().contains("pipeline"));
-        assert!(err.to_string().contains("compile failed"));
-        let err = AttachError::Surface {
-            backend: "wgpu",
-            detail: "bad surface".to_string(),
-        };
-        assert!(err.to_string().contains("surface"));
-        let err = AttachError::Device {
-            backend: "wgpu",
-            detail: "lost".to_string(),
-        };
-        assert!(err.to_string().contains("device"));
-        let err = AttachError::Context {
-            backend: "wgpu",
-            detail: "gone".to_string(),
-        };
-        assert!(err.to_string().contains("context"));
+        use nerust_render_traits::renderer::{OpaqueError, RendererError, RendererErrorKind};
+        for (stage, backend, detail) in [
+            ("adapter", "wgpu", "no adapter"),
+            ("pipeline", "wgpu", "compile failed"),
+            ("surface", "wgpu", "bad surface"),
+            ("device", "wgpu", "lost"),
+            ("context", "wgpu", "gone"),
+        ] {
+            let err =
+                RendererError::attach(backend, stage, Box::new(OpaqueError(detail.to_string())));
+            assert_eq!(err.kind(), RendererErrorKind::Attach { backend, stage });
+            // Display carries context plus detail; backend lives on the kind.
+            assert!(err.to_string().contains(detail), "{err}");
+        }
     }
 
     fn detached_renderer() -> super::WgpuRenderer {
@@ -432,39 +418,41 @@ mod tests {
 
     #[test]
     fn error_dedup_arms_cover_all_attach_stages() {
-        use nerust_render_traits::renderer::{AttachError, RendererError};
-        for (stage, err) in [
+        use nerust_render_traits::renderer::{OpaqueError, RendererError, RendererErrorKind};
+        for (stage, kind) in [
             (
-                "request adapter",
-                AttachError::Adapter {
+                "adapter",
+                RendererErrorKind::Attach {
                     backend: "wgpu",
-                    detail: "x".to_string(),
+                    stage: "adapter",
                 },
             ),
             (
                 "device",
-                AttachError::Device {
+                RendererErrorKind::Attach {
                     backend: "wgpu",
-                    detail: "x".to_string(),
+                    stage: "device",
                 },
             ),
             (
                 "surface",
-                AttachError::Surface {
+                RendererErrorKind::Attach {
                     backend: "wgpu",
-                    detail: "x".to_string(),
+                    stage: "surface",
                 },
             ),
             (
                 "pipeline",
-                AttachError::Pipeline {
+                RendererErrorKind::Attach {
                     backend: "wgpu",
-                    detail: "x".to_string(),
+                    stage: "pipeline",
                 },
             ),
         ] {
-            let wrapped = RendererError::new(stage, Box::new(err));
-            assert!(wrapped.to_string().contains(stage), "{wrapped}");
+            let wrapped =
+                RendererError::attach("wgpu", stage, Box::new(OpaqueError("x".to_string())));
+            assert_eq!(wrapped.kind(), kind);
+            assert!(wrapped.to_string().contains("attach"), "{wrapped}");
         }
         assert!(
             RendererError::not_attached("update")

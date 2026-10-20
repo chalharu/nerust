@@ -3477,6 +3477,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_frontend_kernel"
+version = "0.1.0-dev"
+
+[[package]]
 name = "nerust_gba_core"
 version = "0.1.0-dev"
 dependencies = [
@@ -3617,6 +3621,7 @@ dependencies = [
  "log",
  "nerust_core_traits",
  "nerust_crash_guard",
+ "nerust_frontend_kernel",
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
@@ -3974,6 +3979,7 @@ dependencies = [
  "muda",
  "nerust_core_traits",
  "nerust_crash_guard",
+ "nerust_frontend_kernel",
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",

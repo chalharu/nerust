@@ -7,7 +7,9 @@ use nerust_gui_shell::session::access::PauseControl;
 use nerust_render_traits::renderer::GpuRenderer;
 use tao::event::WindowEvent;
 
-use super::{FrameCtx, HostState, WakeNeed};
+use super::HostState;
+use super::frame::{FrameCtx, FrameSnapshot};
+use super::window::WakeNeed;
 use crate::aux::focus::AuxKind;
 use crate::ports::WindowOpener;
 use nerust_render_traits::ReservedStrip;
@@ -22,7 +24,7 @@ pub(crate) struct ModalFlight {
 
 /// Shell-side OSD sync gate, calling only public presenter/manager APIs.
 /// The live-layer memo is deliberately not an input: a live but steady layer must Skip.
-fn osd_should_sync(
+fn osd_layer_due(
     presenter: &nerust_gui_shell::session::osd::OsdPresenter,
     manager: &nerust_gui_shell::session::osd::OsdManager,
     status_enabled: bool,
@@ -34,54 +36,24 @@ fn osd_should_sync(
         || geometry_changed
 }
 
-/// One settings snapshot per entry point, threaded by reference.
-#[derive(Debug, Clone)]
-pub(crate) struct FrameSnapshot(std::sync::Arc<FrameSnapshotData>);
-
-#[derive(Debug)]
-struct FrameSnapshotData {
-    notifications: nerust_settings_core::model::local::NotificationSettings,
-    language: nerust_settings_core::model::language::AppLanguage,
-}
-
-impl FrameSnapshot {
-    pub(super) fn capture(session: &nerust_gui_shell::session::SessionHandle) -> Self {
-        let snapshot = session.settings_snapshot();
-        Self(std::sync::Arc::new(FrameSnapshotData {
-            notifications: snapshot.local.notifications.clone(),
-            language: snapshot.shared.general.language,
-        }))
-    }
-
-    pub(crate) fn notifications(
-        &self,
-    ) -> &nerust_settings_core::model::local::NotificationSettings {
-        &self.0.notifications
-    }
-
-    pub(crate) fn language(&self) -> nerust_settings_core::model::language::AppLanguage {
-        self.0.language
-    }
-}
-
 impl HostState {
     pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
         let ctx = self.frame_ctx();
         if self.aux.contains(AuxKind::History) {
-            self.sync_history_window(&ctx.frame);
+            self.sync_history_window(ctx.frame());
             return;
         }
         if let Some(handle) = opener.create_aux(
             AuxKind::History,
             crate::ports::AuxOpenParams::History {
-                language: ctx.frame.language(),
+                language: ctx.frame().language(),
             },
         ) {
             let id = self.aux.insert(handle);
             debug_assert_eq!(self.aux.route_id(AuxKind::History), Some(id));
             // Fresh window needs full content regardless of cache.
             self.osd.history.sync_key.clear();
-            self.sync_history_window(&ctx.frame);
+            self.sync_history_window(ctx.frame());
         }
     }
 
@@ -102,12 +74,10 @@ impl HostState {
             self.drop_history_window();
             return;
         }
-        // Read-only viewer: arrival only cancels a pending pause, never resumes.
+        // Read-only viewer: shared aux-focus drive (arrival only
+        // cancels a pending pause, never resumes).
         if let WindowEvent::Focused(focused) = event {
-            let _ = self.focus_event(crate::aux::focus::FocusEvent::Aux(
-                AuxKind::History,
-                focused,
-            ));
+            let _ = self.drive_aux_focus(AuxKind::History, focused);
         }
         let domain = crate::aux::native::adapt_event(&event);
         let Some(outcome) = self.aux_on_event(AuxKind::History, domain) else {
@@ -120,7 +90,7 @@ impl HostState {
         if outcome.cleared {
             self.session.clear_notification_history();
             let ctx = self.frame_ctx();
-            self.sync_history_window(&ctx.frame);
+            self.sync_history_window(ctx.frame());
         }
     }
 
@@ -173,7 +143,7 @@ impl HostState {
             }
             self.osd.modal.flight = None;
             self.osd.modal_closed();
-            if super::services::OsdServicePort::modal_pending(self) == 0 {
+            if self.osd.modal_queue_len() == 0 {
                 self.osd.modal.resume_after_modal = false;
                 if resume_after {
                     self.resume();
@@ -195,12 +165,12 @@ impl HostState {
     pub(crate) fn poll_notifications(&mut self, ctx: &FrameCtx) {
         use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
         let now = Instant::now();
-        let language = ctx.frame.language();
-        let tick = ctx.tick;
+        let language = ctx.frame().language();
+        let tick = ctx.tick();
         let report = self.session.pump_osd(
             &mut self.osd.modal.manager,
             PushInput {
-                policy: TransientPolicy::from(ctx.frame.notifications()),
+                policy: TransientPolicy::from(ctx.frame().notifications()),
                 language,
                 now,
                 tick,
@@ -222,13 +192,13 @@ impl HostState {
             self.request_redraw();
         }
         if self.aux.contains(AuxKind::History) {
-            self.sync_history_window(&ctx.frame);
+            self.sync_history_window(ctx.frame());
         }
     }
 
     /// OSD pump for the control-flow pass: drain plus expiry-driven wake.
     pub(super) fn tick_osd_pump(&mut self, ctx: &FrameCtx) -> WakeNeed {
-        super::services::OsdServicePort::poll_notifications(self, ctx);
+        self.poll_notifications(ctx);
         // Post-pump the deadline implies a showing label: one call drives expiry and wait.
         let osd_deadline = self.osd_wakeup();
         if osd_deadline.is_some() {
@@ -249,7 +219,7 @@ impl HostState {
         size: nerust_render_traits::SurfaceSize,
         ctx: &FrameCtx,
     ) {
-        let strip = self.reserved_strip_with(&ctx.frame);
+        let strip = self.reserved_strip_with(ctx.frame());
         if self.osd.layer.last_strip.check(&strip) {
             renderer.set_reserved_strip(strip);
         }
@@ -265,14 +235,14 @@ impl HostState {
         ctx: &FrameCtx,
     ) {
         use nerust_gui_shell::session::osd::{OsdChrome, OsdSync, OsdSyncInput};
-        let language = ctx.frame.language();
-        let chrome = OsdChrome::from(ctx.frame.notifications());
+        let language = ctx.frame().language();
+        let chrome = OsdChrome::from(ctx.frame().notifications());
         // Cheap shell-side pre-gate before running the presenter.
         let geometry = (size.width, size.height, chrome);
         // Single-op memo: records and reports change atomically, so a
         // repeated geometry never re-arms the presenter below.
-        let geometry_changed = self.osd.layer.last_sync_geometry.should_sync(geometry);
-        if !osd_should_sync(
+        let geometry_changed = self.osd.layer.last_sync_geometry.check(&geometry);
+        if !osd_layer_due(
             &self.osd.layer.presenter,
             &self.osd.modal.manager,
             chrome.status_enabled,
@@ -280,7 +250,7 @@ impl HostState {
         ) {
             return;
         }
-        let tick = ctx.tick;
+        let tick = ctx.tick();
         let decision = self.osd.layer.presenter.sync(
             &self.osd.modal.manager,
             OsdSyncInput {
@@ -385,24 +355,24 @@ mod tests {
         use nerust_gui_shell::session::osd::OsdChrome;
         let support = TestHost::new();
         let mut host = support.host;
-        let chrome = OsdChrome::from(host.frame_ctx().frame.notifications());
+        let chrome = OsdChrome::from(host.frame_ctx().frame().notifications());
         assert!(!chrome.status_enabled);
         // Idle: same generation, nothing visible, status off, no
         // geometry move -- the presenter stays untouched.
-        assert!(!osd_should_sync(
+        assert!(!osd_layer_due(
             &host.osd.layer.presenter,
             &host.osd.modal.manager,
             false,
             false
         ));
         // Status liveness and geometry moves each pass alone.
-        assert!(osd_should_sync(
+        assert!(osd_layer_due(
             &host.osd.layer.presenter,
             &host.osd.modal.manager,
             true,
             false
         ));
-        assert!(osd_should_sync(
+        assert!(osd_layer_due(
             &host.osd.layer.presenter,
             &host.osd.modal.manager,
             false,

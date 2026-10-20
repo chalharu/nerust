@@ -2,30 +2,29 @@
 //! one at a time. Dismissal returns via the typed frontend event.
 
 use super::menu;
-use jni::{jni_sig, jni_str};
 use winit::platform::android::activity::AndroidApp;
 
 /// Ask the Java side to show the modal error dialog. Fire-and-forget:
 /// dismissal (or show failure) reports back through the event bridge.
-pub(crate) fn request_show_error_dialog(app: &AndroidApp, message: &str) {
+pub(super) fn request_show_error_dialog(app: &AndroidApp, message: &str) {
     let message = message.to_string();
-    super::bridge::call_on_activity_or(
+    super::bridge::post_to_activity(
         app,
         "show Android error dialog",
         move |env, activity| {
             let text = env.new_string(&message)?;
-            env.call_method(
+            super::bridge::call_bridge_method(
+                env,
                 &activity,
-                jni_str!("showErrorDialog"),
-                jni_sig!("(Ljava/lang/String;)V"),
+                &super::bridge::methods::SHOW_ERROR_DIALOG,
                 &[jni::objects::JValue::Object(text.as_ref())],
             )?;
             Ok(())
         },
-        || {
+        Some(Box::new(|| {
             // Synthesize the dismiss a dead bridge cannot deliver.
             // Duplicate-safe: the controller drops repeats.
             menu::publish_dialog_dismissed();
-        },
+        })),
     );
 }
