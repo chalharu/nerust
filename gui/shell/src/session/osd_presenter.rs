@@ -474,7 +474,7 @@ mod tests {
         StubState {
             generation: 7,
             row: Some(OsdRow {
-                text: text.to_string(),
+                text: text.into(),
                 rgb: (255, 255, 255),
                 tag: "[I]".into(),
             }),

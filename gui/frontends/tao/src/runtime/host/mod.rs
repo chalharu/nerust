@@ -281,8 +281,7 @@ impl HostState {
 
     /// Kind of the aux window behind this id, if registered.
     pub(super) fn aux_kind_of(&self, id: WindowId) -> Option<AuxKind> {
-        self.aux
-            .kind_of(crate::aux::domain::NativeWindowId::new(id))
+        self.aux.kind_of(crate::aux::native::native_id_of(id))
     }
 
     /// Pump one domain event through the matching aux entry.

@@ -146,10 +146,10 @@ impl SessionHandle {
         let (images_gen, images) = if need_images == ImageNeed::Fetch {
             match core.debug_images() {
                 Ok(Ok((generation, images))) => (generation, images),
-                _ => (0, Vec::new()),
+                _ => (0, std::sync::Arc::new(Vec::new())),
             }
         } else {
-            (0, Vec::new())
+            (0, std::sync::Arc::new(Vec::new()))
         };
         snapshot.images_gen = images_gen;
         snapshot.images = images.iter().map(debug_vm::rgba_image).collect();

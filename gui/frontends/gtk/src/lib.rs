@@ -110,7 +110,8 @@ impl State {
     }
 
     pub(crate) fn title(&self) -> String {
-        self.session.window_title(&self.session.tick_metrics())
+        let tick = self.session.tick_metrics();
+        self.session.window_title(&tick)
     }
 
     pub(crate) fn flush_before_exit(&mut self) {

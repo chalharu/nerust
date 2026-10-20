@@ -370,11 +370,10 @@ impl HostState {
         }
     }
 
-    pub(crate) fn on_render_result(&mut self, result: RenderResult) {
+    pub(crate) fn on_render_result(&mut self, result: RenderResult, frame_counter: u64) {
         match result {
             RenderResult::Presented => {
-                self.shell
-                    .on_frame_presented(self.session.tick_metrics().frame_counter);
+                self.shell.on_frame_presented(frame_counter);
                 let ctx = self.frame_ctx();
                 self.maybe_refresh_window_title(&ctx, Instant::now());
             }
@@ -601,9 +600,9 @@ mod tests {
         host.update_window_size_for_scaling();
         host.remember_fit_window_size();
         host.toggle_fullscreen();
-        host.on_render_result(RenderResult::Presented);
-        host.on_render_result(RenderResult::Skipped);
-        host.on_render_result(RenderResult::Error);
+        host.on_render_result(RenderResult::Presented, 0);
+        host.on_render_result(RenderResult::Skipped, 0);
+        host.on_render_result(RenderResult::Error, 0);
         assert!(host.startup_window_size().width > 0.0);
         assert!(support.menu.updates().is_empty());
     }
@@ -636,7 +635,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         // Presented clears the flag; the headless redraw re-arms it.
-        host.on_render_result(RenderResult::Presented);
+        host.on_render_result(RenderResult::Presented, 0);
         assert!(!host.shell.needs_redraw);
         host.request_redraw();
         assert!(host.shell.needs_redraw);

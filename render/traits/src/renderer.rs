@@ -278,6 +278,39 @@ pub enum OsdAnchor {
     BottomRight,
 }
 
+/// One raster pill row: tag plus body in a single color.
+/// Port-owned DTO; the rasterizer and the shell share this type.
+#[derive(Debug, Clone)]
+pub struct OsdRow {
+    pub tag: std::rc::Rc<str>,
+    pub text: std::rc::Rc<str>,
+    pub rgb: (u8, u8, u8),
+}
+
+/// Status readout: label plus right-aligned value.
+#[derive(Debug, Clone)]
+pub struct OsdStatus {
+    pub label: std::rc::Rc<str>,
+    pub value: std::rc::Rc<str>,
+    pub rgb: (u8, u8, u8),
+}
+
+/// Raster input: transient rows plus optional status, with corners.
+#[derive(Debug, Clone, Default)]
+pub struct OsdContent {
+    pub rows: Vec<OsdRow>,
+    pub status: Option<OsdStatus>,
+    pub position: OsdAnchor,
+    pub status_position: OsdAnchor,
+}
+
+impl OsdRow {
+    /// Shared tag handle; clones the `Rc` without reallocating.
+    pub fn tag_shared(&self) -> std::rc::Rc<str> {
+        self.tag.clone()
+    }
+}
+
 impl OsdAnchor {
     /// Top edge (top-left/top-right) vs bottom edge.
     pub fn is_top(self) -> bool {

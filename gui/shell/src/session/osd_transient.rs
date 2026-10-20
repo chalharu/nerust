@@ -13,7 +13,7 @@ use crate::session::{
 
 #[derive(Debug, Clone)]
 pub struct OsdRow {
-    pub text: String,
+    pub text: Rc<str>,
     pub rgb: (u8, u8, u8),
     pub tag: Rc<str>,
 }
@@ -152,7 +152,7 @@ impl TransientPolicy {
 
 pub(crate) fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: Rc<str>) -> OsdRow {
     OsdRow {
-        text: append_count(base.to_string(), count),
+        text: append_count(base.to_string(), count).into(),
         rgb,
         tag,
     }
@@ -509,7 +509,7 @@ mod tests {
             RouteEffect::QueuedBehind
         );
         assert_eq!(
-            queue.visible_row().map(|row| row.text.clone()),
+            queue.visible_row().map(|row| row.text.to_string()),
             Some("a".to_string())
         );
     }
@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(queue.route_row(second), RouteEffect::QueuedBehind);
         assert!(queue.poll(now));
         assert_eq!(
-            queue.visible_row().map(|row| row.text.clone()),
+            queue.visible_row().map(|row| row.text.to_string()),
             Some("second".to_string())
         );
     }
@@ -639,9 +639,16 @@ mod transient_cov_tests {
             assert!(policy.duration(level) >= Duration::from_millis(500));
             let _ = policy.color(level);
         }
-        assert_eq!(counted_row("a", 1, (1, 2, 3), Rc::from("[INFO]")).text, "a");
         assert_eq!(
-            counted_row("a", 2, (1, 2, 3), Rc::from("[INFO]")).text,
+            counted_row("a", 1, (1, 2, 3), Rc::from("[INFO]"))
+                .text
+                .as_ref(),
+            "a"
+        );
+        assert_eq!(
+            counted_row("a", 2, (1, 2, 3), Rc::from("[INFO]"))
+                .text
+                .as_ref(),
             "a ×2"
         );
     }

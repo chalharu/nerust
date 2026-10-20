@@ -55,6 +55,8 @@ pub struct GlRenderer {
     osd_drop_warned: bool,
     /// Warn-once for view-teardown failures (see `close_live_view`).
     close_warned: bool,
+    /// Last uploaded palette bytes; equal palettes skip the texture upload.
+    last_palette: Option<[u8; 256]>,
     /// Fixed-size staging for the pre-GLES3 pack path (see `render`).
     tight: Vec<u8>,
 }
@@ -65,6 +67,11 @@ impl std::fmt::Debug for GlRenderer {
             .field("attached", &self.gl_surface.is_some())
             .finish_non_exhaustive()
     }
+}
+
+/// Equal palettes skip the texture upload; the memo lives on the renderer.
+fn palette_needs_upload(last: Option<[u8; 256]>, next: [u8; 256]) -> bool {
+    last != Some(next)
 }
 
 impl GlRenderer {
@@ -318,11 +325,14 @@ impl GlRenderer {
             log::warn!("GlRenderer: resize failed: {e}");
             return RenderResult::Error;
         }
-        if let Some(p) = frame_buffer.palette_as_rgba8()
-            && let Err(e) = self.frame.update_palette_texture(&p)
-        {
-            log::warn!("GlRenderer: palette upload failed: {e}");
-            return RenderResult::Error;
+        if let Some(next) = frame_buffer.palette_as_rgba8() {
+            if palette_needs_upload(self.last_palette, next)
+                && let Err(e) = self.frame.update_palette_texture(&next)
+            {
+                log::warn!("GlRenderer: palette upload failed: {e}");
+                return RenderResult::Error;
+            }
+            self.last_palette = Some(next);
         }
         let fs = match frame_format {
             VideoFrameFormat::Rgba => logical_size,
@@ -569,6 +579,7 @@ impl GlFactory {
             osd_staged: None,
             osd_drop_warned: false,
             close_warned: false,
+            last_palette: None,
             tight: Vec::new(),
         })
     }
@@ -605,8 +616,16 @@ fn pack_rows_stripped(
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameView, pack_rows_stripped};
+    use super::{FrameView, pack_rows_stripped, palette_needs_upload};
     use crate::{osd_view::OsdView, surface_view::SurfaceView};
+
+    #[test]
+    fn palette_gate_skips_identical_upload() {
+        let first = [0x12u8; 256];
+        assert!(palette_needs_upload(None, first));
+        assert!(!palette_needs_upload(Some(first), first));
+        assert!(palette_needs_upload(Some(first), [0x34u8; 256]));
+    }
 
     #[test]
     fn pack_rows_stripped_removes_source_padding() {
@@ -1033,6 +1052,7 @@ mod tests {
             osd_staged: None,
             osd_drop_warned: false,
             close_warned: false,
+            last_palette: None,
             tight: Vec::new(),
         };
         let empty = nerust_render_traits::FrameBuffer::with_capacity(

@@ -550,13 +550,8 @@ impl FrameSink for SoftbufferRenderer {
         let top = (self.reserved.top as usize).min(dst_h);
         // Strip rows keep the cleared black: the surface buffer is
         // reused across frames, so stale game pixels must not linger.
-        for row in buffer.as_mut()[..top.saturating_mul(dst_w)].iter_mut() {
-            *row = 0;
-        }
-        for row in buffer.as_mut()[(top.saturating_add(avail_h)).saturating_mul(dst_w)..].iter_mut()
-        {
-            *row = 0;
-        }
+        buffer.as_mut()[..top.saturating_mul(dst_w)].fill(0);
+        buffer.as_mut()[(top.saturating_add(avail_h)).saturating_mul(dst_w)..].fill(0);
 
         let src = frame.as_ref();
         let game_rows = top.saturating_mul(dst_w);

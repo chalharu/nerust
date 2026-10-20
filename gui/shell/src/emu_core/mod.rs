@@ -294,14 +294,19 @@ pub trait LiveInspectPort {
     ) -> Result<std::sync::mpsc::Receiver<Result<InspectResult, InspectError>>, OperationError>;
 }
 
+/// Shared image batch: generation plus refcounted decode.
+pub type SharedDebugImages = std::sync::Arc<Vec<DebugImage>>;
+/// Debugger image outcome: thread errors outer, domain errors inner.
+pub type DebugImagesOutcome =
+    Result<Result<(u64, SharedDebugImages), DebuggerError>, OperationError>;
+
 /// Narrow snapshot leg of the debug port.
 pub trait LiveSnapshotPort {
     fn debug_snapshot_batch(
         &self,
         req: SnapshotRequest,
     ) -> Result<Result<SnapshotResult, DebuggerError>, OperationError>;
-    fn debug_images(&self)
-    -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError>;
+    fn debug_images(&self) -> DebugImagesOutcome;
     fn memory_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError>;
     fn output_channels(&self) -> Result<Vec<String>, OperationError>;
     fn snapshot_batch_send(
@@ -356,7 +361,7 @@ pub struct StoredImages {
     /// Source generation of the stored decode.
     pub generation: u64,
     /// Stored pixels.
-    pub images: Vec<DebugImage>,
+    pub images: std::sync::Arc<Vec<DebugImage>>,
     /// Whether the content changed (viewers skip re-deriving when false).
     pub fresh: bool,
 }
@@ -596,7 +601,7 @@ impl EmuCore {
 
     pub fn swap_frame_buffer(&mut self) {
         if self.frame_ready.load(Ordering::Relaxed)
-            && let Ok(mut guard) = self.shared_fb.lock()
+            && let Ok(mut guard) = self.shared_fb.try_lock()
             && self.frame_ready.swap(false, Ordering::AcqRel)
         {
             std::mem::swap(&mut *guard, &mut self.disp_fb);
@@ -1180,16 +1185,14 @@ impl EmuCore {
 
     /// On-demand system images through the emu thread, cached while paused.
     /// Returns the source generation so viewers skip re-deriving known generations.
-    pub fn debug_images(
-        &self,
-    ) -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError> {
+    pub fn debug_images(&self) -> DebugImagesOutcome {
         // A running core advances memory at any time: dirty first so the lookup below refetches.
         // Atomic pause flag: no metrics lock on the image path.
         if !self.is_paused() {
             self.mark_images_dirty();
         }
         if let Some((generation, shared)) = self.images_cache_lookup() {
-            return Ok(Ok((generation, Vec::clone(&shared))));
+            return Ok(Ok((generation, std::sync::Arc::clone(&shared))));
         }
         let result = recv_debug_reply(self.images_send()?);
         let images = match result {
@@ -1241,7 +1244,7 @@ impl EmuCore {
             cache.generation = cache.served_generation;
             StoredImages {
                 generation: cache.served_generation,
-                images: Vec::clone(&shared),
+                images: std::sync::Arc::clone(&shared),
                 fresh: false,
             }
         } else {
@@ -1249,7 +1252,7 @@ impl EmuCore {
             cache.served_generation = cache.generation;
             StoredImages {
                 generation: cache.generation,
-                images: Vec::clone(&shared),
+                images: std::sync::Arc::clone(&shared),
                 fresh: true,
             }
         }
@@ -1401,9 +1404,7 @@ impl LiveSnapshotPort for EmuCore {
         self.debug_snapshot_batch(req)
     }
 
-    fn debug_images(
-        &self,
-    ) -> Result<Result<(u64, Vec<DebugImage>), DebuggerError>, OperationError> {
+    fn debug_images(&self) -> DebugImagesOutcome {
         self.debug_images()
     }
 

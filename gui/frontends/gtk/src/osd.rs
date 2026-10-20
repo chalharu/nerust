@@ -497,7 +497,7 @@ mod tests {
         StubState {
             generation: 7,
             rows: vec![OsdRow {
-                text: "Paused".to_string(),
+                text: std::rc::Rc::from("Paused"),
                 rgb: (255, 255, 255),
                 tag: "[I]".into(),
             }],
