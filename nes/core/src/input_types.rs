@@ -65,8 +65,29 @@ mod tests {
     use super::NesInputBuffer;
     use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 
+    // Copy-state contract shared by all buffers.
+    fn assert_copy_contract<B>(mut fresh: B, staged: B, foreign: &dyn InputStateBuffer)
+    where
+        B: InputStateBuffer + PartialEq + std::fmt::Debug,
+    {
+        fresh.copy_state(&staged).unwrap();
+        assert_eq!(fresh, staged);
+        assert!(fresh.copy_state(foreign).is_err());
+    }
+
     #[test]
-    fn full_copy_replaces_working_bytes() {
+    fn contract_full_copy_and_mismatch_refusal() {
+        #[derive(Debug, Default)]
+        struct Foreign;
+        impl InputStateBuffer for Foreign {
+            fn set(&mut self, _: usize, _: InputValue) -> Result<(), BufferError> {
+                Ok(())
+            }
+            fn clear(&mut self) {}
+            fn copy_state(&mut self, _: &dyn InputStateBuffer) -> Result<(), BufferError> {
+                Ok(())
+            }
+        }
         use nerust_input_traits::InputValue;
         let mut staged = NesInputBuffer::default();
         staged.set(0, InputValue::Digital(true)).unwrap();
@@ -74,8 +95,11 @@ mod tests {
         let mut working = NesInputBuffer::default();
         working.set(8, InputValue::Digital(true)).unwrap();
         // Full copy overwrites everything: rotation cannot resurrect bytes.
-        working.copy_state(&staged).unwrap();
-        assert_eq!(working.0, staged.0);
+        assert_copy_contract(working, staged, &Foreign);
+        let mut raw = NesInputBuffer::default();
+        let src = NesInputBuffer([0xAA, 0x55, 1]);
+        raw.copy_state(&src).unwrap();
+        assert_eq!(raw.0, [0xAA, 0x55, 1]);
     }
 
     #[test]
@@ -86,6 +110,8 @@ mod tests {
         assert_eq!(buf.0, [0x01, 0x02, 0]);
         buf.set(0, InputValue::Digital(false)).unwrap();
         assert_eq!(buf.0[0], 0);
+        buf.set(9, InputValue::Digital(false)).unwrap();
+        assert_eq!(buf.0[1], 0);
         buf.set(16, InputValue::Digital(true)).unwrap();
         assert_eq!(buf.0[2], 1);
         buf.clear();
@@ -107,25 +133,5 @@ mod tests {
             buf.set(0, InputValue::Position { x: 0.0, y: 0.0 }),
             Err(BufferError::UnsupportedFieldType { .. })
         ));
-    }
-
-    #[test]
-    fn copy_state_moves_bytes_or_refuses_foreign() {
-        #[derive(Debug, Default)]
-        struct Foreign;
-        impl InputStateBuffer for Foreign {
-            fn set(&mut self, _: usize, _: InputValue) -> Result<(), BufferError> {
-                Ok(())
-            }
-            fn clear(&mut self) {}
-            fn copy_state(&mut self, _: &dyn InputStateBuffer) -> Result<(), BufferError> {
-                Ok(())
-            }
-        }
-        let mut dst = NesInputBuffer::default();
-        let src = NesInputBuffer([0xAA, 0x55, 1]);
-        dst.copy_state(&src).unwrap();
-        assert_eq!(dst.0, [0xAA, 0x55, 1]);
-        assert!(dst.copy_state(&Foreign).is_err());
     }
 }

@@ -4,9 +4,8 @@ use log::warn;
 use nerust_render_traits::{
     FrameBuffer, PixelFormat, SurfaceSize, VideoRenderProfile,
     renderer::{
-        FrameSink, GpuFactory, GpuRenderer, OpaqueError, OsdSink, PipelineFactory, Present,
-        ProfileSwitch, RenderPipeline, RenderResult, RendererConfig, RendererError, StripSink,
-        SurfaceLifecycle,
+        FrameSink, OpaqueError, OsdSink, PipelineFactory, ProfileSwitch, RenderPipeline,
+        RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle,
     },
     rgb::RgbaWord,
 };
@@ -643,33 +642,6 @@ impl FrameSink for SoftbufferRenderer {
     }
 }
 
-impl Present for SoftbufferRenderer {
-    fn size(&self) -> SurfaceSize {
-        SurfaceLifecycle::size(self)
-    }
-
-    fn attach(
-        &mut self,
-        window_handle: RawWindowHandle,
-        display_handle: RawDisplayHandle,
-        size: SurfaceSize,
-    ) -> Result<(), RendererError> {
-        SurfaceLifecycle::attach(self, window_handle, display_handle, size)
-    }
-
-    fn detach(&mut self) {
-        SurfaceLifecycle::detach(self);
-    }
-
-    fn resize(&mut self, size: SurfaceSize) {
-        SurfaceLifecycle::resize(self, size);
-    }
-
-    fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
-        FrameSink::render(self, frame)
-    }
-}
-
 impl OsdSink for SoftbufferRenderer {
     fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
         use nerust_render_traits::renderer::OsdLayer;
@@ -695,24 +667,8 @@ impl ProfileSwitch for SoftbufferRenderer {
     }
 }
 
-impl GpuRenderer for SoftbufferRenderer {
-    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        ProfileSwitch::update_render_profile(self, profile)
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct SoftbufferFactory;
-
-impl GpuFactory for SoftbufferFactory {
-    fn create_renderer(
-        &self,
-        config: &RendererConfig,
-        _display_handle: raw_window_handle::RawDisplayHandle,
-    ) -> Result<Box<dyn GpuRenderer>, RendererError> {
-        Ok(Box::new(SoftbufferRenderer::new(&config.render_profile)))
-    }
-}
 
 impl PipelineFactory for SoftbufferFactory {
     /// Per-use-site composition; same renderer, narrow object.
@@ -792,7 +748,7 @@ mod tests {
         let mut frame = FrameBuffer::with_capacity(240, 160, PixelFormat::Rgba);
         frame.resize(240, 160);
         assert_eq!(
-            Present::render(&mut renderer, &frame),
+            FrameSink::render(&mut renderer, &frame),
             RenderResult::Skipped
         );
     }
@@ -804,7 +760,7 @@ mod tests {
         let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
         frame.resize(256, 240);
         assert_eq!(
-            Present::render(&mut renderer, &frame),
+            FrameSink::render(&mut renderer, &frame),
             RenderResult::Skipped
         );
     }
@@ -985,7 +941,7 @@ mod tests {
         let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
         frame.resize(256, 240);
         assert_eq!(
-            Present::render(&mut renderer, &frame),
+            FrameSink::render(&mut renderer, &frame),
             RenderResult::Skipped
         );
     }
@@ -1107,11 +1063,8 @@ mod tests {
 
     #[test]
     fn lifecycle_split_seams_are_object_safe() {
-        use nerust_render_traits::renderer::{
-            FrameSink, GpuRenderer, Present, ProfileSwitch, SurfaceLifecycle,
-        };
-        fn assert_seams<T: SurfaceLifecycle + FrameSink + ProfileSwitch + Present + GpuRenderer>() {
-        }
+        use nerust_render_traits::renderer::{FrameSink, ProfileSwitch, SurfaceLifecycle};
+        fn assert_seams<T: SurfaceLifecycle + FrameSink + ProfileSwitch>() {}
         assert_seams::<SoftbufferRenderer>();
         // Split seams compose as trait objects for lifecycle-only callers.
         fn lifecycle_only(_: &mut dyn SurfaceLifecycle) {}

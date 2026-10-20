@@ -1096,6 +1096,10 @@ mod tests {
             OsdManager::status_parts(59.9, false, AppLanguage::English),
             (String::new(), "59.9 fps".to_string())
         );
+        assert_eq!(
+            OsdManager::status_parts(0.0, false, AppLanguage::Japanese),
+            (String::new(), "0.0 fps".to_string())
+        );
     }
 
     #[test]
@@ -1343,15 +1347,6 @@ mod tests {
 #[cfg(test)]
 mod osd_cov_tests {
     use crate::session::osd::*;
-
-    #[test]
-    fn status_parts_split_label_and_value() {
-        let (label, value) = OsdManager::status_parts(60.0, true, AppLanguage::English);
-        assert_eq!(label, "Paused");
-        assert_eq!(value, "60.0 fps");
-        let (label, _) = OsdManager::status_parts(0.0, false, AppLanguage::Japanese);
-        assert!(label.is_empty());
-    }
 
     #[test]
     fn empty_manager_reports_idle() {

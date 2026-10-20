@@ -106,25 +106,21 @@ pub struct TransientPolicy {
 
 impl From<&NotificationSettings> for TransientPolicy {
     fn from(settings: &NotificationSettings) -> Self {
-        Self::from_view(&crate::session::ports::notification_view(settings))
+        Self {
+            info_enabled: settings.info_enabled,
+            warning_enabled: settings.warning_enabled,
+            error_enabled: settings.error_enabled,
+            info_duration_ms: settings.info_duration_ms,
+            warning_duration_ms: settings.warning_duration_ms,
+            info_rgb: settings.info_color.rgb(),
+            warning_rgb: settings.warning_color.rgb(),
+            error_rgb: settings.error_color.rgb(),
+            error_modal: settings.error_modal,
+        }
     }
 }
 
 impl TransientPolicy {
-    /// Plain-args construction from the narrow view; single settings adapter.
-    pub fn from_view(view: &crate::session::ports::NotificationView) -> Self {
-        Self {
-            info_enabled: view.info_enabled,
-            warning_enabled: view.warning_enabled,
-            error_enabled: view.error_enabled,
-            info_duration_ms: view.info_duration_ms,
-            warning_duration_ms: view.warning_duration_ms,
-            info_rgb: view.info_rgb,
-            warning_rgb: view.warning_rgb,
-            error_rgb: view.error_rgb,
-            error_modal: view.error_modal,
-        }
-    }
     /// Whether `level` rows display at all.
     pub(crate) fn enabled(&self, level: NotificationLevel) -> bool {
         match level {
@@ -622,23 +618,6 @@ mod tests {
             queue.wakeup_deadline(now),
             Some(now + Duration::from_millis(2_000))
         );
-    }
-}
-
-#[cfg(test)]
-mod view_tests {
-    use crate::session::osd_transient::*;
-
-    #[test]
-    fn from_view_matches_from_settings() {
-        use nerust_settings_core::model::local::NotificationSettings;
-        let settings = NotificationSettings::default();
-        let view = crate::session::ports::notification_view(&settings);
-        let via_from = TransientPolicy::from(&settings);
-        let via_view = TransientPolicy::from_view(&view);
-        assert_eq!(via_from.info_enabled, via_view.info_enabled);
-        assert_eq!(via_from.error_modal, via_view.error_modal);
-        assert_eq!(via_from.info_rgb, via_view.info_rgb);
     }
 }
 

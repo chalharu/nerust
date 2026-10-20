@@ -33,7 +33,7 @@ use nerust_gui_shell::{
 };
 use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
-use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
+use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::PipelineFactory};
 use nerust_run_options::RunOptions;
 use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
 use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
@@ -278,7 +278,7 @@ impl State {
 
 fn build_window(
     app: &gtk::Application,
-    factory: &Rc<dyn GpuFactory>,
+    factory: &Rc<dyn PipelineFactory>,
     state: Rc<RefCell<State>>,
 ) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
@@ -450,7 +450,7 @@ pub(crate) fn build_menu_model(
 
 fn ensure_window(
     app: &gtk::Application,
-    factory: &Rc<dyn GpuFactory>,
+    factory: &Rc<dyn PipelineFactory>,
     state: &Rc<RefCell<State>>,
     current_window: &Rc<RefCell<Option<Window>>>,
 ) -> Window {

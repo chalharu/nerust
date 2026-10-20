@@ -59,74 +59,6 @@ pub trait SnapshotPort {
     fn settings_snapshot(&self) -> &nerust_gui_runtime::settings::SettingsSnapshot;
 }
 
-/// Plain-args notification view; single adapter at the settings boundary.
-#[derive(Debug, Clone, Copy)]
-pub struct NotificationView {
-    /// Whether info rows display.
-    pub info_enabled: bool,
-    /// Whether warning rows display.
-    pub warning_enabled: bool,
-    /// Whether error rows display.
-    pub error_enabled: bool,
-    /// Display duration for info rows.
-    pub info_duration_ms: u32,
-    /// Display duration for warning rows.
-    pub warning_duration_ms: u32,
-    /// Display color for info rows.
-    pub info_rgb: (u8, u8, u8),
-    /// Display color for warning rows.
-    pub warning_rgb: (u8, u8, u8),
-    /// Display color for error rows.
-    pub error_rgb: (u8, u8, u8),
-    /// Whether errors also go modal.
-    pub error_modal: bool,
-}
-
-/// Single settings-boundary adapter for notification views.
-pub fn notification_view(
-    settings: &nerust_settings_core::model::local::NotificationSettings,
-) -> NotificationView {
-    NotificationView {
-        info_enabled: settings.info_enabled,
-        warning_enabled: settings.warning_enabled,
-        error_enabled: settings.error_enabled,
-        info_duration_ms: settings.info_duration_ms,
-        warning_duration_ms: settings.warning_duration_ms,
-        info_rgb: settings.info_color.rgb(),
-        warning_rgb: settings.warning_color.rgb(),
-        error_rgb: settings.error_color.rgb(),
-        error_modal: settings.error_modal,
-    }
-}
-
-/// Plain-args chrome view; single adapter at the settings boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChromeView {
-    /// Whether the status pill shows.
-    pub status_enabled: bool,
-    /// Corner for transient rows.
-    pub position: nerust_settings_core::model::local::NotificationPosition,
-    /// Corner for the status pill.
-    pub status_position: nerust_settings_core::model::local::NotificationPosition,
-    /// Layout mode for transient rows.
-    pub area_mode: nerust_settings_core::model::local::NotificationAreaMode,
-    /// Layout mode for the status pill.
-    pub status_area_mode: nerust_settings_core::model::local::NotificationAreaMode,
-}
-
-/// Single settings-boundary adapter for chrome views.
-pub fn chrome_view(
-    settings: &nerust_settings_core::model::local::NotificationSettings,
-) -> ChromeView {
-    ChromeView {
-        status_enabled: settings.status_enabled,
-        position: settings.position,
-        status_position: settings.status_position,
-        area_mode: settings.area_mode,
-        status_area_mode: settings.status_area_mode,
-    }
-}
-
 /// Platform abstraction for state slot I/O (Desktop fs / Android SAF).
 pub trait SlotBackend: Send {
     fn scan(
@@ -188,39 +120,9 @@ mod ports_cov_tests {
     use crate::emu_core::SlotOpFailure;
     use crate::session::ports::*;
 
-    fn settings() -> nerust_settings_core::model::local::NotificationSettings {
-        nerust_settings_core::model::local::NotificationSettings::default()
-    }
-
     #[test]
     fn default_slot_activation_is_activate() {
         assert_eq!(SlotActivation::default(), SlotActivation::Activate);
-    }
-
-    #[test]
-    fn notification_view_copies_settings() {
-        let s = settings();
-        let view = notification_view(&s);
-        assert_eq!(view.info_enabled, s.info_enabled);
-        assert_eq!(view.warning_enabled, s.warning_enabled);
-        assert_eq!(view.error_enabled, s.error_enabled);
-        assert_eq!(view.info_duration_ms, s.info_duration_ms);
-        assert_eq!(view.warning_duration_ms, s.warning_duration_ms);
-        assert_eq!(view.info_rgb, s.info_color.rgb());
-        assert_eq!(view.warning_rgb, s.warning_color.rgb());
-        assert_eq!(view.error_rgb, s.error_color.rgb());
-        assert_eq!(view.error_modal, s.error_modal);
-    }
-
-    #[test]
-    fn chrome_view_copies_settings() {
-        let s = settings();
-        let view = chrome_view(&s);
-        assert_eq!(view.status_enabled, s.status_enabled);
-        assert_eq!(view.position, s.position);
-        assert_eq!(view.status_position, s.status_position);
-        assert_eq!(view.area_mode, s.area_mode);
-        assert_eq!(view.status_area_mode, s.status_area_mode);
     }
 
     #[test]

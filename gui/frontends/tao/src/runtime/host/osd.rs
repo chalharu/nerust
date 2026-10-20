@@ -4,7 +4,7 @@
 use std::time::Instant;
 
 use nerust_gui_shell::session::access::PauseControl;
-use nerust_render_traits::renderer::GpuRenderer;
+use nerust_render_traits::renderer::RenderPipeline;
 use tao::event::WindowEvent;
 
 use super::HostState;
@@ -215,7 +215,7 @@ impl HostState {
     /// the context instead of cloning snapshots twice.
     pub(crate) fn render_osd_frame(
         &mut self,
-        renderer: &mut dyn GpuRenderer,
+        renderer: &mut dyn RenderPipeline,
         size: nerust_render_traits::SurfaceSize,
         ctx: &FrameCtx,
     ) {
@@ -230,7 +230,7 @@ impl HostState {
     /// Coordinates are renderer surface pixels, not the full window.
     fn sync_osd_layer(
         &mut self,
-        renderer: &mut dyn GpuRenderer,
+        renderer: &mut dyn RenderPipeline,
         size: nerust_render_traits::SurfaceSize,
         ctx: &FrameCtx,
     ) {
@@ -296,7 +296,8 @@ mod tests {
     use nerust_render_traits::{
         FrameBuffer, SurfaceSize,
         renderer::{
-            GpuRenderer, OsdLayer, OsdSink, Present, RenderResult, RendererError, StripSink,
+            FrameSink, OsdLayer, OsdSink, ProfileSwitch, RenderResult, RendererError, StripSink,
+            SurfaceLifecycle,
         },
     };
     use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -306,7 +307,7 @@ mod tests {
         layers: Vec<bool>,
     }
 
-    impl Present for StubRenderer {
+    impl SurfaceLifecycle for StubRenderer {
         fn size(&self) -> SurfaceSize {
             SurfaceSize::new(960, 720)
         }
@@ -323,7 +324,9 @@ mod tests {
         fn detach(&mut self) {}
 
         fn resize(&mut self, _size: SurfaceSize) {}
+    }
 
+    impl FrameSink for StubRenderer {
         fn render(&mut self, _frame: &FrameBuffer) -> RenderResult {
             RenderResult::Skipped
         }
@@ -337,7 +340,7 @@ mod tests {
 
     impl StripSink for StubRenderer {}
 
-    impl GpuRenderer for StubRenderer {
+    impl ProfileSwitch for StubRenderer {
         fn update_render_profile(
             &mut self,
             _profile: &nerust_render_traits::VideoRenderProfile,

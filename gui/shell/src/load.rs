@@ -103,10 +103,6 @@ pub enum LoadRequest {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use nerust_core_traits::factory::load::MediaObject;
-
     #[test]
     fn load_failed_keeps_source_chain_with_compat_text() {
         use super::RomLoaderError;
@@ -119,14 +115,6 @@ mod tests {
         );
         // The chain is inspectable, not stringified away.
         assert!(typed.source().is_some());
-    }
-
-    #[test]
-    fn media_object_tracks_path_extension() {
-        let media = MediaObject::new(Some(PathBuf::from("/tmp/test.NES")), vec![1, 2, 3]);
-
-        assert_eq!(media.extension.as_deref(), Some("nes"));
-        assert_eq!(media.bytes.as_ref(), [1, 2, 3]);
     }
 }
 

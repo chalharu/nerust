@@ -8,14 +8,14 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_shell::{context::FrontendContext, registry::SystemRegistry};
-use nerust_render_traits::renderer::GpuFactory;
+use nerust_render_traits::renderer::PipelineFactory;
 use nerust_run_options::RunOptions;
 use simple_logger::SimpleLogger;
 
 type LoadOptionsBySystem = HashMap<Box<dyn SystemId>, Box<dyn DynSystemLoadOptions>>;
 type CliParseResult = Result<(RunOptions, LoadOptionsBySystem), clap::Error>;
 
-fn create_factory() -> Box<dyn GpuFactory> {
+fn create_factory() -> Box<dyn PipelineFactory> {
     #[cfg(all(feature = "wgpu", not(any(feature = "opengl", feature = "softbuffer"))))]
     return Box::new(nerust_render_wgpu::WgpuFactory);
     #[cfg(all(feature = "opengl", not(any(feature = "wgpu", feature = "softbuffer"))))]

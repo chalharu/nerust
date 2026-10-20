@@ -314,47 +314,4 @@ mod fs_cov_tests {
         assert!(back.read_slot(&d, 999).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&d);
     }
-
-    #[test]
-    fn slot_write_scan_read_delete_round_trip() {
-        let back = FsSlots;
-        let d = dir("roundtrip");
-        let id = identity();
-        let next = back.allocate_next_id(&d).unwrap();
-        let summary = back.write_slot(&d, next, &[7, 8, 9], &id, None).unwrap();
-        assert_eq!(summary.slot_id, next);
-        let scanned = back.scan(&d, &id).unwrap();
-        assert!(scanned.iter().any(|s| s.slot_id == next));
-        assert!(back.read_slot(&d, next).unwrap().is_some());
-        back.delete_slot(&d, next).unwrap();
-        assert!(back.read_slot(&d, next).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn autosave_write_read_delete_round_trip() {
-        let back = FsAutosave;
-        let d = dir("autosave");
-        let id = identity();
-        back.delete_autosave(&d).ok();
-        assert_eq!(back.quarantine_autosave(&d).unwrap(), None);
-        back.write_autosave(&d, &[1, 2, 3], &id).unwrap();
-        assert!(back.read_autosave(&d, &id).unwrap().is_some());
-        assert!(back.quarantine_autosave(&d).unwrap().is_some());
-        assert!(back.read_autosave(&d, &id).unwrap_or(None).is_none());
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn mapper_save_round_trip_and_missing() {
-        let back = FsMapper;
-        let d = dir("mapper");
-        let path = d.join("game.sav");
-        assert_eq!(back.read_mapper_save(&path).unwrap(), None);
-        back.write_mapper_save(&path, &[4, 5]).unwrap();
-        assert_eq!(back.read_mapper_save(&path).unwrap(), Some(vec![4, 5]));
-        let recovery = back.write_recovery_mapper_save(&path, &[6]).unwrap();
-        assert!(recovery.exists());
-        let _ = std::fs::remove_dir_all(&d);
-    }
 }

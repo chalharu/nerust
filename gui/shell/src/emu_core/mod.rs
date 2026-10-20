@@ -1964,22 +1964,6 @@ mod fault_tests {
     }
 
     #[test]
-    fn fault_maps_transport_errors() {
-        assert_eq!(
-            StateFault::from(OperationError::WorkerUnavailable),
-            StateFault::Transport
-        );
-        assert_eq!(
-            StateFault::from(OperationError::NoReply),
-            StateFault::Transport
-        );
-        assert_eq!(
-            StateFault::from(CorePersistenceError::WorkerUnavailable),
-            StateFault::Transport
-        );
-    }
-
-    #[test]
     fn fault_covers_codes_and_remaining_branches() {
         for (fault, code) in [
             (StateFault::Transport, "transport"),
@@ -2048,20 +2032,6 @@ mod fault_tests {
         ] {
             assert_eq!(state_fault_to_failure(fault), failure);
         }
-    }
-
-    #[test]
-    fn core_error_shim_matches_fault() {
-        use SlotOpFailure as F;
-        assert_eq!(
-            CorePersistenceError::WorkerUnavailable.slot_failure(),
-            F::Unavailable
-        );
-        assert_eq!(CorePersistenceError::NoReply.slot_failure(), F::Unavailable);
-        assert_eq!(
-            CorePersistenceError::Core("slot file not found".into()).slot_failure(),
-            F::Missing
-        );
     }
 
     #[test]

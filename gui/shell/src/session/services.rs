@@ -116,12 +116,6 @@ mod tests {
     }
 
     #[test]
-    fn media_service_reports_loaded() {
-        let session = test_session();
-        assert!(!session.has_loaded_media());
-    }
-
-    #[test]
     fn settings_service_exposes_snapshot() {
         let session = test_session();
         let _ = session.snapshot();

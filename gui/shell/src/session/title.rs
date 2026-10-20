@@ -139,41 +139,21 @@ mod tests {
         let first = cache.title(input()).to_string();
         // Same key: no rebuild, same borrow.
         assert_eq!(cache.title(input()), first);
+        assert!(!first.contains("No ROM"));
         // Changed key: fresh text.
         let changed = TitleInput {
             paused: true,
             ..input()
         };
         assert_ne!(cache.title(changed), first);
-    }
-}
-
-#[cfg(test)]
-mod agreement_tests {
-    use crate::session::title::*;
-
-    #[test]
-    fn all_title_entries_agree_on_one_source() {
-        let input = TitleInput {
-            paused: true,
-            loaded: true,
-            system_name: Some("Nes"),
-            active_slot: Some(2),
-            slot_count: 3,
+        // Loaded flip with no ROM queued: the cached line names it.
+        let unloaded = TitleInput {
+            loaded: false,
+            active_slot: None,
+            slot_count: 0,
+            ..input()
         };
-        let direct = title(input.clone());
-        assert_eq!(direct, super::title(input));
-        let mut cache = TitleCache::new();
-        let owned = cache
-            .title(TitleInput {
-                paused: true,
-                loaded: true,
-                system_name: Some("Nes"),
-                active_slot: Some(2),
-                slot_count: 3,
-            })
-            .to_string();
-        assert_eq!(owned, direct);
+        assert!(cache.title(unloaded).contains("No ROM"));
     }
 }
 
@@ -199,25 +179,5 @@ mod title_cov_tests {
         };
         let mut cache = TitleCache::new();
         assert_eq!(cache.title(input.clone()), title(input));
-    }
-
-    #[test]
-    fn cache_serves_same_borrow_without_rebuild() {
-        let mut cache = TitleCache::new();
-        let input = || TitleInput {
-            paused: false,
-            loaded: true,
-            system_name: Some("Nes"),
-            active_slot: None,
-            slot_count: 0,
-        };
-        let first = cache.title(input()).to_string();
-        assert_eq!(cache.title(input()), first);
-        assert!(!first.contains("No ROM"));
-        let unloaded = TitleInput {
-            loaded: false,
-            ..input()
-        };
-        assert!(cache.title(unloaded).contains("No ROM"));
     }
 }
