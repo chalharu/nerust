@@ -8,7 +8,7 @@ use std::path::Path;
 use nerust_gui_shell::context::FrontendContext;
 use nerust_render_traits::{
     SurfaceSize,
-    renderer::{GpuRenderer, RendererConfig},
+    renderer::{RenderPipeline, RendererConfig},
 };
 use raw_window_handle::HasDisplayHandle;
 #[cfg(target_os = "macos")]
@@ -26,7 +26,7 @@ use crate::ports::{NativeDialogs, TaoWindowOpener};
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
-    renderer: Option<Box<dyn GpuRenderer>>,
+    renderer: Option<Box<dyn RenderPipeline>>,
     /// Native target the surface is attached to (`None` = toplevel).
     surface_xid: Option<u64>,
 }
@@ -95,7 +95,7 @@ impl WindowRuntime {
         let mut renderer = match self
             .host
             .gpu_factory()
-            .create_renderer(&config, raw_display_handle)
+            .create_pipeline(&config, raw_display_handle)
         {
             Ok(renderer) => renderer,
             Err(e) => {

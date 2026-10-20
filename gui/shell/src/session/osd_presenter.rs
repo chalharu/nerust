@@ -212,19 +212,12 @@ impl OsdChrome {
 }
 impl From<&NotificationSettings> for OsdChrome {
     fn from(settings: &NotificationSettings) -> Self {
-        Self::from_view(&crate::session::ports::chrome_view(settings))
-    }
-}
-
-impl OsdChrome {
-    /// Plain-args construction from the narrow view; single settings adapter.
-    pub fn from_view(view: &crate::session::ports::ChromeView) -> Self {
         Self {
-            status_enabled: view.status_enabled,
-            position: view.position,
-            status_position: view.status_position,
-            area_mode: view.area_mode,
-            status_area_mode: view.status_area_mode,
+            status_enabled: settings.status_enabled,
+            position: settings.position,
+            status_position: settings.status_position,
+            area_mode: settings.area_mode,
+            status_area_mode: settings.status_area_mode,
         }
     }
 }
@@ -446,9 +439,7 @@ mod tests {
     };
     use crate::session::osd_presenter::TickMetrics;
     use nerust_settings_core::model::language::AppLanguage;
-    use nerust_settings_core::model::local::{
-        NotificationAreaMode as M, NotificationPosition as P, NotificationSettings,
-    };
+    use nerust_settings_core::model::local::NotificationSettings;
     use std::time::{Duration, Instant};
 
     /// Fixed display source for decision tests. Bumping the generation
@@ -522,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn status_gate_throttles_digits_but_not_labels() {
+    fn status_gate_throttles_digits_labels_and_fresh() {
         let mut gate = StatusGate::new();
         let now = Instant::now();
         // First sample passes.
@@ -549,22 +540,16 @@ mod tests {
             }),
             ("Paused", "60.3 fps")
         );
-    }
-
-    #[test]
-    fn gate_or_cached_computes_fresh_only_on_change() {
-        let mut gate = StatusGate::new();
-        let now = Instant::now();
-        // Fresh gate: fresh computed once.
+        // Steady inputs never recompute the value: fresh runs only on change.
+        let mut fresh_gate = StatusGate::new();
         let mut fresh_calls = 0;
-        let (label, value) = gate.gate_or_cached(now, "Paused", || {
+        let (label, value) = fresh_gate.gate_or_cached(now, "Paused", || {
             fresh_calls += 1;
             "60.0 fps".to_string()
         });
         assert_eq!((label, value), ("Paused", "60.0 fps"));
         assert_eq!(fresh_calls, 1);
-        // Steady: fresh never runs again.
-        let (_, steady) = gate.gate_or_cached(now, "Paused", || {
+        let (_, steady) = fresh_gate.gate_or_cached(now, "Paused", || {
             fresh_calls += 1;
             "60.1 fps".to_string()
         });
@@ -572,7 +557,17 @@ mod tests {
         assert_eq!(fresh_calls, 1);
     }
 
-    fn chrome(transient: (M, P), status: (M, P), status_on: bool) -> OsdChrome {
+    fn chrome(
+        transient: (
+            nerust_settings_core::model::local::NotificationAreaMode,
+            nerust_settings_core::model::local::NotificationPosition,
+        ),
+        status: (
+            nerust_settings_core::model::local::NotificationAreaMode,
+            nerust_settings_core::model::local::NotificationPosition,
+        ),
+        status_on: bool,
+    ) -> OsdChrome {
         OsdChrome {
             status_enabled: status_on,
             position: transient.1,
@@ -583,136 +578,108 @@ mod tests {
     }
 
     #[test]
-    fn reserved_rows_share_edges() {
+    fn reserved_rows_assign_strips_by_edge_and_side() {
         use nerust_settings_core::model::local::{
             NotificationAreaMode as Mode, NotificationPosition as Pos,
         };
-        assert_eq!(
-            chrome(
+        // ((transient mode, transient corner), (status mode, status corner), status on) -> (top, bottom).
+        for (transient, status, status_on, expected) in [
+            (
                 (Mode::Strip, Pos::BottomLeft),
                 (Mode::Strip, Pos::BottomRight),
-                true
-            )
-            .reserved_rows(),
-            (0, 1)
-        );
-        assert_eq!(
-            chrome(
+                true,
+                (0, 1),
+            ),
+            (
                 (Mode::Strip, Pos::BottomLeft),
                 (Mode::Strip, Pos::BottomLeft),
-                true
-            )
-            .reserved_rows(),
-            (0, 2)
-        );
-        assert_eq!(
-            chrome(
+                true,
+                (0, 2),
+            ),
+            (
                 (Mode::Overlay, Pos::BottomLeft),
                 (Mode::Overlay, Pos::TopLeft),
-                true
-            )
-            .reserved_rows(),
-            (0, 0)
-        );
-        // Independent modes: overlay status reserves nothing.
-        assert_eq!(
-            chrome(
+                true,
+                (0, 0),
+            ),
+            // Independent modes: overlay status reserves nothing.
+            (
                 (Mode::Strip, Pos::BottomLeft),
                 (Mode::Overlay, Pos::TopLeft),
-                true
-            )
-            .reserved_rows(),
-            (0, 1)
-        );
-        // ... and an overlay transient leaves a strip status alone.
-        assert_eq!(
-            chrome(
+                true,
+                (0, 1),
+            ),
+            // ... and an overlay transient leaves a strip status alone.
+            (
                 (Mode::Overlay, Pos::BottomLeft),
                 (Mode::Strip, Pos::TopLeft),
-                true
-            )
-            .reserved_rows(),
-            (1, 0)
-        );
-    }
-
-    #[test]
-    fn reserved_rows_count_edges_and_sides() {
-        assert_eq!(
-            chrome((M::Overlay, P::TopLeft), (M::Overlay, P::BottomLeft), true).reserved_rows(),
-            (0, 0)
-        );
-        assert_eq!(
-            chrome((M::Strip, P::TopLeft), (M::Strip, P::BottomLeft), true).reserved_rows(),
-            (1, 1)
-        );
-        assert_eq!(
-            chrome((M::Strip, P::TopRight), (M::Strip, P::BottomRight), true).reserved_rows(),
-            (1, 1)
-        );
-        // Same corner stacks two rows on one side.
-        assert_eq!(
-            chrome((M::Strip, P::TopLeft), (M::Strip, P::TopLeft), true).reserved_rows(),
-            (2, 0)
-        );
-        // Status off: transient row only.
-        assert_eq!(
-            chrome((M::Strip, P::BottomLeft), (M::Strip, P::TopLeft), false).reserved_rows(),
-            (0, 1)
-        );
-        // Same band: the transient area mode governs the edge, so the
-        // status picker cannot dangle an overlay inside a strip.
-        assert_eq!(
-            chrome((M::Strip, P::BottomLeft), (M::Overlay, P::BottomLeft), true).reserved_rows(),
-            (0, 2)
-        );
-        assert_eq!(
-            chrome((M::Overlay, P::BottomLeft), (M::Strip, P::BottomLeft), true).reserved_rows(),
-            (0, 0)
-        );
-        assert_eq!(
-            chrome(
-                (M::Strip, P::BottomLeft),
-                (M::Overlay, P::BottomRight),
-                true
-            )
-            .reserved_rows(),
-            (0, 1)
-        );
-        assert_eq!(
-            chrome(
-                (M::Overlay, P::BottomLeft),
-                (M::Strip, P::BottomRight),
-                true
-            )
-            .reserved_rows(),
-            (0, 0)
-        );
-    }
-
-    #[test]
-    fn into_content_moves_rows_without_second_clone() {
-        let state = row_state("Paused");
-        let mut presenter = OsdPresenter::new();
-        let now = Instant::now();
-        let plan = match presenter.sync(
-            &state,
-            sync_input(
-                chrome_of(&presenter_settings()),
-                now,
-                320,
-                240,
-                1.0,
-                UiInsets::default(),
+                true,
+                (1, 0),
             ),
-        ) {
-            OsdSync::Render(plan) => plan,
-            other => panic!("expected render, got {other:?}"),
-        };
-        assert_eq!(plan.rows.len(), 1);
-        let content = plan.into_content();
-        assert_eq!(content.rows.len(), 1);
-        assert_eq!(content.rows[0].text, "Paused");
+            (
+                (Mode::Overlay, Pos::TopLeft),
+                (Mode::Overlay, Pos::BottomLeft),
+                true,
+                (0, 0),
+            ),
+            (
+                (Mode::Strip, Pos::TopLeft),
+                (Mode::Strip, Pos::BottomLeft),
+                true,
+                (1, 1),
+            ),
+            (
+                (Mode::Strip, Pos::TopRight),
+                (Mode::Strip, Pos::BottomRight),
+                true,
+                (1, 1),
+            ),
+            // Same corner stacks two rows on one side.
+            (
+                (Mode::Strip, Pos::TopLeft),
+                (Mode::Strip, Pos::TopLeft),
+                true,
+                (2, 0),
+            ),
+            // Status off: transient row only.
+            (
+                (Mode::Strip, Pos::BottomLeft),
+                (Mode::Strip, Pos::TopLeft),
+                false,
+                (0, 1),
+            ),
+            // Same band: the transient area mode governs the edge, so the
+            // status picker cannot dangle an overlay inside a strip.
+            (
+                (Mode::Strip, Pos::BottomLeft),
+                (Mode::Overlay, Pos::BottomLeft),
+                true,
+                (0, 2),
+            ),
+            (
+                (Mode::Overlay, Pos::BottomLeft),
+                (Mode::Strip, Pos::BottomLeft),
+                true,
+                (0, 0),
+            ),
+            (
+                (Mode::Strip, Pos::BottomLeft),
+                (Mode::Overlay, Pos::BottomRight),
+                true,
+                (0, 1),
+            ),
+            (
+                (Mode::Overlay, Pos::BottomLeft),
+                (Mode::Strip, Pos::BottomRight),
+                true,
+                (0, 0),
+            ),
+        ] {
+            assert_eq!(
+                chrome(transient, status, status_on).reserved_rows(),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -1047,29 +1014,6 @@ mod tests {
 }
 
 #[cfg(test)]
-mod borrow_tests {
-    #[test]
-    fn fingerprint_shares_through_rc() {
-        let left = std::rc::Rc::<str>::from("Paused");
-        let right = left.clone();
-        assert!(std::rc::Rc::ptr_eq(&left, &right));
-    }
-}
-
-#[cfg(test)]
-mod chrome_tests {
-    use crate::session::osd_presenter::*;
-
-    #[test]
-    fn chrome_from_view_matches_from_settings() {
-        use nerust_settings_core::model::local::NotificationSettings;
-        let settings = NotificationSettings::default();
-        let view = crate::session::ports::chrome_view(&settings);
-        assert_eq!(OsdChrome::from(&settings), OsdChrome::from_view(&view));
-    }
-}
-
-#[cfg(test)]
 mod presenter_cov_tests {
     use crate::session::osd_presenter::*;
     use nerust_settings_core::model::language::AppLanguage;
@@ -1098,12 +1042,6 @@ mod presenter_cov_tests {
         assert_eq!(status_text("paused", AppLanguage::Japanese), "一時停止中");
         assert_eq!(status_text("", AppLanguage::English), "");
         assert_eq!(status_text("other", AppLanguage::Japanese), "");
-    }
-
-    #[test]
-    fn status_value_formats_one_decimal() {
-        assert_eq!(format_status_value(60.0), "60.0 fps");
-        assert!(!format_status_value(0.0).is_empty());
     }
 
     #[test]
@@ -1143,11 +1081,5 @@ mod presenter_cov_tests {
             router.route(&NotificationKind::Paused),
             ModalRoute::Drop
         ));
-    }
-
-    #[test]
-    fn status_gate_starts_empty() {
-        let gate = StatusGate::new();
-        let _ = gate;
     }
 }

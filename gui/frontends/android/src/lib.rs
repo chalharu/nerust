@@ -57,7 +57,7 @@ use nerust_gui_shell::registry::SystemRegistry;
 #[cfg(any(target_os = "android", test))]
 use nerust_nes_factory::NesFactory;
 #[cfg(target_os = "android")]
-use nerust_render_traits::renderer::GpuFactory;
+use nerust_render_traits::renderer::PipelineFactory;
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
@@ -108,7 +108,7 @@ fn create_audio_registry() -> Arc<AudioBackendRegistry> {
 }
 
 #[cfg(target_os = "android")]
-fn create_gpu_factory() -> Rc<dyn GpuFactory> {
+fn create_gpu_factory() -> Rc<dyn PipelineFactory> {
     Rc::new(nerust_render_wgpu::WgpuFactory)
 }
 

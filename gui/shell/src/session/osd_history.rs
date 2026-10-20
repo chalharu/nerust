@@ -152,16 +152,13 @@ mod tests {
     use nerust_settings_core::model::language::AppLanguage;
 
     #[test]
-    fn level_tag_and_name_stay_distinct() {
-        assert_eq!(level_tag(NotificationLevel::Warning), "[WARN]");
-        assert_eq!(level_name(NotificationLevel::Warning), "Warning");
-        assert_eq!(level_name(NotificationLevel::Error), "Error");
-    }
-
-    #[test]
-    fn level_names_stay_distinct_per_surface() {
+    fn level_text_stays_distinct_per_surface() {
         assert_eq!(level_tag(NotificationLevel::Info), "[INFO]");
         assert_eq!(level_name(NotificationLevel::Info), "Info");
+        assert_eq!(level_tag(NotificationLevel::Warning), "[WARN]");
+        assert_eq!(level_name(NotificationLevel::Warning), "Warning");
+        assert_eq!(level_tag(NotificationLevel::Error), "[ERROR]");
+        assert_eq!(level_name(NotificationLevel::Error), "Error");
         assert_eq!(
             level_label(NotificationLevel::Info, AppLanguage::English),
             "Info"
@@ -234,6 +231,21 @@ mod tests {
         assert_eq!(rows[0].text, "Paused");
         assert!(rows[1].text.ends_with(" ×3"));
         assert_eq!(rows[1].count, 3);
+        // Module, level, and count ride every row, not just the batch shape.
+        let warning = [UiNotification {
+            level: NotificationLevel::Warning,
+            kind: NotificationKind::PersistenceUnavailable,
+            count: 2,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        }];
+        let warning_rows = history_lines(warning.iter(), AppLanguage::English);
+        assert_eq!(
+            warning_rows[0].module,
+            crate::session::notification::LOG_MODULE
+        );
+        assert_eq!(warning_rows[0].level, NotificationLevel::Warning);
+        assert!(warning_rows[0].text.ends_with(" ×2"));
     }
 }
 
@@ -261,43 +273,11 @@ mod history_cov_tests {
     use crate::session::osd_history::*;
 
     #[test]
-    fn level_text_covers_every_level() {
-        for level in [
-            NotificationLevel::Info,
-            NotificationLevel::Warning,
-            NotificationLevel::Error,
-        ] {
-            assert!(!level_tag(level).is_empty());
-            assert!(!level_name(level).is_empty());
-        }
-        assert_eq!(level_tag(NotificationLevel::Error), "[ERROR]");
-    }
-
-    #[test]
     fn format_time_wraps_midnight() {
         use std::time::{Duration, UNIX_EPOCH};
         let t = format_time(UNIX_EPOCH + Duration::from_secs(3600 + 60 + 5));
         assert_eq!(t.len(), 8);
         let t2 = format_time(UNIX_EPOCH + Duration::from_secs(86_400 + 1));
         assert!(t2.ends_with(":00:01") || t2.len() == 8);
-    }
-
-    #[test]
-    fn history_lines_preserve_module_and_level() {
-        use crate::session::notification::{NotificationKind, NotificationLevel, UiNotification};
-        let events = [UiNotification {
-            level: NotificationLevel::Warning,
-            kind: NotificationKind::PersistenceUnavailable,
-            count: 2,
-            seq: 0,
-            at: std::time::UNIX_EPOCH,
-        }];
-        let rows = history_lines(
-            events.iter(),
-            nerust_settings_core::model::language::AppLanguage::English,
-        );
-        assert_eq!(rows[0].module, crate::session::notification::LOG_MODULE);
-        assert_eq!(rows[0].level, NotificationLevel::Warning);
-        assert!(rows[0].text.ends_with(" ×2"));
     }
 }

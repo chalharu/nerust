@@ -6,7 +6,7 @@ use nerust_gui_shell::{
     context::FrontendContext,
     session::{SessionHandle, session_query::WindowSize},
 };
-use nerust_render_traits::{SurfaceSize, renderer::GpuFactory};
+use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
 use nerust_settings_core::model::app_state::RememberedWindowSize;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -221,7 +221,7 @@ impl HostState {
         self.frame_cache.frame_ctx(&self.session)
     }
 
-    pub(crate) fn gpu_factory(&self) -> &Rc<dyn GpuFactory> {
+    pub(crate) fn gpu_factory(&self) -> &Rc<dyn PipelineFactory> {
         &self.ctx.gpu_factory
     }
 

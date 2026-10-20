@@ -10,7 +10,7 @@ use nerust_gui_shell::session::{
 use nerust_render_traits::{
     ReservedStrip, SurfaceSize,
     physical::PhysicalSize,
-    renderer::{GpuRenderer, SafeInsets, strip_pixels},
+    renderer::{RenderPipeline, SafeInsets, strip_pixels},
 };
 use nerust_settings_core::model::{language::AppLanguage, local::NotificationSettings};
 
@@ -115,7 +115,7 @@ pub(super) struct OsdSyncCtx<'a> {
     pub tick: nerust_gui_shell::session::osd::TickMetrics,
     pub settings: &'a NotificationSettings,
     pub language: AppLanguage,
-    pub renderer: &'a mut dyn GpuRenderer,
+    pub renderer: &'a mut dyn RenderPipeline,
     pub size: SurfaceSize,
     pub insets: SafeInsets,
     pub now: Instant,

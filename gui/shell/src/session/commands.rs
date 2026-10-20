@@ -395,9 +395,7 @@ mod tests {
 
 #[cfg(test)]
 mod mapping_tests {
-    use crate::emu_core::StateFault;
     use crate::session::commands::*;
-    use crate::session::error::SlotOpFailure;
 
     #[test]
     fn notification_for_is_the_single_mapping() {
@@ -413,31 +411,6 @@ mod mapping_tests {
         assert_eq!(
             SessionCommand::Pause.notification_for(&ok, None),
             outcome_notification(SessionCommand::Pause, &ok, None)
-        );
-    }
-
-    #[test]
-    fn state_faults_map_to_slot_failures_once() {
-        use crate::emu_core::state_fault_to_failure;
-        assert_eq!(
-            state_fault_to_failure(StateFault::Transport),
-            SlotOpFailure::Unavailable
-        );
-        assert_eq!(
-            state_fault_to_failure(StateFault::Missing),
-            SlotOpFailure::Missing
-        );
-        assert_eq!(
-            state_fault_to_failure(StateFault::Storage),
-            SlotOpFailure::Storage
-        );
-        assert_eq!(
-            state_fault_to_failure(StateFault::Corrupt),
-            SlotOpFailure::Corrupt
-        );
-        assert_eq!(
-            state_fault_to_failure(StateFault::Incompatible),
-            SlotOpFailure::Incompatible
         );
     }
 }

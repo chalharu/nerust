@@ -2,14 +2,17 @@ use std::rc::Rc;
 
 use nerust_render_traits::{
     FrameBuffer, SurfaceSize, VideoRenderProfile,
-    renderer::{GpuFactory, GpuRenderer, OpaqueError, RendererConfig, RendererError},
+    renderer::{
+        OpaqueError, PipelineFactory, RenderPipeline, RendererConfig, RendererError,
+        reattach_surface,
+    },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 #[derive(Debug)]
 pub(crate) struct GtkRenderer {
-    factory: Rc<dyn GpuFactory>,
-    renderer: Option<Box<dyn GpuRenderer>>,
+    factory: Rc<dyn PipelineFactory>,
+    renderer: Option<Box<dyn RenderPipeline>>,
     last_size: SurfaceSize,
     /// Set only by a successful attach. `render` must check this instead of
     /// `renderer.is_some()`: rendering unattached segfaults in native code.
@@ -17,7 +20,7 @@ pub(crate) struct GtkRenderer {
 }
 
 impl GtkRenderer {
-    pub(crate) fn new(factory: Rc<dyn GpuFactory>) -> Self {
+    pub(crate) fn new(factory: Rc<dyn PipelineFactory>) -> Self {
         Self {
             factory,
             renderer: None,
@@ -40,7 +43,7 @@ impl GtkRenderer {
             vsync: true,
             max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
         };
-        match self.factory.create_renderer(&config, display_handle) {
+        match self.factory.create_pipeline(&config, display_handle) {
             Ok(mut r) => {
                 match r.attach(window_handle, display_handle, physical_size) {
                     Ok(()) => {
@@ -69,7 +72,7 @@ impl GtkRenderer {
         self.last_size = size;
         match self.renderer.as_mut() {
             Some(r) => {
-                let result = r.reattach(window_handle, display_handle, size);
+                let result = reattach_surface(r.as_mut(), window_handle, display_handle, size);
                 self.attached = result.is_ok();
                 result
             }
@@ -119,8 +122,8 @@ mod tests {
     use nerust_render_traits::{
         FrameBuffer, SurfaceSize,
         renderer::{
-            GpuFactory, GpuRenderer, OsdLayer, OsdSink, Present, RenderResult, RendererConfig,
-            RendererError, StripSink,
+            FrameSink, OsdLayer, OsdSink, PipelineFactory, ProfileSwitch, RenderPipeline,
+            RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle,
         },
     };
     use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -161,7 +164,7 @@ mod tests {
         fail_attach: bool,
     }
 
-    impl Present for StubRenderer {
+    impl SurfaceLifecycle for StubRenderer {
         fn size(&self) -> SurfaceSize {
             SurfaceSize::new(64, 64)
         }
@@ -181,6 +184,9 @@ mod tests {
         }
         fn detach(&mut self) {}
         fn resize(&mut self, _size: SurfaceSize) {}
+    }
+
+    impl FrameSink for StubRenderer {
         fn render(&mut self, _frame: &FrameBuffer) -> RenderResult {
             self.renders.set(self.renders.get() + 1);
             RenderResult::Presented
@@ -193,7 +199,7 @@ mod tests {
 
     impl StripSink for StubRenderer {}
 
-    impl GpuRenderer for StubRenderer {
+    impl ProfileSwitch for StubRenderer {
         fn update_render_profile(
             &mut self,
             _profile: &nerust_render_traits::VideoRenderProfile,
@@ -209,12 +215,12 @@ mod tests {
         fail_attach: bool,
     }
 
-    impl GpuFactory for StubFactory {
-        fn create_renderer(
+    impl PipelineFactory for StubFactory {
+        fn create_pipeline(
             &self,
             _config: &RendererConfig,
             _display: RawDisplayHandle,
-        ) -> Result<Box<dyn GpuRenderer>, RendererError> {
+        ) -> Result<Box<dyn RenderPipeline>, RendererError> {
             if self.fail {
                 return Err(RendererError::new(
                     "test",
@@ -239,7 +245,7 @@ mod tests {
             fail: true,
             fail_attach: false,
         });
-        let factory_obj: Rc<dyn GpuFactory> = factory.clone();
+        let factory_obj: Rc<dyn PipelineFactory> = factory.clone();
         let mut gtk = GtkRenderer::new(factory_obj);
         let (wh, dh) = dummy_handles();
         gtk.realize(wh, dh, SurfaceSize::new(64, 64), &test_profile());
@@ -254,7 +260,7 @@ mod tests {
     #[test]
     fn successful_realize_drives_renders_and_resizes() {
         let renders = Rc::new(Cell::new(0));
-        let factory_obj: Rc<dyn GpuFactory> = Rc::new(StubFactory {
+        let factory_obj: Rc<dyn PipelineFactory> = Rc::new(StubFactory {
             renders: Rc::clone(&renders),
             fail: false,
             fail_attach: false,
@@ -275,7 +281,7 @@ mod tests {
     #[test]
     fn failed_attach_leaves_renderer_detached() {
         let renders = Rc::new(Cell::new(0));
-        let factory_obj: Rc<dyn GpuFactory> = Rc::new(StubFactory {
+        let factory_obj: Rc<dyn PipelineFactory> = Rc::new(StubFactory {
             renders: Rc::clone(&renders),
             fail: false,
             fail_attach: true,

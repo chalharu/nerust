@@ -750,13 +750,6 @@ mod tests {
     }
 
     #[test]
-    fn texts_render_both_languages() {
-        let kind = NotificationKind::SavedSlot(3);
-        assert!(kind.text(AppLanguage::English).contains('3'));
-        assert!(kind.text(AppLanguage::Japanese).contains("スロット3"));
-    }
-
-    #[test]
     fn texts_cover_every_variant_in_both_languages() {
         let variants = vec![
             NotificationKind::Paused,

@@ -1,8 +1,8 @@
 use nerust_render_traits::{
     FrameBuffer, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation, VideoRenderProfile,
     renderer::{
-        FrameSink, GpuFactory, GpuRenderer, OpaqueError, OsdLayer, OsdSink, Present, ProfileSwitch,
-        RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle,
+        FrameSink, OpaqueError, OsdLayer, OsdSink, ProfileSwitch, RenderResult, RendererConfig,
+        RendererError, StripSink, SurfaceLifecycle,
     },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -165,33 +165,6 @@ impl FrameSink for WgpuRenderer {
     }
 }
 
-impl Present for WgpuRenderer {
-    fn size(&self) -> SurfaceSize {
-        SurfaceLifecycle::size(self)
-    }
-
-    fn attach(
-        &mut self,
-        wh: RawWindowHandle,
-        dh: RawDisplayHandle,
-        size: SurfaceSize,
-    ) -> Result<(), RendererError> {
-        SurfaceLifecycle::attach(self, wh, dh, size)
-    }
-
-    fn detach(&mut self) {
-        SurfaceLifecycle::detach(self);
-    }
-
-    fn resize(&mut self, size: SurfaceSize) {
-        SurfaceLifecycle::resize(self, size);
-    }
-
-    fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
-        FrameSink::render(self, frame)
-    }
-}
-
 impl OsdSink for WgpuRenderer {
     fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
         self.osd = layer;
@@ -224,12 +197,6 @@ impl ProfileSwitch for WgpuRenderer {
     }
 }
 
-impl GpuRenderer for WgpuRenderer {
-    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        ProfileSwitch::update_render_profile(self, profile)
-    }
-}
-
 // WgpuFactory.
 // ---------------------------------------------------------------------------
 
@@ -250,7 +217,7 @@ impl WgpuFactory {
 }
 
 impl WgpuFactory {
-    /// Shared construction for both the legacy and the narrow factories.
+    /// Shared construction for the narrow factory.
     fn build(config: &RendererConfig) -> Result<WgpuRenderer, RendererError> {
         let instance = surface::default_instance();
 
@@ -286,16 +253,6 @@ impl WgpuFactory {
     }
 }
 
-impl GpuFactory for WgpuFactory {
-    fn create_renderer(
-        &self,
-        config: &RendererConfig,
-        _display_handle: RawDisplayHandle,
-    ) -> Result<Box<dyn GpuRenderer>, RendererError> {
-        Ok(Box::new(Self::build(config)?))
-    }
-}
-
 impl nerust_render_traits::renderer::PipelineFactory for WgpuFactory {
     /// Per-use-site composition; same renderer, narrow object.
     fn create_pipeline(
@@ -312,11 +269,9 @@ mod tests {
     #[test]
     fn lifecycle_split_seams_hold() {
         use nerust_render_traits::renderer::{
-            FrameSink, GpuRenderer, PipelineFactory, Present, ProfileSwitch, RenderPipeline,
-            SurfaceLifecycle,
+            FrameSink, PipelineFactory, ProfileSwitch, RenderPipeline, SurfaceLifecycle,
         };
-        fn assert_seams<T: SurfaceLifecycle + FrameSink + ProfileSwitch + Present + GpuRenderer>() {
-        }
+        fn assert_seams<T: SurfaceLifecycle + FrameSink + ProfileSwitch>() {}
         assert_seams::<super::WgpuRenderer>();
         // Per-use-site composition: the same renderer behind narrow traits,
         // minted by the narrow factory entry point.

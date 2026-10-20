@@ -43,7 +43,7 @@ use nerust_gui_shell::{
         persistence::PersistenceBackends,
     },
 };
-use nerust_render_traits::{SurfaceSize, renderer::GpuFactory};
+use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
 use nerust_settings_core::model::shared::StoragePolicy;
 use winit::{
     application::ApplicationHandler,
@@ -130,7 +130,7 @@ pub(super) fn run(
     app: AndroidApp,
     system_registry: Arc<SystemRegistry>,
     audio_registry: Arc<AudioBackendRegistry>,
-    gpu_factory: Rc<dyn GpuFactory>,
+    gpu_factory: Rc<dyn PipelineFactory>,
 ) -> Result<(), String> {
     // Best-effort re-registration from the native thread; the system classloader
     // may fail it. Primary registration happens in JNI_OnLoad.
@@ -241,7 +241,7 @@ struct SessionCore {
     session: SessionHandle,
     storage: AndroidStorage,
     shell: NativeShellState,
-    gpu_factory: Rc<dyn GpuFactory>,
+    gpu_factory: Rc<dyn PipelineFactory>,
 }
 
 /// Live chrome: input routing, peripherals, and the OSD layer.
@@ -278,7 +278,7 @@ impl AndroidFrontend {
         settings_root: PathBuf,
         system_registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
-        gpu_factory: Rc<dyn GpuFactory>,
+        gpu_factory: Rc<dyn PipelineFactory>,
     ) -> Result<Self, String> {
         log::info!("AndroidFrontend::try_new: building frontend state");
         let capabilities = HostBackendCapabilities {

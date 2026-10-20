@@ -11,7 +11,7 @@ use nerust_gui_shell::session::{
     access::{PauseControl, ResetControl, SessionControl, SlotIo, SlotNav},
 };
 use nerust_persistence::model::StateSlotSummary;
-use nerust_render_traits::renderer::GpuFactory;
+use nerust_render_traits::renderer::PipelineFactory;
 use nerust_settings_core::model::local::ScalingMode;
 
 use super::{
@@ -116,7 +116,7 @@ pub(crate) trait WindowExtend {
         application: gtk::Application,
         window: gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
-        factory: Rc<dyn GpuFactory>,
+        factory: Rc<dyn PipelineFactory>,
         state_menus: StateMenus,
     ) -> Window;
     fn window(&self) -> gtk::ApplicationWindow;
@@ -161,7 +161,7 @@ impl WindowExtend for Window {
         application: gtk::Application,
         window: gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
-        factory: Rc<dyn GpuFactory>,
+        factory: Rc<dyn PipelineFactory>,
         state_menus: StateMenus,
     ) -> Window {
         let actions = WindowActions::new();

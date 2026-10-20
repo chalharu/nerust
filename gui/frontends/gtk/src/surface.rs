@@ -4,7 +4,7 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use nerust_render_traits::{SurfaceSize, renderer::GpuFactory};
+use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
 
 use super::{State, renderer::GtkRenderer};
 
@@ -24,7 +24,7 @@ pub(crate) trait SurfaceExtend {
     fn bind(
         window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
-        factory: Rc<dyn GpuFactory>,
+        factory: Rc<dyn PipelineFactory>,
     ) -> Surface;
     fn tick(&self) -> bool;
 }
@@ -33,7 +33,7 @@ impl SurfaceExtend for Surface {
     fn bind(
         window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
-        factory: Rc<dyn GpuFactory>,
+        factory: Rc<dyn PipelineFactory>,
     ) -> Surface {
         state.borrow_mut().renderer_reload_pending = true;
         let renderer = Rc::new(RefCell::new(GtkRenderer::new(factory)));

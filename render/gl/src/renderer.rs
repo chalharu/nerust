@@ -12,9 +12,8 @@ use glutin::{
 use nerust_render_traits::{
     FrameBuffer, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
     renderer::{
-        FrameSink, GpuFactory, GpuRenderer, OsdLayer, OsdSink, Present, ProfileSwitch,
-        RenderResult, RendererConfig, RendererError, RendererErrorKind, StripSink,
-        SurfaceLifecycle,
+        FrameSink, OsdLayer, OsdSink, ProfileSwitch, RenderResult, RendererConfig, RendererError,
+        RendererErrorKind, StripSink, SurfaceLifecycle,
     },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -409,33 +408,6 @@ impl FrameSink for GlRenderer {
     }
 }
 
-impl Present for GlRenderer {
-    fn size(&self) -> SurfaceSize {
-        SurfaceLifecycle::size(self)
-    }
-
-    fn attach(
-        &mut self,
-        wh: RawWindowHandle,
-        dh: RawDisplayHandle,
-        size: SurfaceSize,
-    ) -> Result<(), RendererError> {
-        SurfaceLifecycle::attach(self, wh, dh, size)
-    }
-
-    fn detach(&mut self) {
-        SurfaceLifecycle::detach(self);
-    }
-
-    fn resize(&mut self, size: SurfaceSize) {
-        SurfaceLifecycle::resize(self, size);
-    }
-
-    fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
-        FrameSink::render(self, frame_buffer)
-    }
-}
-
 impl OsdSink for GlRenderer {
     /// Stage an OSD layer; header gate skips the clone on equality.
     /// Keeps the stored copy needed for profile rebuilds.
@@ -475,12 +447,6 @@ impl ProfileSwitch for GlRenderer {
         self.frame = frame;
         self.osd = osd;
         Ok(())
-    }
-}
-
-impl GpuRenderer for GlRenderer {
-    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        ProfileSwitch::update_render_profile(self, profile)
     }
 }
 
@@ -563,7 +529,7 @@ impl GlFactory {
 }
 
 impl GlFactory {
-    /// Shared construction for both the legacy and the narrow factories.
+    /// Shared construction for the narrow factory.
     fn build(
         config: &RendererConfig,
         display_handle: RawDisplayHandle,
@@ -605,16 +571,6 @@ impl GlFactory {
             close_warned: false,
             tight: Vec::new(),
         })
-    }
-}
-
-impl GpuFactory for GlFactory {
-    fn create_renderer(
-        &self,
-        config: &RendererConfig,
-        display_handle: RawDisplayHandle,
-    ) -> Result<Box<dyn GpuRenderer>, RendererError> {
-        Ok(Box::new(Self::build(config, display_handle)?))
     }
 }
 
@@ -702,11 +658,9 @@ mod tests {
     #[test]
     fn lifecycle_split_seams_are_object_safe() {
         use nerust_render_traits::renderer::{
-            FrameSink, GpuRenderer, PipelineFactory, Present, ProfileSwitch, RenderPipeline,
-            SurfaceLifecycle,
+            FrameSink, PipelineFactory, ProfileSwitch, RenderPipeline, SurfaceLifecycle,
         };
-        fn assert_seams<T: SurfaceLifecycle + FrameSink + ProfileSwitch + Present + GpuRenderer>() {
-        }
+        fn assert_seams<T: SurfaceLifecycle + FrameSink + ProfileSwitch>() {}
         assert_seams::<super::GlRenderer>();
         // Per-use-site composition: the same renderer behind narrow traits,
         // minted by the narrow factory entry point.
@@ -1044,10 +998,12 @@ mod tests {
     #[test]
     fn gl_renderer_rebuild_and_detach() {
         use glutin::context::PossiblyCurrentGlContext as _;
-        use nerust_render_traits::renderer::{OsdSink as _, Present as _};
+        use nerust_render_traits::renderer::{
+            FrameSink as _, OsdSink as _, ProfileSwitch as _, SurfaceLifecycle as _,
+        };
         use nerust_render_traits::{
             SurfaceSize,
-            renderer::{GpuRenderer as _, OsdLayer, RenderResult},
+            renderer::{OsdLayer, RenderResult},
         };
 
         let _serial = crate::test_display::lock_display();

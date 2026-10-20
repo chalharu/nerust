@@ -333,47 +333,12 @@ pub fn strip_pixels(client_height: u32, rows: u32, ui_scale: f32) -> u32 {
     rows.saturating_mul(row) + margin + gap * rows.saturating_sub(1)
 }
 
-/// Outcome reported by [`FrameSink::render`] (and legacy [`Present::render`]).
+/// Outcome reported by [`FrameSink::render`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RenderResult {
     Presented,
     Skipped,
     Error,
-}
-
-/// Frame presentation: surface lifecycle plus per-frame blit. Backends implement this without any
-/// OSD vocabulary. Legacy composite; new code programs to [`SurfaceLifecycle`] plus [`FrameSink`] directly.
-pub trait Present: std::fmt::Debug {
-    /// Current output size.
-    fn size(&self) -> SurfaceSize;
-
-    /// Attach a native window.  Must be called before render().
-    fn attach(
-        &mut self,
-        window_handle: RawWindowHandle,
-        display_handle: RawDisplayHandle,
-        size: SurfaceSize,
-    ) -> Result<(), RendererError>;
-
-    /// Detach from the native window (device/pipeline are kept).
-    fn detach(&mut self);
-
-    /// detach + attach (handy for Android surface loss or Wayland).
-    fn reattach(
-        &mut self,
-        window_handle: RawWindowHandle,
-        display_handle: RawDisplayHandle,
-        size: SurfaceSize,
-    ) -> Result<(), RendererError> {
-        self.detach();
-        self.attach(window_handle, display_handle, size)
-    }
-
-    /// Resize the output (swapchain for wgpu; stored for GL).
-    fn resize(&mut self, size: SurfaceSize);
-
-    /// Render a frame.  attach() must have been called.
-    fn render(&mut self, frame: &FrameBuffer) -> RenderResult;
 }
 
 /// Explicit detach + attach for surface loss or Wayland.
@@ -389,7 +354,6 @@ pub fn reattach_surface(
 }
 
 /// Surface ownership: attach/detach/resize without any frame vocabulary.
-/// Split from [`Present`] so lifecycle tests never need a frame.
 pub trait SurfaceLifecycle: std::fmt::Debug {
     /// Current output size.
     fn size(&self) -> SurfaceSize;
@@ -404,16 +368,6 @@ pub trait SurfaceLifecycle: std::fmt::Debug {
 
     /// Detach from the native window (device/pipeline are kept).
     fn detach(&mut self);
-
-    /// detach + attach (handy for Android surface loss or Wayland).
-    fn reattach(
-        &mut self,
-        window_handle: RawWindowHandle,
-        display_handle: RawDisplayHandle,
-        size: SurfaceSize,
-    ) -> Result<(), RendererError> {
-        reattach_surface(self, window_handle, display_handle, size)
-    }
 
     /// Resize the output (swapchain for wgpu; stored for GL).
     fn resize(&mut self, size: SurfaceSize);
@@ -471,13 +425,6 @@ impl<T> RenderPipeline for T where
 }
 
 /// GPU device + pipeline + surface. Composition of the three sinks.
-/// Lifecycle: GpuFactory::create_renderer() → attach() → render() → detach() → drop
-pub trait GpuRenderer: Present + OsdSink + StripSink {
-    /// Update the render pipeline for a new render profile.
-    fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;
-}
-
-/// Common parameters for [`GpuFactory::create_renderer`].
 pub struct RendererConfig {
     pub render_profile: VideoRenderProfile,
     pub vsync: bool,
@@ -497,18 +444,7 @@ impl RendererConfig {
     }
 }
 
-/// Abstract factory: creates a [`GpuRenderer`].
-/// Call `attach()` on the result before rendering.
-pub trait GpuFactory: std::fmt::Debug {
-    fn create_renderer(
-        &self,
-        config: &RendererConfig,
-        display_handle: RawDisplayHandle,
-    ) -> Result<Box<dyn GpuRenderer>, RendererError>;
-}
-
-/// Narrow factory: returns the per-use-site [`RenderPipeline`] composition
-/// instead of the legacy [`GpuRenderer`] composite. New code prefers this.
+/// Narrow factory: returns the per-use-site [`RenderPipeline`] composition.
 pub trait PipelineFactory: std::fmt::Debug {
     /// Create a pipeline; call `attach()` on the result before rendering.
     fn create_pipeline(

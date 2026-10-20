@@ -7,7 +7,7 @@ use nerust_gui_runtime::shell::NativeShellState;
 use nerust_gui_shell::session::{SessionHandle, osd::TickMetrics};
 use nerust_render_traits::{
     FrameBuffer, SurfaceSize, VideoRenderProfile,
-    renderer::{DEFAULT_OSD_UPLOAD_RETRIES, GpuFactory, GpuRenderer, RendererConfig},
+    renderer::{DEFAULT_OSD_UPLOAD_RETRIES, PipelineFactory, RenderPipeline, RendererConfig},
 };
 use nerust_settings_core::model::{language::AppLanguage, local::NotificationSettings};
 use winit::{
@@ -34,7 +34,7 @@ pub(super) struct FrameInput<'session> {
 pub(super) struct RenderSync {
     window: Option<Arc<Window>>,
     window_id: Option<WindowId>,
-    renderer: Option<Box<dyn GpuRenderer>>,
+    renderer: Option<Box<dyn RenderPipeline>>,
 }
 
 impl RenderSync {
@@ -69,7 +69,7 @@ impl RenderSync {
         &mut self,
         event_loop: &ActiveEventLoop,
         session: &SessionHandle,
-        gpu_factory: &Rc<dyn GpuFactory>,
+        gpu_factory: &Rc<dyn PipelineFactory>,
         osd: &mut AndroidOsd,
         shell: &mut NativeShellState,
     ) -> Result<(), String> {
@@ -113,7 +113,7 @@ impl RenderSync {
         &mut self,
         window: Arc<Window>,
         session: &SessionHandle,
-        gpu_factory: &Rc<dyn GpuFactory>,
+        gpu_factory: &Rc<dyn PipelineFactory>,
         osd: &mut AndroidOsd,
         shell: &mut NativeShellState,
     ) {
@@ -143,7 +143,7 @@ impl RenderSync {
             max_osd_upload_retries: DEFAULT_OSD_UPLOAD_RETRIES,
         };
         let renderer_result = gpu_factory
-            .create_renderer(&config, raw_display_handle)
+            .create_pipeline(&config, raw_display_handle)
             .and_then(|mut r| {
                 let ws = SurfaceSize::new(size.width, size.height);
                 r.attach(raw_window_handle, raw_display_handle, ws)

@@ -177,7 +177,35 @@ downcast_rs::impl_downcast!(InputStateBuffer);
 
 #[cfg(test)]
 mod tests {
-    use super::{AttachmentId, DigitalControlId, DigitalInputEvent, DigitalInputState};
+    use super::{
+        AttachmentId, BufferError, DigitalControlId, DigitalInputEvent, DigitalInputState,
+        InputStateBuffer, InputValue,
+    };
+
+    // Copy-state contract shared by all buffers.
+    fn assert_copy_contract<B>(mut fresh: B, staged: B, foreign: &dyn InputStateBuffer)
+    where
+        B: InputStateBuffer + PartialEq + std::fmt::Debug,
+    {
+        fresh.copy_state(&staged).unwrap();
+        assert_eq!(fresh, staged);
+        assert!(fresh.copy_state(foreign).is_err());
+    }
+
+    #[derive(Debug)]
+    struct Foreign;
+    impl InputStateBuffer for Foreign {
+        fn set(&mut self, _f: usize, _v: InputValue) -> Result<(), BufferError> {
+            Ok(())
+        }
+        fn clear(&mut self) {}
+        fn copy_state(&mut self, _: &dyn InputStateBuffer) -> Result<(), BufferError> {
+            Err(BufferError::MismatchedBuffer {
+                expected: "Foreign",
+                actual: "other",
+            })
+        }
+    }
 
     #[test]
     fn digital_input_event_helpers_preserve_state() {
@@ -220,9 +248,8 @@ mod tests {
 
     #[test]
     fn typed_field_id_round_trips_through_set() {
-        use super::{FieldId, InputStateBuffer, InputValue};
-        use crate::BufferError;
-        #[derive(Debug, Default)]
+        use super::FieldId;
+        #[derive(Debug, Default, PartialEq)]
         struct Bit {
             pressed: bool,
         }
@@ -264,30 +291,8 @@ mod tests {
                 .is_err()
         );
         assert_eq!(FieldId::new(3).index(), 3);
-        // Full copy propagates staged bits; mismatched buffers refuse.
-        let mut other = Bit::default();
-        other.copy_state(&bit).unwrap();
-        assert!(other.pressed);
-        // Mismatched buffers refuse without partially applying.
-        struct Foreign;
-        impl std::fmt::Debug for Foreign {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("Foreign")
-            }
-        }
-        impl InputStateBuffer for Foreign {
-            fn set(&mut self, _f: usize, _v: InputValue) -> Result<(), BufferError> {
-                Ok(())
-            }
-            fn clear(&mut self) {}
-            fn copy_state(&mut self, _: &dyn InputStateBuffer) -> Result<(), BufferError> {
-                Err(BufferError::MismatchedBuffer {
-                    expected: "Foreign",
-                    actual: "other",
-                })
-            }
-        }
-        assert!(other.copy_state(&Foreign).is_err());
+        // Copy-state contract shared by all buffers.
+        assert_copy_contract(Bit::default(), bit, &Foreign);
     }
 
     #[test]

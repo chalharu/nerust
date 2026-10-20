@@ -10,7 +10,7 @@ use std::{
     },
 };
 
-use crate::test_gpu::FakeGpuFactory;
+use crate::test_gpu::FakePipelineFactory;
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_shell::{context::FrontendContext, load::RomLoader, registry::SystemRegistry};
 
@@ -90,7 +90,7 @@ impl TestContext {
     pub(crate) fn with_loader(loader: FakeRomLoader) -> Self {
         let dir = unique_test_dir();
         let ctx = FrontendContext {
-            gpu_factory: Rc::new(FakeGpuFactory),
+            gpu_factory: Rc::new(FakePipelineFactory),
             registry: Arc::new(SystemRegistry::new(Vec::new())),
             rom_loader: Box::new(loader.clone()),
             audio_registry: Arc::new(AudioBackendRegistry::new()),

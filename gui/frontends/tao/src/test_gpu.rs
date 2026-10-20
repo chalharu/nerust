@@ -1,19 +1,19 @@
 //! Headless GPU factory: always fails closed, never touches hardware.
 //! Production code never touches this module.
 
-use nerust_render_traits::renderer::{GpuRenderer, RendererConfig, RendererError};
+use nerust_render_traits::renderer::{RenderPipeline, RendererConfig, RendererError};
 
-/// `GpuFactory` that never succeeds: host tests run windowless, so
+/// `PipelineFactory` that never succeeds: host tests run windowless, so
 /// renderer creation must fail closed, never touch the GPU.
 #[derive(Debug, Default)]
-pub(crate) struct FakeGpuFactory;
+pub(crate) struct FakePipelineFactory;
 
-impl nerust_render_traits::renderer::GpuFactory for FakeGpuFactory {
-    fn create_renderer(
+impl nerust_render_traits::renderer::PipelineFactory for FakePipelineFactory {
+    fn create_pipeline(
         &self,
         _config: &RendererConfig,
         _display_handle: raw_window_handle::RawDisplayHandle,
-    ) -> Result<Box<dyn GpuRenderer>, RendererError> {
+    ) -> Result<Box<dyn RenderPipeline>, RendererError> {
         Err(RendererError::new(
             "headless",
             Box::new(std::io::Error::other("no GPU in tests")),
@@ -25,7 +25,7 @@ impl nerust_render_traits::renderer::GpuFactory for FakeGpuFactory {
 mod tests {
     use super::*;
     use nerust_render_traits::{
-        logical::LogicalSize, physical::PhysicalSize, renderer::GpuFactory,
+        logical::LogicalSize, physical::PhysicalSize, renderer::PipelineFactory,
     };
 
     fn test_config() -> nerust_render_traits::renderer::RendererConfig {
@@ -54,10 +54,10 @@ mod tests {
     #[test]
     fn fake_gpu_factory_fails_closed() {
         use raw_window_handle::RawDisplayHandle;
-        let factory = FakeGpuFactory;
+        let factory = FakePipelineFactory;
         // Never dereferenced: the fake fails before touching it.
         let handle: RawDisplayHandle = unsafe { std::mem::zeroed() };
-        let result = factory.create_renderer(&test_config(), handle);
+        let result = factory.create_pipeline(&test_config(), handle);
         assert!(result.is_err());
     }
 }

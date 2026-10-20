@@ -77,7 +77,12 @@ pub fn validate_shared_settings(settings: &DesktopSharedSettings) -> Result<(), 
         let Some(path) = settings.persistence.storage_directory.as_ref() else {
             return Err(SettingsError::MissingCustomStorageDirectory);
         };
-        validate_directory_path(path)?;
+        validate_directory_path_typed(path).map_err(|e| match e {
+            DirectoryValidationError::NotDirectory => SettingsError::Io(std::io::Error::other(
+                "custom storage path is not a directory",
+            )),
+            DirectoryValidationError::Inaccessible(err) => err.into(),
+        })?;
     }
     Ok(())
 }
@@ -107,8 +112,8 @@ pub fn validate_local_settings(settings: &HostBackendLocalSettings) -> Result<()
     Ok(())
 }
 
-/// Typed version of directory validation — used by both the runtime
-/// (via `validate_directory_path`) and the frontend storage validator.
+/// Typed directory validation: walks up to the nearest existing ancestor.
+/// A non-directory hit and an I/O failure map to distinct error variants.
 pub fn validate_directory_path_typed(path: &Path) -> Result<(), DirectoryValidationError> {
     let mut current = Some(path);
     while let Some(candidate) = current {
@@ -126,16 +131,6 @@ pub fn validate_directory_path_typed(path: &Path) -> Result<(), DirectoryValidat
         }
     }
     Ok(())
-}
-
-/// Wrapper for backward-compatible usage inside `validate_shared_settings`.
-pub fn validate_directory_path(path: &Path) -> Result<(), SettingsError> {
-    validate_directory_path_typed(path).map_err(|e| match e {
-        DirectoryValidationError::NotDirectory => SettingsError::Io(std::io::Error::other(
-            "custom storage path is not a directory",
-        )),
-        DirectoryValidationError::Inaccessible(err) => err.into(),
-    })
 }
 
 fn live_system_settings_changed(
