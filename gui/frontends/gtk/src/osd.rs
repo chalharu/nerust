@@ -499,7 +499,7 @@ mod tests {
             rows: vec![OsdRow {
                 text: "Paused".to_string(),
                 rgb: (255, 255, 255),
-                tag: "[I]",
+                tag: "[I]".into(),
             }],
         }
     }

@@ -448,11 +448,7 @@ impl HostState {
         let width = logical_size.width.round().max(1.0) as u32;
         let height = logical_size.height.round().max(1.0) as u32;
 
-        if let Err(error) = self
-            .session
-            .settings_manager()
-            .update_window_size(width, height)
-        {
+        if let Err(error) = self.session.update_window_size(width, height) {
             log::warn!("failed to remember tao window size: {error}");
         }
     }

@@ -10,10 +10,8 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 pub enum SystemActivationError {
     #[error("system not registered: {0}")]
     NotRegistered(Box<dyn SystemId>),
-    #[error("system activation failed: {0}")]
-    Activation(String),
     /// Typed activation failure: renders once at this boundary, keeping the chain as `source`.
-    /// Shaping matches [`Activation`](Self::Activation) so persisted logs do not change.
+    /// Shaping matches the removed `Activation` spelling so persisted logs do not change.
     #[error("system activation failed: {source}")]
     ActivationFailed {
         #[source]
@@ -29,14 +27,19 @@ pub enum RomLoaderError {
     Detect(String),
     #[error("load request resolution failed: {0}")]
     Resolve(String),
-    #[error("ROM load failed: {0}")]
-    Load(String),
     /// Typed load failure: renders once at this boundary, keeping the `source` chain.
-    /// Shaping matches [`Load`](Self::Load) so persisted logs and wording do not change.
+    /// Shaping matches the removed `Load` spelling so persisted logs and wording do not change.
     #[error("ROM load failed: {source}")]
     LoadFailed {
         #[source]
         source: Box<crate::session::SessionError>,
+    },
+    /// Typed activation failure at the load boundary: renders once, keeping the chain as `source`.
+    /// Shaping matches the removed `Load` spelling wrapping the activation error text.
+    #[error("ROM load failed: {source}")]
+    ActivationFailed {
+        #[source]
+        source: Box<SystemActivationError>,
     },
 }
 
@@ -109,16 +112,13 @@ mod tests {
         use super::RomLoaderError;
         use std::error::Error as _;
         let typed = RomLoaderError::from_session(crate::session::SessionError::NoCore);
-        // Display matches the legacy `Load` wording.
+        // Display matches the removed `Load` wording.
         assert_eq!(
             typed.to_string(),
             "ROM load failed: no emulation core active"
         );
         // The chain is inspectable, not stringified away.
         assert!(typed.source().is_some());
-        // Legacy construction still compiles for out-of-crate callers.
-        let legacy = RomLoaderError::Load("no ROM in tests".to_string());
-        assert!(legacy.to_string().contains("no ROM in tests"));
     }
 
     #[test]
@@ -141,9 +141,6 @@ mod activation_tests {
             error,
             SystemActivationError::ActivationFailed { .. }
         ));
-        // Legacy spelling still renders the same shape.
-        let legacy = SystemActivationError::Activation("boom".to_string());
-        assert_eq!(legacy.to_string(), "system activation failed: boom");
         assert_eq!(
             error.to_string(),
             "system activation failed: no emulation core active"

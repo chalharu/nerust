@@ -395,7 +395,7 @@ mod debug_ops_cov_tests {
         use nerust_core_traits::factory::load::MediaObject;
         let temp_dir = crate::test_helpers::unique_temp_dir("debug-ops-loaded");
         let mut session = test_session();
-        let factory = session.factory().unwrap();
+        let factory = session.active_factory_cloned().unwrap();
         let options = factory.default_load_options();
         let view = crate::session::test_util::test_view(&session);
         let resolved = factory.resolve_load_request(&view, options).unwrap();
@@ -432,7 +432,7 @@ mod debug_ops_cov_tests {
             session.debug_write_register("a", 5),
             S::RegisterRefused(_)
         ));
-        let factory = session.factory().unwrap();
+        let factory = session.active_factory_cloned().unwrap();
         let options = factory.default_load_options();
         let view = crate::session::test_util::test_view(&session);
         let resolved = factory.resolve_load_request(&view, options).unwrap();

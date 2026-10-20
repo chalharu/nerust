@@ -10,7 +10,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionError,
     access::SettingsResult,
-    access::{PauseControl, SessionControl, SlotControl},
+    access::{PauseControl, ResetControl, SessionControl, SlotIo, SlotNav},
     commands::SessionCommand,
 };
 
@@ -151,7 +151,7 @@ impl PauseControl for HostState {
     }
 }
 
-impl SlotControl for HostState {
+impl SlotIo for HostState {
     fn save_active_slot(&mut self) -> bool {
         self.session
             .run_command(SessionCommand::SaveActiveSlotOrNew)
@@ -163,12 +163,6 @@ impl SlotControl for HostState {
             .run_command(SessionCommand::LoadActiveSlot)
             .unwrap_or_default()
             .executed
-    }
-    fn select_next_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
-    }
-    fn select_previous_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
     }
     fn load_slot(&mut self, slot_id: u64) -> bool {
         self.session
@@ -184,6 +178,15 @@ impl SlotControl for HostState {
             .session
             .run_command(SessionCommand::DeleteSlot(slot_id));
     }
+}
+
+impl SlotNav for HostState {
+    fn select_next_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
+    }
+    fn select_previous_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
+    }
     fn select_slot(&mut self, slot_id: u64) {
         let _ = self
             .session
@@ -192,6 +195,9 @@ impl SlotControl for HostState {
     fn create_slot(&mut self) {
         let _ = self.session.run_command(SessionCommand::CreateSlot);
     }
+}
+
+impl ResetControl for HostState {
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
     }
@@ -274,7 +280,10 @@ mod tests {
         let mut host = support.host;
         assert!(!host.open_rom_dialog());
         assert_eq!(support.loader.attempted(), [path]);
-        assert_eq!(support.dialogs.errors(), ["ROM load failed: bad rom"]);
+        assert_eq!(
+            support.dialogs.errors(),
+            ["ROM load failed: no emulation core active"]
+        );
     }
 
     #[test]
@@ -460,7 +469,9 @@ mod tests {
 
     #[test]
     fn session_delegates_stay_total_without_core() {
-        use nerust_gui_shell::session::access::{PauseControl, SessionControl, SlotControl};
+        use nerust_gui_shell::session::access::{
+            PauseControl, ResetControl, SessionControl, SlotIo, SlotNav,
+        };
         let support = TestHost::new();
         let mut host = support.host;
         assert!(!host.session.tick_metrics().paused);

@@ -87,7 +87,12 @@ impl OsdManager {
             let renderer = super::notification::NotificationRenderer { language };
             let base: std::rc::Rc<str> = renderer.render_message(&message).into();
             let item = OsdItem {
-                row: counted_row(&base, n.count, policy.color(n.level), level_tag(n.level)),
+                row: counted_row(
+                    &base,
+                    n.count,
+                    policy.color(n.level),
+                    std::rc::Rc::from(level_tag(n.level)),
+                ),
                 level: n.level,
                 message,
                 base,
@@ -674,7 +679,7 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert_eq!(manager.rows()[0].tag, "[ERROR]");
+        assert_eq!(&*manager.rows()[0].tag, "[ERROR]");
         let base = manager.generation();
         manager.poll(now + Duration::from_millis(5_001));
         assert_ne!(manager.generation(), base);
@@ -708,7 +713,7 @@ mod tests {
         let base = manager.generation();
         manager.poll(now);
         assert_ne!(manager.generation(), base);
-        assert_eq!(manager.rows()[0].tag, "[INFO]");
+        assert_eq!(&*manager.rows()[0].tag, "[INFO]");
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Error,
@@ -726,11 +731,11 @@ mod tests {
             FrameChannel::Composited,
         );
         // The Error takes the display at once; the demoted Info waits.
-        assert_eq!(manager.rows()[0].tag, "[ERROR]");
+        assert_eq!(&*manager.rows()[0].tag, "[ERROR]");
         let base = manager.generation();
         manager.poll(now + Duration::from_millis(5_001));
         assert_ne!(manager.generation(), base);
-        assert_eq!(manager.rows()[0].tag, "[INFO]");
+        assert_eq!(&*manager.rows()[0].tag, "[INFO]");
     }
 
     #[test]
@@ -771,11 +776,11 @@ mod tests {
             FrameChannel::Composited,
         );
         // Only Errors preempt; the Warning waits for expiry.
-        assert_eq!(manager.rows()[0].tag, "[INFO]");
+        assert_eq!(&*manager.rows()[0].tag, "[INFO]");
         let base = manager.generation();
         manager.poll(now + Duration::from_millis(2_001));
         assert_ne!(manager.generation(), base);
-        assert_eq!(manager.rows()[0].tag, "[WARN]");
+        assert_eq!(&*manager.rows()[0].tag, "[WARN]");
     }
 
     #[test]
@@ -849,12 +854,12 @@ mod tests {
         let base = manager.generation();
         manager.poll(now + Duration::from_millis(5_001));
         assert_ne!(manager.generation(), base);
-        assert_eq!(manager.rows()[0].tag, "[WARN]");
+        assert_eq!(&*manager.rows()[0].tag, "[WARN]");
         let base = manager.generation();
         manager.poll(now + Duration::from_millis(10_002));
         assert_ne!(manager.generation(), base);
         assert!(manager.rows()[0].text.contains("Reset"));
-        assert_eq!(manager.rows()[0].tag, "[INFO]");
+        assert_eq!(&*manager.rows()[0].tag, "[INFO]");
     }
 
     #[test]
@@ -974,7 +979,7 @@ mod tests {
             now,
             FrameChannel::Composited,
         );
-        assert_eq!(manager.rows()[0].tag, "[ERROR]");
+        assert_eq!(&*manager.rows()[0].tag, "[ERROR]");
         let base = manager.generation();
         manager.poll(now + Duration::from_millis(5_000));
         assert_ne!(manager.generation(), base);
@@ -982,7 +987,7 @@ mod tests {
         let base = manager.generation();
         manager.poll(now + Duration::from_millis(7_000));
         assert_ne!(manager.generation(), base);
-        assert_eq!(manager.rows()[0].tag, "[WARN]");
+        assert_eq!(&*manager.rows()[0].tag, "[WARN]");
         let base = manager.generation();
         manager.poll(now + Duration::from_millis(12_000));
         assert_ne!(manager.generation(), base);

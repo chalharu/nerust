@@ -1,12 +1,11 @@
-use std::collections::HashMap;
-
 use nerust_core_traits::{
     audio::AudioBackend,
     factory::{CoreParts, FactoryError, settings::FactorySettingsView},
 };
 use nerust_emu_thread::{EmuInput, InputPort};
 use nerust_input_traits::{
-    AttachmentId, Controller, ControllerCollection, InputAssignments, InputSystemFactory, ProfileId,
+    Controller, ControllerCollection, InputAssignments, InputSystemFactory, ProfileId,
+    UnifiedFieldMap,
 };
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_render_filters::FilterTypeExt;
@@ -41,14 +40,8 @@ pub(crate) fn create_core_and_adapter_with_assignments(
     let resources = input_factory
         .create_split(&controller_collection)
         .map_err(|e| FactoryError::Create(e.to_string()))?;
-    // Digital-only session projection: analog drops warn and debug-trap
-    // so a future analog device migrates `CoreParts` instead of vanishing.
-    let (split, unified) = nerust_emu_thread::InputSplit::from_resources(resources);
-    let (field_map, dropped) = nerust_core_traits::factory::split_digital_field_map(&unified);
-    if !dropped.is_empty() {
-        log::warn!("nes input: dropping {} analog field(s)", dropped.len());
-    }
-    debug_assert!(dropped.is_empty(), "analog fields dropped: {dropped:?}");
+    // Unified map travels end to end; no lossy projection.
+    let (split, field_map) = nerust_emu_thread::InputSplit::from_resources(resources);
 
     let gui_input = split.gui_endpoint();
     let emu_input = split.emu_endpoint();
@@ -67,7 +60,7 @@ pub(crate) fn create_core_and_adapter(
     speaker: Box<dyn AudioBackend>,
     gui_input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
     emu_input: EmuInput,
-    field_map: HashMap<(AttachmentId, nerust_input_traits::DigitalControlId), usize>,
+    field_map: UnifiedFieldMap,
     controller_collection: ControllerCollection,
 ) -> Result<CoreParts, FactoryError> {
     let filter = crate::settings::filter_type_from_bytes(view.system_config.as_deref());

@@ -27,7 +27,7 @@ use nerust_gui_shell::{
     context::FrontendContext,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
-        access::{PauseControl, SessionControl, SettingsResult, SlotControl},
+        access::{PauseControl, ResetControl, SessionControl, SettingsResult, SlotIo, SlotNav},
         commands::SessionCommand,
     },
 };
@@ -151,7 +151,7 @@ impl PauseControl for State {
     }
 }
 
-impl SlotControl for State {
+impl SlotIo for State {
     fn save_active_slot(&mut self) -> bool {
         self.session
             .run_command(SessionCommand::SaveActiveSlotOrNew)
@@ -163,12 +163,6 @@ impl SlotControl for State {
             .run_command(SessionCommand::LoadActiveSlot)
             .unwrap_or_default()
             .executed
-    }
-    fn select_next_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
-    }
-    fn select_previous_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
     }
     fn load_slot(&mut self, slot_id: u64) -> bool {
         self.session
@@ -184,6 +178,15 @@ impl SlotControl for State {
             .session
             .run_command(SessionCommand::DeleteSlot(slot_id));
     }
+}
+
+impl SlotNav for State {
+    fn select_next_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
+    }
+    fn select_previous_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
+    }
     fn select_slot(&mut self, slot_id: u64) {
         let _ = self
             .session
@@ -192,6 +195,9 @@ impl SlotControl for State {
     fn create_slot(&mut self) {
         let _ = self.session.run_command(SessionCommand::CreateSlot);
     }
+}
+
+impl ResetControl for State {
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
     }
@@ -468,7 +474,7 @@ pub fn run(ctx: FrontendContext, _options: RunOptions) {
         nerust_crash_guard::GuardOutcome::Completed(()) => {}
         nerust_crash_guard::GuardOutcome::Crashed(report) => {
             log::error!("{}", crash_note(report.message()));
-            std::process::exit(nerust_crash_guard::CRASH_EXIT_CODE);
+            std::process::exit(101); // Rust panic convention: a crash never exits 0.
         }
     }
 }

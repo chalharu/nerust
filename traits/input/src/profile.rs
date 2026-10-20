@@ -9,7 +9,7 @@ use super::{
 };
 
 /// Unified session field map: (attachment, control) → absolute field.
-/// End-to-end lookup key; the digital-only projection derives from this.
+/// End-to-end lookup key shared by factories and shells.
 pub type UnifiedFieldMap = HashMap<(AttachmentId, ControlId), usize>;
 
 /// Factory minting one input buffer per call; shared by every endpoint.

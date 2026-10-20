@@ -166,18 +166,6 @@ pub fn notification_for(
     command.success_notification(outcome, active_slot)
 }
 
-/// Backwards-compatible batch form kept for callers migrating off
-/// the 0-or-1 `Vec`. Prefer [`outcome_notification`].
-pub fn outcome_notifications(
-    command: SessionCommand,
-    outcome: &SessionCommandOutcome,
-    active_slot: Option<u64>,
-) -> Vec<crate::session::notification::NotificationKind> {
-    outcome_notification(command, outcome, active_slot)
-        .into_iter()
-        .collect()
-}
-
 /// Decorator resolving `TogglePause` to the steady arm entered from the pass tick.
 /// Both dispatch and notification resolve through here, never inline.
 pub struct TogglePauseDecorator;
@@ -210,7 +198,7 @@ pub fn resolve_toggle(command: SessionCommand, was_paused: bool) -> SessionComma
 #[cfg(test)]
 mod tests {
     use crate::session::commands::{
-        SessionCmd as _, SessionCommand, SessionCommandOutcome, outcome_notifications,
+        SessionCmd as _, SessionCommand, SessionCommandOutcome, outcome_notification,
         resolve_toggle,
     };
     use crate::session::error::SlotOpFailure;
@@ -218,7 +206,7 @@ mod tests {
 
     #[test]
     fn slot_failure_maps_to_warning_or_error() {
-        let warn = outcome_notifications(
+        let warn = outcome_notification(
             SessionCommand::LoadSlot(2),
             &SessionCommandOutcome {
                 executed: false,
@@ -229,13 +217,13 @@ mod tests {
         );
         assert_eq!(
             warn,
-            vec![NotificationKind::SlotFailed {
+            Some(NotificationKind::SlotFailed {
                 slot: Some(2),
                 reason: SlotOpFailure::Missing,
-            }]
+            })
         );
-        assert_eq!(warn[0].level(), NotificationLevel::Warning);
-        let err = outcome_notifications(
+        assert_eq!(warn.unwrap().level(), NotificationLevel::Warning);
+        let err = outcome_notification(
             SessionCommand::SaveSlot(1),
             &SessionCommandOutcome {
                 executed: false,
@@ -244,7 +232,7 @@ mod tests {
             },
             None,
         );
-        assert_eq!(err[0].level(), NotificationLevel::Error);
+        assert_eq!(err.unwrap().level(), NotificationLevel::Error);
     }
 
     #[test]
@@ -261,8 +249,8 @@ mod tests {
             slot_failure: None,
         };
         assert_eq!(
-            outcome_notifications(resolve_toggle(C::TogglePause, true), &ok, None),
-            [NotificationKind::Resumed]
+            outcome_notification(resolve_toggle(C::TogglePause, true), &ok, None),
+            Some(NotificationKind::Resumed)
         );
     }
 
@@ -298,7 +286,7 @@ mod tests {
             ),
         ];
         for (command, expected) in cases {
-            assert_eq!(outcome_notifications(command, &ok, Some(0)), [expected]);
+            assert_eq!(outcome_notification(command, &ok, Some(0)), Some(expected));
         }
         // Unexecuted commands notify nothing.
         let skipped = SessionCommandOutcome {
@@ -306,7 +294,7 @@ mod tests {
             needs_redraw: false,
             slot_failure: None,
         };
-        assert!(outcome_notifications(SessionCommand::Pause, &skipped, Some(0)).is_empty());
+        assert!(outcome_notification(SessionCommand::Pause, &skipped, Some(0)).is_none());
     }
 
     #[test]
@@ -339,18 +327,18 @@ mod tests {
             slot_failure: Some(SlotOpFailure::Missing),
         };
         assert_eq!(
-            outcome_notifications(C::SaveActiveSlotOrNew, &failed, Some(7)),
-            [NotificationKind::SlotFailed {
+            outcome_notification(C::SaveActiveSlotOrNew, &failed, Some(7)),
+            Some(NotificationKind::SlotFailed {
                 slot: Some(7),
                 reason: SlotOpFailure::Missing,
-            }]
+            })
         );
         assert_eq!(
-            outcome_notifications(C::Pause, &failed, Some(7)),
-            [NotificationKind::SlotFailed {
+            outcome_notification(C::Pause, &failed, Some(7)),
+            Some(NotificationKind::SlotFailed {
                 slot: None,
                 reason: SlotOpFailure::Missing,
-            }]
+            })
         );
     }
 
@@ -395,12 +383,12 @@ mod tests {
             slot_failure: None,
         };
         assert_eq!(
-            outcome_notifications(SessionCommand::SaveActiveSlotOrNew, &ok, Some(3)),
-            [NotificationKind::SavedSlot(3)]
+            outcome_notification(SessionCommand::SaveActiveSlotOrNew, &ok, Some(3)),
+            Some(NotificationKind::SavedSlot(3))
         );
         assert_eq!(
-            outcome_notifications(SessionCommand::SelectActiveSlot(5), &ok, Some(3)),
-            [NotificationKind::SelectedSlot(5)]
+            outcome_notification(SessionCommand::SelectActiveSlot(5), &ok, Some(3)),
+            Some(NotificationKind::SelectedSlot(5))
         );
     }
 }

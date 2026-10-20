@@ -8,19 +8,18 @@ use nerust_render_traits::renderer::{
 };
 use std::{collections::HashMap, rc::Rc};
 
-/// One raster pill row: tag plus body in a single color; tag stays static (zero-alloc).
+/// One raster pill row: tag plus body in a single color; tag shares one allocation via `Rc`.
 #[derive(Debug, Clone)]
 pub struct OsdRow {
-    pub tag: &'static str,
+    pub tag: Rc<str>,
     pub text: String,
     pub rgb: (u8, u8, u8),
 }
 
 impl OsdRow {
-    /// Interned tag handle for cache-side sharing; one allocation per
-    /// distinct tag, then `Rc` clones forever.
+    /// Shared tag handle; clones the `Rc` without reallocating.
     pub fn tag_shared(&self) -> Rc<str> {
-        Rc::from(self.tag)
+        self.tag.clone()
     }
 }
 
@@ -298,7 +297,7 @@ impl OsdRaster {
         let mut bottom: Vec<Entry<'_>> = Vec::new();
         for row in &content.rows {
             let entry = Entry::Line {
-                tag: row.tag,
+                tag: Rc::clone(&row.tag),
                 text: row.text.as_str(),
                 rgb: row.rgb,
                 anchor: content.position,
@@ -427,7 +426,7 @@ impl OsdRaster {
                 rgb,
                 anchor,
             } => {
-                let tag_span = self.shape_cached(tag, font_px);
+                let tag_span = self.shape_cached_shared(&tag, font_px);
                 let text_span = self.shape_cached(text, font_px);
                 let gap = self.shape_cached_rc(GAP_STR, font_px).width;
                 let ascent = tag_span.ascent.max(text_span.ascent);
@@ -514,6 +513,17 @@ impl OsdRaster {
         }
         let span = Rc::new(self.shape_uncached(line, font_px));
         self.insert_lru(key, font_px, Rc::clone(&span));
+        span
+    }
+
+    /// Shared-key shape: the caller's `Rc` keys the cache, so hits never allocate.
+    fn shape_cached_shared(&mut self, key: &Rc<str>, font_px: u32) -> Rc<ShapedSpan> {
+        if let Some(hit) = self.shape_cache.get(&(Rc::clone(key), font_px)).cloned() {
+            self.touch_lru(key, font_px);
+            return hit;
+        }
+        let span = Rc::new(self.shape_uncached(key, font_px));
+        self.insert_lru(Rc::clone(key), font_px, Rc::clone(&span));
         span
     }
 
@@ -688,10 +698,10 @@ struct PlacedRow {
 }
 
 /// Layout entry: each carries its own anchor corner for split placement.
-/// Borrows the content; tag and body shape as two cached spans, never one string.
+/// Borrows the content; tag shares the row's `Rc`, body shapes as cached spans, never one string.
 enum Entry<'a> {
     Line {
-        tag: &'static str,
+        tag: Rc<str>,
         text: &'a str,
         rgb: (u8, u8, u8),
         anchor: OsdAnchor,
@@ -779,7 +789,7 @@ mod tests {
     fn content() -> OsdContent {
         OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]",
+                tag: Rc::from("[INFO]"),
                 text: "Paused".to_string(),
                 rgb: (255, 255, 255),
             }],
@@ -856,7 +866,7 @@ mod tests {
         // 720p: font 16px, row 16*16/10+4 = 29.
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]",
+                tag: Rc::from("[INFO]"),
                 text: "Paused".to_string(),
                 rgb: (255, 255, 255),
             }],
@@ -912,7 +922,7 @@ mod tests {
         }
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]",
+                tag: Rc::from("[INFO]"),
                 text: "一時停止しました".to_string(),
                 rgb: (255, 255, 255),
             }],
@@ -932,7 +942,7 @@ mod tests {
         // Body-only: the tag alone must not satisfy the assert above.
         let body = OsdContent {
             rows: vec![OsdRow {
-                tag: "",
+                tag: Rc::from(""),
                 text: "一時停止しました".to_string(),
                 rgb: (255, 255, 255),
             }],
@@ -1063,7 +1073,7 @@ mod tests {
         // spanning margin to margin instead of stacking.
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]",
+                tag: Rc::from("[INFO]"),
                 text: "Paused".to_string(),
                 rgb: (255, 255, 255),
             }],
@@ -1122,11 +1132,11 @@ mod tests {
     #[test]
     fn tag_handles_share_one_allocation() {
         let row = OsdRow {
-            tag: "[INFO]",
+            tag: Rc::from("[INFO]"),
             text: "Paused".to_string(),
             rgb: (255, 255, 255),
         };
-        // Same contents, distinct `Rc`s by value; interning collapses them.
+        // Shared handle: clones the row's `Rc`; shaping keys by value.
         assert_eq!(&*row.tag_shared(), "[INFO]");
         let mut raster = OsdRaster::new();
         let first = raster.shape_line("[INFO]", 16);

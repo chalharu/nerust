@@ -33,7 +33,7 @@ impl InputStateBuffer for TestInputBuffer {
 }
 
 pub(crate) fn test_input_resources() -> (GuiInput, InputSplit) {
-    let split = InputSplit::spawn(Box::new(|| Box::<TestInputBuffer>::default()));
+    let split = InputSplit::spawn_typed(TestInputBuffer::default);
     let gui = split.gui_endpoint();
     (gui, split)
 }

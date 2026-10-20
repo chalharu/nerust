@@ -1,6 +1,7 @@
 //! Transient OSD queue: folding, merge/preempt/replace, burst caps.
 //! Pure queue discipline; orchestration lives in [`OsdManager`](crate::session::osd::OsdManager).
 
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use nerust_settings_core::model::local::NotificationSettings;
@@ -14,7 +15,7 @@ use crate::session::{
 pub struct OsdRow {
     pub text: String,
     pub rgb: (u8, u8, u8),
-    pub tag: &'static str,
+    pub tag: Rc<str>,
 }
 
 #[derive(Debug)]
@@ -153,7 +154,7 @@ impl TransientPolicy {
     }
 }
 
-pub(crate) fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: &'static str) -> OsdRow {
+pub(crate) fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: Rc<str>) -> OsdRow {
     OsdRow {
         text: append_count(base.to_string(), count),
         rgb,
@@ -215,7 +216,12 @@ impl TransientQueue {
             }
             let back = self.pending.back_mut()?;
             back.count += item.count;
-            back.row = counted_row(&item.base, back.count, item.row.rgb, item.row.tag);
+            back.row = counted_row(
+                &item.base,
+                back.count,
+                item.row.rgb,
+                Rc::clone(&item.row.tag),
+            );
             back.deadline = item.deadline;
             return Some(MergeTarget::Queued);
         }
@@ -227,7 +233,12 @@ impl TransientQueue {
             return None;
         }
         current.count += item.count;
-        current.row = counted_row(&item.base, current.count, item.row.rgb, item.row.tag);
+        current.row = counted_row(
+            &item.base,
+            current.count,
+            item.row.rgb,
+            Rc::clone(&item.row.tag),
+        );
         current.deadline = item.deadline;
         Some(MergeTarget::Showing)
     }
@@ -453,7 +464,7 @@ mod tests {
             ),
         };
         OsdItem {
-            row: counted_row(key, 1, (200, 200, 200), "[I]"),
+            row: counted_row(key, 1, (200, 200, 200), Rc::from("[I]")),
             level,
             message,
             base: key.into(),
@@ -649,8 +660,11 @@ mod transient_cov_tests {
             assert!(policy.duration(level) >= Duration::from_millis(500));
             let _ = policy.color(level);
         }
-        assert_eq!(counted_row("a", 1, (1, 2, 3), "[INFO]").text, "a");
-        assert_eq!(counted_row("a", 2, (1, 2, 3), "[INFO]").text, "a ×2");
+        assert_eq!(counted_row("a", 1, (1, 2, 3), Rc::from("[INFO]")).text, "a");
+        assert_eq!(
+            counted_row("a", 2, (1, 2, 3), Rc::from("[INFO]")).text,
+            "a ×2"
+        );
     }
 
     #[test]

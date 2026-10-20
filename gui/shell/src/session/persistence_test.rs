@@ -18,11 +18,11 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
 
     let mut session = test_session();
     let options = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .default_load_options();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(&session), options)
         .unwrap();
@@ -51,11 +51,11 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
 
     let mut session = test_session();
     let options = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .default_load_options();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(&session), options)
         .unwrap();
@@ -90,11 +90,11 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
 
     let mut session = test_session();
     let options = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .default_load_options();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(&session), options)
         .unwrap();
@@ -122,11 +122,11 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
 
     let mut session = test_session();
     let options = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .default_load_options();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(&session), options)
         .unwrap();
@@ -147,11 +147,11 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
 
     let mut session2 = test_session();
     let options = session2
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .default_load_options();
     let resolved = session2
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(&session2), options)
         .unwrap();
@@ -168,11 +168,11 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
 
 fn load_test_rom(session: &mut crate::session::SessionHandle, rom_path: std::path::PathBuf) {
     let options = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .default_load_options();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(session), options)
         .unwrap();
@@ -358,20 +358,20 @@ fn setup_failure_pushes_persistence_unavailable() {
 
 #[test]
 fn every_wiring_funnels_through_configure_backends() {
-    use crate::session::fs::FsSlotBackend;
+    use crate::session::fs::{FsAutosave, FsMapper, FsSlots};
     use crate::session::persistence::PersistenceManager;
     let mut manager = PersistenceManager::new();
-    manager.with_autosave_backend(Box::new(FsSlotBackend));
-    manager.with_mapper_backend(Box::new(FsSlotBackend));
+    manager.with_autosave_backend(Box::new(FsAutosave));
+    manager.with_mapper_backend(Box::new(FsMapper));
     manager.configure_backends(PersistenceBackends {
-        slot: Box::new(FsSlotBackend),
-        autosave: Box::new(FsSlotBackend),
-        mapper: Box::new(FsSlotBackend),
+        slot: Box::new(FsSlots),
+        autosave: Box::new(FsAutosave),
+        mapper: Box::new(FsMapper),
     });
     let bundled = PersistenceManager::with_all_backends(
-        Box::new(FsSlotBackend),
-        Box::new(FsSlotBackend),
-        Box::new(FsSlotBackend),
+        Box::new(FsSlots),
+        Box::new(FsAutosave),
+        Box::new(FsMapper),
     );
     assert!(bundled.slots().is_empty());
     assert!(manager.slots().is_empty());

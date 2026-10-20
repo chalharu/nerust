@@ -1601,8 +1601,8 @@ mod tests {
             _path: &std::path::Path,
             _target: &mut dyn nerust_gui_shell::load::RomLoadTarget,
         ) -> Result<(), nerust_gui_shell::load::RomLoaderError> {
-            Err(nerust_gui_shell::load::RomLoaderError::Load(
-                "no ROM in tests".to_string(),
+            Err(nerust_gui_shell::load::RomLoaderError::from_session(
+                nerust_gui_shell::session::SessionError::NoCore,
             ))
         }
     }

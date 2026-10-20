@@ -20,9 +20,6 @@ use nerust_persistence::{
 
 use super::ports::{AutoSaveBackend, MapperSaveBackend, SlotBackend};
 
-/// Desktop filesystem backend for all three persistence legs.
-pub struct FsSlotBackend;
-
 /// Filesystem slot-I/O leg: state slot scan/read/write/delete only.
 pub struct FsSlots;
 
@@ -211,79 +208,6 @@ impl MapperSaveBackend for FailingSlotBackend {
     }
 }
 
-/// Compat union over the three narrow filesystem legs; new code bounds on one leg.
-/// Kept so existing `FsSlotBackend` construction sites keep compiling.
-impl SlotBackend for FsSlotBackend {
-    fn scan(
-        &self,
-        dir: &Path,
-        identity: &SystemIdentity,
-    ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
-        FsSlots.scan(dir, identity)
-    }
-    fn allocate_next_id(&self, dir: &Path) -> Result<u64, PersistenceError> {
-        FsSlots.allocate_next_id(dir)
-    }
-    fn write_slot(
-        &self,
-        dir: &Path,
-        slot_id: u64,
-        data: &[u8],
-        identity: &SystemIdentity,
-        thumbnail: Option<&ThumbnailSource>,
-    ) -> Result<StateSlotSummary, PersistenceError> {
-        FsSlots.write_slot(dir, slot_id, data, identity, thumbnail)
-    }
-    fn read_slot(
-        &self,
-        dir: &Path,
-        slot_id: u64,
-    ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
-        FsSlots.read_slot(dir, slot_id)
-    }
-    fn delete_slot(&self, dir: &Path, slot_id: u64) -> Result<(), PersistenceError> {
-        FsSlots.delete_slot(dir, slot_id)
-    }
-}
-impl AutoSaveBackend for FsSlotBackend {
-    fn write_autosave(
-        &self,
-        dir: &Path,
-        data: &[u8],
-        identity: &SystemIdentity,
-    ) -> Result<StateSlotSummary, PersistenceError> {
-        FsAutosave.write_autosave(dir, data, identity)
-    }
-    fn read_autosave(
-        &self,
-        dir: &Path,
-        identity: &SystemIdentity,
-    ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
-        FsAutosave.read_autosave(dir, identity)
-    }
-    fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError> {
-        FsAutosave.delete_autosave(dir)
-    }
-    fn quarantine_autosave(&self, dir: &Path) -> Result<Option<PathBuf>, PersistenceError> {
-        FsAutosave.quarantine_autosave(dir)
-    }
-}
-impl MapperSaveBackend for FsSlotBackend {
-    fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
-        FsMapper.read_mapper_save(path)
-    }
-    fn write_mapper_save(&self, path: &Path, data: &[u8]) -> Result<(), PersistenceError> {
-        FsMapper.write_mapper_save(path, data)
-    }
-    fn write_recovery_mapper_save(
-        &self,
-        path: &Path,
-        data: &[u8],
-    ) -> Result<PathBuf, PersistenceError> {
-        FsMapper.write_recovery_mapper_save(path, data)
-    }
-}
-
 #[cfg(test)]
 mod fs_cov_tests {
     use crate::session::fs::*;
@@ -294,7 +218,7 @@ mod fs_cov_tests {
         SystemIdentity::new(Box::new(DummySystemId), vec![1, 2])
     }
 
-    /// Each narrow leg serves its own round-trip; the compat union only delegates.
+    /// Each narrow leg serves its own round-trip.
     #[test]
     fn narrow_slots_leg_round_trips() {
         let back = FsSlots;
@@ -315,7 +239,7 @@ mod fs_cov_tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// Each narrow leg serves its own round-trip; the compat union only delegates.
+    /// Each narrow leg serves its own round-trip.
     #[test]
     fn narrow_autosave_leg_round_trips() {
         let back = FsAutosave;
@@ -330,7 +254,7 @@ mod fs_cov_tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// Each narrow leg serves its own round-trip; the compat union only delegates.
+    /// Each narrow leg serves its own round-trip.
     #[test]
     fn narrow_mapper_leg_round_trips() {
         let back = FsMapper;
@@ -385,7 +309,7 @@ mod fs_cov_tests {
 
     #[test]
     fn read_missing_slot_returns_none() {
-        let back = FsSlotBackend;
+        let back = FsSlots;
         let d = dir("missing");
         assert!(back.read_slot(&d, 999).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&d);
@@ -393,7 +317,7 @@ mod fs_cov_tests {
 
     #[test]
     fn slot_write_scan_read_delete_round_trip() {
-        let back = FsSlotBackend;
+        let back = FsSlots;
         let d = dir("roundtrip");
         let id = identity();
         let next = back.allocate_next_id(&d).unwrap();
@@ -409,7 +333,7 @@ mod fs_cov_tests {
 
     #[test]
     fn autosave_write_read_delete_round_trip() {
-        let back = FsSlotBackend;
+        let back = FsAutosave;
         let d = dir("autosave");
         let id = identity();
         back.delete_autosave(&d).ok();
@@ -423,7 +347,7 @@ mod fs_cov_tests {
 
     #[test]
     fn mapper_save_round_trip_and_missing() {
-        let back = FsSlotBackend;
+        let back = FsMapper;
         let d = dir("mapper");
         let path = d.join("game.sav");
         assert_eq!(back.read_mapper_save(&path).unwrap(), None);

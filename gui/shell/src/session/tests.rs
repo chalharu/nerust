@@ -125,12 +125,12 @@ fn shortcut_key_returns_shortcut_action_without_controller_event() {
 fn system_load_options_flow_into_session_load() {
     let mut session = test_session();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(
             &test_view(&session),
             session
-                .factory()
+                .active_factory_cloned()
                 .expect("no active system")
                 .default_load_options(),
         )
@@ -146,7 +146,7 @@ fn system_load_options_flow_into_session_load() {
 fn session_commands_drive_pause_resume_toggle_and_reset() {
     let mut session = test_session();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .unwrap()
         .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
         .unwrap();
@@ -208,11 +208,11 @@ fn session_commands_report_missing_core_and_empty_slots() {
 fn session_rebuild_reuses_previously_resolved_load_request() {
     let mut session = test_session();
     let options = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .default_load_options();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(&session), options)
         .unwrap();
@@ -326,12 +326,12 @@ fn live_swap_session() -> SessionHandle {
         .set_active_system(factory.system_id().as_ref())
         .unwrap();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(
             &test_view(&session),
             session
-                .factory()
+                .active_factory_cloned()
                 .expect("no active system")
                 .default_load_options(),
         )
@@ -368,12 +368,12 @@ fn live_swap_session_with_failing_settings() -> (SessionHandle, std::path::PathB
         .set_active_system(factory.system_id().as_ref())
         .unwrap();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(
             &test_view(&session),
             session
-                .factory()
+                .active_factory_cloned()
                 .expect("no active system")
                 .default_load_options(),
         )
@@ -477,11 +477,11 @@ fn apply_settings_swaps_audio_without_rebuild_when_latency_changes() {
 
     let mut session = test_session();
     let options = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .default_load_options();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(&session), options)
         .unwrap();
@@ -553,7 +553,7 @@ fn apply_settings_rebuilds_when_assignments_change() {
     let mut session = test_session();
     let prev_assignments = session.input.current_assignments.clone();
 
-    let sid = session.factory().unwrap().system_id();
+    let sid = session.active_factory_cloned().unwrap().system_id();
     let mut next = session.settings_snapshot().clone();
     next.app_state.controller_assignments.insert(
         sid,
@@ -653,11 +653,17 @@ fn session_factory_uses_primary_initially() {
     let registry = Arc::new(SystemRegistry::new(vec![factory]));
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
     let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
-    assert!(session.factory().is_none());
+    assert!(session.active_factory_cloned().is_none());
     session
         .set_active_system(id.as_ref())
         .expect("test setup should succeed for known system");
-    assert_eq!(session.factory().expect("no active system").system_id(), id);
+    assert_eq!(
+        session
+            .active_factory_cloned()
+            .expect("no active system")
+            .system_id(),
+        id
+    );
 }
 
 #[test]
@@ -670,7 +676,7 @@ fn set_active_system_rejects_unknown_id() {
     let err = session.set_active_system(&DummyOtherSystemId).unwrap_err();
     assert!(matches!(err, SystemActivationError::NotRegistered(_)));
     assert!(session.active_system_id().is_none());
-    assert!(session.factory().is_none());
+    assert!(session.active_factory_cloned().is_none());
 }
 
 #[test]
@@ -686,7 +692,7 @@ fn switching_system_discards_previous_loaded_runtime_state() {
         .set_active_system(first.system_id().as_ref())
         .unwrap();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .unwrap()
         .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
         .unwrap();
@@ -959,7 +965,7 @@ fn debug_write_byte_without_core_is_silent() {
 fn loaded_debug_session() -> SessionHandle {
     let mut session = test_session();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
         .expect("load resolves");
