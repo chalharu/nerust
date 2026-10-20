@@ -198,3 +198,96 @@ pub trait MapperSaveBackend: Send {
         data: &[u8],
     ) -> Result<PathBuf, PersistenceError>;
 }
+
+#[cfg(test)]
+mod ports_cov_tests {
+    use crate::session::ports::*;
+
+    fn settings() -> nerust_settings_core::model::local::NotificationSettings {
+        nerust_settings_core::model::local::NotificationSettings::default()
+    }
+
+    #[test]
+    fn default_slot_activation_is_activate() {
+        assert_eq!(SlotActivation::default(), SlotActivation::Activate);
+    }
+
+    #[test]
+    fn notification_view_copies_settings() {
+        let s = settings();
+        let view = notification_view(&s);
+        assert_eq!(view.info_enabled, s.info_enabled);
+        assert_eq!(view.warning_enabled, s.warning_enabled);
+        assert_eq!(view.error_enabled, s.error_enabled);
+        assert_eq!(view.info_duration_ms, s.info_duration_ms);
+        assert_eq!(view.warning_duration_ms, s.warning_duration_ms);
+        assert_eq!(view.info_rgb, s.info_color.rgb());
+        assert_eq!(view.warning_rgb, s.warning_color.rgb());
+        assert_eq!(view.error_rgb, s.error_color.rgb());
+        assert_eq!(view.error_modal, s.error_modal);
+    }
+
+    #[test]
+    fn chrome_view_copies_settings() {
+        let s = settings();
+        let view = chrome_view(&s);
+        assert_eq!(view.status_enabled, s.status_enabled);
+        assert_eq!(view.position, s.position);
+        assert_eq!(view.status_position, s.status_position);
+        assert_eq!(view.area_mode, s.area_mode);
+        assert_eq!(view.status_area_mode, s.status_area_mode);
+    }
+
+    #[test]
+    fn default_quarantine_deletes() {
+        struct Noop;
+        impl AutoSaveBackend for Noop {
+            fn write_autosave(
+                &self,
+                _: &Path,
+                _: &[u8],
+                _: &SystemIdentity,
+            ) -> Result<StateSlotSummary, PersistenceError> {
+                panic!("unused")
+            }
+            fn read_autosave(
+                &self,
+                _: &Path,
+                _: &SystemIdentity,
+            ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
+                Ok(None)
+            }
+            fn delete_autosave(&self, _: &Path) -> Result<(), PersistenceError> {
+                Ok(())
+            }
+        }
+        let dir = std::env::temp_dir().join("nerust-ports-quarantine-probe");
+        assert_eq!(Noop.quarantine_autosave(&dir).unwrap(), None);
+    }
+
+    #[test]
+    fn state_exporter_default_identity_matches_export() {
+        struct IdOnly(Option<SystemIdentity>);
+        impl StateExporter for IdOnly {
+            fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
+                Ok(vec![1])
+            }
+            fn import_state(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                Ok(())
+            }
+            fn export_preview(&self) -> Option<ThumbnailSource> {
+                None
+            }
+            fn export_identity(&self) -> Option<SystemIdentity> {
+                self.0.clone()
+            }
+            fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
+                Ok(None)
+            }
+            fn import_mapper(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                Ok(())
+            }
+        }
+        assert!(IdOnly(None).canonical_media_identity().is_none());
+    }
+}

@@ -367,4 +367,137 @@ mod tests {
         assert_eq!(AuxKind::History.log_tag(), "history window");
         assert_eq!(AuxKind::Settings.log_tag(), "settings");
     }
+
+    use std::cell::{Cell, RefCell};
+
+    /// Headless shell double: records redraw/focus, feeds canned events.
+    struct FakeShell {
+        close: bool,
+        mapped: Option<iced::Event>,
+        redraws: Rc<Cell<u32>>,
+        focused: Rc<Cell<bool>>,
+        seen_tag: Rc<RefCell<Option<&'static str>>>,
+    }
+
+    use std::rc::Rc;
+
+    impl crate::aux::shell::AuxShellOps for FakeShell {
+        fn native_id(&self) -> NativeWindowId {
+            NativeWindowId::dummy()
+        }
+        fn close_requested(&self) -> bool {
+            self.close
+        }
+        fn focus_window(&self) {
+            self.focused.set(true);
+        }
+        fn request_redraw(&self) {
+            self.redraws.set(self.redraws.get() + 1);
+        }
+        fn handle_common(&mut self, _event: &AuxNativeEvent) {}
+        fn feed_event(&mut self, _event: AuxNativeEvent) -> Option<iced::Event> {
+            self.mapped.take()
+        }
+        fn render_tagged(&mut self, tag: &'static str) {
+            *self.seen_tag.borrow_mut() = Some(tag);
+        }
+    }
+
+    /// Window double behind the blanket `AuxIdentity`/`AuxRender` impls.
+    struct FakeWin {
+        kind: AuxKind,
+        shell: FakeShell,
+        handled: Rc<Cell<bool>>,
+        handle_ret: bool,
+    }
+
+    impl AuxShellRef for FakeWin {
+        fn kind(&self) -> AuxKind {
+            self.kind
+        }
+        fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
+            &self.shell
+        }
+        fn shell_mut(&mut self) -> &mut dyn crate::aux::shell::AuxShellOps {
+            &mut self.shell
+        }
+    }
+
+    impl AuxEvents for FakeWin {
+        fn handle(&mut self, _mapped: iced::Event) -> bool {
+            self.handled.set(true);
+            self.handle_ret
+        }
+    }
+
+    fn fake_win(kind: AuxKind, mapped: Option<iced::Event>, handle_ret: bool) -> FakeWin {
+        FakeWin {
+            kind,
+            shell: FakeShell {
+                close: false,
+                mapped,
+                redraws: Rc::new(Cell::new(0)),
+                focused: Rc::new(Cell::new(false)),
+                seen_tag: Rc::new(RefCell::new(None)),
+            },
+            handled: Rc::new(Cell::new(false)),
+            handle_ret,
+        }
+    }
+
+    fn redraw_event() -> iced::Event {
+        iced::Event::Window(iced::window::Event::RedrawRequested(
+            std::time::Instant::now(),
+        ))
+    }
+
+    #[test]
+    fn pump_aux_redraws_only_when_unhandled() {
+        // Handled event: no redraw requested.
+        let mut win = fake_win(AuxKind::Debug, Some(redraw_event()), true);
+        pump_aux(&mut win, AuxNativeEvent::Focused(true));
+        assert!(win.handled.get());
+        assert_eq!(win.shell.redraws.get(), 0);
+        // Unhandled event: host redraws through the shell.
+        let mut win = fake_win(AuxKind::Debug, Some(redraw_event()), false);
+        pump_aux(&mut win, AuxNativeEvent::Focused(true));
+        assert!(win.handled.get());
+        assert_eq!(win.shell.redraws.get(), 1);
+        // No mapped event: redraw without dispatch.
+        let mut win = fake_win(AuxKind::Debug, None, true);
+        pump_aux(&mut win, AuxNativeEvent::Focused(true));
+        assert!(!win.handled.get());
+        assert_eq!(win.shell.redraws.get(), 1);
+    }
+
+    #[test]
+    fn blanket_impls_delegate_identity_and_render() {
+        let mut win = fake_win(AuxKind::Ppu, Some(redraw_event()), true);
+        assert_eq!(AuxIdentity::kind(&win), AuxKind::Ppu);
+        assert_eq!(AuxIdentity::native_id(&win), NativeWindowId::dummy());
+        assert!(!AuxIdentity::close_requested(&win));
+        AuxIdentity::focus_window(&win);
+        assert!(win.shell.focused.get());
+        AuxIdentity::request_redraw(&win);
+        assert_eq!(win.shell.redraws.get(), 1);
+        // Render fans out with the central log tag.
+        AuxRender::render(&mut win);
+        assert_eq!(*win.shell.seen_tag.borrow(), Some("PPU viewer"));
+        win.shell.close = true;
+        assert!(AuxIdentity::close_requested(&win));
+    }
+
+    #[test]
+    fn focus_state_tracks_main_and_burst_contract() {
+        let mut coord = FocusCoordinator::new();
+        assert!(coord.main_active());
+        // Aux blur arms; main arrival cancels without resume.
+        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Ppu, false)), None);
+        assert_eq!(coord.on(FocusEvent::Main(true)), None);
+        assert!(coord.main_active());
+        // Armed burst commits the pause exactly once.
+        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Debug, false)), None);
+        assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
+        assert_eq!(coord.on(FocusEvent::BurstEnd), None);
+    }
 }

@@ -557,4 +557,229 @@ mod tests {
         );
         assert_eq!(tao_button_to_aux(MouseButton::Other(5)), None);
     }
+
+    #[test]
+    fn aux_buttons_map_to_each_iced_button() {
+        assert_eq!(
+            aux_button_to_iced(AuxButton::Left),
+            iced::mouse::Button::Left
+        );
+        assert_eq!(
+            aux_button_to_iced(AuxButton::Right),
+            iced::mouse::Button::Right
+        );
+        assert_eq!(
+            aux_button_to_iced(AuxButton::Middle),
+            iced::mouse::Button::Middle
+        );
+    }
+
+    fn feed_harness() -> (
+        iced::mouse::Cursor,
+        keyboard::Modifiers,
+        std::sync::atomic::AtomicBool,
+    ) {
+        (
+            iced::mouse::Cursor::default(),
+            keyboard::Modifiers::empty(),
+            std::sync::atomic::AtomicBool::new(false),
+        )
+    }
+
+    #[test]
+    fn feed_maps_key_press_and_release() {
+        use crate::aux::native::AuxNativeEvent as E;
+        let (mut cursor, mut modifiers, should_close) = feed_harness();
+        // Text plus repeat ride into the iced key event.
+        let pressed = feed_domain_event(
+            E::KeyPressed {
+                key: keyboard::Key::Character(SmolStr::new("a")),
+                physical: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                text: Some("a".to_string()),
+                repeat: true,
+            },
+            &mut cursor,
+            &mut modifiers,
+            1.0,
+            &should_close,
+        );
+        assert!(matches!(
+            pressed,
+            Some(iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                repeat: true,
+                ..
+            }))
+        ));
+        // Missing text stays missing; release carries no text.
+        let no_text = feed_domain_event(
+            E::KeyPressed {
+                key: keyboard::Key::Unidentified,
+                physical: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                text: None,
+                repeat: false,
+            },
+            &mut cursor,
+            &mut modifiers,
+            1.0,
+            &should_close,
+        );
+        assert!(matches!(
+            no_text,
+            Some(iced::Event::Keyboard(
+                iced::keyboard::Event::KeyPressed { .. }
+            ))
+        ));
+        let released = feed_domain_event(
+            E::KeyReleased {
+                key: keyboard::Key::Unidentified,
+                physical: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+            },
+            &mut cursor,
+            &mut modifiers,
+            1.0,
+            &should_close,
+        );
+        assert!(matches!(
+            released,
+            Some(iced::Event::Keyboard(
+                iced::keyboard::Event::KeyReleased { .. }
+            ))
+        ));
+        assert!(!should_close.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn feed_maps_each_mouse_button_both_edges() {
+        use crate::aux::native::AuxNativeEvent as E;
+        let (mut cursor, mut modifiers, should_close) = feed_harness();
+        for (domain, iced_button) in [
+            (AuxButton::Left, iced::mouse::Button::Left),
+            (AuxButton::Right, iced::mouse::Button::Right),
+            (AuxButton::Middle, iced::mouse::Button::Middle),
+        ] {
+            let pressed = feed_domain_event(
+                E::MousePressed(domain),
+                &mut cursor,
+                &mut modifiers,
+                1.0,
+                &should_close,
+            );
+            assert!(matches!(
+                pressed,
+                Some(iced::Event::Mouse(iced::mouse::Event::ButtonPressed(b)))
+                    if b == iced_button
+            ));
+            let released = feed_domain_event(
+                E::MouseReleased(domain),
+                &mut cursor,
+                &mut modifiers,
+                1.0,
+                &should_close,
+            );
+            assert!(matches!(
+                released,
+                Some(iced::Event::Mouse(iced::mouse::Event::ButtonReleased(b)))
+                    if b == iced_button
+            ));
+        }
+    }
+
+    #[test]
+    fn feed_scales_wheel_pixels_and_passes_lines() {
+        use crate::aux::native::AuxNativeEvent as E;
+        let (mut cursor, mut modifiers, should_close) = feed_harness();
+        let lines = feed_domain_event(
+            E::WheelLines(0.0, 3.0),
+            &mut cursor,
+            &mut modifiers,
+            2.0,
+            &should_close,
+        );
+        assert!(matches!(
+            lines,
+            Some(iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Lines { y, .. }
+            })) if y == 3.0
+        ));
+        // Pixel deltas divide by the live scale like cursor moves.
+        let pixels = feed_domain_event(
+            E::WheelPixels(0.0, 24.0),
+            &mut cursor,
+            &mut modifiers,
+            2.0,
+            &should_close,
+        );
+        assert!(matches!(
+            pixels,
+            Some(iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Pixels { y, .. }
+            })) if y == 12.0
+        ));
+    }
+
+    #[test]
+    fn feed_tracks_modifiers_and_close() {
+        use crate::aux::native::AuxNativeEvent as E;
+        let (mut cursor, mut modifiers, should_close) = feed_harness();
+        assert!(
+            feed_domain_event(
+                E::ModifiersChanged(keyboard::Modifiers::SHIFT),
+                &mut cursor,
+                &mut modifiers,
+                1.0,
+                &should_close,
+            )
+            .is_none()
+        );
+        assert_eq!(modifiers, keyboard::Modifiers::SHIFT);
+        assert!(
+            feed_domain_event(
+                E::CloseRequested,
+                &mut cursor,
+                &mut modifiers,
+                1.0,
+                &should_close,
+            )
+            .is_none()
+        );
+        assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn feed_ignores_non_program_events() {
+        use crate::aux::native::AuxNativeEvent as E;
+        let (mut cursor, mut modifiers, should_close) = feed_harness();
+        for event in [
+            E::Focused(true),
+            E::Focused(false),
+            E::Destroyed,
+            E::Moved(1, 2),
+            E::Resized(800, 600),
+            E::ScaleChanged(2.0),
+            E::Other,
+        ] {
+            assert!(
+                feed_domain_event(event, &mut cursor, &mut modifiers, 1.0, &should_close).is_none()
+            );
+        }
+        // Cursor-left drops the pointer without an event.
+        assert!(
+            feed_domain_event(
+                E::CursorLeft,
+                &mut cursor,
+                &mut modifiers,
+                1.0,
+                &should_close
+            )
+            .is_none()
+        );
+        assert!(matches!(cursor, iced::mouse::Cursor::Unavailable));
+        assert!(!should_close.load(std::sync::atomic::Ordering::Acquire));
+    }
 }

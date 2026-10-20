@@ -418,4 +418,51 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn drive_focus_reports_arrival_only() {
+        let (mut runtime, menu) = test_runtime();
+        // Arrival without a protocol pause reports true, no resume.
+        assert!(runtime.drive_focus(AuxKind::Debug, &WindowEvent::Focused(true)));
+        // Departure and non-focus events report false.
+        assert!(!runtime.drive_focus(AuxKind::Debug, &WindowEvent::Focused(false)));
+        assert!(!runtime.drive_focus(
+            AuxKind::Debug,
+            &WindowEvent::Moved(PhysicalPosition::new(1, 2))
+        ));
+        assert!(!runtime.drive_focus(
+            AuxKind::Settings,
+            &WindowEvent::Resized(tao::dpi::PhysicalSize::new(800, 600))
+        ));
+        assert!(menu.updates().is_empty());
+    }
+
+    #[test]
+    fn aux_routing_without_handles_stays_total() {
+        let (mut runtime, menu) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        // Every aux arm resolves to no handle: pump, outcome, and
+        // redraw all no-op without touching the menu.
+        runtime.on_aux_event(AuxKind::Settings, WindowEvent::Focused(true), &opener);
+        runtime.on_aux_event(AuxKind::Debug, WindowEvent::Focused(false), &opener);
+        runtime.on_aux_event(AuxKind::Ppu, WindowEvent::Focused(false), &opener);
+        runtime.on_aux_event(AuxKind::History, WindowEvent::Focused(true), &opener);
+        runtime.on_settings_event(WindowEvent::Resized(tao::dpi::PhysicalSize::new(1, 1)));
+        runtime.on_ppu_event(WindowEvent::Resized(tao::dpi::PhysicalSize::new(1, 1)));
+        assert!(menu.updates().is_empty());
+        assert!(opener.calls().is_empty());
+    }
+
+    #[test]
+    fn settings_moved_never_arms_pause() {
+        let (mut runtime, menu) = test_runtime();
+        runtime.host.note_main_departure();
+        runtime.on_settings_event(WindowEvent::Moved(PhysicalPosition::new(9, 9)));
+        // Still armed: a non-focus event cancels nothing, so burst
+        // end still commits the departure pause (which then no-ops).
+        let mut flow = ControlFlow::Wait;
+        runtime.host.update_control_flow(&mut flow);
+        assert_eq!(flow, ControlFlow::Wait);
+        assert!(menu.updates().is_empty());
+    }
 }

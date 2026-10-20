@@ -163,4 +163,22 @@ mod tests {
             assert_eq!(got.to_bytes_be(), [er, eg, eb, 255], "alpha={alpha}");
         }
     }
+
+    #[test]
+    fn argb_and_channel_accessors_round_trip() {
+        let word = RgbaWord::from_rgba(0x12, 0x34, 0x56, 0x78);
+        assert_eq!(word.as_u32(), 0x1234_5678);
+        assert_eq!(word.r(), 0x12);
+        assert_eq!(word.g(), 0x34);
+        assert_eq!(word.b(), 0x56);
+        assert_eq!(word.a(), 0x78);
+        assert_eq!(RgbaWord::from_argb_word(word.as_argb_word()), word);
+    }
+
+    #[test]
+    fn ne_word_preserves_host_memory() {
+        let word = RgbaWord::from_rgba(1, 2, 3, 4);
+        assert_eq!(word.as_ne().to_ne_bytes(), [1, 2, 3, 4]);
+        assert_eq!(RgbaWord::from_ne_word(word.as_ne()), word);
+    }
 }

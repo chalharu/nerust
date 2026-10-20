@@ -1025,4 +1025,150 @@ mod tests {
         let surface = window_surface_size(tao::dpi::PhysicalSize::new(960, 720));
         assert_eq!((surface.width, surface.height), (960, 720));
     }
+
+    #[test]
+    fn frame_cache_key_repeats_on_steady_session() {
+        use super::FrameCacheKey;
+        let support = TestHost::new();
+        let host = support.host;
+        assert_eq!(
+            FrameCacheKey::capture(host.session()),
+            FrameCacheKey::capture(host.session())
+        );
+    }
+
+    #[test]
+    fn menu_fingerprint_is_stable_and_content_sensitive() {
+        use super::MenuSig;
+        let support = TestHost::new();
+        let mut host = support.host;
+        let empty = MenuSig::fingerprint(&[], &[]);
+        assert_eq!(empty, MenuSig::fingerprint(&[], &[]));
+        let ctx = host.frame_ctx();
+        assert_eq!(empty, MenuSig::fingerprint(&ctx.slots, &[]));
+        assert_ne!(empty, MenuSig::fingerprint(&ctx.slots, &ctx.shortcuts));
+    }
+
+    #[test]
+    fn chrome_gates_skip_repeat_pushes() {
+        use super::{ChromeScalars, MenuSig};
+        let support = TestHost::new();
+        let mut host = support.host;
+        let scalars = |host: &super::HostState, ctx: &super::FrameCtx| ChromeScalars {
+            loaded: ctx.tick.loaded,
+            paused: ctx.tick.paused,
+            settings_open: host.settings_open(),
+            language: ctx.settings.shared.general.language,
+            active_slot: None,
+            slots_len: ctx.slots.len(),
+            shortcuts_len: ctx.shortcuts.len(),
+        };
+        let ctx = host.frame_ctx();
+        assert!(!host.chrome.cheap_same(&scalars(&host, &ctx)));
+        host.sync_menu_state(&ctx);
+        assert_eq!(support.menu.updates().len(), 1);
+        let ctx = host.frame_ctx();
+        assert!(host.chrome.cheap_same(&scalars(&host, &ctx)));
+        let fresh = MenuSig::fingerprint(&ctx.slots, &ctx.shortcuts);
+        assert!(host.chrome.menu_same(fresh, &ctx.slots, &ctx.shortcuts));
+        assert!(
+            !host
+                .chrome
+                .menu_same(fresh.wrapping_add(1), &ctx.slots, &ctx.shortcuts)
+        );
+        assert!(!host.chrome.title_same("nerust"));
+        let tick = ctx.tick;
+        host.refresh_window_title(&tick);
+        let title = host.session_mut().window_title_cached(&tick).to_owned();
+        assert!(host.chrome.title_same(&title));
+    }
+
+    #[test]
+    fn settings_resume_flag_round_trips_and_clears() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.settings.set_resume_after(true);
+        assert!(host.settings.take_resume_after());
+        assert!(!host.settings.take_resume_after());
+        host.settings.set_resume_after(true);
+        host.settings.close_all();
+        assert!(!host.settings.take_resume_after());
+    }
+
+    #[test]
+    fn osd_service_ports_stay_total_while_idle() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        assert_eq!(host.osd.modal_pending(), 0);
+        assert_eq!(host.osd.modal_queue_len(), 0);
+        assert!(host.osd.take_modal_batch().is_none());
+        host.osd.modal_closed();
+        assert!(!host.osd.modal_showing());
+        assert!(host.osd.history_key().is_none());
+        host.osd.close_all();
+        assert_eq!(host.osd.modal_pending(), 0);
+    }
+
+    #[test]
+    fn debug_orchestrator_flights_start_empty_and_close_clean() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        assert!(host.orchestrator_mut().take_drain_flight().is_none());
+        assert!(host.orchestrator_mut().take_live_flight().is_none());
+        assert!(!host.live_flight_pending());
+        host.orchestrator_mut().close_flights();
+        assert!(!host.live_flight_pending());
+    }
+
+    #[test]
+    fn aux_routing_stays_total_without_windows() {
+        use crate::aux::native::NativeWindowId;
+        let support = TestHost::new();
+        let mut host = support.host;
+        let id = unsafe { tao::window::WindowId::dummy() };
+        assert!(host.aux_kind_of(id).is_none());
+        let _ = NativeWindowId::dummy();
+        assert!(host.with_main_window(|_| ()).is_none());
+        assert!(!host.is_debug_open());
+        assert!(!host.is_ppu_open());
+        assert!(host.debug_bridge_for_ppu().is_none());
+        assert!(host.debug_window_pos().is_none());
+        assert!(host.ppu_window_pos().is_none());
+        host.remember_debug_window_pos(3, 4);
+        host.remember_ppu_window_pos(5, 6);
+        assert_eq!(host.debug_window_pos(), Some((3, 4)));
+        assert_eq!(host.ppu_window_pos(), Some((5, 6)));
+        host.drop_debug_window();
+        host.drop_ppu_window();
+        host.drop_history_window();
+        assert!(host.last_drain_paused().is_none());
+        host.set_last_drain_paused(true);
+        assert_eq!(host.last_drain_paused(), Some(true));
+        let armed = host.live_tick_armed();
+        assert!(!armed.load(std::sync::atomic::Ordering::Acquire));
+        host.register_tick_thread(std::thread::current());
+        assert!(host.next_live_tick().is_none());
+    }
+
+    #[test]
+    fn live_gate_arms_once_then_holds() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let now = std::time::Instant::now();
+        assert!(host.live_due(now));
+        assert!(host.next_live_tick().is_some());
+        assert!(!host.live_due(std::time::Instant::now()));
+    }
+
+    #[test]
+    fn request_flags_round_trip_without_windows() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.request_debug_open();
+        assert!(host.take_debug_open_request());
+        assert!(!host.take_debug_open_request());
+        host.request_ppu_open();
+        assert!(host.take_ppu_open_request());
+        assert!(!host.take_ppu_open_request());
+    }
 }

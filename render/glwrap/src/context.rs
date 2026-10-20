@@ -71,3 +71,42 @@ impl DeletionPolicy {
 pub trait GlObject {
     fn destroy_if_current(&mut self, current: Option<Current>) -> bool;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Current, DeletionPolicy, ScopeGuard};
+
+    #[test]
+    fn guard_runs_action_on_drop() {
+        let mut ran = false;
+        {
+            let _guard = ScopeGuard::new(|| ran = true);
+        }
+        assert!(ran);
+    }
+
+    #[test]
+    fn dismissed_guard_runs_nothing() {
+        let mut ran = false;
+        {
+            let guard = ScopeGuard::new(|| ran = true);
+            guard.dismiss();
+        }
+        assert!(!ran);
+        let _never: ScopeGuard<Box<dyn FnMut()>> = ScopeGuard::dismissed();
+    }
+
+    #[test]
+    fn assert_current_gates_the_proof() {
+        assert!(Current::assert_current(true).is_some());
+        assert!(Current::assert_current(false).is_none());
+    }
+
+    #[test]
+    fn deletion_policy_counts_only_when_asked() {
+        assert!(DeletionPolicy::Count.note(true));
+        assert!(!DeletionPolicy::Count.note(false));
+        assert!(!DeletionPolicy::Ignore.note(true));
+        assert!(!DeletionPolicy::Ignore.note(false));
+    }
+}

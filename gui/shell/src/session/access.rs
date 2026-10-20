@@ -377,3 +377,139 @@ mod narrow_tests {
         bound::<super::super::SessionHandle>();
     }
 }
+
+#[cfg(test)]
+mod access_cov_tests {
+    use crate::session::access::*;
+    use crate::session::test_util::test_session;
+
+    #[test]
+    fn settings_result_defaults_are_clean() {
+        let result = SettingsResult::default();
+        assert!(!result.renderer_needs_rebuild);
+        assert!(!result.fullscreen_default_changed);
+        assert!(!result.scaling_changed);
+    }
+
+    #[test]
+    fn live_narrow_ports_tolerate_coreless_session() {
+        use std::sync::Arc;
+        let registry = Arc::new(crate::registry::SystemRegistry::new(vec![]));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let mut session = super::super::SessionHandle::new_ephemeral(
+            crate::session::test_util::test_session().capabilities,
+            registry,
+            audio,
+        );
+        session.pause();
+        session.resume();
+        session.toggle_pause();
+        assert!(!session.load_slot(1));
+        session.save_slot(1);
+        session.delete_slot(1);
+        assert!(!session.save_active_slot());
+        assert!(!session.load_active_slot());
+        session.select_slot(1);
+        session.select_next_slot();
+        session.select_previous_slot();
+        session.create_slot();
+        session.reset();
+    }
+
+    #[test]
+    fn live_narrow_ports_run_with_core() {
+        let mut session = test_session();
+        session.pause();
+        session.resume();
+        session.toggle_pause();
+        session.save_slot(1);
+        session.delete_slot(1);
+        session.select_slot(1);
+        session.select_next_slot();
+        session.select_previous_slot();
+        session.create_slot();
+        session.reset();
+        let _ = session.save_active_slot();
+        let _ = session.load_active_slot();
+        let _ = session.load_slot(1);
+    }
+
+    #[test]
+    fn ref_forwarding_composes_without_recorder() {
+        struct Probe {
+            calls: Vec<&'static str>,
+        }
+        impl SlotControl for Probe {
+            fn save_active_slot(&mut self) -> bool {
+                self.calls.push("save_active_slot");
+                true
+            }
+            fn load_active_slot(&mut self) -> bool {
+                self.calls.push("load_active_slot");
+                true
+            }
+            fn select_next_slot(&mut self) {
+                self.calls.push("select_next_slot");
+            }
+            fn select_previous_slot(&mut self) {
+                self.calls.push("select_previous_slot");
+            }
+            fn load_slot(&mut self, _: u64) -> bool {
+                self.calls.push("load_slot");
+                true
+            }
+            fn save_slot(&mut self, _: u64) {
+                self.calls.push("save_slot");
+            }
+            fn delete_slot(&mut self, _: u64) {
+                self.calls.push("delete_slot");
+            }
+            fn select_slot(&mut self, _: u64) {
+                self.calls.push("select_slot");
+            }
+            fn create_slot(&mut self) {
+                self.calls.push("create_slot");
+            }
+            fn reset(&mut self) {
+                self.calls.push("reset");
+            }
+        }
+        let mut probe = Probe { calls: vec![] };
+        {
+            let mut borrowed = &mut probe;
+            let narrow: &mut dyn SlotIo = &mut borrowed;
+            narrow.save_slot(9);
+            assert!(narrow.load_slot(9));
+            assert!(narrow.save_active_slot());
+            assert!(narrow.load_active_slot());
+            narrow.delete_slot(9);
+        }
+        {
+            let mut borrowed = &mut probe;
+            let narrow: &mut dyn SlotNav = &mut borrowed;
+            narrow.select_slot(9);
+            narrow.select_next_slot();
+            narrow.select_previous_slot();
+            narrow.create_slot();
+        }
+        {
+            let mut borrowed = &mut probe;
+            let narrow: &mut dyn ResetControl = &mut borrowed;
+            narrow.reset();
+        }
+        for name in [
+            "save_slot",
+            "load_slot",
+            "save_active_slot",
+            "load_active_slot",
+            "delete_slot",
+            "select_slot",
+            "select_next_slot",
+            "select_previous_slot",
+            "create_slot",
+            "reset",
+        ] {
+            assert!(probe.calls.contains(&name), "{name}");
+        }
+    }
+}

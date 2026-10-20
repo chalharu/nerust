@@ -279,3 +279,122 @@ impl SessionHandle {
         }
     }
 }
+
+#[cfg(test)]
+mod debug_ops_cov_tests {
+    use super::*;
+    use crate::debug::ImageNeed;
+    use crate::session::test_util::test_session;
+    use nerust_core_traits::debugger::SpaceId;
+
+    #[test]
+    fn coreless_debug_paths_report_no_core() {
+        use std::sync::Arc;
+        let caps = test_session().capabilities;
+        let registry = Arc::new(crate::registry::SystemRegistry::new(vec![]));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let session = super::SessionHandle::new_ephemeral(caps, registry, audio);
+        assert!(session.debug_spaces().is_empty());
+        assert!(session.debug_snapshot_ready());
+        assert!(session.debug_snapshot_ready_tick(&TickMetrics::default()));
+        assert!(
+            !session
+                .debug_snapshot(None, 0, None, ImageNeed::Skip, None)
+                .available
+        );
+        assert!(session.debug_live_images(ImageNeed::Skip).is_none());
+        assert_eq!(session.debug_read_byte(SpaceId(0), 0), None);
+        assert!(!session.debug_write_byte(SpaceId(0), 0, 1));
+        assert!(matches!(
+            session.debug_write_register("a", 1),
+            debug_vm::StatusMessage::NoCore
+        ));
+        assert_eq!(session.debug_pending_text(), None);
+        assert!(matches!(
+            session.debug_commit_write(),
+            debug_vm::StatusMessage::NothingToWrite
+        ));
+        session.debug_clear_write();
+        session.debug_note_traffic(TrafficKind::StateChanging);
+        session.debug_note_traffic(TrafficKind::Transactional);
+        assert!(matches!(
+            session.debug_pause(),
+            debug_vm::StatusMessage::NoCore
+        ));
+        assert!(matches!(
+            session.debug_resume(),
+            debug_vm::StatusMessage::NoCore
+        ));
+    }
+
+    #[test]
+    fn loaded_debug_paths_answer() {
+        use nerust_core_traits::factory::load::MediaObject;
+        let temp_dir = crate::test_helpers::unique_temp_dir("debug-ops-loaded");
+        let mut session = test_session();
+        let factory = session.factory().unwrap();
+        let options = factory.default_load_options();
+        let view = crate::session::test_util::test_view(&session);
+        let resolved = factory.resolve_load_request(&view, options).unwrap();
+        session
+            .load_resolved(
+                MediaObject::new(
+                    Some(temp_dir.join("test.nes")),
+                    crate::test_helpers::test_rom(),
+                ),
+                resolved,
+            )
+            .unwrap();
+        assert_eq!(session.debug_spaces().len(), 1);
+        assert!(session.debug_read_byte(SpaceId(0), 0).is_some());
+        assert!(session.debug_write_byte(SpaceId(0), 0x10, 0xAB));
+        assert_eq!(session.debug_read_byte(SpaceId(0), 0x10), Some(0xAB));
+        let staged = session.debug_prepare_write(SpaceId(0), 0x10);
+        assert_eq!(staged, Some(0xAB));
+        session.debug_stage_write(0xCD);
+        assert!(session.debug_pending_text().is_some());
+        session.debug_clear_write();
+        assert_eq!(session.debug_pending_text(), None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn debug_write_register_round_trips_and_refuses() {
+        use nerust_core_traits::factory::load::MediaObject;
+        use nerust_gui_viewmodel::debugger::StatusMessage as S;
+        let temp_dir = crate::test_helpers::unique_temp_dir("debug-ops-reg");
+        let mut session = test_session();
+        // ROM-less core has no debugger: refusal without transport noise.
+        assert!(matches!(
+            session.debug_write_register("a", 5),
+            S::RegisterRefused(_)
+        ));
+        let factory = session.factory().unwrap();
+        let options = factory.default_load_options();
+        let view = crate::session::test_util::test_view(&session);
+        let resolved = factory.resolve_load_request(&view, options).unwrap();
+        session
+            .load_resolved(
+                MediaObject::new(
+                    Some(temp_dir.join("test.nes")),
+                    crate::test_helpers::test_rom(),
+                ),
+                resolved,
+            )
+            .unwrap();
+        assert!(matches!(
+            session.debug_write_register("a", 5),
+            S::RegisterWrote {
+                name: "a",
+                value: 5
+            }
+        ));
+        assert!(matches!(
+            session.debug_write_register("bogus", 0),
+            S::RegisterRefused(_)
+        ));
+        assert!(matches!(session.debug_pause(), S::Paused));
+        assert!(matches!(session.debug_resume(), S::Resume));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}

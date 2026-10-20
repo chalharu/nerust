@@ -126,7 +126,7 @@ mod tests {
 
 #[cfg(test)]
 mod activation_tests {
-    use super::*;
+    use crate::load::*;
 
     #[test]
     fn activation_error_constructs_from_session() {

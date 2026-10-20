@@ -361,4 +361,58 @@ mod tests {
         );
         assert!(gui.dirty);
     }
+
+    #[test]
+    fn clear_marks_dirty_and_publishes_release() {
+        let split = bit_split();
+        let mut gui = split.gui_endpoint();
+        let mut emu = split.emu_endpoint();
+        gui.set(0, InputValue::Digital(true)).unwrap();
+        gui.publish();
+        gui.clear();
+        gui.publish();
+        emu.take();
+        assert!(
+            !emu.read_buffer()
+                .downcast_ref::<BitBuffer>()
+                .unwrap()
+                .pressed
+        );
+    }
+
+    #[test]
+    fn take_without_publish_keeps_snapshot() {
+        let split = bit_split();
+        let mut emu = split.emu_endpoint();
+        emu.take();
+        assert!(
+            !emu.read_buffer()
+                .downcast_ref::<BitBuffer>()
+                .unwrap()
+                .pressed
+        );
+        assert!(split.gui_endpoint().try_publish().is_ok());
+    }
+
+    #[test]
+    fn port_trait_endpoints_share_state() {
+        let split = bit_split();
+        let mut gui = InputSplit::gui_endpoint(&split);
+        let mut emu = InputSplit::emu_endpoint(&split);
+        gui.set(0, InputValue::Digital(true)).unwrap();
+        gui.publish();
+        emu.take();
+        assert!(
+            emu.read_buffer()
+                .downcast_ref::<BitBuffer>()
+                .unwrap()
+                .pressed
+        );
+        let mut direct = GuiInput::new(
+            std::sync::Arc::clone(&split.shared),
+            std::sync::Arc::clone(&split.flag),
+            Box::new(|| Box::new(BitBuffer::default())),
+        );
+        assert!(direct.try_publish().is_ok());
+    }
 }

@@ -92,3 +92,50 @@ impl From<AnalogControlId> for ControlId {
         Self::analog(id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AnalogControlId, AttachmentId, ControlId, DeviceKindId, DigitalControlId, PortId, ProfileId,
+    };
+
+    #[test]
+    fn static_ids_round_trip_through_display_and_from() {
+        let port = PortId::new("test.port");
+        assert_eq!(port.as_str(), "test.port");
+        assert_eq!(port.to_string(), "test.port");
+        assert_eq!(PortId::from("test.port"), port);
+        let as_str: &str = port.into();
+        assert_eq!(as_str, "test.port");
+        let attach = AttachmentId::new("test.pad");
+        assert_eq!(attach.to_string(), "test.pad");
+        let back: &'static str = attach.into();
+        let kind = DeviceKindId::from("test.dev");
+        assert_eq!(kind.as_str(), "test.dev");
+        let profile = ProfileId::new("test.profile");
+        assert_eq!(profile.to_string(), "test.profile");
+        let analog = AnalogControlId::new("test.x");
+        assert_eq!(analog.as_str(), "test.x");
+        let digital = DigitalControlId::from("test.a");
+        assert_eq!(digital.as_str(), "test.a");
+        assert_eq!(digital.to_string(), "test.a");
+        assert_eq!(back, "test.pad");
+    }
+
+    #[test]
+    fn control_id_sides_stay_exclusive() {
+        let digital = DigitalControlId::new("test.a");
+        let analog = AnalogControlId::new("test.x");
+        let from_digital = ControlId::digital(digital);
+        assert_eq!(from_digital.as_digital(), Some(digital));
+        assert_eq!(from_digital.as_analog(), None);
+        assert_eq!(from_digital.as_parts(), (0, "test.a"));
+        assert_eq!(from_digital.as_str(), "test.a");
+        let from_analog = ControlId::analog(analog);
+        assert_eq!(from_analog.as_analog(), Some(analog));
+        assert_eq!(from_analog.as_digital(), None);
+        assert_eq!(from_analog, ControlId::from(analog));
+        assert_eq!(ControlId::from(digital), from_digital);
+        assert_eq!(ControlId::from(digital).as_analog(), None);
+    }
+}

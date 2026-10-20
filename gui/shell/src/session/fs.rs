@@ -201,3 +201,95 @@ impl MapperSaveBackend for FsSlotBackend {
         write_recovery_mapper_save(path, data)
     }
 }
+
+#[cfg(test)]
+mod fs_cov_tests {
+    use crate::session::fs::*;
+    use crate::test_helpers::DummySystemId;
+
+    fn identity() -> SystemIdentity {
+        SystemIdentity::new(Box::new(DummySystemId), vec![1, 2])
+    }
+
+    fn dir(label: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "nerust-fs-cov-{}-{}",
+            label,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&base).expect("temp dir");
+        base
+    }
+
+    #[test]
+    fn failing_backend_errors_every_leg() {
+        let back = FailingSlotBackend;
+        let dir = Path::new("/nonexistent-probe-dir");
+        let id = identity();
+        assert!(back.scan(dir, &id).is_err());
+        assert!(back.allocate_next_id(dir).is_err());
+        assert!(back.write_slot(dir, 1, &[], &id, None).is_err());
+        assert!(back.read_slot(dir, 1).is_err());
+        assert!(back.delete_slot(dir, 1).is_err());
+        assert!(back.write_autosave(dir, &[], &id).is_err());
+        assert!(back.read_autosave(dir, &id).is_err());
+        assert!(back.delete_autosave(dir).is_err());
+        assert!(back.read_mapper_save(dir).is_err());
+        assert!(back.write_mapper_save(dir, &[]).is_err());
+        assert!(back.write_recovery_mapper_save(dir, &[]).is_err());
+    }
+
+    #[test]
+    fn read_missing_slot_returns_none() {
+        let back = FsSlotBackend;
+        let d = dir("missing");
+        assert!(back.read_slot(&d, 999).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn slot_write_scan_read_delete_round_trip() {
+        let back = FsSlotBackend;
+        let d = dir("roundtrip");
+        let id = identity();
+        let next = back.allocate_next_id(&d).unwrap();
+        let summary = back.write_slot(&d, next, &[7, 8, 9], &id, None).unwrap();
+        assert_eq!(summary.slot_id, next);
+        let scanned = back.scan(&d, &id).unwrap();
+        assert!(scanned.iter().any(|s| s.slot_id == next));
+        assert!(back.read_slot(&d, next).unwrap().is_some());
+        back.delete_slot(&d, next).unwrap();
+        assert!(back.read_slot(&d, next).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn autosave_write_read_delete_round_trip() {
+        let back = FsSlotBackend;
+        let d = dir("autosave");
+        let id = identity();
+        back.delete_autosave(&d).ok();
+        assert_eq!(back.quarantine_autosave(&d).unwrap(), None);
+        back.write_autosave(&d, &[1, 2, 3], &id).unwrap();
+        assert!(back.read_autosave(&d, &id).unwrap().is_some());
+        assert!(back.quarantine_autosave(&d).unwrap().is_some());
+        assert!(back.read_autosave(&d, &id).unwrap_or(None).is_none());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn mapper_save_round_trip_and_missing() {
+        let back = FsSlotBackend;
+        let d = dir("mapper");
+        let path = d.join("game.sav");
+        assert_eq!(back.read_mapper_save(&path).unwrap(), None);
+        back.write_mapper_save(&path, &[4, 5]).unwrap();
+        assert_eq!(back.read_mapper_save(&path).unwrap(), Some(vec![4, 5]));
+        let recovery = back.write_recovery_mapper_save(&path, &[6]).unwrap();
+        assert!(recovery.exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

@@ -132,4 +132,12 @@ mod tests {
             crash_title()
         );
     }
+
+    #[test]
+    fn crash_dialog_defaults_to_english() {
+        let dialog = crash_dialog_text(AppLanguage::SystemDefault, "boom");
+        assert!(dialog.contains("boom"), "{dialog}");
+        assert!(dialog.contains("The application crashed"), "{dialog}");
+        assert!(dialog.contains("stderr"), "{dialog}");
+    }
 }

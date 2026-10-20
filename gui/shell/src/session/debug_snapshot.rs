@@ -45,3 +45,32 @@ pub(crate) fn fold_watch_byte(rows: &[HexRow], addr: u32) -> Option<u8> {
         .find(|row| addr >= row.addr && addr < row.addr + u32::from(row.valid))
         .map(|row| row.bytes[(addr - row.addr) as usize])
 }
+
+#[cfg(test)]
+mod debug_snapshot_cov_tests {
+    use crate::session::debug_snapshot::*;
+
+    fn row(addr: u32, bytes: [u8; 16], valid: u8) -> HexRow {
+        HexRow { addr, bytes, valid }
+    }
+
+    #[test]
+    fn assemble_rejects_failed_inspect() {
+        use nerust_core_traits::debugger::{InspectError, SnapshotResult};
+        let batch = SnapshotResult {
+            inspect: Err(InspectError::NotPaused),
+            disasm: vec![],
+            anchor: None,
+        };
+        assert!(assemble_snapshot_parts(batch).is_none());
+    }
+
+    #[test]
+    fn fold_returns_byte_only_inside_valid_span() {
+        let rows = [row(0x10, [9; 16], 4)];
+        assert_eq!(fold_watch_byte(&rows, 0x12), Some(9));
+        assert_eq!(fold_watch_byte(&rows, 0x0F), None);
+        assert_eq!(fold_watch_byte(&rows, 0x14), None);
+        assert_eq!(fold_watch_byte(&[], 0x10), None);
+    }
+}

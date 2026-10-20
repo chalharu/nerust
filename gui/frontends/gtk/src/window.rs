@@ -680,3 +680,67 @@ fn show_rom_load_error(parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>
     });
     dialog.present();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{KeyEventState, key_event_pressed, rebuild_slot_menu};
+
+    #[test]
+    fn key_press_state_maps_to_pressed_flag() {
+        assert!(key_event_pressed(KeyEventState::Press));
+        assert!(!key_event_pressed(KeyEventState::Release));
+    }
+
+    fn slot_menu_count(menu: &gio::Menu) -> i32 {
+        use gio::prelude::MenuModelExt;
+        menu.n_items()
+    }
+
+    #[test]
+    fn slot_menu_explains_empty_state() {
+        use nerust_settings_core::model::language::AppLanguage;
+        let menu = gio::Menu::new();
+        rebuild_slot_menu(
+            &menu,
+            &[],
+            None,
+            "win.state-save-slot",
+            AppLanguage::English,
+        );
+        // One disabled item names the empty state, never a blank list.
+        assert_eq!(slot_menu_count(&menu), 1);
+    }
+
+    #[test]
+    fn slot_menu_lists_slots_with_action_targets() {
+        use nerust_persistence::model::StateSlotSummary;
+        use nerust_settings_core::model::language::AppLanguage;
+        let slots = vec![
+            StateSlotSummary {
+                schema_version: 1,
+                slot_id: 1,
+                path: std::path::PathBuf::from("slot1"),
+                saved_at: std::time::SystemTime::UNIX_EPOCH,
+                has_thumbnail: false,
+                emulator_version: "test".to_string(),
+            },
+            StateSlotSummary {
+                schema_version: 1,
+                slot_id: 2,
+                path: std::path::PathBuf::from("slot2"),
+                saved_at: std::time::SystemTime::UNIX_EPOCH,
+                has_thumbnail: false,
+                emulator_version: "test".to_string(),
+            },
+        ];
+        let menu = gio::Menu::new();
+        rebuild_slot_menu(
+            &menu,
+            &slots,
+            Some(2),
+            "win.state-load-slot",
+            AppLanguage::English,
+        );
+        assert_eq!(slot_menu_count(&menu), 2);
+    }
+}

@@ -209,4 +209,25 @@ mod tests {
         let staged: [u8; 4] = scratch.staging(need)[..4].try_into().unwrap();
         assert_eq!(RgbaWord::from_bytes_be(staged).as_u32(), 0x1122_3344);
     }
+
+    #[test]
+    fn ntsc_pack_grows_short_kernels_to_texture_height() {
+        // One entry against a height-2 store: present row verbatim,
+        // missing row zero-padded.
+        let mut scratch = StagingBuf::new();
+        let (height, need) =
+            pack_ntsc_bytes(1, 2, &[0xAA, 0xBB, 0xCC, 0xDD], &mut scratch).unwrap();
+        assert_eq!((height, need), (2, 8));
+        let staged = scratch.staging(need);
+        assert_eq!(&staged[..4], &[0xAA, 0xBB, 0xCC, 0xDD]);
+        assert_eq!(&staged[4..], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn ntsc_pack_empty_source_keeps_requested_height() {
+        let mut scratch = StagingBuf::new();
+        let (height, need) = pack_ntsc_bytes(2, 2, &[], &mut scratch).unwrap();
+        assert_eq!((height, need), (2, 16));
+        assert!(scratch.staging(need).iter().all(|&b| b == 0));
+    }
 }

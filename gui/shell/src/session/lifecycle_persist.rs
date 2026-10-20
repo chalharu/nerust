@@ -32,3 +32,31 @@ impl SessionHandle {
         self.notifications.clear_history();
     }
 }
+
+#[cfg(test)]
+mod lifecycle_persist_cov_tests {
+    use crate::session::lifecycle_persist::*;
+    use crate::session::test_util::test_session;
+
+    #[test]
+    fn coreless_hidden_state_is_false_and_clearable() {
+        use std::sync::Arc;
+        let caps = test_session().capabilities;
+        let registry = Arc::new(crate::registry::SystemRegistry::new(vec![]));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let mut session = SessionHandle::new_ephemeral(caps, registry, audio);
+        assert!(!session.save_hidden_lifecycle_state());
+        assert!(!session.load_hidden_lifecycle_state());
+        session.clear_hidden_lifecycle_state();
+        session.clear_notification_history();
+        assert_eq!(session.notification_history_seq(), 1);
+    }
+
+    #[test]
+    fn loaded_hidden_state_round_trips_without_slots() {
+        let mut session = test_session();
+        session.clear_hidden_lifecycle_state();
+        session.clear_notification_history();
+        assert_eq!(session.notification_history_seq(), 1);
+    }
+}

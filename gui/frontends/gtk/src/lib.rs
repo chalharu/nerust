@@ -642,4 +642,34 @@ mod tests {
         let third = cache.get(&changed);
         assert!(std::sync::Arc::ptr_eq(&second, &third));
     }
+
+    #[test]
+    fn shortcut_hint_falls_back_to_bare_label() {
+        // Unbound action advertises no key, never a stale default.
+        let unbound = vec![ShortcutBinding {
+            action: ShortcutAction::SaveActiveSlot,
+            key: None,
+        }];
+        assert_eq!(
+            shortcut_hint("Save Active Slot", &unbound, ShortcutAction::SaveActiveSlot),
+            "Save Active Slot"
+        );
+        assert_eq!(
+            shortcut_hint(
+                "Save Active Slot",
+                &default_shortcut_bindings(),
+                ShortcutAction::SaveActiveSlot
+            ),
+            "Save Active Slot (F5)"
+        );
+    }
+
+    #[test]
+    fn menu_model_covers_all_sections_in_japanese() {
+        let labels = menu_labels(AppLanguage::Japanese, &default_shortcut_bindings());
+        assert!(!labels.is_empty());
+        // Three top-level sections, none empty after i18n lookup.
+        assert!(labels.iter().all(|label| !label.is_empty()));
+        assert!(labels.len() > 10);
+    }
 }

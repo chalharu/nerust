@@ -87,3 +87,37 @@ impl SessionHandle {
         PersistenceSetup::Ready
     }
 }
+
+#[cfg(test)]
+mod persistence_setup_cov_tests {
+    use crate::session::persistence_setup::*;
+    use crate::session::test_util::test_session;
+
+    #[test]
+    fn coreless_setup_is_unavailable_and_noted() {
+        use std::sync::Arc;
+        let caps = test_session().capabilities;
+        let registry = Arc::new(crate::registry::SystemRegistry::new(vec![]));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let mut session = SessionHandle::new_ephemeral(caps, registry, audio);
+        assert_eq!(
+            session.setup_persistence(None, MapperRestore::Skip),
+            PersistenceSetup::Unavailable
+        );
+        assert_eq!(
+            session.setup_persistence(None, MapperRestore::Load),
+            PersistenceSetup::Unavailable
+        );
+        session.note_persistence_setup(PersistenceSetup::Ready);
+        assert_eq!(session.drain_notifications().len(), 0);
+        session.note_persistence_setup(PersistenceSetup::Unavailable);
+        assert_eq!(session.drain_notifications().len(), 1);
+    }
+
+    #[test]
+    fn binder_without_rom_reports_unavailable() {
+        let mut session = test_session();
+        PersistenceBinder::bind(&mut session, None, MapperRestore::Skip);
+        assert_eq!(session.drain_notifications().len(), 1);
+    }
+}

@@ -95,3 +95,73 @@ pub enum SlotOpFailure {
     #[default]
     Unavailable,
 }
+
+#[cfg(test)]
+mod error_cov_tests {
+    use crate::session::error::*;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn codec_maps_not_found_to_missing() {
+        let err = PersistenceError::Io(Error::new(ErrorKind::NotFound, "gone"));
+        assert_eq!(StateCodecError::from(&err), StateCodecError::Missing);
+        assert_eq!(SlotOpFailure::from(&err), SlotOpFailure::Missing);
+    }
+
+    #[test]
+    fn codec_maps_other_io_to_storage() {
+        let err = PersistenceError::Io(Error::other("disk down"));
+        assert_eq!(StateCodecError::from(&err), StateCodecError::Storage);
+        assert_eq!(SlotOpFailure::from(&err), SlotOpFailure::Storage);
+    }
+
+    #[test]
+    fn codec_maps_non_io_to_corrupt() {
+        let err = PersistenceError::Validation("bad".into());
+        assert_eq!(StateCodecError::from(&err), StateCodecError::Corrupt);
+        assert_eq!(SlotOpFailure::from(&err), SlotOpFailure::Corrupt);
+    }
+
+    #[test]
+    fn codec_round_trips_every_variant() {
+        for (codec, failure) in [
+            (StateCodecError::Unavailable, SlotOpFailure::Unavailable),
+            (StateCodecError::Storage, SlotOpFailure::Storage),
+            (StateCodecError::Missing, SlotOpFailure::Missing),
+            (StateCodecError::Corrupt, SlotOpFailure::Corrupt),
+            (StateCodecError::Incompatible, SlotOpFailure::Incompatible),
+        ] {
+            assert_eq!(SlotOpFailure::from(codec), failure);
+        }
+        assert_eq!(SlotOpFailure::default(), SlotOpFailure::Unavailable);
+    }
+
+    #[test]
+    fn fault_maps_every_arm() {
+        use crate::emu_core::StateFault as F;
+        for (fault, failure) in [
+            (F::Transport, SlotOpFailure::Unavailable),
+            (F::Storage, SlotOpFailure::Storage),
+            (F::Missing, SlotOpFailure::Missing),
+            (F::Corrupt, SlotOpFailure::Corrupt),
+            (F::Incompatible, SlotOpFailure::Incompatible),
+            (F::Other("x".into()), SlotOpFailure::Corrupt),
+        ] {
+            assert_eq!(SlotOpFailure::from(fault), failure);
+        }
+    }
+
+    #[test]
+    fn core_error_shim_matches_fault() {
+        use crate::emu_core::CorePersistenceError as E;
+        assert_eq!(
+            SlotOpFailure::from(E::WorkerUnavailable),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(SlotOpFailure::from(E::NoReply), SlotOpFailure::Unavailable);
+        assert_eq!(
+            E::Core("slot file not found".into()).slot_failure(),
+            SlotOpFailure::Missing
+        );
+    }
+}

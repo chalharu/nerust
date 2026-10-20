@@ -97,3 +97,25 @@ impl TestDisplay {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TestDisplay;
+
+    #[test]
+    fn display_lock_serializes_context_tests() {
+        // Double-lock from one thread would deadlock; the guard
+        // only proves the mutex is live and re-armable.
+        drop(super::lock_display());
+        drop(super::lock_display());
+    }
+
+    #[test]
+    fn connect_skips_headless_without_display() {
+        if std::env::var_os("DISPLAY").is_some() {
+            eprintln!("SKIP: DISPLAY is set, connect may succeed");
+            return;
+        }
+        assert!(TestDisplay::connect().is_none());
+    }
+}

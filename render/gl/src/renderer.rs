@@ -861,6 +861,85 @@ mod tests {
         assert_eq!(super::EMPTY_PROC_NAME.to_bytes(), b"");
     }
 
+    #[test]
+    fn resize_views_skips_degenerate_and_memo_hits() {
+        use nerust_render_traits::ReservedStrip;
+        let mut frame = FrameView::new();
+        let mut surface = SurfaceView::new();
+        let strip = ReservedStrip::default();
+        // Zero viewports skip without touching GL.
+        assert!(super::GlRenderer::resize_views(&mut frame, &mut surface, 0, 64, strip).is_ok());
+        assert!(super::GlRenderer::resize_views(&mut frame, &mut surface, 64, -1, strip).is_ok());
+        // Memo miss without a program fails typed after the pure fit.
+        frame.logical_width = 64;
+        frame.logical_height = 64;
+        assert!(super::GlRenderer::resize_views(&mut frame, &mut surface, 64, 64, strip).is_err());
+        // Recorded inputs hit the memo and skip all GL work.
+        surface.record_resize(64, 64, strip, [0, 0, 64, 64]);
+        assert!(super::GlRenderer::resize_views(&mut frame, &mut surface, 64, 64, strip).is_ok());
+    }
+
+    #[test]
+    fn composite_osd_skips_empty_stages() {
+        let mut frame = FrameView::new();
+        let mut osd = OsdView::new();
+        let mut surface = SurfaceView::new();
+        // Nothing staged: no GL, viewport memo passes through.
+        let outcome =
+            super::GlRenderer::composite_osd(&mut osd, &mut frame, &mut surface, 64, 64).unwrap();
+        assert_eq!(outcome, crate::osd_view::OsdOutcome::Skipped);
+    }
+
+    #[test]
+    fn upload_frame_refuses_short_and_wide_layouts() {
+        use crate::layout::FrameLayout;
+        // Short buffer refuses before any GL upload.
+        let mut frame = FrameView::new();
+        frame.unpack_row_length = true;
+        let layout = FrameLayout {
+            width: 64,
+            height: 64,
+            row_bytes: 256,
+            stride: 256,
+            need: 64 * 64 * 4,
+            stride_px: 64,
+        };
+        assert!(super::upload_frame(&mut frame, &mut Vec::new(), &layout, &[0; 8]).is_err());
+        // Absurd width refuses instead of truncating to i32.
+        let wide = FrameLayout {
+            width: usize::MAX,
+            ..layout
+        };
+        assert!(matches!(
+            super::upload_frame(&mut frame, &mut Vec::new(), &wide, &[0; 8]),
+            Err(super::ViewError::Frame(
+                crate::layout::FrameError::StrideTooWide { .. }
+            ))
+        ));
+        // Tight path packs rows, then fails at the missing program.
+        let mut tight_frame = FrameView::new();
+        let padded = FrameLayout {
+            width: 2,
+            height: 1,
+            row_bytes: 8,
+            stride: 12,
+            need: 12,
+            stride_px: 3,
+        };
+        let mut tight = Vec::new();
+        assert!(super::upload_frame(&mut tight_frame, &mut tight, &padded, &[7; 12]).is_err());
+        // Tight staging holds the packed row; the tail stays zeroed.
+        assert_eq!(&tight[..8], &[7; 8]);
+    }
+
+    #[test]
+    fn pack_rows_stripped_handles_empty_frames() {
+        // Zero height iterates nothing; nonzero pitches stay valid.
+        let mut destination: [u8; 0] = [];
+        pack_rows_stripped(&[], 4, 0, &mut destination, 4);
+        assert!(destination.is_empty());
+    }
+
     #[cfg(unix)]
     #[test]
     fn osd_policy_factory_mints_independent_budgets() {

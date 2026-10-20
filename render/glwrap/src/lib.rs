@@ -392,3 +392,71 @@ impl context::GlObject for Shader {
         Shader::destroy_if_current(self, current)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{QueryStage, ShaderError, info_log_buffer, trim_info_log};
+
+    #[test]
+    fn shader_error_display_names_stage() {
+        let err = ShaderError::Compile {
+            stage: "vertex",
+            log: "boom".to_string(),
+        };
+        assert!(err.to_string().contains("vertex"));
+        let err = ShaderError::Link {
+            log: "bad".to_string(),
+        };
+        assert!(err.to_string().contains("link"));
+        let err = ShaderError::Query {
+            stage: QueryStage::AttribLocation,
+            detail: "d".to_string(),
+        };
+        assert!(err.to_string().contains("AttribLocation"));
+        assert_eq!(
+            ShaderError::Link {
+                log: "x".to_string()
+            },
+            ShaderError::Link {
+                log: "x".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn info_log_buffer_clamps_negative_len() {
+        assert!(info_log_buffer(0).is_empty());
+        assert_eq!(info_log_buffer(-4).len(), 0);
+        assert_eq!(info_log_buffer(9).len(), 9);
+    }
+
+    #[test]
+    fn trim_info_log_drops_nul_and_bounds_written() {
+        let mut buf = b"oops\0junk".to_vec();
+        assert_eq!(trim_info_log(&mut buf, 4), "oops");
+        let mut buf = b"ab".to_vec();
+        assert_eq!(trim_info_log(&mut buf, 99), "ab");
+        let mut buf = b"\0".to_vec();
+        assert_eq!(trim_info_log(&mut buf, 1), "");
+        let mut buf = b"z\0".to_vec();
+        assert_eq!(trim_info_log(&mut buf, -3), "");
+    }
+
+    #[test]
+    fn query_stage_covers_every_introspection_step() {
+        let stages = [
+            QueryStage::ActiveAttribs,
+            QueryStage::ActiveAttrib,
+            QueryStage::AttribName,
+            QueryStage::AttribLocation,
+            QueryStage::ActiveUniforms,
+            QueryStage::ActiveUniform,
+            QueryStage::UniformName,
+            QueryStage::UniformLocation,
+            QueryStage::LinkStatus,
+            QueryStage::InfoLog,
+        ];
+        assert_eq!(stages.len(), 10);
+        assert!(stages.contains(&QueryStage::LinkStatus));
+    }
+}

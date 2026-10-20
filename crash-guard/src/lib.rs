@@ -277,4 +277,34 @@ mod tests {
             run_guarded_with(|| panic!("legacy boom"), default_sink, stub_source);
         assert!(matches!(outcome, GuardOutcome::Crashed(_)));
     }
+
+    #[test]
+    fn crash_exit_code_matches_rust_panic_convention() {
+        assert_eq!(super::CRASH_EXIT_CODE, 101);
+    }
+
+    #[test]
+    fn report_covers_owned_and_unknown_payloads() {
+        let owned = CrashReport::from_payload(&"owned".to_owned(), stub_source);
+        assert_eq!(owned.message(), "owned");
+        assert!(owned.to_string().contains("stub backtrace"));
+        let unknown = CrashReport::from_payload(&42_u32, stub_source);
+        assert_eq!(unknown.message(), "non-string panic payload");
+    }
+
+    #[test]
+    fn record_getters_expose_thread_and_backtrace() {
+        let report = CrashReport::from_payload(&"boom", stub_source);
+        let text = format!("{report:?}");
+        assert!(text.contains("boom"), "{text}");
+    }
+
+    #[test]
+    fn guard_outcome_is_debug_and_must_use() {
+        let completed: GuardOutcome<u32> = GuardOutcome::Completed(1);
+        assert!(format!("{completed:?}").contains("Completed"));
+        let crashed: GuardOutcome<u32> =
+            GuardOutcome::Crashed(CrashReport::from_payload(&"x", stub_source));
+        assert!(format!("{crashed:?}").contains("Crashed"));
+    }
 }

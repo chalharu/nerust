@@ -93,3 +93,46 @@ impl SurfaceView {
         self.game_viewport = None;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{CloseReport, LeakedName, SurfaceView};
+    use nerust_render_traits::ReservedStrip;
+
+    #[test]
+    fn close_report_counts_each_namespace() {
+        let mut report = CloseReport::default();
+        assert!(report.is_ok());
+        assert_eq!(report.failed_names(), 0);
+        report.leak(LeakedName::Texture(1));
+        report.leak(LeakedName::Program(2));
+        report.leak(LeakedName::Array(3));
+        report.leak(LeakedName::Buffer(4));
+        report.leak(LeakedName::Texture(5));
+        assert!(!report.is_ok());
+        assert_eq!(report.failed_names(), 5);
+        assert_eq!(report.failed_textures(), 2);
+        assert_eq!(report.failed_programs(), 1);
+        assert_eq!(report.failed_arrays(), 1);
+        assert_eq!(report.failed_buffers(), 1);
+    }
+
+    #[test]
+    fn surface_memo_hits_only_on_identical_inputs() {
+        let mut view = SurfaceView::new();
+        let strip = ReservedStrip { top: 0, bottom: 8 };
+        assert!(!view.resize_hit(64, 64, strip));
+        assert_eq!(view.game_viewport(), None);
+        view.record_resize(64, 64, strip, [0, 8, 64, 56]);
+        assert!(view.resize_hit(64, 64, strip));
+        assert_eq!(view.game_viewport(), Some([0, 8, 64, 56]));
+        // Any axis or strip change misses.
+        assert!(!view.resize_hit(65, 64, strip));
+        assert!(!view.resize_hit(64, 64, ReservedStrip::default()));
+        view.set_game_viewport([0, 0, 64, 64]);
+        assert_eq!(view.game_viewport(), Some([0, 0, 64, 64]));
+        view.reset();
+        assert!(!view.resize_hit(64, 64, strip));
+        assert_eq!(view.game_viewport(), None);
+    }
+}

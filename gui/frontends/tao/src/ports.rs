@@ -241,3 +241,166 @@ impl TaoWindowOpener<'_> {
         crate::aux::osd::HistoryWindowHandle::new(self.target, language)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aux::focus::{AuxEvents, AuxIdentity, AuxRender};
+    use crate::aux::native::{AuxNativeEvent, NativeWindowId};
+
+    struct StubAux {
+        kind: AuxKind,
+    }
+
+    impl AuxIdentity for StubAux {
+        fn kind(&self) -> AuxKind {
+            self.kind
+        }
+        fn native_id(&self) -> NativeWindowId {
+            NativeWindowId::dummy()
+        }
+        fn close_requested(&self) -> bool {
+            false
+        }
+        fn focus_window(&self) {}
+        fn request_redraw(&self) {}
+    }
+
+    impl AuxRender for StubAux {
+        fn handle_common(&mut self, _event: &AuxNativeEvent) {}
+        fn feed_event(&mut self, _event: AuxNativeEvent) -> Option<iced::Event> {
+            None
+        }
+        fn render(&mut self) {}
+    }
+
+    impl AuxEvents for StubAux {
+        fn handle(&mut self, _mapped: iced::Event) -> bool {
+            false
+        }
+    }
+
+    impl crate::aux::registry::DebugDrainPort for StubAux {}
+    impl crate::aux::registry::LiveImagesPort for StubAux {}
+    impl crate::aux::registry::SettingsClosePort for StubAux {}
+    impl crate::aux::registry::HistorySyncPort for StubAux {}
+    impl crate::aux::registry::BridgeSharePort for StubAux {}
+    impl AuxController for StubAux {}
+
+    /// Local failing opener: records aux requests without a display.
+    /// Defined here so these port tests depend only on the port surface.
+    struct RecordingOpener {
+        calls: std::sync::Mutex<Vec<AuxKind>>,
+    }
+
+    impl RecordingOpener {
+        fn new() -> Self {
+            Self {
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<AuxKind> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl WindowOpener for RecordingOpener {
+        fn create_main(&self, _builder: WindowBuilder) -> Result<Arc<TaoWindow>, String> {
+            Err("no display".to_string())
+        }
+
+        fn create_aux(
+            &self,
+            kind: AuxKind,
+            _params: AuxOpenParams,
+        ) -> Option<Box<dyn AuxController>> {
+            self.calls.lock().unwrap().push(kind);
+            None
+        }
+    }
+
+    #[test]
+    fn aux_open_records_settings_arm() {
+        let params = AuxOpenParams::Settings {
+            snapshot: SettingsSnapshot {
+                shared: Default::default(),
+                local: Default::default(),
+                app_state: Default::default(),
+            },
+            registry: std::sync::Arc::new(SystemRegistry::new(Vec::new())),
+            audio: std::sync::Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
+        };
+        let opener = RecordingOpener::new();
+        assert!(opener.create_aux(AuxKind::Settings, params).is_none());
+        assert_eq!(opener.calls(), [AuxKind::Settings]);
+    }
+
+    #[test]
+    fn aux_open_records_debug_arm() {
+        let opener = RecordingOpener::new();
+        assert!(
+            opener
+                .create_aux(
+                    AuxKind::Debug,
+                    AuxOpenParams::Debug {
+                        display: Default::default(),
+                        spaces: Vec::new(),
+                        mem_addr: 0,
+                        language: AppLanguage::English,
+                        position: None,
+                    },
+                )
+                .is_none()
+        );
+        assert_eq!(opener.calls(), [AuxKind::Debug]);
+    }
+
+    #[test]
+    fn aux_open_records_ppu_arm() {
+        let bridge = std::sync::Arc::new(DebugBridge::new(
+            Default::default(),
+            Vec::new(),
+            0,
+            AppLanguage::English,
+        ));
+        let opener = RecordingOpener::new();
+        assert!(
+            opener
+                .create_aux(
+                    AuxKind::Ppu,
+                    AuxOpenParams::Ppu {
+                        bridge,
+                        position: Some((8, 16)),
+                    },
+                )
+                .is_none()
+        );
+        assert_eq!(opener.calls(), [AuxKind::Ppu]);
+    }
+
+    #[test]
+    fn aux_open_records_history_arm() {
+        let opener = RecordingOpener::new();
+        assert!(
+            opener
+                .create_aux(
+                    AuxKind::History,
+                    AuxOpenParams::History {
+                        language: AppLanguage::English,
+                    },
+                )
+                .is_none()
+        );
+        assert_eq!(opener.calls(), [AuxKind::History]);
+    }
+
+    #[test]
+    fn aux_box_preserves_kind_and_stays_quiet() {
+        let boxed = aux_box(StubAux {
+            kind: AuxKind::Settings,
+        });
+        assert_eq!(boxed.kind(), AuxKind::Settings);
+        assert!(!boxed.close_requested());
+    }
+}

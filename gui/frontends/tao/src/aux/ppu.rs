@@ -437,4 +437,82 @@ mod tests {
         let _ = program.view(&state, iced::window::Id::unique());
         drop(state);
     }
+
+    #[test]
+    fn sync_with_empty_images_keeps_empty_cache() {
+        use nerust_gui_viewmodel::debugger::DisplayCache;
+        use nerust_settings_core::model::language::AppLanguage;
+        let bridge = Arc::new(DebugBridge::new(
+            DisplayCache::default(),
+            Vec::new(),
+            0,
+            AppLanguage::English,
+        ));
+        let program = PpuProgram {
+            bridge: Arc::clone(&bridge),
+        };
+        let mut state = ppu_state(&bridge);
+        // Generation zero differs from the empty sentinel: sync
+        // records it without deriving any pictures.
+        let _ = program.update(&mut state, PpuMessage::Sync);
+        assert!(lock_recovered(&state.snapshot).scaled.is_empty());
+        assert_eq!(lock_recovered(&state.snapshot).source_gen, 0);
+    }
+
+    #[test]
+    fn sync_rederives_on_generation_change_and_keeps_hover() {
+        let bridge = ppu_bridge();
+        let program = PpuProgram {
+            bridge: Arc::clone(&bridge),
+        };
+        let mut state = ppu_state(&bridge);
+        let _ = program.update(&mut state, PpuMessage::Sync);
+        let _ = program.update(&mut state, PpuMessage::Hovered("Tiles hover".to_string()));
+        // New images plus new generation: scaled re-derived, hover kept.
+        bridge.write().display.images = vec![("Map".to_string(), 1, 1, vec![0x00; 4])];
+        bridge.write().display.images_gen = 6;
+        let _ = program.update(&mut state, PpuMessage::Sync);
+        let snapshot = lock_recovered(&state.snapshot);
+        assert_eq!(snapshot.scaled.len(), 1);
+        assert_eq!(snapshot.scaled[0].0, "Map");
+        assert_eq!(snapshot.source_gen, 6);
+        assert_eq!(&*snapshot.hover, "Tiles hover");
+    }
+
+    #[test]
+    fn view_shows_panels_section_only_when_present() {
+        use nerust_core_traits::debugger::{ColumnKind, DebugPanel, PanelColumn};
+        use nerust_gui_viewmodel::debugger::DisplayCache;
+        use nerust_settings_core::model::language::AppLanguage;
+        static COLUMNS: &[PanelColumn] = &[PanelColumn {
+            id: "t",
+            label_id: "T",
+            kind: ColumnKind::Text,
+        }];
+        let bridge = Arc::new(DebugBridge::new(
+            DisplayCache {
+                panels: vec![DebugPanel {
+                    id: "p",
+                    label_id: "P",
+                    columns: COLUMNS,
+                    rows: Vec::new(),
+                }],
+                ..DisplayCache::default()
+            },
+            Vec::new(),
+            0,
+            AppLanguage::English,
+        ));
+        let program = PpuProgram {
+            bridge: Arc::clone(&bridge),
+        };
+        let mut state = ppu_state(&bridge);
+        let _ = program.update(&mut state, PpuMessage::Sync);
+        // Non-empty panels render the section; empty ones skip it.
+        let _full = program.view(&state, iced::window::Id::unique());
+        drop(_full);
+        assert!(nerust_gui_viewmodel::debugger::panels_visible(
+            &lock_recovered(&state.snapshot).panels
+        ));
+    }
 }

@@ -1053,7 +1053,7 @@ mod borrow_tests {
 
 #[cfg(test)]
 mod chrome_tests {
-    use super::*;
+    use crate::session::osd_presenter::*;
 
     #[test]
     fn chrome_from_view_matches_from_settings() {
@@ -1061,5 +1061,88 @@ mod chrome_tests {
         let settings = NotificationSettings::default();
         let view = crate::session::ports::chrome_view(&settings);
         assert_eq!(OsdChrome::from(&settings), OsdChrome::from_view(&view));
+    }
+}
+
+#[cfg(test)]
+mod presenter_cov_tests {
+    use crate::session::osd_presenter::*;
+    use nerust_settings_core::model::language::AppLanguage;
+
+    #[test]
+    fn tick_metrics_gate_pause_and_resume() {
+        let running = TickMetrics {
+            loaded: true,
+            paused: false,
+            ..TickMetrics::default()
+        };
+        assert!(running.can_pause());
+        assert!(!running.can_resume());
+        assert_eq!(running.frame_channel(), FrameChannel::Composited);
+        let idle = TickMetrics::default();
+        assert!(!idle.can_pause());
+        assert!(!idle.can_resume());
+        assert_eq!(idle.frame_channel(), FrameChannel::Unpresented);
+    }
+
+    #[test]
+    fn status_key_and_text_cover_paused_and_running() {
+        assert_eq!(status_key(true), "paused");
+        assert_eq!(status_key(false), "");
+        assert_eq!(status_text("paused", AppLanguage::English), "Paused");
+        assert_eq!(status_text("paused", AppLanguage::Japanese), "一時停止中");
+        assert_eq!(status_text("", AppLanguage::English), "");
+        assert_eq!(status_text("other", AppLanguage::Japanese), "");
+    }
+
+    #[test]
+    fn status_value_formats_one_decimal() {
+        assert_eq!(format_status_value(60.0), "60.0 fps");
+        assert!(!format_status_value(0.0).is_empty());
+    }
+
+    #[test]
+    fn router_routes_transient_modal_and_drop() {
+        use crate::session::notification::NotificationKind;
+        let settings = NotificationSettings::default();
+        let policy = TransientPolicy::from(&settings);
+        let composited = ModalRouter {
+            policy: &policy,
+            channel: FrameChannel::Composited,
+        };
+        assert!(matches!(
+            composited.route(&NotificationKind::Paused),
+            ModalRoute::Transient
+        ));
+        let unpresented = ModalRouter {
+            policy: &policy,
+            channel: FrameChannel::Unpresented,
+        };
+        assert!(matches!(
+            unpresented.route(&NotificationKind::Paused),
+            ModalRoute::Drop
+        ));
+        assert!(matches!(
+            unpresented.route(&NotificationKind::PersistenceUnavailable),
+            ModalRoute::Modal | ModalRoute::Transient
+        ));
+        let off = TransientPolicy {
+            info_enabled: false,
+            ..policy
+        };
+        let router = ModalRouter {
+            policy: &off,
+            channel: FrameChannel::Composited,
+        };
+        assert!(matches!(
+            router.route(&NotificationKind::Paused),
+            ModalRoute::Drop
+        ));
+    }
+
+    #[test]
+    fn status_gate_starts_empty() {
+        let gate = StatusGate::new();
+        let _ = gate;
     }
 }

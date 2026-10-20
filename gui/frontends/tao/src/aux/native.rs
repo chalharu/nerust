@@ -182,4 +182,102 @@ mod tests {
             AuxNativeEvent::MouseReleased(crate::aux::tao_map::AuxButton::Left)
         );
     }
+
+    #[test]
+    fn adapter_maps_geometry_and_modifier_events() {
+        assert_eq!(
+            adapt_event(&WindowEvent::Moved(tao::dpi::PhysicalPosition::new(7, 9))),
+            AuxNativeEvent::Moved(7, 9)
+        );
+        assert_eq!(
+            adapt_event(&WindowEvent::ScaleFactorChanged {
+                scale_factor: 2.0,
+                new_inner_size: &mut tao::dpi::PhysicalSize::new(800, 600),
+            }),
+            AuxNativeEvent::ScaleChanged(2.0)
+        );
+        // Tao modifiers cross as a set; empty stays empty.
+        assert_eq!(
+            adapt_event(&WindowEvent::ModifiersChanged(
+                tao::keyboard::ModifiersState::SHIFT
+            )),
+            AuxNativeEvent::ModifiersChanged(crate::aux::tao_map::tao_modifiers_to_iced(
+                tao::keyboard::ModifiersState::SHIFT
+            ))
+        );
+        assert_eq!(
+            adapt_event(&WindowEvent::ModifiersChanged(
+                tao::keyboard::ModifiersState::empty()
+            )),
+            AuxNativeEvent::ModifiersChanged(iced::keyboard::Modifiers::empty())
+        );
+        assert_eq!(
+            adapt_event(&WindowEvent::CursorLeft {
+                device_id: unsafe { tao::event::DeviceId::dummy() },
+            }),
+            AuxNativeEvent::CursorLeft
+        );
+    }
+
+    #[test]
+    fn adapter_maps_each_mapped_button_press() {
+        use crate::aux::tao_map::AuxButton;
+        for (native, domain) in [
+            (tao::event::MouseButton::Left, AuxButton::Left),
+            (tao::event::MouseButton::Right, AuxButton::Right),
+            (tao::event::MouseButton::Middle, AuxButton::Middle),
+        ] {
+            let pressed = WindowEvent::MouseInput {
+                device_id: unsafe { tao::event::DeviceId::dummy() },
+                state: tao::event::ElementState::Pressed,
+                button: native,
+                modifiers: tao::keyboard::ModifiersState::default(),
+            };
+            assert_eq!(adapt_event(&pressed), AuxNativeEvent::MousePressed(domain));
+            let released = WindowEvent::MouseInput {
+                device_id: unsafe { tao::event::DeviceId::dummy() },
+                state: tao::event::ElementState::Released,
+                button: native,
+                modifiers: tao::keyboard::ModifiersState::default(),
+            };
+            assert_eq!(
+                adapt_event(&released),
+                AuxNativeEvent::MouseReleased(domain)
+            );
+        }
+    }
+
+    #[test]
+    fn adapter_maps_both_wheel_deltas() {
+        let device = unsafe { tao::event::DeviceId::dummy() };
+        let lines = WindowEvent::MouseWheel {
+            device_id: device,
+            delta: tao::event::MouseScrollDelta::LineDelta(0.0, 3.0),
+            phase: tao::event::TouchPhase::Moved,
+            modifiers: tao::keyboard::ModifiersState::default(),
+        };
+        assert_eq!(adapt_event(&lines), AuxNativeEvent::WheelLines(0.0, 3.0));
+        let pixels = WindowEvent::MouseWheel {
+            device_id: device,
+            delta: tao::event::MouseScrollDelta::PixelDelta(tao::dpi::PhysicalPosition::new(
+                0.0, 24.0,
+            )),
+            phase: tao::event::TouchPhase::Moved,
+            modifiers: tao::keyboard::ModifiersState::default(),
+        };
+        assert_eq!(adapt_event(&pixels), AuxNativeEvent::WheelPixels(0.0, 24.0));
+    }
+
+    #[test]
+    fn adapter_passes_unmapped_window_events_through() {
+        // Non-input lifecycle events never reach the programs.
+        assert_eq!(
+            adapt_event(&WindowEvent::ThemeChanged(tao::window::Theme::Dark)),
+            AuxNativeEvent::Other
+        );
+        assert_eq!(
+            adapt_event(&WindowEvent::DecorationsClick),
+            AuxNativeEvent::Other
+        );
+    }
 }

@@ -836,3 +836,80 @@ pub(crate) mod test_util {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod session_cov_tests {
+    use super::test_util::test_session;
+
+    #[test]
+    fn accessors_cover_frame_settings_and_factory() {
+        let mut session = test_session();
+        assert!(session.render_profile().is_some());
+        let _ = session.swap_frame_buffer_tick();
+        session.swap_frame_buffer();
+        assert!(session.with_frame_buffer(|_| ()).is_some());
+        assert!(session.frame_buffer().is_some());
+        session.clear_display();
+        let _ = session.settings_snapshot();
+        let _ = session.chrome();
+        let _ = session.transient_policy();
+        let _ = session.sidecars();
+        let _ = session.host_peripherals();
+        let _ = session.current_assignments();
+        let _ = session.current_assignments_pairs();
+        let _ = session.settings_manager();
+        let _ = session.speaker_factory();
+        assert!(session.active_factory_cloned().is_some());
+        assert!(session.with_active_factory(|_| 7).is_some());
+        assert!(session.active_system_display_name().is_some());
+        assert!(session.active_system_id_box().is_some());
+        assert!(session.active_factory().is_some());
+        assert!(!session.registry().all().is_empty());
+        assert!(session.factory().is_some());
+        assert!(session.active_system_id().is_some());
+        assert!(session.default_load_options().is_some());
+        let id = session.factory().unwrap().system_id();
+        assert!(session.set_active_system(id.as_ref()).is_ok());
+        session.set_persistence_backends(
+            Box::new(super::fs::FsSlotBackend),
+            Box::new(super::fs::FsSlotBackend),
+            Box::new(super::fs::FsSlotBackend),
+        );
+        let tick = session.tick_metrics();
+        let _ = session.window_title_cached(&tick).to_string();
+        let _ = session
+            .notification_history_lines_cached(Default::default())
+            .len();
+    }
+
+    #[test]
+    fn coreless_accessors_report_none() {
+        use std::sync::Arc;
+        let caps = test_session().capabilities;
+        let registry = Arc::new(crate::registry::SystemRegistry::new(vec![]));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let mut session = super::SessionHandle::new_ephemeral(caps, registry, audio);
+        assert!(session.render_profile().is_none());
+        assert!(session.with_frame_buffer(|_| ()).is_none());
+        assert!(session.frame_buffer().is_none());
+        session.clear_display();
+        session.swap_frame_buffer();
+        assert!(session.active_factory_cloned().is_none());
+        assert!(session.with_active_factory(|_| 7).is_none());
+        assert!(session.active_system_display_name().is_none());
+        assert!(session.active_system_id_box().is_none());
+        assert!(session.active_factory().is_none());
+        assert!(session.factory().is_none());
+        assert!(session.active_system_id().is_none());
+        assert!(session.default_load_options().is_none());
+        let _ = session.current_assignments_pairs();
+    }
+
+    #[test]
+    fn session_error_conversions_cover_all_legs() {
+        use super::SessionError;
+        let _ = SessionError::NoCore.to_string();
+        let op: SessionError = nerust_emu_thread::OperationError::NoReply.into();
+        let _ = op.to_string();
+    }
+}

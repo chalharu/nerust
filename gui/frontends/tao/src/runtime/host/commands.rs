@@ -288,6 +288,106 @@ mod tests {
         assert!(support.loader.attempted().is_empty());
     }
 
+    struct OpenAux;
+
+    impl crate::aux::focus::AuxIdentity for OpenAux {
+        fn kind(&self) -> crate::aux::focus::AuxKind {
+            crate::aux::focus::AuxKind::Settings
+        }
+        fn native_id(&self) -> crate::aux::native::NativeWindowId {
+            crate::aux::native::NativeWindowId::dummy()
+        }
+        fn close_requested(&self) -> bool {
+            false
+        }
+        fn focus_window(&self) {}
+        fn request_redraw(&self) {}
+    }
+
+    impl crate::aux::focus::AuxRender for OpenAux {
+        fn handle_common(&mut self, _event: &crate::aux::native::AuxNativeEvent) {}
+        fn feed_event(
+            &mut self,
+            _event: crate::aux::native::AuxNativeEvent,
+        ) -> Option<iced::Event> {
+            None
+        }
+        fn render(&mut self) {}
+    }
+
+    impl crate::aux::focus::AuxEvents for OpenAux {
+        fn handle(&mut self, _mapped: iced::Event) -> bool {
+            false
+        }
+    }
+
+    impl crate::aux::registry::DebugDrainPort for OpenAux {}
+    impl crate::aux::registry::LiveImagesPort for OpenAux {}
+    impl crate::aux::registry::SettingsClosePort for OpenAux {}
+    impl crate::aux::registry::HistorySyncPort for OpenAux {}
+    impl crate::aux::registry::BridgeSharePort for OpenAux {}
+    impl crate::aux::registry::AuxController for OpenAux {}
+
+    fn settings_blocked_host() -> TestHost {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.aux.insert(Box::new(OpenAux));
+        assert!(host.settings_open());
+        TestHost {
+            host,
+            menu: support.menu,
+            loader: support.loader,
+            dialogs: support.dialogs,
+        }
+    }
+
+    #[test]
+    fn open_settings_blocks_menu_commands() {
+        use crate::event::MenuCommand as Cmd;
+        use nerust_gui_shell::session::commands::SessionCommand;
+        let support = settings_blocked_host();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        for command in [
+            Cmd::Open,
+            Cmd::Close,
+            Cmd::Settings,
+            Cmd::Debugger,
+            Cmd::NotificationHistory,
+            Cmd::Session(SessionCommand::TogglePause),
+        ] {
+            assert_eq!(host.on_menu_command(command, &opener), HostAction::None);
+        }
+        assert!(opener.calls().is_empty());
+        assert!(support.loader.attempted().is_empty());
+        assert!(support.menu.updates().is_empty());
+    }
+
+    #[test]
+    fn open_settings_lets_quit_through() {
+        let support = settings_blocked_host();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            host.on_menu_command(MenuCommand::Quit, &opener),
+            HostAction::Exit
+        );
+        assert!(host.close_exited());
+    }
+
+    #[test]
+    fn history_menu_records_open_attempt() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            host.on_menu_command(MenuCommand::NotificationHistory, &opener),
+            HostAction::None
+        );
+        assert_eq!(opener.calls(), [OpenerCall::History]);
+        assert!(!host.aux.contains(crate::aux::focus::AuxKind::History));
+    }
+
     #[test]
     fn quit_exits_and_closes() {
         let support = TestHost::new();

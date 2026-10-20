@@ -282,4 +282,42 @@ mod tests {
             ControlId::analog(AnalogControlId::new("test.stick_x"))
         );
     }
+
+    #[test]
+    fn missing_lookup_returns_none() {
+        let topology = InputTopologyDescriptor::new(vec![], vec![]);
+        assert!(topology.ports().is_empty());
+        assert!(topology.devices().is_empty());
+        assert!(topology.attachment(AttachmentId::new("nope")).is_none());
+        assert!(topology.device(DeviceKindId::new("nope")).is_none());
+    }
+
+    #[test]
+    fn descriptors_expose_labels_and_supported_devices() {
+        let attachment = AttachmentId::new("test.pad1");
+        let device = DeviceKindId::new("test.gamepad");
+        let other = DeviceKindId::new("test.other");
+        let slot =
+            AttachmentSlotDescriptor::new(attachment, "Player 1", device, vec![device, other]);
+        assert_eq!(slot.id(), attachment);
+        assert_eq!(slot.label(), "Player 1");
+        assert_eq!(slot.device(), device);
+        assert_eq!(slot.supported_devices(), &[device, other]);
+        let port = PortDescriptor::new(PortId::new("test.port1"), "Port 1", vec![slot]);
+        assert_eq!(port.id(), PortId::new("test.port1"));
+        assert_eq!(port.label(), "Port 1");
+        assert_eq!(port.attachments().len(), 1);
+        let dev = DeviceDescriptor::new(device, "Gamepad", vec![]);
+        assert_eq!(dev.kind(), device);
+        assert_eq!(dev.label(), "Gamepad");
+        assert!(dev.controls().is_empty());
+        let digital = DigitalControlDescriptor::new(DigitalControlId::new("test.a"), "A", "desc");
+        assert_eq!(digital.id(), DigitalControlId::new("test.a"));
+        assert_eq!(digital.label(), "A");
+        assert_eq!(digital.description(), "desc");
+        let analog = AnalogControlDescriptor::new(AnalogControlId::new("test.x"), "X", "axis");
+        assert_eq!(analog.id(), AnalogControlId::new("test.x"));
+        assert_eq!(analog.label(), "X");
+        assert_eq!(analog.description(), "axis");
+    }
 }

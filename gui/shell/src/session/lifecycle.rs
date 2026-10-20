@@ -133,3 +133,47 @@ impl SessionHandle {
             ));
     }
 }
+
+#[cfg(test)]
+mod lifecycle_cov_tests {
+    use crate::session::lifecycle::*;
+    use crate::session::test_util::test_session;
+
+    #[test]
+    fn coreless_lifecycle_is_best_effort() {
+        use std::sync::Arc;
+        let probe = test_session();
+        let resolved = probe
+            .factory()
+            .unwrap()
+            .resolve_load_request(
+                &crate::session::test_util::test_view(&probe),
+                probe.factory().unwrap().default_load_options(),
+            )
+            .unwrap();
+        let caps = probe.capabilities;
+        let registry = Arc::new(crate::registry::SystemRegistry::new(vec![]));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let mut session = SessionHandle::new_ephemeral(caps, registry, audio);
+        session.restart_audio();
+        assert!(
+            session
+                .load_resolved(MediaObject::new(None, vec![]), resolved)
+                .is_err()
+        );
+        assert!(session.unload().is_ok());
+        session.report_external_error(
+            super::super::notification::FailureOrigin::Bridge,
+            "x".into(),
+        );
+        assert_eq!(session.drain_notifications().len(), 1);
+    }
+
+    #[test]
+    fn loaded_unload_clears_runtime() {
+        let mut session = test_session();
+        session.restart_audio();
+        assert!(session.unload().is_ok());
+        assert!(!session.tick_metrics().loaded);
+    }
+}

@@ -403,4 +403,93 @@ mod tests {
         bridge.write().nav.follow();
         assert_eq!(bridge.anchor(), 0x0800_27D2);
     }
+
+    #[test]
+    fn live_images_apply_only_when_newer() {
+        let bridge = test_bridge();
+        // Same generation: images untouched, no rebuild.
+        assert!(!bridge.apply_live_images(0, Vec::new(), true));
+        // Newer while running: images land, chrome flips to Running.
+        let images = vec![("Tiles".to_string(), 2, 1, vec![0xFF; 8])];
+        assert!(bridge.apply_live_images(3, images, true));
+        assert_eq!(bridge.read().display.images_gen, 3);
+        assert!(matches!(
+            bridge.read().display.status,
+            StatusMessage::Running
+        ));
+        // Newer while paused: images land, status untouched.
+        bridge.write().display.status = StatusMessage::Local("held".to_string());
+        assert!(bridge.apply_live_images(4, Vec::new(), false));
+        assert!(bridge.read().display.images.is_empty());
+        assert!(matches!(
+            bridge.read().display.status,
+            StatusMessage::Local(_)
+        ));
+    }
+
+    #[test]
+    fn drain_display_applies_selection_and_restores() {
+        let bridge = test_bridge();
+        // Reselected row lands alongside the fresh display.
+        bridge.apply_drain_display(DisplayCache::default(), Some((0x120, Some(0xAB))));
+        assert_eq!(bridge.read().selected, Some((0x120, Some(0xAB))));
+        // No reselection: previous selection survives.
+        bridge.apply_drain_display(DisplayCache::default(), None);
+        assert_eq!(bridge.read().selected, Some((0x120, Some(0xAB))));
+    }
+
+    #[test]
+    fn drain_snapshot_carries_flags_and_none_space() {
+        // Empty spaces: no space, anchor falls back to zero.
+        let bridge = test_bridge();
+        let snap = bridge.drain_snapshot(true);
+        assert_eq!(snap.space, Some(SpaceId(0)));
+        assert!(snap.ppu_open);
+        assert!(snap.prev_rows.is_empty());
+        let coreless = DebugBridge::new(DisplayCache::default(), vec![], 0, AppLanguage::English);
+        let snap = coreless.drain_snapshot(false);
+        assert_eq!(snap.space, None);
+        assert!(!snap.ppu_open);
+        assert_eq!(coreless.selected_name(), None);
+        assert_eq!(coreless.anchor(), 0);
+    }
+
+    #[test]
+    fn audit_names_contended_locks() {
+        let bridge = test_bridge();
+        // Held write guard blocks the shared read.
+        let _write = bridge.write();
+        assert!(bridge.try_lock_audit().contains(&"state"));
+    }
+
+    #[test]
+    fn audit_names_contended_outbox() {
+        let bridge = test_bridge();
+        // Held outbox guard surfaces while state stays free.
+        let _guard = bridge.outbox.lock().unwrap();
+        assert_eq!(bridge.try_lock_audit(), vec!["outbox"]);
+    }
+
+    #[test]
+    fn bridge_lock_trait_swaps_ppu_flag_and_batch() {
+        use super::BridgeLock;
+        let bridge = test_bridge();
+        bridge.open_ppu.store(true, Ordering::Release);
+        bridge.push(DebugAction::Refresh);
+        let lock: &dyn BridgeLock = &bridge;
+        let (open, batch) = lock.take_debug_batch();
+        assert!(open);
+        assert_eq!(batch.len(), 1);
+        // Swap consumes: second take sees a closed flag.
+        assert!(!lock.take_debug_batch().0);
+        assert!(lock.drain_snapshot(false).mem_addr == 0);
+    }
+
+    #[test]
+    fn language_and_spaces_read_from_meta() {
+        let bridge = test_bridge();
+        assert_eq!(bridge.language(), AppLanguage::English);
+        assert_eq!(bridge.spaces().len(), 1);
+        assert_eq!(bridge.spaces()[0].0, SpaceId(0));
+    }
 }

@@ -63,3 +63,47 @@ impl InputSystemFactory for crate::NesFactory {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nerust_nes_device::standard_pad::StandardPad;
+
+    #[test]
+    fn slots_expose_two_players() {
+        assert_eq!(crate::NesFactory.slots().len(), 2);
+        assert_eq!(
+            crate::NesFactory.resolve_slot("nes.attachment.player2"),
+            Some(AttachmentId::new("nes.attachment.player2"))
+        );
+        assert_eq!(crate::NesFactory.resolve_slot("nope"), None);
+    }
+
+    #[test]
+    fn default_assignment_prefers_famicom() {
+        let assignments = crate::NesFactory.default_assignments();
+        assert_eq!(assignments.slots().len(), 2);
+        let first = assignments.slots()[0].1.as_ref().expect("p1 pad");
+        assert_eq!(first.profile_id(), ProfileId::new("nes.famicom"));
+        assert!(assignments.slots()[1].1.is_none());
+    }
+
+    #[test]
+    fn split_maps_pad_fields_and_rejects_empty() {
+        let controllers = ControllerCollection::new(vec![
+            Box::new(StandardPad::default()),
+            Box::new(StandardPad::default()),
+        ]);
+        let resources = crate::NesFactory.create_split(&controllers).unwrap();
+        assert_eq!(resources.field_map().len(), 16);
+        let buffer = (resources.new_buffer())();
+        assert!(buffer.downcast_ref::<NesInputBuffer>().is_some());
+        assert!(
+            resources
+                .probe_set(0, nerust_input_traits::InputValue::Digital(true))
+                .is_ok()
+        );
+        let empty = ControllerCollection::new(vec![]);
+        assert!(crate::NesFactory.create_split(&empty).is_err());
+    }
+}

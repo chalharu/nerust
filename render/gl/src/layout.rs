@@ -206,4 +206,73 @@ mod tests {
             Err(FrameError::InvalidViewport { .. })
         ));
     }
+
+    #[test]
+    fn frame_errors_name_sizes() {
+        assert_eq!(
+            FrameError::TooShort { need: 8, have: 2 }.to_string(),
+            "frame buffer too small: need 8, have 2"
+        );
+        assert_eq!(
+            FrameError::StrideTooWide { have: 9 }.to_string(),
+            "frame stride overflows i32 (have 9 bytes)"
+        );
+        assert_eq!(
+            FrameError::DimensionsOverflow { have: 3 }.to_string(),
+            "frame dimensions overflow (have 3 bytes)"
+        );
+        assert_eq!(
+            FrameError::StrideOverflow { have: 4 }.to_string(),
+            "frame stride overflow (have 4 bytes)"
+        );
+        assert_eq!(
+            FrameError::InvalidViewport { w: 0, h: 64 }.to_string(),
+            "invalid viewport 0x64"
+        );
+    }
+
+    #[test]
+    fn checked_rejects_bad_strides_and_short_buffers() {
+        use super::FrameLayout;
+        use nerust_render_traits::logical::LogicalSize;
+        let fs = LogicalSize {
+            width: 64,
+            height: 64,
+        };
+        // Stride not divisible by bpp refuses.
+        assert!(matches!(
+            FrameLayout::checked(fs, 4, 257, 64 * 64 * 4, false),
+            Err(FrameError::StrideOverflow { .. })
+        ));
+        // Short buffer refuses on the padded path.
+        assert!(matches!(
+            FrameLayout::checked(fs, 4, 260, 100, true),
+            Err(FrameError::TooShort { .. })
+        ));
+        // Stride wider than i32 refuses instead of truncating.
+        assert!(matches!(
+            FrameLayout::checked(fs, 1, u32::MAX as usize + 1, usize::MAX, true),
+            Err(FrameError::StrideTooWide { .. })
+        ));
+    }
+
+    #[test]
+    fn fit_scales_tall_content_and_top_strip() {
+        // 64x64 surface, 64x128 content: pillar fit, x scale 0.5.
+        let (viewport, mat) = fit_viewport(
+            64,
+            64,
+            nerust_render_traits::ReservedStrip::default(),
+            64,
+            128,
+        )
+        .unwrap();
+        assert_eq!(viewport, [0, 0, 64, 64]);
+        assert!((mat[0] - 0.5).abs() < 1e-6);
+        assert_eq!(mat[5], 1.0);
+        // Top strip pushes the drawable rect down.
+        let strip = nerust_render_traits::ReservedStrip { top: 8, bottom: 0 };
+        let (viewport, _) = fit_viewport(64, 64, strip, 64, 64).unwrap();
+        assert_eq!(viewport, [0, 0, 64, 56]);
+    }
 }

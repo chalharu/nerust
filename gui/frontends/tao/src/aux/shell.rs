@@ -811,6 +811,43 @@ mod tests {
     }
 
     #[test]
+    fn scaffold_error_names_window_and_detail() {
+        let error = ScaffoldError::BuildWindow {
+            tag: "history window",
+            detail: "no display".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "native window build failed for history window: no display"
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            "BuildWindow { tag: \"history window\", detail: \"no display\" }"
+        );
+    }
+
+    #[test]
+    fn message_queue_drains_pending_then_extra_in_order() {
+        let mut queue = MessageQueue::new();
+        assert_eq!(queue.drain([StubMessage::Ping]).len(), 1);
+        queue.pending.push(StubMessage::Ping);
+        queue.pending.push(StubMessage::Ping);
+        // Queued items come first, inline extras appended after.
+        assert_eq!(queue.drain([StubMessage::Ping]).len(), 3);
+        assert!(queue.drain([] as [StubMessage; 0]).is_empty());
+    }
+
+    #[test]
+    fn set_bounds_aliases_relayout_and_zero_is_recorded() {
+        let (mut shell, _, _) = stub_shell();
+        shell.set_bounds(iced::Size::new(0.0, 0.0));
+        assert_eq!(shell.tree.bounds, iced::Size::new(0.0, 0.0));
+        // Zero viewports stay zero until the next pump rebuilds.
+        assert_eq!(logical_bounds((0, 0), 2.0), iced::Size::new(0.0, 0.0));
+        assert_eq!(logical_bounds((1, 1), 2.0), iced::Size::new(0.5, 0.5));
+    }
+
+    #[test]
     fn process_messages_skips_quiet_batches() {
         let (mut shell, mut backend, _) = stub_shell();
         // Transient UI: construction builds nothing; each rebuild

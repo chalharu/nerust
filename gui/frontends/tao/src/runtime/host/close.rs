@@ -222,4 +222,30 @@ mod tests {
         assert!(!once.arm());
         assert!(once.fired());
     }
+
+    #[test]
+    fn fail_after_close_keeps_terminal_failed() {
+        let mut guard = CloseGuard::new();
+        assert!(guard.begin_close());
+        guard.fail("late display loss".to_string());
+        assert_eq!(guard.fatal_message(), Some("late display loss"));
+        assert!(!guard.is_usable());
+        assert!(!guard.begin_close());
+        assert!(guard.exited());
+    }
+
+    #[test]
+    fn second_fail_overwrites_detail() {
+        let mut guard = CloseGuard::new();
+        guard.fail("first".to_string());
+        guard.fail("second".to_string());
+        assert_eq!(guard.fatal_message(), Some("second"));
+        assert!(!guard.is_usable());
+    }
+
+    #[test]
+    fn default_once_starts_unfired() {
+        let once = CloseOnce::default();
+        assert!(!once.fired());
+    }
 }

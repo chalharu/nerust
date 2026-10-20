@@ -82,4 +82,23 @@ mod tests {
             Err(BufferError::UnsupportedFieldType { field: 0, .. })
         ));
     }
+
+    #[test]
+    fn copy_state_moves_byte_or_refuses_foreign() {
+        #[derive(Debug, Default)]
+        struct Foreign;
+        impl InputStateBuffer for Foreign {
+            fn set(&mut self, _: usize, _: InputValue) -> Result<(), BufferError> {
+                Ok(())
+            }
+            fn clear(&mut self) {}
+            fn copy_state(&mut self, _: &dyn InputStateBuffer) -> Result<(), BufferError> {
+                Ok(())
+            }
+        }
+        let mut dst = GbcInputBuffer::default();
+        dst.copy_state(&GbcInputBuffer(0x3C)).unwrap();
+        assert_eq!(dst.0, 0x3C);
+        assert!(dst.copy_state(&Foreign).is_err());
+    }
 }

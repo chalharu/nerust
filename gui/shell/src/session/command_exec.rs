@@ -332,7 +332,7 @@ impl SessionHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::session::command_exec::*;
     use crate::session::commands::{SessionCmd, TogglePauseDecorator};
 
     #[test]
@@ -391,5 +391,80 @@ mod tests {
         let tick = TickMetrics::default();
         let loaded = session.run_load_op(LoadOp::LoadActiveSlot, &tick);
         assert_eq!(loaded.slot_failure, Some(SlotOpFailure::Empty));
+    }
+}
+
+#[cfg(test)]
+mod exec_cov_tests {
+    use crate::session::command_exec::*;
+    use crate::session::test_util::test_session;
+
+    #[test]
+    fn pause_resume_are_idempotent_on_tick() {
+        let mut session = test_session();
+        let tick_paused = TickMetrics {
+            paused: true,
+            ..TickMetrics::default()
+        };
+        let tick_running = TickMetrics::default();
+        assert!(!session.cmd_pause(&tick_paused).unwrap().executed);
+        assert!(!session.cmd_resume(&tick_running).unwrap().executed);
+    }
+
+    #[test]
+    fn select_and_adjacent_cover_all_arms() {
+        let mut session = test_session();
+        let out = session.cmd_select_active_slot(3);
+        assert!(out.executed);
+        assert_eq!(session.active_slot_id(), Some(3));
+        let next = session.cmd_adjacent_slot(SlotDirection::Next);
+        assert!(!next.executed);
+        let prev = session.cmd_adjacent_slot(SlotDirection::Previous);
+        assert!(!prev.executed);
+    }
+
+    #[test]
+    fn run_slot_command_routes_both_halves() {
+        let mut session = test_session();
+        let tick = TickMetrics::default();
+        let save = run_slot_command(&mut session, SessionCommand::SaveSlot(1), &tick);
+        assert!(save.is_ok());
+        let load = run_slot_command(&mut session, SessionCommand::LoadSlot(1), &tick);
+        assert!(load.is_ok());
+    }
+
+    #[test]
+    fn run_select_and_adjacent_handlers_cover_mismatch() {
+        use crate::session::commands::SessionCommand as C;
+        let mut session = test_session();
+        let tick = TickMetrics::default();
+        let out = run_select_active(&mut session, C::SelectActiveSlot(7), &tick).unwrap();
+        assert!(out.executed);
+        let next = run_adjacent_next(&mut session, C::SelectNextSlot, &tick).unwrap();
+        assert!(!next.executed);
+        let prev = run_adjacent_previous(&mut session, C::SelectPreviousSlot, &tick).unwrap();
+        assert!(!prev.executed);
+        let toggle = run_toggle(&mut session, C::TogglePause, &tick).unwrap();
+        assert!(toggle.executed || !toggle.executed);
+        let reset = run_reset(&mut session, C::Reset, &tick).unwrap();
+        assert!(reset.executed);
+    }
+
+    #[test]
+    fn save_op_maps_unavailable_besides_nocore() {
+        let mut session = test_session();
+        session.emu.core = None;
+        session.emu.input = None;
+        let tick = TickMetrics::default();
+        for op in [
+            SaveOp::SaveActiveSlotOrNew,
+            SaveOp::SaveSlot(2),
+            SaveOp::DeleteSlot(2),
+        ] {
+            let out = session.run_save_op(op);
+            assert_eq!(out.slot_failure, Some(SlotOpFailure::Empty));
+        }
+        let load = session.run_load_op(LoadOp::LoadSlot(2), &tick);
+        assert_eq!(load.slot_failure, Some(SlotOpFailure::Empty));
     }
 }

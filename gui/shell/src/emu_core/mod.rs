@@ -1500,8 +1500,8 @@ mod tests {
 
 #[cfg(test)]
 mod port_tests {
-    use super::*;
     use super::{LiveAudioPort, LiveDebugPort, LiveFramePort, LivePersistPort, LivePlayback};
+    use crate::emu_core::*;
     use crate::test_helpers::build_test_core_parts;
     use nerust_core_traits::factory::load::MediaObject;
 
@@ -1538,6 +1538,22 @@ mod port_tests {
         let second = core.tick_snapshot();
         assert_eq!((first.1, first.2), (second.1, second.2));
     }
+
+    #[test]
+    fn persist_port_round_trips_state_and_mapper() {
+        let core = loaded_core();
+        let saved = LivePersistPort::save_state_raw(&core).expect("save");
+        LivePersistPort::load_state_raw(&core, saved).expect("load");
+        let mapper = LivePersistPort::save_mapper_raw(&core).expect("mapper save");
+        if let Some(bytes) = mapper {
+            LivePersistPort::load_mapper_raw(&core, bytes).expect("mapper load");
+        }
+        assert!(LivePersistPort::canonical_media_identity(&core).is_some());
+        let _ = LivePersistPort::generate_preview(&core);
+        let _ = LiveCore::drain_handle(&core);
+        fn bound<T: CorePersistence>() {}
+        bound::<EmuCore>();
+    }
 }
 
 #[cfg(test)]
@@ -1558,7 +1574,7 @@ mod narrow_tests {
 
 #[cfg(test)]
 mod fault_tests {
-    use super::*;
+    use crate::emu_core::*;
 
     #[test]
     fn fault_maps_messages_to_typed_kinds() {
@@ -1594,5 +1610,125 @@ mod fault_tests {
             StateFault::from(CorePersistenceError::WorkerUnavailable),
             StateFault::Transport
         );
+    }
+
+    #[test]
+    fn fault_covers_codes_and_remaining_branches() {
+        for (fault, code) in [
+            (StateFault::Transport, "transport"),
+            (StateFault::Storage, "storage"),
+            (StateFault::Missing, "missing"),
+            (StateFault::Corrupt, "corrupt"),
+            (StateFault::Incompatible, "incompatible"),
+            (StateFault::Other("x".into()), "other"),
+        ] {
+            assert_eq!(fault.code(), code);
+        }
+        assert_eq!(
+            StateFault::from_message("foreign cartridge"),
+            StateFault::Incompatible
+        );
+        assert_eq!(
+            StateFault::from_message("version skew"),
+            StateFault::Incompatible
+        );
+        assert_eq!(
+            StateFault::from_message("io error on storage"),
+            StateFault::Storage
+        );
+        assert_eq!(
+            StateFault::from_message("missing sector"),
+            StateFault::Missing
+        );
+        assert_eq!(
+            StateFault::from(OperationError::Reply("io failure".into())),
+            StateFault::Storage
+        );
+        assert_eq!(
+            StateFault::from(OperationError::Reply("mismatch".into())),
+            StateFault::Incompatible
+        );
+        assert_eq!(
+            StateFault::from(CorePersistenceError::NoReply),
+            StateFault::Transport
+        );
+        assert_eq!(
+            StateFault::from(CorePersistenceError::Core("gone".into())),
+            StateFault::Corrupt
+        );
+        assert_eq!(
+            CorePersistenceError::WorkerUnavailable.fault(),
+            StateFault::Transport
+        );
+        assert_eq!(CorePersistenceError::NoReply.fault(), StateFault::Transport);
+        assert_eq!(
+            CorePersistenceError::Core("absent".into()).fault(),
+            StateFault::Corrupt
+        );
+        assert!(!CorePersistenceError::NoReply.to_string().is_empty());
+    }
+
+    #[test]
+    fn preview_round_trips_through_state_frame() {
+        let preview = PreviewRgba {
+            width: 2,
+            height: 1,
+            rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        };
+        let frame: crate::state::PreviewFrame = preview.clone().into();
+        let back: PreviewRgba = frame.into();
+        assert_eq!(back, preview);
+    }
+
+    #[test]
+    fn fresh_frame_buffer_covers_palette_and_rgba() {
+        let base = crate::test_helpers::build_test_core_parts().render_profile;
+        let palette: Vec<u32> = (0..256).map(|i| 0xFF00_0000 | i).collect();
+        let pal = fresh_frame_buffer(
+            &VideoRenderProfile {
+                frame_format: VideoFrameFormat::Palette,
+                ..base.clone()
+            },
+            &palette,
+        );
+        assert!(pal.palette().is_some());
+        let rgba = fresh_frame_buffer(
+            &VideoRenderProfile {
+                frame_format: VideoFrameFormat::Rgba,
+                ..base
+            },
+            &palette,
+        );
+        assert!(rgba.palette().is_none());
+    }
+
+    #[test]
+    fn preview_returns_none_without_frame() {
+        #[derive(Debug)]
+        struct EmptyPort;
+        impl EmuThreadPort for EmptyPort {
+            fn send(&self, cmd: EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>> {
+                Err(mpsc::TrySendError::Disconnected(cmd))
+            }
+            fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
+                static CELL: std::sync::OnceLock<Arc<Mutex<FrameBuffer>>> =
+                    std::sync::OnceLock::new();
+                CELL.get_or_init(|| {
+                    let mut fb = FrameBuffer::with_capacity(0, 0, PixelFormat::Rgba);
+                    fb.resize(0, 0);
+                    Arc::new(Mutex::new(fb))
+                })
+            }
+            fn frame_count(&self) -> u64 {
+                0
+            }
+            fn fps(&self) -> f32 {
+                0.0
+            }
+        }
+        assert!(generate_preview_frame(&EmptyPort).is_none());
+        let (tx, rx) = mpsc::channel::<u8>();
+        drop(tx);
+        assert!(matches!(recv_debug_reply(rx), Err(OperationError::NoReply)));
     }
 }

@@ -74,8 +74,8 @@ mod tests {
 
 #[cfg(test)]
 mod insets_tests {
-    use super::*;
     use crate::session::osd_presenter::UiInsets;
+    use crate::session::osd_render::*;
 
     #[test]
     fn safe_insets_convert_losslessly() {
@@ -87,5 +87,50 @@ mod insets_tests {
         };
         let ui = UiInsets::from(safe);
         assert_eq!((ui.top, ui.right, ui.bottom, ui.left), (40, 24, 40, 24));
+    }
+}
+
+#[cfg(test)]
+mod render_cov_tests {
+    use crate::session::osd_render::*;
+
+    #[test]
+    fn plan_into_content_carries_status_color() {
+        use crate::session::osd_presenter::OsdPlan;
+        use nerust_settings_core::model::local::NotificationPosition as P;
+        let plan = OsdPlan {
+            rows: vec![],
+            status: Some(("FPS".to_string(), "60".to_string())),
+            position: P::TopLeft,
+            status_position: P::BottomRight,
+            width: 0,
+            height: 0,
+        };
+        let content = plan.into_content();
+        assert!(content.rows.is_empty());
+        let status = content.status.expect("status rides through");
+        assert_eq!(status.rgb, OSD_STATUS_RGB);
+    }
+
+    #[test]
+    fn plan_without_status_maps_rows() {
+        use crate::session::osd_presenter::OsdPlan;
+        use crate::session::osd_transient::OsdRow;
+        use nerust_settings_core::model::local::NotificationPosition as P;
+        let plan = OsdPlan {
+            rows: vec![OsdRow {
+                text: "Paused".to_string(),
+                rgb: (1, 2, 3),
+                tag: "[INFO]",
+            }],
+            status: None,
+            position: P::TopLeft,
+            status_position: P::TopLeft,
+            width: 0,
+            height: 0,
+        };
+        let content = plan.into_content();
+        assert_eq!(content.rows.len(), 1);
+        assert!(content.status.is_none());
     }
 }

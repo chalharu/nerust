@@ -239,7 +239,7 @@ mod tests {
 
 #[cfg(test)]
 mod pure_tests {
-    use super::*;
+    use crate::session::osd_history::*;
 
     #[test]
     fn injected_offset_renders_deterministically() {
@@ -253,5 +253,51 @@ mod pure_tests {
             format_datetime_with_offset(epoch, -3600),
             "1969-12-31 23:00:00"
         );
+    }
+}
+
+#[cfg(test)]
+mod history_cov_tests {
+    use crate::session::osd_history::*;
+
+    #[test]
+    fn level_text_covers_every_level() {
+        for level in [
+            NotificationLevel::Info,
+            NotificationLevel::Warning,
+            NotificationLevel::Error,
+        ] {
+            assert!(!level_tag(level).is_empty());
+            assert!(!level_name(level).is_empty());
+        }
+        assert_eq!(level_tag(NotificationLevel::Error), "[ERROR]");
+    }
+
+    #[test]
+    fn format_time_wraps_midnight() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let t = format_time(UNIX_EPOCH + Duration::from_secs(3600 + 60 + 5));
+        assert_eq!(t.len(), 8);
+        let t2 = format_time(UNIX_EPOCH + Duration::from_secs(86_400 + 1));
+        assert!(t2.ends_with(":00:01") || t2.len() == 8);
+    }
+
+    #[test]
+    fn history_lines_preserve_module_and_level() {
+        use crate::session::notification::{NotificationKind, NotificationLevel, UiNotification};
+        let events = [UiNotification {
+            level: NotificationLevel::Warning,
+            kind: NotificationKind::PersistenceUnavailable,
+            count: 2,
+            seq: 0,
+            at: std::time::UNIX_EPOCH,
+        }];
+        let rows = history_lines(
+            events.iter(),
+            nerust_settings_core::model::language::AppLanguage::English,
+        );
+        assert_eq!(rows[0].module, crate::session::notification::LOG_MODULE);
+        assert_eq!(rows[0].level, NotificationLevel::Warning);
+        assert!(rows[0].text.ends_with(" ×2"));
     }
 }

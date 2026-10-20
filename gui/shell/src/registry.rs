@@ -20,11 +20,8 @@ pub enum RegistryError {
     AmbiguousMedia(Vec<Box<dyn SystemId>>),
 }
 
-/// Registry of all supported console systems.
-///
-/// Handles system auto-detection and dispatching to the correct
-/// `CoreFactory`. Currently only NES is registered, but SNES/GB
-/// can be added by appending to the `Vec` at construction time.
+/// Registry of all supported console systems: auto-detection plus dispatch.
+/// Add systems by appending to the `Vec` at construction time.
 pub struct SystemRegistry {
     factories: Vec<Arc<dyn CoreFactory>>,
     by_id: HashMap<Box<dyn SystemId>, Arc<dyn CoreFactory>>,
@@ -52,9 +49,7 @@ impl SystemRegistry {
     }
 
     /// Returns the sole factory that handles the given media.
-    ///
-    /// Returns `Ok(None)` when no factory matches and an error when multiple
-    /// factories claim the same media, avoiding registration-order dispatch.
+    /// `Ok(None)` when none matches; error when several claim the same media.
     pub fn detect(
         &self,
         media: &MediaObject,
@@ -77,8 +72,7 @@ impl SystemRegistry {
     }
 
     /// Creates a `RomLoader` that auto-detects the system per load.
-    /// Each `pending_options` entry is consumed on its system's first
-    /// load; later loads use default options.
+    /// Each `pending_options` entry is consumed on its system's first load.
     pub fn create_loader(
         self: &Arc<Self>,
         pending_options: HashMap<Box<dyn SystemId>, Box<dyn DynSystemLoadOptions>>,
@@ -175,7 +169,7 @@ mod tests {
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
 
-    use super::*;
+    use crate::registry::*;
 
     declare_system_id!(DummySystemId, "registry-dummy");
     declare_system_id!(DummyOtherSystemId, "registry-other");

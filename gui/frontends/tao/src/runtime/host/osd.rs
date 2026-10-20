@@ -453,4 +453,69 @@ mod tests {
         host.sync_osd_layer(&mut renderer, surface(), &ctx);
         assert_eq!(renderer.layers, [true, false]);
     }
+
+    #[test]
+    fn history_open_records_request_and_stays_closed() {
+        use crate::aux::focus::AuxKind;
+        use crate::test_opener::{FakeOpener, OpenerCall};
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        host.open_history(&opener);
+        host.open_history(&opener);
+        assert_eq!(opener.calls(), [OpenerCall::History, OpenerCall::History]);
+        assert!(!host.aux.contains(AuxKind::History));
+        assert!(host.osd.history_key().is_none());
+    }
+
+    #[test]
+    fn history_events_without_window_stay_total() {
+        use tao::event::WindowEvent;
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.on_history_event(WindowEvent::Destroyed);
+        host.on_history_event(WindowEvent::Focused(true));
+        host.on_history_event(WindowEvent::Focused(false));
+        assert!(host.osd.history_key().is_none());
+        assert!(support.menu.updates().is_empty());
+    }
+
+    #[test]
+    fn renderer_replace_repushes_without_layer() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let mut renderer = StubRenderer::default();
+        host.note_renderer_replaced();
+        // Invalidated presenter re-runs the decision; with nothing
+        // visible the outcome is still Skip, so no layer lands.
+        let ctx = host.frame_ctx();
+        host.sync_osd_layer(&mut renderer, surface(), &ctx);
+        assert!(renderer.layers.is_empty());
+        assert!(!host.osd.layer.layer_live);
+    }
+
+    #[test]
+    fn idle_pump_reports_no_wake() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        assert!(host.osd_wakeup().is_none());
+        let ctx = host.frame_ctx();
+        let wake = host.tick_osd_pump(&ctx);
+        assert!(wake.osd_deadline.is_none());
+        assert!(wake.live_tick.is_none());
+        assert!(!wake.flight_pending);
+    }
+
+    #[test]
+    fn frame_render_applies_strip_once() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let mut renderer = StubRenderer::default();
+        // First frame records the strip; the repeat reuses the memo.
+        let ctx = host.frame_ctx();
+        host.render_osd_frame(&mut renderer, surface(), &ctx);
+        let ctx = host.frame_ctx();
+        host.render_osd_frame(&mut renderer, surface(), &ctx);
+        assert!(renderer.layers.is_empty());
+    }
 }

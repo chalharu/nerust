@@ -43,3 +43,51 @@ impl SoftbufferRenderer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SoftbufferRenderer;
+    use nerust_render_traits::renderer::OsdLayer;
+
+    fn layer_at(x: u32, y: u32, rgba: Vec<u8>) -> OsdLayer {
+        OsdLayer::new(x, y, 2, 2, rgba)
+    }
+
+    #[test]
+    fn clips_layer_outside_buffer() {
+        let mut buffer = vec![0xFF00_0000u32; 4];
+        let before = buffer.clone();
+        let layer = layer_at(9, 9, vec![255u8; 16]);
+        SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &layer);
+        assert_eq!(buffer, before);
+    }
+
+    #[test]
+    fn short_rgba_and_empty_layer_are_noops() {
+        let mut buffer = vec![0xFF00_0000u32; 4];
+        let before = buffer.clone();
+        let layer = layer_at(0, 0, vec![255u8; 3]);
+        SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &layer);
+        assert_eq!(buffer, before);
+        let empty = OsdLayer::new(0, 0, 0, 0, vec![]);
+        SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &empty);
+        assert_eq!(buffer, before);
+    }
+
+    #[test]
+    fn transparent_pixels_keep_dst() {
+        let mut buffer = vec![0xFF00_0000u32; 4];
+        let layer = layer_at(0, 0, vec![0u8; 16]);
+        SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &layer);
+        assert_eq!(buffer, [0xFF00_0000u32; 4]);
+        let mut partial = vec![0xFF00_0000u32; 4];
+        let layer = layer_at(
+            1,
+            1,
+            vec![255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        SoftbufferRenderer::blend_osd(&mut partial, 2, 2, &layer);
+        assert_eq!(partial[3], 0xFFFF_0000);
+        assert_eq!(&partial[..3], &[0xFF00_0000u32; 3]);
+    }
+}

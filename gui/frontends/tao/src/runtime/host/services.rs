@@ -194,4 +194,44 @@ mod tests {
             nerust_settings_core::model::language::AppLanguage::Japanese
         );
     }
+
+    #[test]
+    fn title_service_gates_repeats() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let ctx = host.frame_ctx();
+        let title = host.session_mut().window_title_cached(&ctx.tick).to_owned();
+        assert!(!host.chrome.title_same(&title));
+        ChromeService::refresh_window_title(&mut host, &ctx.tick);
+        assert!(host.chrome.title_same(&title));
+        ChromeService::refresh_window_title(&mut host, &ctx.tick);
+        assert!(host.chrome.title_same(&title));
+    }
+
+    #[test]
+    fn menu_command_service_delegates() {
+        use crate::event::MenuCommand;
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            SettingsService::on_menu_command(&mut host, MenuCommand::Quit, &opener),
+            crate::runtime::host::HostAction::Exit
+        );
+        assert!(host.close_exited());
+    }
+
+    #[test]
+    fn debug_service_open_fails_closed_headless() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        DebugOrchestratorService::open_debug_windows(&mut host, &opener, false);
+        assert_eq!(opener.calls(), [OpenerCall::Debug]);
+        assert!(!DebugOrchestratorService::is_aux_open(
+            &host,
+            AuxKind::Debug
+        ));
+        assert!(DebugOrchestratorService::take_debug_batch(&mut host).is_none());
+    }
 }

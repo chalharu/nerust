@@ -102,3 +102,54 @@ impl Ntsc {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Ntsc;
+    use nerust_render_traits::rgb::RgbaWord;
+
+    #[test]
+    fn read_entry_uses_be_wire_order() {
+        let bytes = [0x12u8, 0x34, 0x56, 0x78];
+        let mut buf = vec![0u8; 64 * 4];
+        buf[..4].copy_from_slice(&bytes);
+        let word = Ntsc::read_entry(&buf, 0, 0);
+        assert_eq!(word, RgbaWord::from_bytes_be(bytes).as_u32());
+        assert_eq!(Ntsc::read_entry(&buf, 0, 99_999), 0);
+    }
+
+    #[test]
+    fn clamp_and_rgb_out_are_stable() {
+        assert_eq!(Ntsc::rgb_out_impl(0), 0x0000_00FF);
+        assert_eq!(Ntsc::clamp_impl(0), Ntsc::clamp_impl(0));
+        assert_eq!(Ntsc::rgb_out_impl(u32::MAX), Ntsc::rgb_out_impl(u32::MAX));
+    }
+
+    #[test]
+    fn simulate_writes_one_word_per_texel() {
+        use nerust_render_traits::{
+            VideoFrameFormat, logical::LogicalSize, physical::PhysicalSize,
+        };
+        let profile = nerust_render_traits::VideoRenderProfile {
+            source_logical_size: LogicalSize {
+                width: 4,
+                height: 4,
+            },
+            logical_size: LogicalSize {
+                width: 4,
+                height: 4,
+            },
+            physical_size: PhysicalSize {
+                width: 4.0,
+                height: 4.0,
+            },
+            frame_format: VideoFrameFormat::Palette,
+            ntsc_packed_rgba8: Some(vec![0x7Fu8; 34_000].into_boxed_slice()),
+        };
+        let src = vec![3u8; 4 * 4];
+        let mut out = vec![0u32; 16];
+        Ntsc::simulate_gpu_ntsc_rgba(4, &src, &profile, &mut out);
+        assert_eq!(out.len(), 16);
+        assert!(out.iter().all(|w| w & 0xFF == 0xFF));
+    }
+}
