@@ -7,6 +7,10 @@
 
 # LLVM coverage profiles (local runs only; CI uploads lcov fragments)
 **/*.profraw
+# Local lcov reports (CI uploads fragments; never commit these)
+lcov-*.info
+lcov-*/
+coverage/
 
 **/.DS_Store
 .vscode/ipch
