@@ -11,9 +11,9 @@ use nerust_glwrap::{
         is_enabled, tex_sub_image_2d, uniform_1i, uniform_matrix_4fv, use_program, viewport,
     },
 };
-use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
+use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy, UploadBudget};
 
-use crate::upload::{BoundedUploadPolicy, StagingBuf};
+use crate::upload::StagingBuf;
 
 use crate::error::ViewError;
 use crate::frame_textures::use_texture;
@@ -213,8 +213,8 @@ pub(crate) struct OsdView {
     pub(crate) osd_size: (i32, i32),
     pub(crate) osd_prev: Option<(i32, i32, i32, i32)>,
     pub(crate) osd_dirty: bool,
-    /// Bounded retry for the staged layer (shared `UploadBudget`).
-    pub(crate) osd_retry: Box<dyn OsdUploadPolicy>,
+    /// Bounded retry for the staged layer (shared `UploadBudget` value).
+    pub(crate) osd_retry: UploadBudget,
     pub(crate) osd_shader: Option<Shader>,
     pub(crate) osd_layer: Option<OsdLayer>,
     /// Grow-only zeros reused for OSD clears (no steady allocs).
@@ -235,7 +235,7 @@ impl Default for OsdView {
             osd_size: (0, 0),
             osd_prev: None,
             osd_dirty: false,
-            osd_retry: Box::new(BoundedUploadPolicy::new(MAX_OSD_UPLOAD_RETRIES)),
+            osd_retry: UploadBudget::new(MAX_OSD_UPLOAD_RETRIES),
             osd_shader: None,
             osd_layer: None,
             osd_clear_scratch: StagingBuf::new(),
@@ -252,8 +252,8 @@ impl OsdView {
         Self::default()
     }
 
-    /// Inject an upload policy (tests, custom backoff); replaces the budget.
-    pub fn set_osd_policy(&mut self, policy: Box<dyn OsdUploadPolicy>) {
+    /// Replace the upload budget (tests, custom backoff).
+    pub fn set_osd_policy(&mut self, policy: UploadBudget) {
         self.osd_retry = policy;
     }
 
@@ -647,24 +647,12 @@ impl OsdView {
 #[cfg(test)]
 mod tests {
     use super::{OsdOutcome, OsdView, RetryDecision};
-    use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
+    use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy, UploadBudget};
 
     fn staged_view() -> OsdView {
         let mut view = OsdView::default();
         view.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
         view
-    }
-
-    /// Test policy: drops on the first failure (proves injection works).
-    #[derive(Debug)]
-    struct AlwaysDrop;
-
-    impl OsdUploadPolicy for AlwaysDrop {
-        fn record_failure(&mut self) -> bool {
-            true
-        }
-
-        fn reset(&mut self) {}
     }
 
     #[test]
@@ -699,7 +687,7 @@ mod tests {
     #[test]
     fn injected_policy_drives_drop_decision() {
         let mut view = staged_view();
-        view.set_osd_policy(Box::new(AlwaysDrop));
+        view.set_osd_policy(UploadBudget::new(1));
         assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
         assert!(view.osd_layer.is_none());
         assert!(!view.osd_dirty);
@@ -707,16 +695,15 @@ mod tests {
 
     #[test]
     fn retry_budget_uses_single_shared_policy() {
-        use crate::upload::BoundedUploadPolicy;
         // Rebuilt shared budget: two failures then drop.
         let mut view = staged_view();
-        view.set_osd_policy(Box::new(BoundedUploadPolicy::new(3)));
+        view.set_osd_policy(UploadBudget::new(3));
         assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
         assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
         assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
         // Zero clamps to one attempt, never drops live layers at once.
         let mut view = staged_view();
-        view.set_osd_policy(Box::new(BoundedUploadPolicy::new(0)));
+        view.set_osd_policy(UploadBudget::new(0));
         assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
     }
 

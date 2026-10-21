@@ -440,12 +440,6 @@ pub fn note_osd_upload(
     }
     false
 }
-/// Factory minting one upload policy per rebuilt view; impl crates provide it.
-pub trait OsdUploadPolicyFactory: std::fmt::Debug {
-    /// Mint a fresh policy budget for one view lifetime.
-    fn create_policy(&self) -> Box<dyn OsdUploadPolicy>;
-}
-
 /// Per-use-site pipeline composition without the legacy composites.
 pub trait RenderPipeline:
     SurfaceLifecycle + FrameSink + OsdSink + StripSink + ProfileSwitch
@@ -608,44 +602,6 @@ mod tests {
             err.kind().to_string(),
             RendererErrorKind::InvalidSurface.to_string()
         );
-    }
-
-    #[test]
-    fn upload_factory_mints_fresh_budgets() {
-        // Port-side harness: impl crates provide the concrete policy.
-        #[derive(Debug)]
-        struct StubPolicy {
-            max: u8,
-            fails: u8,
-        }
-        impl OsdUploadPolicy for StubPolicy {
-            fn record_failure(&mut self) -> bool {
-                self.fails = self.fails.saturating_add(1);
-                self.fails >= self.max
-            }
-            fn reset(&mut self) {
-                self.fails = 0;
-            }
-        }
-        #[derive(Debug)]
-        struct StubFactory(u8);
-        impl OsdUploadPolicyFactory for StubFactory {
-            fn create_policy(&self) -> Box<dyn OsdUploadPolicy> {
-                Box::new(StubPolicy {
-                    max: self.0.max(1),
-                    fails: 0,
-                })
-            }
-        }
-        let factory = StubFactory(2);
-        let mut first = factory.create_policy();
-        let mut second = factory.create_policy();
-        assert!(!first.record_failure());
-        assert!(first.record_failure());
-        // Independent budgets: the second policy is unaffected.
-        assert!(!second.record_failure());
-        first.reset();
-        assert!(!first.record_failure());
     }
 
     #[test]

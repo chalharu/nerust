@@ -1,28 +1,7 @@
 //! Shared OSD upload budget plus byte staging: the budget lives in
 //! the port crate so every backend mints the same policy.
 
-pub use nerust_render_traits::renderer::UploadBudget as BoundedUploadPolicy;
-use nerust_render_traits::renderer::{OsdUploadPolicy, OsdUploadPolicyFactory};
-
-/// Factory minting one bounded budget per rebuilt overlay view.
-/// Renderers hold this, never a concrete policy type.
-#[derive(Debug, Clone, Copy)]
-pub struct RetryPolicyFactory {
-    max: u8,
-}
-
-impl RetryPolicyFactory {
-    /// Budget source for one view lifetime; clamps at mint time.
-    pub fn new(max: u8) -> Self {
-        Self { max }
-    }
-}
-
-impl OsdUploadPolicyFactory for RetryPolicyFactory {
-    fn create_policy(&self) -> Box<dyn OsdUploadPolicy> {
-        Box::new(BoundedUploadPolicy::new(self.max))
-    }
-}
+pub use nerust_render_traits::renderer::UploadBudget;
 
 /// Grow-only byte staging for texture uploads. No steady allocs; ports
 /// take `&mut [u8]` slices staged from here, never the buffer itself.
@@ -66,45 +45,18 @@ impl StagingBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{BoundedUploadPolicy, RetryPolicyFactory, StagingBuf};
-    use nerust_render_traits::renderer::{OsdUploadPolicy as _, OsdUploadPolicyFactory as _};
+    use super::StagingBuf;
+    use nerust_render_traits::renderer::{OsdUploadPolicy as _, UploadBudget};
 
     #[test]
-    fn bounded_policy_pins_single_budget() {
-        let mut policy = BoundedUploadPolicy::new(0);
-        // Zero clamps to one attempt, never drops live layers at once.
-        assert!(policy.record_failure());
-        policy.reset();
-        let mut policy = BoundedUploadPolicy::new(3);
-        assert!(!policy.record_failure());
-        assert!(!policy.record_failure());
-        assert!(policy.record_failure());
-        assert!(policy.record_failure());
-        policy.reset();
-        assert!(!policy.record_failure());
-        // Saturation: hundreds of failures never wrap back to retry.
-        let mut policy = BoundedUploadPolicy::new(3);
+    fn budget_saturates_instead_of_wrapping() {
+        let mut policy = UploadBudget::new(3);
         for _ in 0..300 {
             policy.record_failure();
         }
         assert!(policy.record_failure());
-    }
-
-    #[test]
-    fn retry_factory_mints_independent_budgets() {
-        let factory = RetryPolicyFactory::new(3);
-        let mut first = factory.create_policy();
-        let mut second = factory.create_policy();
-        assert!(!first.record_failure());
-        assert!(!first.record_failure());
-        // A second view starts with a fresh budget, not the spent one.
-        assert!(!second.record_failure());
-        assert!(!second.record_failure());
-        assert!(first.record_failure());
-        assert!(second.record_failure());
-        // Zero clamps at mint time.
-        let mut policy = RetryPolicyFactory::new(0).create_policy();
-        assert!(policy.record_failure());
+        policy.reset();
+        assert!(!policy.record_failure());
     }
 
     #[test]
