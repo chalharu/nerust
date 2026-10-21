@@ -177,6 +177,15 @@ impl GlRenderer {
         (w, h)
     }
 
+    /// Swap pacing for the profile; an unavailable interval only warns at apply time.
+    fn swap_interval(vsync: bool) -> SwapInterval {
+        if vsync {
+            SwapInterval::Wait(NonZeroU32::MIN)
+        } else {
+            SwapInterval::DontWait
+        }
+    }
+
     /// Context attach: create context + window surface + fresh view.
     fn context_attach(
         &mut self,
@@ -210,12 +219,7 @@ impl GlRenderer {
             .make_current(&surf)
             .map_err(|e| RendererError::attach("gl", "make_current", Box::new(e)))?;
 
-        let interval = if self.vsync {
-            SwapInterval::Wait(NonZeroU32::MIN)
-        } else {
-            SwapInterval::DontWait
-        };
-        if let Err(e) = surf.set_swap_interval(&ctx, interval) {
+        if let Err(e) = surf.set_swap_interval(&ctx, Self::swap_interval(self.vsync)) {
             log::warn!("GlRenderer: requested swap interval unavailable: {e}");
         }
         let api = FrameView::load_with(proc_loader(&self.display));
