@@ -107,9 +107,9 @@ impl State {
         self.session.tick_metrics().paused
     }
 
-    pub(crate) fn title(&self) -> String {
+    pub(crate) fn title_cached(&mut self) -> String {
         let tick = self.session.tick_metrics();
-        self.session.window_title(&tick)
+        self.session.window_title_cached(&tick).to_owned()
     }
 
     pub(crate) fn flush_before_exit(&mut self) {

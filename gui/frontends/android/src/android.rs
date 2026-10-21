@@ -869,12 +869,8 @@ impl AndroidFrontend {
         if self.core.shell.should_refresh_title(now)
             && let Some(window) = self.flow.render_sync.cloned_window()
         {
-            window.set_title(
-                &self
-                    .core
-                    .session
-                    .window_title(&self.core.session.tick_metrics()),
-            );
+            let tick = self.core.session.tick_metrics();
+            window.set_title(&self.core.session.window_title_cached(&tick));
         }
     }
 
