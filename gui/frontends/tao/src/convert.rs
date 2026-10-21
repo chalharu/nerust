@@ -38,6 +38,30 @@ pub(crate) fn domain_key_to_iced(key: &nerust_keyboard::Key, text: Option<&str>)
         K::Enter => keyboard::Key::Named(Named::Enter),
         K::Escape => keyboard::Key::Named(Named::Escape),
         K::Tab => keyboard::Key::Named(Named::Tab),
+        // Caret and paging keys: aux text fields need logical identity,
+        // shortcuts keep reading the physical code.
+        K::ArrowUp => keyboard::Key::Named(Named::ArrowUp),
+        K::ArrowDown => keyboard::Key::Named(Named::ArrowDown),
+        K::ArrowLeft => keyboard::Key::Named(Named::ArrowLeft),
+        K::ArrowRight => keyboard::Key::Named(Named::ArrowRight),
+        K::Home => keyboard::Key::Named(Named::Home),
+        K::End => keyboard::Key::Named(Named::End),
+        K::PageUp => keyboard::Key::Named(Named::PageUp),
+        K::PageDown => keyboard::Key::Named(Named::PageDown),
+        K::Insert => keyboard::Key::Named(Named::Insert),
+        K::Space => keyboard::Key::Named(Named::Space),
+        K::F1 => keyboard::Key::Named(Named::F1),
+        K::F2 => keyboard::Key::Named(Named::F2),
+        K::F3 => keyboard::Key::Named(Named::F3),
+        K::F4 => keyboard::Key::Named(Named::F4),
+        K::F5 => keyboard::Key::Named(Named::F5),
+        K::F6 => keyboard::Key::Named(Named::F6),
+        K::F7 => keyboard::Key::Named(Named::F7),
+        K::F8 => keyboard::Key::Named(Named::F8),
+        K::F9 => keyboard::Key::Named(Named::F9),
+        K::F10 => keyboard::Key::Named(Named::F10),
+        K::F11 => keyboard::Key::Named(Named::F11),
+        K::F12 => keyboard::Key::Named(Named::F12),
         _ => keyboard::Key::Unidentified,
     }
 }
@@ -394,19 +418,24 @@ mod tests {
             (Key::Enter, Named::Enter),
             (Key::Escape, Named::Escape),
             (Key::Tab, Named::Tab),
+            (Key::ArrowUp, Named::ArrowUp),
+            (Key::ArrowDown, Named::ArrowDown),
+            (Key::ArrowLeft, Named::ArrowLeft),
+            (Key::ArrowRight, Named::ArrowRight),
+            (Key::Home, Named::Home),
+            (Key::End, Named::End),
+            (Key::PageUp, Named::PageUp),
+            (Key::PageDown, Named::PageDown),
+            (Key::Insert, Named::Insert),
+            (Key::Space, Named::Space),
+            (Key::F1, Named::F1),
+            (Key::F6, Named::F6),
+            (Key::F12, Named::F12),
         ] {
             assert_eq!(domain_key_to_iced(&key, None), keyboard::Key::Named(named));
         }
-        assert_eq!(
-            domain_key_to_iced(&Key::F1, None),
-            keyboard::Key::Unidentified
-        );
-        // Non-editing named keys stay unidentified: physical codes
-        // (not logical names) drive shortcuts.
-        assert_eq!(
-            domain_key_to_iced(&Key::Space, None),
-            keyboard::Key::Unidentified
-        );
+        // Separately tracked modifiers stay unidentified: iced reads them
+        // from the modifiers state, not the logical key.
         assert_eq!(
             domain_key_to_iced(&Key::ShiftLeft, None),
             keyboard::Key::Unidentified
