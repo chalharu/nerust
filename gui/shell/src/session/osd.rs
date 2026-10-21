@@ -190,45 +190,6 @@ impl ModalSource for OsdManager {
     }
 }
 
-/// Narrow pump surface for [`SessionHandle::pump_osd`], decoupled from the orchestration type.
-pub trait PumpTarget: OsdState + ModalSink {
-    /// Route one drained batch through the transient/modal policy.
-    fn push_notifications(
-        &mut self,
-        notifications: Vec<UiNotification>,
-        policy: &TransientPolicy,
-        language: AppLanguage,
-        now: Instant,
-        channel: FrameChannel,
-    );
-    /// Advance the showing label.
-    fn poll_queue(&mut self, now: Instant);
-    /// Drain the aggregated modal batch into the sequential queue.
-    /// Returns whether a batch was queued.
-    fn pump_modal_queue(&mut self) -> bool;
-}
-
-impl PumpTarget for OsdManager {
-    fn push_notifications(
-        &mut self,
-        notifications: Vec<UiNotification>,
-        policy: &TransientPolicy,
-        language: AppLanguage,
-        now: Instant,
-        channel: FrameChannel,
-    ) {
-        self.push_all_with_policy(notifications, policy, language, now, channel);
-    }
-
-    fn poll_queue(&mut self, now: Instant) {
-        self.poll(now);
-    }
-
-    fn pump_modal_queue(&mut self) -> bool {
-        self.pump_modal()
-    }
-}
-
 impl OsdManager {
     /// Queued error batches awaiting a dialog, for the wake policy.
     pub fn modal_pending(&self) -> usize {
@@ -1422,23 +1383,5 @@ mod osd_cov_tests {
         manager.requeue_front("head".to_string());
         assert_eq!(manager.take_modal_batch().as_deref(), Some("head"));
         manager.modal_closed();
-    }
-
-    #[test]
-    fn pump_target_delegates_to_manager() {
-        use super::PumpTarget as _;
-        let mut manager = OsdManager::new();
-        let now = Instant::now();
-        manager.push_notifications(
-            vec![],
-            &TransientPolicy::from(
-                &nerust_settings_core::model::local::NotificationSettings::default(),
-            ),
-            AppLanguage::English,
-            now,
-            FrameChannel::Composited,
-        );
-        manager.poll_queue(now);
-        assert!(!manager.pump_modal_queue());
     }
 }
