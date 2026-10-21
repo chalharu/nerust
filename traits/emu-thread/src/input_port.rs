@@ -187,19 +187,23 @@ impl GuiInput {
     }
 }
 
-impl nerust_input_traits::GuiInputPort for GuiInput {
+impl nerust_input_traits::InputStaging for GuiInput {
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
         GuiInput::set(self, field, value)
-    }
-
-    fn publish(&mut self) {
-        GuiInput::publish(self);
     }
 
     fn clear(&mut self) {
         GuiInput::clear(self);
     }
 }
+
+impl nerust_input_traits::InputPublish for GuiInput {
+    fn publish(&mut self) {
+        GuiInput::publish(self);
+    }
+}
+
+impl nerust_input_traits::GuiInputPort for GuiInput {}
 
 /// Emu thread input consumer.
 /// `Send` but `!Sync`: keep each `EmuInput` on its owning emu thread.
@@ -256,13 +260,20 @@ struct TypedGuiInput<B> {
     dirty: bool,
 }
 
-impl<B: InputStateBuffer> nerust_input_traits::GuiInputPort for TypedGuiInput<B> {
+impl<B: InputStateBuffer> nerust_input_traits::InputStaging for TypedGuiInput<B> {
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
         self.state.set(field, value)?;
         self.dirty = true;
         Ok(())
     }
 
+    fn clear(&mut self) {
+        self.state.clear();
+        self.dirty = true;
+    }
+}
+
+impl<B: InputStateBuffer> nerust_input_traits::InputPublish for TypedGuiInput<B> {
     fn publish(&mut self) {
         if !self.dirty {
             return;
@@ -279,16 +290,14 @@ impl<B: InputStateBuffer> nerust_input_traits::GuiInputPort for TypedGuiInput<B>
         self.flag.store(true, Ordering::Release);
         self.dirty = false;
     }
-
-    fn clear(&mut self) {
-        self.state.clear();
-        self.dirty = true;
-    }
 }
+
+impl<B: InputStateBuffer> nerust_input_traits::GuiInputPort for TypedGuiInput<B> {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_input_traits::{InputPublish as _, InputStaging as _};
 
     /// Single-field digital buffer for port tests.
     #[derive(Debug, Default)]
@@ -357,7 +366,7 @@ mod tests {
 
     #[test]
     fn receiver_contract_delivers_latest_and_retains_snapshot() {
-        use nerust_input_traits::GuiInputPort;
+        use nerust_input_traits::{InputPublish as _, InputStaging as _};
         let (mut gui, mut receiver, _) =
             InputSplit::typed_resources::<BitBuffer>(bit_resources()).unwrap();
         let pressed = |receiver: &mut InputReceiver<BitBuffer>| receiver.receive().pressed;

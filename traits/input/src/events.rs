@@ -154,15 +154,23 @@ pub trait InputStateBuffer: std::fmt::Debug + Send + Downcast {
 
 downcast_rs::impl_downcast!(InputStateBuffer);
 
-/// Session-owned GUI input writer. Transport implementations live outside cores.
-pub trait GuiInputPort: Send {
-    /// Write one absolute field; stages dirty for the next publish.
+/// Domain staging half: write and reset fields; transport decides batching.
+pub trait InputStaging {
+    /// Write one absolute field.
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
-    /// Publish staged state when dirty; clean frames skip the handoff.
-    fn publish(&mut self);
-    /// Reset all fields to neutral; stages dirty for the next publish.
+    /// Reset all fields to neutral.
     fn clear(&mut self);
 }
+
+/// Transport half: hand staged state to the core.
+pub trait InputPublish {
+    /// Publish staged state when dirty; clean frames skip the handoff.
+    fn publish(&mut self);
+}
+
+/// Session-owned GUI input writer: domain staging plus transport publish.
+/// New code depends on the narrow half it uses.
+pub trait GuiInputPort: InputStaging + InputPublish + Send {}
 
 /// Typed core-facing snapshot. The assembly layer supplies the transport-free
 /// refresh callback; cores never name channels, locks, or erased buffers.
