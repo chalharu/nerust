@@ -369,17 +369,7 @@ impl SessionHandle {
     }
 
     pub(crate) fn remember_last_successful_rom_directory(&mut self, path: Option<&Path>) {
-        let Some(path) = path else { return };
-        if let Err(error) = self
-            .settings
-            .manager
-            .update_last_successful_rom_directory(path)
-        {
-            log::warn!("failed to update app state: {error}");
-        }
-        if let Ok(snapshot) = self.settings.manager.snapshot_arc() {
-            self.settings.snapshot = snapshot;
-        }
+        self.settings.remember_rom_directory(path);
     }
 }
 

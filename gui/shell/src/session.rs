@@ -202,6 +202,18 @@ struct SettingsCluster {
 }
 
 impl SettingsCluster {
+    /// Record the last successfully loaded ROM directory; failures only warn.
+    /// Department behavior: the facade never touches the manager directly.
+    fn remember_rom_directory(&mut self, path: Option<&std::path::Path>) {
+        let Some(path) = path else { return };
+        if let Err(error) = self.manager.update_last_successful_rom_directory(path) {
+            log::warn!("failed to update app state: {error}");
+        }
+        if let Ok(snapshot) = self.manager.snapshot_arc() {
+            self.snapshot = snapshot;
+        }
+    }
+
     /// Department constructor: the facade builds departments, never bare field lists.
     fn load(registry: &SystemRegistry, use_persistent: bool, paths: Option<SettingsPaths>) -> Self {
         let (manager, snapshot) =
