@@ -16,6 +16,7 @@ use crate::session::{
     ActiveRuntime, SessionError, SessionHandle,
     osd::TickMetrics,
     persistence_setup::{MapperRestore, PersistenceBinder},
+    ports::StateExporter,
 };
 use nerust_settings_core::factory::settings_view;
 
@@ -327,9 +328,9 @@ impl SessionHandle {
             .loaded
             .then(|| {
                 self.emu
-                    .core()?
-                    .save_state_raw()
-                    .map_err(|error| SessionError::from(error.slot_failure()))
+                    .exporter()?
+                    .export_state()
+                    .map_err(SessionError::from)
             })
             .transpose()?;
 
@@ -342,7 +343,7 @@ impl SessionHandle {
                 .emu_core
                 .load_paused(&loaded.media, Some(loaded.options.clone()))?;
             if let Some(bytes) = core_bytes {
-                rebuilt.emu_core.load_state_raw(bytes)?;
+                rebuilt.emu_core.import_state(bytes)?;
             }
             // The worker-side pause-stable adapter keeps state imports parked atomically.
         }
