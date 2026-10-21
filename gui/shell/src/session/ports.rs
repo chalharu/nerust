@@ -41,11 +41,6 @@ pub trait StateExporter {
     fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure>;
     /// Import a battery-backed mapper save from disk.
     fn import_mapper(&self, bytes: Vec<u8>) -> Result<(), SlotOpFailure>;
-    /// Resolve a stored state blob to raw core bytes.
-    /// Default decodes the shell envelope; backends never call the free function directly.
-    fn resolve_format(&self, bytes: &[u8]) -> Vec<u8> {
-        crate::state::resolve_state_format(bytes)
-    }
 }
 
 /// Whether a save also moves the active-slot pointer. Explicit enum:
