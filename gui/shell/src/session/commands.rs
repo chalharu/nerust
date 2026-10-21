@@ -118,23 +118,6 @@ impl SessionCmd for SessionCommand {
     }
 }
 
-impl SessionCommand {
-    /// Slot carried for failure messages: explicit-slot commands use their own id.
-    /// Active-slot commands resolve to `active`; the rest report `None`.
-    pub fn associated_slot(&self, active: Option<u64>) -> Option<u64> {
-        self.slot_affinity(active)
-    }
-
-    /// Single mapping from outcome to notification; all entry points delegate here.
-    pub fn notification_for(
-        &self,
-        outcome: &SessionCommandOutcome,
-        active_slot: Option<u64>,
-    ) -> Option<crate::session::notification::Message> {
-        self.success_notification(outcome, active_slot)
-    }
-}
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct SessionCommandOutcome {
     pub executed: bool,
@@ -146,15 +129,6 @@ pub struct SessionCommandOutcome {
 
 /// Single mapping from command outcome to notification.
 pub fn outcome_notification(
-    command: SessionCommand,
-    outcome: &SessionCommandOutcome,
-    active_slot: Option<u64>,
-) -> Option<crate::session::notification::Message> {
-    notification_for(command, outcome, active_slot)
-}
-
-/// Single source mapping command outcomes to notifications.
-pub fn notification_for(
     command: SessionCommand,
     outcome: &SessionCommandOutcome,
     active_slot: Option<u64>,
@@ -282,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn associated_slot_covers_every_command() {
+    fn slot_affinity_covers_every_command() {
         use crate::session::commands::SessionCommand as C;
         for (command, expected) in [
             (C::SaveSlot(4), Some(4)),
@@ -299,11 +273,11 @@ mod tests {
             (C::SelectNextSlot, None),
             (C::SelectPreviousSlot, None),
         ] {
-            assert_eq!(command.associated_slot(Some(7)), expected);
+            assert_eq!(command.slot_affinity(Some(7)), expected);
         }
         // Active-slot commands without an active slot report none.
-        assert_eq!(C::SaveActiveSlotOrNew.associated_slot(None), None);
-        assert_eq!(C::LoadActiveSlot.associated_slot(None), None);
+        assert_eq!(C::SaveActiveSlotOrNew.slot_affinity(None), None);
+        assert_eq!(C::LoadActiveSlot.slot_affinity(None), None);
         // Failure routing follows the slot: active-slot ops carry it.
         let failed = SessionCommandOutcome {
             executed: false,
@@ -340,11 +314,6 @@ mod tests {
             C::SelectPreviousSlot,
         ] {
             assert!(!command.cmd_name().is_empty());
-            // Free functions delegate to the trait.
-            assert_eq!(
-                command.associated_slot(Some(7)),
-                command.slot_affinity(Some(7))
-            );
         }
         // Slot affinity matches the legacy expectations.
         assert_eq!(C::SaveSlot(4).slot_affinity(Some(7)), Some(4));
@@ -367,28 +336,6 @@ mod tests {
         assert_eq!(
             outcome_notification(SessionCommand::SelectActiveSlot(5), &ok, Some(3)),
             Some(Message::selected_slot(5))
-        );
-    }
-}
-
-#[cfg(test)]
-mod mapping_tests {
-    use crate::session::commands::*;
-
-    #[test]
-    fn notification_for_is_the_single_mapping() {
-        let ok = SessionCommandOutcome {
-            executed: true,
-            needs_redraw: false,
-            slot_failure: None,
-        };
-        assert_eq!(
-            notification_for(SessionCommand::Pause, &ok, None),
-            outcome_notification(SessionCommand::Pause, &ok, None)
-        );
-        assert_eq!(
-            SessionCommand::Pause.notification_for(&ok, None),
-            outcome_notification(SessionCommand::Pause, &ok, None)
         );
     }
 }
