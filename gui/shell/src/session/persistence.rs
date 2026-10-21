@@ -249,8 +249,7 @@ impl PersistenceManager {
         }
     }
 
-    /// Load a slot through `emu`; stored bytes reach the core via the exporter's `resolve_format`.
-    /// The envelope lives at the session boundary, never in this module.
+    /// Load a slot through `emu`; the envelope decodes once at this boundary.
     pub fn load_slot(
         &mut self,
         slot_id: u64,
@@ -261,7 +260,9 @@ impl PersistenceManager {
         };
         match self.slot_backend.read_slot(dir, slot_id) {
             Ok(Some(slot)) => {
-                if let Err(failure) = emu.import_state(emu.resolve_format(&slot.machine_state)) {
+                if let Err(failure) =
+                    emu.import_state(crate::state::resolve_state_format(&slot.machine_state))
+                {
                     Err(failure)
                 } else {
                     // Load changes no files: point active, no re-scan.
@@ -449,8 +450,7 @@ impl PersistenceManager {
         }
     }
 
-    /// Load the hidden autosave through `emu`. Stored bytes reach the
-    /// core through the exporter's `resolve_format`.
+    /// Load the hidden autosave through `emu`; envelope decodes here.
     pub fn load_hidden(&self, emu: &dyn StateExporter) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             return false;
@@ -467,7 +467,7 @@ impl PersistenceManager {
                     return false;
                 }
                 if emu
-                    .import_state(emu.resolve_format(&slot.machine_state))
+                    .import_state(crate::state::resolve_state_format(&slot.machine_state))
                     .is_err()
                 {
                     let _ = self.autosave_backend.quarantine_autosave(dir);
@@ -771,8 +771,8 @@ mod persistence_cov_tests {
             fault: SlotOpFailure::Unavailable,
         };
         assert!(error.to_string().contains("Unavailable"));
-        // StateExporter resolves the shell envelope by default.
-        let resolved = exporter.resolve_format(&save_state_with_header(vec![1, 2, 3]));
+        // Shell envelope decodes once at the persistence boundary.
+        let resolved = crate::state::resolve_state_format(&save_state_with_header(vec![1, 2, 3]));
         assert_eq!(resolved, vec![1, 2, 3]);
         let _ = std::fs::remove_dir_all(&dir);
         let _ = FsSlots;
