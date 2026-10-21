@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Shared bridge-contract core: error type, guarded checks, comment stripping.
 
 Imported by generate/verify/test scripts so the schema helpers live once.
