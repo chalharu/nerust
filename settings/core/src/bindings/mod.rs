@@ -257,9 +257,12 @@ mod tests {
         ];
         for entries in [fields.to_vec(), fields.into_iter().rev().collect()] {
             let mut target = HashMap::from([(Key::KeyA, 99)]);
-            let conflict =
-                super::resolve_key_fields(&entries.into_iter().collect(), &bindings, &mut target)
-                    .unwrap_err();
+            let conflict = super::resolve_key_fields(
+                &nerust_input_traits::collect_first_wins(entries),
+                &bindings,
+                &mut target,
+            )
+            .unwrap_err();
             assert_eq!(conflict.control, PersistedControlId::digital("test.a"));
             assert_eq!(target, HashMap::from([(Key::KeyZ, 1)]));
         }
