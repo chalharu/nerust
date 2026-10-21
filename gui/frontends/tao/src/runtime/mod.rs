@@ -82,9 +82,8 @@ impl WindowRuntime {
         raw_display_handle: raw_window_handle::RawDisplayHandle,
     ) -> Option<()> {
         let (raw_window_handle, size, xid) = self.host.surface_target()?;
-        let session = self.host.session();
-        let vsync = session.settings_snapshot().local.video.presentation.vsync;
-        let render_profile = session.render_profile().cloned()?;
+        let vsync = self.host.settings_snapshot().local.video.presentation.vsync;
+        let render_profile = self.host.render_profile()?;
         let config = RendererConfig {
             render_profile,
             vsync,
@@ -132,12 +131,7 @@ impl WindowRuntime {
             Err(detail) => {
                 // Startup runs before the main window exists: standalone dialog only.
                 crate::ports::show_rom_load_error(
-                    self.host
-                        .session()
-                        .settings_snapshot()
-                        .shared
-                        .general
-                        .language,
+                    self.host.settings_snapshot().shared.general.language,
                     &detail,
                 );
                 false

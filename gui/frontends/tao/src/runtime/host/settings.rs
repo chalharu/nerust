@@ -187,7 +187,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         assert!(host.close_settings_window(None).is_none());
-        let snapshot = host.session().settings_snapshot().clone();
+        let snapshot = host.settings_snapshot().clone();
         let plan = host
             .close_settings_window(Some(snapshot))
             .expect("identical snapshot applies cleanly");

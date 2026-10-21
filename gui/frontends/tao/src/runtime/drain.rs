@@ -8,7 +8,6 @@ use nerust_gui_viewmodel::debugger as debug_vm;
 
 use super::host::{HostState, WakeNeed};
 use crate::aux::focus::AuxKind;
-use crate::aux::registry::debug_spaces;
 use crate::ports::WindowOpener;
 
 impl HostState {
@@ -26,10 +25,7 @@ impl HostState {
 
     /// Live follow is active: both aux windows open on a running loaded core.
     pub(crate) fn live_follow_active(&self) -> bool {
-        self.is_debug_open()
-            && self.is_ppu_open()
-            && self.session().tick_metrics().loaded
-            && !self.session().tick_metrics().paused
+        self.is_debug_open() && self.is_ppu_open() && self.tick().loaded && !self.tick().paused
     }
 
     /// Live-follow pulse entry (timer thread via `UserEvent::LiveTick`).
@@ -70,7 +66,7 @@ impl HostState {
         if !self.live_due(Instant::now()) {
             return;
         }
-        let mut flight = self.session().debug_live_images_begin(true);
+        let mut flight = self.debug_live_images_begin(true);
         match flight.poll() {
             LiveImagesPoll::Done(live) => self.apply_live_images(live),
             LiveImagesPoll::Pending => {
@@ -85,7 +81,7 @@ impl HostState {
         let Some(batch) = live else {
             return;
         };
-        let running = !self.session().tick_metrics().paused;
+        let running = !self.tick().paused;
         let images = batch
             .images
             .into_iter()
@@ -101,13 +97,13 @@ impl HostState {
     pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         use nerust_gui_shell::debug::DebugAction;
         if !self.is_debug_open() {
-            let spaces = debug_spaces(self.session());
+            let spaces = self.debug_spaces();
             if spaces.is_empty() {
                 log::warn!("debugger: no spaces (no core)");
             }
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
             let position = self.debug_window_pos();
-            let language = self.session().settings_snapshot().shared.general.language;
+            let language = self.settings_snapshot().shared.general.language;
             match opener.create_aux(
                 AuxKind::Debug,
                 crate::ports::AuxOpenParams::Debug {
@@ -155,7 +151,7 @@ impl HostState {
     /// Drain debugger requests and push one batched snapshot back.
     pub(crate) fn drain_debug_requests(&mut self) {
         if let Some(bridge) = self.debug_bridge_for_ppu() {
-            bridge.bind_epoch(self.session().debug_epoch());
+            bridge.bind_epoch(self.debug_epoch());
         }
         let Some((open_ppu, requests)) = self.take_debug_batch() else {
             return;
@@ -174,7 +170,7 @@ impl HostState {
     /// Sends only; the event loop polls, so the UI thread never blocks.
     pub(crate) fn run_debug_drain(&mut self, requests: &[nerust_gui_shell::debug::DebugAction]) {
         if let Some(bridge) = self.debug_bridge_for_ppu() {
-            bridge.bind_epoch(self.session().debug_epoch());
+            bridge.bind_epoch(self.debug_epoch());
         }
         let ppu_open = self.is_ppu_open();
         let snapshot = match self.aux.debug_snapshot(ppu_open) {
@@ -182,14 +178,14 @@ impl HostState {
             None => {
                 // No round-trip ran, so nothing could have moved:
                 // still record truth for the focus gate below.
-                self.set_last_drain_paused(self.session().tick_metrics().paused);
+                self.set_last_drain_paused(self.tick().paused);
                 return;
             }
         };
         // Contended bridge locks would wedge the UI thread:
         // all critical sections are short field copies.
         debug_assert!(self.aux.debug_locks_free());
-        let epoch = self.session().debug_epoch();
+        let epoch = self.debug_epoch();
         // Split before pause transitions: ownership changes must not run ahead
         // of an earlier step/write still waiting for its worker reply.
         let mut start = 0;
@@ -232,7 +228,7 @@ impl HostState {
                 DebugAction::TogglePause => self.toggle_pause(),
                 _ => continue,
             }
-            if self.session().tick_metrics().loaded {
+            if self.tick().loaded {
                 *action = DebugAction::Refresh;
             }
         }
@@ -247,7 +243,7 @@ impl HostState {
             prev_dump_rows: &snapshot.prev_rows,
             need_images: snapshot.ppu_open,
         };
-        let flight = self.session().debug_drain_begin(&actions, &input);
+        let flight = self.debug_drain_begin(&actions, &input);
         self.debug.drain_epoch = Some(batch.epoch);
         self.orchestrator_mut().store_drain_flight(flight);
     }
@@ -295,7 +291,7 @@ impl HostState {
         let ctx = self.frame_ctx();
         self.sync_chrome(&ctx, false);
         // Post-drain truth: focus flips compare against this to skip redundant round-trips.
-        self.set_last_drain_paused(self.session().tick_metrics().paused);
+        self.set_last_drain_paused(self.tick().paused);
     }
 
     /// Focus-driven chrome sync. Menu/title refresh always runs; no redraw.
@@ -304,7 +300,7 @@ impl HostState {
         if chrome_drain_due(
             self.is_debug_open(),
             self.last_drain_paused(),
-            self.session().tick_metrics().paused,
+            self.tick().paused,
         ) && !self.debug.drain_pending()
         {
             self.run_debug_drain(&[]);
