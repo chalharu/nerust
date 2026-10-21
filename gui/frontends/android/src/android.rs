@@ -1037,9 +1037,7 @@ impl ApplicationHandler for AndroidFrontend {
             }
             WindowEvent::Resized(size) => {
                 log::info!("window_event: resized to {}x{}", size.width, size.height);
-                self.flow
-                    .render_sync
-                    .resize_renderer(SurfaceSize::new(size.width, size.height));
+                // Size ownership lives in render(): the next pass resizes itself.
                 self.chrome.input.rebuild_overlay(
                     &self.core.session,
                     &self.app,

@@ -183,12 +183,6 @@ impl RenderSync {
         self.renderer = None;
     }
 
-    pub(super) fn resize_renderer(&mut self, size: SurfaceSize) {
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.resize(size);
-        }
-    }
-
     /// Build the per-frame bundle once per pass. The buffer borrows the
     /// session; `render` fans out from it without re-locking or cloning.
     pub(super) fn build_frame_input(session: &mut SessionHandle) -> FrameInput<'_> {
