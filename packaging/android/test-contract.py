@@ -240,8 +240,7 @@ class StructureTests(unittest.TestCase):
         with self.assertRaises(VERIFY.ContractError):
             self.verify()
 
-    def test_ack_signature_is_derived_not_pinned_to_old_no_args_abi(self):
-        # A coordinated ACK-ID migration must pass; one-sided migrations fail.
+    def _probe_ack_fixture(self):
         # Derive the synthetic new method name so this stays valid after the
         # Android agent changes the real ACK's signature concurrently.
         registration = '''jni::NativeMethod::from_raw_parts(
@@ -253,8 +252,16 @@ class StructureTests(unittest.TestCase):
         callbacks = ['''pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onProbeAck(
             env: jni::EnvUnowned<'_>, activity: JObject<'_>, id: jni::sys::jlong,
         ) {}''']
+        return registration, table, activity, callbacks
+
+    def test_ack_signature_is_derived_not_pinned_to_old_no_args_abi(self):
+        # A coordinated ACK-ID migration must pass; one-sided migrations fail.
+        registration, table, activity, callbacks = self._probe_ack_fixture()
         self.assertEqual(VERIFY.validate_jni(registration, table, activity, callbacks)["native"],
                          {"onProbeAck": "(J)V"})
+
+    def test_ack_signature_mismatch_is_rejected(self):
+        registration, table, activity, callbacks = self._probe_ack_fixture()
         broken = registration.replace("(J)V", "()V")
         with self.assertRaises(VERIFY.ContractError):
             VERIFY.validate_jni(broken, table, activity, callbacks)

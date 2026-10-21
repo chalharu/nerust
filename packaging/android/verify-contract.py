@@ -79,26 +79,33 @@ def _registration_entries(registration):
     return entries
 
 
+def _rust_arg_descriptor(arg):
+    """Single Rust JNI argument to its descriptor letter."""
+    kind = re.fullmatch(r"(?:mut\s+)?\w+:\s*(?:jni::(?:sys|objects)::)?(\w+)(?:<'_>)?", arg)
+    require(kind and kind[1] in RUST_TYPES, f"unsupported Rust JNI argument: {arg}")
+    return RUST_TYPES[kind[1]]
+
+
+def _callback_signature(symbol, args_text, result_text):
+    """One Rust extern callback to its JNI signature; env/receiver are fixed."""
+    require(not result_text.strip(), f"unsupported JNI callback return: {symbol}")
+    args = [arg.strip() for arg in args_text.split(",") if arg.strip()]
+    require(len(args) >= 2 and re.search(r":\s*jni::EnvUnowned<'_>$", args[0])
+            and re.search(r":\s*(?:jni::objects::)?JObject<'_>$", args[1]),
+            f"invalid JNI environment/receiver: {symbol}")
+    return "(" + "".join(_rust_arg_descriptor(arg) for arg in args[2:]) + ")V"
+
+
 def _callback_symbols(callbacks):
     """Rust extern callbacks keyed by symbol with JNI signatures."""
     symbols = {}
     for text in callbacks:
         for match in re.finditer(
-                r'pub\s+extern\s+"system"\s+fn\s+(Java_\w+)\s*\(([^()]*)\)([^\{]*+)\{',
+                r'pub\s+extern\s+"system"\s+fn\s+(Java_\w+)\s*\(([^()]*)\)([^\{]*)\{',
                 uncomment(text)):
             symbol, args, result = match.groups()
-            require(not result.strip(), f"unsupported JNI callback return: {symbol}")
-            args = [arg.strip() for arg in args.split(",") if arg.strip()]
-            require(len(args) >= 2 and re.search(r":\s*jni::EnvUnowned<'_>$", args[0])
-                    and re.search(r":\s*(?:jni::objects::)?JObject<'_>$", args[1]),
-                    f"invalid JNI environment/receiver: {symbol}")
-            descriptors = []
-            for arg in args[2:]:
-                kind = re.fullmatch(r"(?:mut\s+)?\w+:\s*(?:jni::(?:sys|objects)::)?(\w+)(?:<'_>)?", arg)
-                require(kind and kind[1] in RUST_TYPES, f"unsupported Rust JNI argument: {arg}")
-                descriptors.append(RUST_TYPES[kind[1]])
             require(symbol not in symbols, f"duplicate Rust callback: {symbol}")
-            symbols[symbol] = "(" + "".join(descriptors) + ")V"
+            symbols[symbol] = _callback_signature(symbol, args, result)
     return symbols
 
 
@@ -181,7 +188,7 @@ def _variant_gaps(body):
     gaps = []
     variants = []
     pos = 0
-    for match in re.finditer(r'(\w+)\s*\{([^{}]*+)\}', body):
+    for match in re.finditer(r'(\w+)\s*\{([^{}]*)\}', body):
         gaps.append(body[pos:match.start()])
         variants.append(match.groups())
         pos = match.end()
