@@ -14,7 +14,7 @@ pub(crate) fn native_id_of(id: tao::window::WindowId) -> NativeWindowId {
     use std::hash::{Hash, Hasher};
     struct Fnv(u64);
     impl Hasher for Fnv {
-        fn write(&mut self, bytes: &[u8]) -> () {
+        fn write(&mut self, bytes: &[u8]) {
             for &byte in bytes {
                 self.0 ^= u64::from(byte);
                 self.0 = self.0.wrapping_mul(0x100_0000_01b3);
