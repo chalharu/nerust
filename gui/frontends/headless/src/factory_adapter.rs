@@ -608,7 +608,7 @@ mod tests {
                 "empty",
                 &NesFactory,
                 &InputAssignments::new(Vec::new()),
-                &HashMap::new(),
+                &nerust_input_traits::UnifiedFieldMap::new(),
             )
             .unwrap();
             assert_eq!(empty, vec![vec![], vec![]]);
@@ -617,7 +617,12 @@ mod tests {
         #[test]
         fn missing_field_still_reports_case_and_control() {
             let assignments = NesFactory.input_system_factory().default_assignments();
-            match resolve_pad_buttons("missing-field", &NesFactory, &assignments, &HashMap::new()) {
+            match resolve_pad_buttons(
+                "missing-field",
+                &NesFactory,
+                &assignments,
+                &nerust_input_traits::UnifiedFieldMap::new(),
+            ) {
                 Err(RomTestError::CoreConstruction { case_id, message }) => {
                     assert_eq!(case_id, "missing-field");
                     assert!(message.contains("test input field missing"), "{message}");
