@@ -36,7 +36,7 @@ use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
-use nerust_input_traits::{AttachmentId, ControlId, InputAssignments};
+use nerust_input_traits::{InputAssignments, UnifiedFieldMap};
 use nerust_keyboard::Key;
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
@@ -60,7 +60,7 @@ pub use crate::emu_core::images::LiveImages;
 struct CoreRuntime {
     emu_core: EmuCore,
     gui_input: Box<dyn nerust_input_traits::GuiInputPort>,
-    field_map: HashMap<(AttachmentId, ControlId), usize>,
+    field_map: UnifiedFieldMap,
     host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
 }
 
@@ -85,7 +85,7 @@ struct CoreCreation {
 struct ActiveRuntime {
     core: Box<dyn LiveCore>,
     input: Box<dyn nerust_input_traits::GuiInputPort>,
-    field_map: HashMap<(AttachmentId, ControlId), usize>,
+    field_map: UnifiedFieldMap,
     host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
 }
 
@@ -148,7 +148,7 @@ impl InputDept {
     pub(crate) fn rebuild_key_field_map(
         &mut self,
         bindings: Option<&[nerust_settings_core::model::input::KeyboardBinding]>,
-        field_map: Option<&HashMap<(AttachmentId, ControlId), usize>>,
+        field_map: Option<&UnifiedFieldMap>,
     ) {
         self.key_field_map.clear();
         if let Some(bindings) = bindings
@@ -303,7 +303,7 @@ impl EmuCluster {
         self.debug_epoch = Arc::new(std::sync::atomic::AtomicBool::new(true));
     }
 
-    fn field_map(&self) -> Option<&HashMap<(AttachmentId, ControlId), usize>> {
+    fn field_map(&self) -> Option<&UnifiedFieldMap> {
         self.runtime.as_ref().map(|runtime| &runtime.field_map)
     }
 

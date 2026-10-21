@@ -50,7 +50,7 @@ impl crate::NesFactory {
                 slot: AttachmentId::new("nes.attachment.player2"),
             });
         }
-        let mut field_map = std::collections::HashMap::new();
+        let mut field_map = nerust_input_traits::UnifiedFieldMap::new();
         for (idx, port) in NES_PORTS.iter().enumerate() {
             let Some(dev) = controllers.get(idx) else {
                 continue;

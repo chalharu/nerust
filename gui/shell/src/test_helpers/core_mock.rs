@@ -246,7 +246,7 @@ pub(crate) fn build_test_core_parts() -> nerust_system_traits::factory::CorePart
         core: Box::new(core),
         audio: Box::new(nerust_core_traits::audio::NullAudio),
         gui_input: Box::new(gui_input),
-        field_map: std::collections::HashMap::new(),
+        field_map: nerust_input_traits::UnifiedFieldMap::new(),
         render_profile,
         palette: Box::new([0u32; 256]),
         host_peripherals: Default::default(),

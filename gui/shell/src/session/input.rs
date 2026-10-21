@@ -172,6 +172,7 @@ mod tests {
     use nerust_input_traits::{
         AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, ControllerProfile,
         DeviceKindId, DigitalControlId, InputAssignments, PortSet, ProfileId, SlotInfo,
+        UnifiedFieldMap,
     };
     use nerust_settings_core::model::input::KeyboardBinding;
     use nerust_settings_core::model::input::PersistedControlId;
@@ -326,7 +327,8 @@ mod tests {
     fn rebuild_input_map_maps_matching_keyboard_binding() {
         let attachment = AttachmentId::new("test.topology.slot");
         let control = ControlId::digital(DigitalControlId::new("test.topology.a"));
-        let field_map = HashMap::from([((attachment, control), 7)]);
+        let mut field_map = UnifiedFieldMap::new();
+        field_map.insert((attachment, control), 7);
         let bindings = [KeyboardBinding::new(
             attachment.as_str(),
             PersistedControlId::digital(control.as_str()),
@@ -398,7 +400,8 @@ mod tests {
         use crate::session::input_map::DuplicateBinding;
         let attachment = AttachmentId::new("test.topology.slot");
         let control = ControlId::digital(DigitalControlId::new("test.topology.a"));
-        let field_map = HashMap::from([((attachment, control), 7)]);
+        let mut field_map = UnifiedFieldMap::new();
+        field_map.insert((attachment, control), 7);
         let bindings = [
             KeyboardBinding::new(
                 attachment.as_str(),
