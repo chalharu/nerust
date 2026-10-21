@@ -59,26 +59,29 @@ impl SystemActivationError {
     }
 }
 
-/// Target for a ROM load operation.
-/// Session operations needed by `RomLoader` implementations, for any session type.
-pub trait RomLoadTarget {
+/// Environment half of a ROM load: options, settings, activation.
+/// Loaders read this; executors extend it below.
+pub trait LoadEnvironment {
     fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>>;
     fn settings_snapshot(&self) -> &SettingsSnapshot;
-    fn load_resolved(
-        &mut self,
-        media: MediaObject,
-        resolved: ResolvedLoadRequest,
-    ) -> Result<(), RomLoaderError>;
-    fn resume(&mut self);
-
     /// Notifies the target of the detected system for the ROM being loaded.
-    /// Returns `Err` if the system is not recognised or activation fails.
     fn set_active_system(
         &mut self,
         _system_id: &dyn SystemId,
     ) -> Result<(), SystemActivationError> {
         Ok(())
     }
+}
+
+/// Target for a ROM load operation.
+/// Session operations needed by `RomLoader` implementations, for any session type.
+pub trait RomLoadTarget: LoadEnvironment {
+    fn load_resolved(
+        &mut self,
+        media: MediaObject,
+        resolved: ResolvedLoadRequest,
+    ) -> Result<(), RomLoaderError>;
+    fn resume(&mut self);
 }
 
 /// Loads a ROM file into a [`RomLoadTarget`] and resumes.
