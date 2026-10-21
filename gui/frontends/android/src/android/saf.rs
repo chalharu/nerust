@@ -23,7 +23,10 @@ use nerust_persistence::{
 use winit::platform::android::activity::AndroidApp;
 
 use super::bridge;
-use crate::{bridge_contract::SAF_CHUNK_BYTES, saf_decision::collect_stream};
+use crate::{
+    bridge_contract::SAF_CHUNK_BYTES,
+    saf_decision::{CollectError, collect_stream_capped},
+};
 
 #[derive(Clone)]
 pub(super) struct AndroidStorageBackend {
@@ -67,8 +70,17 @@ impl AndroidStorageBackend {
             if session <= 0 {
                 return Err(jni::errors::Error::NullPtr("Android SAF open failed"));
             }
-            let mut result =
-                collect_stream(|| Self::call_read_session_chunk_inner(env, activity, session));
+            let limit = usize::try_from(MAX_SLOT_ARCHIVE_BYTES).unwrap_or(usize::MAX);
+            let mut result = collect_stream_capped(
+                || Self::call_read_session_chunk_inner(env, activity, session),
+                limit,
+            )
+            .map_err(|error| match error {
+                CollectError::Read(error) => error,
+                CollectError::OverLimit { .. } => {
+                    jni::errors::Error::NullPtr("Android SAF document exceeds scan bound")
+                }
+            });
             // Clear a failed read's pending exception before cleanup; retain
             // the original error so partial bytes never become success.
             if env.exception_check() {
