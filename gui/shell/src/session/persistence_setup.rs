@@ -72,20 +72,6 @@ impl SessionHandle {
                 .push(crate::session::notification::Message::persistence_unavailable());
         }
     }
-
-    pub(crate) fn setup_persistence(
-        &mut self,
-        rom_path: Option<&Path>,
-        mapper_restore: MapperRestore,
-    ) -> PersistenceSetup {
-        setup_persistence(
-            &self.settings.manager,
-            &mut self.media.persistence,
-            self.emu.exporter().ok(),
-            rom_path,
-            mapper_restore,
-        )
-    }
 }
 
 fn setup_persistence(
@@ -137,14 +123,11 @@ mod persistence_setup_cov_tests {
         let registry = Arc::new(crate::registry::SystemRegistry::new(vec![]));
         let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let mut session = SessionHandle::new_ephemeral(caps, registry, audio);
-        assert_eq!(
-            session.setup_persistence(None, MapperRestore::Skip),
-            PersistenceSetup::Unavailable
-        );
-        assert_eq!(
-            session.setup_persistence(None, MapperRestore::Load),
-            PersistenceSetup::Unavailable
-        );
+        PersistenceBinder::bind(&mut session, None, MapperRestore::Skip);
+        assert_eq!(session.drain_notifications().len(), 1);
+        // Unavailable setup is noted once via the binder path below.
+        PersistenceBinder::bind(&mut session, None, MapperRestore::Load);
+        assert_eq!(session.drain_notifications().len(), 1);
         session.note_persistence_setup(PersistenceSetup::Ready);
         assert_eq!(session.drain_notifications().len(), 0);
         session.note_persistence_setup(PersistenceSetup::Unavailable);
