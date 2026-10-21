@@ -47,14 +47,16 @@ pub(super) enum RomPickerResult {
 /// Picker slot in the unified bridge vault: result plus the open gate.
 pub(super) struct PickerSlot {
     pub(super) result: Option<(u64, RomPickerResult)>,
-    pub(super) in_flight: bool,
+    /// Outstanding request generation; `None` is idle. Stale generations
+    /// never count as pending and never block a new request.
+    pub(super) in_flight: Option<u64>,
 }
 
 impl PickerSlot {
     pub(super) const fn empty() -> Self {
         Self {
             result: None,
-            in_flight: false,
+            in_flight: None,
         }
     }
 }
