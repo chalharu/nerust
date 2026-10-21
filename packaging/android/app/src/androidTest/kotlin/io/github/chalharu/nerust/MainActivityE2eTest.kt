@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
+import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertArrayEquals
@@ -18,6 +19,7 @@ import org.junit.runners.MethodSorters
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
 
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -258,6 +260,7 @@ class MainActivityE2eTest {
     @Test(timeout = TEST_TIMEOUT_MS)
     fun backTerminatesApplicationProcess() {
         val activity = launchActivity()
+        watchStuckShutdown("back", activity)
         runOnActivityThread(activity) {
             activity.onBackPressed()
         }
@@ -268,11 +271,26 @@ class MainActivityE2eTest {
     @Test(timeout = TEST_TIMEOUT_MS)
     fun exitTerminatesApplicationProcess() {
         val activity = launchActivity()
+        watchStuckShutdown("exit", activity)
         runOnActivityThread(activity) {
             activity.dispatchMenuActionForTest(MenuAction.EXIT)
         }
         SystemClock.sleep(STARTUP_TIMEOUT_MS)
         fail("Exit should terminate the application process")
+    }
+
+    /** Watchdog for a stuck shutdown: dumps every thread while the test still runs.
+     * Destroy is expected within seconds; a dump here names the blocker. */
+    private fun watchStuckShutdown(tag: String, activity: MainActivity) {
+        thread(isDaemon = true, name = "shutdown-watchdog-$tag") {
+            SystemClock.sleep(SHUTDOWN_WATCHDOG_MS)
+            if (!activity.isDestroyed) {
+                Log.w(TAG, "$tag: activity not destroyed after ${SHUTDOWN_WATCHDOG_MS}ms; dumping threads")
+                for ((stuck, stack) in Thread.getAllStackTraces()) {
+                    Log.w(TAG, "$tag: thread=${stuck.name} state=${stuck.state}\n\t${stack.joinToString("\n\t")}")
+                }
+            }
+        }
     }
 
     private fun launchActivity(): MainActivity {
@@ -468,6 +486,8 @@ class MainActivityE2eTest {
                 Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                 Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
+        const val SHUTDOWN_WATCHDOG_MS = 30_000L
+        const val TAG = "MainActivityE2eTest"
         const val STARTUP_STABILITY_DELAY_MS = 2_000L
         const val STARTUP_TIMEOUT_MS = 60_000L
         const val TEST_TIMEOUT_MS = 180_000L

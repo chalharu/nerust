@@ -21,7 +21,7 @@ echo "  abi: ${TARGET_ABI}"
 
 dump_logcat_on_failure() {
     local status=$?
-    if [ "${status}" -ne 0 ] && command -v adb >/dev/null 2>&1; then
+    if [[ "${status}" -ne 0 ]] && command -v adb >/dev/null 2>&1; then
         echo "Android logcat tail after e2e failure:"
         adb logcat -d -t 500 || true
     fi
@@ -63,7 +63,7 @@ expect_process_termination() {
 dump_shutdown_threads() {
     local pid
     pid="$(adb shell pidof "${APP_PACKAGE}" 2>/dev/null | tr -d '\r' || true)"
-    if [ -n "${pid}" ]; then
+    if [[ -n "${pid}" ]]; then
         echo "App process ${pid} survived termination; dumping threads:"
         adb shell kill -QUIT "${pid}" || true
         sleep 2
