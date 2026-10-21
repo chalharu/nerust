@@ -1056,9 +1056,10 @@ impl ApplicationHandler for AndroidFrontend {
                     .handle_touch(&mut self.core.session, &self.app, touch);
             }
             WindowEvent::RedrawRequested => {
-                // One build per pass: the bundle owns the session borrow
-                // chain; render/Osd fan out from it without re-locking.
-                let input = RenderSync::build_frame_input(&mut self.core.session);
+                // Mutating prologue releases first; the bundle then borrows
+                // shared, so settings work never waits on rasterize.
+                RenderSync::prepare_frame(&mut self.core.session);
+                let input = RenderSync::build_frame_input(&self.core.session);
                 self.flow.render_sync.render(
                     &mut self.chrome.osd,
                     &mut self.core.shell,

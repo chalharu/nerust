@@ -183,9 +183,10 @@ impl RenderSync {
         self.renderer = None;
     }
 
-    /// Build the per-frame bundle once per pass. The buffer borrows the
-    /// session; `render` fans out from it without re-locking or cloning.
-    pub(super) fn build_frame_input(session: &mut SessionHandle) -> FrameInput<'_> {
+    /// Mutating prologue: clear and swap, then release the exclusive borrow.
+    /// Capture runs on a shared borrow below, so settings work never waits
+    /// on the rasterize tail.
+    pub(super) fn prepare_frame(session: &mut SessionHandle) {
         // With no loaded ROM, clear the display just before rendering.
         // One metrics lock per pass: poll and render share this tick.
         let tick = session.tick_metrics();
@@ -193,6 +194,13 @@ impl RenderSync {
             session.clear_display();
         }
         session.swap_frame_buffer();
+    }
+
+    /// Shared capture: small values copy, only the frame borrows.
+    /// Call after [`prepare_frame`](Self::prepare_frame); the exclusive
+    /// borrow is already released when render runs.
+    pub(super) fn build_frame_input(session: &SessionHandle) -> FrameInput<'_> {
+        let tick = session.tick_metrics();
         let profile = session.render_profile().map(|p| p.physical_size);
         let snapshot = session.settings_snapshot();
         let notifications = &snapshot.local.notifications;
@@ -235,10 +243,6 @@ impl RenderSync {
         let settings = input.notifications;
         let language = input.language;
         let Some(fb) = input.fb.as_ref() else {
-            shell.needs_redraw = false;
-            return;
-        };
-        let Some(renderer) = self.renderer.as_mut() else {
             shell.needs_redraw = false;
             return;
         };
