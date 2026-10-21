@@ -166,7 +166,8 @@ impl Shader {
             stage: QueryStage::LinkStatus,
             detail: e.to_string(),
         })?;
-        std::mem::forget(program);
+        // Ownership moves into `Self`; the guard must not delete it.
+        let _retained = std::mem::ManuallyDrop::new(program);
         Ok(Self {
             program: program_id,
             attributes,
@@ -427,7 +428,8 @@ fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, ShaderError> {
                 log: trim_info_log(&mut buf, written),
             });
         }
-        std::mem::forget(guard);
+        // Ownership moves to the caller as a raw id; the guard must not delete it.
+        let _retained = std::mem::ManuallyDrop::new(guard);
         Ok(program)
     }
 }
