@@ -556,6 +556,32 @@ mod tests {
     }
 
     #[test]
+    fn decode_tolerates_only_schema_optional_rows() {
+        let snapshot = default_snapshot();
+        let registry = registry();
+        let current = android_settings(&snapshot, &registry);
+        let full: std::collections::HashMap<String, usize> = current
+            .setting_defs()
+            .into_iter()
+            .map(|def| (def.key, def.current))
+            .collect();
+        // The hidden same-edge row may be absent.
+        let mut missing_optional = full.clone();
+        missing_optional.remove("status.area_mode");
+        assert!(
+            AndroidSettings::decode_with(&current, &|key| { missing_optional.get(key).copied() })
+                .is_some()
+        );
+        // A required row must abort the decode.
+        let mut missing_required = full;
+        missing_required.remove("audio_muted");
+        assert!(
+            AndroidSettings::decode_with(&current, &|key| { missing_required.get(key).copied() })
+                .is_none()
+        );
+    }
+
+    #[test]
     fn dialog_choices_align_with_keys() {
         // Regression test: each key must carry its own setting's choice list.
         // A past misalignment silently rejected valid saves.
