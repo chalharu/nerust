@@ -111,6 +111,5 @@ pub(crate) enum AuxNativeEvent {
     KeyReleased {
         key: nerust_keyboard::Key,
     },
-    TextCommit(String),
     Other,
 }
