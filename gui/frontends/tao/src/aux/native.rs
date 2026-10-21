@@ -22,7 +22,8 @@ pub(crate) fn adapt_event(event: &WindowEvent) -> AuxNativeEvent {
         WindowEvent::Focused(focused) => AuxNativeEvent::Focused(*focused),
         WindowEvent::CloseRequested => AuxNativeEvent::CloseRequested,
         WindowEvent::Destroyed => AuxNativeEvent::Destroyed,
-        WindowEvent::ReceivedImeText(text) => AuxNativeEvent::TextCommit(text.clone()),
+        // No IME-commit consumer exists: drop at the boundary, never carry and discard.
+        WindowEvent::ReceivedImeText(_) => AuxNativeEvent::Other,
         WindowEvent::Moved(position) => AuxNativeEvent::Moved(position.x, position.y),
         WindowEvent::Resized(size) => AuxNativeEvent::Resized(size.width, size.height),
         WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
@@ -117,12 +118,12 @@ mod tests {
     }
 
     #[test]
-    fn adapter_carries_ime_text_without_a_key() {
-        // IME commits arrive tao-side with no physical key; the
-        // domain event carries the text on its own variant.
+    fn adapter_drops_ime_text_at_the_boundary() {
+        // IME commits arrive tao-side with no consumer; the
+        // adapter maps them to `Other` instead of carrying text.
         assert_eq!(
             adapt_event(&WindowEvent::ReceivedImeText("あ".to_string())),
-            AuxNativeEvent::TextCommit("あ".to_string())
+            AuxNativeEvent::Other
         );
     }
 

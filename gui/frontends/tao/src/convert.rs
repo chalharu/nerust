@@ -88,9 +88,6 @@ pub(crate) fn feed_domain_event(
                 location: iced::keyboard::Location::Standard,
             }))
         }
-        // Iced 0.14 has no IME-commit event: the domain still carries
-        // `TextCommit` (see `adapt_event`), conversion drops it here.
-        E::TextCommit(_) => None,
         E::MousePressed(button) => {
             let button = aux_button_to_iced(button);
             Some(iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
@@ -584,18 +581,11 @@ mod tests {
     }
 
     #[test]
-    fn feed_drops_text_commit_without_iced_counterpart() {
+    fn feed_drops_unmapped_domain_events() {
         use crate::aux::domain::AuxNativeEvent as E;
         let (mut cursor, mut modifiers, should_close) = feed_harness();
         assert!(
-            feed_domain_event(
-                E::TextCommit("あ".to_string()),
-                &mut cursor,
-                &mut modifiers,
-                1.0,
-                &should_close,
-            )
-            .is_none()
+            feed_domain_event(E::Other, &mut cursor, &mut modifiers, 1.0, &should_close,).is_none()
         );
     }
 
@@ -708,7 +698,6 @@ mod tests {
             E::Resized(800, 600),
             E::ScaleChanged(2.0),
             E::Other,
-            E::TextCommit("あ".to_string()),
         ] {
             assert!(
                 feed_domain_event(event, &mut cursor, &mut modifiers, 1.0, &should_close).is_none()
