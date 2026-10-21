@@ -106,8 +106,8 @@ class SafRepository(private val context: Context) : AutoCloseable {
     private fun sweepSupersededMarkers(directory: DocumentFile, name: String, order: String) {
         for (marker in directory.listFiles()) {
             val markerName = marker.name
-            if (markerName == null || !markerName.startsWith(PREFIX) || !markerName.endsWith(".commit")) continue
-            if (markerName == "$PREFIX$order.commit") continue
+            if (!isCommitMarker(markerName)) continue
+            if (markerName == commitMarkerName(order)) continue
             try {
                 val raw = readCommitMarker(marker) ?: continue
                 val record = JSONObject(raw)
@@ -167,7 +167,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
     }
 
     private fun commitMarkers(files: Array<DocumentFile>): List<DocumentFile> =
-        files.filter { it.name?.let { name -> name.startsWith(PREFIX) && name.endsWith(".commit") } == true }
+        files.filter { isCommitMarker(it.name) }
 
     private fun readCommitMarker(marker: DocumentFile): String? {
         val stream = context.contentResolver.openInputStream(marker.uri) ?: return null
@@ -210,13 +210,13 @@ class SafRepository(private val context: Context) : AutoCloseable {
 
     private fun publish(directory: DocumentFile, name: String, data: String?, size: Long): Boolean {
         val existing = directory.listFiles().mapNotNull {
-            it.name?.takeIf { name -> name.startsWith(PREFIX) && name.endsWith(".commit") }
+            it.name?.takeIf { name -> isCommitMarker(name) }
                 ?.removePrefix(PREFIX)?.take(19)?.toLongOrNull()
         }.maxOrNull() ?: 0L
         val order = generationClock.updateAndGet { maxOf(it + 1, existing + 1, System.currentTimeMillis()) }
             .toString().padStart(19, '0') + "-" + UUID.randomUUID()
         // Octet-stream avoids providers appending a MIME-derived .json extension.
-        val marker = directory.createFile("application/octet-stream", "$PREFIX$order.commit") ?: return false
+        val marker = directory.createFile("application/octet-stream", commitMarkerName(order)) ?: return false
         return try {
             val record = JSONObject().put("version", 1).put("name", name).put("order", order)
                 .put("data", data ?: JSONObject.NULL).put("size", size).put("complete", true).toString()
@@ -226,13 +226,18 @@ class SafRepository(private val context: Context) : AutoCloseable {
             sweepSupersededMarkers(directory, name, order)
             true
         } catch (error: Exception) {
-            runCatching { marker.delete() }
-            // The staged data belongs to this failed commit only; drop it too.
-            data?.takeIf { it.startsWith(PREFIX) }?.let { staged ->
-                runCatching { directory.findFile(staged)?.delete() }
-            }
+            abortPublish(directory, marker, data)
             Log.w(TAG, "SAF commit failed; previous generation retained", error)
             false
+        }
+    }
+
+    /** Remove a failed commit's marker and its staged data file. */
+    private fun abortPublish(directory: DocumentFile, marker: DocumentFile, data: String?) {
+        runCatching { marker.delete() }
+        // The staged data belongs to this failed commit only; drop it too.
+        data?.takeIf { it.startsWith(PREFIX) }?.let { staged ->
+            runCatching { directory.findFile(staged)?.delete() }
         }
     }
 
@@ -269,7 +274,15 @@ class SafRepository(private val context: Context) : AutoCloseable {
     companion object {
         private const val TAG = "Nerust"
         private const val PREFIX = ".nerust-generation-"
+        private const val COMMIT_SUFFIX = ".commit"
         private val generationClock = AtomicLong()
+
+        /** Commit-marker file name for one publish order. */
+        internal fun commitMarkerName(order: String) = "$PREFIX$order$COMMIT_SUFFIX"
+
+        /** True for files this repository manages as commit markers. */
+        internal fun isCommitMarker(name: String?) =
+            name != null && name.startsWith(PREFIX) && name.endsWith(COMMIT_SUFFIX)
     }
 
     private val readSessions = SafReadSessions()

@@ -90,6 +90,9 @@ dependencies {
     val documentFileVersion = "1.1.0"
     val junitVersion = "4.13.2"
     val lifecycleVersion = "2.11.0"
+    val savedStateVersion = "1.5.0"
+    val androidxTestVersion = "1.7.0"
+    val androidxTestExtVersion = "1.3.0"
 
     implementation(composeBom)
     implementation("androidx.compose.material3:material3")
@@ -97,13 +100,13 @@ dependencies {
     implementation("androidx.documentfile:documentfile:$documentFileVersion")
     implementation("androidx.lifecycle:lifecycle-runtime:$lifecycleVersion")
     implementation("androidx.lifecycle:lifecycle-viewmodel:$lifecycleVersion")
-    implementation("androidx.savedstate:savedstate:1.5.0")
+    implementation("androidx.savedstate:savedstate:$savedStateVersion")
 
     testImplementation("junit:junit:$junitVersion")
 
-    androidTestImplementation("androidx.test:core:1.7.0")
-    androidTestImplementation("androidx.test:runner:1.7.0")
-    androidTestImplementation("androidx.test:rules:1.7.0")
-    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:core:$androidxTestVersion")
+    androidTestImplementation("androidx.test:runner:$androidxTestVersion")
+    androidTestImplementation("androidx.test:rules:$androidxTestVersion")
+    androidTestImplementation("androidx.test.ext:junit:$androidxTestExtVersion")
     androidTestImplementation("junit:junit:$junitVersion")
 }
