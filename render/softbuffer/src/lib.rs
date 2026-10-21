@@ -147,7 +147,7 @@ impl PixelIndexer<'_> {
         match *self {
             Self::Rgba { src } => rgba_texel(src, 0, i),
             Self::Palette { src, palette } => palette_texel(src, palette, 0, i),
-            Self::PaletteTable { src, table } => palette_table_texel(src, &table, 0, i),
+            Self::PaletteTable { src, table } => palette_table_texel(src, table, 0, i),
             Self::Ntsc { buf } => ntsc_texel(buf, 0, i),
         }
     }
@@ -249,7 +249,7 @@ impl SoftbufferRenderer {
                 }
                 PixelIndexer::PaletteTable { src, table } => {
                     Self::horizontal_row(dst_y_index, dst_w, lut, px, resize_buffer, |i| {
-                        palette_table_texel(src, &table, src_y_index, i)
+                        palette_table_texel(src, table, src_y_index, i)
                     });
                 }
                 PixelIndexer::Ntsc { buf } => {
