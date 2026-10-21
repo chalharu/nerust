@@ -14,7 +14,7 @@ use nerust_settings_core::model::local::{
 
 use crate::session::{
     notification::{Message, NotificationLevel},
-    osd_transient::{FrameChannel, OsdRow, TransientPolicy, falls_back_to_modal},
+    osd_transient::{FrameChannel, OsdRow, TransientPolicy},
 };
 
 /// One metrics read per tick: `metrics()` locks and queries the emu thread.
@@ -77,19 +77,28 @@ pub(crate) struct ModalRouter<'a> {
 }
 
 impl ModalRouter<'_> {
+    /// Single routing home: enabled levels pass; without a composited
+    /// frame only modal-worthy rows survive as modal, the rest drop.
     pub(crate) fn route(&self, kind: &Message) -> ModalRoute {
         let level: NotificationLevel = kind.level();
         if !self.policy.enabled(level) {
             return ModalRoute::Drop;
         }
-        // No composited frame and not modal-worthy: drop the row.
-        if self.channel == FrameChannel::Unpresented && !kind.wants_modal() {
-            return ModalRoute::Drop;
-        }
-        if falls_back_to_modal(kind, self.policy, self.channel) {
-            ModalRoute::Modal
-        } else {
-            ModalRoute::Transient
+        match self.channel {
+            FrameChannel::Unpresented => {
+                if kind.wants_modal() {
+                    ModalRoute::Modal
+                } else {
+                    ModalRoute::Drop
+                }
+            }
+            FrameChannel::Composited => {
+                if level == NotificationLevel::Error && self.policy.error_modal {
+                    ModalRoute::Modal
+                } else {
+                    ModalRoute::Transient
+                }
+            }
         }
     }
 }
