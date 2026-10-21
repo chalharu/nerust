@@ -296,7 +296,9 @@ fn shared_frame_validation_maps_metadata_errors_on_every_path() {
         assert_eq!((layout.width, layout.height, layout.need), (2, 2, 264));
         assert_eq!(
             validate_frame(&frame, size, VideoFrameFormat::Palette, unpack).err(),
-            Some(FrameError::ProfileMismatch)
+            Some(FrameError::Shared(
+                nerust_render_traits::FrameError::ProfileMismatch
+            ))
         );
         for size in [
             LogicalSize {
@@ -310,7 +312,9 @@ fn shared_frame_validation_maps_metadata_errors_on_every_path() {
         ] {
             assert_eq!(
                 validate_frame(&frame, size, VideoFrameFormat::Rgba, unpack).err(),
-                Some(FrameError::ProfileMismatch)
+                Some(FrameError::Shared(
+                    nerust_render_traits::FrameError::ProfileMismatch
+                ))
             );
         }
     }
@@ -318,10 +322,12 @@ fn shared_frame_validation_maps_metadata_errors_on_every_path() {
     for unpack in [true, false] {
         assert_eq!(
             validate_frame(&frame, size, VideoFrameFormat::Rgba, unpack).err(),
-            Some(FrameError::TooShort {
-                need: 264,
-                have: 263,
-            })
+            Some(FrameError::Shared(
+                nerust_render_traits::FrameError::TooShort {
+                    need: 264,
+                    have: 263,
+                }
+            ))
         );
     }
 }
