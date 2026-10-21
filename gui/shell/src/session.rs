@@ -720,11 +720,11 @@ impl SessionHandle {
     }
 
     /// Cached window title for the current tick; rebuilds only on tick, selection, or name change.
-    pub fn window_title_cached(&mut self, tick: &osd::TickMetrics) -> &str {
+    pub fn window_title_cached(&mut self, paused: bool, loaded: bool) -> &str {
         let name = self.cached_display_name;
         let input = title::TitleInput {
-            paused: tick.paused,
-            loaded: tick.loaded,
+            paused,
+            loaded,
             system_name: name,
             active_slot: self.active_slot_id(),
             slot_count: self.slots().len(),
@@ -992,7 +992,9 @@ mod session_cov_tests {
             mapper: Box::new(super::fs::FsMapper),
         });
         let tick = session.tick_metrics();
-        let _ = session.window_title_cached(&tick).to_string();
+        let _ = session
+            .window_title_cached(tick.paused, tick.loaded)
+            .to_string();
         let _ = session
             .notification_history_lines_cached(Default::default())
             .len();
