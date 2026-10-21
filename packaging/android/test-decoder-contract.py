@@ -7,11 +7,11 @@ key enum and request-id wrapper are fixtures; codec and validator are real files
 import importlib.util
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import tomllib
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location("generator", Path(__file__).with_name("generate-contract.py"))
@@ -103,17 +103,26 @@ def harness(schema):
     return "\n".join(lines) + "\n"
 
 
+def prepare_probe(root, schema):
+    (root / "src").mkdir()
+    (root / "Cargo.toml").write_text(manifest())
+    (root / "src/lib.rs").write_text(harness(schema))
+    # Keep transitive versions aligned with the workspace instead of resolving
+    # a second, newer dependency graph in this temporary project.
+    (root / "Cargo.lock").write_bytes((GEN.ROOT / "Cargo.lock").read_bytes())
+
+
 def main():
     schema = json.loads((GEN.RUST / "bridge_events.v1.json").read_text())
     with tempfile.TemporaryDirectory(prefix="nerust-android-decoder-") as directory:
         root = Path(directory)
-        (root / "src").mkdir()
-        (root / "Cargo.toml").write_text(manifest())
-        (root / "src/lib.rs").write_text(harness(schema))
+        prepare_probe(root, schema)
         env = dict(os.environ, RUSTC_WRAPPER="")
         env.setdefault("CARGO_BUILD_JOBS", "2")
         env["CARGO_TARGET_DIR"] = str(Path(env.get("CARGO_TARGET_DIR", "/tmp/nerust-android-contract-target")).resolve() / "decoder-probes")
-        subprocess.run(["cargo", "test", "--offline", "--manifest-path", str(root / "Cargo.toml"), "--lib"],
+        # A cold CI cache must be allowed to fetch locked dependencies. Explicit
+        # caller policy (e.g. CARGO_NET_OFFLINE) is still inherited via env.
+        subprocess.run(["cargo", "test", "--manifest-path", str(root / "Cargo.toml"), "--lib"],
                        env=env, check=True)
     print(f"Android real decoder schema probes: OK ({len(probes(schema))} cases)")
 

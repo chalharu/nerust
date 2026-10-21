@@ -38,16 +38,6 @@ impl ModalLine {
     }
 }
 
-/// Queue caps for the OSD subsystem, in one home instead of scattered literals.
-pub(crate) struct OsdLimits;
-
-impl OsdLimits {
-    /// Sequential display (one showing row) plus pending rows.
-    pub(crate) const MAX_TRANSIENT_QUEUED: usize = 2;
-    /// Sequential modal batches; overflow drops the oldest.
-    pub(crate) const MAX_MODAL_QUEUED: usize = 8;
-}
-
 /// Pure outcome of one modal pump step: data only, never touching `format!` or the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ModalPump {
@@ -184,7 +174,7 @@ pub trait ModalSource {
 
 impl ModalBox {
     /// Cap shared by queue and requeue paths (drop-oldest discipline).
-    const MAX_QUEUED: usize = OsdLimits::MAX_MODAL_QUEUED;
+    const MAX_QUEUED: usize = 8;
 
     #[cfg(test)]
     pub(crate) fn push(&mut self, text: String) {
@@ -371,8 +361,7 @@ mod modal_cov_tests {
     }
 
     #[test]
-    fn limits_match_documented_caps() {
-        assert_eq!(OsdLimits::MAX_TRANSIENT_QUEUED, 2);
-        assert_eq!(OsdLimits::MAX_MODAL_QUEUED, 8);
+    fn modal_limit_matches_documented_cap() {
+        assert_eq!(ModalBox::MAX_QUEUED, 8);
     }
 }

@@ -6,9 +6,8 @@ use std::time::{Duration, Instant};
 
 use nerust_settings_core::model::local::NotificationSettings;
 
-use crate::session::{
-    notification::{NotificationKind, NotificationLevel, ReplaceGroup, append_count},
-    osd_modal::OsdLimits,
+use crate::session::notification::{
+    NotificationKind, NotificationLevel, ReplaceGroup, append_count,
 };
 
 #[derive(Debug, Clone)]
@@ -159,6 +158,9 @@ pub(crate) fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: Rc<str
 }
 
 impl TransientQueue {
+    /// Two pending rows plus the single showing row.
+    const MAX_QUEUED: usize = 2;
+
     /// Re-project retained domain messages under current presentation policy.
     pub(crate) fn refresh(
         &mut self,
@@ -304,7 +306,7 @@ impl TransientQueue {
         };
         self.current = Some(item);
         self.pending.push_front(demoted);
-        while self.pending.len() > OsdLimits::MAX_TRANSIENT_QUEUED {
+        while self.pending.len() > Self::MAX_QUEUED {
             Self::evict_overflow(&mut self.pending, VictimEdge::Newest);
         }
         None
@@ -347,7 +349,7 @@ impl TransientQueue {
         self.pending.push_back(item);
         // Full queue drops the lowest severity first; Errors drop
         // only when every queued row is an Error.
-        while self.pending.len() > OsdLimits::MAX_TRANSIENT_QUEUED {
+        while self.pending.len() > Self::MAX_QUEUED {
             Self::evict_overflow(&mut self.pending, VictimEdge::Oldest);
         }
         RouteEffect::QueuedBehind
@@ -645,6 +647,19 @@ mod tests {
             queue.visible_row().map(|row| row.text.to_string()),
             Some("second".to_string())
         );
+    }
+
+    #[test]
+    fn pending_queue_keeps_at_most_two_rows() {
+        let mut queue = TransientQueue::default();
+        let now = Instant::now();
+        for key in ["a", "b", "info"] {
+            queue.route_row(test_item(NotificationLevel::Info, key, now));
+        }
+        assert_eq!(TransientQueue::MAX_QUEUED, 2);
+        assert_eq!(queue.pending.len(), 2);
+        assert_eq!(queue.pending.front().unwrap().base.as_ref(), "b");
+        assert_eq!(queue.pending.back().unwrap().base.as_ref(), "info");
     }
 
     #[test]

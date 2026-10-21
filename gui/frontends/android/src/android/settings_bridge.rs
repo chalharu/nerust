@@ -7,7 +7,8 @@ use jni::objects::{JObject, JString, JValue};
 use winit::platform::android::activity::AndroidApp;
 
 use super::bridge::{self, SettingsDialogResult};
-use super::settings_model::{AndroidSettings, SETTINGS_SCHEMA_VERSION, SettingDef};
+use super::settings_model::{AndroidSettings, SETTINGS_SCHEMA_VERSION};
+use super::settings_schema::SettingDef;
 use crate::settings_flight::SettingsRequestId;
 use nerust_settings_core::model::local::ScreenOrientation;
 
@@ -125,7 +126,7 @@ fn show_settings_with_env_inner(
 
     bridge::call_bridge_method(
         env,
-        &activity,
+        activity,
         &bridge::methods::SHOW_SETTINGS_DIALOG,
         &[JValue::Object(payload.as_ref())],
     )?;

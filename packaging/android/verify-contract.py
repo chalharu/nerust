@@ -7,9 +7,9 @@ No Android SDK, JVM, or third-party Python package is needed.
 """
 import importlib.util
 import json
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location("generator", Path(__file__).with_name("generate-contract.py"))
@@ -29,7 +29,7 @@ def require(condition, message):
 def uncomment(text):
     # Preserve strings containing comment-like characters.
     return re.sub(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/',
-                  lambda m: m[0] if m[0].startswith('"') else " ", text, flags=re.S)
+                  lambda m: m[0] if m[0].startswith('"') else " ", text, flags=re.DOTALL)
 
 
 def sources():
@@ -81,7 +81,7 @@ def validate_jni(registration, table, activity, callbacks):
     for text in callbacks:
         for match in re.finditer(
                 r'pub\s+extern\s+"system"\s+fn\s+(Java_\w+)\s*\((.*?)\)\s*([^\{]*)\{',
-                uncomment(text), re.S):
+                uncomment(text), re.DOTALL):
             symbol, args, result = match.groups()
             require(not result.strip(), f"unsupported JNI callback return: {symbol}")
             args = [arg.strip() for arg in args.split(",") if arg.strip()]
@@ -136,11 +136,11 @@ def validate_decoder(definitions, decoder):
     decoder = uncomment(decoder)
     require(re.search(r'#\[serde\(tag = "type", rename_all = "snake_case"\)\]\s*enum BridgeEventV1', decoder),
             "unsupported decoder enum representation")
-    enum = re.search(r'enum BridgeEventV1\s*\{(.*?)\n\}', decoder, re.S)
+    enum = re.search(r'enum BridgeEventV1\s*\{(.*?)\n\}', decoder, re.DOTALL)
     require(enum, "missing typed event decoder")
     variant_pattern = r'(\w+)\s*\{([^{}]*)\}\s*,?'
-    variants = re.findall(variant_pattern, enum[1], re.S)
-    require(not re.sub(variant_pattern, '', enum[1], flags=re.S).strip(), "unparsed decoder variant")
+    variants = re.findall(variant_pattern, enum[1], re.DOTALL)
+    require(not re.sub(variant_pattern, '', enum[1], flags=re.DOTALL).strip(), "unparsed decoder variant")
     expected = {}
     for variant, body in variants:
         event = re.sub(r'(?<!^)(?=[A-Z])', '_', variant).lower()
@@ -163,7 +163,7 @@ def validate_decoder(definitions, decoder):
                       for name, prop in definition["properties"].items()}
               for event, definition in definitions.items()}
     require(expected == actual, f"schema/typed decoder fields differ: {actual} != {expected}")
-    require(re.search(r'if\s+version\s*!=\s*BRIDGE_EVENT_VERSION\s*\{.*?return None;', decoder, re.S),
+    require(re.search(r'if\s+version\s*!=\s*BRIDGE_EVENT_VERSION\s*\{.*?return None;', decoder, re.DOTALL),
             "decoder must reject unsupported versions")
     require(re.search(r'let mut value: serde_json::Value = serde_json::from_str\(raw\).ok\(\)\?;\s*'
                       r'validate_bridge_event\(&mut value\)\?;\s*'
@@ -174,7 +174,7 @@ def validate_decoder(definitions, decoder):
 def validate_producer(definitions, producer):
     producer = uncomment(producer)
     builders = re.findall(r'internal fun (\w+)\(([^()]*)\): String\s*=\s*JSONObject\(\)(.*?)\.toString\(\)',
-                          producer, re.S)
+                          producer, re.DOTALL)
     require({name for name, _, _ in builders} == {"menuEventJson", "controllerEventJson"},
             "unparsed event producers")
     for name, args, body in builders:
@@ -193,7 +193,7 @@ def validate_producer(definitions, producer):
             kind = arg_types.get(value)
             if value == "BRIDGE_EVENT_VERSION":
                 kind = "integer"
-            elif value.startswith('"') or value.startswith("MenuAction."):
+            elif value.startswith(('"', "MenuAction.")):
                 kind = "string"
             require(kind is not None, f"unsupported producer value: {value}")
             fields[key] = kind

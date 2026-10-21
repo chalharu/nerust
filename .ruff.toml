@@ -1,2 +1,3 @@
 extend-exclude = ["roms"]
 force-exclude = true
+target-version = "py311"

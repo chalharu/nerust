@@ -20,8 +20,8 @@ pub enum GbcPersistenceError {
     )]
     MapperKindMismatch {
         component: &'static str,
-        expected: crate::cartridge_mbc::MbcKind,
-        actual: crate::cartridge_mbc::MbcKind,
+        expected: crate::cartridge_descriptor::MbcKind,
+        actual: crate::cartridge_descriptor::MbcKind,
     },
     #[error("invalid machine state: {0}")]
     InvalidState(String),

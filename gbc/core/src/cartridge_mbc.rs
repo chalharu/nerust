@@ -28,23 +28,9 @@ pub use mbc7::Mbc7;
 pub use mmm01::Mmm01;
 pub use wisdom_tree::WisdomTree;
 
-const PERSISTENT_STATE_SCHEMA_VERSION: u32 = 1;
+pub use crate::cartridge_descriptor::MbcKind;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum MbcKind {
-    RomOnly,
-    Mbc1,
-    Mbc2,
-    Mbc3,
-    Mbc5,
-    Mbc6,
-    Mbc7,
-    M161,
-    Mmm01,
-    WisdomTree,
-    HuC1,
-    HuC3,
-}
+const PERSISTENT_STATE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MbcPersistentState {
@@ -844,7 +830,14 @@ mod tests {
             .expect("battery state");
         let mut target = Mbc2::new(vec![0; 0x8000], true);
 
-        assert!(target.import_persistent_state(&state).is_err());
+        assert!(matches!(
+            target.import_persistent_state(&state),
+            Err(GbcPersistenceError::MapperKindMismatch {
+                component: "MBC persistent state",
+                expected: MbcKind::Mbc2,
+                actual: MbcKind::Mbc1,
+            })
+        ));
     }
 
     #[test]
