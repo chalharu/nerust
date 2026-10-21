@@ -270,16 +270,6 @@ impl EmuCluster {
             .ok_or(SessionError::NoCore)
     }
 
-    /// Shared live core behind the [`LiveCore`](crate::emu_core::LiveCore) port.
-    pub(crate) fn core(&self) -> Result<&dyn LiveCore, SessionError> {
-        self.require_live()
-    }
-
-    /// Exclusive live core for swaps and rebuilds.
-    pub(crate) fn core_mut(&mut self) -> Result<&mut Box<dyn LiveCore>, SessionError> {
-        self.require_live_mut()
-    }
-
     /// Shared live core, mapping absence once to the slot `Empty` fault.
     /// Save/load paths use this so `NoCore` never fans out at call sites.
     pub(crate) fn live_or_empty(
@@ -567,7 +557,7 @@ impl SessionHandle {
     }
 
     pub fn render_profile(&self) -> Option<&VideoRenderProfile> {
-        self.emu.core().ok().map(|c| c.render_profile())
+        self.emu.require_live().ok().map(|c| c.render_profile())
     }
 
     /// Swap the display buffer, then report the fresh tick.
@@ -581,18 +571,18 @@ impl SessionHandle {
         if let Some(gui_input) = self.emu.input_mut() {
             gui_input.publish();
         }
-        if let Ok(core) = self.emu.core_mut() {
+        if let Ok(core) = self.emu.require_live_mut() {
             core.swap_frame_buffer();
         }
     }
 
     /// Raw display buffer for one render call; `None` without a live core.
     pub fn frame_buffer(&self) -> Option<&FrameBuffer> {
-        self.emu.core().ok().map(|c| c.frame_buffer())
+        self.emu.require_live().ok().map(|c| c.frame_buffer())
     }
 
     pub fn clear_display(&mut self) {
-        if let Ok(core) = self.emu.core_mut() {
+        if let Ok(core) = self.emu.require_live_mut() {
             core.clear_display();
         }
     }
