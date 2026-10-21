@@ -1,6 +1,7 @@
 //! Persistence ports: slot/autosave/mapper backends plus the manager-facing traits.
 //! Platform adapters implement these; `fs` holds the desktop filesystem one.
 
+use crate::emu_core::{PreviewRgba, SlotOpFailure};
 use nerust_core_traits::identity::SystemIdentity;
 use nerust_persistence::{
     error::PersistenceError,
@@ -9,8 +10,31 @@ use nerust_persistence::{
     thumbnail::ThumbnailSource,
 };
 
-/// Re-exported from the live-core home; ports depend on it, never define it.
-pub use crate::emu_core::StateExporter;
+/// Persistence-facing view of the live core: slot bytes are stored verbatim.
+/// Domain-owned port; the live core implements it, never defines it.
+pub trait StateExporter {
+    /// Export raw core state bytes for slot storage.
+    fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure>;
+    /// Import raw core state bytes previously resolved by the caller.
+    fn import_state(&self, data: Vec<u8>) -> Result<(), SlotOpFailure>;
+    /// Preview pixels for the slot thumbnail, if a frame is available.
+    fn export_preview(&self) -> Option<PreviewRgba>;
+    /// Identity the slot is filed under.
+    fn export_identity(&self) -> Option<SystemIdentity>;
+    /// Canonical media identity for slot filing; defaults to [`export_identity`](Self::export_identity).
+    fn canonical_media_identity(&self) -> Option<SystemIdentity> {
+        self.export_identity()
+    }
+    /// Export the battery-backed mapper save, if the core holds one.
+    fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure>;
+    /// Import a battery-backed mapper save from disk.
+    fn import_mapper(&self, bytes: Vec<u8>) -> Result<(), SlotOpFailure>;
+    /// Resolve a stored state blob to raw core bytes.
+    /// Default decodes the shell envelope; backends never call the free function directly.
+    fn resolve_format(&self, bytes: &[u8]) -> Vec<u8> {
+        crate::state::resolve_state_format(bytes)
+    }
+}
 
 /// Whether a save also moves the active-slot pointer. Explicit enum:
 /// a bare `bool` at six call sites never says which way it flips.

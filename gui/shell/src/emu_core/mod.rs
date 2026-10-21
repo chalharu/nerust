@@ -7,6 +7,7 @@ use std::{
     },
 };
 
+use crate::session::ports::StateExporter;
 use nerust_core_traits::{
     CoreConfig, CoreOptions, EmuCommand, LoadCommand, StateDataCommand, SwapAudioCommand,
     SwapFrameSlotCommand,
@@ -114,32 +115,6 @@ pub fn state_fault_to_failure(fault: StateFault) -> SlotOpFailure {
         StateFault::Corrupt => F::Corrupt,
         StateFault::Incompatible => F::Incompatible,
         StateFault::Other(_) => F::Corrupt,
-    }
-}
-
-/// Persistence-facing view of the live core: slot bytes are stored verbatim.
-/// The caller resolves the envelope via [`StateExporter::resolve_format`].
-pub trait StateExporter {
-    /// Export raw core state bytes for slot storage.
-    fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure>;
-    /// Import raw core state bytes previously resolved by the caller.
-    fn import_state(&self, data: Vec<u8>) -> Result<(), SlotOpFailure>;
-    /// Preview pixels for the slot thumbnail, if a frame is available.
-    fn export_preview(&self) -> Option<PreviewRgba>;
-    /// Identity the slot is filed under.
-    fn export_identity(&self) -> Option<SystemIdentity>;
-    /// Canonical media identity for slot filing; defaults to [`export_identity`](Self::export_identity).
-    fn canonical_media_identity(&self) -> Option<SystemIdentity> {
-        self.export_identity()
-    }
-    /// Export the battery-backed mapper save, if the core holds one.
-    fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure>;
-    /// Import a battery-backed mapper save from disk.
-    fn import_mapper(&self, bytes: Vec<u8>) -> Result<(), SlotOpFailure>;
-    /// Resolve a stored state blob to raw core bytes.
-    /// Default decodes the shell envelope; backends never call the free function directly.
-    fn resolve_format(&self, bytes: &[u8]) -> Vec<u8> {
-        crate::state::resolve_state_format(bytes)
     }
 }
 
@@ -324,16 +299,6 @@ impl<T: LiveStepPort + LiveInspectPort + LiveSnapshotPort + LiveMemoryPort + ?Si
 {
 }
 
-/// Persist leg of the live core: single port for slot bytes.
-pub trait LivePersistPort {
-    fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError>;
-    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), CorePersistenceError>;
-    fn generate_preview(&self) -> Option<PreviewRgba>;
-    fn canonical_media_identity(&self) -> Option<SystemIdentity>;
-    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, CorePersistenceError>;
-    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError>;
-}
-
 /// Report from storing a fetched image decode: generation, pixels, and freshness.
 #[derive(Debug)]
 pub struct StoredImages {
@@ -357,7 +322,7 @@ pub trait LiveImagePort {
 
 /// Full live core: all narrow legs plus the owned drain handle.
 pub trait LiveCore:
-    LivePlayback + LiveFramePort + LiveAudioPort + LiveDebugPort + LivePersistPort + LiveImagePort
+    LivePlayback + LiveFramePort + LiveAudioPort + LiveDebugPort + LiveImagePort
 {
     /// Owned handle for the async debug drain.
     fn drain_handle(&self) -> Box<dyn LiveCore>;
@@ -834,19 +799,6 @@ impl EmuCore {
         result
     }
 
-    pub fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, OperationError> {
-        LivePersistPort::save_mapper_raw(self).map_err(persistence_to_operation)
-    }
-
-    pub fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), OperationError> {
-        LivePersistPort::load_mapper_raw(self, bytes).map_err(persistence_to_operation)
-    }
-
-    /// Raw state save: Send SaveState, return core bytes (no header, no preview).
-    pub fn save_state_raw(&self) -> Result<Vec<u8>, OperationError> {
-        LivePersistPort::save_state_raw(self).map_err(persistence_to_operation)
-    }
-
     /// Preview frame from the shared buffer; `None` without a frame.
     fn generate_preview(&self) -> Option<PreviewRgba> {
         generate_preview_frame(&*self.emu)
@@ -1096,11 +1048,6 @@ impl EmuCore {
             }
         }
     }
-
-    /// Raw state load: Send LoadState with raw core bytes. No format fallback.
-    pub fn load_state_raw(&self, data: Vec<u8>) -> Result<(), OperationError> {
-        LivePersistPort::load_state_raw(self, data).map_err(persistence_to_operation)
-    }
 }
 
 impl EmuCore {
@@ -1185,52 +1132,6 @@ impl EmuCore {
                 fresh: true,
             }
         }
-    }
-}
-
-impl LivePersistPort for EmuCore {
-    fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError> {
-        EmuThread::request_via(
-            |cmd| self.emu.send(cmd),
-            |reply| EmuCommand::SaveState { reply },
-        )
-        .map_err(op_to_persistence)
-    }
-
-    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), CorePersistenceError> {
-        let result = EmuThread::request_via(
-            |cmd| self.emu.send(cmd),
-            |reply| EmuCommand::LoadState(Box::new(StateDataCommand { data, reply })),
-        )
-        .map_err(op_to_persistence);
-        self.mark_images_dirty();
-        result
-    }
-
-    fn generate_preview(&self) -> Option<PreviewRgba> {
-        EmuCore::generate_preview(self)
-    }
-
-    fn canonical_media_identity(&self) -> Option<SystemIdentity> {
-        self.canonical_media_identity()
-    }
-
-    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, CorePersistenceError> {
-        EmuThread::request_via(
-            |cmd| self.emu.send(cmd),
-            |reply| EmuCommand::MapperSave { reply },
-        )
-        .map_err(op_to_persistence)
-    }
-
-    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError> {
-        let result = EmuThread::request_via(
-            |cmd| self.emu.send(cmd),
-            |reply| EmuCommand::ImportMapperSave(Box::new(StateDataCommand { data: bytes, reply })),
-        )
-        .map_err(op_to_persistence);
-        self.mark_images_dirty();
-        result
     }
 }
 
@@ -1436,32 +1337,66 @@ impl LiveCore for EmuCore {
     }
 }
 
-/// Session-side adapter: narrow persist port plus fault mapping.
-/// Lives here so `session::error` never imports the core.
+/// Domain-port converse: thread request, then the two stored mappings.
 impl StateExporter for EmuCore {
     fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
-        LivePersistPort::save_state_raw(self).map_err(|error| error.slot_failure())
+        request_slot(|| {
+            EmuThread::request_via(
+                |cmd| self.emu.send(cmd),
+                |reply| EmuCommand::SaveState { reply },
+            )
+        })
     }
 
     fn import_state(&self, data: Vec<u8>) -> Result<(), SlotOpFailure> {
-        LivePersistPort::load_state_raw(self, data).map_err(|error| error.slot_failure())
+        let result = request_slot(|| {
+            EmuThread::request_via(
+                |cmd| self.emu.send(cmd),
+                |reply| EmuCommand::LoadState(Box::new(StateDataCommand { data, reply })),
+            )
+        });
+        self.mark_images_dirty();
+        result
     }
 
     fn export_preview(&self) -> Option<PreviewRgba> {
-        LivePersistPort::generate_preview(self)
+        self.generate_preview()
     }
 
     fn export_identity(&self) -> Option<SystemIdentity> {
-        LivePersistPort::canonical_media_identity(self)
+        self.canonical_media_identity()
     }
 
     fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
-        LivePersistPort::save_mapper_raw(self).map_err(|error| error.slot_failure())
+        request_slot(|| {
+            EmuThread::request_via(
+                |cmd| self.emu.send(cmd),
+                |reply| EmuCommand::MapperSave { reply },
+            )
+        })
     }
 
     fn import_mapper(&self, bytes: Vec<u8>) -> Result<(), SlotOpFailure> {
-        LivePersistPort::load_mapper_raw(self, bytes).map_err(|error| error.slot_failure())
+        let result = request_slot(|| {
+            EmuThread::request_via(
+                |cmd| self.emu.send(cmd),
+                |reply| {
+                    EmuCommand::ImportMapperSave(Box::new(StateDataCommand { data: bytes, reply }))
+                },
+            )
+        });
+        self.mark_images_dirty();
+        result
     }
+}
+
+/// Thread request classified end to end: transport, then slot fault.
+fn request_slot<T>(
+    request: impl FnOnce() -> Result<T, OperationError<nerust_core_traits::CoreError>>,
+) -> Result<T, SlotOpFailure> {
+    request()
+        .map_err(op_to_persistence)
+        .map_err(|error| error.slot_failure())
 }
 
 fn op_to_persistence(e: OperationError<nerust_core_traits::CoreError>) -> CorePersistenceError {
@@ -1469,16 +1404,6 @@ fn op_to_persistence(e: OperationError<nerust_core_traits::CoreError>) -> CorePe
         OperationError::WorkerUnavailable => CorePersistenceError::WorkerUnavailable,
         OperationError::NoReply => CorePersistenceError::NoReply,
         OperationError::Reply(s) => CorePersistenceError::Core(s),
-    }
-}
-
-/// Compatibility boundary for the older playback-facing raw helpers. Persistence
-/// orchestration uses the typed port directly; diagnostic text is never classified.
-fn persistence_to_operation(error: CorePersistenceError) -> OperationError {
-    match error {
-        CorePersistenceError::WorkerUnavailable => OperationError::WorkerUnavailable,
-        CorePersistenceError::NoReply => OperationError::NoReply,
-        CorePersistenceError::Core(error) => OperationError::Reply(error.to_string()),
     }
 }
 
@@ -1828,7 +1753,7 @@ mod tests {
 
 #[cfg(test)]
 mod port_tests {
-    use super::{LiveAudioPort, LiveFramePort, LivePersistPort, LivePlayback, LiveSnapshotPort};
+    use super::{LiveAudioPort, LiveFramePort, LivePlayback, LiveSnapshotPort};
     use crate::emu_core::*;
     use crate::test_helpers::build_test_core_parts;
     use nerust_system_traits::factory::load::MediaObject;
@@ -1856,8 +1781,8 @@ mod port_tests {
         LiveAudioPort::restart_audio(&core).expect("restart");
         assert!(LiveSnapshotPort::memory_spaces(&core).is_ok());
         assert!(LiveSnapshotPort::output_channels(&core).is_ok());
-        assert!(LivePersistPort::save_state_raw(&core).is_ok());
-        assert!(LivePersistPort::save_mapper_raw(&core).is_ok());
+        assert!(StateExporter::export_state(&core).is_ok());
+        assert!(StateExporter::export_mapper(&core).is_ok());
     }
 
     #[test]
@@ -1916,18 +1841,19 @@ mod port_tests {
     }
 
     #[test]
-    fn persist_port_round_trips_state_and_mapper() {
+    fn exporter_round_trips_state_and_mapper() {
+        use crate::session::ports::StateExporter;
         let core = loaded_core();
-        let saved = LivePersistPort::save_state_raw(&core).expect("save");
-        LivePersistPort::load_state_raw(&core, saved).expect("load");
-        let mapper = LivePersistPort::save_mapper_raw(&core).expect("mapper save");
+        let saved = core.export_state().expect("save");
+        core.import_state(saved).expect("load");
+        let mapper = core.export_mapper().expect("mapper save");
         if let Some(bytes) = mapper {
-            LivePersistPort::load_mapper_raw(&core, bytes).expect("mapper load");
+            core.import_mapper(bytes).expect("mapper load");
         }
-        assert!(LivePersistPort::canonical_media_identity(&core).is_some());
-        let _ = LivePersistPort::generate_preview(&core);
+        assert!(core.export_identity().is_some());
+        let _ = core.export_preview();
         let _ = LiveCore::drain_handle(&core);
-        fn bound<T: LivePersistPort>() {}
+        fn bound<T: StateExporter>() {}
         bound::<EmuCore>();
     }
 }
@@ -1935,13 +1861,19 @@ mod port_tests {
 #[cfg(test)]
 mod narrow_tests {
     use super::*;
-    use super::{LiveAudioPort, LiveFramePort, LivePersistPort, LivePlayback};
+    use super::{LiveAudioPort, LiveFramePort, LivePlayback};
+    use crate::session::ports::StateExporter;
 
-    /// Static bound check: the core implements every narrow leg.
+    /// Static bound check: the core implements every narrow leg plus the domain port.
     #[test]
     fn core_implements_all_narrow_ports() {
         fn bound<
-            T: LivePlayback + LiveFramePort + LiveAudioPort + LiveDebugPort + LivePersistPort,
+            T: LivePlayback
+                + LiveFramePort
+                + LiveAudioPort
+                + LiveDebugPort
+                + LiveImagePort
+                + StateExporter,
         >() {
         }
         bound::<EmuCore>();
