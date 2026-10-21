@@ -156,7 +156,7 @@ mod tests {
     use nerust_gbc_factory::GbcFactory;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::{
-        load::{RomLoadTarget, RomLoaderError},
+        load::{LoadEnvironment, RomLoadTarget, RomLoaderError},
         registry::SystemRegistry,
         settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
@@ -175,13 +175,16 @@ mod tests {
         snapshot: SettingsSnapshot,
     }
 
-    impl RomLoadTarget for LoadRecorder {
+    impl LoadEnvironment for LoadRecorder {
         fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
             None
         }
         fn settings_snapshot(&self) -> &SettingsSnapshot {
             &self.snapshot
         }
+    }
+
+    impl RomLoadTarget for LoadRecorder {
         fn load_resolved(
             &mut self,
             _media: MediaObject,
