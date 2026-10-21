@@ -316,7 +316,14 @@ impl SlotBackend for AndroidStorageBackend {
             if size == Some(0) || !Self::scan_candidate(size) {
                 continue;
             }
-            let path = dir.child(&name)?;
+            // Untrusted listing names never abort the scan: skip and move on.
+            let path = match dir.child(&name) {
+                Ok(path) => path,
+                Err(_) => {
+                    log::warn!("SAF scan: skipping invalid entry name");
+                    continue;
+                }
+            };
             let bytes = self.read(&path)?;
             let Some(bytes) = bytes else {
                 continue;
