@@ -538,7 +538,7 @@ fn apply_settings_rolls_back_on_save_failure() {
     // Core should still be present (swap-back rollback succeeded without
     // reconstructing anything)
     assert!(
-        session.emu.core().is_ok(),
+        session.emu.require_live().is_ok(),
         "core should be restored after rollback"
     );
     let _ = std::fs::remove_dir_all(dir);

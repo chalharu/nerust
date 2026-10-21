@@ -44,7 +44,7 @@ impl RomLoadTarget for SessionHandle {
 
 impl SessionHandle {
     pub fn restart_audio(&mut self) {
-        if let Some(core) = self.emu.core().ok()
+        if let Some(core) = self.emu.require_live().ok()
             && let Err(error) = core.restart_audio()
         {
             log::warn!("restart_audio failed: {error}");
@@ -72,7 +72,7 @@ impl SessionHandle {
         // and restores its execution state; no persistence configuration changed yet.
         let was_running = tick.loaded && !tick.paused;
         if was_running {
-            self.emu.core()?.pause()?;
+            self.emu.require_live()?.pause()?;
         }
         let flush = self
             .media
@@ -81,7 +81,7 @@ impl SessionHandle {
         if let Err(error) = flush {
             if was_running
                 && !self.execution_held
-                && let Err(rollback) = self.emu.core()?.resume()
+                && let Err(rollback) = self.emu.require_live()?.resume()
             {
                 return Err(SessionError::Rollback {
                     apply: Box::new(error.into()),
@@ -105,7 +105,7 @@ impl SessionHandle {
             // Replacement is already published: a resume rejection is a partial load,
             // never proof that the old media is still active.
             self.emu
-                .core()?
+                .require_live()?
                 .resume()
                 .map_err(|_| nerust_emu_thread::OperationError::NoReply)?;
         }
@@ -116,7 +116,7 @@ impl SessionHandle {
         if let Ok(exporter) = self.emu.exporter() {
             self.media.persistence.flush_mapper_save(exporter)?;
         }
-        if let Ok(core) = self.emu.core_mut() {
+        if let Ok(core) = self.emu.require_live_mut() {
             core.unload()?;
         }
         self.emu.invalidate_debug();

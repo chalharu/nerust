@@ -76,7 +76,7 @@ impl SessionHandle {
 
     pub fn debug_spaces(&self) -> Vec<nerust_core_traits::debugger::SpaceInfo> {
         self.emu
-            .core()
+            .require_live()
             .ok()
             .and_then(|core| core.memory_spaces().ok())
             .unwrap_or_default()
@@ -91,14 +91,14 @@ impl SessionHandle {
     /// Tick-threaded form of [`debug_snapshot_ready`](Self::debug_snapshot_ready):
     /// no metrics lock here, so per-tick debugger gates share the pass tick.
     pub fn debug_snapshot_ready_tick(&self, tick: &TickMetrics) -> bool {
-        self.emu.core().ok().is_none_or(|_| tick.paused)
+        self.emu.require_live().ok().is_none_or(|_| tick.paused)
     }
 
     /// Owned context for one async drain flight: a boxed live core plus
     /// the shared write transaction. See [`DrainCtx`].
     pub(crate) fn drain_ctx(&self) -> crate::debug::DrainCtx {
         crate::debug::DrainCtx::new(
-            self.emu.core().ok().map(|core| core.drain_handle()),
+            self.emu.require_live().ok().map(|core| core.drain_handle()),
             Arc::clone(&self.debug_txn),
         )
         .with_epoch(Arc::clone(&self.emu.debug_epoch))
@@ -120,7 +120,7 @@ impl SessionHandle {
             DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, InspectRequest, SnapshotRequest,
         };
         let mut snapshot = debug_vm::DebugSnapshot::default();
-        let core = match self.emu.core().ok() {
+        let core = match self.emu.require_live().ok() {
             Some(core) => core,
             None => return snapshot,
         };
@@ -171,7 +171,7 @@ impl SessionHandle {
         space: nerust_core_traits::debugger::SpaceId,
         addr: u32,
     ) -> Option<u8> {
-        let core = self.emu.core().ok()?;
+        let core = self.emu.require_live().ok()?;
         let result = core
             .inspect(nerust_core_traits::debugger::InspectRequest {
                 space: Some(space),
@@ -193,7 +193,7 @@ impl SessionHandle {
         value: u8,
     ) -> bool {
         use nerust_core_traits::debugger::MemoryWrite;
-        let core = match self.emu.core().ok() {
+        let core = match self.emu.require_live().ok() {
             Some(core) => core,
             None => return false,
         };
@@ -210,7 +210,7 @@ impl SessionHandle {
 
     /// Single-register write for the register viewer.
     pub fn debug_write_register(&self, name: &'static str, value: u64) -> debug_vm::StatusMessage {
-        let core = match self.emu.core().ok() {
+        let core = match self.emu.require_live().ok() {
             Some(core) => core,
             None => return CoreFailure::no_core().thread_status(),
         };
@@ -252,7 +252,7 @@ impl SessionHandle {
             Some(staged) => staged,
             None => return debug_vm::StatusMessage::NothingToWrite,
         };
-        let core = match self.emu.core().ok() {
+        let core = match self.emu.require_live().ok() {
             Some(core) => core,
             None => return CoreFailure::no_core().thread_status(),
         };
@@ -283,7 +283,7 @@ impl SessionHandle {
 
     /// Pause for debugger control.
     pub fn debug_pause(&self) -> debug_vm::StatusMessage {
-        match self.emu.core().ok() {
+        match self.emu.require_live().ok() {
             Some(core) => match core.pause() {
                 Ok(()) => debug_vm::StatusMessage::Paused,
                 Err(error) => CoreFailure::from(error).pause_status(true),
@@ -294,10 +294,10 @@ impl SessionHandle {
 
     /// Resume for debugger control.
     pub fn debug_resume(&self) -> debug_vm::StatusMessage {
-        if self.execution_held && self.emu.core().is_ok() {
+        if self.execution_held && self.emu.require_live().is_ok() {
             return debug_vm::StatusMessage::Paused;
         }
-        match self.emu.core().ok() {
+        match self.emu.require_live().ok() {
             Some(core) => match core.resume() {
                 Ok(()) => debug_vm::StatusMessage::Resume,
                 Err(error) => CoreFailure::from(error).pause_status(false),
@@ -312,7 +312,7 @@ impl SessionHandle {
         &self,
         unit: nerust_core_traits::debugger::StepUnit,
     ) -> debug_vm::StatusMessage {
-        let core = match self.emu.core().ok() {
+        let core = match self.emu.require_live().ok() {
             Some(core) => core,
             None => return CoreFailure::no_core().thread_status(),
         };

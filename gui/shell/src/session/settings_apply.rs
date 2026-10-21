@@ -61,7 +61,7 @@ impl SessionHandle {
         let assignments_changed = next_assignments
             .as_ref()
             .is_some_and(|a| a != previous_assignments);
-        let strategy = plan.live_strategy(assignments_changed, self.emu.core().is_ok());
+        let strategy = plan.live_strategy(assignments_changed, self.emu.require_live().is_ok());
         DerivedApply {
             plan,
             strategy,
@@ -91,7 +91,11 @@ impl SessionHandle {
                 ))
             });
             if let Some(((profile, palette), (old_profile, old_palette))) = assets {
-                if let Err(error) = self.emu.core_mut()?.apply_presentation(profile, palette) {
+                if let Err(error) = self
+                    .emu
+                    .require_live_mut()?
+                    .apply_presentation(profile, palette)
+                {
                     // Queue rejection is the only proof that nothing changed. A missing
                     // reply or a compound failure may have already replaced the frame slot.
                     if !matches!(error, nerust_emu_thread::OperationError::WorkerUnavailable) {
@@ -106,7 +110,7 @@ impl SessionHandle {
         }
         if rebuild {
             if tick.loaded && !tick.paused {
-                self.emu.core()?.pause()?;
+                self.emu.require_live()?.pause()?;
                 applied.push(AppliedOperation::ResumePrevious);
             }
             let assignments = derived
@@ -117,22 +121,22 @@ impl SessionHandle {
             applied.push(AppliedOperation::Runtime(self.emu.replace(next)));
             return Ok(());
         }
-        if self.emu.core().is_ok() && derived.plan.audio_backend_changed {
+        if self.emu.require_live().is_ok() && derived.plan.audio_backend_changed {
             let previous = self
                 .speaker_factory()
                 .build_speaker(&self.settings.snapshot.local);
             let previous_rate = previous.sample_rate();
             let speaker = self.speaker_factory().build_speaker(&next_settings.local);
             let rate = speaker.sample_rate();
-            if let Err(error) = self.emu.core()?.swap_audio_backend(speaker, rate) {
+            if let Err(error) = self.emu.require_live()?.swap_audio_backend(speaker, rate) {
                 if !matches!(error, nerust_emu_thread::OperationError::WorkerUnavailable) {
                     applied.push(AppliedOperation::Audio(previous, previous_rate));
                 }
                 return Err(error.into());
             }
             applied.push(AppliedOperation::Audio(previous, previous_rate));
-        } else if self.emu.core().is_ok() && derived.plan.audio_volume_changed {
-            self.emu.core()?.set_volume(volume(next_settings))?;
+        } else if self.emu.require_live().is_ok() && derived.plan.audio_volume_changed {
+            self.emu.require_live()?.set_volume(volume(next_settings))?;
             applied.push(AppliedOperation::Volume(volume(&self.settings.snapshot)));
         }
         Ok(())
@@ -152,18 +156,23 @@ impl AppliedOperation {
     fn revert(self, session: &mut SessionHandle) -> Result<(), SessionError> {
         match self {
             Self::Runtime(previous) => session.emu.restore(previous),
-            Self::ResumePrevious if !session.execution_held => session.emu.core()?.resume()?,
+            Self::ResumePrevious if !session.execution_held => {
+                session.emu.require_live()?.resume()?
+            }
             Self::ResumePrevious => {}
             Self::Presentation(profile, palette) => {
                 session
                     .emu
-                    .core_mut()?
+                    .require_live_mut()?
                     .apply_presentation(profile, palette)?;
             }
             Self::Audio(speaker, rate) => {
-                session.emu.core()?.swap_audio_backend(speaker, rate)?;
+                session
+                    .emu
+                    .require_live()?
+                    .swap_audio_backend(speaker, rate)?;
             }
-            Self::Volume(volume) => session.emu.core()?.set_volume(volume)?,
+            Self::Volume(volume) => session.emu.require_live()?.set_volume(volume)?,
         }
         Ok(())
     }
@@ -236,7 +245,7 @@ impl SessionHandle {
                     // Never advertise a known-running state after failed compensation.
                     let _ = self
                         .emu
-                        .core()
+                        .require_live()
                         .and_then(|core| core.pause().map_err(Into::into));
                     self.emu.invalidate_debug();
                     self.debug_clear_write();
@@ -278,7 +287,7 @@ impl SessionHandle {
             self.debug_clear_write();
             if tick.loaded && !tick.paused && !self.execution_held {
                 self.emu
-                    .core()?
+                    .require_live()?
                     .resume()
                     .map_err(|_| nerust_emu_thread::OperationError::NoReply)?;
             }
@@ -719,7 +728,8 @@ mod settings_apply_cov_tests {
         let (mut session, dir) = test_session_with_failing_settings();
         let original = session.settings_snapshot().clone();
         let assignments = session.input.current_assignments.clone();
-        let core = session.emu.core().unwrap() as *const dyn crate::emu_core::LiveCore as *const ();
+        let core = session.emu.require_live().unwrap() as *const dyn crate::emu_core::LiveCore
+            as *const ();
         let mut next = original.clone();
         next.app_state.controller_assignments.insert(
             session.active_system_id_box().unwrap(),
@@ -733,7 +743,8 @@ mod settings_apply_cov_tests {
             Err(SessionError::Settings(_))
         ));
         assert_eq!(
-            session.emu.core().unwrap() as *const dyn crate::emu_core::LiveCore as *const (),
+            session.emu.require_live().unwrap() as *const dyn crate::emu_core::LiveCore
+                as *const (),
             core
         );
         assert_eq!(session.input.current_assignments, assignments);

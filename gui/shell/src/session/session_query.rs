@@ -44,14 +44,17 @@ impl SessionHandle {
     pub fn tick_metrics(&self) -> TickMetrics {
         // Single lock-free snapshot per pass: pause/load truth rides the
         // stamped atomics, counters read the thread side directly.
-        let snapshot = self.emu.core().ok().map(|c| c.tick_snapshot()).unwrap_or(
-            crate::emu_core::TickSnapshot {
+        let snapshot = self
+            .emu
+            .require_live()
+            .ok()
+            .map(|c| c.tick_snapshot())
+            .unwrap_or(crate::emu_core::TickSnapshot {
                 fps: 0.0,
                 paused: false,
                 loaded: false,
                 frames: 0,
-            },
-        );
+            });
         TickMetrics {
             fps: snapshot.fps,
             paused: snapshot.paused,
@@ -61,7 +64,7 @@ impl SessionHandle {
     }
 
     pub fn window_size(&self) -> WindowSize {
-        let Some(core) = self.emu.core().ok() else {
+        let Some(core) = self.emu.require_live().ok() else {
             return WindowSize::default();
         };
         let profile = core.render_profile();
