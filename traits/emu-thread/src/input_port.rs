@@ -6,13 +6,15 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+#[cfg(test)]
+use nerust_input_traits::InputResources;
 use nerust_input_traits::{
-    BufferError, InputReceiver, InputResources, InputStateBuffer, InputValue, TypedInputResources,
-    UnifiedFieldMap,
+    BufferError, InputReceiver, InputStateBuffer, InputValue, TypedInputResources, UnifiedFieldMap,
 };
 
 /// Shared-state factory behind the split endpoints.
-/// Lets shells hold the port without naming thread primitives.
+/// Test-only: production assembles through [`InputSplit::typed_split`].
+#[cfg(test)]
 pub trait InputPort: std::fmt::Debug + Send + Sync {
     /// Build the GUI producer from shared state.
     fn gui_endpoint(&self) -> GuiInput;
@@ -25,6 +27,7 @@ pub trait InputPort: std::fmt::Debug + Send + Sync {
 pub struct InputSplit {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
     flag: Arc<AtomicBool>,
+    #[cfg(test)]
     new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
 }
 
@@ -54,8 +57,8 @@ impl InputSplit {
         (gui, receiver, fields)
     }
 
-    /// Check the erased factory once at assembly, then use typed swaps on the
-    /// frame path. No core or frame-time receive needs a runtime downcast.
+    /// Test-only erased assembly; production uses [`typed_split`](Self::typed_split).
+    #[cfg(test)]
     pub fn typed_resources<B: InputStateBuffer + 'static>(
         resources: InputResources,
     ) -> Result<
@@ -91,8 +94,8 @@ impl InputSplit {
         Ok((gui, receiver, fields))
     }
 
-    /// Test-only constructor: production assembles through [`InputSplit::typed_resources`].
-    /// Stays `pub` for downstream test helpers; never use in production paths.
+    /// Test-only constructor; never use in production paths.
+    #[cfg(test)]
     pub fn spawn_typed<B>(make: impl Fn() -> B + Send + Sync + 'static) -> Self
     where
         B: InputStateBuffer + 'static,
@@ -110,7 +113,7 @@ impl InputSplit {
         }
     }
 
-    /// Test-only move-out: production assembles through [`InputSplit::typed_resources`].
+    /// Test-only move-out: production assembles through [`InputSplit::typed_split`].
     #[cfg(test)]
     pub fn from_resources(resources: InputResources) -> (Self, UnifiedFieldMap) {
         let (field_map, factory) = resources.into_parts();
@@ -135,6 +138,7 @@ impl std::fmt::Debug for InputSplit {
     }
 }
 
+#[cfg(test)]
 impl InputPort for InputSplit {
     fn gui_endpoint(&self) -> GuiInput {
         GuiInput::from_split(self)
@@ -146,7 +150,9 @@ impl InputPort for InputSplit {
 }
 
 /// GUI thread input delivery.
+/// Test-only erased endpoint; production uses the typed split.
 /// `Send` but `!Sync`: keep each `GuiInput` on its owning GUI thread.
+#[cfg(test)]
 #[derive(Debug)]
 pub struct GuiInput {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
@@ -160,6 +166,7 @@ pub struct GuiInput {
     mismatch_warned: bool,
 }
 
+#[cfg(test)]
 impl GuiInput {
     fn from_split(split: &InputSplit) -> Self {
         Self {
@@ -213,6 +220,7 @@ impl GuiInput {
     }
 }
 
+#[cfg(test)]
 impl nerust_input_traits::InputStaging for GuiInput {
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
         GuiInput::set(self, field, value)
@@ -223,16 +231,20 @@ impl nerust_input_traits::InputStaging for GuiInput {
     }
 }
 
+#[cfg(test)]
 impl nerust_input_traits::InputPublish for GuiInput {
     fn publish(&mut self) {
         GuiInput::publish(self);
     }
 }
 
+#[cfg(test)]
 impl nerust_input_traits::GuiInputPort for GuiInput {}
 
 /// Emu thread input consumer.
 /// `Send` but `!Sync`: keep each `EmuInput` on its owning emu thread.
+/// Test-only erased endpoint; production receives through [`InputReceiver`].
+#[cfg(test)]
 #[derive(Debug)]
 pub struct EmuInput {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
@@ -240,6 +252,7 @@ pub struct EmuInput {
     read_buf: Box<dyn InputStateBuffer>,
 }
 
+#[cfg(test)]
 impl EmuInput {
     fn from_split(split: &InputSplit) -> Self {
         Self {
