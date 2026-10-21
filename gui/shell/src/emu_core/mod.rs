@@ -101,121 +101,11 @@ pub struct TickSnapshot {
     pub frames: u64,
 }
 
-/// Playback leg of the live core.
-pub trait LivePlayback {
-    fn pause(&self) -> Result<(), OperationError>;
-    fn resume(&self) -> Result<(), OperationError>;
-    fn reset(&self) -> Result<(), OperationError>;
-    fn load(
-        &self,
-        media: &MediaObject,
-        core_options: Option<Box<dyn CoreOptions>>,
-    ) -> Result<(), OperationError>;
-    fn unload(&self) -> Result<(), OperationError>;
-    fn metrics(&self) -> ConsoleMetrics;
-    fn tick_snapshot(&self) -> TickSnapshot;
-    /// Lock-free pause flag: per-frame image gates read this instead of locking `metrics()`.
-    fn is_paused(&self) -> bool {
-        self.tick_snapshot().paused
-    }
-}
-
-/// Frame leg of the live core.
-pub trait LiveFramePort {
-    fn render_profile(&self) -> &VideoRenderProfile;
-    fn swap_frame_buffer(&mut self);
-    fn frame_buffer(&self) -> &FrameBuffer;
-    fn clear_display(&mut self);
-    fn apply_presentation(
-        &mut self,
-        profile: VideoRenderProfile,
-        palette: Box<[u32]>,
-    ) -> Result<(), OperationError>;
-}
-
-/// Audio leg of the live core.
-pub trait LiveAudioPort {
-    fn set_volume(&self, volume: f32) -> Result<(), OperationError>;
-    fn restart_audio(&self) -> Result<(), OperationError>;
-    fn swap_audio_backend(
-        &self,
-        backend: Box<dyn AudioBackend>,
-        sample_rate: u32,
-    ) -> Result<(), OperationError>;
-}
-
-/// Narrow step leg of the debug port.
-pub trait LiveStepPort {
-    fn step(&self, unit: StepUnit) -> Result<Result<u64, DebuggerError>, OperationError>;
-    /// Narrow send half for the async drain.
-    fn step_send(
-        &self,
-        unit: StepUnit,
-    ) -> Result<std::sync::mpsc::Receiver<Result<u64, DebuggerError>>, OperationError>;
-}
-
-/// Narrow inspect leg of the debug port.
-pub trait LiveInspectPort {
-    fn inspect(
-        &self,
-        req: InspectRequest,
-    ) -> Result<Result<InspectResult, InspectError>, OperationError>;
-    fn inspect_send(
-        &self,
-        req: InspectRequest,
-    ) -> Result<std::sync::mpsc::Receiver<Result<InspectResult, InspectError>>, OperationError>;
-}
-
 /// Shared image batch: generation plus refcounted decode.
 pub type SharedDebugImages = std::sync::Arc<Vec<DebugImage>>;
 /// Debugger image outcome: thread errors outer, domain errors inner.
 pub type DebugImagesOutcome =
     Result<Result<(u64, SharedDebugImages), DebuggerError>, OperationError>;
-
-/// Narrow snapshot leg of the debug port.
-pub trait LiveSnapshotPort {
-    fn debug_snapshot_batch(
-        &self,
-        req: SnapshotRequest,
-    ) -> Result<Result<SnapshotResult, DebuggerError>, OperationError>;
-    fn debug_images(&self) -> DebugImagesOutcome;
-    fn memory_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError>;
-    fn output_channels(&self) -> Result<Vec<String>, OperationError>;
-    fn snapshot_batch_send(
-        &self,
-        req: SnapshotRequest,
-    ) -> Result<std::sync::mpsc::Receiver<Result<SnapshotResult, DebuggerError>>, OperationError>;
-}
-
-/// Narrow memory-write leg of the debug port.
-pub trait LiveMemoryPort {
-    fn write_memory(&self, req: MemoryWrite) -> Result<Result<(), DebuggerError>, OperationError>;
-    fn write_register(
-        &self,
-        name: &'static str,
-        value: u64,
-    ) -> Result<Result<(), DebuggerError>, OperationError>;
-    fn write_memory_send(
-        &self,
-        req: MemoryWrite,
-    ) -> Result<std::sync::mpsc::Receiver<Result<(), DebuggerError>>, OperationError>;
-    fn write_register_send(
-        &self,
-        name: &'static str,
-        value: u64,
-    ) -> Result<std::sync::mpsc::Receiver<Result<(), DebuggerError>>, OperationError>;
-}
-
-/// Debug leg of the live core: union of the narrow step/inspect/snapshot/memory legs.
-pub trait LiveDebugPort:
-    LiveStepPort + LiveInspectPort + LiveSnapshotPort + LiveMemoryPort
-{
-}
-
-impl<T: LiveStepPort + LiveInspectPort + LiveSnapshotPort + LiveMemoryPort + ?Sized> LiveDebugPort
-    for T
-{
-}
 
 /// Report from storing a fetched image decode: generation, pixels, and freshness.
 #[derive(Debug)]
@@ -228,24 +118,126 @@ pub struct StoredImages {
     pub fresh: bool,
 }
 
-/// Narrow image-cache leg of the live core: paused PPU-viewer cache.
-pub trait LiveImagePort {
+/// Always-live surface: playback, frame, audio, and the paused image cache.
+/// Frontends hold `&dyn LiveCore`; debug traffic uses [`LiveDebugPort`].
+pub trait LiveCore: LiveDebugPort {
+    /// Playback leg.
+    fn pause(&self) -> Result<(), OperationError>;
+    /// Playback leg.
+    fn resume(&self) -> Result<(), OperationError>;
+    /// Playback leg.
+    fn reset(&self) -> Result<(), OperationError>;
+    /// Playback leg.
+    fn load(
+        &self,
+        media: &MediaObject,
+        core_options: Option<Box<dyn CoreOptions>>,
+    ) -> Result<(), OperationError>;
+    /// Playback leg.
+    fn unload(&self) -> Result<(), OperationError>;
+    /// Playback leg.
+    fn metrics(&self) -> ConsoleMetrics;
+    /// Playback leg.
+    fn tick_snapshot(&self) -> TickSnapshot;
+    /// Lock-free pause flag: per-frame image gates read this instead of locking `metrics()`.
+    fn is_paused(&self) -> bool {
+        self.tick_snapshot().paused
+    }
+    /// Frame leg.
+    fn render_profile(&self) -> &VideoRenderProfile;
+    /// Frame leg.
+    fn swap_frame_buffer(&mut self);
+    /// Frame leg.
+    fn frame_buffer(&self) -> &FrameBuffer;
+    /// Frame leg.
+    fn clear_display(&mut self);
+    /// Frame leg.
+    fn apply_presentation(
+        &mut self,
+        profile: VideoRenderProfile,
+        palette: Box<[u32]>,
+    ) -> Result<(), OperationError>;
+    /// Audio leg.
+    fn set_volume(&self, volume: f32) -> Result<(), OperationError>;
+    /// Audio leg.
+    fn restart_audio(&self) -> Result<(), OperationError>;
+    /// Audio leg.
+    fn swap_audio_backend(
+        &self,
+        backend: Box<dyn AudioBackend>,
+        sample_rate: u32,
+    ) -> Result<(), OperationError>;
+    /// Paused PPU-viewer cache leg.
     fn mark_images_dirty(&self);
+    /// Paused PPU-viewer cache leg.
     fn images_cache_lookup(&self) -> Option<(u64, std::sync::Arc<Vec<DebugImage>>)>;
+    /// Paused PPU-viewer cache leg.
     fn images_send(
         &self,
     ) -> Result<std::sync::mpsc::Receiver<Result<Vec<DebugImage>, DebuggerError>>, OperationError>;
+    /// Paused PPU-viewer cache leg.
     fn images_store(&self, images: Vec<DebugImage>) -> StoredImages;
-}
-
-/// Full live core: all narrow legs plus the owned drain handle.
-pub trait LiveCore:
-    LivePlayback + LiveFramePort + LiveAudioPort + LiveDebugPort + LiveImagePort
-{
     /// Owned handle for the async debug drain.
     fn drain_handle(&self) -> Box<dyn LiveCore>;
     /// Persistence view of this core; object-safe upcast for boxed holders.
     fn as_exporter(&self) -> &dyn StateExporter;
+}
+
+/// Debug surface: step, inspect, snapshot, and memory writes.
+/// The debugger holds `&dyn LiveDebugPort`; nothing else names these legs.
+pub trait LiveDebugPort {
+    /// Step leg plus its narrow send half for the async drain.
+    fn step(&self, unit: StepUnit) -> Result<Result<u64, DebuggerError>, OperationError>;
+    /// Step leg plus its narrow send half for the async drain.
+    fn step_send(
+        &self,
+        unit: StepUnit,
+    ) -> Result<std::sync::mpsc::Receiver<Result<u64, DebuggerError>>, OperationError>;
+    /// Inspect leg plus its narrow send half.
+    fn inspect(
+        &self,
+        req: InspectRequest,
+    ) -> Result<Result<InspectResult, InspectError>, OperationError>;
+    /// Inspect leg plus its narrow send half.
+    fn inspect_send(
+        &self,
+        req: InspectRequest,
+    ) -> Result<std::sync::mpsc::Receiver<Result<InspectResult, InspectError>>, OperationError>;
+    /// Snapshot leg plus its narrow send half.
+    fn debug_snapshot_batch(
+        &self,
+        req: SnapshotRequest,
+    ) -> Result<Result<SnapshotResult, DebuggerError>, OperationError>;
+    /// Snapshot leg: on-demand system images.
+    fn debug_images(&self) -> DebugImagesOutcome;
+    /// Snapshot leg: memory spaces and output channels.
+    fn memory_spaces(&self) -> Result<Vec<SpaceInfo>, OperationError>;
+    /// Snapshot leg: memory spaces and output channels.
+    fn output_channels(&self) -> Result<Vec<String>, OperationError>;
+    /// Snapshot leg send half.
+    fn snapshot_batch_send(
+        &self,
+        req: SnapshotRequest,
+    ) -> Result<std::sync::mpsc::Receiver<Result<SnapshotResult, DebuggerError>>, OperationError>;
+    /// Memory-write leg plus its narrow send halves.
+    fn write_memory(&self, req: MemoryWrite) -> Result<Result<(), DebuggerError>, OperationError>;
+    /// Memory-write leg plus its narrow send halves.
+    fn write_register(
+        &self,
+        name: &'static str,
+        value: u64,
+    ) -> Result<Result<(), DebuggerError>, OperationError>;
+    /// Memory-write leg send half.
+    fn write_memory_send(
+        &self,
+        req: MemoryWrite,
+    ) -> Result<std::sync::mpsc::Receiver<Result<(), DebuggerError>>, OperationError>;
+    /// Memory-write leg send half.
+    fn write_register_send(
+        &self,
+        name: &'static str,
+        value: u64,
+    ) -> Result<std::sync::mpsc::Receiver<Result<(), DebuggerError>>, OperationError>;
 }
 
 /// Cached system images for the debugger PPU viewer; viewers compare `generation`.
@@ -1053,7 +1045,7 @@ impl EmuCore {
     }
 }
 
-impl LivePlayback for EmuCore {
+impl LiveCore for EmuCore {
     fn pause(&self) -> Result<(), OperationError> {
         self.pause()
     }
@@ -1089,9 +1081,7 @@ impl LivePlayback for EmuCore {
     fn is_paused(&self) -> bool {
         self.is_paused()
     }
-}
 
-impl LiveFramePort for EmuCore {
     fn render_profile(&self) -> &VideoRenderProfile {
         self.render_profile()
     }
@@ -1115,9 +1105,7 @@ impl LiveFramePort for EmuCore {
     ) -> Result<(), OperationError> {
         self.apply_presentation(profile, palette)
     }
-}
 
-impl LiveAudioPort for EmuCore {
     fn set_volume(&self, volume: f32) -> Result<(), OperationError> {
         self.set_volume(volume)
     }
@@ -1133,9 +1121,36 @@ impl LiveAudioPort for EmuCore {
     ) -> Result<(), OperationError> {
         self.swap_audio_backend(backend, sample_rate)
     }
+
+    fn mark_images_dirty(&self) {
+        self.mark_images_dirty()
+    }
+
+    fn images_cache_lookup(&self) -> Option<(u64, std::sync::Arc<Vec<DebugImage>>)> {
+        self.images_cache_lookup()
+    }
+
+    fn images_send(
+        &self,
+    ) -> Result<std::sync::mpsc::Receiver<Result<Vec<DebugImage>, DebuggerError>>, OperationError>
+    {
+        self.images_send()
+    }
+
+    fn images_store(&self, images: Vec<DebugImage>) -> StoredImages {
+        self.images_store(images)
+    }
+
+    fn drain_handle(&self) -> Box<dyn LiveCore> {
+        self.drain_handle_boxed()
+    }
+
+    fn as_exporter(&self) -> &dyn StateExporter {
+        self
+    }
 }
 
-impl LiveStepPort for EmuCore {
+impl LiveDebugPort for EmuCore {
     fn step(&self, unit: StepUnit) -> Result<Result<u64, DebuggerError>, OperationError> {
         self.step(unit)
     }
@@ -1143,12 +1158,10 @@ impl LiveStepPort for EmuCore {
     fn step_send(
         &self,
         unit: StepUnit,
-    ) -> Result<mpsc::Receiver<Result<u64, DebuggerError>>, OperationError> {
+    ) -> Result<std::sync::mpsc::Receiver<Result<u64, DebuggerError>>, OperationError> {
         self.step_send(unit)
     }
-}
 
-impl LiveInspectPort for EmuCore {
     fn inspect(
         &self,
         req: InspectRequest,
@@ -1159,12 +1172,11 @@ impl LiveInspectPort for EmuCore {
     fn inspect_send(
         &self,
         req: InspectRequest,
-    ) -> Result<mpsc::Receiver<Result<InspectResult, InspectError>>, OperationError> {
+    ) -> Result<std::sync::mpsc::Receiver<Result<InspectResult, InspectError>>, OperationError>
+    {
         self.inspect_send(req)
     }
-}
 
-impl LiveSnapshotPort for EmuCore {
     fn debug_snapshot_batch(
         &self,
         req: SnapshotRequest,
@@ -1187,16 +1199,12 @@ impl LiveSnapshotPort for EmuCore {
     fn snapshot_batch_send(
         &self,
         req: SnapshotRequest,
-    ) -> Result<mpsc::Receiver<Result<SnapshotResult, DebuggerError>>, OperationError> {
+    ) -> Result<std::sync::mpsc::Receiver<Result<SnapshotResult, DebuggerError>>, OperationError>
+    {
         self.snapshot_batch_send(req)
     }
-}
 
-impl LiveMemoryPort for EmuCore {
-    fn write_memory(
-        &self,
-        req: nerust_core_traits::debugger::MemoryWrite,
-    ) -> Result<Result<(), nerust_core_traits::debugger::DebuggerError>, OperationError> {
+    fn write_memory(&self, req: MemoryWrite) -> Result<Result<(), DebuggerError>, OperationError> {
         self.write_memory(req)
     }
 
@@ -1204,14 +1212,14 @@ impl LiveMemoryPort for EmuCore {
         &self,
         name: &'static str,
         value: u64,
-    ) -> Result<Result<(), nerust_core_traits::debugger::DebuggerError>, OperationError> {
+    ) -> Result<Result<(), DebuggerError>, OperationError> {
         self.write_register(name, value)
     }
 
     fn write_memory_send(
         &self,
-        req: nerust_core_traits::debugger::MemoryWrite,
-    ) -> Result<mpsc::Receiver<Result<(), DebuggerError>>, OperationError> {
+        req: MemoryWrite,
+    ) -> Result<std::sync::mpsc::Receiver<Result<(), DebuggerError>>, OperationError> {
         self.write_memory_send(req)
     }
 
@@ -1219,39 +1227,8 @@ impl LiveMemoryPort for EmuCore {
         &self,
         name: &'static str,
         value: u64,
-    ) -> Result<mpsc::Receiver<Result<(), DebuggerError>>, OperationError> {
+    ) -> Result<std::sync::mpsc::Receiver<Result<(), DebuggerError>>, OperationError> {
         self.write_register_send(name, value)
-    }
-}
-
-impl crate::emu_core::LiveImagePort for EmuCore {
-    fn mark_images_dirty(&self) {
-        self.mark_images_dirty()
-    }
-
-    fn images_cache_lookup(&self) -> Option<(u64, std::sync::Arc<Vec<DebugImage>>)> {
-        self.images_cache_lookup()
-    }
-
-    fn images_send(
-        &self,
-    ) -> Result<std::sync::mpsc::Receiver<Result<Vec<DebugImage>, DebuggerError>>, OperationError>
-    {
-        self.images_send()
-    }
-
-    fn images_store(&self, images: Vec<DebugImage>) -> StoredImages {
-        self.images_store(images)
-    }
-}
-
-impl LiveCore for EmuCore {
-    fn drain_handle(&self) -> Box<dyn LiveCore> {
-        self.drain_handle_boxed()
-    }
-
-    fn as_exporter(&self) -> &dyn StateExporter {
-        self
     }
 }
 
@@ -1671,7 +1648,7 @@ mod tests {
 
 #[cfg(test)]
 mod port_tests {
-    use super::{LiveAudioPort, LiveFramePort, LivePlayback, LiveSnapshotPort};
+    use super::{LiveCore, LiveDebugPort};
     use crate::emu_core::*;
     use crate::test_helpers::build_test_core_parts;
     use nerust_system_traits::factory::load::MediaObject;
@@ -1686,19 +1663,19 @@ mod port_tests {
     #[test]
     fn narrow_ports_delegate_to_core() {
         let core = loaded_core();
-        LivePlayback::pause(&core).expect("pause");
-        LivePlayback::resume(&core).expect("resume");
-        LivePlayback::reset(&core).expect("reset");
-        let _ = LivePlayback::metrics(&core);
-        let snapshot = LivePlayback::tick_snapshot(&core);
+        LiveCore::pause(&core).expect("pause");
+        LiveCore::resume(&core).expect("resume");
+        LiveCore::reset(&core).expect("reset");
+        let _ = LiveCore::metrics(&core);
+        let snapshot = LiveCore::tick_snapshot(&core);
         assert!(snapshot.loaded);
         assert!(!snapshot.paused);
-        let _ = LiveFramePort::render_profile(&core);
-        let _ = LiveFramePort::frame_buffer(&core);
-        LiveAudioPort::set_volume(&core, 0.5).expect("volume");
-        LiveAudioPort::restart_audio(&core).expect("restart");
-        assert!(LiveSnapshotPort::memory_spaces(&core).is_ok());
-        assert!(LiveSnapshotPort::output_channels(&core).is_ok());
+        let _ = LiveCore::render_profile(&core);
+        let _ = LiveCore::frame_buffer(&core);
+        LiveCore::set_volume(&core, 0.5).expect("volume");
+        LiveCore::restart_audio(&core).expect("restart");
+        assert!(LiveDebugPort::memory_spaces(&core).is_ok());
+        assert!(LiveDebugPort::output_channels(&core).is_ok());
         assert!(StateExporter::export_state(&core).is_ok());
         assert!(StateExporter::export_mapper(&core).is_ok());
     }
@@ -1709,8 +1686,8 @@ mod port_tests {
         // Old `Clone` vs new explicit handle: same sharing, named constructor.
         let handle = core.shallow_handle();
         assert_eq!(
-            LivePlayback::tick_snapshot(&handle).frames,
-            LivePlayback::tick_snapshot(&core).frames,
+            LiveCore::tick_snapshot(&handle).frames,
+            LiveCore::tick_snapshot(&core).frames,
             "drain handle shares the frame counter"
         );
         assert_eq!(
@@ -1720,16 +1697,16 @@ mod port_tests {
         );
         // Boxed drain handle behind the port shares too.
         let boxed = LiveCore::drain_handle(&core);
-        assert!(LivePlayback::metrics(&*boxed).loaded);
+        assert!(LiveCore::metrics(&*boxed).loaded);
         assert!(boxed.as_exporter().export_identity().is_some());
     }
 
     #[test]
     fn is_paused_reads_atomic_without_metrics_lock() {
         let core = loaded_core();
-        assert!(!LivePlayback::is_paused(&core));
-        LivePlayback::pause(&core).expect("pause");
-        assert!(LivePlayback::is_paused(&core));
+        assert!(!LiveCore::is_paused(&core));
+        LiveCore::pause(&core).expect("pause");
+        assert!(LiveCore::is_paused(&core));
         assert!(core.is_paused());
     }
 
@@ -1778,22 +1755,14 @@ mod port_tests {
 
 #[cfg(test)]
 mod narrow_tests {
+    use super::LiveCore;
     use super::*;
-    use super::{LiveAudioPort, LiveFramePort, LivePlayback};
     use crate::session::ports::StateExporter;
 
     /// Static bound check: the core implements every narrow leg plus the domain port.
     #[test]
     fn core_implements_all_narrow_ports() {
-        fn bound<
-            T: LivePlayback
-                + LiveFramePort
-                + LiveAudioPort
-                + LiveDebugPort
-                + LiveImagePort
-                + StateExporter,
-        >() {
-        }
+        fn bound<T: LiveCore + LiveDebugPort + StateExporter>() {}
         bound::<EmuCore>();
     }
 }
