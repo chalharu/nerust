@@ -49,10 +49,6 @@ impl Lifecycle {
         self.auto_paused = paused;
     }
 
-    pub(super) fn resume_pending(&self) -> bool {
-        self.resume_pending
-    }
-
     /// Gate one foreground attempt: pending plus deadline clear in one place.
     /// Callers attempt only on `true`; the retry state stays inside.
     pub(super) fn resume_due(&mut self, is_resumed: bool) -> bool {
@@ -123,10 +119,6 @@ impl Lifecycle {
     /// if a retry is already scheduled.
     pub(super) fn retry_deadline(&self) -> Option<Instant> {
         self.retry_at
-    }
-
-    pub(super) fn clear_retry_deadline(&mut self) {
-        self.retry_at = None;
     }
 
     pub(super) fn record_success(&mut self) {
