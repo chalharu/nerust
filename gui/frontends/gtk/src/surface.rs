@@ -130,35 +130,45 @@ impl SurfaceExtend for Surface {
 
         // Destination-generation invalidation and uploads precede the first
         // frame on a fresh surface, including a same-size recovery attach.
-        // The poll/render borrow starts here: attach already ran borrow-free.
-        let mut state = match s.state.try_borrow_mut() {
-            Ok(state) => state,
-            Err(_) => {
-                log::warn!("gtk tick: state busy before poll, skipping frame");
-                return true;
-            }
-        };
-        let surface = self.clone();
-        s.osd
-            .borrow_mut()
-            .poll(&surface, &mut state, &s.renderer, &s.window);
-
-        if s.retry.borrow().ready(now)
-            && let Some(fb) = state.frame_buffer()
+        // Poll drops its borrow before render: the GPU pass never waits on
+        // OSD queue work, and the frame borrow spans render only.
         {
-            match s.renderer.borrow_mut().render(fb, physical_size) {
-                nerust_render_traits::renderer::RenderResult::Error => {
-                    if s.retry.borrow_mut().failed(now) {
-                        state.session.report_external_error(
-                            nerust_gui_shell::session::notification::FailureOrigin::Host,
-                            "GTK rendering failed; recreating renderer with backoff".into(),
-                        );
+            let mut state = match s.state.try_borrow_mut() {
+                Ok(state) => state,
+                Err(_) => {
+                    log::warn!("gtk tick: state busy before poll, skipping frame");
+                    return true;
+                }
+            };
+            let surface = self.clone();
+            s.osd
+                .borrow_mut()
+                .poll(&surface, &mut state, &s.renderer, &s.window);
+        }
+
+        if s.retry.borrow().ready(now) {
+            let mut state = match s.state.try_borrow_mut() {
+                Ok(state) => state,
+                Err(_) => {
+                    log::warn!("gtk tick: state busy before render, skipping frame");
+                    return true;
+                }
+            };
+            if let Some(fb) = state.frame_buffer() {
+                match s.renderer.borrow_mut().render(fb, physical_size) {
+                    nerust_render_traits::renderer::RenderResult::Error => {
+                        if s.retry.borrow_mut().failed(now) {
+                            state.session.report_external_error(
+                                nerust_gui_shell::session::notification::FailureOrigin::Host,
+                                "GTK rendering failed; recreating renderer with backoff".into(),
+                            );
+                        }
                     }
+                    nerust_render_traits::renderer::RenderResult::Presented => {
+                        s.retry.borrow_mut().succeeded()
+                    }
+                    _ => {}
                 }
-                nerust_render_traits::renderer::RenderResult::Presented => {
-                    s.retry.borrow_mut().succeeded()
-                }
-                _ => {}
             }
         }
 
