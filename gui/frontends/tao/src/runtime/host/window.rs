@@ -320,9 +320,7 @@ impl HostState {
 
     /// Load a ROM, syncing menu/title/redraw on success. Returns the failure detail on error.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        let mut target =
-            nerust_gui_shell::session::load_adapter::SessionLoadAdapter::new(&mut self.session);
-        match self.ctx.rom_loader.load_rom(path, &mut target) {
+        match self.ctx.rom_loader.load_rom(path, &mut self.session) {
             Ok(()) => {
                 self.reconcile_pause();
                 self.after_rom_load();

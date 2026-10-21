@@ -8,7 +8,6 @@ pub mod input;
 pub(crate) mod input_map;
 pub mod lifecycle;
 pub(crate) mod lifecycle_persist;
-pub mod load_adapter;
 pub mod notification;
 pub mod osd;
 pub(crate) mod osd_history;
