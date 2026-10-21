@@ -4,7 +4,7 @@ use nerust_gui_runtime::{
 };
 use nerust_gui_shell::{
     context::FrontendContext,
-    session::{SessionHandle, session_query::WindowSize},
+    session::{SessionHandle, osd::TickMetrics, session_query::WindowSize},
 };
 use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
 use nerust_settings_core::model::app_state::RememberedWindowSize;
@@ -255,8 +255,32 @@ impl HostState {
         &self.session
     }
 
-    pub(crate) fn session_mut(&mut self) -> &mut SessionHandle {
-        &mut self.session
+    /// Narrow live-core swap for the frame pump; the port stays inside.
+    pub(crate) fn swap_frame_buffer(&mut self) {
+        self.session.swap_frame_buffer();
+    }
+
+    /// Borrowed frame for the render call; `None` before the first swap.
+    pub(crate) fn frame_buffer(&self) -> Option<&nerust_render_traits::FrameBuffer> {
+        self.session.frame_buffer()
+    }
+
+    /// Host-origin failure detail for the notification queue.
+    pub(crate) fn report_host_error(&mut self, detail: String) {
+        self.session.report_external_error(
+            nerust_gui_shell::session::notification::FailureOrigin::Host,
+            detail,
+        );
+    }
+
+    /// Clear the bounded review history.
+    pub(crate) fn clear_history(&mut self) {
+        self.session.clear_notification_history();
+    }
+
+    /// Cached window title for the chrome gate.
+    pub(crate) fn cached_title(&mut self, tick: &TickMetrics) -> String {
+        self.session.window_title_cached(tick).to_owned()
     }
 
     #[cfg(test)]
@@ -519,7 +543,8 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         let _ = host.gpu_factory();
-        let _ = host.session_mut();
+        let tick = host.frame_ctx().tick();
+        let _ = host.cached_title(&tick);
         assert!(!host.session().tick_metrics().loaded);
     }
 

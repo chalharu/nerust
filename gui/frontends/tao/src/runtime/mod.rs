@@ -242,8 +242,8 @@ impl WindowRuntime {
         self.host
             .render_osd_frame(renderer.as_mut(), window_size, &ctx);
 
-        self.host.session_mut().swap_frame_buffer();
-        if let Some(fb) = self.host.session_mut().frame_buffer() {
+        self.host.swap_frame_buffer();
+        if let Some(fb) = self.host.frame_buffer() {
             let frame_counter = ctx.tick().frame_counter;
             let result = renderer.render(fb);
             self.host.on_render_result(result, frame_counter);
