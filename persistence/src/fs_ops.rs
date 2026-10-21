@@ -8,9 +8,10 @@ use std::{
 
 use crate::error::PersistenceError;
 
-/// Replace a file atomically. Errors mean the replacement did not commit.
-/// Parent-directory durability errors after rename are logged: returning failure there
-/// would let callers roll memory back while the new file is already visible on disk.
+/// Replace a file atomically. `Ok` means the replacement committed and is
+/// visible; parent-directory durability stays best-effort by design: reporting
+/// failure there would let callers roll memory back while the new file is
+/// already visible on disk, which is worse than a logged warning.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
