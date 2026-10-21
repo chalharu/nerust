@@ -102,8 +102,7 @@ impl HostState {
 
     /// Reserved edge strips in physical pixels; static per settings, not per frame.
     fn reserved_strip_with(&self, frame: &FrameSnapshot) -> ReservedStrip {
-        use nerust_gui_shell::session::osd::OsdChrome;
-        let chrome = OsdChrome::from(frame.notifications());
+        let chrome = *frame.chrome();
         let client_h = self.windows.client_height();
         let (top_rows, bottom_rows) = chrome.reserved_rows();
         ReservedStrip {
@@ -157,14 +156,14 @@ impl HostState {
     /// Drain shell notifications into display state, show error modals, refresh the overlay.
     /// Cheap when idle; safe to call every loop pass.
     pub(crate) fn poll_notifications(&mut self, ctx: &FrameCtx) {
-        use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
+        use nerust_gui_shell::session::osd::PushInput;
         let now = Instant::now();
         let language = ctx.frame().language();
         let tick = ctx.tick();
         let report = self.session.pump_osd(
             &mut self.osd.modal.manager,
             PushInput {
-                policy: TransientPolicy::from(ctx.frame().notifications()),
+                policy: *ctx.frame().policy(),
                 language,
                 now,
                 tick,
@@ -224,9 +223,9 @@ impl HostState {
         size: nerust_render_traits::SurfaceSize,
         ctx: &FrameCtx,
     ) {
-        use nerust_gui_shell::session::osd::{OsdChrome, OsdSync, OsdSyncInput};
+        use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput};
         let language = ctx.frame().language();
-        let chrome = OsdChrome::from(ctx.frame().notifications());
+        let chrome = *ctx.frame().chrome();
         // Cheap shell-side pre-gate before running the presenter.
         let geometry = (size.width, size.height, chrome);
         // Single-op memo: records and reports change atomically, so a
@@ -374,10 +373,9 @@ mod tests {
 
     #[test]
     fn sync_gate_covers_all_cheap_inputs() {
-        use nerust_gui_shell::session::osd::OsdChrome;
         let support = TestHost::new();
         let mut host = support.host;
-        let chrome = OsdChrome::from(host.frame_ctx().frame().notifications());
+        let chrome = *host.frame_ctx().frame().chrome();
         assert!(!chrome.status_enabled);
         // Idle: same generation, nothing visible, status off, no
         // geometry move -- the presenter stays untouched.

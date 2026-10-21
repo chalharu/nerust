@@ -52,18 +52,45 @@ impl FrameCtx {
 }
 
 /// One settings snapshot per entry point, threaded by reference.
+/// Derived OSD values ride along so per-frame callers never rebuild them.
 #[derive(Debug, Clone)]
-pub(crate) struct FrameSnapshot(Arc<nerust_gui_runtime::settings::SettingsSnapshot>);
+pub(crate) struct FrameSnapshot {
+    settings: Arc<nerust_gui_runtime::settings::SettingsSnapshot>,
+    chrome: nerust_gui_shell::session::osd::OsdChrome,
+    policy: nerust_gui_shell::session::osd::TransientPolicy,
+}
 
 impl FrameSnapshot {
-    pub(crate) fn notifications(
-        &self,
-    ) -> &nerust_settings_core::model::local::NotificationSettings {
-        &self.0.local.notifications
+    fn new(settings: Arc<nerust_gui_runtime::settings::SettingsSnapshot>) -> Self {
+        use nerust_gui_shell::session::osd::{OsdChrome, TransientPolicy};
+        let chrome = OsdChrome::from(&settings.local.notifications);
+        let policy = TransientPolicy::from(&settings.local.notifications);
+        Self {
+            settings,
+            chrome,
+            policy,
+        }
     }
 
     pub(crate) fn language(&self) -> nerust_settings_core::model::language::AppLanguage {
-        self.0.shared.general.language
+        self.settings.shared.general.language
+    }
+
+    /// Cached chrome: no per-frame rebuild.
+    pub(crate) fn chrome(&self) -> &nerust_gui_shell::session::osd::OsdChrome {
+        &self.chrome
+    }
+
+    #[cfg(test)]
+    pub(crate) fn settings_arc(
+        &self,
+    ) -> &std::sync::Arc<nerust_gui_runtime::settings::SettingsSnapshot> {
+        &self.settings
+    }
+
+    /// Cached transient policy: no per-frame rebuild.
+    pub(crate) fn policy(&self) -> &nerust_gui_shell::session::osd::TransientPolicy {
+        &self.policy
     }
 }
 
@@ -121,7 +148,7 @@ impl FrameCache {
             self.generation += 1;
             let fresh = Arc::new(ChromeSnapshot {
                 generation: self.generation,
-                frame: FrameSnapshot(Arc::clone(&settings)),
+                frame: FrameSnapshot::new(Arc::clone(&settings)),
                 settings,
                 system: system.map(|id| id.clone_box()),
                 slots,
@@ -211,11 +238,11 @@ mod tests {
                 .expect("headless settings apply");
             let second = host.frame_ctx();
             assert!(!Arc::ptr_eq(&first.chrome, &second.chrome));
-            assert_eq!(
-                second.frame().notifications(),
-                &settings.local.notifications
-            );
-            assert!(Arc::ptr_eq(&second.chrome.settings, &second.frame().0));
+            assert_eq!(second.frame().language(), settings.shared.general.language);
+            assert!(Arc::ptr_eq(
+                &second.chrome.settings,
+                second.frame().settings_arc()
+            ));
         }
     }
 
