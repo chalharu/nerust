@@ -93,11 +93,7 @@ impl SessionHandle {
             return Err(error.into());
         }
         PersistenceBinder::prepare(self, &candidate.emu_core, media.native_path());
-        self.emu.replace(super::ActiveRuntime::from(candidate));
-        self.debug_clear_write();
-        self.clear_input();
-        self.input.invalidate_topology();
-        self.rebuild_key_field_map();
+        self.publish_runtime(super::ActiveRuntime::from(candidate));
 
         self.remember_last_successful_rom_directory(media.native_path());
         // Move, don't clone: the core borrowed the bytes above; the media travels into storage.
