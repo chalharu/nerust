@@ -356,30 +356,36 @@ impl SoftbufferRenderer {
                 if dst_index >= dst.len() {
                     break;
                 }
-                let mut acc = [0u16; 4];
-                let mut touched = false;
-                for (slot, &(_, w)) in taps.iter().enumerate() {
-                    let Some(word) = rows[slot].and_then(|row| row.get(x)).copied() else {
-                        continue;
-                    };
-                    let src_val = RgbaWord::unpack_argb(word);
-                    acc[0] = acc[0].saturating_add((src_val[0] as u16 * w + 0x80) >> 8);
-                    acc[1] = acc[1].saturating_add((src_val[1] as u16 * w + 0x80) >> 8);
-                    acc[2] = acc[2].saturating_add((src_val[2] as u16 * w + 0x80) >> 8);
-                    acc[3] = acc[3].saturating_add((src_val[3] as u16 * w + 0x80) >> 8);
-                    touched = true;
-                }
-                dst[dst_index] = if touched {
-                    RgbaWord::pack_argb(
-                        acc[0].min(255) as u8,
-                        acc[1].min(255) as u8,
-                        acc[2].min(255) as u8,
-                        acc[3].min(255) as u8,
-                    )
-                } else {
-                    0
-                };
+                dst[dst_index] = Self::blend_taps(taps, &rows, x);
             }
+        }
+    }
+
+    /// One blended texel from at most 2 taps; untouched texels stay black.
+    /// `rows` parallels `taps`: a missing row skips its tap, never panics.
+    fn blend_taps(taps: &[(u16, u16)], rows: &[Option<&[u32]>; 2], x: usize) -> u32 {
+        let mut acc = [0u16; 4];
+        let mut touched = false;
+        for (slot, &(_, w)) in taps.iter().enumerate() {
+            let Some(word) = rows[slot].and_then(|row| row.get(x)).copied() else {
+                continue;
+            };
+            let src_val = RgbaWord::unpack_argb(word);
+            acc[0] = acc[0].saturating_add((src_val[0] as u16 * w + 0x80) >> 8);
+            acc[1] = acc[1].saturating_add((src_val[1] as u16 * w + 0x80) >> 8);
+            acc[2] = acc[2].saturating_add((src_val[2] as u16 * w + 0x80) >> 8);
+            acc[3] = acc[3].saturating_add((src_val[3] as u16 * w + 0x80) >> 8);
+            touched = true;
+        }
+        if touched {
+            RgbaWord::pack_argb(
+                acc[0].min(255) as u8,
+                acc[1].min(255) as u8,
+                acc[2].min(255) as u8,
+                acc[3].min(255) as u8,
+            )
+        } else {
+            0
         }
     }
 

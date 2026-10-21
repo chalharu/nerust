@@ -11,14 +11,8 @@ use crate::lifecycle_decision::RestoreAction;
 
 impl super::AndroidFrontend {
     pub(super) fn try_resume_foreground(&mut self, event_loop: &ActiveEventLoop) {
-        if !self.is_resumed || !self.flow.lifecycle.resume_pending() {
+        if !self.flow.lifecycle.resume_due(self.is_resumed) {
             return;
-        }
-        if let Some(retry_at) = self.flow.lifecycle.retry_deadline() {
-            if Instant::now() < retry_at {
-                return;
-            }
-            self.flow.lifecycle.clear_retry_deadline();
         }
         log::info!(
             "try_resume_foreground: attempt {}",

@@ -77,33 +77,41 @@ impl WindowRuntime {
         thread_rx.recv().ok()
     }
 
+    /// Pipeline for the live profile; reports creation faults to the host.
+    /// `None` keeps the previous renderer instead of a half-built one.
+    fn create_pipeline(
+        &mut self,
+        raw_display_handle: raw_window_handle::RawDisplayHandle,
+    ) -> Option<Box<dyn RenderPipeline>> {
+        let render_profile = self.host.render_profile()?;
+        let config = RendererConfig {
+            render_profile,
+            vsync: self.host.settings_snapshot().local.video.presentation.vsync,
+            max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
+        };
+        // Drop the old renderer before the new attach makes its own context current.
+        self.renderer = None;
+        match self
+            .host
+            .gpu_factory()
+            .create_pipeline(&config, raw_display_handle)
+        {
+            Ok(renderer) => Some(renderer),
+            Err(e) => {
+                log::error!("failed to create renderer: {e}");
+                self.host
+                    .render_failed(format!("Failed to create renderer: {e}"));
+                None
+            }
+        }
+    }
+
     fn build_renderer_and_surface(
         &mut self,
         raw_display_handle: raw_window_handle::RawDisplayHandle,
     ) -> Option<()> {
         let (raw_window_handle, size, xid) = self.host.surface_target()?;
-        let vsync = self.host.settings_snapshot().local.video.presentation.vsync;
-        let render_profile = self.host.render_profile()?;
-        let config = RendererConfig {
-            render_profile,
-            vsync,
-            max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
-        };
-        // Drop the old renderer before the new attach makes its own context current.
-        self.renderer = None;
-        let mut renderer = match self
-            .host
-            .gpu_factory()
-            .create_pipeline(&config, raw_display_handle)
-        {
-            Ok(renderer) => renderer,
-            Err(e) => {
-                log::error!("failed to create renderer: {e}");
-                self.host
-                    .render_failed(format!("Failed to create renderer: {e}"));
-                return None;
-            }
-        };
+        let mut renderer = self.create_pipeline(raw_display_handle)?;
         if let Err(e) = renderer.attach(
             raw_window_handle,
             raw_display_handle,

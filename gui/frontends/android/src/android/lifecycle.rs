@@ -53,6 +53,21 @@ impl Lifecycle {
         self.resume_pending
     }
 
+    /// Gate one foreground attempt: pending plus deadline clear in one place.
+    /// Callers attempt only on `true`; the retry state stays inside.
+    pub(super) fn resume_due(&mut self, is_resumed: bool) -> bool {
+        if !is_resumed || !self.resume_pending {
+            return false;
+        }
+        if let Some(retry_at) = self.retry_at {
+            if Instant::now() < retry_at {
+                return false;
+            }
+            self.retry_at = None;
+        }
+        true
+    }
+
     /// 1-based index of the attempt about to run (attempts + 1).
     pub(super) fn attempt_index(&self) -> u32 {
         self.retry_attempts + 1

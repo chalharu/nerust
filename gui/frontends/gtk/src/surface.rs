@@ -85,93 +85,109 @@ impl SurfaceExtend for Surface {
             }
         };
         let now = std::time::Instant::now();
-        if s.retry.borrow().ready(now)
-            && let Some((profile, rebuild)) = swap
-            && (rebuild || physical_size != s.last_size.get())
-        {
-            let result = s.window.surface().and_then(|surf| {
-                let display = gdk::Display::default()?;
-                super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
-                    let mut renderer = s.renderer.borrow_mut();
-                    if rebuild {
-                        renderer.realize(wh, dh, physical_size, &profile)
-                    } else {
-                        renderer.reattach(wh, dh, physical_size)
-                    }
-                })
-            });
-            // GPU attach runs outside the state borrow; outcome handling re-borrows briefly.
-            let mut state = match s.state.try_borrow_mut() {
-                Ok(state) => state,
-                Err(_) => {
-                    log::warn!("gtk tick: state busy after attach, skipping frame");
-                    return true;
+        SurfaceCore::attach_if_due(&s, swap, physical_size, now);
+        SurfaceCore::poll_osd(self, &s);
+        SurfaceCore::render_if_ready(&s, physical_size, now);
+        true
+    }
+}
+
+impl SurfaceCore {
+    /// Realize or reattach the GPU surface when the profile or size moved.
+    /// Attach runs outside the state borrow; outcome handling re-borrows briefly.
+    fn attach_if_due(
+        s: &SurfaceCore,
+        swap: Option<(nerust_render_traits::VideoRenderProfile, bool)>,
+        physical_size: SurfaceSize,
+        now: std::time::Instant,
+    ) {
+        let ready = s.retry.borrow().ready(now);
+        let Some((profile, rebuild)) = swap else {
+            return;
+        };
+        if !(ready && (rebuild || physical_size != s.last_size.get())) {
+            return;
+        }
+        let result = s.window.surface().and_then(|surf| {
+            let display = gdk::Display::default()?;
+            super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
+                let mut renderer = s.renderer.borrow_mut();
+                if rebuild {
+                    renderer.realize(wh, dh, physical_size, &profile)
+                } else {
+                    renderer.reattach(wh, dh, physical_size)
                 }
-            };
-            match result {
-                Some(Ok(())) => {
-                    s.last_size.set(physical_size);
-                    state.renderer_reload_pending = false;
+            })
+        });
+        let mut state = match s.state.try_borrow_mut() {
+            Ok(state) => state,
+            Err(_) => {
+                log::warn!("gtk tick: state busy after attach, skipping frame");
+                return;
+            }
+        };
+        match result {
+            Some(Ok(())) => {
+                s.last_size.set(physical_size);
+                state.renderer_reload_pending = false;
+            }
+            failure => {
+                if s.retry.borrow_mut().failed(now) {
+                    let detail = match failure {
+                        Some(Err(error)) => error.to_string(),
+                        _ => "native surface/display handles unavailable".into(),
+                    };
+                    state.session.report_external_error(
+                        nerust_gui_shell::session::notification::FailureOrigin::Host,
+                        format!("GTK renderer attach failed: {detail}"),
+                    );
                 }
-                failure => {
+            }
+        }
+    }
+
+    /// Poll OSD queues with a short borrow: the GPU pass never waits on queue work.
+    fn poll_osd(surface: &Surface, s: &SurfaceCore) {
+        let mut state = match s.state.try_borrow_mut() {
+            Ok(state) => state,
+            Err(_) => {
+                log::warn!("gtk tick: state busy before poll, skipping frame");
+                return;
+            }
+        };
+        let surface = surface.clone();
+        s.osd
+            .borrow_mut()
+            .poll(&surface, &mut state, &s.renderer, &s.window);
+    }
+
+    /// Present one frame when the retry gate allows; the borrow spans render only.
+    fn render_if_ready(s: &SurfaceCore, physical_size: SurfaceSize, now: std::time::Instant) {
+        if !s.retry.borrow().ready(now) {
+            return;
+        }
+        let mut state = match s.state.try_borrow_mut() {
+            Ok(state) => state,
+            Err(_) => {
+                log::warn!("gtk tick: state busy before render, skipping frame");
+                return;
+            }
+        };
+        if let Some(fb) = state.frame_buffer() {
+            match s.renderer.borrow_mut().render(fb, physical_size) {
+                nerust_render_traits::renderer::RenderResult::Error => {
                     if s.retry.borrow_mut().failed(now) {
-                        let detail = match failure {
-                            Some(Err(error)) => error.to_string(),
-                            _ => "native surface/display handles unavailable".into(),
-                        };
                         state.session.report_external_error(
                             nerust_gui_shell::session::notification::FailureOrigin::Host,
-                            format!("GTK renderer attach failed: {detail}"),
+                            "GTK rendering failed; recreating renderer with backoff".into(),
                         );
                     }
                 }
+                nerust_render_traits::renderer::RenderResult::Presented => {
+                    s.retry.borrow_mut().succeeded()
+                }
+                _ => {}
             }
         }
-
-        // Destination-generation invalidation and uploads precede the first
-        // frame on a fresh surface, including a same-size recovery attach.
-        // Poll drops its borrow before render: the GPU pass never waits on
-        // OSD queue work, and the frame borrow spans render only.
-        {
-            let mut state = match s.state.try_borrow_mut() {
-                Ok(state) => state,
-                Err(_) => {
-                    log::warn!("gtk tick: state busy before poll, skipping frame");
-                    return true;
-                }
-            };
-            let surface = self.clone();
-            s.osd
-                .borrow_mut()
-                .poll(&surface, &mut state, &s.renderer, &s.window);
-        }
-
-        if s.retry.borrow().ready(now) {
-            let mut state = match s.state.try_borrow_mut() {
-                Ok(state) => state,
-                Err(_) => {
-                    log::warn!("gtk tick: state busy before render, skipping frame");
-                    return true;
-                }
-            };
-            if let Some(fb) = state.frame_buffer() {
-                match s.renderer.borrow_mut().render(fb, physical_size) {
-                    nerust_render_traits::renderer::RenderResult::Error => {
-                        if s.retry.borrow_mut().failed(now) {
-                            state.session.report_external_error(
-                                nerust_gui_shell::session::notification::FailureOrigin::Host,
-                                "GTK rendering failed; recreating renderer with backoff".into(),
-                            );
-                        }
-                    }
-                    nerust_render_traits::renderer::RenderResult::Presented => {
-                        s.retry.borrow_mut().succeeded()
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        true
     }
 }

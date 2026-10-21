@@ -94,24 +94,22 @@ impl LutEntry {
         Self::lut_reserve(&mut self.y_lut, dst_h);
 
         for x in 0..dst_w {
-            // Center the source pixel coordinates based on the destination size and scaling factors
-            let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale.0 + 0.5) as isize
-                + (src_w >> 1) as isize;
-            if src_x < 0 || src_x >= src_w as isize {
-                self.x_lut.push(None);
-            } else {
-                self.x_lut.push(Some((src_x as u16, 256)));
-            }
+            self.x_lut.push(Self::nearest_tap(x, dst_w, scale.0, src_w));
         }
         for y in 0..dst_h {
-            // Center the source pixel coordinates based on the destination size and scaling factors
-            let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale.1 + 0.5) as isize
-                + (src_h >> 1) as isize;
-            if src_y < 0 || src_y >= src_h as isize {
-                self.y_lut.push(None);
-            } else {
-                self.y_lut.push(Some((src_y as u16, 256)));
-            }
+            self.y_lut.push(Self::nearest_tap(y, dst_h, scale.1, src_h));
+        }
+    }
+
+    /// Centered nearest tap on one axis; outside maps to `None`.
+    fn nearest_tap(dst: usize, dst_len: usize, factor: f32, src_len: usize) -> TapEntry {
+        // Center the source pixel on the destination size and scaling factor.
+        let src = ((dst as isize - (dst_len >> 1) as isize) as f32 * factor + 0.5) as isize
+            + (src_len >> 1) as isize;
+        if src < 0 || src >= src_len as isize {
+            None
+        } else {
+            Some((src as u16, 256))
         }
     }
 
