@@ -215,6 +215,7 @@ class MainActivity :
         }
     }
 
+    /** Mirror of the Rust tracker for edge-detect and device-removal synthesis; focus loss converges via session clear. */
     private fun releaseAllControllers() {
         controllerPressed.keys.toList().forEach(::releaseController)
     }
