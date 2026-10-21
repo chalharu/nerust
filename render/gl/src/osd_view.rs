@@ -201,8 +201,6 @@ impl CompositeGuard {
     }
 }
 
-/// Fallback upload attempts before a failing OSD layer drops.
-
 /// OSD pipeline resources: layer, program, retry, staging. One owner for
 /// the overlay domain; the frame pipeline never touches these.
 #[derive(Debug)]
