@@ -15,7 +15,7 @@ use nerust_gui_runtime::debug_transaction::WriteTransaction;
 use nerust_gui_runtime::debugger as debug_vm;
 use nerust_gui_runtime::debugger::{self as vm, DisplayCache};
 
-use crate::emu_core::{LiveCore, LiveDebugPort, PlaybackPort as _};
+use crate::emu_core::{LiveCore, LiveDebugPort};
 
 /// One debugger action batch. Same variants as the former per-frontend
 /// request enums; frontends only translate widgets into these.

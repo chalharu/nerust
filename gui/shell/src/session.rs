@@ -82,7 +82,7 @@ struct CoreCreation {
 }
 
 /// The factory's live resources share one lifetime and are replaced as a unit.
-struct ActiveRuntime {
+pub(crate) struct ActiveRuntime {
     core: Box<dyn LiveCore>,
     input: Box<dyn nerust_input_traits::GuiInputPort>,
     field_map: UnifiedFieldMap,

@@ -435,9 +435,10 @@ fn setup_failure_pushes_persistence_unavailable() {
 
     // Core active but no ROM loaded: no media identity, so setup fails.
     let mut session = test_session();
-    assert_eq!(
-        session.setup_persistence(None, MapperRestore::Skip),
-        PersistenceSetup::Unavailable
+    crate::session::persistence_setup::PersistenceBinder::bind(
+        &mut session,
+        None,
+        MapperRestore::Skip,
     );
     session.note_persistence_setup(PersistenceSetup::Unavailable);
     let notes = session.drain_notifications();
