@@ -20,6 +20,9 @@ impl UnifiedFieldMap {
     }
 
     /// Insert one field; returns the displaced field, if any.
+    /// Callers keep first-wins: a `Some` return means the map already
+    /// held the key and the newcomer was dropped by the caller.
+    #[must_use]
     pub fn insert(&mut self, key: (AttachmentId, ControlId), field: usize) -> Option<usize> {
         self.0.insert(key, field)
     }
@@ -50,10 +53,15 @@ impl UnifiedFieldMap {
     }
 }
 
-impl FromIterator<((AttachmentId, ControlId), usize)> for UnifiedFieldMap {
-    fn from_iter<T: IntoIterator<Item = ((AttachmentId, ControlId), usize)>>(iter: T) -> Self {
-        Self(iter.into_iter().collect())
+/// First-wins collection: later duplicates are dropped, never overwrite.
+pub fn collect_first_wins(
+    iter: impl IntoIterator<Item = ((AttachmentId, ControlId), usize)>,
+) -> UnifiedFieldMap {
+    let mut map = UnifiedFieldMap::new();
+    for (key, field) in iter {
+        let _ = map.insert(key, field);
     }
+    map
 }
 
 /// Factory minting one input buffer per call; shared by every endpoint.
@@ -523,15 +531,13 @@ mod tests {
             }
         }
         let resources = InputResources::new(
-            [(
+            super::collect_first_wins([(
                 (
                     AttachmentId::new("test.p1"),
                     ControlId::digital(DigitalControlId::new("test.a")),
                 ),
                 0,
-            )]
-            .into_iter()
-            .collect(),
+            )]),
             Box::new(|| Box::new(Bit) as Box<dyn InputStateBuffer>),
         );
         assert_eq!(resources.field_map().len(), 1);
@@ -561,7 +567,7 @@ mod tests {
         assert_eq!(map.insert(key, 5), Some(3));
         assert_eq!(map.get(&key), Some(&5));
         assert_eq!(map.len(), 1);
-        let collected: UnifiedFieldMap = [(key, 7)].into_iter().collect();
+        let collected = super::collect_first_wins([(key, 7)]);
         assert_eq!(collected.get(&key), Some(&7));
         assert!(collected.contains_key(&key));
     }

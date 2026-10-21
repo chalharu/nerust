@@ -20,7 +20,7 @@ pub use ids::{
 pub use profile::{
     AbstractKey, BufferFactory, ControlInfo, ControlKind, ControllerProfile, CreateSplitError,
     InputAssignments, InputPorts, InputResources, InputSystemFactory, PortSet, SlotInfo,
-    UnifiedFieldMap,
+    UnifiedFieldMap, collect_first_wins,
 };
 pub use topology::{
     AnalogControlDescriptor, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,

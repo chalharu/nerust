@@ -417,17 +417,15 @@ mod tests {
     /// Test-only resources: `InputSplit::from_resources` is the single
     /// move-out; nothing here touches the private triplets.
     fn bit_resources() -> nerust_input_traits::InputResources {
-        use nerust_input_traits::{AttachmentId, ControlId, DigitalControlId, UnifiedFieldMap};
+        use nerust_input_traits::{AttachmentId, ControlId, DigitalControlId, collect_first_wins};
         nerust_input_traits::InputResources::new(
-            [(
+            collect_first_wins([(
                 (
                     AttachmentId::new("test.p1"),
                     ControlId::digital(DigitalControlId::new("test.a")),
                 ),
                 0,
-            )]
-            .into_iter()
-            .collect::<UnifiedFieldMap>(),
+            )]),
             Box::new(|| Box::new(BitBuffer::default()) as Box<dyn InputStateBuffer>),
         )
     }
