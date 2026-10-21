@@ -202,7 +202,13 @@ impl ModalBox {
     }
 
     /// Queue one aggregated error batch for sequential display, capped.
+    /// Consecutive identical details coalesce: an error storm queues once.
     pub(crate) fn queue_modal(&mut self, detail: String) -> bool {
+        if self.queue.back().is_some_and(
+            |lines| matches!(lines.as_slice(), [ModalLine::Text(back)] if back == &detail),
+        ) {
+            return false;
+        }
         self.queue.push_back(vec![ModalLine::Text(detail)]);
         self.enforce_cap()
     }
