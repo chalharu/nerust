@@ -63,7 +63,7 @@ mod tests {
 #[cfg(test)]
 mod render_cov_tests {
     use crate::session::osd_render::*;
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     #[test]
     fn plan_into_content_carries_status_color() {
@@ -90,7 +90,7 @@ mod render_cov_tests {
         use nerust_settings_core::model::local::NotificationPosition as P;
         let plan = OsdPlan {
             rows: vec![OsdRow {
-                text: Rc::from("Paused"),
+                text: Arc::from("Paused"),
                 rgb: (1, 2, 3),
                 tag: "[INFO]".into(),
             }],

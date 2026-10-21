@@ -454,7 +454,7 @@ mod tests {
         StubState {
             generation: 7,
             rows: vec![OsdRow {
-                text: std::rc::Rc::from("Paused"),
+                text: std::sync::Arc::from("Paused"),
                 rgb: (255, 255, 255),
                 tag: "[I]".into(),
             }],

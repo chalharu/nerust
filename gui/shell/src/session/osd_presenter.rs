@@ -2,7 +2,7 @@
 //! Pure decision procedure; frontends only rasterize the plan.
 
 use std::{
-    rc::Rc,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -142,11 +142,11 @@ impl StatusGate {
 }
 
 /// Raster-ready frame decided by [`OsdPresenter`]: rows plus gated status text.
-/// Status shares the fingerprint pair: steady renders clone the `Rc`.
+/// Status shares the fingerprint pair: steady renders clone the `Arc`.
 #[derive(Debug, Clone)]
 pub struct OsdPlan {
     pub rows: Vec<OsdRow>,
-    pub status: Option<(Rc<str>, Rc<str>)>,
+    pub status: Option<(Arc<str>, Arc<str>)>,
     pub position: NotificationPosition,
     pub status_position: NotificationPosition,
     pub width: u32,
@@ -244,11 +244,11 @@ pub trait OsdState {
     fn rows(&self) -> &[OsdRow];
 }
 
-/// Status half of the sync fingerprint; `Rc` shares the pair without per-render clones.
+/// Status half of the sync fingerprint; `Arc` shares the pair without per-render clones.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StatusFingerprint {
-    label: std::rc::Rc<str>,
-    value: std::rc::Rc<str>,
+    label: std::sync::Arc<str>,
+    value: std::sync::Arc<str>,
     position: NotificationPosition,
     status_position: NotificationPosition,
     area_mode: NotificationAreaMode,
@@ -398,10 +398,13 @@ impl OsdPresenter {
             return OsdSync::Skip;
         }
         self.active = true;
-        // Borrowed fingerprint: status strings share their allocation via `Rc`.
+        // Borrowed fingerprint: status strings share their allocation via `Arc`.
         let (label_value, position, status_position) = match self.last_status.as_ref() {
             Some(fingerprint) => (
-                Some((Rc::clone(&fingerprint.label), Rc::clone(&fingerprint.value))),
+                Some((
+                    Arc::clone(&fingerprint.label),
+                    Arc::clone(&fingerprint.value),
+                )),
                 fingerprint.position,
                 fingerprint.status_position,
             ),
