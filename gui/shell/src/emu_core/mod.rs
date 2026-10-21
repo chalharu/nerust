@@ -39,26 +39,6 @@ pub struct PreviewRgba {
     pub rgba: Vec<u8>,
 }
 
-impl From<PreviewRgba> for crate::state::PreviewFrame {
-    fn from(preview: PreviewRgba) -> Self {
-        Self {
-            width: preview.width,
-            height: preview.height,
-            rgba: preview.rgba,
-        }
-    }
-}
-
-impl From<crate::state::PreviewFrame> for PreviewRgba {
-    fn from(frame: crate::state::PreviewFrame) -> Self {
-        Self {
-            width: frame.width,
-            height: frame.height,
-            rgba: frame.rgba,
-        }
-    }
-}
-
 /// Errors from core operations invoked by the persistence layer.
 #[derive(Debug, thiserror::Error)]
 pub enum CorePersistenceError {
@@ -1802,18 +1782,6 @@ mod fault_tests {
             SlotOpFailure::Corrupt
         );
         assert!(!CorePersistenceError::NoReply.to_string().is_empty());
-    }
-
-    #[test]
-    fn preview_round_trips_through_state_frame() {
-        let preview = PreviewRgba {
-            width: 2,
-            height: 1,
-            rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
-        };
-        let frame: crate::state::PreviewFrame = preview.clone().into();
-        let back: PreviewRgba = frame.into();
-        assert_eq!(back, preview);
     }
 
     #[test]
