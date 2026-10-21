@@ -163,6 +163,9 @@ pub trait InputPorts: std::fmt::Debug {
     }
 }
 
+/// One placed controller: the assigned profile plus its port-group index.
+pub type Placement = Option<(Rc<dyn ControllerProfile>, usize)>;
+
 /// Slot-to-controller assignments.
 /// Equality is order-sensitive and structural (slot order + [`ProfileId`] compare).
 #[derive(Clone)]
@@ -185,18 +188,19 @@ impl InputAssignments {
     pub fn placement_plan(
         &self,
         ports: &dyn InputPorts,
-    ) -> Result<Vec<Option<(ProfileId, usize)>>, CreateSplitError> {
+    ) -> Result<Vec<Placement>, CreateSplitError> {
         let slots = ports.slots();
+        let index_of = |id: AttachmentId| slots.iter().position(|s| s.id == id);
         let mut seen = std::collections::HashSet::new();
         let mut plan = vec![None; slots.len()];
         for (slot, profile) in &self.slots {
-            if !slots.iter().any(|s| s.id == *slot) {
-                return Err(CreateSplitError::SlotNotFound { slot: *slot });
-            }
+            let slot_index =
+                index_of(*slot).ok_or(CreateSplitError::SlotNotFound { slot: *slot })?;
             if !seen.insert(*slot) {
                 return Err(CreateSplitError::SlotConflict { a: *slot, b: *slot });
             }
             let Some(profile) = profile else { continue };
+            // Keep the caller's profile handle; canonical metadata only validates.
             let controller = profile.profile_id();
             let canonical = ports
                 .resolve_controller(controller.as_str())
@@ -216,14 +220,13 @@ impl InputAssignments {
                 });
             }
             for (group, port) in set.ports.iter().enumerate() {
-                let index = slots
-                    .iter()
-                    .position(|s| s.id == *port)
-                    .ok_or(CreateSplitError::SlotNotFound { slot: *port })?;
+                let index =
+                    index_of(*port).ok_or(CreateSplitError::SlotNotFound { slot: *port })?;
                 if plan[index].is_some() {
                     return Err(CreateSplitError::SlotConflict { a: *slot, b: *port });
                 }
-                plan[index] = Some((controller, group));
+                let _ = slot_index;
+                plan[index] = Some((Rc::clone(profile), group));
             }
         }
         Ok(plan)
