@@ -6,9 +6,6 @@
 #[derive(Debug, Clone, Copy)]
 pub struct Current(());
 
-/// Historical spelling of [`Current`]; both name the same proof.
-pub type CurrentContext = Current;
-
 impl Current {
     /// Checked proof: `Some` only when the caller verified `ctx.is_current()`.
     /// Takes the `bool` verdict so this crate stays free of a glutin dependency.

@@ -1,54 +1,16 @@
-//! SAF transport decisions as pure predicates.
-//! Host-compiled so the capability ladder and error taxonomy are unit-tested.
+//! Actual SAF stream collection, host-tested: only an empty chunk is EOF.
+//! Errors discard the partial buffer; short chunks are data, not EOF.
 
-/// Typed SAF failure: only a version skew may fall back.
-/// Missing documents and I/O faults are hard errors on the chosen path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SafError {
-    Missing,
-    VersionSkew,
-    Io(String),
-}
-
-impl SafError {
-    /// Fallback is reserved for a bridge too old for the chosen path.
-    pub(crate) fn fallback_eligible(&self) -> bool {
-        matches!(self, SafError::VersionSkew)
-    }
-
-    /// Missing-document probe result shared by every path.
-    pub(crate) fn missing() -> Self {
-        SafError::Missing
-    }
-
-    /// Old-APK signal: the method the path needs does not exist.
-    pub(crate) fn version_skew() -> Self {
-        SafError::VersionSkew
-    }
-
-    /// Transport fault: surfaced, never retried on another path.
-    pub(crate) fn io(message: impl ToString) -> Self {
-        SafError::Io(message.to_string())
-    }
-}
-
-/// One-shot capability probe: newest path the APK offers.
-/// Probed once per backend; writes chunk whenever reads stream.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SafCapability {
-    Streamed,
-    ChunkedBytes,
-    ChunkedBase64,
-    Legacy,
-}
-
-/// Write-side path for a probed capability: reads stream, writes chunk.
-impl SafCapability {
-    pub(crate) fn write_capability(self) -> Self {
-        match self {
-            SafCapability::Streamed => SafCapability::ChunkedBytes,
-            other => other,
+pub(crate) fn collect_stream<E>(
+    mut read: impl FnMut() -> Result<Vec<u8>, E>,
+) -> Result<Vec<u8>, E> {
+    let mut bytes = Vec::new();
+    loop {
+        let chunk = read()?;
+        if chunk.is_empty() {
+            return Ok(bytes);
         }
+        bytes.extend_from_slice(&chunk);
     }
 }
 
@@ -57,25 +19,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_version_skew_falls_back() {
-        assert!(!SafError::missing().fallback_eligible());
-        assert!(SafError::version_skew().fallback_eligible());
-        assert!(!SafError::io("disk gone").fallback_eligible());
+    fn short_chunks_are_data_until_explicit_eof() {
+        let mut chunks = [Ok(vec![1, 2]), Ok(vec![3]), Ok(vec![])].into_iter();
+        assert_eq!(
+            collect_stream::<()>(|| chunks.next().unwrap()),
+            Ok(vec![1, 2, 3])
+        );
+        assert!(chunks.next().is_none());
     }
 
     #[test]
-    fn stream_capability_writes_through_chunks() {
+    fn error_after_data_never_returns_truncated_success() {
+        let mut chunks = [Ok(vec![1, 2]), Err("read failed")].into_iter();
         assert_eq!(
-            SafCapability::Streamed.write_capability(),
-            SafCapability::ChunkedBytes
+            collect_stream(|| chunks.next().unwrap()),
+            Err("read failed")
         );
+    }
+
+    #[test]
+    fn empty_file_and_immediate_error_are_distinct() {
+        assert_eq!(collect_stream::<()>(|| Ok(vec![])), Ok(vec![]));
         assert_eq!(
-            SafCapability::ChunkedBase64.write_capability(),
-            SafCapability::ChunkedBase64
-        );
-        assert_eq!(
-            SafCapability::Legacy.write_capability(),
-            SafCapability::Legacy
+            collect_stream(|| Err("invalid session")),
+            Err("invalid session")
         );
     }
 }

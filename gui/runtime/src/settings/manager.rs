@@ -28,7 +28,7 @@ pub struct SettingsManager {
 #[derive(Debug)]
 struct SettingsState {
     defaults: SettingsSnapshot,
-    current: SettingsSnapshot,
+    current: Arc<SettingsSnapshot>,
     document: SettingsDocument,
     store: Box<dyn SettingsStore>,
 }
@@ -62,7 +62,7 @@ impl SettingsManager {
         Ok(Self {
             inner: Arc::new(RwLock::new(SettingsState {
                 defaults: defaults.clone(),
-                current,
+                current: Arc::new(current),
                 document,
                 store: Box::new(FileBackedStore(paths)),
             })),
@@ -116,7 +116,7 @@ impl SettingsManager {
         Ok(Self {
             inner: Arc::new(RwLock::new(SettingsState {
                 defaults: defaults.clone(),
-                current,
+                current: Arc::new(current),
                 document,
                 store: Box::new(FileBackedStore(paths)),
             })),
@@ -140,7 +140,7 @@ impl SettingsManager {
             inner: Arc::new(RwLock::new(SettingsState {
                 document: SettingsDocument::from_snapshot(&defaults)
                     .expect("serializing validated default settings should succeed"),
-                current: defaults.clone(),
+                current: Arc::new(defaults.clone()),
                 defaults,
                 store,
             })),
@@ -161,7 +161,7 @@ impl SettingsManager {
             inner: Arc::new(RwLock::new(SettingsState {
                 document: SettingsDocument::from_snapshot(&defaults)
                     .expect("serializing validated default settings should succeed"),
-                current: defaults.clone(),
+                current: Arc::new(defaults.clone()),
                 defaults,
                 store: Box::new(EphemeralStore),
             })),
@@ -169,6 +169,11 @@ impl SettingsManager {
     }
 
     pub fn snapshot(&self) -> Result<SettingsSnapshot, SettingsError> {
+        Ok(self.snapshot_arc()?.as_ref().clone())
+    }
+
+    /// Shared immutable publication; readers never scan or clone the settings tree.
+    pub fn snapshot_arc(&self) -> Result<Arc<SettingsSnapshot>, SettingsError> {
         Ok(self
             .inner
             .read()
@@ -204,7 +209,9 @@ impl SettingsManager {
             .map_err(|_| SettingsError::LockPoisoned)?;
         let document = guard.document.updated_with(&snapshot)?;
         guard.store.save(&document)?;
-        guard.current = snapshot;
+        if guard.current.as_ref() != &snapshot {
+            guard.current = Arc::new(snapshot);
+        }
         guard.document = document;
         Ok(())
     }
@@ -215,7 +222,9 @@ impl SettingsManager {
             .write()
             .map_err(|_| SettingsError::LockPoisoned)?;
         let (loaded, document) = guard.store.load(&guard.defaults);
-        guard.current = loaded.clone();
+        if guard.current.as_ref() != &loaded {
+            guard.current = Arc::new(loaded.clone());
+        }
         guard.document = document;
         Ok(loaded)
     }
@@ -295,6 +304,32 @@ mod tests {
         super::{SettingsPaths, test_local_defaults, test_root, test_shared_defaults},
         SettingsManager,
     };
+
+    #[test]
+    fn immutable_publication_is_stable_until_settings_change() {
+        let manager = SettingsManager::ephemeral(
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        );
+        let before = manager.snapshot_arc().unwrap();
+        assert!(std::sync::Arc::ptr_eq(
+            &before,
+            &manager.snapshot_arc().unwrap()
+        ));
+        manager.save_snapshot(before.as_ref().clone()).unwrap();
+        assert!(std::sync::Arc::ptr_eq(
+            &before,
+            &manager.snapshot_arc().unwrap()
+        ));
+        let mut next = before.as_ref().clone();
+        next.local.audio.muted = !next.local.audio.muted;
+        manager.save_snapshot(next.clone()).unwrap();
+        let after = manager.snapshot_arc().unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&before, &after));
+        assert_eq!(after.as_ref(), &next);
+        assert_ne!(before.local.audio.muted, after.local.audio.muted);
+    }
 
     #[test]
     fn ephemeral_manager_round_trips_snapshot() {

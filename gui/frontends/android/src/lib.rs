@@ -1,6 +1,8 @@
 // Root stays ungated so pure modules compile and test on host.
 // Android-bound items below stay target-gated.
 #[cfg(any(target_os = "android", test))]
+mod bridge_contract;
+#[cfg(any(target_os = "android", test))]
 mod bridge_events;
 #[cfg(any(target_os = "android", test))]
 mod density;
@@ -30,6 +32,14 @@ mod reentrancy;
 
 #[cfg(target_os = "android")]
 mod android;
+
+// Exercise the actual settings serializer/model on the host, without JNI.
+#[cfg(all(test, not(target_os = "android")))]
+#[path = "android/settings_codec.rs"]
+mod settings_codec;
+#[cfg(all(test, not(target_os = "android")))]
+#[path = "android/settings_model.rs"]
+mod settings_model;
 
 #[cfg(any(target_os = "android", test))]
 use std::sync::Arc;
@@ -76,7 +86,7 @@ fn init_android_logging() {
     // so a panicking frontend logs and returns instead of exiting.
     static CRASH_HOOK: std::sync::OnceLock<nerust_crash_guard::HookGuard> =
         std::sync::OnceLock::new();
-    let _ = CRASH_HOOK.set(nerust_crash_guard::install_default());
+    CRASH_HOOK.get_or_init(nerust_crash_guard::install_default);
 }
 
 #[cfg(any(target_os = "android", test))]
@@ -130,7 +140,8 @@ pub fn android_main(app: AndroidApp) {
             let gpu_factory = create_gpu_factory();
             android::run(app, system_registry, audio_registry, gpu_factory)
         },
-        nerust_crash_guard::default_sink,
+        // The process registration already logs this same panic-site record.
+        |_| {},
         nerust_crash_guard::capture_backtrace,
     ) {
         GuardOutcome::Completed(Ok(())) => {

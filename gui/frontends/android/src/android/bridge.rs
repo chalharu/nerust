@@ -139,23 +139,8 @@ pub(super) mod methods {
     bridge_method!(SET_CARTRIDGE_RUMBLE, "setCartridgeRumble", "(I)V");
     bridge_method!(APPLY_SCREEN_ORIENTATION, "applyScreenOrientation", "(I)V");
     bridge_method!(
-        READ_SAF_FILE,
-        "readSafFile",
-        "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
-    );
-    bridge_method!(
-        WRITE_SAF_FILE,
-        "writeSafFile",
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
-    );
-    bridge_method!(
         DELETE_SAF_FILE,
         "deleteSafFile",
-        "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
-    );
-    bridge_method!(
-        LIST_SAF_FILES,
-        "listSafFiles",
         "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
     );
     bridge_method!(
@@ -164,29 +149,9 @@ pub(super) mod methods {
         "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
     );
     bridge_method!(
-        GET_SAF_FILE_SIZE,
-        "getSafFileSize",
-        "(Ljava/lang/String;Ljava/lang/String;)J"
-    );
-    bridge_method!(
-        READ_SAF_FILE_CHUNK,
-        "readSafFileChunk",
-        "(Ljava/lang/String;Ljava/lang/String;JJ)Ljava/lang/String;"
-    );
-    bridge_method!(
-        WRITE_SAF_FILE_CHUNK,
-        "writeSafFileChunk",
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;"
-    );
-    bridge_method!(
-        READ_SAF_FILE_CHUNK_BYTES,
-        "readSafFileChunkBytes",
-        "(Ljava/lang/String;Ljava/lang/String;JJ)[B"
-    );
-    bridge_method!(
         WRITE_SAF_FILE_CHUNK_BYTES,
         "writeSafFileChunkBytes",
-        "(Ljava/lang/String;Ljava/lang/String;[BZ)Ljava/lang/String;"
+        "(Ljava/lang/String;Ljava/lang/String;[BZ)Z"
     );
     bridge_method!(
         OPEN_SAF_READ_SESSION,
@@ -265,25 +230,20 @@ fn lock_accel() -> std::sync::MutexGuard<'static, Option<AccelerometerInputHandl
     })
 }
 
-fn lock_vault() -> std::sync::MutexGuard<'static, BridgeVault> {
-    // Single vault mutex: nesting panics loudly, never deadlocks.
-    let _guard = crate::reentrancy::lock_reentrancy_guard();
-    BRIDGE.lock().unwrap_or_else(|poison| {
-        log::error!("Android bridge mutex poisoned; recovering state");
-        poison.into_inner()
-    })
+fn with_vault<T>(operation: impl FnOnce(&mut BridgeVault) -> T) -> T {
+    crate::reentrancy::with_lock(&BRIDGE, operation)
 }
 
 pub(super) fn with_queue<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T) -> T {
-    operation(&mut lock_vault().queue)
+    with_vault(|vault| operation(&mut vault.queue))
 }
 
 pub(super) fn with_picker<T>(operation: impl FnOnce(&mut PickerSlot) -> T) -> T {
-    operation(&mut lock_vault().picker)
+    with_vault(|vault| operation(&mut vault.picker))
 }
 
 pub(super) fn with_settings<T>(operation: impl FnOnce(&mut SettingsSlot) -> T) -> T {
-    operation(&mut lock_vault().settings)
+    with_vault(|vault| operation(&mut vault.settings))
 }
 
 /// Set the event proxy once at construction; rebinds only warn.

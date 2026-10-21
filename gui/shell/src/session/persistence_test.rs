@@ -36,10 +36,13 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     fs::write(&mapper_save_path, [9, 8, 7, 6]).expect("mapper save should write");
 
     let mut next = session.settings_snapshot().clone();
-    next.local.audio.latency_ms = 90;
+    next.shared.systems.insert(
+        Box::new(DummySystemId),
+        Box::new(nerust_nes_settings::NesSettings::default()),
+    );
     let plan = session.apply_settings(next).unwrap();
 
-    assert!(plan.session_rebuild_required);
+    assert!(plan.visual_changed);
     assert!(mapper_save_path.exists());
     let _ = fs::remove_dir_all(temp_dir);
 }

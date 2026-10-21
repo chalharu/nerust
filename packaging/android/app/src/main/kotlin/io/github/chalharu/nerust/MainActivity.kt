@@ -72,7 +72,7 @@ class MainActivity :
     private val sensorController = SensorController(this)
     private val chromeManager = ChromeManager(this)
     private val dialogManager = DialogManager(this)
-    private val safRepository by lazy { SafRepository(this) }
+    private val safRepository = SafRepository(this)
     internal var lastDialogStateForTest = "not requested"
 
     // Root-window safe insets in physical pixels, order [top, right, bottom, left].
@@ -267,6 +267,7 @@ class MainActivity :
         chromeManager.onDestroy()
         dialogManager.dismissForStop()
         sensorController.onDestroy()
+        safRepository.close()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
         onActivityDestroyed()
@@ -410,59 +411,17 @@ class MainActivity :
     }
 
     /** SAF bridge, delegated to [SafRepository]. Chunked methods bound every JNI crossing to 64KB. */
-    fun readSafFile(
-        treeUri: String,
-        relativePath: String,
-    ): String? = safRepository.readSafFile(treeUri, relativePath)
-
-    fun writeSafFile(
-        treeUri: String,
-        relativePath: String,
-        encoded: String,
-    ): String = safRepository.writeSafFile(treeUri, relativePath, encoded)
-
     fun deleteSafFile(
         treeUri: String,
         relativePath: String,
     ): String = safRepository.deleteSafFile(treeUri, relativePath)
-
-    fun listSafFiles(
-        treeUri: String,
-        relativePath: String,
-    ): String = safRepository.listSafFiles(treeUri, relativePath)
-
-    fun getSafFileSize(
-        treeUri: String,
-        relativePath: String,
-    ): Long = safRepository.getSafFileSize(treeUri, relativePath)
-
-    fun readSafFileChunk(
-        treeUri: String,
-        relativePath: String,
-        offset: Long,
-        length: Long,
-    ): String? = safRepository.readSafFileChunk(treeUri, relativePath, offset, length)
-
-    fun writeSafFileChunk(
-        treeUri: String,
-        relativePath: String,
-        encoded: String,
-        append: Boolean,
-    ): String = safRepository.writeSafFileChunk(treeUri, relativePath, encoded, append)
-
-    fun readSafFileChunkBytes(
-        treeUri: String,
-        relativePath: String,
-        offset: Long,
-        length: Long,
-    ): ByteArray? = safRepository.readSafFileChunkBytes(treeUri, relativePath, offset, length)
 
     fun writeSafFileChunkBytes(
         treeUri: String,
         relativePath: String,
         bytes: ByteArray,
         append: Boolean,
-    ): String = safRepository.writeSafFileChunkBytes(treeUri, relativePath, bytes, append)
+    ): Boolean = safRepository.writeSafFileChunkBytes(treeUri, relativePath, bytes, append)
 
     fun listSafFilesWithSizes(
         treeUri: String,
@@ -478,7 +437,7 @@ class MainActivity :
     fun readSafReadSession(
         sessionId: Long,
         maxBytes: Int,
-    ): ByteArray = safRepository.readSafReadSession(sessionId, maxBytes)
+    ): ByteArray? = safRepository.readSafReadSession(sessionId, maxBytes)
 
     fun closeSafReadSession(sessionId: Long) {
         safRepository.closeSafReadSession(sessionId)

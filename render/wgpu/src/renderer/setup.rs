@@ -612,7 +612,7 @@ pub(crate) fn set_osd_layer(
         layer.y,
         w,
         h,
-        Some(&layer.rgba),
+        Some(layer.rgba()),
     );
     pipeline.osd_visible = true;
     pipeline.osd_prev = Some((layer.x, layer.y, w, h));

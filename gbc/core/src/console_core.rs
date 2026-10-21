@@ -10,7 +10,7 @@ use nerust_core_traits::{
         rumble_channel,
     },
 };
-use nerust_emu_thread::EmuInput;
+use nerust_input_traits::InputReceiver;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
@@ -36,7 +36,7 @@ struct LoadedGbc {
 
 pub struct GbcConsoleCore {
     loaded: Option<LoadedGbc>,
-    emu_input: EmuInput,
+    emu_input: Box<dyn InputReceiver>,
     paused: bool,
     accelerometer: AccelerometerInputPort,
     rumble: RumbleOutputPort,
@@ -46,14 +46,14 @@ pub struct GbcConsoleCore {
 }
 
 impl GbcConsoleCore {
-    pub fn new_empty(emu_input: EmuInput) -> Self {
+    pub fn new_empty(emu_input: Box<dyn InputReceiver>) -> Self {
         let (_, accelerometer) = accelerometer_channel();
         let (_, rumble) = rumble_channel();
         Self::with_peripherals(emu_input, accelerometer, rumble)
     }
 
     pub fn with_peripherals(
-        emu_input: EmuInput,
+        emu_input: Box<dyn InputReceiver>,
         accelerometer: AccelerometerInputPort,
         rumble: RumbleOutputPort,
     ) -> Self {
@@ -152,10 +152,9 @@ impl GbcConsoleCore {
         frame_slot: &mut FrameBuffer,
         audio_out: &mut Vec<StereoSample>,
     ) -> Result<u64, CoreError> {
-        self.emu_input.take();
         let input = self
             .emu_input
-            .read_buffer()
+            .receive()
             .downcast_ref::<GbcInputBuffer>()
             .ok_or_else(|| CoreError::Core(Box::new(GbcCoreError::InvalidInputBuffer)))?
             .0;
@@ -435,7 +434,6 @@ mod tests {
         CoreOptions,
         peripheral::{AccelerationSample, RumbleState, accelerometer_channel, rumble_channel},
     };
-    use nerust_emu_thread::{InputPort as _, InputSplit};
     use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 
     use super::*;
@@ -464,12 +462,12 @@ mod tests {
         }
     }
 
-    fn input() -> EmuInput {
-        InputSplit::spawn_typed(GbcInputBuffer::default).emu_endpoint()
+    fn input() -> Box<dyn InputReceiver> {
+        Box::<GbcInputBuffer>::default()
     }
 
-    fn wrong_input() -> EmuInput {
-        InputSplit::spawn_typed(|| OtherInput).emu_endpoint()
+    fn wrong_input() -> Box<dyn InputReceiver> {
+        Box::new(OtherInput)
     }
 
     fn rom() -> Vec<u8> {

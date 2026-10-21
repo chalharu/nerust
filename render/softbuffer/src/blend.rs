@@ -15,9 +15,10 @@ impl SoftbufferRenderer {
     ) {
         let src_w = layer.width as usize;
         let src_h = layer.height as usize;
+        let rgba = layer.rgba();
         let need = src_w.checked_mul(src_h).and_then(|px| px.checked_mul(4));
         let Some(need) = need else { return };
-        if src_w == 0 || src_h == 0 || layer.rgba.len() < need {
+        if src_w == 0 || src_h == 0 || rgba.len() < need {
             return;
         }
         for row in 0..src_h {
@@ -31,13 +32,13 @@ impl SoftbufferRenderer {
                     break;
                 }
                 let s = (row * src_w + col) * 4;
-                let alpha = layer.rgba[s + 3];
+                let alpha = rgba[s + 3];
                 if alpha == 0 {
                     continue;
                 }
                 let dst_word = buffer[dst_y * dst_w + dst_x];
                 let dst = RgbaWord::from_argb_word(dst_word);
-                let src = [layer.rgba[s], layer.rgba[s + 1], layer.rgba[s + 2], alpha];
+                let src = [rgba[s], rgba[s + 1], rgba[s + 2], alpha];
                 buffer[dst_y * dst_w + dst_x] = dst.blend_src_over(src).as_argb_word();
             }
         }

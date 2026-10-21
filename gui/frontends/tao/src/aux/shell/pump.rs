@@ -1,4 +1,4 @@
-//! Program pump: retained tree plus queued messages, no live interface.
+//! Program pump: retained tree plus incoming message iterators, no live interface.
 //! Relayout, pump, and message-run passes live here; surfaces live in `surface`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,7 +11,7 @@ use iced_winit::{
     runtime::user_interface::{Cache, State, UserInterface},
 };
 
-/// Program UI shell: [`ViewTree`] plus a [`MessageQueue`] on the side.
+/// Retained program tree and layout cache.
 /// No interface is retained across calls.
 pub(crate) struct ViewTree<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     pub(super) instance: Box<program::Instance<P>>,
@@ -20,31 +20,10 @@ pub(crate) struct ViewTree<P: Program<Theme = iced::Theme, Renderer = Renderer>>
     pub(super) bounds: Size,
 }
 
-/// Queued program messages, drained under the update-then-rebuild sequence.
-pub(crate) struct MessageQueue<M> {
-    pending: Vec<M>,
-}
-
-impl<M> MessageQueue<M> {
-    fn new() -> Self {
-        Self {
-            pending: Vec::new(),
-        }
-    }
-
-    /// Queued plus inline messages for one rebuild pass.
-    fn drain(&mut self, extra: impl IntoIterator<Item = M>) -> Vec<M> {
-        let mut all = std::mem::take(&mut self.pending);
-        all.extend(extra);
-        all
-    }
-}
-
-/// Program UI shell: [`ViewTree`] plus a [`MessageQueue`] on the side.
+/// Program UI shell: retained tree plus reusable event-message scratch.
 /// No interface is retained across calls.
 pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> {
     pub(super) tree: ViewTree<P>,
-    queue: MessageQueue<P::Message>,
     /// Reused event-draw scratch: pumps and redraws never allocate per event.
     scratch: Vec<P::Message>,
 }
@@ -83,7 +62,6 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
                 window_id,
                 bounds,
             },
-            queue: MessageQueue::new(),
             scratch: Vec::new(),
         }
     }
@@ -108,13 +86,6 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     pub(super) fn restore_scratch(&mut self, mut out: Vec<P::Message>) {
         out.clear();
         self.scratch = out;
-    }
-
-    /// Queue one program message for the next `process_messages` pass.
-    /// Queued, never applied inline: only `process_messages` may mutate the instance.
-    #[cfg(test)]
-    pub(crate) fn push_message(&mut self, message: P::Message) {
-        self.queue.pending.push(message);
     }
 
     /// Build the transient interface for one pump pass.
@@ -165,21 +136,19 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         outcome
     }
 
-    /// Runs pending messages, rebuilding once. Reports whether a rebuild happened.
+    /// Runs incoming messages directly, rebuilding once. Reports whether a rebuild happened.
     pub(crate) fn process_messages(
         &mut self,
         messages: impl IntoIterator<Item = P::Message>,
         renderer: &mut Renderer,
         invalidated: &AtomicBool,
     ) -> bool {
-        // Queued `push_message` items join this pass so the single
-        // build below applies every pending program message at once.
-        let mut all = self.queue.drain(messages);
-        if all.is_empty() && !invalidated.load(Ordering::Acquire) {
+        let mut messages = messages.into_iter().peekable();
+        if messages.peek().is_none() && !invalidated.load(Ordering::Acquire) {
             return false;
         }
         // Run the messages against the instance, then rebuild once.
-        for msg in all.drain(..) {
+        for msg in messages {
             let _task = self.tree.instance.update(msg);
         }
         let ui = Self::build_transient(
@@ -198,16 +167,18 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::{Arc, atomic::AtomicUsize};
 
-    static VIEW_CALLS: AtomicUsize = AtomicUsize::new(0);
-
-    struct StubProgram;
+    #[derive(Default)]
+    struct StubProgram {
+        view_calls: Arc<AtomicUsize>,
+        updates: Arc<std::sync::Mutex<Vec<u8>>>,
+    }
     #[derive(Debug, Clone, Default)]
     struct StubState;
     #[derive(Debug, Clone)]
     enum StubMessage {
-        Ping,
+        Ping(u8),
     }
 
     impl Program for StubProgram {
@@ -236,8 +207,10 @@ mod tests {
         fn update(
             &self,
             _state: &mut Self::State,
-            _message: Self::Message,
+            message: Self::Message,
         ) -> iced::Task<Self::Message> {
+            let StubMessage::Ping(value) = message;
+            self.updates.lock().unwrap().push(value);
             iced::Task::none()
         }
 
@@ -246,14 +219,24 @@ mod tests {
             _state: &'a Self::State,
             _window: iced::window::Id,
         ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
-            VIEW_CALLS.fetch_add(1, Ordering::SeqCst);
+            self.view_calls.fetch_add(1, Ordering::SeqCst);
             iced::widget::text("stub").into()
         }
     }
 
-    fn stub_shell() -> (UiShell<StubProgram>, Renderer, iced_winit::Clipboard) {
-        VIEW_CALLS.store(0, Ordering::SeqCst);
-        let (instance, _task) = program::Instance::new(StubProgram);
+    type StubShell = (
+        UiShell<StubProgram>,
+        Renderer,
+        iced_winit::Clipboard,
+        Arc<AtomicUsize>,
+        Arc<std::sync::Mutex<Vec<u8>>>,
+    );
+
+    fn stub_shell() -> StubShell {
+        let program = StubProgram::default();
+        let calls = Arc::clone(&program.view_calls);
+        let updates = Arc::clone(&program.updates);
+        let (instance, _task) = program::Instance::new(program);
         let backend = Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
         let shell = UiShell::new(
             instance,
@@ -261,7 +244,7 @@ mod tests {
             iced::Size::new(800.0, 600.0),
         );
         let clipboard = iced_winit::Clipboard::unconnected();
-        (shell, backend, clipboard)
+        (shell, backend, clipboard, calls, updates)
     }
 
     #[test]
@@ -292,7 +275,7 @@ mod tests {
     fn pump_builds_transient_ui_and_idles() {
         // No retained interface: every pump rebuilds from the cache
         // and folds back, so there is no orphan state to warn on.
-        let (mut shell, mut backend, mut clipboard) = stub_shell();
+        let (mut shell, mut backend, mut clipboard, _, _) = stub_shell();
         let mut messages = Vec::new();
         let outcome = shell.pump(
             iced::Event::Window(iced::window::Event::RedrawRequested(
@@ -305,57 +288,53 @@ mod tests {
         );
         assert!(messages.is_empty());
         assert_eq!(outcome, PumpOutcome::Idle);
-        // Push and relayout stay total; relayout only records bounds.
-        shell.push_message(StubMessage::Ping);
+        // Relayout only records bounds.
         shell.relayout(iced::Size::new(640.0, 480.0));
         assert_eq!(shell.tree.bounds, iced::Size::new(640.0, 480.0));
     }
 
     #[test]
     fn shell_drops_cleanly_without_retained_ui() {
-        // No self-reference remains: live and message-queued shells
-        // both drop without a manual drop order.
-        let (shell, _, _) = stub_shell();
-        drop(shell);
-        let (mut shell, _, _) = stub_shell();
-        shell.push_message(StubMessage::Ping);
+        // No self-reference remains; no manual drop order is needed.
+        let (shell, _, _, _, _) = stub_shell();
         drop(shell);
     }
 
     #[test]
-    fn message_queue_drains_pending_then_extra_in_order() {
-        let mut queue = MessageQueue::new();
-        assert_eq!(queue.drain([StubMessage::Ping]).len(), 1);
-        queue.pending.push(StubMessage::Ping);
-        queue.pending.push(StubMessage::Ping);
-        // Queued items come first, inline extras appended after.
-        assert_eq!(queue.drain([StubMessage::Ping]).len(), 3);
-        assert!(queue.drain([] as [StubMessage; 0]).is_empty());
+    fn process_messages_runs_iterator_in_order_and_rebuilds_once() {
+        let (mut shell, mut backend, _, calls, updates) = stub_shell();
+        let invalidated = AtomicBool::new(false);
+        assert!(shell.process_messages((0..3).map(StubMessage::Ping), &mut backend, &invalidated));
+        assert_eq!(*updates.lock().unwrap(), [0, 1, 2]);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(!shell.process_messages(std::iter::empty(), &mut backend, &invalidated));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
     fn set_bounds_aliases_relayout() {
-        let (mut shell, _, _) = stub_shell();
+        let (mut shell, _, _, _, _) = stub_shell();
         shell.set_bounds(iced::Size::new(0.0, 0.0));
         assert_eq!(shell.tree.bounds, iced::Size::new(0.0, 0.0));
     }
 
     #[test]
     fn process_messages_skips_quiet_batches() {
-        let (mut shell, mut backend, _) = stub_shell();
+        let (mut shell, mut backend, _, calls, updates) = stub_shell();
         // Transient UI: construction builds nothing; each rebuild
         // invokes the view exactly once.
-        assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
         // Empty batch without invalidation: no rebuild.
         let still = AtomicBool::new(false);
         assert!(!shell.process_messages(Vec::new(), &mut backend, &still));
-        assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
         // Either a message or the flag rebuilds exactly once.
-        assert!(shell.process_messages(vec![StubMessage::Ping], &mut backend, &still));
-        assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), 1);
+        assert!(shell.process_messages([StubMessage::Ping(7)], &mut backend, &still));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(*updates.lock().unwrap(), [7]);
         let flagged = AtomicBool::new(true);
         assert!(shell.process_messages(Vec::new(), &mut backend, &flagged));
-        assert_eq!(VIEW_CALLS.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert!(!flagged.load(Ordering::Acquire));
     }
 }

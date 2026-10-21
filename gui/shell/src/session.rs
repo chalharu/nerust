@@ -86,6 +86,25 @@ struct CoreCreation {
     applied_assignments: InputAssignments,
 }
 
+/// The factory's live resources share one lifetime and are replaced as a unit.
+struct ActiveRuntime {
+    core: Box<dyn LiveCore>,
+    input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
+    field_map: HashMap<(AttachmentId, ControlId), usize>,
+    host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
+}
+
+impl From<CoreRuntime> for ActiveRuntime {
+    fn from(runtime: CoreRuntime) -> Self {
+        Self {
+            core: Box::new(runtime.emu_core),
+            input: runtime.gui_input,
+            field_map: runtime.field_map,
+            host_peripherals: runtime.host_peripherals,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct LoadedMedia {
     media: MediaObject,
@@ -104,8 +123,6 @@ pub enum KeyboardShortcut {
 /// for the input domain so `SessionHandle` stays a facade.
 struct InputDept {
     current_assignments: InputAssignments,
-    field_map: HashMap<(AttachmentId, ControlId), usize>,
-    host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_keyboard::Key, usize>,
     pressed_keys: std::collections::HashSet<Key>,
@@ -116,15 +133,9 @@ struct InputDept {
 
 impl InputDept {
     /// Department constructor: the facade builds departments, never bare field lists.
-    fn new(
-        current_assignments: InputAssignments,
-        field_map: HashMap<(AttachmentId, ControlId), usize>,
-        host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
-    ) -> Self {
+    fn new(current_assignments: InputAssignments) -> Self {
         Self {
             current_assignments,
-            field_map,
-            host_peripherals,
             key_field_map: HashMap::new(),
             pressed_keys: std::collections::HashSet::new(),
             touch_cache: Default::default(),
@@ -136,11 +147,13 @@ impl InputDept {
     pub(crate) fn rebuild_key_field_map(
         &mut self,
         bindings: Option<&[nerust_settings_core::model::input::KeyboardBinding]>,
+        field_map: Option<&HashMap<(AttachmentId, ControlId), usize>>,
     ) {
         self.key_field_map.clear();
         if let Some(bindings) = bindings
+            && let Some(field_map) = field_map
             && let Err(duplicate) = crate::session::input_map::rebuild_input_map(
-                &self.field_map,
+                field_map,
                 bindings,
                 &mut self.key_field_map,
             )
@@ -183,7 +196,7 @@ pub(crate) struct TouchCache {
 /// settings domain.
 struct SettingsCluster {
     manager: SettingsManager,
-    snapshot: SettingsSnapshot,
+    snapshot: Arc<SettingsSnapshot>,
 }
 
 impl SettingsCluster {
@@ -224,27 +237,33 @@ impl MediaDept {
 /// Live emulation objects: the core plus its GUI input adapter.
 /// Everything touching the running core goes through these typed methods.
 struct EmuCluster {
-    core: Option<Box<dyn LiveCore>>,
-    input: Option<Box<dyn nerust_core_traits::factory::GuiInputPort>>,
+    runtime: Option<ActiveRuntime>,
+    empty_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
 }
 
 impl EmuCluster {
     fn new() -> Self {
         Self {
-            core: None,
-            input: None,
+            runtime: None,
+            empty_peripherals: Default::default(),
         }
     }
 
     /// Single typed access: shared live core behind the port.
     pub(crate) fn require_live(&self) -> Result<&dyn LiveCore, SessionError> {
-        self.core.as_deref().ok_or(SessionError::NoCore)
+        self.runtime
+            .as_ref()
+            .map(|runtime| runtime.core.as_ref())
+            .ok_or(SessionError::NoCore)
     }
 
     /// Single typed access: exclusive live core behind the port.
     /// Returns the box so the borrow stays concrete; callers deref to the port.
     pub(crate) fn require_live_mut(&mut self) -> Result<&mut Box<dyn LiveCore>, SessionError> {
-        self.core.as_mut().ok_or(SessionError::NoCore)
+        self.runtime
+            .as_mut()
+            .map(|runtime| &mut runtime.core)
+            .ok_or(SessionError::NoCore)
     }
 
     /// Shared live core behind the [`LiveCore`](crate::emu_core::LiveCore) port.
@@ -262,8 +281,9 @@ impl EmuCluster {
     pub(crate) fn live_or_empty(
         &self,
     ) -> Result<&dyn LiveCore, crate::session::error::SlotOpFailure> {
-        self.core
-            .as_deref()
+        self.runtime
+            .as_ref()
+            .map(|runtime| runtime.core.as_ref())
             .ok_or(crate::session::error::SlotOpFailure::Empty)
     }
 
@@ -272,21 +292,29 @@ impl EmuCluster {
         self.require_live().map(|core| core.as_exporter())
     }
 
-    /// Paired install: core and input always arrive together from the
-    /// factory, so they are never half-present.
-    fn install(
-        &mut self,
-        core: Box<dyn LiveCore>,
-        input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
-    ) {
-        self.core = Some(core);
-        self.input = Some(input);
+    /// Keep the previous aggregate alive until a settings transaction commits.
+    fn replace(&mut self, next: ActiveRuntime) -> Option<ActiveRuntime> {
+        self.runtime.replace(next)
+    }
+
+    fn restore(&mut self, previous: Option<ActiveRuntime>) {
+        self.runtime = previous;
+    }
+
+    fn field_map(&self) -> Option<&HashMap<(AttachmentId, ControlId), usize>> {
+        self.runtime.as_ref().map(|runtime| &runtime.field_map)
+    }
+
+    fn host_peripherals(&self) -> &nerust_core_traits::peripheral::HostPeripheralHandles {
+        self.runtime
+            .as_ref()
+            .map_or(&self.empty_peripherals, |runtime| &runtime.host_peripherals)
     }
 
     fn input_mut(
         &mut self,
     ) -> Option<&mut (dyn nerust_core_traits::factory::GuiInputPort + 'static)> {
-        self.input.as_mut().map(|boxed| boxed.as_mut())
+        self.runtime.as_mut().map(|runtime| runtime.input.as_mut())
     }
 }
 
@@ -388,7 +416,7 @@ impl SessionHandle {
         registry: &SystemRegistry,
         use_persistent: bool,
         paths: Option<SettingsPaths>,
-    ) -> (SettingsManager, SettingsSnapshot) {
+    ) -> (SettingsManager, Arc<SettingsSnapshot>) {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
@@ -413,13 +441,13 @@ impl SessionHandle {
                 default_app_state(),
             )
         };
-        let settings_snapshot = settings.snapshot().unwrap_or_else(|e| {
+        let settings_snapshot = settings.snapshot_arc().unwrap_or_else(|e| {
             log::warn!("settings snapshot unavailable, using ephemeral defaults: {e}");
-            SettingsSnapshot {
+            Arc::new(SettingsSnapshot {
                 shared: default_shared_settings(registry.all()),
                 local: default_local_settings(),
                 app_state: default_app_state(),
-            }
+            })
         });
         (settings, settings_snapshot)
     }
@@ -455,9 +483,7 @@ impl SessionHandle {
             .as_ref()
             .and_then(|id| registry.find_by_id(id.as_ref()))
             .cloned();
-        let (emu_core, gui_input, field_map, host_peripherals, assignments) = if let Some(ref f) =
-            factory
-        {
+        let (runtime, assignments) = if let Some(ref f) = factory {
             let sid = f.system_id();
             let requested_assignments = Self::load_assignments(f, &settings_snapshot, sid.as_ref());
             let created = Self::create_core_with_assignments(
@@ -467,23 +493,14 @@ impl SessionHandle {
                 &requested_assignments,
             )?;
             (
-                Some(created.runtime.emu_core),
-                Some(created.runtime.gui_input),
-                created.runtime.field_map,
-                created.runtime.host_peripherals,
+                Some(ActiveRuntime::from(created.runtime)),
                 created.applied_assignments,
             )
         } else {
-            (
-                None,
-                None,
-                HashMap::new(),
-                Default::default(),
-                InputAssignments::new(vec![]),
-            )
+            (None, InputAssignments::new(vec![]))
         };
         let mut result = Self {
-            input: InputDept::new(assignments, field_map, host_peripherals),
+            input: InputDept::new(assignments),
             emu: EmuCluster::new(),
             registry,
             active_system_id,
@@ -496,9 +513,7 @@ impl SessionHandle {
             title_cache: title::TitleCache::new(),
             history_view: session_query::HistoryView::new(),
         };
-        if let (Some(core), Some(input)) = (emu_core, gui_input) {
-            result.emu.install(Box::new(core), input);
-        }
+        result.emu.restore(runtime);
         result.rebuild_key_field_map();
         Ok(result)
     }
@@ -574,6 +589,11 @@ impl SessionHandle {
         &self.settings.snapshot
     }
 
+    /// Immutable settings identity changes only after a successful update.
+    pub fn settings_arc(&self) -> Arc<SettingsSnapshot> {
+        Arc::clone(&self.settings.snapshot)
+    }
+
     /// Narrow chrome view for the OSD layer decision, adapted once at the settings boundary.
     pub fn chrome(&self) -> osd::OsdChrome {
         osd::OsdChrome::from(&self.settings.snapshot.local.notifications)
@@ -592,7 +612,7 @@ impl SessionHandle {
     }
 
     pub fn host_peripherals(&self) -> &nerust_core_traits::peripheral::HostPeripheralHandles {
-        &self.input.host_peripherals
+        self.emu.host_peripherals()
     }
 
     pub fn current_assignments(&self) -> &InputAssignments {
@@ -600,8 +620,10 @@ impl SessionHandle {
     }
 
     /// Narrow settings write: remembers the window size for the next launch.
-    pub fn update_window_size(&self, width: u32, height: u32) -> Result<(), SettingsError> {
-        self.settings.manager.update_window_size(width, height)
+    pub fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), SettingsError> {
+        self.settings.manager.update_window_size(width, height)?;
+        self.settings.snapshot = self.settings.manager.snapshot_arc()?;
+        Ok(())
     }
 
     /// Bundle form of the backend swap: one struct instead of three
@@ -723,6 +745,11 @@ pub enum SessionError {
     MapperFlush(#[from] crate::session::persistence::MapperFlushError),
     #[error("no emulation core active")]
     NoCore,
+    #[error("settings apply failed: {apply}; rollback also failed: {rollback}")]
+    Rollback {
+        apply: Box<SessionError>,
+        rollback: Box<SessionError>,
+    },
 }
 
 impl From<crate::session::error::SlotOpFailure> for SessionError {
@@ -768,12 +795,7 @@ impl SessionHandle {
 
         self.active_system_id = Some(system_id.clone_box());
         self.input.current_assignments = created.applied_assignments;
-        self.emu.install(
-            Box::new(created.runtime.emu_core),
-            created.runtime.gui_input,
-        );
-        self.input.field_map = created.runtime.field_map;
-        self.input.host_peripherals = created.runtime.host_peripherals;
+        self.emu.replace(ActiveRuntime::from(created.runtime));
         self.media.clear_runtime();
         self.input.pressed_keys.clear();
         self.rebuild_key_field_map();
@@ -890,6 +912,31 @@ mod tests;
 #[cfg(test)]
 mod session_cov_tests {
     use super::test_util::test_session;
+
+    #[test]
+    fn window_state_is_published_and_survives_later_settings_apply() {
+        let mut session = test_session();
+        let before = session.settings_arc();
+        session.update_window_size(731, 547).unwrap();
+        let after = session.settings_arc();
+        assert!(!std::sync::Arc::ptr_eq(&before, &after));
+        assert_eq!(after.app_state.window_size("main").unwrap().width, 731);
+        let mut next = after.as_ref().clone();
+        next.local.audio.muted = !next.local.audio.muted;
+        session.apply_settings(next).unwrap();
+        assert_eq!(
+            session
+                .settings
+                .manager
+                .snapshot()
+                .unwrap()
+                .app_state
+                .window_size("main")
+                .unwrap()
+                .width,
+            731,
+        );
+    }
 
     #[test]
     fn accessors_cover_frame_settings_and_factory() {

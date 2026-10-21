@@ -94,10 +94,12 @@ impl HostState {
         }
     }
 
-    /// Fresh view holds no layer: re-push on the next sync instead
-    /// of skipping on a stale fingerprint. Sole presenter reset.
+    /// A fresh destination has neither the layer nor the reserved strip.
     pub(crate) fn note_renderer_replaced(&mut self) {
         self.osd.layer.presenter.invalidate();
+        self.osd.layer.last_strip.clear();
+        self.osd.layer.last_sync_geometry.clear();
+        self.osd.layer.layer_live = false;
     }
 
     /// Reserved edge strips in physical pixels; static per settings, not per frame.
@@ -305,6 +307,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct StubRenderer {
         layers: Vec<bool>,
+        strips: Vec<ReservedStrip>,
     }
 
     impl SurfaceLifecycle for StubRenderer {
@@ -338,7 +341,11 @@ mod tests {
         }
     }
 
-    impl StripSink for StubRenderer {}
+    impl StripSink for StubRenderer {
+        fn set_reserved_strip(&mut self, strip: ReservedStrip) {
+            self.strips.push(strip);
+        }
+    }
 
     impl ProfileSwitch for StubRenderer {
         fn update_render_profile(
@@ -490,5 +497,31 @@ mod tests {
         let ctx = host.frame_ctx();
         host.render_osd_frame(&mut renderer, surface(), &ctx);
         assert!(renderer.layers.is_empty());
+        assert_eq!(renderer.strips.len(), 1);
+    }
+
+    #[test]
+    fn renderer_replacement_repushes_strip_and_visible_layer() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let mut settings = host.session.settings_snapshot().clone();
+        settings.local.notifications.status_enabled = true;
+        host.apply_settings(settings)
+            .expect("headless settings apply");
+        let ctx = host.frame_ctx();
+        let mut old = StubRenderer::default();
+        host.render_osd_frame(&mut old, surface(), &ctx);
+        assert_eq!(old.layers, [true]);
+        assert_eq!(old.strips.len(), 1);
+
+        host.note_renderer_replaced();
+        assert!(!host.osd.layer.layer_live);
+        let mut fresh = StubRenderer::default();
+        host.render_osd_frame(&mut fresh, surface(), &ctx);
+        assert_eq!(fresh.strips, old.strips);
+        assert_eq!(fresh.layers, [true]);
+        host.render_osd_frame(&mut fresh, surface(), &ctx);
+        assert_eq!(fresh.strips.len(), 1);
+        assert_eq!(fresh.layers, [true]);
     }
 }

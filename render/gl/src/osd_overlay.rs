@@ -51,10 +51,10 @@ pub(crate) fn checked_osd_rect(
     if need == 0 {
         return Err(OsdReject::Empty);
     }
-    if layer.rgba.len() < need {
+    if layer.rgba().len() < need {
         return Err(OsdReject::Short {
             need,
-            have: layer.rgba.len(),
+            have: layer.rgba().len(),
         });
     }
     // u32 -> i32 via try_from: values above i32::MAX refuse as

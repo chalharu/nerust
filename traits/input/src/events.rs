@@ -175,6 +175,21 @@ pub trait InputStateBuffer: std::fmt::Debug + Send + Downcast {
 
 downcast_rs::impl_downcast!(InputStateBuffer);
 
+/// Core-facing input receiver, independent of any thread or transport.
+pub trait InputReceiver: Send {
+    /// Refresh once at frame start and borrow the latest complete snapshot.
+    /// Without new input, retain the previous state. The snapshot stays valid
+    /// for the borrow; implementations should avoid per-frame allocation.
+    fn receive(&mut self) -> &dyn InputStateBuffer;
+}
+
+/// A local buffer is also a receiver with a fixed snapshot (no transport).
+impl<B: InputStateBuffer> InputReceiver for B {
+    fn receive(&mut self) -> &dyn InputStateBuffer {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -205,6 +220,13 @@ mod tests {
                 actual: "other",
             })
         }
+    }
+
+    #[test]
+    fn local_buffer_receives_without_transport() {
+        let mut receiver: Box<dyn super::InputReceiver> = Box::new(Foreign);
+        assert!(receiver.receive().downcast_ref::<Foreign>().is_some());
+        assert!(receiver.receive().downcast_ref::<Foreign>().is_some());
     }
 
     #[test]

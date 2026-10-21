@@ -3,9 +3,7 @@
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use cosmic_text::{CacheKey, SwashContent};
-use nerust_render_traits::renderer::{
-    GenerationClock, OsdAnchor, OsdLayer, SafeInsets, osd_font_px,
-};
+use nerust_render_traits::renderer::{OsdAnchor, OsdLayer, ViewInsets, osd_font_px};
 use std::{collections::HashMap, rc::Rc};
 
 /// Port-owned OSD DTOs, re-exported for frontends that only name the rasterizer crate.
@@ -87,12 +85,10 @@ pub struct OsdRaster {
     sans_name: String,
     has_fonts: bool,
     ui_scale: f32,
-    safe_insets: SafeInsets,
+    safe_insets: ViewInsets,
     /// Flat shape cache keyed by (text, size); LRU order in `shape_lru`.
     shape_cache: HashMap<ShapeKey, Rc<ShapedSpan>>,
     shape_lru: std::collections::VecDeque<ShapeKey>,
-    /// Staging-owner generation clock: rasterized layers mint here, never globally.
-    clock: GenerationClock,
 }
 
 impl OsdRaster {
@@ -119,10 +115,9 @@ impl OsdRaster {
             sans_name,
             has_fonts,
             ui_scale: 1.0,
-            safe_insets: SafeInsets::default(),
+            safe_insets: ViewInsets::default(),
             shape_cache: HashMap::new(),
             shape_lru: std::collections::VecDeque::new(),
-            clock: GenerationClock::new(),
         }
     }
 
@@ -134,7 +129,7 @@ impl OsdRaster {
 
     /// Extra edge padding for rounded corners, notches, or gesture bars.
     /// Zero by default so desktop output is unchanged.
-    pub fn set_safe_insets(&mut self, insets: SafeInsets) {
+    pub fn set_safe_insets(&mut self, insets: ViewInsets) {
         self.safe_insets = insets;
     }
 
@@ -231,14 +226,7 @@ impl OsdRaster {
                 }
             }
         }
-        Some(OsdLayer::with_generation(
-            min_x,
-            min_y,
-            width,
-            height,
-            rgba,
-            self.clock.next(),
-        ))
+        Some(OsdLayer::new(min_x, min_y, width, height, rgba))
     }
 
     fn layout(
@@ -755,7 +743,7 @@ fn draw_pill(rgba: &mut [u8], stride_w: u32, x: u32, y: u32, w: u32, h: u32, rad
 mod tests {
     use super::*;
     use super::{OsdContent, OsdRow, OsdStatus};
-    use nerust_render_traits::renderer::SafeInsets;
+    use nerust_render_traits::renderer::ViewInsets;
 
     fn content() -> OsdContent {
         OsdContent {
@@ -786,15 +774,15 @@ mod tests {
         }
         let layer = raster.rasterize(&content(), 960, 720).expect("ascii rows");
         assert_eq!(
-            layer.rgba.len(),
+            layer.rgba().len(),
             layer.width as usize * layer.height as usize * 4
         );
         assert!(layer.width < 960 && layer.height < 720);
         // Pill corners stay transparent (radius), text is opaque somewhere.
-        assert_eq!(layer.rgba[3], 0);
+        assert_eq!(layer.rgba()[3], 0);
         assert!(
             layer
-                .rgba
+                .rgba()
                 .as_chunks::<4>()
                 .0
                 .iter()
@@ -802,7 +790,7 @@ mod tests {
         );
         // Deterministic: the glyph cache makes the second pass identical.
         let again = raster.rasterize(&content(), 960, 720).expect("cached");
-        assert_eq!(layer.rgba, again.rgba);
+        assert_eq!(layer.rgba(), again.rgba());
     }
 
     #[test]
@@ -813,7 +801,7 @@ mod tests {
             return;
         }
         let plain = raster.rasterize(&content(), 960, 720).expect("plain");
-        raster.set_safe_insets(SafeInsets {
+        raster.set_safe_insets(ViewInsets {
             top: 60,
             right: 40,
             bottom: 60,
@@ -903,7 +891,7 @@ mod tests {
         };
         let layer = raster.rasterize(&content, 960, 720).expect("cjk rows");
         let lit = layer
-            .rgba
+            .rgba()
             .as_chunks::<4>()
             .0
             .iter()
@@ -921,7 +909,7 @@ mod tests {
         };
         let layer = raster.rasterize(&body, 960, 720).expect("cjk body");
         let body_lit = layer
-            .rgba
+            .rgba()
             .as_chunks::<4>()
             .0
             .iter()
@@ -994,13 +982,13 @@ mod tests {
         // The value pill stays on the margin side either way.
         let seam_left = value_w.ceil() as u32 + super::PILL_PAD_X * 2 + super::ROW_GAP / 2;
         for y in 0..paused_left.height {
-            let alpha = paused_left.rgba
+            let alpha = paused_left.rgba()
                 [(y as usize * paused_left.width as usize + seam_left as usize) * 4 + 3];
             assert_eq!(alpha, 0, "seam must be transparent at y={y}");
         }
         let seam_right = label_w.ceil() as u32 + super::PILL_PAD_X * 2 + super::ROW_GAP / 2;
         for y in 0..paused_right.height {
-            let alpha = paused_right.rgba
+            let alpha = paused_right.rgba()
                 [(y as usize * paused_right.width as usize + seam_right as usize) * 4 + 3];
             assert_eq!(alpha, 0, "seam must be transparent at y={y}");
         }
@@ -1116,18 +1104,16 @@ mod tests {
     }
 
     #[test]
-    fn staged_layers_mint_distinct_generations_but_dedup_by_hash() {
+    fn repeated_rasters_dedup_by_exact_content() {
         let mut raster = OsdRaster::new();
         if !raster.has_fonts() {
             eprintln!("SKIP: no system fonts");
             return;
         }
-        // Staging owner mints: consecutive rasterizes never share a generation.
+        // Independent immutable payloads still compare equal.
         let first = raster.rasterize(&content(), 960, 720).expect("first");
         let second = raster.rasterize(&content(), 960, 720).expect("second");
-        assert_ne!(first.generation, second.generation);
-        assert_ne!(first.generation, 0);
-        // Identical bytes hash equal: backends skip the re-upload.
+        // Matching digests are followed by exact byte comparison.
         assert_eq!(first.content_hash(), second.content_hash());
         assert!(first.same_content(Some(&second)));
         assert!(OsdLayer::same_option(Some(&first), Some(&second)));

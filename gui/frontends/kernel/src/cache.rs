@@ -1,4 +1,4 @@
-//! Shared change gates: versioned memos plus Eq-gated snapshot shares.
+//! Shared versioned change gates for small frontend keys.
 
 /// Versioned change gate: true when `value` differs from memory.
 /// False means the downstream push can be skipped.
@@ -46,41 +46,6 @@ impl<T: PartialEq> Versioned<T> {
     }
 }
 
-/// Eq-gated snapshot share: clones the value only when it changed
-/// since the last frame; steady frames reuse one `Arc`.
-#[derive(Debug)]
-pub struct SnapshotCache<T: PartialEq> {
-    last: Option<std::sync::Arc<T>>,
-}
-
-impl<T: PartialEq> Default for SnapshotCache<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T: PartialEq> SnapshotCache<T> {
-    /// Empty cache: the first `get` always clones.
-    pub fn new() -> Self {
-        Self { last: None }
-    }
-
-    /// Shared snapshot: the cached `Arc` on repeat, a fresh clone on change.
-    pub fn get(&mut self, current: &T) -> std::sync::Arc<T>
-    where
-        T: Clone,
-    {
-        if let Some(last) = &self.last
-            && last.as_ref() == current
-        {
-            return std::sync::Arc::clone(last);
-        }
-        let fresh = std::sync::Arc::new(current.clone());
-        self.last = Some(std::sync::Arc::clone(&fresh));
-        fresh
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,18 +70,5 @@ mod tests {
         assert_eq!(memo.version(), 1);
         assert!(memo.check(&"b".to_string()));
         assert_eq!(memo.version(), 2);
-    }
-
-    #[test]
-    fn snapshot_cache_reuses_arc_on_steady_values() {
-        let mut cache: SnapshotCache<Vec<u8>> = SnapshotCache::new();
-        let value = vec![1u8, 2, 3];
-        let first = cache.get(&value);
-        let second = cache.get(&value);
-        assert!(std::sync::Arc::ptr_eq(&first, &second));
-        let changed = vec![1u8, 2, 4];
-        let third = cache.get(&changed);
-        assert!(!std::sync::Arc::ptr_eq(&first, &third));
-        assert_eq!(*third, changed);
     }
 }

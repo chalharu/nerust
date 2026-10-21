@@ -10,7 +10,7 @@ use nerust_gui_shell::session::{
 use nerust_render_traits::{
     ReservedStrip, SurfaceSize,
     physical::PhysicalSize,
-    renderer::{RenderPipeline, SafeInsets, strip_pixels},
+    renderer::{RenderPipeline, ViewInsets, strip_pixels},
 };
 use nerust_settings_core::model::{language::AppLanguage, local::NotificationSettings};
 
@@ -63,7 +63,7 @@ struct InsetsCache {
     size: SurfaceSize,
     scale_key: u32,
     version: u64,
-    system: SafeInsets,
+    system: ViewInsets,
 }
 
 impl InsetsCache {
@@ -72,7 +72,7 @@ impl InsetsCache {
             size: SurfaceSize::new(0, 0),
             scale_key: u32::MAX,
             version: u64::MAX,
-            system: SafeInsets::default(),
+            system: ViewInsets::default(),
         }
     }
 
@@ -82,7 +82,7 @@ impl InsetsCache {
     }
 
     /// Cached push or default: default-until-push, never a blocking query.
-    fn refresh(&mut self, size: SurfaceSize, scale: f32) -> SafeInsets {
+    fn refresh(&mut self, size: SurfaceSize, scale: f32) -> ViewInsets {
         let scale_key = crate::density::density_key(scale);
         let version = super::bridge::insets_version();
         if size != self.size || scale_key != self.scale_key || version != self.version {
@@ -90,7 +90,7 @@ impl InsetsCache {
             self.scale_key = scale_key;
             self.version = version;
             self.system = super::bridge::cached_system_insets()
-                .map(|[top, right, bottom, left]| SafeInsets {
+                .map(|[top, right, bottom, left]| ViewInsets {
                     top: top.max(0) as u32,
                     right: right.max(0) as u32,
                     bottom: bottom.max(0) as u32,
@@ -117,7 +117,7 @@ pub(super) struct OsdSyncCtx<'a> {
     pub language: AppLanguage,
     pub renderer: &'a mut dyn RenderPipeline,
     pub size: SurfaceSize,
-    pub insets: SafeInsets,
+    pub insets: ViewInsets,
     pub now: Instant,
 }
 
@@ -189,8 +189,8 @@ impl AndroidOsd {
         scale_factor: f32,
         content: Option<PhysicalSize>,
         size: SurfaceSize,
-        system: SafeInsets,
-    ) -> SafeInsets {
+        system: ViewInsets,
+    ) -> ViewInsets {
         let density = scale_factor.max(0.5);
         let base = (EDGE_SAFE_DP * density).round() as u32;
         let extra = (BAR_AXIS_EXTRA_DP * density).round() as u32;
@@ -203,14 +203,14 @@ impl AndroidOsd {
             _ => size.height >= size.width,
         };
         if taller {
-            SafeInsets {
+            ViewInsets {
                 top: base.max(system.top) + extra,
                 right: base.max(system.right),
                 bottom: base.max(system.bottom) + extra,
                 left: base.max(system.left),
             }
         } else {
-            SafeInsets {
+            ViewInsets {
                 top: base.max(system.top),
                 right: base.max(system.right) + extra,
                 bottom: base.max(system.bottom),
@@ -221,7 +221,7 @@ impl AndroidOsd {
 
     /// Java window insets, refreshed only on size/density/push change.
     /// Default-until-push: no frame ever blocks on a JNI query.
-    pub(super) fn system_insets(&mut self, size: SurfaceSize, scale: f32) -> SafeInsets {
+    pub(super) fn system_insets(&mut self, size: SurfaceSize, scale: f32) -> ViewInsets {
         self.insets.refresh(size, scale)
     }
 

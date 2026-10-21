@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gl::types::{GLenum, GLint, GLsizei, GLuint};
 
 use super::{
-    CurrentContext, Error,
+    Current, Error,
     raw::{
         bind_buffer, bind_vertex_array, buffer_data, delete_buffers, delete_vertex_arrays,
         draw_arrays, enable_vertex_attrib_array, gen_buffers, gen_vertex_arrays,
@@ -73,7 +73,7 @@ impl VertexArray {
 
     /// Delete the VAO and held buffers when the context is current.
     /// No GL call without a current context; Drop reports the leak.
-    pub fn destroy_if_current(&mut self, current: Option<CurrentContext>) -> bool {
+    pub fn destroy_if_current(&mut self, current: Option<Current>) -> bool {
         let Some(_current) = current else {
             log::debug!("orphan GL VAO {} skipped: no current context", self.vao.id);
             self.vao.deleted = true;
@@ -228,7 +228,7 @@ impl VertexBuffer {
 
     /// Delete the buffer when the context is current.
     /// `None` skips the GL call and reports failure; Drop logs the leak.
-    pub fn destroy_if_current(&self, current: Option<CurrentContext>) -> bool {
+    pub fn destroy_if_current(&self, current: Option<Current>) -> bool {
         if self.deleted.get() {
             return false;
         }
@@ -288,7 +288,7 @@ impl IndexBuffer {
 
     /// Delete the buffer when the context is current.
     /// `None` skips the GL call and reports failure; Drop logs the leak.
-    pub fn destroy_if_current(&self, current: Option<CurrentContext>) -> bool {
+    pub fn destroy_if_current(&self, current: Option<Current>) -> bool {
         if self.deleted.get() {
             return false;
         }
@@ -309,19 +309,19 @@ pub struct Attrib {
 }
 
 impl super::context::GlObject for VertexArray {
-    fn destroy_if_current(&mut self, current: Option<CurrentContext>) -> bool {
+    fn destroy_if_current(&mut self, current: Option<Current>) -> bool {
         VertexArray::destroy_if_current(self, current)
     }
 }
 
 impl super::context::GlObject for VertexBuffer {
-    fn destroy_if_current(&mut self, current: Option<CurrentContext>) -> bool {
+    fn destroy_if_current(&mut self, current: Option<Current>) -> bool {
         VertexBuffer::destroy_if_current(self, current)
     }
 }
 
 impl super::context::GlObject for IndexBuffer {
-    fn destroy_if_current(&mut self, current: Option<CurrentContext>) -> bool {
+    fn destroy_if_current(&mut self, current: Option<Current>) -> bool {
         IndexBuffer::destroy_if_current(self, current)
     }
 }

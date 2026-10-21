@@ -222,10 +222,13 @@ fn session_rebuild_reuses_previously_resolved_load_request() {
     assert!(session.tick_metrics().loaded);
 
     let mut next = session.settings_snapshot().clone();
-    next.local.audio.latency_ms = 90;
+    next.shared.systems.insert(
+        Box::new(DummySystemId),
+        Box::new(nerust_nes_settings::NesSettings::default()),
+    );
     let plan = session.apply_settings(next).unwrap();
 
-    assert!(plan.session_rebuild_required);
+    assert!(plan.visual_changed);
     assert!(session.tick_metrics().loaded);
 }
 
@@ -406,10 +409,7 @@ fn apply_settings_swaps_presentation_without_rebuild_on_visual_delta() {
 
     let creations = mock_core_creations();
     let plan = session.apply_settings(next).unwrap();
-    assert!(
-        plan.session_rebuild_required,
-        "visual delta still flags the plan"
-    );
+    assert!(plan.visual_changed, "visual delta still flags the plan");
     assert_eq!(
         mock_core_creations(),
         creations,
@@ -468,7 +468,7 @@ fn apply_settings_skips_rebuild_when_assignments_unchanged() {
     let mut session = test_session();
     let snapshot = session.settings_snapshot().clone();
     let plan = session.apply_settings(snapshot).unwrap();
-    assert!(!plan.session_rebuild_required);
+    assert!(!plan.visual_changed);
 }
 
 #[test]
@@ -583,6 +583,82 @@ fn apply_settings_rebuilds_when_assignments_change() {
             .any(|(slot, _)| slot.as_str() == TEST_SLOT_P1.as_str()),
         "new assignments should include the test slot"
     );
+}
+
+#[test]
+fn rebuild_replaces_peripherals_and_input_mapping_together() {
+    use nerust_core_traits::peripheral::accelerometer_channel;
+    use nerust_input_traits::{AttachmentId, ControlId, DigitalControlId};
+
+    let mut session = test_session();
+    let (handle, port) = accelerometer_channel();
+    port.set_requested(true);
+    let old_field = (
+        AttachmentId::new("old.slot"),
+        ControlId::digital(DigitalControlId::new("old.control")),
+    );
+    let old = session.emu.runtime.as_mut().unwrap();
+    old.host_peripherals.accelerometer = Some(handle.clone());
+    old.field_map.insert(old_field, 99);
+    assert!(session.host_peripherals().accelerometer.is_some());
+
+    let next = with_visual_delta(&session);
+    session.apply_settings(next).unwrap();
+    assert!(session.host_peripherals().accelerometer.is_none());
+    assert!(!session.emu.field_map().unwrap().contains_key(&old_field));
+    // The retained old channel is independent of the newly installed runtime.
+    assert!(handle.demand().requested);
+}
+
+#[test]
+fn failed_rebuild_restores_input_peripherals_and_running_state() {
+    use nerust_core_traits::peripheral::{AccelerationSample, accelerometer_channel};
+    use nerust_input_traits::{AttachmentId, ControlId, DigitalControlId};
+
+    let (mut session, dir) = test_session_with_failing_settings();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(MediaObject::new(None, test_rom()), resolved)
+        .unwrap();
+    let before = session.settings_arc();
+    let (handle, port) = accelerometer_channel();
+    let old_field = (
+        AttachmentId::new("old.slot"),
+        ControlId::digital(DigitalControlId::new("old.control")),
+    );
+    let old = session.emu.runtime.as_mut().unwrap();
+    let input =
+        old.input.as_ref() as *const dyn nerust_core_traits::factory::GuiInputPort as *const ();
+    old.host_peripherals.accelerometer = Some(handle);
+    old.field_map.insert(old_field, 99);
+
+    let next = with_visual_delta(&session);
+    assert!(matches!(
+        session.apply_settings(next),
+        Err(SessionError::Settings(_))
+    ));
+    let restored = session.emu.runtime.as_ref().unwrap();
+    assert_eq!(
+        restored.input.as_ref() as *const dyn nerust_core_traits::factory::GuiInputPort
+            as *const (),
+        input
+    );
+    assert_eq!(session.emu.field_map().unwrap().get(&old_field), Some(&99));
+    let sample = AccelerationSample::new(1.0, 2.0);
+    session
+        .host_peripherals()
+        .accelerometer
+        .as_ref()
+        .unwrap()
+        .publish(sample);
+    assert_eq!(port.latest(), Some(sample));
+    assert!(Arc::ptr_eq(&before, &session.settings_arc()));
+    assert!(session.tick_metrics().loaded && !session.tick_metrics().paused);
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
