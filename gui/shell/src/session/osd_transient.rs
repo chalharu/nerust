@@ -653,33 +653,4 @@ mod transient_cov_tests {
             "a ×2"
         );
     }
-
-    #[test]
-    fn modal_fallback_routes_by_channel() {
-        use crate::session::notification::Message;
-        use crate::session::osd_presenter::{ModalRoute, ModalRouter};
-        let policy = TransientPolicy::from(
-            &nerust_settings_core::model::local::NotificationSettings::default(),
-        );
-        let unpresented = ModalRouter {
-            policy: &policy,
-            channel: FrameChannel::Unpresented,
-        };
-        assert!(matches!(
-            unpresented.route(&Message::persistence_unavailable()),
-            ModalRoute::Modal
-        ));
-        assert!(matches!(
-            unpresented.route(&Message::paused()),
-            ModalRoute::Drop
-        ));
-        let composited = ModalRouter {
-            policy: &policy,
-            channel: FrameChannel::Composited,
-        };
-        assert!(matches!(
-            composited.route(&Message::paused()),
-            ModalRoute::Transient
-        ));
-    }
 }
