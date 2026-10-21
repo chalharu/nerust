@@ -647,7 +647,7 @@ impl OsdView {
 #[cfg(test)]
 mod tests {
     use super::{OsdOutcome, OsdView, RetryDecision};
-    use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy, UploadBudget};
+    use nerust_render_traits::renderer::{OsdLayer, UploadBudget};
 
     fn staged_view() -> OsdView {
         let mut view = OsdView::default();
