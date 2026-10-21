@@ -117,13 +117,13 @@ impl SessionHandle {
 #[cfg(test)]
 mod tests {
     use super::HistoryView;
-    use crate::session::notification::{NotificationKind, NotificationLevel, UiNotification};
+    use crate::session::notification::{Message, NotificationLevel, UiNotification};
     use nerust_settings_core::model::language::AppLanguage;
 
-    fn event(seq: u64, kind: NotificationKind) -> UiNotification {
+    fn event(seq: u64, message: Message) -> UiNotification {
         UiNotification {
             level: NotificationLevel::Info,
-            kind,
+            message,
             count: 1,
             seq,
             at: std::time::UNIX_EPOCH,
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn history_view_rebuilds_only_on_seq_or_language_change() {
         let mut view = HistoryView::new();
-        let first = [event(0, NotificationKind::Paused)];
+        let first = [event(0, Message::paused())];
         let lines = view.lines(first.iter(), 1, AppLanguage::English);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].text, "Paused");
@@ -141,10 +141,7 @@ mod tests {
         let len = view.lines(first.iter(), 1, AppLanguage::English).len();
         assert_eq!(len, 1);
         // New event with a new seq: rebuild picks it up.
-        let second = [
-            event(0, NotificationKind::Paused),
-            event(1, NotificationKind::Resumed),
-        ];
+        let second = [event(0, Message::paused()), event(1, Message::resumed())];
         let lines = view.lines(second.iter(), 2, AppLanguage::English);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[1].text, "Resumed");
@@ -160,11 +157,11 @@ mod agreement_tests {
 
     #[test]
     fn cached_and_vec_histories_agree_on_one_source() {
-        use crate::session::notification::{NotificationKind, NotificationLevel, UiNotification};
+        use crate::session::notification::{Message, NotificationLevel, UiNotification};
         use nerust_settings_core::model::language::AppLanguage;
         let events = [UiNotification {
             level: NotificationLevel::Info,
-            kind: NotificationKind::Paused,
+            message: Message::paused(),
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,

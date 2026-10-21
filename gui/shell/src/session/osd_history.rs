@@ -121,7 +121,7 @@ pub fn history_lines<'a>(
     let offset_secs = local_utc_offset_secs();
     history
         .map(|n| {
-            let text = super::notification::render_text(&n.kind, n.count, language);
+            let text = super::notification::render_text(&n.message, n.count, language);
             HistoryLine {
                 datetime: format_datetime_in(n.at, offset_secs),
                 level: n.level,
@@ -146,9 +146,7 @@ pub fn format_time(time: std::time::SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::notification::{
-        FailureOrigin, NotificationKind, NotificationLevel, UiNotification,
-    };
+    use crate::session::notification::{FailureOrigin, Message, NotificationLevel, UiNotification};
     use nerust_settings_core::model::language::AppLanguage;
 
     #[test]
@@ -208,18 +206,14 @@ mod tests {
         let events = [
             UiNotification {
                 level: NotificationLevel::Info,
-                kind: NotificationKind::Paused,
+                message: Message::paused(),
                 count: 1,
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
             },
             UiNotification {
                 level: NotificationLevel::Error,
-                kind: NotificationKind::CommandFailure {
-                    origin: FailureOrigin::Command,
-                    id: "Save",
-                    detail: String::new(),
-                },
+                message: Message::command_failure(FailureOrigin::Command, "Save", String::new()),
                 count: 3,
                 seq: 1,
                 at: std::time::UNIX_EPOCH,
@@ -234,7 +228,7 @@ mod tests {
         // Module, level, and count ride every row, not just the batch shape.
         let warning = [UiNotification {
             level: NotificationLevel::Warning,
-            kind: NotificationKind::PersistenceUnavailable,
+            message: Message::persistence_unavailable(),
             count: 2,
             seq: 0,
             at: std::time::UNIX_EPOCH,

@@ -179,7 +179,7 @@ impl SessionHandle {
                 let name = command.cmd_name();
                 log::warn!("run_command {name} failed: {error}");
                 self.notifications.push(
-                    crate::session::notification::NotificationKind::command_failure_from(
+                    crate::session::notification::Message::command_failure_from(
                         crate::session::notification::FailureOrigin::Command,
                         name,
                         error,

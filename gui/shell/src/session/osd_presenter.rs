@@ -13,7 +13,7 @@ use nerust_settings_core::model::local::{
 };
 
 use crate::session::{
-    notification::{NotificationKind, NotificationLevel},
+    notification::{Message, NotificationLevel},
     osd_transient::{FrameChannel, OsdRow, TransientPolicy, falls_back_to_modal},
 };
 
@@ -77,7 +77,7 @@ pub(crate) struct ModalRouter<'a> {
 }
 
 impl ModalRouter<'_> {
-    pub(crate) fn route(&self, kind: &NotificationKind) -> ModalRoute {
+    pub(crate) fn route(&self, kind: &Message) -> ModalRoute {
         let level: NotificationLevel = kind.level();
         if !self.policy.enabled(level) {
             return ModalRoute::Drop;
@@ -1062,7 +1062,7 @@ mod presenter_cov_tests {
 
     #[test]
     fn router_routes_transient_modal_and_drop() {
-        use crate::session::notification::NotificationKind;
+        use crate::session::notification::Message;
         let settings = NotificationSettings::default();
         let policy = TransientPolicy::from(&settings);
         let composited = ModalRouter {
@@ -1070,7 +1070,7 @@ mod presenter_cov_tests {
             channel: FrameChannel::Composited,
         };
         assert!(matches!(
-            composited.route(&NotificationKind::Paused),
+            composited.route(&Message::paused()),
             ModalRoute::Transient
         ));
         let unpresented = ModalRouter {
@@ -1078,11 +1078,11 @@ mod presenter_cov_tests {
             channel: FrameChannel::Unpresented,
         };
         assert!(matches!(
-            unpresented.route(&NotificationKind::Paused),
+            unpresented.route(&Message::paused()),
             ModalRoute::Drop
         ));
         assert!(matches!(
-            unpresented.route(&NotificationKind::PersistenceUnavailable),
+            unpresented.route(&Message::persistence_unavailable()),
             ModalRoute::Modal | ModalRoute::Transient
         ));
         let off = TransientPolicy {
@@ -1093,9 +1093,6 @@ mod presenter_cov_tests {
             policy: &off,
             channel: FrameChannel::Composited,
         };
-        assert!(matches!(
-            router.route(&NotificationKind::Paused),
-            ModalRoute::Drop
-        ));
+        assert!(matches!(router.route(&Message::paused()), ModalRoute::Drop));
     }
 }
