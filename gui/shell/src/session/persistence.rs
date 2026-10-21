@@ -169,7 +169,7 @@ impl PersistenceManager {
 
         let core_bytes = emu.export_state()?;
         check_blob_budget(&core_bytes)?;
-        let state_blob = save_state_with_header(core_bytes);
+        let state_blob = save_state_with_header(&core_bytes);
         let preview =
             emu.export_preview()
                 .map(|frame| nerust_persistence::thumbnail::ThumbnailSource {
@@ -437,7 +437,7 @@ impl PersistenceManager {
                 if check_blob_budget(&core_bytes).is_err() {
                     return false;
                 }
-                let state_blob = save_state_with_header(core_bytes);
+                let state_blob = save_state_with_header(&core_bytes);
                 self.autosave_backend
                     .write_autosave(dir, &state_blob, &identity)
                     .is_ok()
@@ -768,7 +768,7 @@ mod persistence_cov_tests {
         };
         assert!(error.to_string().contains("Unavailable"));
         // Shell envelope decodes once at the persistence boundary.
-        let resolved = crate::state::resolve_state_format(&save_state_with_header(vec![1, 2, 3]));
+        let resolved = crate::state::resolve_state_format(&save_state_with_header(&[1, 2, 3]));
         assert_eq!(resolved, vec![1, 2, 3]);
         let _ = std::fs::remove_dir_all(&dir);
         let _ = FsSlots;
