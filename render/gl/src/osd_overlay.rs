@@ -107,16 +107,16 @@ mod tests {
 
     #[test]
     fn decision_maps_shared_policy_outcome() {
-        assert_eq!(false, false);
-        assert_eq!(true, true);
+        assert!(!false);
+        assert!(true);
         // End to end through the single budget: two retries, then drop.
         let mut budget = UploadBudget::new(3);
-        assert_eq!(budget.record_failure(), false);
-        assert_eq!(budget.record_failure(), false);
-        assert_eq!(budget.record_failure(), true);
-        assert_eq!(budget.record_failure(), true);
+        assert!(!budget.record_failure());
+        assert!(!budget.record_failure());
+        assert!(budget.record_failure());
+        assert!(budget.record_failure());
         budget.reset();
-        assert_eq!(budget.record_failure(), false);
+        assert!(!budget.record_failure());
     }
 
     #[test]
