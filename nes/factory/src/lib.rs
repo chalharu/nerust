@@ -4,21 +4,18 @@ mod settings;
 
 use std::rc::Rc;
 
-use nerust_core_traits::{
-    audio::AudioBackend,
-    factory::{
-        CoreFactory, CoreParts, FactoryError, SystemDefaults,
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{
-            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
-            SystemLoadOptions, SystemLoadOptionsSchema,
-        },
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::{audio::AudioBackend, identity::SystemId};
 use nerust_input_traits::ControllerProfile;
 use nerust_nes_settings::NesSettings;
+use nerust_system_traits::factory::{
+    CoreFactory, CoreParts, FactoryError, SystemDefaults,
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+    load::{
+        DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+        SystemLoadOptions, SystemLoadOptionsSchema,
+    },
+    settings::FactorySettingsView,
+};
 
 #[derive(Debug)]
 pub struct NesFactory;
@@ -218,7 +215,7 @@ pub fn create_test_core_and_adapter(
 
 #[cfg(test)]
 mod media_tests {
-    use nerust_core_traits::factory::CoreFactory;
+    use nerust_system_traits::factory::CoreFactory;
 
     use super::NesFactory;
 

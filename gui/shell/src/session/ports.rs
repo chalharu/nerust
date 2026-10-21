@@ -1,12 +1,11 @@
 //! Persistence ports: slot/autosave/mapper backends plus the manager-facing traits.
 //! Platform adapters implement these; `fs` holds the desktop filesystem one.
 
-use std::path::{Path, PathBuf};
-
 use nerust_core_traits::identity::SystemIdentity;
 use nerust_persistence::{
     error::PersistenceError,
     model::{LoadedStateSlot, StateSlotSummary},
+    sidecar::StorageLocation,
     thumbnail::ThumbnailSource,
 };
 
@@ -37,12 +36,12 @@ pub trait LoadPorts {
     /// Default load options for the active system.
     fn default_load_options(
         &self,
-    ) -> Option<Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptions>>;
+    ) -> Option<Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptions>>;
     /// Load resolved media.
     fn load_resolved(
         &mut self,
-        media: nerust_core_traits::factory::load::MediaObject,
-        resolved: nerust_core_traits::factory::load::ResolvedLoadRequest,
+        media: nerust_system_traits::factory::load::MediaObject,
+        resolved: nerust_system_traits::factory::load::ResolvedLoadRequest,
     ) -> Result<(), crate::load::RomLoaderError>;
     /// Resume after load.
     fn resume(&mut self);
@@ -63,13 +62,13 @@ pub trait SnapshotPort {
 pub trait SlotBackend: Send {
     fn scan(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         identity: &SystemIdentity,
     ) -> Result<Vec<StateSlotSummary>, PersistenceError>;
-    fn allocate_next_id(&self, dir: &Path) -> Result<u64, PersistenceError>;
+    fn allocate_next_id(&self, dir: &StorageLocation) -> Result<u64, PersistenceError>;
     fn write_slot(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         slot_id: u64,
         data: &[u8],
         identity: &SystemIdentity,
@@ -77,42 +76,50 @@ pub trait SlotBackend: Send {
     ) -> Result<StateSlotSummary, PersistenceError>;
     fn read_slot(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         slot_id: u64,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError>;
-    fn delete_slot(&self, dir: &Path, slot_id: u64) -> Result<(), PersistenceError>;
+    fn delete_slot(&self, dir: &StorageLocation, slot_id: u64) -> Result<(), PersistenceError>;
 }
 
 /// Platform abstraction for autosave I/O.
 pub trait AutoSaveBackend: Send {
     fn write_autosave(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         data: &[u8],
         identity: &SystemIdentity,
     ) -> Result<StateSlotSummary, PersistenceError>;
     fn read_autosave(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         identity: &SystemIdentity,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError>;
-    fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError>;
+    fn delete_autosave(&self, dir: &StorageLocation) -> Result<(), PersistenceError>;
     /// Quarantine the hidden autosave aside instead of deleting it.
     /// Returns the quarantine path, or `None` when nothing was kept.
-    fn quarantine_autosave(&self, dir: &Path) -> Result<Option<PathBuf>, PersistenceError> {
+    fn quarantine_autosave(
+        &self,
+        dir: &StorageLocation,
+    ) -> Result<Option<StorageLocation>, PersistenceError> {
         self.delete_autosave(dir).map(|_| None)
     }
 }
 
 /// Platform abstraction for mapper save I/O.
 pub trait MapperSaveBackend: Send {
-    fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError>;
-    fn write_mapper_save(&self, path: &Path, data: &[u8]) -> Result<(), PersistenceError>;
+    fn read_mapper_save(&self, path: &StorageLocation)
+    -> Result<Option<Vec<u8>>, PersistenceError>;
+    fn write_mapper_save(
+        &self,
+        path: &StorageLocation,
+        data: &[u8],
+    ) -> Result<(), PersistenceError>;
     fn write_recovery_mapper_save(
         &self,
-        path: &Path,
+        path: &StorageLocation,
         data: &[u8],
-    ) -> Result<PathBuf, PersistenceError>;
+    ) -> Result<StorageLocation, PersistenceError>;
 }
 
 #[cfg(test)]
@@ -131,7 +138,7 @@ mod ports_cov_tests {
         impl AutoSaveBackend for Noop {
             fn write_autosave(
                 &self,
-                _: &Path,
+                _: &StorageLocation,
                 _: &[u8],
                 _: &SystemIdentity,
             ) -> Result<StateSlotSummary, PersistenceError> {
@@ -139,17 +146,17 @@ mod ports_cov_tests {
             }
             fn read_autosave(
                 &self,
-                _: &Path,
+                _: &StorageLocation,
                 _: &SystemIdentity,
             ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
                 Ok(None)
             }
-            fn delete_autosave(&self, _: &Path) -> Result<(), PersistenceError> {
+            fn delete_autosave(&self, _: &StorageLocation) -> Result<(), PersistenceError> {
                 Ok(())
             }
         }
         let dir = std::env::temp_dir().join("nerust-ports-quarantine-probe");
-        assert_eq!(Noop.quarantine_autosave(&dir).unwrap(), None);
+        assert_eq!(Noop.quarantine_autosave(&dir.into()).unwrap(), None);
     }
 
     #[test]
@@ -162,7 +169,7 @@ mod ports_cov_tests {
             fn import_state(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
                 Ok(())
             }
-            fn export_preview(&self) -> Option<ThumbnailSource> {
+            fn export_preview(&self) -> Option<crate::emu_core::PreviewRgba> {
                 None
             }
             fn export_identity(&self) -> Option<SystemIdentity> {

@@ -15,6 +15,7 @@ name = "main"
 
 [dependencies]
 nerust_core_traits.workspace = true
+nerust_system_traits.workspace = true
 nerust_gba_factory.workspace = true
 nerust_gbc_factory.workspace = true
 nerust_gui_shell.workspace = true
@@ -31,7 +32,7 @@ nerust_crash_guard.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_nes_settings.workspace = true
 nerust_persistence.workspace = true
-nerust_render_traits.workspace = true
+nerust_render_traits = { features = ["renderer"], workspace = true }
 nerust_render_wgpu.workspace = true
 nerust_render_osd.workspace = true
 nerust_settings_core.workspace = true

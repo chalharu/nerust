@@ -12,3 +12,118 @@ pub(crate) const ACTION_SAVE_STATE: &str = "save_state";
 pub(crate) const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
 pub(crate) const ACTION_UNLOAD: &str = "unload";
 pub(crate) const ACTION_CONTROLLER: &str = "controller";
+
+/// Schema-derived validation before typed dispatch. Missing is not JSON null.
+pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()> {
+    let object = value.as_object_mut()?;
+    match object.get("type")?.as_str()? {
+        "menu" => {
+            for (name, value) in object.iter_mut() {
+                let valid = match name.as_str() {
+                    "v" => {
+                        normalize_bridge_integer(value)?;
+                        value.as_i64() == Some(1)
+                    }
+                    "type" => value.as_str() == Some("menu"),
+                    "action" => {
+                        matches!(
+                            value.as_str(),
+                            Some(
+                                "exit"
+                                    | "load_state"
+                                    | "open_rom"
+                                    | "open_settings"
+                                    | "orientation_changed"
+                                    | "reset"
+                                    | "save_state"
+                                    | "toggle_pause"
+                                    | "unload"
+                                    | "controller"
+                            )
+                        )
+                    }
+                    "device_id" => {
+                        normalize_bridge_integer(value)?;
+                        value
+                            .as_i64()
+                            .is_some_and(|number| (-2147483648..=2147483647).contains(&number))
+                    }
+                    "key" => {
+                        matches!(
+                            value.as_str(),
+                            Some(
+                                "button1"
+                                    | "button2"
+                                    | "button5"
+                                    | "button6"
+                                    | "start"
+                                    | "select"
+                                    | "up"
+                                    | "down"
+                                    | "left"
+                                    | "right"
+                            )
+                        )
+                    }
+                    "pressed" => value.is_boolean(),
+                    _ => false,
+                };
+                if !valid {
+                    return None;
+                }
+            }
+            for name in ["v", "type", "action"] {
+                object.get(name)?;
+            }
+            if object.get("action")?.as_str() == Some("controller") {
+                object.get("device_id")?;
+                object.get("key")?;
+                object.get("pressed")?;
+            }
+            Some(())
+        }
+        "error_dialog_dismissed" => {
+            for (name, value) in object.iter_mut() {
+                let valid = match name.as_str() {
+                    "v" => {
+                        normalize_bridge_integer(value)?;
+                        value.as_i64() == Some(1)
+                    }
+                    "type" => value.as_str() == Some("error_dialog_dismissed"),
+                    "request_id" => {
+                        normalize_bridge_integer(value)?;
+                        value
+                            .as_i64()
+                            .is_some_and(|number| (1..=9223372036854775807).contains(&number))
+                    }
+                    _ => false,
+                };
+                if !valid {
+                    return None;
+                }
+            }
+            for name in ["v", "type", "request_id"] {
+                object.get(name)?;
+            }
+            Some(())
+        }
+        _ => None,
+    }
+}
+
+// JSON Schema integers include integral decimal/exponent numbers (e.g. 1.0).
+fn normalize_bridge_integer(value: &mut serde_json::Value) -> Option<()> {
+    if value.as_i64().is_some() {
+        return Some(());
+    }
+    // Never round an existing unsigned integer through f64.
+    if value.as_u64().is_some() {
+        return None;
+    }
+    let number = value.as_f64()?;
+    if number.fract() != 0.0 || number < i64::MIN as f64 || number >= -(i64::MIN as f64) {
+        return None;
+    }
+    *value = serde_json::Value::from(number as i64);
+    Some(())
+}

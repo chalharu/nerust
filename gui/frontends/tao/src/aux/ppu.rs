@@ -160,17 +160,14 @@ impl Program for PpuProgram {
                 // `Arc::clone` under a read guard, then scale lock-free:
                 // the 2x derivation must never hold the display guard.
                 let display = bridge.display_snapshot();
-                let (images, generation, panels) = (
-                    display.images.clone(),
-                    display.images_gen,
-                    nerust_gui_viewmodel::debugger::format_panels(&display.panels),
-                );
+                let generation = display.images_gen;
+                let panels = nerust_gui_viewmodel::debugger::format_panels(&display.panels);
                 let current = Arc::clone(&snapshot_read(&state.snapshot));
                 // Sync swaps once per drain: scaled re-derived only on
                 // generation change, hover preserved as-is.
                 let scaled: ScaledPictures = if current.source_gen != generation {
-                    let mut scaled = Vec::with_capacity(images.len());
-                    for (label, width, height, rgba) in &images {
+                    let mut scaled = Vec::with_capacity(display.images.len());
+                    for (label, width, height, rgba) in &display.images {
                         let bytes = scale2x_nearest(rgba, *width, *height);
                         scaled.push((
                             label.clone(),
@@ -404,9 +401,11 @@ mod tests {
         assert_eq!(snapshot_read(&state.snapshot).source_gen, 5);
         assert_eq!(snapshot_read(&state.snapshot).scaled[0].1, 4);
         assert_eq!(snapshot_read(&state.snapshot).scaled[0].2, 2);
+        let scaled = Arc::clone(&snapshot_read(&state.snapshot).scaled);
         // Identical generation re-runs Sync without re-deriving.
         let _ = program.update(&mut state, PpuMessage::Sync);
         assert_eq!(snapshot_read(&state.snapshot).source_gen, 5);
+        assert!(Arc::ptr_eq(&scaled, &snapshot_read(&state.snapshot).scaled));
         // Hover only records the line, never re-derives.
         let _ = program.update(
             &mut state,

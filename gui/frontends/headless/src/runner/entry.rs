@@ -6,7 +6,7 @@ use crate::{
 };
 
 pub(super) fn validate_case(
-    factories: &[Box<dyn nerust_core_traits::factory::CoreFactory>],
+    factories: &[Box<dyn nerust_system_traits::factory::CoreFactory>],
     case: &RomCase,
     options: ValidationOptions,
 ) -> CaseOutcome {

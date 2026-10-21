@@ -2,9 +2,8 @@ use std::rc::Rc;
 
 use nerust_emu_thread::{GuiInput, InputPort, InputSplit};
 use nerust_input_traits::{
-    BufferError, ControlInfo, ControllerCollection, ControllerProfile, CreateSplitError,
-    InputAssignments, InputPorts, InputResources, InputStateBuffer, InputSystemFactory, InputValue,
-    PortSet, ProfileId, SlotInfo,
+    BufferError, ControlInfo, ControllerProfile, InputAssignments, InputPorts, InputStateBuffer,
+    InputSystemFactory, InputValue, PortSet, ProfileId, SlotInfo,
 };
 
 use crate::test_helpers::TEST_SLOT_P1;
@@ -79,12 +78,6 @@ impl InputSystemFactory for MockInputFactory {
     fn default_assignments(&self) -> InputAssignments {
         InputAssignments::new(vec![(TEST_SLOT_P1, None)])
     }
-    fn create_split(&self, _: &ControllerCollection) -> Result<InputResources, CreateSplitError> {
-        Ok(InputResources::new(
-            std::collections::HashMap::new(),
-            Box::new(|| Box::<TestInputBuffer>::default()),
-        ))
-    }
 }
 
 #[cfg(test)]
@@ -120,8 +113,6 @@ mod input_mock_cov_tests {
         assert_eq!(factory.slots().len(), 1);
         assert_eq!(factory.controllers().count(), 1);
         assert_eq!(factory.default_assignments().slots().len(), 1);
-        let collection = ControllerCollection::new(vec![]);
-        assert!(factory.create_split(&collection).is_ok());
         let _ = test_input_resources();
         assert_eq!(MockSlotProfile.profile_id().as_str(), "test.profile.p1");
         assert_eq!(MockSlotProfile.label(), "Test P1");

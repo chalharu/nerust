@@ -27,7 +27,7 @@ impl WindowRuntime {
                 // Focus truth plus resume only; chrome sync and drains
                 // stay deferred to the tick burst (one pass, one capture).
                 if self.host.focus_event(FocusEvent::Main(true)) == Some(FocusEffect::Resume) {
-                    self.host.resume_session();
+                    self.host.release_focus_pause();
                 }
                 self.host.request_redraw();
             }
@@ -129,7 +129,45 @@ impl WindowRuntime {
 
     pub(super) fn on_debug_redrawn(&mut self, opener: &dyn WindowOpener) {
         self.drain_and_maybe_open_ppu(opener);
-        self.host.render_aux(AuxKind::Debug);
+        let outcome = self.host.render_aux(AuxKind::Debug);
+        // Redraw widgets may have emitted actions after the pre-render drain.
+        // Take them before a close outcome removes their bridge.
+        self.drain_and_maybe_open_ppu(opener);
+        if let Some(outcome) = outcome {
+            self.apply_aux_outcome(AuxKind::Debug, outcome);
+        }
+    }
+
+    pub(super) fn on_aux_redrawn(&mut self, kind: AuxKind) {
+        let Some(outcome) = self.host.render_aux(kind) else {
+            return;
+        };
+        self.apply_aux_outcome(kind, outcome);
+    }
+
+    fn apply_aux_outcome(&mut self, kind: AuxKind, outcome: crate::aux::registry::AuxOutcome) {
+        if let Some(detail) = outcome.error {
+            self.host.session_mut().report_external_error(
+                nerust_gui_shell::session::notification::FailureOrigin::Host,
+                detail,
+            );
+        }
+        if outcome.cleared {
+            self.host.session_mut().clear_notification_history();
+        }
+        if !outcome.close {
+            return;
+        }
+        match kind {
+            AuxKind::Settings => {
+                if self.host.close_settings_and_maybe_rebuild() {
+                    self.recreate_renderer();
+                }
+            }
+            AuxKind::Debug => self.host.drop_debug_window(),
+            AuxKind::Ppu => self.host.drop_ppu_window(),
+            AuxKind::History => self.host.drop_history_window(),
+        }
     }
 
     pub(super) fn on_ppu_event(&mut self, event: WindowEvent) {

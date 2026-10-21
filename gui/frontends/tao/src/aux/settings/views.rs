@@ -425,7 +425,7 @@ impl SettingsAppState {
         for field in &view.fields {
             let choices: Vec<
                 nerust_gui_viewmodel::settings::dto::ChoiceView<
-                    nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+                    nerust_system_traits::factory::descriptor::SystemSettingsChoiceId,
                 >,
             > = field.choices.clone();
             let selected = choices.iter().find(|c| c.value == field.selected).cloned();
@@ -436,7 +436,7 @@ impl SettingsAppState {
                 choices,
                 selected,
                 move |choice: nerust_gui_viewmodel::settings::dto::ChoiceView<
-                    nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+                    nerust_system_traits::factory::descriptor::SystemSettingsChoiceId,
                 >| { Message::SetSystemChoice(field_id_str.clone(), choice) },
             ));
         }

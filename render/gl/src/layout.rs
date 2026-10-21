@@ -5,6 +5,8 @@
 /// of a `&'static str` tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FrameError {
+    #[error("frame format or dimensions do not match the render profile")]
+    ProfileMismatch,
     /// Width/height/row-bytes math overflowed.
     #[error("frame dimensions overflow (have {have} bytes)")]
     DimensionsOverflow { have: usize },
@@ -20,6 +22,35 @@ pub enum FrameError {
     /// Surface or content size unusable for viewport fitting.
     #[error("invalid viewport {w}x{h}")]
     InvalidViewport { w: i32, h: i32 },
+}
+
+impl FrameError {
+    fn from_shared(error: nerust_render_traits::FrameError, have: usize) -> Self {
+        match error {
+            nerust_render_traits::FrameError::ProfileMismatch => Self::ProfileMismatch,
+            nerust_render_traits::FrameError::InvalidDimensions => {
+                Self::DimensionsOverflow { have }
+            }
+            nerust_render_traits::FrameError::InvalidStride => Self::StrideOverflow { have },
+            nerust_render_traits::FrameError::TooShort { need, have } => {
+                Self::TooShort { need, have }
+            }
+        }
+    }
+}
+
+/// Reject incompatible metadata before performing any GL work. Larger source
+/// buffers are allowed; uploads consume only the profile's visible rectangle.
+pub(crate) fn validate_frame(
+    frame: &nerust_render_traits::FrameBuffer,
+    size: nerust_render_traits::logical::LogicalSize,
+    format: nerust_render_traits::VideoFrameFormat,
+    unpack: bool,
+) -> Result<FrameLayout, FrameError> {
+    let data_len = frame.as_ref().len();
+    let layout = nerust_render_traits::FrameLayout::validate(frame, size, format)
+        .map_err(|error| FrameError::from_shared(error, data_len))?;
+    FrameLayout::from_shared(layout, format.bytes_per_pixel(), data_len, unpack)
 }
 
 /// Checked frame geometry shared by the attach guard and the three
@@ -45,47 +76,33 @@ impl FrameLayout {
         data_len: usize,
         unpack_row_length: bool,
     ) -> Result<Self, FrameError> {
-        if bpp == 0 {
-            return Err(FrameError::DimensionsOverflow { have: data_len });
-        }
-        let row_bytes = fs
-            .width
-            .checked_mul(bpp)
-            .ok_or(FrameError::DimensionsOverflow { have: data_len })?;
-        if !stride.is_multiple_of(bpp) {
-            return Err(FrameError::StrideOverflow { have: data_len });
-        }
-        let stride_px = stride
-            .checked_div(bpp)
-            .ok_or(FrameError::StrideOverflow { have: data_len })?;
-        let need = if unpack_row_length {
-            fs.height.checked_sub(1).map_or(Ok(0), |rows| {
-                rows.checked_mul(stride)
-                    .and_then(|tail| tail.checked_add(row_bytes))
-                    .ok_or(FrameError::StrideOverflow { have: data_len })
-            })?
-        } else if stride == row_bytes {
-            fs.width
-                .checked_mul(fs.height)
-                .and_then(|px| px.checked_mul(bpp))
-                .ok_or(FrameError::DimensionsOverflow { have: data_len })?
+        let layout = nerust_render_traits::FrameLayout::checked(fs, bpp, stride, data_len)
+            .map_err(|error| FrameError::from_shared(error, data_len))?;
+        Self::from_shared(layout, bpp, data_len, unpack_row_length)
+    }
+
+    /// Shared validation owns byte geometry; only GL limits remain here.
+    fn from_shared(
+        layout: nerust_render_traits::FrameLayout,
+        bpp: usize,
+        data_len: usize,
+        unpack_row_length: bool,
+    ) -> Result<Self, FrameError> {
+        let fs = layout.size();
+        i32::try_from(fs.width)
+            .and_then(|_| i32::try_from(fs.height))
+            .map_err(|_| FrameError::StrideTooWide { have: data_len })?;
+        let stride_px = if unpack_row_length {
+            layout.stride() / bpp
         } else {
-            stride
-                .checked_mul(fs.height)
-                .ok_or(FrameError::StrideOverflow { have: data_len })?
+            fs.width
         };
-        if data_len < need {
-            return Err(FrameError::TooShort {
-                need,
-                have: data_len,
-            });
-        }
         Ok(Self {
             width: fs.width,
             height: fs.height,
-            row_bytes,
-            stride,
-            need,
+            row_bytes: layout.row_bytes(),
+            stride: layout.stride(),
+            need: layout.required_bytes(),
             stride_px: i32::try_from(stride_px)
                 .map_err(|_| FrameError::StrideTooWide { have: data_len })?,
         })
@@ -94,6 +111,7 @@ impl FrameLayout {
 
 /// Fit the game into the surface minus reserved OSD strips. Pure.
 /// GL viewports start at the bottom-left; ratios run in `f64`, narrowing once.
+#[cfg(test)]
 pub(crate) fn fit_viewport(
     surface_w: i32,
     surface_h: i32,
@@ -101,17 +119,29 @@ pub(crate) fn fit_viewport(
     logical_w: i32,
     logical_h: i32,
 ) -> Result<([i32; 4], [f32; 16]), FrameError> {
+    fit_viewport_aspect(
+        surface_w,
+        surface_h,
+        strip,
+        (logical_w as f64, logical_h as f64),
+    )
+}
+
+pub(crate) fn fit_viewport_aspect(
+    surface_w: i32,
+    surface_h: i32,
+    strip: nerust_render_traits::ReservedStrip,
+    physical: (f64, f64),
+) -> Result<([i32; 4], [f32; 16]), FrameError> {
     if surface_w <= 0 || surface_h <= 0 {
         return Err(FrameError::InvalidViewport {
             w: surface_w,
             h: surface_h,
         });
     }
-    if logical_w <= 0 || logical_h <= 0 {
-        return Err(FrameError::InvalidViewport {
-            w: logical_w,
-            h: logical_h,
-        });
+    if physical.0 <= 0.0 || physical.1 <= 0.0 || !physical.0.is_finite() || !physical.1.is_finite()
+    {
+        return Err(FrameError::InvalidViewport { w: 0, h: 0 });
     }
     let height_i = surface_h.max(1);
     // Exact: `surface_*` are validated positive `i32`, always `< u32::MAX`.
@@ -123,7 +153,7 @@ pub(crate) fn fit_viewport(
     // `f64` ratios: `as f32` division on 8K-class widths already
     // loses sub-pixel fit (e.g. 256/7680 rounds early).
     let window_aspect = area_width as f64 / area_height as f64;
-    let content_aspect = logical_w as f64 / logical_h as f64;
+    let content_aspect = physical.0 / physical.1;
     if !window_aspect.is_finite() || !content_aspect.is_finite() || content_aspect == 0.0 {
         return Err(FrameError::InvalidViewport {
             w: surface_w,
@@ -156,6 +186,130 @@ pub(crate) fn fit_viewport(
 #[cfg(test)]
 mod tests {
     use super::{FrameError, fit_viewport};
+
+    #[test]
+    fn shared_validation_preserves_gl_error_mapping_and_geometry() {
+        use nerust_render_traits::logical::LogicalSize;
+        let size = LogicalSize {
+            width: 2,
+            height: 2,
+        };
+        for unpack in [true, false] {
+            for (size, bpp, stride, have, expected) in [
+                (size, 0, 12, 32, FrameError::DimensionsOverflow { have: 32 }),
+                (
+                    LogicalSize { width: 0, ..size },
+                    4,
+                    12,
+                    32,
+                    FrameError::DimensionsOverflow { have: 32 },
+                ),
+                (
+                    LogicalSize {
+                        width: usize::MAX,
+                        ..size
+                    },
+                    4,
+                    12,
+                    32,
+                    FrameError::DimensionsOverflow { have: 32 },
+                ),
+                (size, 4, 4, 32, FrameError::StrideOverflow { have: 32 }),
+                (size, 4, 9, 32, FrameError::StrideOverflow { have: 32 }),
+                (
+                    size,
+                    1,
+                    usize::MAX,
+                    usize::MAX,
+                    FrameError::StrideOverflow { have: usize::MAX },
+                ),
+                (size, 4, 12, 19, FrameError::TooShort { need: 20, have: 19 }),
+            ] {
+                assert_eq!(
+                    super::FrameLayout::checked(size, bpp, stride, have, unpack).err(),
+                    Some(expected)
+                );
+            }
+            for have in [20, 99] {
+                let shared = nerust_render_traits::FrameLayout::checked(size, 4, 12, have).unwrap();
+                let gl = super::FrameLayout::checked(size, 4, 12, have, unpack).unwrap();
+                assert_eq!((gl.width, gl.height), (size.width, size.height));
+                assert_eq!(gl.row_bytes, shared.row_bytes());
+                assert_eq!(gl.stride, shared.stride());
+                assert_eq!(gl.need, shared.required_bytes());
+                assert_eq!(gl.stride_px, if unpack { 3 } else { 2 });
+            }
+        }
+    }
+
+    #[test]
+    fn gl_limits_dimensions_on_every_path_but_stride_only_for_unpack() {
+        use nerust_render_traits::logical::LogicalSize;
+        let too_wide = i32::MAX as usize + 1;
+        for unpack in [true, false] {
+            for size in [
+                LogicalSize {
+                    width: too_wide,
+                    height: 1,
+                },
+                LogicalSize {
+                    width: 1,
+                    height: too_wide,
+                },
+            ] {
+                assert_eq!(
+                    super::FrameLayout::checked(size, 1, size.width, usize::MAX, unpack).err(),
+                    Some(FrameError::StrideTooWide { have: usize::MAX })
+                );
+            }
+        }
+        let size = LogicalSize {
+            width: 1,
+            height: 1,
+        };
+        assert_eq!(
+            super::FrameLayout::checked(size, 1, too_wide, 1, true).err(),
+            Some(FrameError::StrideTooWide { have: 1 })
+        );
+        let packed = super::FrameLayout::checked(size, 1, too_wide, 1, false).unwrap();
+        assert_eq!((packed.stride_px, packed.need), (1, 1));
+    }
+
+    #[test]
+    fn frame_layout_rejects_overlapping_rows_on_every_path() {
+        let size = nerust_render_traits::logical::LogicalSize {
+            width: 4,
+            height: 2,
+        };
+        for unpack in [true, false] {
+            for stride in [0, 4, 12] {
+                assert!(super::FrameLayout::checked(size, 4, stride, 64, unpack).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn frame_layout_accepts_an_unpadded_final_row_on_every_path() {
+        let size = nerust_render_traits::logical::LogicalSize {
+            width: 2,
+            height: 2,
+        };
+        for unpack in [true, false] {
+            let layout = super::FrameLayout::checked(size, 4, 12, 20, unpack).unwrap();
+            assert_eq!(layout.need, 20);
+        }
+    }
+
+    #[test]
+    fn viewport_uses_fractional_physical_aspect() {
+        let (_, matrix) =
+            super::fit_viewport_aspect(400, 300, Default::default(), (320.5, 240.375)).unwrap();
+        assert_eq!(matrix[0], 1.0);
+        assert_eq!(matrix[5], 1.0);
+        assert!(
+            super::fit_viewport_aspect(400, 300, Default::default(), (f64::NAN, 240.0)).is_err()
+        );
+    }
 
     #[test]
     fn fit_exact_aspect_is_identity() {

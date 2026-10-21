@@ -96,6 +96,29 @@ macOS needs no extra system packages. Build the Android APK with
 `packaging/android/package.sh`. That script needs Java 17 and the
 Android SDK/NDK.
 
+## Development boundaries
+
+- `traits/core` defines guest execution, audio and debugger contracts;
+  `traits/input` defines typed input state. Cores do not depend on GUI
+  transport or system assembly.
+- `traits/system` owns factory assembly, load-option resolution and
+  settings descriptors. Factory consumers should import these contracts
+  from `nerust_system_traits`, not `nerust_core_traits`.
+- `gui/runtime` owns host-independent settings and debugger transactions;
+  `gui/shell` coordinates sessions and persistence; viewmodels and native
+  frontends adapt those contracts for presentation.
+- Persistence uses typed native/document-tree locations. Failed mapper
+  restoration protects the original save; replacement cores remain paused
+  until restoration and settings commit finish.
+- Accepted operations without a reply have an unknown outcome, not a
+  guaranteed rejection. Media epochs invalidate stale asynchronous results.
+- Renderers share frame validation in `render/traits`; native window APIs
+  require its `renderer` feature. Android wire changes are checked by
+  `packaging/android/check-contract.sh` against actual JNI declarations.
+- Panic hooks log panic-site diagnostics. Caught payload reports are kept
+  separate because arbitrary `resume_unwind` calls cannot be correlated
+  reliably with a hook record.
+
 ## License
 
 [MPL-2.0](https://github.com/chalharu/nerust/blob/master/LICENSE)

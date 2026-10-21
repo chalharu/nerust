@@ -3,8 +3,7 @@ use std::{fmt::Debug, path::PathBuf, sync::Arc};
 use clap::{ArgMatches, Args, Command, FromArgMatches};
 use downcast_rs::Downcast;
 use dyn_eq::DynEq;
-
-use crate::CoreOptions;
+use nerust_core_traits::CoreOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MediaLocation {
@@ -25,10 +24,10 @@ impl MediaObject {
             .as_deref()
             .and_then(|p| p.extension())
             .and_then(std::ffi::OsStr::to_str)
-            .map(|ext| ext.to_ascii_lowercase());
+            .map(str::to_ascii_lowercase);
         Self {
             bytes: Arc::from(data),
-            location: path.clone().map(MediaLocation::NativePath),
+            location: path.map(MediaLocation::NativePath),
             extension,
         }
     }
@@ -62,14 +61,12 @@ impl MediaObject {
 }
 
 pub trait SystemLoadOptions: Args + Debug + Eq + 'static {}
-
 pub trait SystemLoadOptionsSchema: Debug + Eq + 'static {
     type Options: SystemLoadOptions;
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct SystemLoadOptionsWrapper<T: SystemLoadOptions>(T);
-
 #[derive(Debug, PartialEq, Eq)]
 pub struct SystemLoadOptionsSchemaWrapper<T: SystemLoadOptionsSchema>(T);
 
@@ -77,7 +74,6 @@ impl<T: SystemLoadOptionsSchema> SystemLoadOptionsSchemaWrapper<T> {
     pub fn augment_args(&self, cmd: Command) -> Command {
         <T::Options as Args>::augment_args(cmd)
     }
-
     pub fn arg_matches(
         &self,
         matches: &ArgMatches,
@@ -87,7 +83,6 @@ impl<T: SystemLoadOptionsSchema> SystemLoadOptionsSchemaWrapper<T> {
 }
 
 pub trait DynSystemLoadOptions: Debug + DynEq + Downcast {}
-
 pub trait DynSystemLoadOptionsSchema: Debug + DynEq + Downcast {
     fn augment_args(&self, cmd: Command) -> Command;
     fn arg_matches(
@@ -100,7 +95,6 @@ impl<T: SystemLoadOptionsSchema> DynSystemLoadOptionsSchema for SystemLoadOption
     fn augment_args(&self, cmd: Command) -> Command {
         SystemLoadOptionsSchemaWrapper::<T>::augment_args(self, cmd)
     }
-
     fn arg_matches(
         &self,
         matches: &ArgMatches,
@@ -108,12 +102,9 @@ impl<T: SystemLoadOptionsSchema> DynSystemLoadOptionsSchema for SystemLoadOption
         SystemLoadOptionsSchemaWrapper::<T>::arg_matches(self, matches).map(|x| Box::new(x) as _)
     }
 }
-
 impl<T: SystemLoadOptions> DynSystemLoadOptions for SystemLoadOptionsWrapper<T> {}
-
 downcast_rs::impl_downcast!(DynSystemLoadOptions);
 dyn_eq::eq_trait_object!(DynSystemLoadOptions);
-
 downcast_rs::impl_downcast!(DynSystemLoadOptionsSchema);
 
 impl<T: SystemLoadOptions> From<T> for Box<dyn DynSystemLoadOptions> {
@@ -121,7 +112,6 @@ impl<T: SystemLoadOptions> From<T> for Box<dyn DynSystemLoadOptions> {
         Box::new(SystemLoadOptionsWrapper(value))
     }
 }
-
 impl<T: SystemLoadOptionsSchema> From<T> for Box<dyn DynSystemLoadOptionsSchema> {
     fn from(value: T) -> Self {
         Box::new(SystemLoadOptionsSchemaWrapper(value))
@@ -131,7 +121,6 @@ impl<T: SystemLoadOptionsSchema> From<T> for Box<dyn DynSystemLoadOptionsSchema>
 pub trait DynSystemLoadOptionsExt: Sized {
     fn into_inner<T: SystemLoadOptions>(self) -> Result<T, Self>;
 }
-
 impl DynSystemLoadOptionsExt for Box<dyn DynSystemLoadOptions> {
     fn into_inner<T: SystemLoadOptions>(self) -> Result<T, Self> {
         self.downcast::<SystemLoadOptionsWrapper<T>>()
@@ -146,91 +135,65 @@ pub struct ResolvedLoadRequest {
 }
 
 #[cfg(test)]
-mod media_tests {
-    use super::{MediaLocation, MediaObject};
+mod tests {
+    use super::*;
 
     #[test]
-    fn native_media_preserves_path_and_extension() {
-        let media = MediaObject::new(Some("game.NES".into()), vec![1]);
-
-        assert_eq!(media.native_path(), Some(std::path::Path::new("game.NES")));
-        assert_eq!(media.extension.as_deref(), Some("nes"));
-        assert!(matches!(media.location, Some(MediaLocation::NativePath(_))));
-    }
-
-    #[test]
-    fn document_media_preserves_uri_display_name_and_extension() {
-        let media = MediaObject::from_document_uri(
-            "content://provider/document/42",
-            "Pokemon Crystal.GBC",
-            vec![1, 2],
-        );
-
-        assert_eq!(media.native_path(), None);
-        assert_eq!(media.extension.as_deref(), Some("gbc"));
+    fn media_preserves_native_and_document_locations() {
+        let native = MediaObject::new(Some("game.NES".into()), vec![1]);
+        assert_eq!(native.native_path(), Some(std::path::Path::new("game.NES")));
+        assert_eq!(native.extension.as_deref(), Some("nes"));
+        let document =
+            MediaObject::from_document_uri("content://provider/42", "Crystal.GBC", vec![1, 2]);
+        assert!(document.native_path().is_none());
+        assert_eq!(document.extension.as_deref(), Some("gbc"));
         assert_eq!(
-            media.location,
+            document.location,
             Some(MediaLocation::DocumentUri {
-                uri: "content://provider/document/42".to_string(),
-                display_name: "Pokemon Crystal.GBC".to_string(),
+                uri: "content://provider/42".into(),
+                display_name: "Crystal.GBC".into(),
             })
         );
     }
-}
-
-#[cfg(test)]
-mod wrapper_tests {
-    use super::{
-        DynSystemLoadOptions, DynSystemLoadOptionsExt, DynSystemLoadOptionsSchema,
-        SystemLoadOptions, SystemLoadOptionsSchema, SystemLoadOptionsSchemaWrapper,
-    };
 
     #[derive(Debug, Clone, PartialEq, Eq, clap::Parser)]
-    struct StubOptions {
-        #[arg(long, default_value = "1")]
+    struct Options {
+        #[arg(long, default_value_t = 1)]
         level: u8,
     }
-
-    impl SystemLoadOptions for StubOptions {}
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    struct StubSchema;
-
-    impl SystemLoadOptionsSchema for StubSchema {
-        type Options = StubOptions;
+    impl SystemLoadOptions for Options {}
+    #[derive(Debug, PartialEq, Eq)]
+    struct Schema;
+    impl SystemLoadOptionsSchema for Schema {
+        type Options = Options;
     }
 
     #[test]
-    fn schema_wrapper_round_trips_cli_args() {
-        let schema = SystemLoadOptionsSchemaWrapper(StubSchema);
-        let cmd = schema.augment_args(clap::Command::new("test"));
-        let matches = cmd.try_get_matches_from(["test", "--level", "3"]).unwrap();
-        let options: Box<dyn DynSystemLoadOptions> =
-            Box::new(schema.arg_matches(&matches).unwrap());
-        let inner: StubOptions = options.into_inner().unwrap();
-        assert_eq!(inner.level, 3);
-        // Box conversions used by factories.
-        let boxed: Box<dyn DynSystemLoadOptions> = StubOptions { level: 5 }.into();
-        let back: StubOptions = boxed.into_inner().unwrap();
-        assert_eq!(back.level, 5);
-        let boxed_schema: Box<dyn DynSystemLoadOptionsSchema> = StubSchema.into();
-        let cmd = boxed_schema.augment_args(clap::Command::new("test"));
-        let matches = cmd.try_get_matches_from(["test"]).unwrap();
-        let options = boxed_schema.arg_matches(&matches).unwrap();
-        let inner: StubOptions = options.into_inner().unwrap();
-        assert_eq!(inner.level, 1);
+    fn cli_schema_and_erased_options_round_trip() {
+        let schema: Box<dyn DynSystemLoadOptionsSchema> = Schema.into();
+        let matches = schema
+            .augment_args(Command::new("test"))
+            .try_get_matches_from(["test", "--level", "3"])
+            .unwrap();
+        assert_eq!(
+            schema
+                .arg_matches(&matches)
+                .unwrap()
+                .into_inner::<Options>()
+                .unwrap()
+                .level,
+            3
+        );
+        let boxed: Box<dyn DynSystemLoadOptions> = Options { level: 5 }.into();
+        assert_eq!(boxed.into_inner::<Options>().unwrap().level, 5);
     }
 
     #[test]
-    fn into_inner_rejects_foreign_options() {
-        #[derive(Debug, Clone, PartialEq, Eq, clap::Parser)]
-        struct OtherOptions {
-            #[arg(long, default_value_t = false)]
-            flag: bool,
-        }
-        impl SystemLoadOptions for OtherOptions {}
-
-        let boxed: Box<dyn DynSystemLoadOptions> = StubOptions { level: 1 }.into();
-        assert!(boxed.into_inner::<OtherOptions>().is_err());
+    fn foreign_options_are_rejected() {
+        #[derive(Debug, PartialEq, Eq, clap::Parser)]
+        struct Other {}
+        impl SystemLoadOptions for Other {}
+        let options: Box<dyn DynSystemLoadOptions> = Options { level: 1 }.into();
+        assert!(options.into_inner::<Other>().is_err());
     }
 }

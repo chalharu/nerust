@@ -416,12 +416,16 @@ class MainActivity :
         relativePath: String,
     ): String = safRepository.deleteSafFile(treeUri, relativePath)
 
-    fun writeSafFileChunkBytes(
+    fun openSafWriteSession(
         treeUri: String,
         relativePath: String,
-        bytes: ByteArray,
-        append: Boolean,
-    ): Boolean = safRepository.writeSafFileChunkBytes(treeUri, relativePath, bytes, append)
+    ): Long = safRepository.openSafWriteSession(treeUri, relativePath)
+
+    fun writeSafWriteSession(sessionId: Long, bytes: ByteArray): Boolean =
+        safRepository.writeSafWriteSession(sessionId, bytes)
+
+    fun closeSafWriteSession(sessionId: Long, commit: Boolean): Boolean =
+        safRepository.closeSafWriteSession(sessionId, commit)
 
     fun listSafFilesWithSizes(
         treeUri: String,
@@ -698,7 +702,7 @@ class MainActivity :
 
     /** Dumb host for the Rust dialog gate: always present what Rust requests.
      * A showing settings dialog is dismissed with notify so Rust resolves it. */
-    fun showErrorDialog(message: String) {
+    fun showErrorDialog(requestId: Long, message: String) {
         if (dialogManager.isShowing(SETTINGS_DIALOG_TAG)) {
             dialogManager.dismissForStop()
         }
@@ -707,7 +711,7 @@ class MainActivity :
             contentDescription = message,
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = false,
-            onDismiss = { onErrorDialogDismissed() },
+            onDismiss = { onErrorDialogDismissed(requestId) },
         ) { dismiss ->
             NerustErrorDialogCard(
                 message = message,
@@ -738,7 +742,7 @@ class MainActivity :
 
     private external fun onMenuAction(action: String)
 
-    private external fun onErrorDialogDismissed()
+    private external fun onErrorDialogDismissed(requestId: Long)
 
     private external fun onDirectoryPickerResult(uri: String?)
 

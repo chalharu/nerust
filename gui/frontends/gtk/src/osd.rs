@@ -12,7 +12,8 @@ use super::{State, renderer::GtkRenderer};
 pub(crate) struct GtkOsd {
     manager: OsdManager,
     raster: nerust_render_osd::OsdRaster,
-    last_strip: nerust_render_traits::ReservedStrip,
+    last_strip: Option<nerust_render_traits::ReservedStrip>,
+    output_generation: Option<u64>,
     /// Owns the whole sync fingerprint. Shared decision procedure with
     /// the tao frontend; this struct only rasterizes.
     presenter: nerust_gui_shell::session::osd::OsdPresenter,
@@ -23,7 +24,8 @@ impl GtkOsd {
         Self {
             manager: OsdManager::new(),
             raster: nerust_render_osd::OsdRaster::new(),
-            last_strip: nerust_render_traits::ReservedStrip::default(),
+            last_strip: None,
+            output_generation: None,
             presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
         }
     }
@@ -32,6 +34,7 @@ impl GtkOsd {
     /// holds no layer, so the next sync must re-push instead of skip.
     pub(crate) fn invalidate(&mut self) {
         self.presenter.invalidate();
+        self.last_strip = None;
     }
 
     /// Drain the session queue, show modals, and sync the OSD layer.
@@ -44,6 +47,11 @@ impl GtkOsd {
         window: &gtk::ApplicationWindow,
     ) {
         use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
+        let generation = renderer.borrow().output_generation();
+        if self.output_generation != Some(generation) {
+            self.invalidate();
+            self.output_generation = Some(generation);
+        }
         let now = Instant::now();
         // Single snapshot read per frame: the `Arc` gate skips the
         // full-snapshot clone on steady frames (see `settings_arc`).
@@ -63,22 +71,14 @@ impl GtkOsd {
         if report.changed {
             log::debug!("gtk osd: display state changed");
         }
-        let mut resume_after_modal = false;
         if report.modal_queued {
-            // Auto-pause first, guarded by can_pause.
-            // Only what we paused resumes, after the last ack.
-            {
-                use nerust_gui_shell::session::access::PauseControl;
-                if tick.can_pause() && !tick.paused {
-                    state.pause();
-                    resume_after_modal = true;
-                }
-            }
+            // Own the whole queue lifetime, even when another owner already paused.
+            state.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, true);
         }
         // The batch take runs on the already-borrowed manager: the Surface
         // Rc is only touched inside the ack closure, after the tick borrow.
         if let Some(detail) = self.manager.take_modal_batch() {
-            Self::present_modal(surface, window, detail, resume_after_modal);
+            Self::present_modal(surface, window, detail);
         }
         self.apply_strip(&settings, renderer, window);
         self.sync_layer(&settings, language, tick.paused, tick.fps, renderer, window);
@@ -101,8 +101,8 @@ impl GtkOsd {
             top: strip_pixels(client_h, top_rows, 1.0),
             bottom: strip_pixels(client_h, bottom_rows, 1.0),
         };
-        if strip != self.last_strip {
-            self.last_strip = strip;
+        if Some(strip) != self.last_strip {
+            self.last_strip = Some(strip);
             renderer.borrow_mut().set_reserved_strip(strip);
         }
     }
@@ -370,12 +370,11 @@ impl GtkOsd {
 }
 impl GtkOsd {
     /// Present one error batch; the ack chains the next.
-    /// Resume only after the last batch iff auto-paused.
+    /// Release only the modal ownership after the last batch.
     fn present_modal(
         surface: &super::surface::Surface,
         window: &gtk::ApplicationWindow,
         detail: String,
-        resume_after_modal: bool,
     ) {
         let dialog = gtk::MessageDialog::new(
             Some(window),
@@ -397,10 +396,13 @@ impl GtkOsd {
                 osd.manager.take_modal_batch()
             };
             if let Some(next) = next {
-                Self::present_modal(&surface, &window, next, resume_after_modal);
-            } else if resume_after_modal {
-                use nerust_gui_shell::session::access::PauseControl;
-                surface.borrow().state.borrow_mut().resume();
+                Self::present_modal(&surface, &window, next);
+            } else {
+                surface
+                    .borrow()
+                    .state
+                    .borrow_mut()
+                    .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, false);
             }
         });
         dialog.present();
@@ -463,7 +465,9 @@ mod tests {
     fn osd_new_and_invalidate_are_headless() {
         // No display needed: construction and plan reset stay CPU-side.
         let mut osd = GtkOsd::new();
+        osd.last_strip = Some(nerust_render_traits::ReservedStrip { top: 8, bottom: 9 });
         osd.invalidate();
+        assert!(osd.last_strip.is_none());
         osd.invalidate();
     }
 
@@ -526,17 +530,5 @@ mod tests {
         // Fully-qualified call covers the GTK raster backend seam.
         assert!(raster.rasterize(&content, 0, 240).is_none());
         assert!(raster.rasterize(&content, 320, 0).is_none());
-    }
-
-    #[test]
-    fn strip_math_matches_reserved_rows() {
-        use nerust_render_traits::renderer::strip_pixels;
-        // Zero rows or zero height reserve nothing.
-        assert_eq!(strip_pixels(1000, 0, 1.0), 0);
-        assert_eq!(strip_pixels(0, 2, 1.0), 0);
-        // One strip row at scale one is nonzero and stable.
-        let one = strip_pixels(1000, 1, 1.0);
-        assert!(one > 0);
-        assert_eq!(strip_pixels(1000, 1, 1.0), one);
     }
 }

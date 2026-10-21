@@ -1,15 +1,12 @@
 use std::sync::Arc;
 
-use nerust_core_traits::{
-    audio::AudioBackend,
-    factory::{
-        CoreFactory, FactoryError,
-        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::{audio::AudioBackend, identity::SystemId};
 use nerust_input_traits::{InputAssignments, InputSystemFactory};
+use nerust_system_traits::factory::{
+    CoreFactory, FactoryError,
+    load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+    settings::FactorySettingsView,
+};
 
 use crate::test_helpers::{
     DummyOtherSystemId, DummySystemId, MockInputFactory, NoopCoreOptions, NoopSystemLoadOptions,
@@ -42,7 +39,7 @@ impl CoreFactory for MockFactory {
         _: &FactorySettingsView,
         _speaker: Box<dyn AudioBackend>,
         _: &InputAssignments,
-    ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
+    ) -> Result<nerust_system_traits::factory::CoreParts, FactoryError> {
         CORE_CREATIONS.with(|c| c.set(c.get() + 1));
         Ok(build_test_core_parts())
     }
@@ -52,16 +49,16 @@ impl CoreFactory for MockFactory {
     fn settings_page(
         &self,
         _: &FactorySettingsView,
-    ) -> nerust_core_traits::factory::descriptor::SystemSettingsPageModel {
-        nerust_core_traits::factory::descriptor::SystemSettingsPageModel {
+    ) -> nerust_system_traits::factory::descriptor::SystemSettingsPageModel {
+        nerust_system_traits::factory::descriptor::SystemSettingsPageModel {
             fields: Arc::from([]),
         }
     }
     fn apply_settings_choice(
         &self,
         _: &mut FactorySettingsView,
-        _: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
-        _: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+        _: &nerust_system_traits::factory::descriptor::SystemSettingsFieldId,
+        _: &nerust_system_traits::factory::descriptor::SystemSettingsChoiceId,
     ) -> Result<(), FactoryError> {
         Ok(())
     }
@@ -83,7 +80,7 @@ impl CoreFactory for MockFactory {
     }
     fn load_options_schema(
         &self,
-    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+    ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
         unreachable!()
     }
 }
@@ -101,7 +98,7 @@ impl CoreFactory for AlternateMockFactory {
         view: &FactorySettingsView,
         speaker: Box<dyn AudioBackend>,
         assignments: &InputAssignments,
-    ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
+    ) -> Result<nerust_system_traits::factory::CoreParts, FactoryError> {
         MockFactory.create_core_and_adapter_with_assignments(view, speaker, assignments)
     }
     fn probe_media(&self, media: &MediaObject) -> bool {
@@ -110,14 +107,14 @@ impl CoreFactory for AlternateMockFactory {
     fn settings_page(
         &self,
         view: &FactorySettingsView,
-    ) -> nerust_core_traits::factory::descriptor::SystemSettingsPageModel {
+    ) -> nerust_system_traits::factory::descriptor::SystemSettingsPageModel {
         MockFactory.settings_page(view)
     }
     fn apply_settings_choice(
         &self,
         view: &mut FactorySettingsView,
-        field: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
-        choice: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+        field: &nerust_system_traits::factory::descriptor::SystemSettingsFieldId,
+        choice: &nerust_system_traits::factory::descriptor::SystemSettingsChoiceId,
     ) -> Result<(), FactoryError> {
         MockFactory.apply_settings_choice(view, field, choice)
     }
@@ -136,7 +133,7 @@ impl CoreFactory for AlternateMockFactory {
     }
     fn load_options_schema(
         &self,
-    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+    ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
         MockFactory.load_options_schema()
     }
 }

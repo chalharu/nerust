@@ -14,6 +14,7 @@
 mod archive;
 pub mod error;
 mod fs_ops;
+pub use fs_ops::write_atomic;
 mod metadata;
 pub mod model;
 pub mod sidecar;

@@ -1,8 +1,11 @@
-//! Frame texture domain: allocation-free initial uploads plus the NTSC kernel path.
+//! Frame texture allocation and validated CPU uploads, including NTSC kernels.
 //! This module owns the TexImage calls; the renderer coordinates the views.
 
 use gl::types::{GLenum, GLint};
-use nerust_glwrap::raw::{active_texture, bind_texture, tex_image_2d, tex_parameteri};
+use nerust_glwrap::bindings as gl;
+use nerust_glwrap::raw::{
+    active_texture, bind_buffer, bind_texture, pixel_storei, tex_image_2d, tex_parameteri,
+};
 use nerust_render_traits::rgb::RgbaWord;
 
 use crate::upload::StagingBuf;
@@ -11,6 +14,18 @@ use crate::error::ViewError;
 
 fn ok_gl<T>(result: Result<T, nerust_glwrap::GlError>) -> Result<T, ViewError> {
     result.map_err(ViewError::Gl)
+}
+
+/// CPU slice uploads on the renderer's GL 3.3 context must not inherit PBO
+/// offsets, skipped rows/pixels, or a foreign row pitch. Length validation is
+/// meaningful only after establishing these unpack invariants.
+pub(crate) fn prepare_cpu_unpack() -> Result<(), ViewError> {
+    ok_gl(bind_buffer(gl::PIXEL_UNPACK_BUFFER, 0))?;
+    ok_gl(pixel_storei(gl::UNPACK_ALIGNMENT, 1))?;
+    ok_gl(pixel_storei(gl::UNPACK_ROW_LENGTH, 0))?;
+    ok_gl(pixel_storei(gl::UNPACK_SKIP_ROWS, 0))?;
+    ok_gl(pixel_storei(gl::UNPACK_SKIP_PIXELS, 0))?;
+    Ok(())
 }
 
 /// Point-sampled clamp addressing, shared by all upload textures.
@@ -60,19 +75,22 @@ pub(crate) fn allocate_texture_store(
     internal_fmt: GLint,
     data_fmt: GLenum,
 ) -> Result<(), ViewError> {
+    prepare_cpu_unpack()?;
     use_texture(unit, texture)?;
     set_nearest_params()?;
-    ok_gl(tex_image_2d(
-        gl::TEXTURE_2D,
-        0,
-        internal_fmt,
-        checked_i32(width)?,
-        checked_i32(height)?,
-        0,
-        data_fmt,
-        gl::UNSIGNED_BYTE,
-        std::ptr::null(),
-    ))?;
+    ok_gl(unsafe {
+        tex_image_2d(
+            gl::TEXTURE_2D,
+            0,
+            internal_fmt,
+            checked_i32(width)?,
+            checked_i32(height)?,
+            0,
+            data_fmt,
+            gl::UNSIGNED_BYTE,
+            std::ptr::null(),
+        )
+    })?;
     Ok(())
 }
 
@@ -143,19 +161,37 @@ pub(crate) fn upload_texture_bytes(
     data_fmt: GLenum,
     data: &[u8],
 ) -> Result<(), ViewError> {
+    let bpp = match data_fmt {
+        gl::RGBA => 4,
+        gl::RED => 1,
+        _ => return Err(crate::layout::FrameError::DimensionsOverflow { have: data.len() }.into()),
+    };
+    let stride = width
+        .checked_mul(bpp)
+        .ok_or(crate::layout::FrameError::DimensionsOverflow { have: data.len() })?;
+    crate::layout::FrameLayout::checked(
+        nerust_render_traits::logical::LogicalSize { width, height },
+        bpp,
+        stride,
+        data.len(),
+        true,
+    )?;
+    prepare_cpu_unpack()?;
     use_texture(unit, texture)?;
     set_nearest_params()?;
-    ok_gl(tex_image_2d(
-        gl::TEXTURE_2D,
-        0,
-        internal_fmt,
-        checked_i32(width)?,
-        checked_i32(height)?,
-        0,
-        data_fmt,
-        gl::UNSIGNED_BYTE,
-        data.as_ptr().cast(),
-    ))?;
+    ok_gl(unsafe {
+        tex_image_2d(
+            gl::TEXTURE_2D,
+            0,
+            internal_fmt,
+            checked_i32(width)?,
+            checked_i32(height)?,
+            0,
+            data_fmt,
+            gl::UNSIGNED_BYTE,
+            data.as_ptr().cast(),
+        )
+    })?;
     Ok(())
 }
 

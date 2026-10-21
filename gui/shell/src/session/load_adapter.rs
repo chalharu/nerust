@@ -1,11 +1,9 @@
 //! [`RomLoadTarget`] adapter over [`SessionHandle`].
 //! Implements the loader-facing trait so `RomLoader`s stay decoupled from the session type.
 
-use nerust_core_traits::{
-    factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
-    identity::SystemId,
-};
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_system_traits::factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest};
 
 use crate::{
     load::{RomLoadTarget, RomLoaderError, SystemActivationError},
@@ -205,7 +203,8 @@ mod tests {
             let view = test_view(&session);
             factory.resolve_load_request(&view, options).unwrap()
         };
-        let err = LoadPorts::load_resolved(&mut session, MediaObject::new(None, vec![]), resolved);
-        assert!(err.is_err() || err.is_ok());
+        LoadPorts::load_resolved(&mut session, MediaObject::new(None, vec![]), resolved)
+            .expect("mock core accepts its resolved load request");
+        assert!(session.tick_metrics().loaded);
     }
 }

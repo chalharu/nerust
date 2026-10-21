@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+source "${SCRIPT_DIR}/package-helpers.sh"
 if ! command -v python3 >/dev/null 2>&1; then
     echo "python3 is required (cargo metadata target_directory parsing)" >&2
     exit 1
@@ -205,16 +206,7 @@ else
     for main_so in "${so_files[@]}"; do
         abi="$(basename "$(dirname "${main_so}")")"
         budget="$(native_budget_bytes)"
-        if "${readelf_bin}" -S "${main_so}" | grep -Eq '\.debug_(info|abbrev|line|str|ranges|addr|loclists?)|\.zdebug_'; then
-            echo "${abi}/libmain.so contains DWARF sections; release strip is not effective" >&2
-            exit 1
-        fi
-        so_size="$(wc -c < "${main_so}" | tr -d '[:space:]')"
-        if (( so_size > budget )); then
-            echo "${abi}/libmain.so is ${so_size} bytes, over the ${budget} budget (${abi})" >&2
-            exit 1
-        fi
-        echo "${abi}/libmain.so: ${so_size} bytes, no DWARF"
+        verify_native_library "${readelf_bin}" "${main_so}" "${budget}"
     done
 fi
 # Gate passed: publish the staged libs via a temp-dir swap.
@@ -243,8 +235,5 @@ else
 fi
 
 
-mkdir -p "${OUT_DIR}"
-cp "${APK_SRC}" "${OUT_DIR}/${APK_NAME}"
-sha256sum "${OUT_DIR}/${APK_NAME}" > "${OUT_DIR}/${APK_NAME}.sha256"
-(cd "${OUT_DIR}" && sha256sum -c "${APK_NAME}.sha256")
+publish_apk "${APK_SRC}" "${OUT_DIR}" "${APK_NAME}"
 echo "effective native budget: $(native_budget_bytes) bytes (BUDGET_BYTES=${BUDGET_BYTES:-default})"

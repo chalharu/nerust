@@ -2,14 +2,11 @@ use std::{collections::HashMap, path::PathBuf, rc::Rc, sync::Arc};
 
 use clap::Command;
 use log::LevelFilter;
-use nerust_core_traits::{
-    audio::AudioBackendRegistry,
-    factory::{CoreFactory, load::DynSystemLoadOptions},
-    identity::SystemId,
-};
+use nerust_core_traits::{audio::AudioBackendRegistry, identity::SystemId};
 use nerust_gui_shell::{context::FrontendContext, registry::SystemRegistry};
 use nerust_render_traits::renderer::PipelineFactory;
 use nerust_run_options::RunOptions;
+use nerust_system_traits::factory::{CoreFactory, load::DynSystemLoadOptions};
 use simple_logger::SimpleLogger;
 
 type LoadOptionsBySystem = HashMap<Box<dyn SystemId>, Box<dyn DynSystemLoadOptions>>;
@@ -82,7 +79,7 @@ fn parse_cli_args_from(
 
 fn validate_unique_cli_arguments(
     factories: &[Arc<dyn CoreFactory>],
-    schemas: &[Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema>],
+    schemas: &[Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema>],
 ) -> Result<(), clap::Error> {
     let mut owners: HashMap<String, Box<dyn SystemId>> = HashMap::new();
     for (factory, schema) in factories.iter().zip(schemas) {
@@ -152,13 +149,7 @@ pub fn run() {
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
-    use nerust_core_traits::{
-        CoreOptions,
-        factory::{
-            CoreFactory,
-            load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
-        },
-    };
+    use nerust_core_traits::CoreOptions;
     #[cfg(feature = "gba")]
     use nerust_gba_factory::GbaFactory;
     #[cfg(feature = "gbc")]
@@ -173,6 +164,10 @@ mod tests {
     };
     #[cfg(feature = "nes")]
     use nerust_nes_factory::NesFactory;
+    use nerust_system_traits::factory::{
+        CoreFactory,
+        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+    };
 
     struct LoadRecorder {
         resolved: Option<Box<dyn CoreOptions>>,

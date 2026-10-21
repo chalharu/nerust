@@ -1,4 +1,5 @@
 use super::{Mbc, MbcKind};
+use crate::persistence_error::GbcPersistenceError;
 
 const BANK_SIZE: usize = 0x8000;
 
@@ -69,15 +70,9 @@ impl Mbc for M161 {
         .expect("M161 machine state should serialize")
     }
 
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
         let state: M161MachineState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != 1 {
-            return Err(format!(
-                "unsupported M161 machine state version: {}",
-                state.schema_version
-            ));
-        }
+            super::decode_mapper_state(data, 1, "M161 machine state", None)?;
         if state.bank > 0x07 {
             return Err("invalid M161 machine state bank".into());
         }

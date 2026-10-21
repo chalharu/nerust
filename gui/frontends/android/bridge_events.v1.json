@@ -3,7 +3,7 @@
   "title": "nerust Android bridge events v1",
   "x-settings-schema-version": 1,
   "x-saf-chunk-bytes": 65536,
-  "description": "Canonical schema for Kotlin→Rust bridge strings sent via MainActivity.onMenuAction. Kotlin builds every string with the BridgeContract builders; the Rust decoder in gui/frontends/android/src/android/menu.rs accepts v1 JSON only. The error-dialog ack travels on the dedicated onErrorDialogDismissed()V native.",
+  "description": "Canonical v1 Kotlin→Rust bridge strings. The Rust bridge_events.rs decoder validates this schema before dispatch. Error acknowledgements require the correlated request_id; Kotlin sends it through the dedicated onErrorDialogDismissed(J)V native.",
   "type": "object",
   "oneOf": [
     { "$ref": "#/definitions/menuEvent" },
@@ -31,7 +31,7 @@
             "controller"
           ]
         },
-        "device_id": { "type": "integer" },
+        "device_id": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
         "key": {
           "type": "string",
           "enum": [
@@ -49,14 +49,20 @@
         },
         "pressed": { "type": "boolean" }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "if": {
+        "properties": { "action": { "const": "controller" } },
+        "required": ["action"]
+      },
+      "then": { "required": ["device_id", "key", "pressed"] }
     },
     "errorDialogDismissedEvent": {
       "type": "object",
-      "required": ["v", "type"],
+      "required": ["v", "type", "request_id"],
       "properties": {
         "v": { "const": 1 },
-        "type": { "const": "error_dialog_dismissed" }
+        "type": { "const": "error_dialog_dismissed" },
+        "request_id": { "type": "integer", "minimum": 1, "maximum": 9223372036854775807 }
       },
       "additionalProperties": false
     }

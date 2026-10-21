@@ -25,6 +25,15 @@ static MOCK_SPACES: [SpaceInfo; 1] = [SpaceInfo {
 
 static MOCK_TABLE: SpaceTable = SpaceTable::build(&MOCK_SPACES);
 
+/// Options that record every actual core load, including reconstructed runtimes.
+#[derive(Debug, Clone)]
+pub(crate) struct ObservedCoreOptions {
+    pub marker: u8,
+    pub loads: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+}
+
+impl nerust_core_traits::CoreOptions for ObservedCoreOptions {}
+
 pub(crate) struct MockConsoleCore {
     loaded: bool,
     paused: bool,
@@ -163,7 +172,14 @@ impl ConsoleCore for MockConsoleCore {
         audio_out.clear();
         Ok(())
     }
-    fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
+    fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
+        if let Some(options) = config
+            .core_options
+            .as_deref()
+            .and_then(|options| options.downcast_ref::<ObservedCoreOptions>())
+        {
+            options.loads.lock().unwrap().push(options.marker);
+        }
         self.loaded = true;
         self.paused = true;
         self.identity = Some(SystemIdentity::new(
@@ -206,8 +222,8 @@ impl ConsoleCore for MockConsoleCore {
     }
 }
 
-pub(crate) fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
-    use nerust_core_traits::factory::CoreParts;
+pub(crate) fn build_test_core_parts() -> nerust_system_traits::factory::CoreParts {
+    use nerust_system_traits::factory::CoreParts;
     let core = MockConsoleCore::new();
     let render_profile = VideoRenderProfile {
         source_logical_size: LogicalSize {

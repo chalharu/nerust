@@ -1,6 +1,6 @@
 use std::{rc::Rc, sync::Arc};
 
-use nerust_core_traits::{factory::CoreFactory, identity::SystemId};
+use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo};
 use nerust_settings_core::model::{language::AppLanguage, snapshot::SettingsSnapshot};
 use nerust_settings_core::{
@@ -10,6 +10,7 @@ use nerust_settings_core::{
     i18n::{UiText, text as ui_text},
     input::clear_multi_port_conflicts,
 };
+use nerust_system_traits::factory::CoreFactory;
 
 use super::topology_adapter::build_topology;
 
@@ -29,24 +30,16 @@ fn resolve_assignments(
     pairs: &[(String, Option<String>)],
     input_factory: &dyn nerust_input_traits::InputSystemFactory,
 ) -> Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> {
-    let mut assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = pairs
+    pairs
         .iter()
-        .filter_map(|(slot_id, _)| {
+        .filter_map(|(slot_id, controller)| {
             let att = input_factory.resolve_slot(slot_id)?;
-            Some((att, None::<Rc<dyn ControllerProfile>>))
+            let profile = controller
+                .as_ref()
+                .and_then(|id| input_factory.resolve_controller(id));
+            Some((att, profile))
         })
-        .collect();
-    for (slot_id, ctrl_opt) in pairs {
-        if let Some(id) = ctrl_opt
-            && let Some(profile) = input_factory.resolve_controller(id)
-            && let Some(entry) = assignments
-                .iter_mut()
-                .find(|(s, _)| s.to_string() == *slot_id)
-        {
-            entry.1 = Some(profile);
-        }
-    }
-    assignments
+        .collect()
 }
 
 fn persisted_pairs(
@@ -293,13 +286,11 @@ fn project_shortcut_row(
 fn project_binding_sections(
     state: &EditorState,
     system_id: &dyn SystemId,
-    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
-    slots_descs: &[SlotInfo],
+    topology: &nerust_input_traits::InputTopologyDescriptor,
     capture_target: &Option<CaptureTarget>,
 ) -> Vec<BindingSectionView> {
     let language = state.draft.shared.general.language;
-    let topo = build_topology(assignments, slots_descs);
-    let mut sections: Vec<BindingSectionView> = keyboard_binding_sections(&topo, system_id)
+    let mut sections: Vec<BindingSectionView> = keyboard_binding_sections(topology, system_id)
         .into_iter()
         .map(|section| {
             let rows: Vec<BindingRowView> = section
@@ -353,14 +344,13 @@ fn project_view(
         })
         .collect();
 
-    let topology = build_topology(&assignments, slots_descs);
-    let sections = project_binding_sections(
-        state,
-        system_id.as_ref(),
-        &assignments,
-        slots_descs,
-        capture_target,
-    );
+    let topology = state
+        .topology_cache
+        .borrow()
+        .get(system_id.as_ref())
+        .cloned()
+        .unwrap_or_else(|| Rc::new(build_topology(&assignments, slots_descs)));
+    let sections = project_binding_sections(state, system_id.as_ref(), &topology, capture_target);
 
     // Build conflict messages — prefer cached result from validator
     let conflicts: Vec<InputConflictView> = state
@@ -386,8 +376,8 @@ fn project_view(
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::factory::CoreFactory;
     use nerust_input_traits::AttachmentId;
+    use nerust_system_traits::factory::CoreFactory;
 
     use super::resolve_assignments;
     use crate::settings::test_support::{P1_SLOT, P2_SLOT, TestInputFactory, test_vm};
@@ -454,7 +444,7 @@ mod tests {
             ],
         );
 
-        let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
+        let factory: Arc<dyn nerust_system_traits::factory::CoreFactory> = Arc::new(test_factory);
         let vm = super::super::SettingsViewModel::new(
             snapshot,
             vec![factory],
@@ -500,12 +490,12 @@ mod tests {
     #[test]
     fn set_slot_missing_from_persisted_pairs_adds_it() {
         use crate::settings::test_support::{P1_SLOT, P2_SLOT, TestCoreFactory, TestInputFactory};
-        use nerust_core_traits::factory::CoreFactory;
         use nerust_settings_core::model::snapshot::SettingsSnapshot;
         use nerust_settings_core::model::{
             app_state::DesktopAppState, local::HostBackendLocalSettings,
             shared::DesktopSharedSettings,
         };
+        use nerust_system_traits::factory::CoreFactory;
         use std::sync::Arc;
 
         // Only P1 is in persisted pairs — P2 is absent entirely.
@@ -521,7 +511,7 @@ mod tests {
             vec![(P1_SLOT.to_string(), Some("test.ctrl.p1".to_string()))],
         );
 
-        let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
+        let factory: Arc<dyn nerust_system_traits::factory::CoreFactory> = Arc::new(test_factory);
         let vm = super::super::SettingsViewModel::new(
             snapshot,
             vec![factory],

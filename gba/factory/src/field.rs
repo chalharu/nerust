@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use nerust_core_traits::factory::descriptor::{
+use nerust_gba_settings::{GbaSettings, SolarLight};
+use nerust_system_traits::factory::descriptor::{
     SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
 };
 use strum::{Display, EnumIter, EnumString};
-
-use crate::{GbaSettings, SolarLight};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString, Display, EnumIter)]
 pub enum GbaSettingField {
@@ -123,8 +122,7 @@ mod tests {
     #[test]
     fn options_returns_non_empty_for_each_field() {
         for field in GbaSettingField::iter() {
-            let opts = field.options();
-            assert!(!opts.is_empty(), "field {field} has no options");
+            assert!(!field.options().is_empty(), "field {field} has no options");
         }
     }
 }

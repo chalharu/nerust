@@ -8,9 +8,10 @@ use winit::platform::android::activity::AndroidApp;
 
 use super::bridge::{self, SettingsDialogResult};
 use super::settings_model::{AndroidSettings, SETTINGS_SCHEMA_VERSION, SettingDef};
+use crate::settings_flight::SettingsRequestId;
 use nerust_settings_core::model::local::ScreenOrientation;
 
-/// Cached [`AndroidSettings::setting_defs`], keyed by a fingerprint.
+/// Cached [`AndroidSettings::setting_defs`], keyed by the complete model.
 /// Shared by handle, so cache hits never re-clone the whole table.
 pub(super) fn cached_setting_defs(current: &AndroidSettings) -> Arc<Vec<SettingDef>> {
     bridge::with_settings(|state| {
@@ -23,14 +24,14 @@ pub(super) fn cached_setting_defs(current: &AndroidSettings) -> Arc<Vec<SettingD
 #[serde(rename_all = "camelCase")]
 struct SettingsResultPayload {
     schema_version: u32,
-    request_id: u64,
+    request_id: SettingsRequestId,
     #[serde(default)]
     dismissed: bool,
     #[serde(default)]
     values: BTreeMap<String, usize>,
 }
 
-/// Update cached settings so `show_settings_dialog_sync` can present current data.
+/// Update cached settings for the event-loop-owned asynchronous display request.
 pub(super) fn update_cached_settings(current: &AndroidSettings) {
     bridge::with_settings(|state| {
         state.cache = Some(current.clone());
@@ -68,54 +69,29 @@ pub(super) fn apply_screen_orientation(app: &AndroidApp, orientation: ScreenOrie
     );
 }
 
-fn begin_request(current: &AndroidSettings) -> Option<(u64, String)> {
+fn begin_request(current: &AndroidSettings) -> Option<(SettingsRequestId, String)> {
     bridge::with_settings(|state| {
-        if state.pending_request_id.is_some() {
-            return None;
-        }
-        let request_id = state.next_request_id;
-        state.next_request_id = state.next_request_id.wrapping_add(1).max(1);
-        state.pending_request_id = Some(request_id);
+        let request_id = state.flight.begin()?;
         let defs = AndroidSettings::cached_setting_defs_locked(&mut state.defs_cache, current);
         Some((
             request_id,
-            AndroidSettings::dialog_payload_from_defs(request_id, &defs),
+            AndroidSettings::dialog_payload_from_defs(request_id.0, &defs),
         ))
     })
 }
 
-pub(super) fn show_settings_dialog_sync(
-    env: &mut jni::Env<'_>,
-    activity: &JObject<'_>,
-) -> Result<bool, String> {
-    let current = bridge::with_settings(|state| state.cache.clone())
-        .ok_or_else(|| "Android settings cache is empty".to_string())?;
-    let Some((request_id, payload)) = begin_request(&current) else {
-        return Ok(false);
-    };
-    if let Err(error) = show_settings_with_env(env, activity, &payload) {
-        bridge::with_settings(|state| {
-            if state.pending_request_id == Some(request_id) {
-                state.pending_request_id = None;
-            }
-        });
-        return Err(error);
-    }
-    Ok(true)
-}
-
 pub(super) fn take_result() -> Option<SettingsDialogResult> {
-    bridge::with_settings(|state| state.result.take())
+    bridge::with_settings(|state| state.flight.take())
 }
 
 pub(super) fn is_dialog_open() -> bool {
-    bridge::with_settings(|state| state.pending_request_id.is_some())
+    bridge::with_settings(|state| state.flight.is_open())
 }
 
 pub(super) fn reset_transient() {
     bridge::with_settings(|state| {
-        state.result = None;
-        state.pending_request_id = None;
+        // Accepted user input survives suspension until the event loop consumes it.
+        state.flight.suspend();
     });
 }
 
@@ -140,17 +116,6 @@ pub(super) fn request_show_settings_dialog(
     Ok(true)
 }
 
-fn show_settings_with_env(
-    env: &mut jni::Env<'_>,
-    activity: &JObject<'_>,
-    payload: &str,
-) -> Result<(), String> {
-    env.with_local_frame(8, |env| {
-        show_settings_with_env_inner(env, activity, payload)
-    })
-    .map_err(|error| format!("failed to show Android settings dialog: {error:?}"))
-}
-
 fn show_settings_with_env_inner(
     env: &mut jni::Env<'_>,
     activity: &JObject<'_>,
@@ -167,49 +132,22 @@ fn show_settings_with_env_inner(
     Ok(())
 }
 
-fn publish_result(request_id: u64, result: SettingsDialogResult) {
-    let accepted = bridge::with_settings(|state| {
-        if state.pending_request_id != Some(request_id) {
-            return false;
-        }
-        state.result = Some(result);
-        state.pending_request_id = None;
-        true
-    });
+fn publish_result(request_id: SettingsRequestId, result: SettingsDialogResult) {
+    let accepted = bridge::with_settings(|state| state.flight.accept(request_id, result));
     if !accepted {
-        log::warn!("ignoring stale Android settings result for request {request_id}");
+        log::warn!("ignoring stale Android settings result for request {request_id:?}");
         return;
     }
-    bridge::wake();
-}
-
-fn resolve_pending_as_dismissed() {
-    bridge::with_settings(|state| {
-        state.result = Some(SettingsDialogResult::Dismissed);
-        state.pending_request_id = None;
-    });
     bridge::wake();
 }
 
 /// Id-conditional variant: a stale callback must not clear the live flight.
-fn resolve_pending_as_dismissed_for(request_id: u64) {
-    let cleared = bridge::with_settings(|state| {
-        if state.pending_request_id != Some(request_id) {
-            return false;
-        }
-        state.result = Some(SettingsDialogResult::Dismissed);
-        state.pending_request_id = None;
-        true
-    });
-    if !cleared {
-        log::warn!("ignoring stale Android settings failure for request {request_id}");
-        return;
-    }
-    bridge::wake();
+fn resolve_pending_as_dismissed_for(request_id: SettingsRequestId) {
+    publish_result(request_id, SettingsDialogResult::Dismissed);
 }
 
 // JNI callback for the settings dialog result.
-// Null means dismissed; otherwise versioned JSON with ID and values.
+// Every dismissal carries versioned JSON with its request ID.
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult(
@@ -244,38 +182,15 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
             }
             Err(error) => {
                 log::error!("failed to parse Android settings result: {error}");
-                resolve_pending_as_dismissed();
+                // No trustworthy correlation id: never dismiss a newer flight.
             }
         },
         jni::Outcome::Ok(None) => {
-            // Null is the documented dismissed encoding: resolve the
-            // single flight instead of wedging `pending_request_id`.
-            log::debug!("Android settings dialog dismissed without result");
-            resolve_pending_as_dismissed();
+            log::warn!("ignoring uncorrelated Android settings dismissal");
         }
-        jni::Outcome::Err(_) => {
-            resolve_pending_as_dismissed();
-        }
+        jni::Outcome::Err(_) => {}
         jni::Outcome::Panic(_) => {
             log::error!("Android settings dialog callback panicked");
-            resolve_pending_as_dismissed();
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn malformed_result_resolves_pending_as_dismissed() {
-        // A garbage close must not wedge the open flag.
-        // The flight resolves as dismissed; the bridge reports closed.
-        bridge::with_settings(|state| state.pending_request_id = Some(7));
-        assert!(is_dialog_open());
-        resolve_pending_as_dismissed();
-        assert!(!is_dialog_open());
-        assert_eq!(take_result(), Some(SettingsDialogResult::Dismissed));
-        assert_eq!(take_result(), None);
     }
 }

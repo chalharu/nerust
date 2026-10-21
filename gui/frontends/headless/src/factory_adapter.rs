@@ -10,14 +10,14 @@ use nerust_core_traits::{
     CoreConfig,
     audio::{AudioBackend, StereoSample},
     debugger::{InspectRequest, SpaceInfo, StepUnit},
-    factory::{
-        CoreFactory,
-        settings::{FactorySettingsView, Language},
-    },
 };
 use nerust_gui_shell::emu_core::EmuCore;
 use nerust_input_traits::{InputAssignments, InputValue};
 use nerust_render_traits::FrameBuffer;
+use nerust_system_traits::factory::{
+    CoreFactory,
+    settings::{FactorySettingsView, Language},
+};
 
 use crate::{error::RomTestError, manifest::RomCase};
 
@@ -25,7 +25,7 @@ use crate::{error::RomTestError, manifest::RomCase};
 /// execution plus input writer and nominal-audio tap.
 pub(crate) struct TestSystem {
     emu: EmuCore,
-    gui_input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
+    gui_input: Box<dyn nerust_input_traits::GuiInputPort>,
     pad_buttons: Vec<Vec<(&'static str, usize)>>,
     spaces: Vec<SpaceInfo>,
     tap: Arc<Mutex<Vec<StereoSample>>>,
@@ -82,7 +82,7 @@ fn probe_factory<'a>(
     case_id: &str,
     rom_bytes: &[u8],
 ) -> Result<&'a dyn CoreFactory, RomTestError> {
-    let media = nerust_core_traits::factory::load::MediaObject::new(None, rom_bytes.to_vec());
+    let media = nerust_system_traits::factory::load::MediaObject::new(None, rom_bytes.to_vec());
     factories
         .iter()
         .find(|factory| factory.probe_media(&media))
@@ -99,7 +99,7 @@ fn resolve_case_options(
     case_id: &str,
     view: &FactorySettingsView,
     options: &[String],
-) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, RomTestError> {
+) -> Result<nerust_system_traits::factory::load::ResolvedLoadRequest, RomTestError> {
     let mut argv = Vec::with_capacity(options.len() + 1);
     argv.push("headless".to_string());
     argv.extend(options.iter().cloned());
@@ -124,7 +124,7 @@ fn create_core_parts(
     factory: &dyn CoreFactory,
     case_id: &str,
     view: &FactorySettingsView,
-    resolved: nerust_core_traits::factory::load::ResolvedLoadRequest,
+    resolved: nerust_system_traits::factory::load::ResolvedLoadRequest,
     audio_sample_rate: u32,
 ) -> Result<LoadedCoreParts, RomTestError> {
     let base = factory.input_system_factory().default_assignments();
@@ -144,7 +144,7 @@ fn create_core_parts(
 
 /// Loaded core plus assignments plus resolved options for assembly.
 struct LoadedCoreParts {
-    parts: nerust_core_traits::factory::CoreParts,
+    parts: nerust_system_traits::factory::CoreParts,
     assignments: InputAssignments,
     options: Option<Box<dyn nerust_core_traits::CoreOptions>>,
 }
@@ -171,7 +171,7 @@ fn assemble_test_system(
     let (emu, gui_input, field_map, _) = EmuCore::from_parts(parts);
     // Paused load: power-on state survives to frame zero (no free-run
     // frames, no compensating reset that would destroy it).
-    let media = nerust_core_traits::factory::load::MediaObject::new(None, rom_bytes.to_vec());
+    let media = nerust_system_traits::factory::load::MediaObject::new(None, rom_bytes.to_vec());
     emu.load_paused(&media, config.core_options)
         .map_err(|error| construction(case_id, format!("load: {error:?}")))?;
     // Resolve test ids through the injected map, never from positions.
@@ -214,7 +214,7 @@ fn resolve_pad_buttons(
             let Some(control_id) = info.id.as_digital() else {
                 continue;
             };
-            let field = nerust_core_traits::factory::resolve_unified_field(
+            let field = nerust_system_traits::factory::resolve_unified_field(
                 field_map,
                 *attachment,
                 control_id,
@@ -338,7 +338,7 @@ impl TestSystem {
 /// its three fields; driving code provably cannot observe.
 pub(crate) struct SystemControl<'a> {
     emu: &'a EmuCore,
-    gui_input: &'a mut (dyn nerust_core_traits::factory::GuiInputPort + 'static),
+    gui_input: &'a mut (dyn nerust_input_traits::GuiInputPort + 'static),
     pad_buttons: &'a [Vec<(&'static str, usize)>],
 }
 

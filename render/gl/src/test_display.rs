@@ -3,6 +3,8 @@
 
 use std::num::NonZeroU32;
 
+use nerust_glwrap::bindings as gl;
+
 use glutin::{
     config::{Config, ConfigSurfaceTypes, ConfigTemplateBuilder},
     context::{
@@ -20,6 +22,7 @@ pub(crate) struct TestDisplay {
 }
 
 pub(crate) struct TestContext {
+    _dispatch: nerust_glwrap::bindings::DispatchGuard,
     _surface: Surface<PbufferSurface>,
     pub(crate) context: PossiblyCurrentContext,
 }
@@ -37,10 +40,8 @@ impl TestDisplay {
     /// Connect to the X display, or `None` when headless so local
     /// runs stay green.
     pub(crate) fn connect() -> Option<Self> {
-        Self::connect_strict().or_else(|| {
-            eprintln!("SKIP GL context tests: no GL display");
-            None
-        })
+        std::env::var_os("DISPLAY")?;
+        Some(Self::connect_strict().expect("DISPLAY is set but no GL display/config is available"))
     }
 
     fn connect_strict() -> Option<Self> {
@@ -50,13 +51,24 @@ impl TestDisplay {
                 RawDisplayHandle::Xlib(XlibDisplayHandle::new(None, 0)),
                 DisplayApiPreference::EglThenGlx(Box::new(|_reg| {})),
             )
+            .map_err(|error| eprintln!("GL test display initialization failed: {error:?}"))
             .ok()?
         };
         let template = ConfigTemplateBuilder::new()
             .with_alpha_size(8)
             .with_surface_type(ConfigSurfaceTypes::PBUFFER)
             .build();
-        let config = unsafe { display.find_configs(template).ok()? }.next()?;
+        let config = unsafe {
+            display
+                .find_configs(template)
+                .map_err(|error| eprintln!("GL test config query failed: {error:?}"))
+                .ok()?
+        }
+        .next()
+        .or_else(|| {
+            eprintln!("GL test display has no RGBA pbuffer config");
+            None
+        })?;
         Some(Self { display, config })
     }
 
@@ -91,7 +103,15 @@ impl TestDisplay {
                 .ok()?
         };
         let context = context.make_current(&surface).ok()?;
+        let api = unsafe {
+            nerust_glwrap::Context::load_with(|name| {
+                self.display
+                    .get_proc_address(&std::ffi::CString::new(name).unwrap())
+            })
+        };
+        let dispatch = unsafe { api.enter() };
         Some(TestContext {
+            _dispatch: dispatch,
             _surface: surface,
             context,
         })
@@ -101,6 +121,80 @@ impl TestDisplay {
 #[cfg(test)]
 mod tests {
     use super::TestDisplay;
+
+    #[test]
+    fn context_tables_are_thread_local_and_scopes_restore_dispatch() {
+        use glutin::display::GlDisplay as _;
+        use std::sync::{Arc, Barrier};
+        let _serial = super::lock_display();
+        let Some(display) = TestDisplay::connect() else {
+            return;
+        };
+        drop(display);
+        let barrier = Arc::new(Barrier::new(2));
+        let workers: Vec<_> = [16, 24]
+            .into_iter()
+            .map(|width| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let display = TestDisplay::connect().expect("display became unavailable");
+                    let _current = display
+                        .make_pbuffer_current(32, 32)
+                        .expect("pbuffer creation failed");
+                    let api = unsafe {
+                        nerust_glwrap::Context::load_with(|name| {
+                            display
+                                .display
+                                .get_proc_address(&std::ffi::CString::new(name).unwrap())
+                        })
+                    };
+                    let scope = unsafe { api.enter() };
+                    assert!(nerust_glwrap::Current::assert_current(true).is_some());
+                    for _ in 0..32 {
+                        nerust_glwrap::raw::viewport(0, 0, width, width).unwrap();
+                        let mut viewport = [0; 4];
+                        unsafe {
+                            api.with_current(|| {
+                                nerust_glwrap::raw::get_viewport(&mut viewport).unwrap();
+                            });
+                        }
+                        assert_eq!(viewport, [0, 0, width, width]);
+                    }
+                    // Deliberately omit one entry point for the same native
+                    // context. The facade must panic before crossing FFI and
+                    // restore the outer table when the nested scope unwinds.
+                    let incomplete = unsafe {
+                        nerust_glwrap::Context::load_with(|name| {
+                            if name == "glViewport" {
+                                std::ptr::null()
+                            } else {
+                                display
+                                    .display
+                                    .get_proc_address(&std::ffi::CString::new(name).unwrap())
+                            }
+                        })
+                    };
+                    assert!(
+                        std::panic::catch_unwind(|| unsafe {
+                            incomplete.with_current(|| nerust_glwrap::raw::viewport(0, 0, 1, 1))
+                        })
+                        .is_err()
+                    );
+                    let mut viewport = [0; 4];
+                    nerust_glwrap::raw::get_viewport(&mut viewport).unwrap();
+                    assert_eq!(viewport, [0, 0, width, width]);
+                    drop(scope);
+                    drop(_current);
+                    assert!(nerust_glwrap::Current::assert_current(true).is_none());
+                    assert!(std::panic::catch_unwind(nerust_glwrap::raw::check_frame).is_err());
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    }
 
     #[test]
     fn display_lock_serializes_context_tests() {

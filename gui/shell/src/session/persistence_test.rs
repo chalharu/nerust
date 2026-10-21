@@ -1,7 +1,7 @@
 use std::fs;
 
-use nerust_core_traits::factory::load::MediaObject;
 use nerust_persistence::slots::autosave_state_slot_path;
+use nerust_system_traits::factory::load::MediaObject;
 
 use crate::emu_core::CorePersistenceError;
 use crate::session::commands::{SessionCommand, SessionCommandOutcome};
@@ -33,7 +33,8 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     let (_, mapper_save_path) = session
         .sidecars()
         .expect("load should configure mapper_save_path");
-    fs::write(&mapper_save_path, [9, 8, 7, 6]).expect("mapper save should write");
+    fs::write(mapper_save_path.native_path().unwrap(), [9, 8, 7, 6])
+        .expect("mapper save should write");
 
     let mut next = session.settings_snapshot().clone();
     next.shared.systems.insert(
@@ -43,7 +44,7 @@ fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
     let plan = session.apply_settings(next).unwrap();
 
     assert!(plan.visual_changed);
-    assert!(mapper_save_path.exists());
+    assert!(mapper_save_path.native_path().unwrap().exists());
     let _ = fs::remove_dir_all(temp_dir);
 }
 
@@ -70,7 +71,7 @@ fn hidden_lifecycle_state_round_trips_without_visible_slot() {
     let (states_dir, _) = session
         .sidecars()
         .expect("load should configure states_dir");
-    let autosave_path = autosave_state_slot_path(&states_dir);
+    let autosave_path = autosave_state_slot_path(states_dir.native_path().unwrap());
     assert!(autosave_path.is_file());
     assert!(session.slots().is_empty());
     assert_eq!(session.active_slot_id(), None);
@@ -109,7 +110,7 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
     let (states_dir, _) = session
         .sidecars()
         .expect("load should configure states_dir");
-    let autosave_path = autosave_state_slot_path(&states_dir);
+    let autosave_path = autosave_state_slot_path(states_dir.native_path().unwrap());
     assert!(autosave_path.is_file());
 
     fs::write(&autosave_path, [0xFF, 0xFF, 0xFF]).expect("corrupt state");
@@ -144,7 +145,7 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
     let (states_dir, _) = session
         .sidecars()
         .expect("load should configure states_dir");
-    let autosave_path = autosave_state_slot_path(&states_dir);
+    let autosave_path = autosave_state_slot_path(states_dir.native_path().unwrap());
     assert!(autosave_path.is_file());
     drop(session);
 
@@ -182,6 +183,83 @@ fn load_test_rom(session: &mut crate::session::SessionHandle, rom_path: std::pat
     session
         .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
         .unwrap();
+}
+
+#[test]
+fn mapper_flush_failure_vetoes_rom_replacement() {
+    use crate::emu_core::{EmuCore, EmuThreadPort};
+    use nerust_render_traits::{FrameBuffer, PixelFormat};
+    use std::sync::{Arc, Mutex, atomic::AtomicBool};
+    #[derive(Debug)]
+    struct FailedExport(Arc<Mutex<FrameBuffer>>);
+    impl EmuThreadPort for FailedExport {
+        fn send(
+            &self,
+            command: nerust_core_traits::EmuCommand,
+        ) -> Result<(), std::sync::mpsc::TrySendError<nerust_core_traits::EmuCommand>> {
+            match command {
+                nerust_core_traits::EmuCommand::MapperSave { reply } => {
+                    reply
+                        .send(Err(nerust_core_traits::CoreError::InvalidCoreOptions))
+                        .unwrap();
+                    Ok(())
+                }
+                other => Err(std::sync::mpsc::TrySendError::Disconnected(other)),
+            }
+        }
+        fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
+            &self.0
+        }
+        fn frame_count(&self) -> u64 {
+            0
+        }
+        fn fps(&self) -> f32 {
+            0.0
+        }
+    }
+    let root = unique_temp_dir("flush-veto");
+    let mut session = test_session();
+    load_test_rom(&mut session, root.join("original.nes"));
+    let original = session
+        .media
+        .loaded
+        .as_ref()
+        .unwrap()
+        .media
+        .native_path()
+        .unwrap()
+        .to_path_buf();
+    let sidecars = session.sidecars();
+    let frame = Arc::new(Mutex::new(FrameBuffer::with_capacity(
+        0,
+        0,
+        PixelFormat::Rgba,
+    )));
+    let parts = build_test_core_parts();
+    session.emu.runtime.as_mut().unwrap().core = Box::new(EmuCore::new(
+        Arc::new(FailedExport(frame.clone())),
+        parts.render_profile,
+        frame,
+        FrameBuffer::with_capacity(0, 0, PixelFormat::Rgba),
+        Arc::new(AtomicBool::new(false)),
+    ));
+    let factory = session.active_factory_cloned().unwrap();
+    let resolved = factory
+        .resolve_load_request(&test_view(&session), factory.default_load_options())
+        .unwrap();
+    assert!(matches!(
+        session.load_resolved(
+            MediaObject::new(Some(root.join("replacement.nes")), test_rom()),
+            resolved,
+        ),
+        Err(crate::session::SessionError::MapperFlush(_))
+    ));
+    assert_eq!(
+        session.media.loaded.as_ref().unwrap().media.native_path(),
+        Some(original.as_path())
+    );
+    assert_eq!(session.sidecars(), sidecars);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -275,19 +353,30 @@ fn core_persistence_errors_classify_for_slot_messages() {
         SlotOpFailure::Unavailable
     );
     assert_eq!(
-        CorePersistenceError::Core("ROM identity mismatch".into()).slot_failure(),
+        CorePersistenceError::Core(nerust_core_traits::CoreError::Persistence {
+            kind: nerust_core_traits::CoreFault::Incompatible,
+            source: "ROM identity mismatch".into(),
+        })
+        .slot_failure(),
         SlotOpFailure::Incompatible
     );
     assert_eq!(
-        CorePersistenceError::Core("unsupported schema version: 9".into()).slot_failure(),
+        CorePersistenceError::Core(nerust_core_traits::CoreError::InvalidCoreOptions)
+            .slot_failure(),
         SlotOpFailure::Incompatible
     );
     assert_eq!(
-        CorePersistenceError::Core("decode error: truncated".into()).slot_failure(),
+        CorePersistenceError::Core(nerust_core_traits::CoreError::Core(
+            "decode error: truncated".into()
+        ))
+        .slot_failure(),
         SlotOpFailure::Corrupt
     );
     assert_eq!(
-        CorePersistenceError::Core("system: bus clock ahead of system tick".into()).slot_failure(),
+        CorePersistenceError::Core(nerust_core_traits::CoreError::Core(
+            "system: bus clock ahead of system tick".into()
+        ))
+        .slot_failure(),
         SlotOpFailure::Corrupt
     );
 }
@@ -303,7 +392,7 @@ impl StateExporter for FailingExportCore {
     fn import_state(&self, _data: Vec<u8>) -> Result<(), SlotOpFailure> {
         Err(SlotOpFailure::Unavailable)
     }
-    fn export_preview(&self) -> Option<nerust_persistence::thumbnail::ThumbnailSource> {
+    fn export_preview(&self) -> Option<crate::emu_core::PreviewRgba> {
         None
     }
     fn export_identity(&self) -> Option<nerust_core_traits::identity::SystemIdentity> {
@@ -330,7 +419,7 @@ fn flush_mapper_save_propagates_export_failure() {
         Box::new(FailingSlotBackend),
         Box::new(FailingSlotBackend),
     );
-    manager.configure(temp_dir.clone(), temp_dir.join("test.sav"));
+    manager.configure(temp_dir.clone().into(), temp_dir.join("test.sav").into());
     assert!(matches!(
         manager.flush_mapper_save(&FailingExportCore),
         Err(crate::session::persistence::MapperFlushError {
@@ -357,6 +446,92 @@ fn setup_failure_pushes_persistence_unavailable() {
         notes[0].kind,
         NotificationKind::PersistenceUnavailable
     ));
+}
+
+#[test]
+fn pathless_replacement_cannot_write_previous_rom_sidecars() {
+    let root = unique_temp_dir("pathless-replacement");
+    let mut session = test_session();
+    load_test_rom(&mut session, root.join("first.nes"));
+    assert!(session.sidecars().is_some());
+    let factory = session.active_factory_cloned().unwrap();
+    let resolved = factory
+        .resolve_load_request(&test_view(&session), factory.default_load_options())
+        .unwrap();
+    session
+        .load_resolved(MediaObject::new(None, test_rom_with_mapper4()), resolved)
+        .unwrap();
+    assert!(session.sidecars().is_none());
+    assert!(session.slots().is_empty());
+    assert!(!session.save_hidden_lifecycle_state());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn execution_hold_survives_load_and_settings_rebuild() {
+    use crate::test_helpers::ObservedCoreOptions;
+    use nerust_system_traits::factory::load::ResolvedLoadRequest;
+    use std::sync::{Arc, Mutex};
+    let mut session = test_session();
+    let loads = Arc::new(Mutex::new(Vec::new()));
+    session.set_execution_held(true);
+    session
+        .load_resolved(
+            MediaObject::new(None, test_rom()),
+            ResolvedLoadRequest {
+                options: Box::new(ObservedCoreOptions {
+                    marker: 73,
+                    loads: loads.clone(),
+                }),
+            },
+        )
+        .unwrap();
+    assert!(session.tick_metrics().paused);
+    assert!(
+        !session
+            .run_command(SessionCommand::Resume)
+            .unwrap()
+            .executed
+    );
+    assert!(matches!(
+        session.debug_resume(),
+        nerust_gui_runtime::debugger::StatusMessage::Paused
+    ));
+    let output = session.debug_drain(
+        &[crate::debug::DebugAction::Resume],
+        &crate::debug::DebugDrainInput {
+            space: None,
+            mem_addr: 0,
+            dis_addr: None,
+            watch: None,
+            reg_target: None,
+            freeze: None,
+            prev_dump_rows: &[],
+            need_images: false,
+        },
+    );
+    assert!(
+        output.display.paused,
+        "debugger resume must honor the same execution hold"
+    );
+    let epoch = session.debug_epoch();
+    let mut next = session.settings_snapshot().clone();
+    next.shared.systems.insert(
+        Box::new(DummySystemId),
+        Box::new(nerust_nes_settings::NesSettings::default()),
+    );
+    session.apply_settings(next).unwrap();
+    assert!(!epoch.load(std::sync::atomic::Ordering::Acquire));
+    assert!(session.tick_metrics().paused);
+    assert_eq!(*loads.lock().unwrap(), vec![73, 73]);
+    session.set_execution_held(false);
+    assert!(
+        session
+            .run_command(SessionCommand::Resume)
+            .unwrap()
+            .executed
+    );
+    assert!(!session.tick_metrics().paused);
 }
 
 #[test]

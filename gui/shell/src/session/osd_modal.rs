@@ -1,6 +1,43 @@
 //! Modal error batches: sequential display pumping.
 //! The shell pump and the owning frontend adapter are the only writers.
 
+use super::{
+    notification::{Message, NotificationLevel, NotificationRenderer, append_count},
+    osd_transient::TransientPolicy,
+};
+use nerust_settings_core::model::language::AppLanguage;
+
+#[derive(Debug)]
+enum ModalLine {
+    Text(String),
+    Notification {
+        message: Message,
+        count: u32,
+        level: NotificationLevel,
+    },
+}
+
+impl ModalLine {
+    fn render(&self, presentation: Option<(TransientPolicy, AppLanguage)>) -> Option<String> {
+        match self {
+            Self::Text(text) => Some(text.clone()),
+            Self::Notification {
+                message,
+                count,
+                level,
+            } => {
+                let (policy, language) = presentation?;
+                policy.enabled(*level).then(|| {
+                    append_count(
+                        NotificationRenderer { language }.render_message(message),
+                        *count,
+                    )
+                })
+            }
+        }
+    }
+}
+
 /// Queue caps for the OSD subsystem, in one home instead of scattered literals.
 pub(crate) struct OsdLimits;
 
@@ -33,15 +70,39 @@ pub(crate) struct ModalCenter {
 }
 
 impl ModalCenter {
-    /// Move the aggregated batch into the sequential queue, capped.
-    /// Pure: returns the outcome for the caller to format and log.
-    pub(crate) fn pump(&mut self, detailed: Option<String>) -> ModalPump {
-        match detailed {
-            None => ModalPump::Idle,
-            Some(detail) => {
-                let dropped = self.modal_box.queue_modal(detail);
-                ModalPump::Queued { dropped }
-            }
+    pub(crate) fn set_presentation(&mut self, policy: TransientPolicy, language: AppLanguage) {
+        if self.modal_box.presentation == Some((policy, language)) {
+            return;
+        }
+        self.modal_box.presentation = Some((policy, language));
+        let enabled = |line: &ModalLine| match line {
+            ModalLine::Text(_) => true,
+            ModalLine::Notification { level, .. } => policy.enabled(*level),
+        };
+        self.modal_box.batch.retain(enabled);
+        for lines in &mut self.modal_box.queue {
+            lines.retain(enabled);
+        }
+        self.modal_box.queue.retain(|lines| !lines.is_empty());
+    }
+
+    pub(crate) fn push_message(&mut self, message: Message, count: u32, level: NotificationLevel) {
+        self.modal_box.batch.push(ModalLine::Notification {
+            message,
+            count,
+            level,
+        });
+    }
+
+    /// Preserve structured lines all the way to dialog delivery.
+    pub(crate) fn pump_pending(&mut self) -> ModalPump {
+        let lines = std::mem::take(&mut self.modal_box.batch);
+        if lines.is_empty() {
+            return ModalPump::Idle;
+        }
+        self.modal_box.queue.push_back(lines);
+        ModalPump::Queued {
+            dropped: self.modal_box.enforce_cap(),
         }
     }
 
@@ -54,13 +115,8 @@ impl ModalCenter {
         self.warned_full
     }
 
-    /// Take the pending raw lines as one display batch. The caller
-    /// formats them (bullets) at the render boundary.
-    pub(crate) fn take_batch_text(&mut self) -> Vec<String> {
-        self.modal_box.take_modal_text()
-    }
-
     /// Push one pre-routed raw line into the aggregation.
+    #[cfg(test)]
     pub(crate) fn push_text(&mut self, text: String) {
         self.modal_box.push(text);
     }
@@ -102,8 +158,9 @@ impl ModalCenter {
 /// Modal error batches with sequential display pumping.
 #[derive(Debug, Default)]
 pub(crate) struct ModalBox {
-    batch: Vec<String>,
-    queue: std::collections::VecDeque<String>,
+    batch: Vec<ModalLine>,
+    queue: std::collections::VecDeque<Vec<ModalLine>>,
+    presentation: Option<(TransientPolicy, AppLanguage)>,
     open: bool,
     /// Total overflow losses. Pure fact, no I/O: the pump adapter
     /// decides logging from the delta (see `pump_modal`).
@@ -129,17 +186,18 @@ impl ModalBox {
     /// Cap shared by queue and requeue paths (drop-oldest discipline).
     const MAX_QUEUED: usize = OsdLimits::MAX_MODAL_QUEUED;
 
+    #[cfg(test)]
     pub(crate) fn push(&mut self, text: String) {
-        self.batch.push(text);
-    }
-
-    pub(crate) fn take_batch(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.batch)
+        self.batch.push(ModalLine::Text(text));
     }
 
     /// Take pending error lines as one display batch, as raw lines for the boundary to format.
+    #[cfg(test)]
     pub(crate) fn take_modal_text(&mut self) -> Vec<String> {
-        self.take_batch()
+        std::mem::take(&mut self.batch)
+            .iter()
+            .filter_map(|line| line.render(self.presentation))
+            .collect()
     }
 
     /// Single cap enforcement: drop-oldest, count losses.
@@ -155,13 +213,13 @@ impl ModalBox {
 
     /// Queue one aggregated error batch for sequential display, capped.
     pub(crate) fn queue_modal(&mut self, detail: String) -> bool {
-        self.queue.push_back(detail);
+        self.queue.push_back(vec![ModalLine::Text(detail)]);
         self.enforce_cap()
     }
 
     /// Re-queue an interrupted head batch preserving display order.
     pub(crate) fn requeue_front(&mut self, detail: String) -> bool {
-        self.queue.push_front(detail);
+        self.queue.push_front(vec![ModalLine::Text(detail)]);
         let mut dropped = false;
         while self.queue.len() > Self::MAX_QUEUED {
             self.queue.remove(1);
@@ -176,9 +234,27 @@ impl ModalBox {
         if self.open {
             return None;
         }
-        let next = self.queue.pop_front()?;
-        self.open = true;
-        Some(next)
+        while let Some(lines) = self.queue.pop_front() {
+            let structured = lines
+                .iter()
+                .any(|line| matches!(line, ModalLine::Notification { .. }));
+            let rendered: Vec<_> = lines
+                .iter()
+                .filter_map(|line| line.render(self.presentation))
+                .map(|text| {
+                    if structured {
+                        format!("• {text}")
+                    } else {
+                        text
+                    }
+                })
+                .collect();
+            if !rendered.is_empty() {
+                self.open = true;
+                return Some(rendered.join("\n"));
+            }
+        }
+        None
     }
 
     pub(crate) fn modal_closed(&mut self) {
@@ -231,19 +307,11 @@ mod tests {
     fn modal_center_pump_is_pure_data() {
         let mut center = ModalCenter::default();
         // Idle without a batch.
-        let idle = center.pump(None);
+        let idle = center.pump_pending();
         assert_eq!(idle, ModalPump::Idle);
-        assert!(matches!(idle, ModalPump::Idle));
         // Queued batches report without formatting or logging.
         center.push_text("raw line".to_string());
-        assert_eq!(
-            center.pump(Some("raw line".to_string())),
-            ModalPump::Queued { dropped: false }
-        );
-        assert!(matches!(
-            ModalPump::Queued { dropped: false },
-            ModalPump::Queued { .. }
-        ));
+        assert_eq!(center.pump_pending(), ModalPump::Queued { dropped: false });
         // Take/close drain through the center and re-arm the flag.
         assert_eq!(center.pending(), 1);
         assert_eq!(center.take_batch().as_deref(), Some("raw line"));
@@ -285,10 +353,7 @@ mod modal_cov_tests {
         center.note_overflow_reported();
         assert!(center.overflow_already_reported());
         center.push_text("x".to_string());
-        assert_eq!(
-            center.pump(Some("x".to_string())),
-            ModalPump::Queued { dropped: false }
-        );
+        assert_eq!(center.pump_pending(), ModalPump::Queued { dropped: false });
         assert_eq!(center.take_batch().as_deref(), Some("x"));
         center.closed();
         assert!(!center.overflow_already_reported());
@@ -301,7 +366,7 @@ mod modal_cov_tests {
             assert!(!center.queue_direct(format!("b{i}")));
         }
         assert!(center.queue_direct("overflow".to_string()));
-        assert!(!center.requeue_direct("head".to_string()) || center.pending() <= 8);
+        assert!(center.requeue_direct("head".to_string()));
         assert_eq!(center.pending(), 8);
     }
 

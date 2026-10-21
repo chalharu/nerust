@@ -28,20 +28,24 @@ pub(super) fn compute_viewport(
         || available_height == 0
         || content_size.width <= 0.0
         || content_size.height <= 0.0
+        || !content_size.width.is_finite()
+        || !content_size.height.is_finite()
     {
         return Viewport {
             x: 0.0,
-            y: strip.top as f32,
-            width: window_size.width as f32,
-            height: available_height as f32,
+            y: strip.top.min(window_size.height) as f32,
+            width: 0.0,
+            height: 0.0,
         };
     }
 
-    let rate_x = window_size.width as f32 / content_size.width;
-    let rate_y = available_height as f32 / content_size.height;
+    // Finite f32 physical sizes can still overflow f32 ratios. Fit in f64,
+    // then narrow only the bounded surface-space result.
+    let rate_x = f64::from(window_size.width) / f64::from(content_size.width);
+    let rate_y = f64::from(available_height) / f64::from(content_size.height);
     let rate = rate_x.min(rate_y);
-    let width = content_size.width * rate;
-    let height = content_size.height * rate;
+    let width = (f64::from(content_size.width) * rate) as f32;
+    let height = (f64::from(content_size.height) * rate) as f32;
 
     // On Android prefer slightly top-aligned viewport so on-screen controls
     // (drawn as overlays) do not overlap the game's important content. Non-Android
@@ -65,9 +69,13 @@ impl RenderPipeline {
         if surface_size.width == 0 || surface_size.height == 0 {
             return;
         }
-        self.osd_surface = surface_size;
         let surface_size =
             fit_surface_size_to_limit(surface_size, self.device.limits().max_texture_dimension_2d);
+        if self.osd_surface != surface_size {
+            // The backend re-applies its authoritative layer after resize.
+            self.osd_visible = false;
+            self.osd_surface = surface_size;
+        }
         self.config.width = surface_size.width;
         self.config.height = surface_size.height;
         surface.configure(&self.device, &self.config);
@@ -78,20 +86,31 @@ impl RenderPipeline {
         encoder: &mut wgpu::CommandEncoder,
         frame_buffer: &[u8],
         source_bytes_per_row: usize,
-    ) {
-        let upload_bytes =
-            if source_bytes_per_row == self.frame_upload_layout.upload_bytes_per_row as usize {
-                frame_buffer
-            } else {
-                pack_frame_rows(
-                    frame_buffer,
-                    source_bytes_per_row,
-                    self.frame_logical_size.height,
-                    &mut self.frame_upload_staging,
-                    self.frame_upload_layout,
-                );
-                &self.frame_upload_staging
-            };
+    ) -> Result<(), String> {
+        nerust_render_traits::FrameLayout::checked(
+            self.frame_logical_size,
+            self.frame_upload_layout.bytes_per_pixel as usize,
+            source_bytes_per_row,
+            frame_buffer.len(),
+        )
+        .map_err(|e| e.to_string())?;
+        let buffer_size = self.frame_upload_layout.buffer_size as usize;
+        let upload_bytes = if source_bytes_per_row
+            == self.frame_upload_layout.upload_bytes_per_row as usize
+            && frame_buffer.len() >= buffer_size
+        {
+            &frame_buffer[..buffer_size]
+        } else {
+            pack_frame_rows(
+                frame_buffer,
+                source_bytes_per_row,
+                self.frame_logical_size.height,
+                &mut self.frame_upload_staging,
+                self.frame_upload_layout,
+            )
+            .map_err(|e| e.to_string())?;
+            &self.frame_upload_staging
+        };
         self.queue
             .write_buffer(&self.frame_upload_buffer, 0, upload_bytes);
         encoder.copy_buffer_to_texture(
@@ -115,6 +134,7 @@ impl RenderPipeline {
                 depth_or_array_layers: 1,
             },
         );
+        Ok(())
     }
 
     pub fn render(
@@ -124,6 +144,16 @@ impl RenderPipeline {
         frame_buffer: &[u8],
         source_bytes_per_row: usize,
     ) -> Result<RenderOutcome, String> {
+        if surface_size.width == 0 || surface_size.height == 0 {
+            return Ok(RenderOutcome::Skipped);
+        }
+        nerust_render_traits::FrameLayout::checked(
+            self.frame_logical_size,
+            self.frame_upload_layout.bytes_per_pixel as usize,
+            source_bytes_per_row,
+            frame_buffer.len(),
+        )
+        .map_err(|e| e.to_string())?;
         let surface_size =
             fit_surface_size_to_limit(surface_size, self.device.limits().max_texture_dimension_2d);
         let (surface_texture, suboptimal) = match surface.get_current_texture() {
@@ -152,7 +182,7 @@ impl RenderPipeline {
             .create_command_encoder(&CommandEncoderDescriptor {
                 label: Some("nerust_render_encoder"),
             });
-        self.update_frame_texture(&mut encoder, frame_buffer, source_bytes_per_row);
+        self.update_frame_texture(&mut encoder, frame_buffer, source_bytes_per_row)?;
         let viewport = compute_viewport(surface_size, self.content_size, self.reserved);
 
         {
@@ -172,17 +202,19 @@ impl RenderPipeline {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            render_pass.set_viewport(
-                viewport.x,
-                viewport.y,
-                viewport.width,
-                viewport.height,
-                0.0,
-                1.0,
-            );
-            render_pass.set_pipeline(&self.pipeline);
-            render_pass.set_bind_group(0, &self.bind_group, &[]);
-            render_pass.draw(0..3, 0..1);
+            if viewport.width > 0.0 && viewport.height > 0.0 {
+                render_pass.set_viewport(
+                    viewport.x,
+                    viewport.y,
+                    viewport.width,
+                    viewport.height,
+                    0.0,
+                    1.0,
+                );
+                render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_bind_group(0, &self.bind_group, &[]);
+                render_pass.draw(0..3, 0..1);
+            }
         }
         self.draw_osd(&mut encoder, &view);
 

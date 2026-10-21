@@ -324,8 +324,8 @@ impl HostState {
             nerust_gui_shell::session::load_adapter::SessionLoadAdapter::new(&mut self.session);
         match self.ctx.rom_loader.load_rom(path, &mut target) {
             Ok(()) => {
-                let ctx = self.frame_ctx();
-                self.after_rom_load(&ctx);
+                self.reconcile_pause();
+                self.after_rom_load();
                 Ok(())
             }
             Err(error) => {
@@ -351,8 +351,24 @@ impl HostState {
         // Deferred focus effects land here: one gated sync covers menu,
         // title, and drain-due instead of per-event round-trips.
         self.sync_debug_chrome(&ctx);
-        let wake = self.tick_debug_pump().fold(self.tick_osd_pump(&ctx));
-        let tick = ctx.tick();
+        if self.render_retry.take_due(Instant::now()) {
+            self.request_redraw();
+        }
+        let wake = self
+            .tick_debug_pump()
+            .fold(self.tick_osd_pump(&ctx))
+            .fold(WakeNeed {
+                osd_deadline: self
+                    .aux
+                    .pump_deadlines(Instant::now())
+                    .into_iter()
+                    .chain(self.render_retry.deadline())
+                    .min(),
+                ..WakeNeed::default()
+            });
+        // Drain completion or modal ACK may have changed pause state after the
+        // frame capture. Never park using the pre-ACK paused snapshot.
+        let tick = self.session.tick_metrics();
         let now = Instant::now();
         let (deadline, wants_redraw) = update_flow(
             now,
@@ -373,11 +389,28 @@ impl HostState {
     pub(crate) fn on_render_result(&mut self, result: RenderResult, frame_counter: u64) {
         match result {
             RenderResult::Presented => {
+                self.render_retry.succeeded();
                 self.shell.on_frame_presented(frame_counter);
                 let ctx = self.frame_ctx();
                 self.maybe_refresh_window_title(&ctx, Instant::now());
             }
-            RenderResult::Skipped | RenderResult::Error => {}
+            RenderResult::Error => {
+                self.render_failed("Rendering failed; retrying with backoff".into());
+            }
+            RenderResult::Skipped => {}
+        }
+    }
+
+    pub(crate) fn render_ready(&self) -> bool {
+        self.render_retry.ready(Instant::now())
+    }
+
+    pub(crate) fn render_failed(&mut self, detail: String) {
+        if self.render_retry.failed(Instant::now()) {
+            self.session.report_external_error(
+                nerust_gui_shell::session::notification::FailureOrigin::Host,
+                detail,
+            );
         }
     }
 
@@ -386,6 +419,9 @@ impl HostState {
     }
 
     pub(crate) fn request_redraw(&mut self) {
+        if !self.render_ready() {
+            return;
+        }
         self.windows.request_redraw(&mut self.shell);
     }
     /// Idempotent close teardown: the guard makes flush run exactly once.
@@ -397,7 +433,7 @@ impl HostState {
         self.remember_fit_window_size();
         // Every cluster drops its windows, sync memos, flights, and
         // resume flags: no history/modal/resume leaks past close.
-        self.settings.close_all();
+        self.pause_policy = Default::default();
         self.osd.close_all();
         self.aux.close_all();
         self.debug.close_flights();

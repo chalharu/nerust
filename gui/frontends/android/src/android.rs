@@ -17,6 +17,7 @@ mod settings;
 mod settings_bridge;
 mod settings_codec;
 mod settings_model;
+mod settings_schema;
 mod storage;
 mod touch_layout;
 mod touch_tracker;
@@ -87,7 +88,7 @@ pub(super) fn register_main_activity_natives(
             ),
             jni::NativeMethod::from_raw_parts(
                 jni_str!("onErrorDialogDismissed"),
-                jni_str!("()V"),
+                jni_str!("(J)V"),
                 menu::Java_io_github_chalharu_nerust_MainActivity_onErrorDialogDismissed
                     as *mut c_void,
             ),
@@ -403,8 +404,7 @@ impl AndroidFrontend {
         }
     }
 
-    /// Update the cached library entries and settings so synchronous JNI
-    /// callbacks (from onMenuAction) can show up-to-date dialogs.
+    /// Update settings for the asynchronous, event-loop-owned dialog request.
     fn refresh_dialog_caches(&self) {
         let mut current = AndroidSettings::from_snapshot(
             self.core.session.settings_snapshot(),
@@ -486,19 +486,7 @@ impl AndroidFrontend {
                     return;
                 };
                 next.shared.persistence.storage_document_tree_uri = Some(uri);
-                match self.apply_settings(next) {
-                    Ok(_) => {
-                        self.refresh_dialog_caches();
-                        self.flow.render_sync.request_redraw(&mut self.core.shell);
-                    }
-                    Err(error) => {
-                        log::error!("failed to apply Android storage directory: {error}");
-                        self.core.session.report_external_error(
-                            nerust_gui_shell::session::notification::FailureOrigin::Selection,
-                            "Selected directory could not be used".to_string(),
-                        );
-                    }
-                }
+                self.execute_settings_apply(next);
             }
             RomPickerResult::Cancelled => {
                 self.pending_storage_settings = None;
@@ -531,8 +519,11 @@ impl AndroidFrontend {
                     if auto_pause {
                         self.pause();
                     }
-                    if let Some(detail) = self.flow.dialogs.current_detail() {
-                        error_dialog::request_show_error_dialog(&self.app, detail);
+                    if let (Some(id), Some(detail)) = (
+                        self.flow.dialogs.current_id(),
+                        self.flow.dialogs.current_detail(),
+                    ) {
+                        error_dialog::request_show_error_dialog(&self.app, id, detail);
                     }
                 }
                 SettingsClosedTransition::Resume => self.resume(),
@@ -600,13 +591,17 @@ impl AndroidFrontend {
                     // If Android has already dropped the surface, keep the renderer absent here;
                     // `ensure_window` will rebuild it on the next resume with the updated settings.
                     if let Some(window) = self.flow.render_sync.cloned_window() {
-                        self.flow.render_sync.rebuild_renderer(
+                        if let Err(error) = self.flow.render_sync.rebuild_renderer(
                             window,
                             &self.core.session,
                             &self.core.gpu_factory,
                             &mut self.chrome.osd,
                             &mut self.core.shell,
-                        );
+                        ) {
+                            log::warn!("settings renderer rebuild failed: {error}");
+                            self.flow.lifecycle.begin_foreground_resume();
+                            self.flow.lifecycle.schedule_retry(self.is_resumed);
+                        }
                     }
                 }
                 // Push overlay and FPS-label settings to the live chrome.
@@ -691,6 +686,7 @@ impl AndroidFrontend {
 
     fn handle_surface_close(&mut self) {
         log::warn!("handle_surface_close: surface closed");
+        picker::reset_transient();
         self.save_lifecycle_state();
         self.release_window_resources();
         if self.is_resumed {
@@ -701,6 +697,8 @@ impl AndroidFrontend {
     /// Shared unload path for Exit and Unload: drop the hidden snapshot,
     /// the restore marker, and the loaded ROM.
     fn unload_for_exit(&mut self) {
+        picker::reset_transient();
+        self.discard_restore_state();
         if self.core.session.tick_metrics().loaded {
             self.core.session.clear_hidden_lifecycle_state();
             self.core.storage.clear_restore_pending();
@@ -744,8 +742,7 @@ impl AndroidFrontend {
                 log::error!("{error}");
             }
         }
-        // Bridge truth, not the request outcome: the sync show path may leave this dialog up.
-        // Every gate queries the bridge pending id instead.
+        // Every screen gate queries the bridge pending id.
     }
 
     fn handle_menu_action(&mut self, event: FrontendEvent, tick: TickMetrics) {
@@ -812,7 +809,7 @@ impl AndroidFrontend {
                 }
                 MenuAction::TogglePause => self.toggle_pause(),
             },
-            FrontendEvent::ErrorDialogDismissed => self.handle_error_dialog_dismissed(tick),
+            FrontendEvent::ErrorDialogDismissed(id) => self.handle_error_dialog_dismissed(id, tick),
         }
     }
 
@@ -833,20 +830,28 @@ impl AndroidFrontend {
         if auto_pause {
             self.pause();
         }
-        if let Some(detail) = self.flow.dialogs.current_detail() {
-            error_dialog::request_show_error_dialog(&self.app, detail);
+        if let (Some(id), Some(detail)) = (
+            self.flow.dialogs.current_id(),
+            self.flow.dialogs.current_detail(),
+        ) {
+            error_dialog::request_show_error_dialog(&self.app, id, detail);
         }
     }
 
     /// Dismiss hook: resumes only our own auto-pause, then shows the next queued error.
     /// `tick` is the pass tick; this handler must not take a second metrics lock.
-    fn handle_error_dialog_dismissed(&mut self, tick: TickMetrics) {
+    fn handle_error_dialog_dismissed(
+        &mut self,
+        id: crate::error_dialog_controller::DialogRequestId,
+        tick: TickMetrics,
+    ) {
         // Bridge truth here: a settings dialog may have opened over the
         // error since the last event.
-        let transition = self
-            .chrome
-            .osd
-            .with_modal(|queue| self.flow.dialogs.on_dismissed(queue, self.is_resumed, tick));
+        let transition = self.chrome.osd.with_modal(|queue| {
+            self.flow
+                .dialogs
+                .on_dismissed(id, queue, self.is_resumed, tick)
+        });
         match transition {
             DismissTransition::Idle => {}
             DismissTransition::Reshow => {
@@ -854,7 +859,8 @@ impl AndroidFrontend {
             }
             DismissTransition::ResumeAndReshow => {
                 self.resume();
-                self.maybe_show_error_dialog(tick);
+                let current_tick = self.core.session.tick_metrics();
+                self.maybe_show_error_dialog(current_tick);
             }
         }
     }
@@ -959,6 +965,8 @@ impl ResetControl for AndroidFrontend {
 
 impl SessionControl for AndroidFrontend {
     fn unload(&mut self) {
+        picker::reset_transient();
+        self.discard_restore_state();
         if let Err(error) = self.core.session.unload() {
             log::warn!("ROM unload failed: {error}");
         }
@@ -1071,14 +1079,15 @@ impl ApplicationHandler for AndroidFrontend {
             return;
         }
         let now = Instant::now();
-        // Pre-drain tick for the event handlers; poll and dialog gates
-        // below re-read after mutation instead of reusing this tick.
-        let tick = self.core.session.tick_metrics();
+        // Each mutating handler receives fresh metrics, never a pre-drain tick.
         self.try_resume_foreground(event_loop);
         if let Some(result) = picker::take_result() {
             self.handle_picker_result(event_loop, result);
         }
-        if let Some(result) = settings::take_result() {
+        if self.is_resumed
+            && let Some(result) = settings::take_result()
+        {
+            let tick = self.core.session.tick_metrics();
             self.handle_settings_result(result, tick);
         }
         bridge::take_events_into(&mut self.event_scratch);
@@ -1086,6 +1095,7 @@ impl ApplicationHandler for AndroidFrontend {
         // drain first in arrival order, then the menu lane.
         let mut pending = std::mem::take(&mut self.event_scratch);
         for event in pending.drain(..) {
+            let tick = self.core.session.tick_metrics();
             self.handle_menu_action(event, tick);
         }
         self.event_scratch = pending;
@@ -1120,19 +1130,11 @@ impl ApplicationHandler for AndroidFrontend {
             {
                 window.request_redraw();
             }
-            // Render loop is self-sustaining via request_redraw() after each present.
-            // OSD expiry still needs a wake while paused, when no frames arrive.
-            if let Some(deadline) = self.chrome.osd.wakeup(now) {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
-            } else {
-                event_loop.set_control_flow(ControlFlow::Wait);
-            }
-        } else {
-            if self.is_resumed || self.flow.lifecycle.resume_pending() {
-                event_loop.set_control_flow(ControlFlow::Poll);
-            } else {
-                event_loop.set_control_flow(ControlFlow::Wait);
-            }
         }
+        let deadline = crate::wake_deadline::next_deadline(
+            self.flow.lifecycle.retry_deadline(),
+            self.chrome.osd.wakeup(now),
+        );
+        event_loop.set_control_flow(deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 }

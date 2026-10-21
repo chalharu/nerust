@@ -6,7 +6,7 @@ use nerust_gba_core::input_types::GbaInputBuffer;
 use std::collections::HashMap;
 
 fn test_core() -> GbaConsoleCore {
-    GbaConsoleCore::new(Box::<GbaInputBuffer>::default())
+    GbaConsoleCore::new(GbaInputBuffer::default())
 }
 
 fn test_config() -> CoreConfig {

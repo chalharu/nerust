@@ -1,6 +1,5 @@
 pub mod audio;
 pub mod debugger;
-pub mod factory;
 pub mod identity;
 pub mod peripheral;
 pub mod save_state;
@@ -24,13 +23,46 @@ use nerust_render_traits::{FrameBuffer, PixelFormat};
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
     #[error("{0}")]
-    RomParse(Box<dyn std::error::Error + Send + Sync>),
+    RomParse(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
-    Core(Box<dyn std::error::Error + Send + Sync>),
+    Core(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("no ROM loaded")]
     NoRomLoaded,
     #[error("invalid core options")]
     InvalidCoreOptions,
+    /// Structured persistence refusal. Concrete cores attach the original error as source.
+    #[error("{source}")]
+    Persistence {
+        kind: CoreFault,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+}
+
+/// Application-relevant fault kind, independent of diagnostic wording or a concrete core.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoreFault {
+    Unavailable,
+    Storage,
+    Missing,
+    Corrupt,
+    Incompatible,
+}
+
+impl CoreError {
+    pub fn fault(&self) -> CoreFault {
+        match self {
+            Self::Persistence { kind, .. } => *kind,
+            Self::NoRomLoaded => CoreFault::Unavailable,
+            Self::InvalidCoreOptions => CoreFault::Incompatible,
+            Self::RomParse(_) => CoreFault::Corrupt,
+            Self::Core(error) => match error.downcast_ref::<std::io::Error>() {
+                Some(error) if error.kind() == std::io::ErrorKind::NotFound => CoreFault::Missing,
+                Some(_) => CoreFault::Storage,
+                None => CoreFault::Corrupt,
+            },
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -500,6 +532,33 @@ mod tests {
         assert_eq!(
             format!("{}", CoreError::InvalidCoreOptions),
             "invalid core options"
+        );
+    }
+
+    #[test]
+    fn core_fault_classification_uses_types_and_preserves_sources() {
+        use super::CoreFault;
+        use std::error::Error as _;
+
+        let error = CoreError::Persistence {
+            kind: CoreFault::Incompatible,
+            source: "truncated data without compatibility keywords".into(),
+        };
+        assert_eq!(error.fault(), CoreFault::Incompatible);
+        assert!(error.source().is_some());
+        assert_eq!(CoreError::NoRomLoaded.fault(), CoreFault::Unavailable);
+        assert_eq!(
+            CoreError::InvalidCoreOptions.fault(),
+            CoreFault::Incompatible
+        );
+        let error = CoreError::Core(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "unsupported version mismatch",
+        )));
+        assert_eq!(error.fault(), CoreFault::Missing);
+        assert_eq!(
+            CoreError::Core("io version mismatch".into()).fault(),
+            CoreFault::Corrupt
         );
     }
 

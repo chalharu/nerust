@@ -89,6 +89,8 @@ pub struct OsdRaster {
     /// Flat shape cache keyed by (text, size); LRU order in `shape_lru`.
     shape_cache: HashMap<ShapeKey, Rc<ShapedSpan>>,
     shape_lru: std::collections::VecDeque<ShapeKey>,
+    gap_key: Rc<str>,
+    empty_key: Rc<str>,
 }
 
 impl OsdRaster {
@@ -118,6 +120,8 @@ impl OsdRaster {
             safe_insets: ViewInsets::default(),
             shape_cache: HashMap::new(),
             shape_lru: std::collections::VecDeque::new(),
+            gap_key: Rc::from(GAP_STR),
+            empty_key: Rc::from(EMPTY_STR),
         }
     }
 
@@ -488,18 +492,12 @@ impl OsdRaster {
 
     /// Interned-key variant: gap and empty spans share one allocation.
     fn shape_cached_rc(&mut self, key: &'static str, font_px: u32) -> Rc<ShapedSpan> {
-        let interned: Rc<str> = Rc::from(key);
-        if let Some(hit) = self
-            .shape_cache
-            .get(&(Rc::clone(&interned), font_px))
-            .cloned()
-        {
-            self.touch_lru(&interned, font_px);
-            return hit;
-        }
-        let span = Rc::new(self.shape_uncached(key, font_px));
-        self.insert_lru(interned, font_px, Rc::clone(&span));
-        span
+        let interned = match key {
+            GAP_STR => Rc::clone(&self.gap_key),
+            EMPTY_STR => Rc::clone(&self.empty_key),
+            _ => unreachable!("only gap and empty literals use the interned path"),
+        };
+        self.shape_cached_shared(&interned, font_px)
     }
 
     /// Test seam for shaping assertions: production shapes through the cache.
@@ -628,7 +626,7 @@ impl OsdRaster {
                         continue;
                     }
                     let (dx, dy) = (base_x + col as i32, base_y + row as i32);
-                    if dx < 0 || dy < 0 {
+                    if dx < 0 || dy < 0 || dx as u32 >= stride_w {
                         continue;
                     }
                     let offset = (dy as u32 * stride_w + dx as u32) as usize * 4;
@@ -712,12 +710,9 @@ impl OsdRaster {
 /// Integer straight-alpha blend of one pixel over the layer buffer.
 /// Round-half-up fixed point; no FPU on the per-pixel path.
 fn blend_over(dst: &mut [u8], r: u8, g: u8, b: u8, a: u8) {
-    let alpha = u32::from(a);
-    let inv = 255 - alpha;
-    dst[0] = ((u32::from(r) * alpha + u32::from(dst[0]) * inv + 127) / 255) as u8;
-    dst[1] = ((u32::from(g) * alpha + u32::from(dst[1]) * inv + 127) / 255) as u8;
-    dst[2] = ((u32::from(b) * alpha + u32::from(dst[2]) * inv + 127) / 255) as u8;
-    dst[3] = ((alpha * 255 + u32::from(dst[3]) * inv + 127) / 255).min(255) as u8;
+    use nerust_render_traits::rgb::RgbaWord;
+    let previous = RgbaWord::from_rgba(dst[0], dst[1], dst[2], dst[3]);
+    dst[..4].copy_from_slice(&previous.blend_src_over([r, g, b, a]).to_bytes_be());
 }
 
 /// Rounded-rect pill fill on the layer (top-left origin, cropped space).
@@ -1060,6 +1055,12 @@ mod tests {
         assert_eq!(pixel[3], 184);
         blend_over(&mut pixel, 0, 0, 0, 184);
         assert!(pixel[3] > 200);
+        let mut clear = [10, 20, 30, 0];
+        blend_over(&mut clear, 255, 200, 100, 128);
+        assert_eq!(clear, [255, 200, 100, 128]);
+        let mut pill = [0, 0, 0, 184];
+        blend_over(&mut pill, 255, 255, 255, 128);
+        assert_eq!(pill, [149, 149, 149, 220]);
     }
 
     #[test]
@@ -1086,6 +1087,26 @@ mod tests {
         let empty_again = raster.shape_cached_rc(EMPTY_STR, 16);
         assert!(Rc::ptr_eq(&empty, &empty_again));
         assert!(!Rc::ptr_eq(&gap, &empty));
+    }
+
+    #[test]
+    fn literal_cache_keys_reuse_the_raster_owned_allocation() {
+        let mut raster = OsdRaster::new();
+        for (literal, key) in [
+            (GAP_STR, raster.gap_key.clone()),
+            (EMPTY_STR, raster.empty_key.clone()),
+        ] {
+            let first = raster.shape_cached_rc(literal, 16);
+            for _ in 0..8 {
+                assert!(Rc::ptr_eq(&first, &raster.shape_cached_rc(literal, 16)));
+                let (cached, _) = raster
+                    .shape_cache
+                    .keys()
+                    .find(|(text, size)| &**text == literal && *size == 16)
+                    .unwrap();
+                assert!(Rc::ptr_eq(cached, &key));
+            }
+        }
     }
 
     #[test]

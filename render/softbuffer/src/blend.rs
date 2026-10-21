@@ -36,10 +36,15 @@ impl SoftbufferRenderer {
                 if alpha == 0 {
                     continue;
                 }
-                let dst_word = buffer[dst_y * dst_w + dst_x];
-                let dst = RgbaWord::from_argb_word(dst_word);
+                // Softbuffer presents XRGB: the high byte is not alpha. The
+                // game/clear pixels are an opaque destination for source-over.
+                let Some(dst_word) = buffer.get_mut(dst_y * dst_w + dst_x) else {
+                    continue;
+                };
+                let dst_word_value = *dst_word | 0xFF00_0000;
+                let dst = RgbaWord::from_argb_word(dst_word_value);
                 let src = [rgba[s], rgba[s + 1], rgba[s + 2], alpha];
-                buffer[dst_y * dst_w + dst_x] = dst.blend_src_over(src).as_argb_word();
+                *dst_word = dst.blend_src_over(src).as_argb_word();
             }
         }
     }
@@ -49,6 +54,22 @@ impl SoftbufferRenderer {
 mod tests {
     use super::SoftbufferRenderer;
     use nerust_render_traits::renderer::OsdLayer;
+
+    #[test]
+    fn right_clipping_keeps_original_row_pitch() {
+        let mut buffer = [0u32; 4];
+        let layer = OsdLayer::new(
+            1,
+            0,
+            2,
+            2,
+            vec![
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+            ],
+        );
+        SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &layer);
+        assert_eq!(buffer, [0, 0xFFFF_0000, 0, 0xFF00_00FF]);
+    }
 
     fn layer_at(x: u32, y: u32, rgba: Vec<u8>) -> OsdLayer {
         OsdLayer::new(x, y, 2, 2, rgba)

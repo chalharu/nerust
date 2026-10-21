@@ -7,6 +7,11 @@ pub(crate) fn should_lifecycle_pause(lifecycle_auto_paused: bool, can_pause: boo
     !lifecycle_auto_paused && can_pause
 }
 
+/// A live core already retained its state. A user picker response outranks automatic restore.
+pub(crate) fn should_fetch_restore(pending: bool, loaded: bool, picker_pending: bool) -> bool {
+    pending && !loaded && !picker_pending
+}
+
 /// Suspend file outcome for the storage marker.
 /// Saved hidden state touches the marker; a miss clears it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +103,14 @@ pub(crate) fn restore_fetch_route(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restore_never_replaces_a_live_core_or_waiting_user_selection() {
+        assert!(should_fetch_restore(true, false, false));
+        assert!(!should_fetch_restore(true, true, false));
+        assert!(!should_fetch_restore(true, false, true));
+        assert!(!should_fetch_restore(false, false, false));
+    }
 
     #[test]
     fn lifecycle_pause_needs_running_core() {

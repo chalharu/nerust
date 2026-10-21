@@ -1,13 +1,11 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use nerust_core_traits::{
-    factory::{
-        CoreFactory,
-        load::{DynSystemLoadOptions, MediaObject},
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::rom::load_rom_path;
+use nerust_system_traits::factory::{
+    CoreFactory,
+    load::{DynSystemLoadOptions, MediaObject},
+};
 
 use crate::load::{RomLoadTarget, RomLoader, RomLoaderError};
 use nerust_settings_core::factory::settings_view;
@@ -150,23 +148,20 @@ impl RomLoader for RegistryRomLoader {
 mod tests {
     use std::{fs, path::PathBuf, sync::Arc};
 
-    use nerust_core_traits::{
-        declare_system_id,
-        factory::{
-            CoreFactory, CoreParts, FactoryError,
-            descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-            load::{
-                DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
-                SystemLoadOptions,
-            },
-            settings::FactorySettingsView,
-        },
-        identity::SystemId,
-    };
+    use nerust_core_traits::{declare_system_id, identity::SystemId};
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
     use nerust_settings_core::model::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
+    };
+    use nerust_system_traits::factory::{
+        CoreFactory, CoreParts, FactoryError,
+        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+        load::{
+            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+            SystemLoadOptions,
+        },
+        settings::FactorySettingsView,
     };
 
     use crate::registry::*;

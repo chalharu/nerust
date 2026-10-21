@@ -1,4 +1,5 @@
 use super::{Mbc, MbcKind};
+use crate::persistence_error::GbcPersistenceError;
 
 const MACHINE_STATE_SCHEMA_VERSION: u32 = 1;
 
@@ -115,15 +116,13 @@ impl Mbc for HuC1 {
         .expect("HuC1 machine state should serialize")
     }
 
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        let state: HuC1MachineState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != MACHINE_STATE_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported HuC1 machine state version: {}",
-                state.schema_version
-            ));
-        }
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
+        let state: HuC1MachineState = super::decode_mapper_state(
+            data,
+            MACHINE_STATE_SCHEMA_VERSION,
+            "HuC1 machine state",
+            None,
+        )?;
         if state.rom_bank > 0x3F || state.ram_bank > 0x03 || state.ram.len() != self.ram.len() {
             return Err("invalid HuC1 machine state".into());
         }

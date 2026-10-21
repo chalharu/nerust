@@ -25,7 +25,7 @@ fn latest_saved_slot_id_prefers_newest_timestamp_then_slot_id() {
     let summary = |slot_id, saved_at_secs| StateSlotSummary {
         schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
         slot_id,
-        path: PathBuf::from(format!("/tmp/{slot_id}.state")),
+        path: PathBuf::from(format!("/tmp/{slot_id}.state")).into(),
         saved_at: UNIX_EPOCH + Duration::from_secs(saved_at_secs),
         has_thumbnail: false,
         emulator_version: "test".into(),

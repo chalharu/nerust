@@ -6,6 +6,20 @@ use crate::session::SessionError;
 /// Re-exported from the settings domain home; frontends keep importing it here.
 pub use super::settings_apply::SettingsResult;
 
+impl super::SessionHandle {
+    /// Synchronize the frontend pause arbiter before load/apply can replace a worker.
+    /// This changes activation policy only; the arbiter still sends pause/resume.
+    pub fn set_execution_held(&mut self, held: bool) {
+        self.execution_held = held;
+    }
+
+    /// Capture at batch acceptance, not at flight start. Replacement invalidates
+    /// this token even when the batch has not issued its first command yet.
+    pub fn debug_epoch(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        std::sync::Arc::clone(&self.emu.debug_epoch)
+    }
+}
+
 /// Pause control: the only session operations the modal auto-pause path needs.
 /// Kept separate so callers depend on three methods, not the whole session surface.
 pub trait PauseControl {

@@ -1,7 +1,9 @@
 //! NTSC kernel simulation: palette-index to RGBA words.
 //! Pure byte math; the renderer only stages the output buffer.
 
-use nerust_render_traits::{VideoRenderProfile, filter::BLACK_PALETTE_INDEX, rgb::RgbaWord};
+use nerust_render_traits::{
+    VideoRenderProfile, filter::BLACK_PALETTE_INDEX, logical::LogicalSize, rgb::RgbaWord,
+};
 
 const NTSC_ROW_OFFSETS: [[usize; 6]; 7] = [
     [0, 19, 31, 7, 26, 38],
@@ -25,13 +27,19 @@ const NTSC_SOURCE_OFFSETS: [[i32; 6]; 7] = [
 pub(crate) struct Ntsc;
 
 impl Ntsc {
-    pub(crate) fn palette_index(source_frame: &[u8], width: usize, x: i32, y: usize) -> u8 {
-        if x < 0 || x as usize >= width {
+    pub(crate) fn palette_index(
+        source_frame: &[u8],
+        size: LogicalSize,
+        stride: usize,
+        x: i32,
+        y: usize,
+    ) -> u8 {
+        if x < 0 || x as usize >= size.width || y >= size.height {
             return BLACK_PALETTE_INDEX;
         }
         // Short rows render black instead of panicking the UI thread.
         source_frame
-            .get(y.saturating_mul(width).saturating_add(x as usize))
+            .get(y.saturating_mul(stride).saturating_add(x as usize))
             .copied()
             .unwrap_or(BLACK_PALETTE_INDEX)
     }
@@ -66,6 +74,7 @@ impl Ntsc {
 
     pub(crate) fn simulate_gpu_ntsc_rgba(
         src_h: usize,
+        src_stride: usize,
         source_frame: &[u8],
         render_profile: &VideoRenderProfile,
         ntsc_buffer: &mut [u32],
@@ -86,7 +95,8 @@ impl Ntsc {
                 for (source_offset, row_offset) in source_offsets.into_iter().zip(row_offsets) {
                     let color = Self::palette_index(
                         source_frame,
-                        render_profile.source_logical_size.width,
+                        render_profile.source_logical_size,
+                        src_stride,
                         base + source_offset,
                         y,
                     );
@@ -107,6 +117,26 @@ impl Ntsc {
 mod tests {
     use super::Ntsc;
     use nerust_render_traits::rgb::RgbaWord;
+
+    #[test]
+    fn palette_rows_honor_source_pitch_and_profile_bounds() {
+        use nerust_render_traits::{filter::BLACK_PALETTE_INDEX, logical::LogicalSize};
+        let size = LogicalSize {
+            width: 2,
+            height: 2,
+        };
+        let source = [1, 2, 99, 99, 3, 4, 99, 99, 5, 6];
+        assert_eq!(Ntsc::palette_index(&source, size, 4, 0, 1), 3);
+        assert_eq!(Ntsc::palette_index(&source, size, 4, 1, 1), 4);
+        assert_eq!(
+            Ntsc::palette_index(&source, size, 4, 2, 1),
+            BLACK_PALETTE_INDEX
+        );
+        assert_eq!(
+            Ntsc::palette_index(&source, size, 4, 0, 2),
+            BLACK_PALETTE_INDEX
+        );
+    }
 
     #[test]
     fn read_entry_uses_be_wire_order() {
@@ -148,7 +178,7 @@ mod tests {
         };
         let src = vec![3u8; 4 * 4];
         let mut out = vec![0u32; 16];
-        Ntsc::simulate_gpu_ntsc_rgba(4, &src, &profile, &mut out);
+        Ntsc::simulate_gpu_ntsc_rgba(4, 4, &src, &profile, &mut out);
         assert_eq!(out.len(), 16);
         assert!(out.iter().all(|w| w & 0xFF == 0xFF));
     }

@@ -2,18 +2,16 @@
 
 use std::{rc::Rc, sync::Arc};
 
-use nerust_core_traits::{
-    factory::{
-        CoreFactory, CoreParts, FactoryError,
-        descriptor::SystemSettingsPageModel,
-        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{
-    AttachmentId, ControllerProfile, InputAssignments, InputPorts, InputResources,
-    InputSystemFactory, PortSet, ProfileId, SlotInfo,
+    AttachmentId, ControllerProfile, InputAssignments, InputPorts, InputSystemFactory, PortSet,
+    ProfileId, SlotInfo,
+};
+use nerust_system_traits::factory::{
+    CoreFactory, CoreParts, FactoryError,
+    descriptor::SystemSettingsPageModel,
+    load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+    settings::FactorySettingsView,
 };
 
 use super::SettingsViewModel;
@@ -92,12 +90,6 @@ impl InputSystemFactory for TestInputFactory {
     fn default_assignments(&self) -> InputAssignments {
         InputAssignments::new(vec![])
     }
-    fn create_split(
-        &self,
-        _: &nerust_input_traits::ControllerCollection,
-    ) -> Result<InputResources, nerust_input_traits::CreateSplitError> {
-        unreachable!("not called in tests")
-    }
 }
 
 #[derive(Debug)]
@@ -129,8 +121,8 @@ impl CoreFactory for TestCoreFactory {
     fn apply_settings_choice(
         &self,
         _: &mut FactorySettingsView,
-        _: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
-        _: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+        _: &nerust_system_traits::factory::descriptor::SystemSettingsFieldId,
+        _: &nerust_system_traits::factory::descriptor::SystemSettingsChoiceId,
     ) -> Result<(), FactoryError> {
         Ok(())
     }
@@ -149,7 +141,7 @@ impl CoreFactory for TestCoreFactory {
     }
     fn load_options_schema(
         &self,
-    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+    ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
         unreachable!("not called in tests")
     }
 }

@@ -10,7 +10,10 @@ pub mod images;
 pub mod nav;
 pub mod snapshot;
 pub mod status;
-pub mod transaction;
+/// Compatibility module; runtime owns the write protocol.
+pub mod transaction {
+    pub use nerust_gui_runtime::debug_transaction::WriteTransaction;
+}
 
 #[cfg(test)]
 mod tests;

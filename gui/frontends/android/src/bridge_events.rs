@@ -26,7 +26,7 @@ pub(crate) enum MenuAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FrontendEvent {
     Menu(MenuAction),
-    ErrorDialogDismissed,
+    ErrorDialogDismissed(crate::error_dialog_controller::DialogRequestId),
 }
 
 use crate::bridge_contract::*;
@@ -64,21 +64,26 @@ enum BridgeEventV1 {
     ErrorDialogDismissed {
         #[allow(dead_code)]
         v: u32,
+        request_id: crate::error_dialog_controller::DialogRequestId,
     },
 }
 
 fn decode_json_event(raw: &str) -> Option<FrontendEvent> {
-    let envelope: BridgeEventV1 = serde_json::from_str(raw).ok()?;
+    let mut value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    validate_bridge_event(&mut value)?;
+    let envelope: BridgeEventV1 = serde_json::from_value(value).ok()?;
     let version = match &envelope {
         BridgeEventV1::Menu { v, .. } => *v,
-        BridgeEventV1::ErrorDialogDismissed { v } => *v,
+        BridgeEventV1::ErrorDialogDismissed { v, .. } => *v,
     };
     if version != BRIDGE_EVENT_VERSION {
         log::warn!("ignoring Android bridge event with unsupported version {version}");
         return None;
     }
     match envelope {
-        BridgeEventV1::ErrorDialogDismissed { .. } => Some(FrontendEvent::ErrorDialogDismissed),
+        BridgeEventV1::ErrorDialogDismissed { request_id, .. } => {
+            Some(FrontendEvent::ErrorDialogDismissed(request_id))
+        }
         BridgeEventV1::Menu {
             action,
             device_id,
@@ -195,8 +200,10 @@ mod tests {
             }))
         );
         assert_eq!(
-            decode_frontend_event(r#"{"v":1,"type":"error_dialog_dismissed"}"#),
-            Some(FrontendEvent::ErrorDialogDismissed)
+            decode_frontend_event(r#"{"v":1,"type":"error_dialog_dismissed","request_id":7}"#),
+            Some(FrontendEvent::ErrorDialogDismissed(
+                crate::error_dialog_controller::DialogRequestId(7)
+            ))
         );
     }
 

@@ -395,7 +395,9 @@ mod tests {
         fn feed_event(&mut self, _event: AuxNativeEvent) -> Option<iced::Event> {
             None
         }
-        fn render(&mut self) {}
+        fn render(&mut self) -> Option<String> {
+            None
+        }
     }
 
     impl AuxEvents for ProbeAux {

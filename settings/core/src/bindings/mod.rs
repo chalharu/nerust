@@ -2,17 +2,33 @@ pub mod descriptors;
 
 use std::collections::BTreeMap;
 
-use crate::model::input::KeyboardProfile;
+use crate::model::input::{KeyboardProfile, PersistedControlId};
 use crate::model::shared::DesktopSharedSettings;
 use nerust_core_traits::identity::SystemId;
-use nerust_input_traits::InputTopologyDescriptor;
+use nerust_input_traits::{InputTopologyDescriptor, UnifiedFieldMap};
 use nerust_keyboard::Key;
 
 /// Precomputed (attachment, control) → key lookup for one profile.
 /// Build once per pass; repeated validations reuse it instead of re-indexing.
 #[derive(Debug, Default)]
 pub struct BindingIndex<'a> {
-    map: std::collections::HashMap<(&'a str, &'a str), Key>,
+    map: std::collections::HashMap<(&'a str, BindingControl<'a>), Key>,
+}
+
+/// Textual IDs are not identity: analog and digital keys stay disjoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum BindingControl<'a> {
+    Digital(&'a str),
+    Analog(&'a str),
+}
+
+impl<'a> From<&'a PersistedControlId> for BindingControl<'a> {
+    fn from(control: &'a PersistedControlId) -> Self {
+        match control {
+            PersistedControlId::Digital(id) => Self::Digital(id),
+            PersistedControlId::Analog(id) => Self::Analog(id),
+        }
+    }
 }
 
 impl<'a> BindingIndex<'a> {
@@ -20,15 +36,20 @@ impl<'a> BindingIndex<'a> {
     pub fn for_profile(profile: &'a KeyboardProfile) -> Self {
         let mut map = std::collections::HashMap::with_capacity(profile.bindings.len());
         for binding in &profile.bindings {
-            map.entry((binding.attachment.as_str(), binding.control.as_str()))
-                .or_insert(binding.key);
+            map.entry((
+                binding.attachment.as_str(),
+                BindingControl::from(&binding.control),
+            ))
+            .or_insert(binding.key);
         }
         Self { map }
     }
 
-    /// Probe one descriptor pair in O(1).
+    /// Probe a digital keyboard descriptor in O(1). Analog IDs never shadow it.
     pub fn key_for(&self, attachment: &str, control: &str) -> Option<Key> {
-        self.map.get(&(attachment, control)).copied()
+        self.map
+            .get(&(attachment, BindingControl::Digital(control)))
+            .copied()
     }
 
     pub fn len(&self) -> usize {
@@ -38,6 +59,56 @@ impl<'a> BindingIndex<'a> {
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
+}
+
+/// A skipped active binding. Domain identity is retained for diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingConflict {
+    pub attachment: String,
+    pub control: PersistedControlId,
+    pub key: Key,
+}
+
+/// Resolve physical keys at the settings/runtime boundary. Binding order is
+/// authoritative for both duplicate controls and duplicate physical keys;
+/// randomized field-map iteration can never select the winner.
+pub fn resolve_key_fields(
+    fields: &UnifiedFieldMap,
+    bindings: &[crate::model::input::KeyboardBinding],
+    target: &mut std::collections::HashMap<Key, usize>,
+) -> Result<(), BindingConflict> {
+    use std::collections::{HashMap, HashSet};
+    let digital: HashMap<_, _> = fields
+        .iter()
+        .filter_map(|((attachment, control), field)| {
+            Some((
+                (attachment.as_str(), control.as_digital()?.as_str()),
+                *field,
+            ))
+        })
+        .collect();
+    target.clear();
+    let mut controls = HashSet::new();
+    let mut first_conflict = None;
+    for binding in bindings {
+        let PersistedControlId::Digital(control) = &binding.control else {
+            continue;
+        };
+        let identity = (binding.attachment.as_str(), control.as_str());
+        let Some(&field) = digital.get(&identity) else {
+            continue;
+        };
+        if !controls.insert(identity) || target.contains_key(&binding.key) {
+            first_conflict.get_or_insert_with(|| BindingConflict {
+                attachment: binding.attachment.as_str().to_owned(),
+                control: binding.control.clone(),
+                key: binding.key,
+            });
+            continue;
+        }
+        target.insert(binding.key, field);
+    }
+    first_conflict.map_or(Ok(()), Err)
 }
 
 /// Key conflicts with a precomputed profile index; same result as [`conflicting_keys`].
@@ -148,6 +219,51 @@ mod tests {
 
     const TEST_DEV: DeviceKindId = DeviceKindId::new("test.dev");
     const TEST_ATT: AttachmentId = AttachmentId::new("test.att");
+
+    #[test]
+    fn runtime_resolution_is_ordered_for_duplicate_controls_and_physical_keys() {
+        use nerust_input_traits::{AnalogControlId, ControlId};
+        use std::collections::HashMap;
+        let fields = [
+            (
+                (
+                    TEST_ATT,
+                    ControlId::digital(DigitalControlId::new("test.a")),
+                ),
+                0,
+            ),
+            (
+                (
+                    TEST_ATT,
+                    ControlId::digital(DigitalControlId::new("test.b")),
+                ),
+                1,
+            ),
+            (
+                (TEST_ATT, ControlId::analog(AnalogControlId::new("test.a"))),
+                2,
+            ),
+        ];
+        let bindings = vec![
+            KeyboardBinding::new("test.att", PersistedControlId::analog("test.a"), Key::KeyZ),
+            KeyboardBinding::new(
+                "test.att",
+                PersistedControlId::digital("missing"),
+                Key::KeyZ,
+            ),
+            KeyboardBinding::new("test.att", PersistedControlId::digital("test.b"), Key::KeyZ),
+            KeyboardBinding::new("test.att", PersistedControlId::digital("test.a"), Key::KeyZ),
+            KeyboardBinding::new("test.att", PersistedControlId::digital("test.b"), Key::KeyX),
+        ];
+        for entries in [fields.to_vec(), fields.into_iter().rev().collect()] {
+            let mut target = HashMap::from([(Key::KeyA, 99)]);
+            let conflict =
+                super::resolve_key_fields(&entries.into_iter().collect(), &bindings, &mut target)
+                    .unwrap_err();
+            assert_eq!(conflict.control, PersistedControlId::digital("test.a"));
+            assert_eq!(target, HashMap::from([(Key::KeyZ, 1)]));
+        }
+    }
 
     fn single_port_topology() -> InputTopologyDescriptor {
         InputTopologyDescriptor::new(
@@ -276,6 +392,39 @@ mod tests {
             "{labels:?}"
         );
         assert!(labels.contains(&"Reset".to_string()), "{labels:?}");
+    }
+
+    #[test]
+    fn index_keeps_control_kinds_distinct_and_first_digital_wins() {
+        let profile = crate::model::input::KeyboardProfile {
+            bindings: vec![
+                KeyboardBinding::new(
+                    "test.att",
+                    PersistedControlId::analog("test.ctrl.a"),
+                    Key::KeyX,
+                ),
+                KeyboardBinding::new(
+                    "test.att",
+                    PersistedControlId::digital("test.ctrl.a"),
+                    Key::KeyZ,
+                ),
+                KeyboardBinding::new(
+                    "test.att",
+                    PersistedControlId::digital("test.ctrl.a"),
+                    Key::KeyA,
+                ),
+            ],
+        };
+        let index = super::BindingIndex::for_profile(&profile);
+        assert_eq!(index.len(), 2);
+        assert_eq!(index.key_for("test.att", "test.ctrl.a"), Some(Key::KeyZ));
+        let analog_only = crate::model::input::KeyboardProfile {
+            bindings: profile.bindings[..1].to_vec(),
+        };
+        assert_eq!(
+            super::BindingIndex::for_profile(&analog_only).key_for("test.att", "test.ctrl.a"),
+            None
+        );
     }
 
     #[test]

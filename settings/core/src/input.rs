@@ -1,16 +1,24 @@
 use std::rc::Rc;
 
-use nerust_input_traits::{AttachmentId, ControllerProfile, InputAssignments};
+use nerust_input_traits::{AttachmentId, ControllerProfile};
 
-/// Clear other occupied slots in the same multi-port set; owned by [`InputAssignments`].
+/// Clear other occupied slots in the selected profile's multi-port set in place.
 pub fn clear_multi_port_conflicts(
     slot: AttachmentId,
     profile: &dyn ControllerProfile,
     assignments: &mut [(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
 ) {
-    let mut owned = InputAssignments::new(assignments.to_vec());
-    owned.clear_multi_port_conflicts(slot, profile);
-    assignments.clone_from_slice(owned.slots());
+    if let Some(set) = profile
+        .port_sets()
+        .iter()
+        .find(|set| set.ports.first() == Some(&slot))
+    {
+        for (other, controller) in assignments {
+            if *other != slot && set.ports.contains(other) {
+                *controller = None;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

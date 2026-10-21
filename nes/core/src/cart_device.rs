@@ -214,17 +214,13 @@ pub(crate) trait Cartridge: Mapper {
         state: CartridgeRuntimeState,
     ) -> Result<(), PersistenceError> {
         if !state.extra_kind.is_empty() || !state.extra_body.is_empty() {
-            return Err(PersistenceError::Validation(
-                "unexpected mapper-specific state for this mapper".into(),
-            ));
+            return Err(PersistenceError::UnexpectedMapperState);
         }
-        self.mapper_state_ref()
-            .validate_for_import(
-                &state.mapper_state,
-                self.data_ref().prog_rom_len(),
-                self.data_ref().char_rom_len(),
-            )
-            .map_err(PersistenceError::Validation)?;
+        self.mapper_state_ref().validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
         *self.mapper_state_mut() = state.mapper_state;
         Ok(())
     }
@@ -244,21 +240,15 @@ pub(crate) trait Cartridge: Mapper {
     ) -> Result<(), PersistenceError> {
         let (save_prg_len, save_chr_len) = self.persistent_mapper_save_lengths();
         if save_prg_len == 0 && save_chr_len == 0 {
-            return Err(PersistenceError::Validation(
-                "cartridge does not expose persistent mapper save memory".into(),
-            ));
+            return Err(PersistenceError::NoPersistentMemory);
         }
         if prg_ram.len() != save_prg_len || chr_ram.len() != save_chr_len {
-            return Err(PersistenceError::Validation(
-                "persistent mapper memory length mismatch".into(),
-            ));
+            return Err(PersistenceError::PersistentMemoryLength);
         }
         let sram_len = self.mapper_state_ref().sram.len();
         let vram_len = self.mapper_state_ref().vram.len();
         if save_prg_len > sram_len || save_chr_len > vram_len {
-            return Err(PersistenceError::Validation(
-                "persistent mapper memory exceeds available backing store".into(),
-            ));
+            return Err(PersistenceError::PersistentMemoryBounds);
         }
         self.mapper_state_mut().sram[..save_prg_len].copy_from_slice(prg_ram);
         self.mapper_state_mut().vram[..save_chr_len].copy_from_slice(chr_ram);

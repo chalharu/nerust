@@ -1,8 +1,8 @@
 //! MediaLoader: ROM/document loading owned by one module.
 //! Dispatches completed worker-thread fetch buffers.
 
-use nerust_core_traits::factory::load::MediaObject;
 use nerust_gui_shell::session::access::PauseControl as _;
+use nerust_system_traits::factory::load::MediaObject;
 use winit::event_loop::ActiveEventLoop;
 
 use super::{bridge, storage::LastMediaReference};
@@ -231,19 +231,24 @@ impl super::AndroidFrontend {
                         "finish_rom_load: ensure_window failed: {error}; scheduling foreground resume"
                     );
                     self.flow.lifecycle.begin_foreground_resume();
+                    self.flow.lifecycle.schedule_retry(self.is_resumed);
                 }
             }
         } else if let Some(window) = self.flow.render_sync.cloned_window() {
             // Rebuild renderer to ensure the underlying surface is fresh; dialogs or
             // system UI may have invalidated the previous surface.
             log::info!("finish_rom_load: rebuilding renderer to ensure visible surface");
-            self.flow.render_sync.rebuild_renderer(
+            if let Err(error) = self.flow.render_sync.rebuild_renderer(
                 window,
                 &self.core.session,
                 &self.core.gpu_factory,
                 &mut self.chrome.osd,
                 &mut self.core.shell,
-            );
+            ) {
+                log::warn!("ROM renderer rebuild failed: {error}");
+                self.flow.lifecycle.begin_foreground_resume();
+                self.flow.lifecycle.schedule_retry(self.is_resumed);
+            }
             self.chrome.input.rebuild_overlay(
                 &self.core.session,
                 &self.app,

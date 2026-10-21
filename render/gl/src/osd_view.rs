@@ -1,16 +1,14 @@
 //! OSD overlay view: layer staging, upload, and composite.
 //! Owns the overlay domain; the frame pipeline only lends binding helpers.
 
-use std::ptr;
-
 use gl::types::GLint;
+use nerust_glwrap::bindings as gl;
 use nerust_glwrap::{
     Current, DeletionPolicy, Shader,
     raw::{
-        active_texture, bind_buffer, bind_vertex_array, blend_func, blend_func_separate,
-        check_frame, delete_textures, disable, draw_arrays, enable, gen_textures, get_integer_u32,
-        get_viewport, is_enabled, tex_image_2d, tex_sub_image_2d, uniform_1i, uniform_matrix_4fv,
-        use_program, viewport,
+        active_texture, bind_buffer, bind_vertex_array, blend_func_separate, check_frame,
+        delete_textures, disable, draw_arrays, enable, gen_textures, get_integer_u32, get_viewport,
+        is_enabled, tex_sub_image_2d, uniform_1i, uniform_matrix_4fv, use_program, viewport,
     },
 };
 use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
@@ -22,7 +20,7 @@ use crate::frame_textures::use_texture;
 use crate::frame_view::{FrameView, ok_gl};
 use crate::mat4::Mat4;
 use crate::osd_overlay::{
-    OSDRect, RetryDecision, checked_clear_need, checked_osd_gl_y, checked_osd_rect,
+    OSDRect, RetryDecision, checked_clear_need, checked_osd_rect, checked_osd_y,
 };
 use crate::surface_view::LeakedName;
 
@@ -102,7 +100,12 @@ impl BlendGuard {
         let src_alpha = ok_gl(get_integer_u32(gl::BLEND_SRC_ALPHA))?;
         let dst_alpha = ok_gl(get_integer_u32(gl::BLEND_DST_ALPHA))?;
         ok_gl(enable(gl::BLEND))?;
-        ok_gl(blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA))?;
+        ok_gl(blend_func_separate(
+            gl::SRC_ALPHA,
+            gl::ONE_MINUS_SRC_ALPHA,
+            gl::ONE,
+            gl::ONE_MINUS_SRC_ALPHA,
+        ))?;
         Ok(Self {
             was_enabled,
             src_rgb,
@@ -288,6 +291,9 @@ impl OsdView {
         frame: &mut FrameView,
         game_viewport: Option<[i32; 4]>,
     ) -> Result<(OsdOutcome, Option<[i32; 4]>), ViewError> {
+        if self.osd_layer.is_some() && self.osd_size != (surface_w, surface_h) {
+            self.osd_dirty = true;
+        }
         if self.osd_dirty {
             match self.sync_osd_texture(surface_w, surface_h) {
                 Ok(()) => {
@@ -316,12 +322,7 @@ impl OsdView {
             let mat: [f32; 16] = identity.as_array();
             if last != Some(mat) {
                 if let Some(sampler_loc) = loc {
-                    ok_gl(uniform_matrix_4fv(
-                        sampler_loc,
-                        1,
-                        gl::FALSE,
-                        identity.as_ptr(),
-                    ))?;
+                    ok_gl(uniform_matrix_4fv(sampler_loc, 1, gl::FALSE, &mat))?;
                     ok_gl(check_frame())?;
                     self.last_osd_matrix = Some(mat);
                 } else if self.osd_shader.is_some() {
@@ -351,7 +352,8 @@ impl OsdView {
         let applied_viewport = Some(_composite.saved_viewport());
         // Guard restoration must not leave a successful program memo on error.
         frame.set_current_program(None);
-        ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
+        // Shared quad: four vertices with identical position/UV locations.
+        ok_gl(unsafe { draw_arrays(gl::TRIANGLE_STRIP, 0, 4) })?;
         // Guard drops here restoring game state; the program memo is unknown.
         drop(_composite);
         // Explicit restore: rebind the game texture so the next frame
@@ -382,6 +384,46 @@ impl OsdView {
     /// Upload the staged layer into the full-surface texture (draw path only binds).
     /// Best-effort: failures keep the previous texture, never panic.
     fn sync_osd_texture(&mut self, surface_w: i32, surface_h: i32) -> Result<(), ViewError> {
+        if self.osd_texture == 0 {
+            return Ok(());
+        }
+        if self.osd_size != (surface_w, surface_h) {
+            let need = checked_clear_need(surface_w, surface_h).map_err(|_| {
+                ViewError::InvalidSurface {
+                    w: surface_w,
+                    h: surface_h,
+                }
+            })?;
+            let limit = ok_gl(nerust_glwrap::raw::get_integer(gl::MAX_TEXTURE_SIZE))?;
+            if surface_w > limit || surface_h > limit {
+                return Err(ViewError::InvalidSurface {
+                    w: surface_w,
+                    h: surface_h,
+                });
+            }
+            // A null TexImage allocation has undefined contents. Initialize the
+            // entire new store before compositing any subrectangle.
+            self.osd_clear_scratch
+                .try_staging(need)
+                .map_err(|_| {
+                    ViewError::Gl(nerust_glwrap::GlError::new(vec![
+                        nerust_glwrap::GlErrorKind::OutOfMemory,
+                    ]))
+                })?
+                .fill(0);
+            crate::frame_textures::upload_texture_bytes(
+                0,
+                self.osd_texture,
+                surface_w as usize,
+                surface_h as usize,
+                gl::RGBA as i32,
+                gl::RGBA,
+                self.osd_clear_scratch.staging(need),
+            )?;
+            ok_gl(check_frame())?;
+            self.osd_size = (surface_w, surface_h);
+            self.osd_prev = None;
+        }
         if self.osd_layer.is_none() {
             if let Some((px, py, pw, ph)) = self.osd_prev {
                 let texture = self.osd_texture;
@@ -389,34 +431,6 @@ impl OsdView {
                 self.osd_prev = None;
             }
             return Ok(());
-        }
-        if self.osd_texture == 0 {
-            return Ok(());
-        }
-        if self.osd_size != (surface_w, surface_h) {
-            let w = usize::try_from(surface_w.max(1)).map_err(|_| ViewError::InvalidSurface {
-                w: surface_w,
-                h: surface_h,
-            })?;
-            let h = usize::try_from(surface_h.max(1)).map_err(|_| ViewError::InvalidSurface {
-                w: surface_w,
-                h: surface_h,
-            })?;
-            use_texture(0, self.osd_texture)?;
-            ok_gl(tex_image_2d(
-                gl::TEXTURE_2D,
-                0,
-                gl::RGBA as i32,
-                surface_w,
-                surface_h,
-                0,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                ptr::null(),
-            ))?;
-            ok_gl(check_frame())?;
-            let _ = (w, h);
-            self.osd_size = (surface_w, surface_h);
         }
         let staged = match self.osd_layer.as_ref() {
             Some(layer) => match checked_osd_rect(layer, surface_w, surface_h) {
@@ -439,11 +453,11 @@ impl OsdView {
             ..
         } = staged;
         let rect = (lx, ly, lw, lh);
-        if self.osd_prev != Some(rect) {
-            if let Some((px, py, pw, ph)) = self.osd_prev {
-                let texture = self.osd_texture;
-                self.clear_rect(texture, surface_h, px, py, pw, ph)?;
-            }
+        if self.osd_prev != Some(rect)
+            && let Some((px, py, pw, ph)) = self.osd_prev
+        {
+            let texture = self.osd_texture;
+            self.clear_rect(texture, surface_h, px, py, pw, ph)?;
         }
         let Some(layer) = self.osd_layer.as_ref() else {
             return Ok(());
@@ -456,7 +470,7 @@ impl OsdView {
     }
 
     /// Clear a subrect to transparent using the reusable zero scratch.
-    /// `surface_h` flips the top-left OSD origin to GL bottom-left.
+    /// Texture rows and the shared quad's UVs are both top-first.
     fn clear_rect(
         &mut self,
         texture: u32,
@@ -468,25 +482,28 @@ impl OsdView {
     ) -> Result<(), ViewError> {
         let need = checked_clear_need(w, h).map_err(|_| ViewError::InvalidOsdClear { w, h })?;
         self.osd_clear_scratch.staging(need).fill(0);
-        let gl_y = checked_osd_gl_y(surface_h, y, h).map_err(|_| ViewError::InvalidOsdFlip {
+        let gl_y = checked_osd_y(surface_h, y, h).map_err(|_| ViewError::InvalidOsdFlip {
             surface_h,
             y,
             h,
         })?;
         let rect = (x, y, w, h);
+        crate::frame_textures::prepare_cpu_unpack()?;
         use_texture(0, texture)?;
         ok_osd_gl(
-            tex_sub_image_2d(
-                gl::TEXTURE_2D,
-                0,
-                x,
-                gl_y,
-                w,
-                h,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                self.osd_clear_scratch.staging(need).as_ptr().cast(),
-            ),
+            unsafe {
+                tex_sub_image_2d(
+                    gl::TEXTURE_2D,
+                    0,
+                    x,
+                    gl_y,
+                    w,
+                    h,
+                    gl::RGBA,
+                    gl::UNSIGNED_BYTE,
+                    self.osd_clear_scratch.staging(need).as_ptr().cast(),
+                )
+            },
             rect,
             "clear",
         )?;
@@ -495,7 +512,7 @@ impl OsdView {
     }
 
     /// Upload RGBA rows into a texture subrect (best-effort).
-    /// `surface_h` flips the top-left OSD origin to GL bottom-left.
+    /// Texture rows and the shared quad's UVs are both top-first.
     pub(crate) fn blit_bytes(
         texture: u32,
         surface_h: i32,
@@ -505,25 +522,36 @@ impl OsdView {
         h: i32,
         bytes: &[u8],
     ) -> Result<(), ViewError> {
-        let gl_y = checked_osd_gl_y(surface_h, y, h).map_err(|_| ViewError::InvalidOsdFlip {
+        let need = checked_clear_need(w, h).map_err(|_| ViewError::InvalidOsdClear { w, h })?;
+        if bytes.len() < need {
+            return Err(crate::layout::FrameError::TooShort {
+                need,
+                have: bytes.len(),
+            }
+            .into());
+        }
+        let gl_y = checked_osd_y(surface_h, y, h).map_err(|_| ViewError::InvalidOsdFlip {
             surface_h,
             y,
             h,
         })?;
         let rect = (x, y, w, h);
+        crate::frame_textures::prepare_cpu_unpack()?;
         use_texture(0, texture)?;
         ok_osd_gl(
-            tex_sub_image_2d(
-                gl::TEXTURE_2D,
-                0,
-                x,
-                gl_y,
-                w,
-                h,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                bytes.as_ptr().cast(),
-            ),
+            unsafe {
+                tex_sub_image_2d(
+                    gl::TEXTURE_2D,
+                    0,
+                    x,
+                    gl_y,
+                    w,
+                    h,
+                    gl::RGBA,
+                    gl::UNSIGNED_BYTE,
+                    bytes.as_ptr().cast(),
+                )
+            },
             rect,
             "blit",
         )?;
@@ -543,13 +571,19 @@ impl OsdView {
     /// Best-effort overlay program plus a placeholder texture.
     /// Unlike the game pipeline, failure only drops the OSD.
     pub(crate) fn init_osd(&mut self, is_gles: bool) {
+        for name in self.close(Current::assert_current(true)) {
+            log::debug!("OSD reinitialization could not delete {name:?}");
+        }
+        self.osd_dirty = self.osd_layer.is_some();
+        self.osd_retry.reset();
         use crate::frame_textures::upload_texture_bytes;
         use crate::shader_compiler::compile_osd_program;
         let mut names = [0u32; 1];
-        if gen_textures(1, names.as_mut_ptr()).is_err() {
+        let generated = gen_textures(1, &mut names);
+        self.osd_texture = names[0];
+        if generated.is_err() {
             return;
         }
-        self.osd_texture = names[0];
         if upload_texture_bytes(
             0,
             self.osd_texture,
@@ -589,7 +623,7 @@ impl OsdView {
                     leaked.push(LeakedName::Texture(0));
                 }
                 log::debug!("OsdView teardown skipped: no current context");
-            } else if delete_textures(1, &self.osd_texture as *const u32).is_err() {
+            } else if delete_textures(1, &[self.osd_texture]).is_err() {
                 log::debug!("OsdView teardown failed");
                 if policy.note(true) {
                     leaked.push(LeakedName::Texture(0));

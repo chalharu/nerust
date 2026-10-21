@@ -149,7 +149,7 @@ fn save_slot_summary_matches_loaded_summary() {
 
     let mut scanned_slots = scan_state_slots(&dir).unwrap();
     let scanned = scanned_slots.pop().unwrap();
-    let loaded = load_state_slot(&written.path).unwrap();
+    let loaded = load_state_slot(written.path.native_path().unwrap()).unwrap();
     assert_eq!(written.saved_at, scanned.saved_at);
     assert_eq!(scanned.schema_version, written.schema_version);
     assert_eq!(scanned.slot_id, written.slot_id);
@@ -157,4 +157,35 @@ fn save_slot_summary_matches_loaded_summary() {
     assert_eq!(scanned.has_thumbnail, written.has_thumbnail);
     assert_eq!(scanned.emulator_version, written.emulator_version);
     assert_eq!(loaded.summary, scanned);
+}
+
+#[test]
+fn shared_slot_codec_round_trips_native_and_document_tree_keys() {
+    use crate::{
+        sidecar::StorageLocation,
+        slots::{build_state_slot_bytes, load_state_slot_bytes},
+    };
+    let identity = test_identity();
+    for path in [
+        StorageLocation::from("/tmp/states/7.state"),
+        StorageLocation::document_tree(
+            "content://provider/tree/primary%3A日本語",
+            "nes/id/states/7.state",
+        )
+        .unwrap(),
+    ] {
+        let (bytes, written) =
+            build_state_slot_bytes(path.clone(), 7, b"state", &identity, None).unwrap();
+        let loaded = load_state_slot_bytes(path.clone(), bytes.clone(), Some(&identity))
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.summary, written);
+        assert_eq!(loaded.summary.path, path);
+        assert_eq!(loaded.machine_state, b"state");
+        assert!(
+            load_state_slot_bytes(path, bytes, Some(&test_identity_with_bytes(vec![99])))
+                .unwrap()
+                .is_none()
+        );
+    }
 }

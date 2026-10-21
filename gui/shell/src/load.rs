@@ -1,10 +1,8 @@
 use std::path::Path;
 
-use nerust_core_traits::{
-    factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
-    identity::SystemId,
-};
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_system_traits::factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SystemActivationError {

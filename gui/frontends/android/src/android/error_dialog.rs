@@ -6,7 +6,11 @@ use winit::platform::android::activity::AndroidApp;
 
 /// Ask the Java side to show the modal error dialog. Fire-and-forget:
 /// dismissal (or show failure) reports back through the event bridge.
-pub(super) fn request_show_error_dialog(app: &AndroidApp, message: &str) {
+pub(super) fn request_show_error_dialog(
+    app: &AndroidApp,
+    id: crate::error_dialog_controller::DialogRequestId,
+    message: &str,
+) {
     let message = message.to_string();
     super::bridge::post_to_activity(
         app,
@@ -17,14 +21,17 @@ pub(super) fn request_show_error_dialog(app: &AndroidApp, message: &str) {
                 env,
                 &activity,
                 &super::bridge::methods::SHOW_ERROR_DIALOG,
-                &[jni::objects::JValue::Object(text.as_ref())],
+                &[
+                    jni::objects::JValue::Long(id.0 as i64),
+                    jni::objects::JValue::Object(text.as_ref()),
+                ],
             )?;
             Ok(())
         },
-        Some(Box::new(|| {
+        Some(Box::new(move || {
             // Synthesize the dismiss a dead bridge cannot deliver.
             // Duplicate-safe: the controller drops repeats.
-            menu::publish_dialog_dismissed();
+            menu::publish_dialog_dismissed(id);
         })),
     );
 }

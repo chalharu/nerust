@@ -56,17 +56,13 @@ impl Cartridge for Action53 {
         state: CartridgeRuntimeState,
     ) -> Result<(), PersistenceError> {
         if state.extra_kind != MAPPER_KIND_ACTION53 {
-            return Err(PersistenceError::Validation(
-                "unexpected Action53 runtime kind".into(),
-            ));
+            return Err(PersistenceError::MapperRuntimeKind("Action53"));
         }
-        self.state
-            .validate_for_import(
-                &state.mapper_state,
-                self.data_ref().prog_rom_len(),
-                self.data_ref().char_rom_len(),
-            )
-            .map_err(PersistenceError::Validation)?;
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
         let runtime: Action53RuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.selected_register = runtime.selected_register;

@@ -1051,9 +1051,9 @@ checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 
 [[package]]
 name = "crunchy"
-version = "0.2.4"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
+checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
 
 [[package]]
 name = "cryoglyph"
@@ -3402,6 +3402,7 @@ dependencies = [
  "nerust_run_options",
  "nerust_sound_cpal",
  "nerust_sound_cubeb",
+ "nerust_system_traits",
  "nerust_tao",
  "simple_logger",
 ]
@@ -3432,6 +3433,7 @@ dependencies = [
  "nerust_settings_core",
  "nerust_settings_traits",
  "nerust_sound_cpal",
+ "nerust_system_traits",
  "serde",
  "serde_json",
  "sha2",
@@ -3442,7 +3444,6 @@ dependencies = [
 name = "nerust_core_traits"
 version = "0.1.0-dev"
 dependencies = [
- "clap",
  "downcast-rs 2.0.2",
  "dyn-clone",
  "dyn-eq",
@@ -3451,7 +3452,6 @@ dependencies = [
  "log",
  "nerust_input_traits",
  "nerust_render_traits",
- "nerust_settings_traits",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3521,6 +3521,8 @@ dependencies = [
  "nerust_input_traits",
  "nerust_render_traits",
  "nerust_settings_traits",
+ "nerust_system_traits",
+ "strum",
 ]
 
 [[package]]
@@ -3529,11 +3531,9 @@ version = "0.1.0-dev"
 dependencies = [
  "dyn-clone",
  "dyn-eq",
- "nerust_core_traits",
  "nerust_settings_traits",
  "serde",
  "serde-value",
- "strum",
  "typetag",
 ]
 
@@ -3577,6 +3577,8 @@ dependencies = [
  "nerust_input_traits",
  "nerust_render_traits",
  "nerust_settings_traits",
+ "nerust_system_traits",
+ "strum",
 ]
 
 [[package]]
@@ -3585,11 +3587,9 @@ version = "0.1.0-dev"
 dependencies = [
  "dyn-clone",
  "dyn-eq",
- "nerust_core_traits",
  "nerust_settings_traits",
  "serde",
  "serde-value",
- "strum",
  "typetag",
 ]
 
@@ -3622,11 +3622,13 @@ dependencies = [
  "nerust_gui_viewmodel",
  "nerust_input_traits",
  "nerust_keyboard",
+ "nerust_nes_factory",
  "nerust_persistence",
  "nerust_render_osd",
  "nerust_render_traits",
  "nerust_run_options",
  "nerust_settings_core",
+ "nerust_system_traits",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-quartz-core 0.3.2",
@@ -3669,6 +3671,7 @@ dependencies = [
  "nerust_render_traits",
  "nerust_settings_core",
  "nerust_settings_traits",
+ "nerust_system_traits",
  "rmp-serde",
  "serde",
  "thiserror 2.0.21",
@@ -3680,9 +3683,11 @@ name = "nerust_gui_viewmodel"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
+ "nerust_gui_runtime",
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_settings_core",
+ "nerust_system_traits",
  "serde",
  "thiserror 2.0.21",
  "typetag",
@@ -3760,6 +3765,7 @@ dependencies = [
  "nerust_render_filters",
  "nerust_render_traits",
  "nerust_settings_traits",
+ "nerust_system_traits",
 ]
 
 [[package]]
@@ -3802,7 +3808,6 @@ dependencies = [
 name = "nerust_render_gl"
 version = "0.1.0-dev"
 dependencies = [
- "gl",
  "glutin",
  "log",
  "nerust_glwrap",
@@ -3860,6 +3865,7 @@ dependencies = [
  "pollster 1.0.1",
  "raw-window-handle",
  "wgpu 30.0.1",
+ "x11-dl",
  "zerocopy",
 ]
 
@@ -3877,6 +3883,7 @@ dependencies = [
  "nerust_input_traits",
  "nerust_nes_factory",
  "nerust_render_traits",
+ "nerust_system_traits",
  "png",
  "serde",
  "serde-saphyr",
@@ -3911,6 +3918,7 @@ dependencies = [
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_settings_traits",
+ "nerust_system_traits",
  "serde",
  "serde-saphyr",
  "typetag",
@@ -3958,6 +3966,20 @@ name = "nerust_sound_spectrum"
 version = "0.1.0-dev"
 
 [[package]]
+name = "nerust_system_traits"
+version = "0.1.0-dev"
+dependencies = [
+ "clap",
+ "downcast-rs 2.0.2",
+ "dyn-eq",
+ "nerust_core_traits",
+ "nerust_input_traits",
+ "nerust_render_traits",
+ "nerust_settings_traits",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "nerust_tao"
 version = "0.1.0-dev"
 dependencies = [
@@ -3976,11 +3998,13 @@ dependencies = [
  "nerust_gui_viewmodel",
  "nerust_input_traits",
  "nerust_keyboard",
+ "nerust_nes_factory",
  "nerust_persistence",
  "nerust_render_osd",
  "nerust_render_traits",
  "nerust_run_options",
  "nerust_settings_core",
+ "nerust_system_traits",
  "raw-window-handle",
  "rfd",
  "tao",
@@ -4741,18 +4765,18 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pin-project"
-version = "1.1.13"
+version = "1.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2466b2336ed02bcdca6b294417127b90ec92038d1d5c4fbeac971a922e0e0924"
+checksum = "be57f64e946e500c8ee36ef6331845d40a93055567ec57e8fae13efd33759b95"
 dependencies = [
  "pin-project-internal",
 ]
 
 [[package]]
 name = "pin-project-internal"
-version = "1.1.13"
+version = "1.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c96395f0a926bc13b1c17622aaddda1ecb55d49c8f1bf9777e4d877800a43f8b"
+checksum = "3c0f5fad0874fc7abcd4d750e76917eaebbecaa2c20bde22e1dbeeba8beb758c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4767,9 +4791,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pin-utils"
-version = "0.1.1"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13bee6c73da26345c729282832b60b0363cf3dd9f4bfd81d8551b7a1c889a113"
+checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pkg-config"
@@ -4824,9 +4848,9 @@ checksum = "bc6355899e1c9462875b6757c79f3caa011a1fdae12bbb1a2e72dd1f234f8336"
 
 [[package]]
 name = "portable-atomic"
-version = "1.15.0"
+version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+checksum = "3d20d5497ef88037a52ff98267d066e7f11fcc5e99bbfbd58a42336193aacec3"
 
 [[package]]
 name = "portable-atomic-util"
@@ -4854,12 +4878,9 @@ checksum = "4a6394b9e965e73d0a289ee54f589087e2c676aedf60885baf52c76b771e4958"
 
 [[package]]
 name = "ppv-lite86"
-version = "0.2.21"
+version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
-dependencies = [
- "zerocopy",
-]
+checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
 name = "presser"

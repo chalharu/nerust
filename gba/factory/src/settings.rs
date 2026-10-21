@@ -1,5 +1,8 @@
 use crate::GbaLoadOptions;
-use nerust_core_traits::factory::{
+use crate::field::{GbaSettingChoice, GbaSettingField};
+use nerust_gba_core::core_options::GbaCoreOptions;
+use nerust_gba_settings::{GbaSettings, SolarLight};
+use nerust_system_traits::factory::{
     FactoryError,
     descriptor::{
         SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsFieldKind,
@@ -7,11 +10,6 @@ use nerust_core_traits::factory::{
     },
     load::{DynSystemLoadOptions, DynSystemLoadOptionsExt, ResolvedLoadRequest},
     settings::FactorySettingsView,
-};
-use nerust_gba_core::core_options::GbaCoreOptions;
-use nerust_gba_settings::{
-    GbaSettings, SolarLight,
-    field::{GbaSettingChoice, GbaSettingField},
 };
 
 const EXPOSED_FIELDS: [GbaSettingField; 1] = [GbaSettingField::PeripheralSolarLight];
@@ -104,7 +102,7 @@ pub(crate) fn resolve_gba_load_request(
 mod tests {
     use std::borrow::Cow;
 
-    use nerust_core_traits::factory::settings::Language;
+    use nerust_system_traits::factory::settings::Language;
 
     use super::*;
 

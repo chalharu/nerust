@@ -68,8 +68,8 @@ fn run_generated_manifest_case(case_id: &str) {
     }
 }
 
-fn factories() -> &'static Vec<Box<dyn nerust_core_traits::factory::CoreFactory>> {
-    static FACTORIES: OnceLock<Vec<Box<dyn nerust_core_traits::factory::CoreFactory>>> =
+fn factories() -> &'static Vec<Box<dyn nerust_system_traits::factory::CoreFactory>> {
+    static FACTORIES: OnceLock<Vec<Box<dyn nerust_system_traits::factory::CoreFactory>>> =
         OnceLock::new();
     FACTORIES.get_or_init(system_factories)
 }

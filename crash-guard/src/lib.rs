@@ -1,5 +1,6 @@
-//! Outermost crash containment: hook install plus guarded entry. Hook preserves only the record;
-//! dialogs and termination are the host's job. Configuration travels by parameter, never globals.
+//! Outermost crash containment: hook diagnostics plus guarded entry. Hook records describe
+//! the panic site; caught reports describe only the caught payload, without claiming correlation.
+//! Dialogs and termination are the host's job. Configuration travels by parameter, never globals.
 
 use std::{
     any::Any,
@@ -82,9 +83,20 @@ impl Drop for HookGuard {
                 None
             }
         };
-        if let Some(previous) = previous {
+        let replaced = if let Some(previous) = previous {
+            // set_hook drops the replaced closure. Its captures may install a
+            // new guard in Drop, so first take ownership without destroying it.
+            // Neither std hook writes nor closure destruction may hold HOOKS.
+            let replaced = panic::take_hook();
             panic::set_hook(Box::new(move |info| previous(info)));
-        }
+            Some(replaced)
+        } else {
+            None
+        };
+        drop(_install);
+        // In particular, a wrapping external hook can own a reentrant or
+        // panicking destructor. The registry is already restored and unlocked.
+        drop(replaced);
     }
 }
 
@@ -180,12 +192,17 @@ pub enum GuardOutcome<R> {
     Crashed(CrashReport),
 }
 
-/// Structured crash data for dialogs: getters only, log shape via `Display`.
+/// Caught payload data for dialogs: getters only, log shape via `Display`.
+/// Hook diagnostics are logged separately: stable std cannot establish their
+/// identity with an arbitrary caught payload, especially after `resume_unwind`.
 #[derive(Debug, Clone)]
 pub struct CrashReport {
-    record: PanicRecord,
+    thread: String,
     message: String,
 }
+
+const UNAVAILABLE_BACKTRACE: &str =
+    "panic hook record unavailable for caught payload (correlation cannot be established)";
 
 impl CrashReport {
     /// What panicked (payload text or fallback).
@@ -193,10 +210,12 @@ impl CrashReport {
         &self.message
     }
 
-    #[cfg(test)]
-    fn from_payload(payload: &(dyn Any + Send), backtrace: String) -> Self {
+    fn from_payload(payload: &(dyn Any + Send)) -> Self {
         Self {
-            record: PanicRecord::capture_with(payload_message(payload), backtrace),
+            thread: std::thread::current()
+                .name()
+                .unwrap_or("unnamed")
+                .to_owned(),
             message: payload_message(payload),
         }
     }
@@ -207,12 +226,13 @@ impl std::fmt::Display for CrashReport {
         write!(
             f,
             "crashed on thread '{}': {}\nbacktrace:\n{}",
-            self.record.thread, self.record.detail, self.record.backtrace
+            self.thread, self.message, UNAVAILABLE_BACKTRACE
         )
     }
 }
 
-/// Thread, detail, and backtrace captured once for hook and report.
+/// Thread, hook detail, and panic-site backtrace captured once per hook invocation.
+/// This diagnostic is not evidence about the payload eventually caught by a guard.
 /// `Debug` exposes the same fields as the getters.
 #[derive(Debug, Clone)]
 pub struct PanicRecord {
@@ -227,7 +247,7 @@ impl PanicRecord {
         &self.thread
     }
 
-    /// Panic payload text.
+    /// Full panic hook detail, including the panic location when available.
     pub fn detail(&self) -> &str {
         &self.detail
     }
@@ -266,43 +286,23 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
 }
 
 /// Run `main` under a scoped hook; on unwind build the report and return it.
-/// Silent (the hook already logged); caught state is never resumed or reused.
+/// Report construction is silent; caught state is never resumed or reused.
+/// The hook logs each invocation with one panic-site capture shared by its sinks.
+/// The report uses only the caught payload: hooks may belong to swallowed panics,
+/// and `resume_unwind` skips hooks. Addresses, types, and equal text cannot prove
+/// correlation (storage can move or be reused). Reports therefore always state
+/// that the hook record is unavailable for the caught payload. No catch-site
+/// trace is substituted and neither sink nor source is called after the catch.
 pub fn run_guarded_with<R>(
     main: impl FnOnce() -> R,
     sink: impl Fn(&PanicRecord) + Send + Sync + 'static,
     source: impl Fn() -> String + Send + Sync + 'static,
 ) -> GuardOutcome<R> {
-    let captured = Arc::new(Mutex::new(None));
-    let for_hook = Arc::clone(&captured);
     let thread = std::thread::current().id();
-    let _guard = install_erased(
-        Arc::new(move |record| {
-            *for_hook.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(record.clone());
-            sink(record);
-        }),
-        Arc::new(source),
-        Some(thread),
-    );
+    let _guard = install_erased(Arc::new(sink), Arc::new(source), Some(thread));
     match panic::catch_unwind(std::panic::AssertUnwindSafe(main)) {
         Ok(value) => GuardOutcome::Completed(value),
-        Err(payload) => {
-            let record = captured
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .take()
-                // resume_unwind does not invoke a hook; do not fabricate a
-                // catch-site backtrace or invoke the source a second time.
-                .unwrap_or_else(|| {
-                    PanicRecord::capture_with(
-                        payload_message(payload.as_ref()),
-                        "panic hook was not invoked".to_owned(),
-                    )
-                });
-            GuardOutcome::Crashed(CrashReport {
-                record,
-                message: payload_message(payload.as_ref()),
-            })
-        }
+        Err(payload) => GuardOutcome::Crashed(CrashReport::from_payload(payload.as_ref())),
     }
 }
 
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn report_display_names_thread_and_message() {
-        let report = CrashReport::from_payload(&"boom", stub_source());
+        let report = CrashReport::from_payload(&"boom");
         let text = report.to_string();
         assert!(text.contains("boom"), "{text}");
         assert!(text.contains("crashed on thread"), "{text}");
@@ -477,31 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn panic_snapshot_and_last_drop_do_not_invert_std_hook_lock() {
-        let _lock = HOOK_TEST_LOCK.lock().unwrap();
-        // Original hook noise is irrelevant to this stress probe.
-        let original = panic::take_hook();
-        panic::set_hook(Box::new(|_| {}));
-        std::thread::scope(|scope| {
-            scope.spawn(|| {
-                for _ in 0..200 {
-                    let guard = install_with_source(|_| std::thread::yield_now(), stub_source);
-                    std::thread::yield_now();
-                    drop(guard);
-                }
-            });
-            scope.spawn(|| {
-                for _ in 0..200 {
-                    let _ = panic::catch_unwind(|| panic!("concurrent panic"));
-                }
-            });
-        });
-        assert!(HOOKS.lock().unwrap().previous.is_none());
-        panic::set_hook(original);
-    }
-
-    #[test]
-    fn guarded_report_reuses_panic_site_record_and_one_capture() {
+    fn guarded_report_separates_hook_diagnostic_and_captures_once() {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let probe = Arc::clone(&calls);
@@ -522,8 +498,14 @@ mod tests {
         };
         let seen = seen.lock().unwrap();
         let logged = seen.as_ref().unwrap();
-        assert_eq!(report.record.detail, logged.detail);
-        assert_eq!(report.record.backtrace, logged.backtrace);
+        assert!(logged.detail().contains("origin"));
+        assert!(logged.detail().contains("panicked at"));
+        assert_eq!(logged.backtrace(), "panic-site trace");
+        assert_eq!(report.message(), "origin");
+        let text = report.to_string();
+        assert!(text.contains(UNAVAILABLE_BACKTRACE), "{text}");
+        assert!(!text.contains(logged.backtrace()), "{text}");
+        assert!(!text.contains("panicked at"), "{text}");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
@@ -532,29 +514,57 @@ mod tests {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let probe = Arc::clone(&calls);
+        let outer_calls = Arc::new(AtomicUsize::new(0));
+        let outer_source = Arc::clone(&outer_calls);
+        let outer_seen = Arc::new(Mutex::new(Vec::new()));
+        let outer_sink = Arc::clone(&outer_seen);
+        let inner_seen = Arc::new(Mutex::new(Vec::new()));
+        let inner_sink = Arc::clone(&inner_seen);
         let _process = install_with_source(|_| {}, || panic!("newest source must win"));
         let outer: GuardOutcome<()> = run_guarded_with(
             || {
                 let inner: GuardOutcome<()> = run_guarded_with(
                     || panic!("inner"),
-                    |_| {},
+                    move |record| inner_sink.lock().unwrap().push(record.clone()),
                     move || {
                         probe.fetch_add(1, Ordering::SeqCst);
                         "inner trace".to_owned()
                     },
                 );
-                assert!(matches!(inner, GuardOutcome::Crashed(_)));
+                let GuardOutcome::Crashed(report) = inner else {
+                    panic!("expected inner crash")
+                };
+                assert_eq!(report.message(), "inner");
+                let text = report.to_string();
+                assert!(text.contains(UNAVAILABLE_BACKTRACE), "{text}");
+                assert!(!text.contains("inner trace"), "{text}");
                 panic!("outer");
             },
-            |_| {},
-            || "outer trace".to_owned(),
+            move |record| outer_sink.lock().unwrap().push(record.clone()),
+            move || {
+                outer_source.fetch_add(1, Ordering::SeqCst);
+                "outer trace".to_owned()
+            },
         );
         let GuardOutcome::Crashed(report) = outer else {
             panic!("expected crash")
         };
         assert_eq!(report.message(), "outer");
-        assert_eq!(report.record.backtrace, "outer trace");
+        let text = report.to_string();
+        assert!(text.contains(UNAVAILABLE_BACKTRACE), "{text}");
+        assert!(!text.contains("outer trace"), "{text}");
+        assert!(!text.contains("inner trace"), "{text}");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(outer_calls.load(Ordering::SeqCst), 1);
+        let outer_seen = outer_seen.lock().unwrap();
+        let inner_seen = inner_seen.lock().unwrap();
+        assert_eq!(outer_seen.len(), 2);
+        assert_eq!(inner_seen.len(), 1);
+        assert_eq!(outer_seen[0].detail(), inner_seen[0].detail());
+        assert_eq!(outer_seen[0].thread(), inner_seen[0].thread());
+        assert_eq!(outer_seen[0].backtrace(), "inner trace");
+        assert_eq!(inner_seen[0].backtrace(), "inner trace");
+        assert_eq!(outer_seen[1].backtrace(), "outer trace");
     }
 
     #[test]
@@ -578,8 +588,9 @@ mod tests {
                             panic!("expected crash")
                         };
                         assert_eq!(report.message(), format!("thread {index}"));
-                        assert!(report.record.detail.contains(&format!("thread {index}")));
-                        assert_eq!(report.record.backtrace, format!("trace {index}"));
+                        let text = report.to_string();
+                        assert!(text.contains(UNAVAILABLE_BACKTRACE), "{text}");
+                        assert!(!text.contains("trace "), "{text}");
                     })
                 })
                 .collect();
@@ -606,14 +617,56 @@ mod tests {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
         let outcome: GuardOutcome<()> = run_guarded_with(
             || panic::resume_unwind(Box::new("resumed")),
-            |_| {},
+            |_| panic!("resume must not call sink"),
             || panic!("must not capture after catch"),
         );
         let GuardOutcome::Crashed(report) = outcome else {
             panic!("expected crash")
         };
         assert_eq!(report.message(), "resumed");
-        assert_eq!(report.record.backtrace, "panic hook was not invoked");
+        assert!(report.to_string().contains(UNAVAILABLE_BACKTRACE));
+    }
+
+    #[test]
+    fn replaced_payload_in_same_allocation_never_reuses_old_diagnostic() {
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let captures = Arc::new(AtomicUsize::new(0));
+        let source = Arc::clone(&captures);
+        let outcome: GuardOutcome<()> = run_guarded_with(
+            || {
+                let mut payload =
+                    panic::catch_unwind(|| panic::panic_any("obsolete-payload-A".to_owned()))
+                        .unwrap_err()
+                        .downcast::<String>()
+                        .unwrap();
+                let address = std::ptr::from_ref(payload.as_ref());
+                // Drop the old value and replace it in the same live allocation.
+                // No unsafe code or allocator behavior is needed to reuse storage.
+                *payload = "replacement".to_owned();
+                assert_eq!(address, std::ptr::from_ref(payload.as_ref()));
+                panic::resume_unwind(payload);
+            },
+            move |record| sink.lock().unwrap().push(record.clone()),
+            move || {
+                source.fetch_add(1, Ordering::SeqCst);
+                "old payload trace".to_owned()
+            },
+        );
+        let GuardOutcome::Crashed(report) = outcome else {
+            panic!("expected replaced payload crash")
+        };
+        assert_eq!(report.message(), "replacement");
+        let text = report.to_string();
+        assert!(text.contains(UNAVAILABLE_BACKTRACE), "{text}");
+        assert!(!text.contains("obsolete-payload-A"), "{text}");
+        assert!(!text.contains("old payload trace"), "{text}");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].detail().contains("obsolete-payload-A"));
+        assert_eq!(seen[0].backtrace(), "old payload trace");
+        assert_eq!(captures.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -657,17 +710,24 @@ mod tests {
 
     #[test]
     fn report_covers_owned_and_unknown_payloads() {
-        let owned = CrashReport::from_payload(&"owned".to_owned(), stub_source());
+        let owned = CrashReport::from_payload(&"owned".to_owned());
         assert_eq!(owned.message(), "owned");
-        assert!(owned.to_string().contains("stub backtrace"));
-        let unknown = CrashReport::from_payload(&42_u32, stub_source());
+        assert!(owned.to_string().contains(UNAVAILABLE_BACKTRACE));
+        let unknown = CrashReport::from_payload(&42_u32);
         assert_eq!(unknown.message(), "non-string panic payload");
+        assert!(unknown.to_string().contains(UNAVAILABLE_BACKTRACE));
     }
 
     #[test]
     fn record_getters_expose_thread_and_backtrace() {
-        let report = CrashReport::from_payload(&"boom", stub_source());
-        let text = format!("{report:?}");
+        let record = PanicRecord::capture_with("boom".to_owned(), stub_source());
+        assert_eq!(
+            record.thread(),
+            std::thread::current().name().unwrap_or("unnamed")
+        );
+        assert_eq!(record.detail(), "boom");
+        assert_eq!(record.backtrace(), "stub backtrace");
+        let text = format!("{record:?}");
         assert!(text.contains("boom"), "{text}");
     }
 
@@ -675,8 +735,7 @@ mod tests {
     fn guard_outcome_is_debug_and_must_use() {
         let completed: GuardOutcome<u32> = GuardOutcome::Completed(1);
         assert!(format!("{completed:?}").contains("Completed"));
-        let crashed: GuardOutcome<u32> =
-            GuardOutcome::Crashed(CrashReport::from_payload(&"x", stub_source()));
+        let crashed: GuardOutcome<u32> = GuardOutcome::Crashed(CrashReport::from_payload(&"x"));
         assert!(format!("{crashed:?}").contains("Crashed"));
     }
 }

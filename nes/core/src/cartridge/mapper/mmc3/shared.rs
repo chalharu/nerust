@@ -282,17 +282,13 @@ impl Mapper4Shared {
         state: CartridgeRuntimeState,
     ) -> Result<(), PersistenceError> {
         if state.extra_kind != MAPPER_KIND_MMC3 {
-            return Err(PersistenceError::Validation(
-                "unexpected MMC3 runtime kind".into(),
-            ));
+            return Err(PersistenceError::MapperRuntimeKind("MMC3"));
         }
-        self.state
-            .validate_for_import(
-                &state.mapper_state,
-                self.cartridge_data.prog_rom_len(),
-                self.cartridge_data.char_rom_len(),
-            )
-            .map_err(PersistenceError::Validation)?;
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.cartridge_data.prog_rom_len(),
+            self.cartridge_data.char_rom_len(),
+        )?;
         let runtime: Mapper4RuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.bank_select = runtime.bank_select;

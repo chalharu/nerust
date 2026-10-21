@@ -224,7 +224,11 @@ pub(crate) trait AuxRender {
     /// Convert one domain event for the window's own dispatcher.
     fn feed_event(&mut self, event: AuxNativeEvent) -> Option<iced::Event>;
     /// Full render through the shared pump; only the log tag differs.
-    fn render(&mut self);
+    fn render(&mut self) -> Option<String>;
+    fn wake_deadline(&self) -> Option<std::time::Instant> {
+        None
+    }
+    fn wake_due(&mut self, _now: std::time::Instant) {}
 }
 
 /// Combined pump surface: every aux window speaks both halves.
@@ -270,9 +274,16 @@ impl<T: AuxShellRef + ?Sized> AuxRender for T {
         self.shell_mut().feed_event(event)
     }
 
-    fn render(&mut self) {
+    fn render(&mut self) -> Option<String> {
         let tag = self.kind().log_tag();
-        self.shell_mut().render_tagged(tag);
+        self.shell_mut().render_tagged(tag)
+    }
+
+    fn wake_deadline(&self) -> Option<std::time::Instant> {
+        self.shell().wake_deadline()
+    }
+    fn wake_due(&mut self, now: std::time::Instant) {
+        self.shell_mut().wake_due(now);
     }
 }
 
@@ -398,8 +409,9 @@ mod tests {
         fn feed_event(&mut self, _event: AuxNativeEvent) -> Option<iced::Event> {
             self.mapped.take()
         }
-        fn render_tagged(&mut self, tag: &'static str) {
+        fn render_tagged(&mut self, tag: &'static str) -> Option<String> {
             *self.seen_tag.borrow_mut() = Some(tag);
+            None
         }
     }
 

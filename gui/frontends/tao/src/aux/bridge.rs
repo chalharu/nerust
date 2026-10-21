@@ -105,6 +105,7 @@ pub(crate) struct DebugBridge {
     display: RwLock<std::sync::Arc<DisplayCache>>,
     meta: BridgeMeta,
     outbox: Mutex<Vec<DebugAction>>,
+    epoch: Mutex<Option<std::sync::Arc<AtomicBool>>>,
     pub(crate) view_invalidated: AtomicBool,
     pub(crate) ppu_invalidated: AtomicBool,
     /// Toolbar PPU-viewer request: host-owned window, so the iced
@@ -136,6 +137,7 @@ impl DebugBridge {
             display: RwLock::new(std::sync::Arc::new(display)),
             meta: BridgeMeta { spaces, language },
             outbox: Mutex::new(Vec::new()),
+            epoch: Mutex::new(None),
             view_invalidated: AtomicBool::new(false),
             ppu_invalidated: AtomicBool::new(false),
             open_ppu: AtomicBool::new(false),
@@ -236,8 +238,7 @@ impl DebugBridge {
             lock_core(&self.core).selected = Some(selected);
         }
         let old = self.display_snapshot();
-        let without_images = old.clone_without_images();
-        display.restore_paused_sections(&without_images);
+        display.restore_paused_sections(&old);
         *write_display(&self.display) = std::sync::Arc::new(display);
     }
 
@@ -282,6 +283,26 @@ impl DebugBridge {
         std::mem::take(&mut *lock_recovered(&self.outbox))
     }
 
+    /// Bind UI requests to the runtime whose data the editor displays. Drop
+    /// unclaimed requests and persistent writes before accepting a new epoch.
+    pub(crate) fn bind_epoch(&self, next: std::sync::Arc<AtomicBool>) {
+        let mut epoch = lock_recovered(&self.epoch);
+        if epoch
+            .as_ref()
+            .is_some_and(|old| !std::sync::Arc::ptr_eq(old, &next))
+        {
+            lock_recovered(&self.outbox).clear();
+            let mut core = lock_core(&self.core);
+            core.watch = None;
+            core.freeze = None;
+            core.selected = None;
+            core.reg_target = None;
+            drop(core);
+            *write_display(&self.display) = std::sync::Arc::new(DisplayCache::default());
+        }
+        *epoch = Some(next);
+    }
+
     /// Queued request depth without draining (test read).
     #[cfg(test)]
     pub(crate) fn outbox_len(&self) -> usize {
@@ -289,6 +310,13 @@ impl DebugBridge {
     }
 
     pub(crate) fn push(&self, request: DebugAction) {
+        let epoch = lock_recovered(&self.epoch);
+        if epoch
+            .as_ref()
+            .is_some_and(|epoch| !epoch.load(Ordering::Acquire))
+        {
+            return;
+        }
         lock_recovered(&self.outbox).push(request);
         self.view_invalidated.store(true, Ordering::Release);
     }
@@ -676,6 +704,27 @@ mod tests {
             StatusMessage::Local(_)
         ));
         assert!(bridge.view_invalidated.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn replacement_discards_unclaimed_ui_actions_and_freeze() {
+        let bridge = test_bridge();
+        let epoch = std::sync::Arc::new(AtomicBool::new(true));
+        bridge.bind_epoch(epoch.clone());
+        bridge.set_freeze(0x10, 0xff);
+        bridge.push(DebugAction::RegisterWrite(7));
+        epoch.store(false, Ordering::Release);
+        bridge.push(DebugAction::Resume);
+        assert_eq!(
+            bridge.outbox_len(),
+            1,
+            "invalid epoch rejects new submissions"
+        );
+        bridge.bind_epoch(std::sync::Arc::new(AtomicBool::new(true)));
+        assert!(bridge.take_requests().is_empty());
+        assert!(bridge.freeze().is_none());
+        bridge.push(DebugAction::Refresh);
+        assert_eq!(bridge.take_requests().len(), 1);
     }
 
     #[test]

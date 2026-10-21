@@ -3,7 +3,10 @@
 
 use std::path::Path;
 
-use crate::session::SessionHandle;
+use crate::session::{
+    SessionHandle,
+    persistence::{PersistenceManager, StateExporter},
+};
 
 /// Persistence setup outcome. Callers map `Unavailable` to one
 /// `PersistenceUnavailable` notice; the game still runs without it.
@@ -26,6 +29,22 @@ pub(crate) enum MapperRestore {
 pub(crate) struct PersistenceBinder;
 
 impl PersistenceBinder {
+    /// Restore persistence on a parked candidate before it becomes the live runtime.
+    pub(crate) fn prepare(
+        session: &mut SessionHandle,
+        exporter: &dyn StateExporter,
+        rom_path: Option<&Path>,
+    ) {
+        let setup = setup_persistence(
+            &session.settings.manager,
+            &mut session.media.persistence,
+            Some(exporter),
+            rom_path,
+            MapperRestore::Load,
+        );
+        session.note_persistence_setup(setup);
+    }
+
     pub(crate) fn bind(
         session: &mut SessionHandle,
         rom_path: Option<&Path>,
@@ -37,21 +56,6 @@ impl PersistenceBinder {
 }
 
 impl SessionHandle {
-    fn resolve_persistence_paths(
-        &self,
-        rom_path: Option<&Path>,
-        identity: &nerust_core_traits::identity::SystemIdentity,
-    ) -> Option<nerust_persistence::sidecar::SidecarPaths> {
-        self.settings
-            .manager
-            .resolve_persistence_paths_with_import(identity.system_id.as_ref(), rom_path, identity)
-            .map_err(|error| {
-                log::warn!("failed to resolve persistence paths: {error}");
-                error
-            })
-            .ok()
-    }
-
     pub(crate) fn note_persistence_setup(&mut self, setup: PersistenceSetup) {
         if setup == PersistenceSetup::Unavailable {
             self.notifications
@@ -64,28 +68,51 @@ impl SessionHandle {
         rom_path: Option<&Path>,
         mapper_restore: MapperRestore,
     ) -> PersistenceSetup {
-        let sidecars = self
-            .emu
-            .exporter()
-            .ok()
-            .and_then(|exporter| exporter.export_identity())
-            .and_then(|identity| self.resolve_persistence_paths(rom_path, &identity));
-        let Some(sidecars) = sidecars else {
-            return PersistenceSetup::Unavailable;
-        };
-        self.media
-            .persistence
-            .configure(sidecars.states_dir, sidecars.mapper_save_path);
-        if let Ok(exporter) = self.emu.exporter() {
-            self.media.persistence.refresh_slots(exporter);
-            if mapper_restore == MapperRestore::Load
-                && let Err(e) = self.media.persistence.load_mapper_save_if_needed(exporter)
-            {
-                log::warn!("load_mapper_save_if_needed failed: {e}");
-            }
-        }
-        PersistenceSetup::Ready
+        setup_persistence(
+            &self.settings.manager,
+            &mut self.media.persistence,
+            self.emu.exporter().ok(),
+            rom_path,
+            mapper_restore,
+        )
     }
+}
+
+fn setup_persistence(
+    settings: &nerust_gui_runtime::settings::manager::SettingsManager,
+    persistence: &mut PersistenceManager,
+    exporter: Option<&dyn StateExporter>,
+    rom_path: Option<&Path>,
+    mapper_restore: MapperRestore,
+) -> PersistenceSetup {
+    let sidecars = exporter
+        .and_then(|exporter| exporter.export_identity())
+        .and_then(|identity| {
+            settings
+                .resolve_persistence_paths_with_import(
+                    identity.system_id.as_ref(),
+                    rom_path,
+                    &identity,
+                )
+                .map_err(|error| log::warn!("failed to resolve persistence paths: {error}"))
+                .ok()
+        });
+    let Some(sidecars) = sidecars else {
+        // A new ROM must never inherit the previous ROM's save targets.
+        persistence.reset();
+        return PersistenceSetup::Unavailable;
+    };
+    persistence.configure(sidecars.states_dir, sidecars.mapper_save_path);
+    if let Some(exporter) = exporter {
+        persistence.refresh_slots(exporter);
+        if mapper_restore == MapperRestore::Load
+            && let Err(e) = persistence.load_mapper_save_if_needed(exporter)
+        {
+            log::warn!("load_mapper_save_if_needed failed: {e}");
+            return PersistenceSetup::Unavailable;
+        }
+    }
+    PersistenceSetup::Ready
 }
 
 #[cfg(test)]

@@ -46,6 +46,7 @@ impl Mat4 {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn as_ptr(&self) -> *const f32 {
         &self._data as *const _ as *const f32
     }

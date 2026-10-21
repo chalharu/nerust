@@ -46,6 +46,7 @@ pub(crate) struct State {
     session: SessionHandle,
     ctx: FrontendContext,
     renderer_reload_pending: bool,
+    pause_policy: nerust_frontend_kernel::pause::PausePolicy,
 }
 
 impl State {
@@ -72,6 +73,7 @@ impl State {
             session,
             ctx,
             renderer_reload_pending: false,
+            pause_policy: Default::default(),
         }
     }
 
@@ -99,6 +101,7 @@ impl State {
         if self.session.tick_metrics().loaded {
             self.renderer_reload_pending = true;
         }
+        self.reconcile_pause();
         Ok(())
     }
 
@@ -113,10 +116,6 @@ impl State {
 
     pub(crate) fn flush_before_exit(&mut self) {
         self.session.flush_before_exit();
-    }
-
-    pub(crate) fn take_renderer_reload_pending(&mut self) -> bool {
-        std::mem::take(&mut self.renderer_reload_pending)
     }
 
     pub(crate) fn notification_history_lines(
@@ -139,13 +138,43 @@ impl State {
 
 impl PauseControl for State {
     fn pause(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Pause);
+        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, true);
     }
     fn resume(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Resume);
+        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, false);
     }
     fn toggle_pause(&mut self) {
-        let _ = self.session.run_command(SessionCommand::TogglePause);
+        self.set_pause_owner(
+            nerust_frontend_kernel::pause::PauseOwner::User,
+            !self.paused(),
+        );
+    }
+}
+
+impl State {
+    fn reconcile_pause(&mut self) {
+        let tick = self.session.tick_metrics();
+        self.session.set_execution_held(self.pause_policy.paused());
+        if self.pause_policy.paused() && tick.loaded && !tick.paused {
+            let _ = self.session.run_command(SessionCommand::Pause);
+        }
+    }
+
+    pub(crate) fn set_pause_owner(
+        &mut self,
+        owner: nerust_frontend_kernel::pause::PauseOwner,
+        active: bool,
+    ) {
+        let tick = self.session.tick_metrics();
+        let paused = self.pause_policy.set(owner, active, tick.paused);
+        self.session.set_execution_held(paused);
+        if tick.loaded && tick.paused != paused {
+            let _ = self.session.run_command(if paused {
+                SessionCommand::Pause
+            } else {
+                SessionCommand::Resume
+            });
+        }
     }
 }
 
@@ -211,7 +240,9 @@ impl SessionControl for State {
         &mut self,
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
-        let plan = self.session.apply_settings(settings)?;
+        let plan = self.session.apply_settings(settings);
+        self.reconcile_pause();
+        let plan = plan?;
         if plan.renderer_rebuild_required || plan.window_settings_changed {
             self.renderer_reload_pending = true;
         }

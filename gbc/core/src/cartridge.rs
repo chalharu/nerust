@@ -1,6 +1,7 @@
 use std::time::SystemTime;
 
 use crate::cartridge_mbc::Mbc;
+use crate::persistence_error::GbcPersistenceError;
 use nerust_core_traits::peripheral::{AccelerationSample, RumbleState};
 
 /// Top-level cartridge struct wrapping the ROM data and MBC.
@@ -54,7 +55,7 @@ impl Cartridge {
         self.mbc.serialize_state()
     }
 
-    pub fn deserialize_mbc_state(&mut self, data: &[u8]) -> Result<(), String> {
+    pub fn deserialize_mbc_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
         self.mbc.deserialize_state(data)
     }
 
@@ -88,11 +89,14 @@ impl Cartridge {
         self.mbc.rumble_state()
     }
 
-    pub fn export_persistent_state(&self, now: SystemTime) -> Result<Option<Vec<u8>>, String> {
+    pub fn export_persistent_state(
+        &self,
+        now: SystemTime,
+    ) -> Result<Option<Vec<u8>>, GbcPersistenceError> {
         self.mbc.export_persistent_state(now)
     }
 
-    pub fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), String> {
+    pub fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
         self.mbc.import_persistent_state(data)
     }
 }

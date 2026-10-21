@@ -16,6 +16,8 @@ impl SessionHandle {
     /// Restore runtime state from the hidden autosave slot.
     /// Best-effort for resume: failures log and report `false`.
     pub fn load_hidden_lifecycle_state(&mut self) -> bool {
+        self.emu.invalidate_debug();
+        self.debug_clear_write();
         self.emu
             .exporter()
             .ok()

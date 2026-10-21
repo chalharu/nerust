@@ -2,7 +2,7 @@
 ///
 /// Wire errors (encode/decode/version/identity) and state errors (invalid
 /// field values on import) stay distinct so the ConsoleCore boundary can map
-/// them to `CoreError::Core` with context, while ROM problems keep the
+/// them to `CoreError::Persistence` with context, while ROM problems keep the
 /// `CoreError::RomParse` mapping.
 #[derive(Debug, thiserror::Error)]
 pub enum GbaPersistenceError {
@@ -18,20 +18,44 @@ pub enum GbaPersistenceError {
     OptionsMismatch,
     #[error("audio rate mismatch: state={0} backend={1}")]
     AudioRateMismatch(u32, u32),
+    #[error("cartridge error: mapper save kind mismatch: wire={wire:?} actual={actual:?}")]
+    MapperSaveKindMismatch {
+        wire: crate::cartridge::save::SaveTypeSer,
+        actual: crate::cartridge::save::SaveTypeSer,
+    },
     #[error("invalid state: {0}")]
     InvalidState(String),
     #[error("cartridge error: {0}")]
     Cartridge(String),
 }
 
-/// Load-time errors (ROM parse / input). Promoted from the private
+impl From<GbaPersistenceError> for nerust_core_traits::CoreError {
+    fn from(error: GbaPersistenceError) -> Self {
+        use nerust_core_traits::CoreFault;
+        let kind = match &error {
+            GbaPersistenceError::UnsupportedVersion(_)
+            | GbaPersistenceError::RomIdentityMismatch
+            | GbaPersistenceError::OptionsMismatch
+            | GbaPersistenceError::AudioRateMismatch(_, _)
+            | GbaPersistenceError::MapperSaveKindMismatch { .. } => CoreFault::Incompatible,
+            GbaPersistenceError::Encode(_)
+            | GbaPersistenceError::Decode(_)
+            | GbaPersistenceError::InvalidState(_)
+            | GbaPersistenceError::Cartridge(_) => CoreFault::Corrupt,
+        };
+        Self::Persistence {
+            kind,
+            source: Box::new(error),
+        }
+    }
+}
+
+/// Load-time errors (ROM parse / identity). Promoted from the private
 /// `GbaCoreError` in `console_core.rs` so both entry points share them.
 #[derive(Debug, thiserror::Error)]
 pub enum GbaLoadError {
     #[error("invalid or unsupported GBA ROM")]
     InvalidRom,
-    #[error("GBA input buffer has the wrong concrete type")]
-    InvalidInputBuffer,
     #[error("save state ROM mismatch")]
     RomMismatch,
 }

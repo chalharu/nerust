@@ -3,13 +3,14 @@
 
 use std::{path::Path, sync::Arc};
 
-use nerust_core_traits::{audio::AudioBackend, factory::CoreFactory};
+use nerust_core_traits::audio::AudioBackend;
 use nerust_gui_runtime::settings::{
     LiveStrategy, SettingsApplyPlan, SettingsSnapshot,
     apply::{validate_local_settings, validate_shared_settings},
 };
 use nerust_input_traits::InputAssignments;
 use nerust_render_traits::VideoRenderProfile;
+use nerust_system_traits::factory::CoreFactory;
 
 use crate::session::{
     ActiveRuntime, SessionError, SessionHandle,
@@ -89,7 +90,14 @@ impl SessionHandle {
                 ))
             });
             if let Some(((profile, palette), (old_profile, old_palette))) = assets {
-                self.emu.core_mut()?.apply_presentation(profile, palette)?;
+                if let Err(error) = self.emu.core_mut()?.apply_presentation(profile, palette) {
+                    // Queue rejection is the only proof that nothing changed. A missing
+                    // reply or a compound failure may have already replaced the frame slot.
+                    if !matches!(error, nerust_emu_thread::OperationError::WorkerUnavailable) {
+                        applied.push(AppliedOperation::Presentation(old_profile, old_palette));
+                    }
+                    return Err(error.into());
+                }
                 applied.push(AppliedOperation::Presentation(old_profile, old_palette));
             } else {
                 rebuild = true;
@@ -115,7 +123,12 @@ impl SessionHandle {
             let previous_rate = previous.sample_rate();
             let speaker = self.speaker_factory().build_speaker(&next_settings.local);
             let rate = speaker.sample_rate();
-            self.emu.core()?.swap_audio_backend(speaker, rate)?;
+            if let Err(error) = self.emu.core()?.swap_audio_backend(speaker, rate) {
+                if !matches!(error, nerust_emu_thread::OperationError::WorkerUnavailable) {
+                    applied.push(AppliedOperation::Audio(previous, previous_rate));
+                }
+                return Err(error.into());
+            }
             applied.push(AppliedOperation::Audio(previous, previous_rate));
         } else if self.emu.core().is_ok() && derived.plan.audio_volume_changed {
             self.emu.core()?.set_volume(volume(next_settings))?;
@@ -138,7 +151,8 @@ impl AppliedOperation {
     fn revert(self, session: &mut SessionHandle) -> Result<(), SessionError> {
         match self {
             Self::Runtime(previous) => session.emu.restore(previous),
-            Self::ResumePrevious => session.emu.core()?.resume()?,
+            Self::ResumePrevious if !session.execution_held => session.emu.core()?.resume()?,
+            Self::ResumePrevious => {}
             Self::Presentation(profile, palette) => {
                 session
                     .emu
@@ -211,23 +225,34 @@ impl SessionHandle {
             .and_then(|()| {
                 self.settings
                     .manager
-                    .save_snapshot(next_settings)
+                    .commit_snapshot(next_settings)
                     .map_err(Into::into)
             });
-        if let Err(error) = result {
-            if let Err(rollback) = rollback(self, applied) {
-                return Err(SessionError::Rollback {
-                    apply: Box::new(error),
-                    rollback: Box::new(rollback),
-                });
+        let committed = match result {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                if let Err(rollback) = rollback(self, applied) {
+                    // Never advertise a known-running state after failed compensation.
+                    let _ = self
+                        .emu
+                        .core()
+                        .and_then(|core| core.pause().map_err(Into::into));
+                    self.emu.invalidate_debug();
+                    self.debug_clear_write();
+                    return Err(SessionError::Rollback {
+                        apply: Box::new(error),
+                        rollback: Box::new(rollback),
+                    });
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
+        };
 
         let rebuilt = applied
             .iter()
             .any(|op| matches!(op, AppliedOperation::Runtime(_)));
-        self.settings.snapshot = self.settings.manager.snapshot_arc()?;
+        let bindings_changed = self.settings.snapshot.shared.input != committed.shared.input;
+        self.settings.snapshot = committed;
         if derived.assignments_changed
             && let Some(a) = derived.next_assignments
         {
@@ -245,16 +270,37 @@ impl SessionHandle {
             };
             self.bind_settings_persistence(restore);
         }
-        self.rebind_input();
+        if rebuilt || derived.assignments_changed || bindings_changed {
+            self.rebind_input();
+        }
+        if rebuilt {
+            self.debug_clear_write();
+            if tick.loaded && !tick.paused && !self.execution_held {
+                self.emu
+                    .core()?
+                    .resume()
+                    .map_err(|_| nerust_emu_thread::OperationError::NoReply)?;
+            }
+        }
         Ok(derived.plan)
     }
 
     /// Rebuild the keyboard reverse map after anything that moves
     /// bindings, assignments, or controllers.
     fn rebind_input(&mut self) {
-        self.clear_input();
+        // Release old fields without losing physical key repeat suppression.
+        if let Some(input) = self.emu.input_mut() {
+            input.clear();
+        }
         self.rebuild_key_field_map();
-        self.input.touch_cache = Default::default();
+        for key in &self.input.pressed_keys {
+            if let Some(&field) = self.input.key_field_map.get(key)
+                && let Some(input) = self.emu.input_mut()
+            {
+                let _ = input.set(field, nerust_input_traits::InputValue::Digital(true));
+            }
+        }
+        self.input.invalidate_topology();
     }
 
     pub fn set_fullscreen_default(
@@ -292,15 +338,13 @@ impl SessionHandle {
             build_core_for_settings(self.speaker_factory(), next_settings, &factory, assignments)?;
         if let Some(loaded) = self.media.loaded.as_ref() {
             // Preparation must not run guest frames before restoring state.
-            rebuilt.emu_core.load_paused(&loaded.media, None)?;
+            rebuilt
+                .emu_core
+                .load_paused(&loaded.media, Some(loaded.options.clone()))?;
             if let Some(bytes) = core_bytes {
                 rebuilt.emu_core.load_state_raw(bytes)?;
             }
-            if tick.paused {
-                rebuilt.emu_core.pause()?;
-            } else {
-                rebuilt.emu_core.resume()?;
-            }
+            // The worker-side pause-stable adapter keeps state imports parked atomically.
         }
         Ok(ActiveRuntime::from(rebuilt))
     }
@@ -331,7 +375,7 @@ impl SessionHandle {
 
 /// Build a fresh core for `next_settings` plus `assignments`, with no session borrowing.
 /// Free function of exactly what the build consumes, so callers hold the session borrow.
-fn build_core_for_settings(
+pub(super) fn build_core_for_settings(
     speaker_factory: &dyn crate::settings::AudioSpeakerFactory,
     next_settings: &SettingsSnapshot,
     factory: &Arc<dyn CoreFactory>,
@@ -348,20 +392,17 @@ fn build_core_for_settings(
 mod settings_apply_cov_tests {
     use std::sync::{Mutex, atomic::AtomicBool};
 
-    use nerust_core_traits::{
-        EmuCommand,
-        factory::{
-            CoreParts, FactoryError,
-            descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-            load::{
-                DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
-            },
-            settings::FactorySettingsView,
-        },
-        identity::SystemId,
-    };
+    use nerust_core_traits::{EmuCommand, identity::SystemId};
     use nerust_input_traits::InputSystemFactory;
     use nerust_render_traits::{FrameBuffer, PixelFormat};
+    use nerust_system_traits::factory::{
+        CoreParts, FactoryError,
+        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+        load::{
+            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+        },
+        settings::FactorySettingsView,
+    };
 
     use crate::emu_core::{EmuCore, EmuThreadPort};
     use crate::session::settings_apply::*;

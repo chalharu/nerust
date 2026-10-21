@@ -3,11 +3,19 @@
 
 use super::super::debug_windows::DebugWindows;
 
+pub(crate) struct DrainBatch {
+    pub epoch: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub actions: Vec<nerust_gui_shell::debug::DebugAction>,
+    pub snapshot: crate::aux::bridge::DrainSnapshot,
+}
+
 /// Debug orchestrator: aux-window cluster plus the in-flight async flights.
 pub(crate) struct DebugOrchestrator {
     windows: DebugWindows,
     drain_flight: Option<nerust_gui_shell::debug::DrainFlight>,
     live_flight: Option<nerust_gui_shell::debug::LiveImagesFlight>,
+    pub(crate) queue: std::collections::VecDeque<DrainBatch>,
+    pub(crate) drain_epoch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl DebugOrchestrator {
@@ -16,6 +24,8 @@ impl DebugOrchestrator {
             windows: DebugWindows::new(),
             drain_flight: None,
             live_flight: None,
+            queue: Default::default(),
+            drain_epoch: None,
         }
     }
 
@@ -51,10 +61,16 @@ impl DebugOrchestrator {
         self.live_flight.is_some()
     }
 
+    pub(crate) fn drain_pending(&self) -> bool {
+        self.drain_flight.is_some() || !self.queue.is_empty()
+    }
+
     /// Drop in-flight async fetches (close teardown; handles live in the registry).
     pub(crate) fn close_flights(&mut self) {
         self.drain_flight.take();
         self.live_flight.take();
+        self.queue.clear();
+        self.drain_epoch = None;
     }
 }
 

@@ -1,7 +1,4 @@
-use std::{
-    io::Error as IoError,
-    path::{Path, PathBuf},
-};
+use std::io::Error as IoError;
 
 use jni::{
     JavaVM,
@@ -10,13 +7,13 @@ use jni::{
     sys::jobject,
 };
 use nerust_core_traits::identity::SystemIdentity;
-use nerust_gui_runtime::settings::persistence::decode_document_tree_path;
 use nerust_gui_shell::session::persistence::{
     AutoSaveBackend, FsAutosave, FsMapper, FsSlots, MapperSaveBackend, SlotBackend,
 };
 use nerust_persistence::{
     error::PersistenceError,
     model::{LoadedStateSlot, StateSlotSummary},
+    sidecar::StorageLocation,
     slots::{build_state_slot_bytes, load_state_slot_bytes},
     thumbnail::ThumbnailSource,
 };
@@ -39,28 +36,20 @@ impl AndroidStorageBackend {
         PersistenceError::Io(IoError::other(error.to_string()))
     }
 
-    fn decode(path: &Path) -> Option<(String, String)> {
-        decode_document_tree_path(path)
-    }
-
-    fn validate_relative_path(path: &str) -> Result<(), PersistenceError> {
-        if path.is_empty()
-            || path.starts_with('/')
-            || path.split('/').any(|segment| {
-                segment.is_empty() || segment == "." || segment == ".." || segment.contains('\\')
-            })
-        {
-            return Err(PersistenceError::Validation(
-                "invalid Android SAF relative path".into(),
-            ));
+    /// Only the JNI boundary projects the typed document key to bridge strings.
+    fn document_key(location: &StorageLocation) -> Result<(&str, &str), PersistenceError> {
+        match location {
+            StorageLocation::DocumentTree { uri, relative } => Ok((uri, relative.as_str())),
+            StorageLocation::Native(_) => Err(PersistenceError::Validation(
+                "native storage passed to SAF".into(),
+            )),
         }
-        Ok(())
     }
 
     /// One fixed raw stream: open -1 = missing, 0 = error, positive = session.
     /// Nonempty chunks are data, empty chunks EOF, null/exception an I/O error.
-    fn read(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, PersistenceError> {
-        Self::validate_relative_path(relative)?;
+    fn read(&self, location: &StorageLocation) -> Result<Option<Vec<u8>>, PersistenceError> {
+        let (uri, relative) = Self::document_key(location)?;
         let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
         bridge::with_java_env(&vm, |env| {
             let activity_raw = self.app.activity_as_ptr() as jobject;
@@ -147,8 +136,8 @@ impl AndroidStorageBackend {
         Ok(())
     }
 
-    fn write(&self, uri: &str, relative: &str, bytes: &[u8]) -> Result<(), PersistenceError> {
-        Self::validate_relative_path(relative)?;
+    fn write(&self, location: &StorageLocation, bytes: &[u8]) -> Result<(), PersistenceError> {
+        let (uri, relative) = Self::document_key(location)?;
         let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
         bridge::with_java_env(&vm, |env| {
             let activity_raw = self.app.activity_as_ptr() as jobject;
@@ -156,58 +145,69 @@ impl AndroidStorageBackend {
             let activity = activity.as_ref();
             let uri = JString::from_str(env, uri)?;
             let relative = JString::from_str(env, relative)?;
-            // An empty write must still truncate/create the document.
-            for (index, chunk) in bytes
-                .chunks(SAF_CHUNK_BYTES)
-                .enumerate()
-                .chain(bytes.is_empty().then_some((0, &[][..])))
-            {
-                let result = Self::call_write_chunk_bytes_inner(
-                    env,
-                    activity,
-                    &uri,
-                    &relative,
-                    chunk,
-                    index > 0,
-                )?;
-                if !result {
-                    return Err(jni::errors::Error::NullPtr("Android SAF write failed"));
+            let session = bridge::call_bridge_method(
+                env,
+                activity,
+                &bridge::methods::OPEN_SAF_WRITE_SESSION,
+                &[
+                    JValue::Object(uri.as_ref()),
+                    JValue::Object(relative.as_ref()),
+                ],
+            )?
+            .j()?;
+            if session <= 0 {
+                return Err(jni::errors::Error::NullPtr("Android SAF staging failed"));
+            }
+            let result = (|| {
+                for chunk in bytes.chunks(SAF_CHUNK_BYTES) {
+                    if !Self::call_write_chunk_bytes_inner(env, activity, session, chunk)? {
+                        return Err(jni::errors::Error::NullPtr("Android SAF write failed"));
+                    }
                 }
+                Ok(())
+            })();
+            let result = if env.exception_check() {
+                env.exception_clear();
+                Err(result.err().unwrap_or(jni::errors::Error::JavaException))
+            } else {
+                result
+            };
+            let finish = bridge::call_bridge_method(
+                env,
+                activity,
+                &bridge::methods::CLOSE_SAF_WRITE_SESSION,
+                &[JValue::Long(session), JValue::Bool(result.is_ok())],
+            );
+            result?;
+            if !finish?.z()? {
+                return Err(jni::errors::Error::NullPtr("Android SAF commit failed"));
             }
             Ok::<(), jni::errors::Error>(())
         })
         .map_err(Self::persist)
     }
 
-    /// One raw `byte[]` chunk write; `append` selects `"wa"` (append) over
-    /// `"rwt"` (overwrite).
+    /// One raw `byte[]` chunk on the existing staged output stream.
     fn call_write_chunk_bytes_inner(
         env: &mut jni::Env<'_>,
         activity: &JObject<'_>,
-        uri: &JString<'_>,
-        relative: &JString<'_>,
+        session: i64,
         chunk: &[u8],
-        append: bool,
     ) -> jni::errors::Result<bool> {
         env.with_local_frame(4, |env| {
             let buffer = env.byte_array_from_slice(chunk)?;
             bridge::call_bridge_method(
                 env,
                 activity,
-                &bridge::methods::WRITE_SAF_FILE_CHUNK_BYTES,
-                &[
-                    JValue::Object(uri.as_ref()),
-                    JValue::Object(relative.as_ref()),
-                    JValue::Object(buffer.as_ref()),
-                    JValue::Bool(append),
-                ],
+                &bridge::methods::WRITE_SAF_WRITE_SESSION,
+                &[JValue::Long(session), JValue::Object(buffer.as_ref())],
             )?
             .z()
         })
     }
 
-    fn delete(&self, uri: &str, relative: &str) -> Result<(), PersistenceError> {
-        Self::validate_relative_path(relative)?;
+    fn delete(&self, location: &StorageLocation) -> Result<(), PersistenceError> {
+        let (uri, relative) = Self::document_key(location)?;
         let result = self.call_saf_string(&bridge::methods::DELETE_SAF_FILE, uri, relative)?;
         if matches!(result.as_deref(), Some("ok") | Some("missing")) {
             Ok(())
@@ -221,9 +221,9 @@ impl AndroidStorageBackend {
     /// One listing contract: negative sizes mean unknown, never trigger fallback.
     fn sized_listing(
         &self,
-        uri: &str,
-        relative: &str,
+        location: &StorageLocation,
     ) -> Result<Vec<(String, Option<i64>)>, PersistenceError> {
+        let (uri, relative) = Self::document_key(location)?;
         let value = self
             .call_saf_string(&bridge::methods::LIST_SAF_FILES_WITH_SIZES, uri, relative)?
             .ok_or_else(|| Self::persist("Android SAF listing failed"))?;
@@ -264,8 +264,11 @@ impl AndroidStorageBackend {
         .map_err(Self::persist)
     }
 
-    fn state_path(dir: &Path, slot_id: u64) -> PathBuf {
-        dir.join(format!("{slot_id}.state"))
+    fn state_path(
+        dir: &StorageLocation,
+        slot_id: u64,
+    ) -> Result<StorageLocation, PersistenceError> {
+        dir.child(&format!("{slot_id}.state"))
     }
 }
 
@@ -288,13 +291,13 @@ impl SlotBackend for AndroidStorageBackend {
     /// SAF scan runs off the event loop; one crossing carries every (name, size).
     fn scan(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         identity: &SystemIdentity,
     ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
-        let Some((uri, relative)) = Self::decode(dir) else {
+        if let StorageLocation::Native(_) = dir {
             return FsSlots.scan(dir, identity);
-        };
-        let entries: Vec<(String, Option<i64>)> = self.sized_listing(&uri, &relative)?;
+        }
+        let entries: Vec<(String, Option<i64>)> = self.sized_listing(dir)?;
         let mut result = Vec::new();
         for (name, size) in entries
             .into_iter()
@@ -304,9 +307,8 @@ impl SlotBackend for AndroidStorageBackend {
             if size == Some(0) {
                 continue;
             }
-            let path = dir.join(&name);
-            let child = format!("{relative}/{name}");
-            let bytes = self.read(&uri, &child)?;
+            let path = dir.child(&name)?;
+            let bytes = self.read(&path)?;
             let Some(bytes) = bytes else {
                 continue;
             };
@@ -318,12 +320,12 @@ impl SlotBackend for AndroidStorageBackend {
         Ok(result)
     }
 
-    fn allocate_next_id(&self, dir: &Path) -> Result<u64, PersistenceError> {
-        let Some((uri, relative)) = Self::decode(dir) else {
+    fn allocate_next_id(&self, dir: &StorageLocation) -> Result<u64, PersistenceError> {
+        if let StorageLocation::Native(_) = dir {
             return FsSlots.allocate_next_id(dir);
-        };
+        }
         Ok(self
-            .sized_listing(&uri, &relative)?
+            .sized_listing(dir)?
             .iter()
             .filter_map(|(name, _)| name.strip_suffix(".state")?.parse::<u64>().ok())
             .max()
@@ -334,109 +336,118 @@ impl SlotBackend for AndroidStorageBackend {
 
     fn write_slot(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         slot_id: u64,
         data: &[u8],
         identity: &SystemIdentity,
         thumbnail: Option<&ThumbnailSource>,
     ) -> Result<StateSlotSummary, PersistenceError> {
-        let Some((uri, relative)) = Self::decode(dir) else {
+        if let StorageLocation::Native(_) = dir {
             return FsSlots.write_slot(dir, slot_id, data, identity, thumbnail);
-        };
-        let path = Self::state_path(dir, slot_id);
-        let (bytes, summary) = build_state_slot_bytes(path, slot_id, data, identity, thumbnail)?;
-        self.write(&uri, &format!("{relative}/{slot_id}.state"), &bytes)?;
+        }
+        let path = Self::state_path(dir, slot_id)?;
+        let (bytes, summary) =
+            build_state_slot_bytes(path.clone(), slot_id, data, identity, thumbnail)?;
+        self.write(&path, &bytes)?;
         Ok(summary)
     }
 
     fn read_slot(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         slot_id: u64,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
-        let Some((uri, relative)) = Self::decode(dir) else {
+        if let StorageLocation::Native(_) = dir {
             return FsSlots.read_slot(dir, slot_id);
-        };
-        let path = Self::state_path(dir, slot_id);
-        let Some(bytes) = self.read(&uri, &format!("{relative}/{slot_id}.state"))? else {
+        }
+        let path = Self::state_path(dir, slot_id)?;
+        let Some(bytes) = self.read(&path)? else {
             return Ok(None);
         };
         load_state_slot_bytes(path, bytes, None)
     }
 
-    fn delete_slot(&self, dir: &Path, slot_id: u64) -> Result<(), PersistenceError> {
-        let Some((uri, relative)) = Self::decode(dir) else {
+    fn delete_slot(&self, dir: &StorageLocation, slot_id: u64) -> Result<(), PersistenceError> {
+        if let StorageLocation::Native(_) = dir {
             return FsSlots.delete_slot(dir, slot_id);
-        };
-        self.delete(&uri, &format!("{relative}/{slot_id}.state"))
+        }
+        self.delete(&Self::state_path(dir, slot_id)?)
     }
 }
 
 impl AutoSaveBackend for AndroidStorageBackend {
     fn write_autosave(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         data: &[u8],
         identity: &SystemIdentity,
     ) -> Result<StateSlotSummary, PersistenceError> {
-        let Some((uri, relative)) = Self::decode(dir) else {
+        if let StorageLocation::Native(_) = dir {
             return FsAutosave.write_autosave(dir, data, identity);
-        };
-        let path = dir.join(".autosave_slot");
-        let (bytes, summary) = build_state_slot_bytes(path, 0, data, identity, None)?;
-        self.write(&uri, &format!("{relative}/.autosave_slot"), &bytes)?;
+        }
+        let path = dir.child(".autosave_slot")?;
+        let (bytes, summary) = build_state_slot_bytes(path.clone(), 0, data, identity, None)?;
+        self.write(&path, &bytes)?;
         Ok(summary)
     }
 
     fn read_autosave(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         identity: &SystemIdentity,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
-        let Some((uri, relative)) = Self::decode(dir) else {
+        if let StorageLocation::Native(_) = dir {
             return FsAutosave.read_autosave(dir, identity);
-        };
-        let path = dir.join(".autosave_slot");
-        let Some(bytes) = self.read(&uri, &format!("{relative}/.autosave_slot"))? else {
+        }
+        let path = dir.child(".autosave_slot")?;
+        let Some(bytes) = self.read(&path)? else {
             return Ok(None);
         };
         load_state_slot_bytes(path, bytes, Some(identity))
     }
 
-    fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError> {
-        let Some((uri, relative)) = Self::decode(dir) else {
+    fn delete_autosave(&self, dir: &StorageLocation) -> Result<(), PersistenceError> {
+        if let StorageLocation::Native(_) = dir {
             return FsAutosave.delete_autosave(dir);
-        };
-        self.delete(&uri, &format!("{relative}/.autosave_slot"))
+        }
+        self.delete(&dir.child(".autosave_slot")?)
     }
 }
 
 impl MapperSaveBackend for AndroidStorageBackend {
-    fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
-        let Some((uri, relative)) = Self::decode(path) else {
+    fn read_mapper_save(
+        &self,
+        path: &StorageLocation,
+    ) -> Result<Option<Vec<u8>>, PersistenceError> {
+        if let StorageLocation::Native(_) = path {
             return FsMapper.read_mapper_save(path);
-        };
-        self.read(&uri, &relative)
+        }
+        self.read(path)
     }
 
-    fn write_mapper_save(&self, path: &Path, data: &[u8]) -> Result<(), PersistenceError> {
-        let Some((uri, relative)) = Self::decode(path) else {
+    fn write_mapper_save(
+        &self,
+        path: &StorageLocation,
+        data: &[u8],
+    ) -> Result<(), PersistenceError> {
+        if let StorageLocation::Native(_) = path {
             return FsMapper.write_mapper_save(path, data);
-        };
-        self.write(&uri, &relative, data)
+        }
+        self.write(path, data)
     }
 
     fn write_recovery_mapper_save(
         &self,
-        path: &Path,
+        path: &StorageLocation,
         data: &[u8],
-    ) -> Result<PathBuf, PersistenceError> {
-        let Some((uri, relative)) = Self::decode(path) else {
+    ) -> Result<StorageLocation, PersistenceError> {
+        let StorageLocation::DocumentTree { uri, relative } = path else {
             return FsMapper.write_recovery_mapper_save(path, data);
         };
-        let recovery = format!("{relative}.recovery");
-        self.write(&uri, &recovery, data)?;
-        Ok(PathBuf::from(format!("{}.recovery", path.display())))
+        let recovery =
+            StorageLocation::document_tree(uri, format!("{}.recovery", relative.as_str()))?;
+        self.write(&recovery, data)?;
+        Ok(recovery)
     }
 }
 
@@ -445,18 +456,18 @@ mod tests {
     use super::AndroidStorageBackend;
 
     #[test]
-    fn relative_path_validation_rejects_traversal_and_empty_segments() {
-        assert!(AndroidStorageBackend::validate_relative_path("gbc/id/states").is_ok());
-        for invalid in [
-            "",
-            "/root",
-            "../save",
-            "gbc//save",
-            "gbc/./save",
-            "gbc\\save",
-        ] {
-            assert!(AndroidStorageBackend::validate_relative_path(invalid).is_err());
-        }
+    fn document_keys_reach_the_bridge_without_path_encoding() {
+        let uri = "content://provider/tree/primary%3ASaves";
+        let dir = super::StorageLocation::document_tree(uri, "gbc/id/states").unwrap();
+        let path = AndroidStorageBackend::state_path(&dir, 7).unwrap();
+        assert_eq!(
+            AndroidStorageBackend::document_key(&path).unwrap(),
+            (uri, "gbc/id/states/7.state")
+        );
+        assert!(
+            AndroidStorageBackend::document_key(&super::StorageLocation::from("native.sav"))
+                .is_err()
+        );
     }
 
     /// Pin shared with the Kotlin side: both crossings assume 64KB.

@@ -45,7 +45,7 @@ pub(super) enum RomPickerResult {
 
 /// Picker slot in the unified bridge vault: result plus the open gate.
 pub(super) struct PickerSlot {
-    pub(super) result: Option<RomPickerResult>,
+    pub(super) result: Option<(u64, RomPickerResult)>,
     pub(super) in_flight: bool,
 }
 
@@ -67,20 +67,16 @@ pub(super) enum SettingsDialogResult {
 
 /// Single-flight dialog state; lives in the unified bridge vault.
 pub(super) struct SettingsSlot {
-    pub(super) result: Option<SettingsDialogResult>,
+    pub(super) flight: crate::settings_flight::SettingsFlight<SettingsDialogResult>,
     pub(super) cache: Option<AndroidSettings>,
-    pub(super) next_request_id: u64,
-    pub(super) pending_request_id: Option<u64>,
-    pub(super) defs_cache: Option<(u64, Arc<Vec<SettingDef>>)>,
+    pub(super) defs_cache: Option<(AndroidSettings, Arc<Vec<SettingDef>>)>,
 }
 
 impl SettingsSlot {
     pub(super) const fn empty() -> Self {
         Self {
-            result: None,
+            flight: crate::settings_flight::SettingsFlight::new(),
             cache: None,
-            next_request_id: 1,
-            pending_request_id: None,
             defs_cache: None,
         }
     }
@@ -116,7 +112,7 @@ pub(super) mod methods {
     bridge_method!(
         SHOW_ERROR_DIALOG,
         "showErrorDialog",
-        "(Ljava/lang/String;)V"
+        "(JLjava/lang/String;)V"
     );
     bridge_method!(
         NOTIFY_ROM_LOADED,
@@ -149,10 +145,12 @@ pub(super) mod methods {
         "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
     );
     bridge_method!(
-        WRITE_SAF_FILE_CHUNK_BYTES,
-        "writeSafFileChunkBytes",
-        "(Ljava/lang/String;Ljava/lang/String;[BZ)Z"
+        OPEN_SAF_WRITE_SESSION,
+        "openSafWriteSession",
+        "(Ljava/lang/String;Ljava/lang/String;)J"
     );
+    bridge_method!(WRITE_SAF_WRITE_SESSION, "writeSafWriteSession", "(J[B)Z");
+    bridge_method!(CLOSE_SAF_WRITE_SESSION, "closeSafWriteSession", "(JZ)Z");
     bridge_method!(
         OPEN_SAF_READ_SESSION,
         "openSafReadSession",
@@ -196,25 +194,10 @@ impl AndroidBridgeState {
     }
 }
 
-/// Single bridge vault: queue, picker, and settings share one mutex.
-/// One lock kills cross-thread order; same-thread nesting still panics.
-struct BridgeVault {
-    queue: AndroidBridgeState,
-    picker: PickerSlot,
-    settings: SettingsSlot,
-}
-
-impl BridgeVault {
-    const fn empty() -> Self {
-        Self {
-            queue: AndroidBridgeState::empty(),
-            picker: PickerSlot::empty(),
-            settings: SettingsSlot::empty(),
-        }
-    }
-}
-
-static BRIDGE: Mutex<BridgeVault> = Mutex::new(BridgeVault::empty());
+// Transport lanes do not contend with descriptor construction or ROM ownership.
+static QUEUE: Mutex<AndroidBridgeState> = Mutex::new(AndroidBridgeState::empty());
+static PICKER: Mutex<PickerSlot> = Mutex::new(PickerSlot::empty());
+static SETTINGS: Mutex<SettingsSlot> = Mutex::new(SettingsSlot::empty());
 
 /// Monotonic insets generation: readers skip the lock when unchanged.
 static INSETS_VERSION: AtomicU64 = AtomicU64::new(0);
@@ -230,20 +213,16 @@ fn lock_accel() -> std::sync::MutexGuard<'static, Option<AccelerometerInputHandl
     })
 }
 
-fn with_vault<T>(operation: impl FnOnce(&mut BridgeVault) -> T) -> T {
-    crate::reentrancy::with_lock(&BRIDGE, operation)
-}
-
 pub(super) fn with_queue<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T) -> T {
-    with_vault(|vault| operation(&mut vault.queue))
+    crate::reentrancy::with_lock(&QUEUE, operation)
 }
 
 pub(super) fn with_picker<T>(operation: impl FnOnce(&mut PickerSlot) -> T) -> T {
-    with_vault(|vault| operation(&mut vault.picker))
+    crate::reentrancy::with_lock(&PICKER, operation)
 }
 
 pub(super) fn with_settings<T>(operation: impl FnOnce(&mut SettingsSlot) -> T) -> T {
-    with_vault(|vault| operation(&mut vault.settings))
+    crate::reentrancy::with_lock(&SETTINGS, operation)
 }
 
 /// Set the event proxy once at construction; rebinds only warn.
@@ -305,7 +284,7 @@ pub(super) fn publish_all(events: &[FrontendEvent]) {
     }
     with_queue(|state| {
         for event in events {
-            if matches!(event, FrontendEvent::ErrorDialogDismissed) {
+            if matches!(event, FrontendEvent::ErrorDialogDismissed(_)) {
                 state.priority_events.push_back(*event);
             } else {
                 state.normal_events.push_back(*event);
@@ -399,7 +378,12 @@ pub(super) fn post_to_activity(
         let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
         let result = with_java_env(&vm, |env| {
             let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
-            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+            // AndroidApp owns this global reference; create our own local reference
+            // rather than treating the borrowed global as an owned local.
+            let activity = unsafe {
+                env.as_cast_raw::<jni::refs::Global<jni::objects::JObject<'static>>>(&activity_raw)?
+            };
+            let activity = env.new_local_ref(activity.as_ref())?;
             operation(env, activity)
         });
         if let Err(error) = result {

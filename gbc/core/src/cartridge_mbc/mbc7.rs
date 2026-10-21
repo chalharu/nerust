@@ -1,3 +1,4 @@
+use crate::persistence_error::GbcPersistenceError;
 use std::time::SystemTime;
 
 use nerust_core_traits::peripheral::AccelerationSample;
@@ -414,28 +415,26 @@ impl Mbc for Mbc7 {
         self.eeprom.reset_runtime();
     }
 
-    fn export_persistent_state(&self, _now: SystemTime) -> Result<Option<Vec<u8>>, String> {
+    fn export_persistent_state(
+        &self,
+        _now: SystemTime,
+    ) -> Result<Option<Vec<u8>>, GbcPersistenceError> {
         rmp_serde::to_vec_named(&Mbc7PersistentState {
             schema_version: PERSISTENT_STATE_SCHEMA_VERSION,
             kind: self.kind(),
             eeprom: self.eeprom.data.clone(),
         })
         .map(Some)
-        .map_err(|error| error.to_string())
+        .map_err(GbcPersistenceError::from)
     }
 
-    fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), String> {
-        let state: Mbc7PersistentState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != PERSISTENT_STATE_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported MBC7 persistent state version: {}",
-                state.schema_version
-            ));
-        }
-        if state.kind != self.kind() {
-            return Err("MBC7 persistent state kind mismatch".into());
-        }
+    fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
+        let state: Mbc7PersistentState = super::decode_mapper_state(
+            data,
+            PERSISTENT_STATE_SCHEMA_VERSION,
+            "MBC7 persistent state",
+            Some(self.kind()),
+        )?;
         if state.eeprom.len() != EEPROM_SIZE {
             return Err("MBC7 persistent EEPROM length mismatch".into());
         }
@@ -457,15 +456,13 @@ impl Mbc for Mbc7 {
         .expect("MBC7 machine state should serialize")
     }
 
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        let state: Mbc7MachineState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != MACHINE_STATE_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported MBC7 machine state version: {}",
-                state.schema_version
-            ));
-        }
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
+        let state: Mbc7MachineState = super::decode_mapper_state(
+            data,
+            MACHINE_STATE_SCHEMA_VERSION,
+            "MBC7 machine state",
+            None,
+        )?;
         if state.rom_bank > 0x7F || !state.eeprom.valid() {
             return Err("invalid MBC7 machine state".into());
         }

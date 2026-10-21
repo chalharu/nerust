@@ -8,7 +8,7 @@ use nerust_render_traits::{
 use super::{
     draw::compute_viewport,
     fit_surface_size_to_limit,
-    setup::{FramePipelineKind, composed_shader_source, encode_ntsc_texture, frame_logical_size},
+    setup::{composed_shader_source, encode_ntsc_texture},
 };
 
 #[test]
@@ -47,6 +47,36 @@ fn viewport_avoids_reserved_strips() {
     assert_eq!(viewport.height, 800.0);
     assert_eq!(viewport.x, 373.333_34);
     assert_eq!(viewport.y, 40.0);
+}
+
+#[test]
+fn viewport_stays_finite_for_extreme_aspects_and_full_reservation() {
+    for value in [f32::MIN_POSITIVE, f32::from_bits(1), f32::MAX] {
+        let viewport = compute_viewport(
+            SurfaceSize::new(64, 64),
+            PhysicalSize {
+                width: value,
+                height: value,
+            },
+            ReservedStrip::default(),
+        );
+        assert_eq!((viewport.width, viewport.height), (64.0, 64.0));
+    }
+    let viewport = compute_viewport(
+        SurfaceSize::new(64, 64),
+        PhysicalSize {
+            width: 1.0,
+            height: 1.0,
+        },
+        ReservedStrip {
+            top: u32::MAX,
+            bottom: u32::MAX,
+        },
+    );
+    assert_eq!(
+        (viewport.y, viewport.width, viewport.height),
+        (64.0, 0.0, 0.0)
+    );
 }
 
 #[test]
@@ -134,8 +164,137 @@ fn direct_color_upload_uses_logical_frame_size() {
         },
     ));
 
-    let upload_size = frame_logical_size(&presentation, FramePipelineKind::DirectColor);
+    let upload_size = presentation.input_size();
 
     assert_eq!(upload_size.width, 512);
     assert_eq!(upload_size.height, 480);
+}
+
+#[test]
+fn clipped_osd_rows_keep_original_source_pitch_and_clear_staging() {
+    use super::setup::pack_osd_rect;
+    let source: Vec<u8> = (0..48).collect(); // 4 pixels x 3 rows
+    for (width, height) in [(1, 1), (2, 3), (4, 2), (4, 3)] {
+        let mut staging = vec![255; 2048];
+        let (pitch, len) = pack_osd_rect(&mut staging, width, height, Some((&source, 16))).unwrap();
+        assert_eq!(len, pitch as usize * height as usize);
+        for row in 0..height as usize {
+            let start = row * pitch as usize;
+            assert_eq!(
+                &staging[start..start + width as usize * 4],
+                &source[row * 16..row * 16 + width as usize * 4]
+            );
+            assert!(
+                staging[start + width as usize * 4..start + pitch as usize]
+                    .iter()
+                    .all(|&b| b == 0)
+            );
+        }
+        pack_osd_rect(&mut staging, width, height, None).unwrap();
+        assert!(staging.iter().all(|&b| b == 0));
+        staging.fill(255);
+        assert!(pack_osd_rect(&mut staging, width, height, Some((&source[..1], 16))).is_none());
+        assert!(staging.iter().all(|&b| b == 0));
+    }
+    assert!(pack_osd_rect(&mut Vec::new(), 0, 2, None).is_none());
+}
+
+#[test]
+fn present_modes_honor_vsync_and_supported_fallbacks() {
+    use wgpu::PresentMode::*;
+    for (modes, vsync, expected) in [
+        (vec![Immediate, Fifo], true, Fifo),
+        (vec![Immediate, Fifo], false, Immediate),
+        (vec![AutoNoVsync, AutoVsync, Fifo], true, AutoVsync),
+        (vec![AutoNoVsync, AutoVsync, Fifo], false, AutoNoVsync),
+        (vec![Fifo], false, Fifo),
+        (vec![Mailbox, Fifo], false, Mailbox),
+    ] {
+        assert_eq!(
+            super::RenderPipeline::select_present_mode(&modes, vsync),
+            expected
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn device_osd_resize_recreates_texture_and_invalid_layers_clear_visibility() {
+    use nerust_render_traits::renderer::OsdLayer;
+    let _guard = crate::test_window::lock();
+    let Some(window) = crate::test_window::TestWindow::open() else {
+        return;
+    };
+    let instance = crate::surface::instance_with_display(window.clone());
+    let (wh, dh) = window.handles();
+    let surface = crate::surface::create_wgpu_surface(&instance, wh, dh).unwrap();
+    let presentation = VideoPresentation::new(VideoFrameSpec::new(
+        VideoFrameFormat::Rgba,
+        LogicalSize {
+            width: 4,
+            height: 4,
+        },
+        LogicalSize {
+            width: 4,
+            height: 4,
+        },
+        PhysicalSize {
+            width: 4.0,
+            height: 4.0,
+        },
+    ));
+    let mut pipeline = pollster::block_on(super::RenderPipeline::new(
+        &instance,
+        &surface,
+        SurfaceSize::new(64, 64),
+        &presentation,
+        None,
+        super::PresentationOptions { vsync: false },
+        super::DeviceLimitProfile::Default,
+    ))
+    .unwrap();
+    super::setup::set_osd_layer(
+        &mut pipeline,
+        Some(&OsdLayer::new(62, 3, 4, 2, (0..32).collect())),
+    );
+    assert_eq!(pipeline.osd_prev, Some((62, 3, 2, 2)));
+    assert_eq!(
+        &pipeline.osd_staging[256..264],
+        &[16, 17, 18, 19, 20, 21, 22, 23]
+    );
+    pipeline.reconfigure_surface(&surface, SurfaceSize::new(96, 80));
+    super::setup::set_osd_layer(
+        &mut pipeline,
+        Some(&OsdLayer::new(62, 3, 4, 2, (0..32).collect())),
+    );
+    let texture = pipeline.osd_texture.as_ref().unwrap();
+    assert_eq!((texture.width(), texture.height()), (96, 80));
+    assert!(pipeline.osd_visible);
+    assert_eq!(pipeline.osd_prev, Some((62, 3, 4, 2)));
+    pipeline.reconfigure_surface(&surface, SurfaceSize::new(16, 16));
+    super::setup::set_osd_layer(
+        &mut pipeline,
+        Some(&OsdLayer::new(62, 3, 4, 2, (0..32).collect())),
+    );
+    assert!(!pipeline.osd_visible);
+    pipeline.reconfigure_surface(&surface, SurfaceSize::new(96, 80));
+    super::setup::set_osd_layer(
+        &mut pipeline,
+        Some(&OsdLayer::new(62, 3, 4, 2, (0..32).collect())),
+    );
+    assert!(pipeline.osd_visible);
+    assert_eq!(pipeline.osd_prev, Some((62, 3, 4, 2)));
+    for layer in [
+        OsdLayer::new(62, 3, 4, 2, vec![255]),
+        OsdLayer::new(0, 0, 0, 0, vec![]),
+        OsdLayer::new(999, 999, 1, 1, vec![255; 4]),
+    ] {
+        super::setup::set_osd_layer(&mut pipeline, Some(&layer));
+        assert!(!pipeline.osd_visible);
+        assert!(pipeline.osd_prev.is_none());
+    }
+    pipeline
+        .device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
 }

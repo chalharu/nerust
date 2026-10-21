@@ -12,7 +12,6 @@ use gtk::prelude::{
     BoxExt as _, ButtonExt as _, CheckButtonExt as _, ComboBoxExt as _, DialogExt as _,
     EditableExt as _, GtkWindowExt as _, WidgetExt as _,
 };
-use nerust_core_traits::factory::CoreFactory;
 use nerust_gui_shell::session::access::SessionControl;
 use nerust_gui_viewmodel::settings::{
     ReadOnlyObservableProperty, SettingsViewModel, StoragePathError, StoragePathValidator,
@@ -26,6 +25,7 @@ use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::{UiText, notification_group_label, text as ui_text},
 };
+use nerust_system_traits::factory::CoreFactory;
 
 use nerust_settings_core::model::{language::AppLanguage, local::ScalingMode};
 

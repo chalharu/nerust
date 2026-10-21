@@ -16,7 +16,7 @@ pub(in crate::runner) struct ValidationRunner {
 
 impl ValidationRunner {
     pub(in crate::runner) fn new(
-        factories: &[Box<dyn nerust_core_traits::factory::CoreFactory>],
+        factories: &[Box<dyn nerust_system_traits::factory::CoreFactory>],
         case: &RomCase,
         rom_bytes: &[u8],
         options: ValidationOptions,

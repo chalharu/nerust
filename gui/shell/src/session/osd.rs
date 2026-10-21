@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use nerust_settings_core::model::language::AppLanguage;
 
-use super::notification::{UiNotification, render_text};
+use super::notification::UiNotification;
 
 pub use super::osd_history::{
     HistoryLine, format_datetime, format_datetime_with_offset, format_time, history_lines,
@@ -32,6 +32,7 @@ pub struct OsdManager {
     /// Monotonic display-generation. Presenters remember the last
     /// generation they synced; inequality means re-render.
     generation: u64,
+    presentation: Option<(TransientPolicy, AppLanguage, FrameChannel)>,
 }
 
 /// Bundled inputs for [`SessionHandle::pump_osd`]: the caller-owned half of the push.
@@ -65,6 +66,18 @@ impl OsdManager {
         now: Instant,
         channel: FrameChannel,
     ) {
+        let presentation = (*policy, language, channel);
+        self.modal.set_presentation(*policy, language);
+        if self.presentation != Some(presentation) {
+            let had_visible = self.transient.has_visible();
+            for (message, count, level) in self.transient.refresh(policy, language, now, channel) {
+                self.modal.push_message(message, count, level);
+            }
+            self.presentation = Some(presentation);
+            if had_visible || self.transient.has_visible() {
+                self.mark_changed();
+            }
+        }
         // Dirty only on a real change: filtered rows, dropped info,
         // and queued-behind rows must not schedule a redraw.
         let mut changed = false;
@@ -77,8 +90,7 @@ impl OsdManager {
                 // Disabled levels never display.
                 ModalRoute::Drop => continue,
                 ModalRoute::Modal => {
-                    self.modal
-                        .push_text(render_text(&n.kind, n.count, language));
+                    self.modal.push_message(message, n.count, n.level);
                     changed = true;
                     continue;
                 }
@@ -131,18 +143,7 @@ impl OsdManager {
     /// Drain the aggregated modal batch into the sequential queue.
     /// Bullet formatting happens here; overflow warns once per episode until the queue drains.
     pub(crate) fn pump_modal(&mut self) -> bool {
-        let lines = self.modal.take_batch_text();
-        if lines.is_empty() {
-            return false;
-        }
-        // Single source for the aggregation wording: dialogs show it
-        // as-is on every frontend, Android included.
-        let detail = lines
-            .iter()
-            .map(|line| format!("• {line}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        match self.modal.pump(Some(detail)) {
+        match self.modal.pump_pending() {
             ModalPump::Idle => false,
             ModalPump::Queued { dropped } => {
                 if dropped && !self.modal.overflow_already_reported() {
@@ -282,6 +283,107 @@ mod tests {
 
     fn policy() -> TransientPolicy {
         TransientPolicy::from(&settings())
+    }
+
+    #[test]
+    fn queued_and_visible_rows_follow_current_language_and_level_policy() {
+        let now = Instant::now();
+        let mut manager = OsdManager::new();
+        manager.push_all_with_policy(
+            vec![UiNotification {
+                level: NotificationLevel::Info,
+                kind: NotificationKind::Paused,
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            }],
+            &policy(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        manager.poll(now);
+        assert_eq!(manager.rows()[0].text.as_ref(), "Paused");
+        manager.push_all_with_policy(
+            vec![],
+            &policy(),
+            AppLanguage::Japanese,
+            now,
+            FrameChannel::Composited,
+        );
+        assert_eq!(manager.rows()[0].text.as_ref(), "一時停止しました");
+        let off = TransientPolicy {
+            info_enabled: false,
+            ..policy()
+        };
+        manager.push_all_with_policy(
+            vec![],
+            &off,
+            AppLanguage::Japanese,
+            now,
+            FrameChannel::Composited,
+        );
+        assert!(manager.rows().is_empty());
+    }
+
+    #[test]
+    fn queued_modal_localizes_and_filters_only_at_delivery() {
+        let now = Instant::now();
+        let mut manager = OsdManager::new();
+        manager.push_all_with_policy(
+            vec![UiNotification {
+                level: NotificationLevel::Warning,
+                kind: NotificationKind::PersistenceUnavailable,
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            }],
+            &policy(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Unpresented,
+        );
+        assert!(manager.pump_modal());
+        manager.push_all_with_policy(
+            vec![],
+            &policy(),
+            AppLanguage::Japanese,
+            now,
+            FrameChannel::Unpresented,
+        );
+        assert!(
+            manager
+                .take_modal_batch()
+                .unwrap()
+                .contains("保存機能が利用できません")
+        );
+        manager.modal_closed();
+        manager.push_all_with_policy(
+            vec![UiNotification {
+                level: NotificationLevel::Warning,
+                kind: NotificationKind::PersistenceUnavailable,
+                count: 1,
+                seq: 1,
+                at: std::time::UNIX_EPOCH,
+            }],
+            &policy(),
+            AppLanguage::English,
+            now,
+            FrameChannel::Unpresented,
+        );
+        manager.pump_modal();
+        let off = TransientPolicy {
+            warning_enabled: false,
+            ..policy()
+        };
+        manager.push_all_with_policy(
+            vec![],
+            &off,
+            AppLanguage::Japanese,
+            now,
+            FrameChannel::Unpresented,
+        );
+        assert!(manager.take_modal_batch().is_none());
     }
 
     #[test]

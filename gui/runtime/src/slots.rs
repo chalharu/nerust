@@ -25,7 +25,7 @@ mod tests {
         StateSlotSummary {
             schema_version: 1,
             slot_id,
-            path: PathBuf::from(format!("slot-{slot_id}.nst")),
+            path: PathBuf::from(format!("slot-{slot_id}.nst")).into(),
             saved_at: UNIX_EPOCH + Duration::from_secs(1_700_000_000 + slot_id),
             has_thumbnail: false,
             emulator_version: "test".into(),

@@ -1,5 +1,3 @@
-pub mod field;
-
 use nerust_settings_traits::SystemSettings;
 use serde::{Deserialize, Serialize};
 

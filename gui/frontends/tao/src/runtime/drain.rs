@@ -154,7 +154,9 @@ impl HostState {
 
     /// Drain debugger requests and push one batched snapshot back.
     pub(crate) fn drain_debug_requests(&mut self) {
-        self.poll_debug_flight();
+        if let Some(bridge) = self.debug_bridge_for_ppu() {
+            bridge.bind_epoch(self.session().debug_epoch());
+        }
         let Some((open_ppu, requests)) = self.take_debug_batch() else {
             return;
         };
@@ -162,6 +164,7 @@ impl HostState {
             self.request_ppu_open();
         }
         if requests.is_empty() {
+            self.poll_debug_flight();
             return;
         }
         self.run_debug_drain(&requests);
@@ -170,7 +173,9 @@ impl HostState {
     /// Run one action batch through an async shell-drain flight.
     /// Sends only; the event loop polls, so the UI thread never blocks.
     pub(crate) fn run_debug_drain(&mut self, requests: &[nerust_gui_shell::debug::DebugAction]) {
-        use nerust_gui_shell::debug::DebugDrainInput;
+        if let Some(bridge) = self.debug_bridge_for_ppu() {
+            bridge.bind_epoch(self.session().debug_epoch());
+        }
         let ppu_open = self.is_ppu_open();
         let snapshot = match self.aux.debug_snapshot(ppu_open) {
             Some(snapshot) => snapshot,
@@ -184,6 +189,54 @@ impl HostState {
         // Contended bridge locks would wedge the UI thread:
         // all critical sections are short field copies.
         debug_assert!(self.aux.debug_locks_free());
+        let epoch = self.session().debug_epoch();
+        // Split before pause transitions: ownership changes must not run ahead
+        // of an earlier step/write still waiting for its worker reply.
+        let mut start = 0;
+        for (index, action) in requests.iter().enumerate() {
+            if index > start
+                && matches!(
+                    action,
+                    nerust_gui_shell::debug::DebugAction::Pause
+                        | nerust_gui_shell::debug::DebugAction::Resume
+                        | nerust_gui_shell::debug::DebugAction::TogglePause
+                )
+            {
+                self.debug.queue.push_back(super::host::debug::DrainBatch {
+                    epoch: epoch.clone(),
+                    actions: requests[start..index].to_vec(),
+                    snapshot: snapshot.clone(),
+                });
+                start = index;
+            }
+        }
+        self.debug.queue.push_back(super::host::debug::DrainBatch {
+            epoch,
+            actions: requests[start..].to_vec(),
+            snapshot,
+        });
+        self.poll_debug_flight();
+    }
+
+    fn start_debug_batch(&mut self, batch: super::host::debug::DrainBatch) {
+        use nerust_gui_shell::debug::{DebugAction, DebugDrainInput};
+        use nerust_gui_shell::session::access::PauseControl;
+        if !batch.epoch.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let mut actions = batch.actions;
+        for action in &mut actions {
+            match action {
+                DebugAction::Pause => self.pause(),
+                DebugAction::Resume => self.resume(),
+                DebugAction::TogglePause => self.toggle_pause(),
+                _ => continue,
+            }
+            if self.session().tick_metrics().loaded {
+                *action = DebugAction::Refresh;
+            }
+        }
+        let snapshot = batch.snapshot;
         let input = DebugDrainInput {
             space: snapshot.space,
             mem_addr: snapshot.mem_addr,
@@ -194,31 +247,40 @@ impl HostState {
             prev_dump_rows: &snapshot.prev_rows,
             need_images: snapshot.ppu_open,
         };
-        // Supersede: a newer batch replaces the stored flight.
-        let mut flight = self.session().debug_drain_begin(requests, &input);
-        match flight.poll() {
-            DrainPoll::Done(output) => self.apply_drain_output(*output),
-            DrainPoll::Pending => {
-                self.orchestrator_mut().store_drain_flight(flight);
-            }
-        }
+        let flight = self.session().debug_drain_begin(&actions, &input);
+        self.debug.drain_epoch = Some(batch.epoch);
+        self.orchestrator_mut().store_drain_flight(flight);
     }
 
     /// Poll the stored drain flight once; applies on completion.
     /// Returns whether a flight is still pending.
     pub(crate) fn poll_debug_flight(&mut self) -> bool {
-        let mut flight = match self.orchestrator_mut().take_drain_flight() {
-            Some(flight) => flight,
-            None => return false,
-        };
-        match flight.poll() {
-            DrainPoll::Done(output) => {
-                self.apply_drain_output(*output);
-                false
+        loop {
+            if self
+                .debug
+                .drain_epoch
+                .as_ref()
+                .is_some_and(|epoch| !epoch.load(std::sync::atomic::Ordering::Acquire))
+            {
+                self.orchestrator_mut().take_drain_flight();
+                self.debug.drain_epoch = None;
             }
-            DrainPoll::Pending => {
-                self.orchestrator_mut().store_drain_flight(flight);
-                true
+            let Some(mut flight) = self.orchestrator_mut().take_drain_flight() else {
+                let Some(batch) = self.debug.queue.pop_front() else {
+                    return false;
+                };
+                self.start_debug_batch(batch);
+                continue;
+            };
+            match flight.poll() {
+                DrainPoll::Done(output) => {
+                    self.debug.drain_epoch = None;
+                    self.apply_drain_output(*output);
+                }
+                DrainPoll::Pending => {
+                    self.orchestrator_mut().store_drain_flight(flight);
+                    return true;
+                }
             }
         }
     }
@@ -243,7 +305,8 @@ impl HostState {
             self.is_debug_open(),
             self.last_drain_paused(),
             self.session().tick_metrics().paused,
-        ) {
+        ) && !self.debug.drain_pending()
+        {
             self.run_debug_drain(&[]);
         }
     }
@@ -259,6 +322,119 @@ fn chrome_drain_due(debug_open: bool, last_drain_paused: Option<bool>, paused: b
 mod tests {
     use super::chrome_drain_due;
     use crate::runtime::host::TestHost;
+
+    #[test]
+    fn replacement_discards_waiting_old_epoch_batches_before_pause_or_write() {
+        use crate::runtime::host::debug::DrainBatch;
+        use nerust_gui_shell::debug::DebugAction;
+        let support = TestHost::with_nes();
+        let mut host = support.host;
+        host.load_test_rom();
+        assert!(matches!(
+            host.session().debug_pause(),
+            nerust_gui_viewmodel::debugger::StatusMessage::Paused
+        ));
+        let stub = crate::testkit::StubAux::new(crate::aux::focus::AuxKind::Debug);
+        let applied = stub.applied_drain.clone();
+        host.aux.insert(Box::new(stub));
+        let epoch = host.session().debug_epoch();
+        let mut snapshot = host.aux.debug_snapshot(false).unwrap();
+        snapshot.space = Some(host.session().debug_spaces()[0].id);
+        snapshot.reg_target = Some("a");
+        snapshot.freeze = Some((0, 0xff));
+        // Keep the first flight unpolled, with later mutations still queued.
+        // Replacing the media now must drop both, without relying on timings.
+        host.start_debug_batch(DrainBatch {
+            epoch: epoch.clone(),
+            actions: vec![DebugAction::StepInstr, DebugAction::RegisterWrite(0xff)],
+            snapshot: snapshot.clone(),
+        });
+        host.debug.queue.push_back(DrainBatch {
+            epoch: epoch.clone(),
+            actions: vec![DebugAction::Pause, DebugAction::RegisterWrite(0xaa)],
+            snapshot,
+        });
+        host.load_test_rom();
+        assert!(!epoch.load(std::sync::atomic::Ordering::Acquire));
+        assert!(!host.poll_debug_flight());
+        assert!(!host.session().tick_metrics().paused);
+        assert!(!host.debug.drain_pending());
+        assert!(
+            !applied.get(),
+            "old output must never reach the replacement UI"
+        );
+        use nerust_gui_shell::session::access::PauseControl;
+        host.pause();
+        let current = host.session().debug_snapshot(
+            None,
+            0,
+            None,
+            nerust_gui_shell::debug::ImageNeed::Skip,
+            None,
+        );
+        assert!(current.regs.contains(&("a", 0)));
+    }
+
+    #[test]
+    fn queued_pause_waits_for_prior_real_worker_flight_and_chrome_cannot_replace_it() {
+        use crate::runtime::host::debug::DrainBatch;
+        use nerust_gui_shell::debug::DebugAction;
+        use nerust_gui_shell::session::access::PauseControl;
+        let support = TestHost::with_nes();
+        let mut host = support.host;
+        host.load_test_rom();
+        host.pause();
+        host.aux.insert(Box::new(crate::testkit::StubAux::new(
+            crate::aux::focus::AuxKind::Debug,
+        )));
+        let epoch = host.session().debug_epoch();
+        let mut snapshot = host.aux.debug_snapshot(false).unwrap();
+        let space = host.session().debug_spaces()[0].id;
+        snapshot.space = Some(space);
+        snapshot.reg_target = Some("a");
+        snapshot.freeze = Some((0, 0x5a));
+        host.start_debug_batch(DrainBatch {
+            epoch: epoch.clone(),
+            actions: vec![DebugAction::StepInstr, DebugAction::RegisterWrite(0x45)],
+            snapshot: snapshot.clone(),
+        });
+        host.debug.queue.push_back(DrainBatch {
+            epoch,
+            actions: vec![DebugAction::Resume],
+            snapshot,
+        });
+        assert!(
+            host.session().tick_metrics().paused,
+            "resume has not started"
+        );
+        let ctx = host.frame_ctx();
+        host.sync_debug_chrome(&ctx);
+        assert_eq!(
+            host.debug.queue.len(),
+            1,
+            "chrome may not replace a pending drain"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while host.poll_debug_flight() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "worker did not settle"
+            );
+            std::thread::yield_now();
+        }
+        assert!(!host.session().tick_metrics().paused);
+        assert!(!host.debug.drain_pending());
+        host.pause();
+        assert_eq!(host.session().debug_read_byte(space, 0), Some(0x5a));
+        let current = host.session().debug_snapshot(
+            None,
+            0,
+            None,
+            nerust_gui_shell::debug::ImageNeed::Skip,
+            None,
+        );
+        assert!(current.regs.contains(&("a", 0x45)));
+    }
 
     #[test]
     fn focus_chrome_drains_only_on_pause_transitions() {
