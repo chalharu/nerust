@@ -1,7 +1,7 @@
 //! Slot persistence orchestration: save/load/delete plus mapper-save flushing.
 //! Ports live in [`ports`](super::ports); the filesystem backend in [`fs`](super::fs).
 
-use std::{io::ErrorKind, path::PathBuf};
+use std::{io::ErrorKind, path::PathBuf, sync::Arc};
 
 use nerust_core_traits::{
     identity::SystemIdentity,
@@ -61,7 +61,7 @@ pub struct PersistenceManager {
     mapper_save_path: Option<PathBuf>,
     mapper_save_flush_allowed: bool,
     mapper_save_recovery_written: bool,
-    slots: Vec<StateSlotSummary>,
+    slots: Arc<[StateSlotSummary]>,
     active_slot_id: Option<u64>,
 }
 
@@ -85,7 +85,7 @@ impl PersistenceManager {
             mapper_save_path: None,
             mapper_save_flush_allowed: true,
             mapper_save_recovery_written: false,
-            slots: Vec::new(),
+            slots: Arc::from([]),
             active_slot_id: None,
         }
     }
@@ -127,6 +127,10 @@ impl PersistenceManager {
 
     pub fn slots(&self) -> &[StateSlotSummary] {
         &self.slots
+    }
+
+    pub fn slots_arc(&self) -> Arc<[StateSlotSummary]> {
+        Arc::clone(&self.slots)
     }
 
     pub fn active_slot_id(&self) -> Option<u64> {
@@ -187,14 +191,16 @@ impl PersistenceManager {
         }
     }
 
-    /// Insert or replace one slot summary in place, keeping the cache sorted.
+    /// Publish one immutable revision after a successful write.
     fn upsert_summary(&mut self, summary: StateSlotSummary) {
-        if let Some(slot) = self.slots.iter_mut().find(|s| s.slot_id == summary.slot_id) {
+        let mut slots = self.slots.to_vec();
+        if let Some(slot) = slots.iter_mut().find(|s| s.slot_id == summary.slot_id) {
             *slot = summary;
         } else {
-            self.slots.push(summary);
-            self.slots.sort_by_key(|slot| slot.slot_id);
+            slots.push(summary);
+            slots.sort_by_key(|slot| slot.slot_id);
         }
+        self.slots = slots.into();
     }
 
     pub fn save_active_slot_or_new(
@@ -269,7 +275,12 @@ impl PersistenceManager {
                     self.active_slot_id = None;
                 }
                 // Prune the cache; no re-scan on the mutation path.
-                self.slots.retain(|slot| slot.slot_id != slot_id);
+                self.slots = self
+                    .slots
+                    .iter()
+                    .filter(|slot| slot.slot_id != slot_id)
+                    .cloned()
+                    .collect();
                 Ok(())
             }
             Err(error) => Err(classify(&error)),
@@ -296,7 +307,8 @@ impl PersistenceManager {
             self.slot_backend.scan(dir, identity).unwrap_or_default()
         } else {
             Vec::new()
-        };
+        }
+        .into();
         if self
             .active_slot_id
             .is_some_and(|slot_id| !self.slots.iter().any(|slot| slot.slot_id == slot_id))
@@ -321,7 +333,7 @@ impl PersistenceManager {
         self.mapper_save_path = None;
         self.mapper_save_flush_allowed = true;
         self.mapper_save_recovery_written = false;
-        self.slots = Vec::new();
+        self.slots = Arc::from([]);
         self.active_slot_id = None;
     }
 
@@ -711,13 +723,17 @@ mod persistence_cov_tests {
             .expect("save ok");
         assert_eq!(manager.slots().len(), 1);
         assert_eq!(manager.active_slot_id(), Some(1));
+        let first = manager.slots_arc();
+        assert!(Arc::ptr_eq(&first, &manager.slots_arc()));
         manager
             .save_slot(1, &exporter, SlotActivation::Leave)
             .expect("resave ok");
         assert_eq!(manager.slots().len(), 1);
+        assert!(!Arc::ptr_eq(&first, &manager.slots_arc()));
         // Delete prunes the cache without a backend scan.
         manager.delete_slot(1).expect("delete ok");
         assert!(manager.slots().is_empty());
+        assert_eq!(first.len(), 1, "published revisions remain immutable");
         assert_eq!(manager.active_slot_id(), None);
         // Mapper-flush errors keep the typed fault for the UI boundary.
         let error = crate::session::persistence::MapperFlushError {

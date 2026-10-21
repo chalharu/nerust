@@ -280,6 +280,9 @@ impl SettingsApplier {
 mod tests {
     use std::sync::Arc;
 
+    use super::super::settings_model::RangeSpec;
+    use crate::settings_sections::{SETTINGS_SECTION_IDS, section_label};
+
     use nerust_core_traits::factory::CoreFactory;
     use nerust_core_traits::factory::descriptor::SystemSettingsChoiceId;
     use nerust_gba_factory::GbaFactory;
@@ -354,6 +357,22 @@ mod tests {
             .into_iter()
             .map(|def| (def.key, def.current))
             .collect()
+    }
+
+    #[test]
+    fn cache_reuses_current_defs_and_refreshes_changed_settings() {
+        let registry = registry();
+        let mut current = android_settings(&default_snapshot(), &registry);
+        current.prioritize_system(Some(GbaFactory.system_id().as_ref()));
+        assert_eq!(current.system_choices[0].system_id, GbaFactory.system_id());
+        let mut cache = None;
+        let first = AndroidSettings::cached_setting_defs_locked(&mut cache, &current);
+        let second = AndroidSettings::cached_setting_defs_locked(&mut cache, &current);
+        assert!(Arc::ptr_eq(&first, &second));
+        current.audio_muted = !current.audio_muted;
+        let changed = AndroidSettings::cached_setting_defs_locked(&mut cache, &current);
+        assert!(!Arc::ptr_eq(&first, &changed));
+        assert_eq!(*changed, current.setting_defs());
     }
 
     #[test]
@@ -698,7 +717,7 @@ mod tests {
         let payload: serde_json::Value =
             serde_json::from_str(&AndroidSettings::dialog_payload_from_defs(42, &defs)).unwrap();
 
-        assert_eq!(payload["schemaVersion"], 1);
+        assert_eq!(payload["schemaVersion"], SETTINGS_SCHEMA_VERSION);
         assert_eq!(payload["requestId"], 42);
         assert_eq!(payload["sections"][0]["id"], "audio");
         assert_eq!(payload["sections"][0]["fields"][0]["key"], "audio_muted");

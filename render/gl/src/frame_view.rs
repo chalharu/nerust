@@ -5,7 +5,7 @@ use std::{os::raw::c_void, ptr, rc::Rc};
 
 use gl::types::GLint;
 use nerust_glwrap::{
-    CurrentContext, DeletionPolicy, ScopeGuard, Shader,
+    Current, DeletionPolicy, ScopeGuard, Shader,
     raw::{
         active_texture, bind_buffer, check_frame, clear, clear_color, delete_textures, draw_arrays,
         enable_vertex_attrib_array, gen_textures, get_integer, gl_string, pixel_storei,
@@ -117,7 +117,9 @@ impl FrameView {
         };
         let id = shader.id();
         if self.current_program != Some(id) {
+            self.current_program = None;
             ok_gl(shader.use_program())?;
+            ok_gl(check_frame())?;
             self.current_program = Some(id);
         }
         Ok(())
@@ -132,6 +134,7 @@ impl FrameView {
             return Err(ViewError::NoProgram { program: "game" });
         };
         ok_gl(uniform_matrix_4fv(loc, 1, gl::FALSE, mat.as_ptr()))?;
+        ok_gl(check_frame())?;
         self.last_matrix = Some(*mat);
         Ok(())
     }
@@ -347,6 +350,7 @@ impl FrameView {
             gl::FALSE,
             identity.as_ptr(),
         ))?;
+        ok_gl(check_frame())?;
         self.last_matrix = Some(mat);
         ok_gl(uniform_1i(frame_loc, 0))?;
         Ok(())
@@ -375,6 +379,7 @@ impl FrameView {
         } else {
             ok_gl(active_texture(gl::TEXTURE0))?;
         }
+        ok_gl(check_frame())?;
         Ok(())
     }
 
@@ -455,10 +460,10 @@ impl FrameView {
         }
         drop(_row_guard);
         ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
-        // Release-time batched drain (debug wrappers already drained).
-        let _ = check_frame();
         // Explicit restore: back to unit 0 so the OSD pass starts clean.
         ok_gl(active_texture(gl::TEXTURE0))?;
+        // Include state restoration in the release-time boundary.
+        ok_gl(check_frame())?;
         Ok(())
     }
 
@@ -497,7 +502,9 @@ impl FrameView {
         if self.frame_texture != 0 {
             use_texture(0, self.frame_texture)?;
         }
-        self.use_game_program().ok();
+        if self.shader.is_some() {
+            self.use_game_program()?;
+        }
         Ok(())
     }
 
@@ -529,6 +536,7 @@ impl FrameView {
         }
 
         self.init_geometry()?;
+        ok_gl(check_frame())?;
         Ok(is_gles)
     }
 
@@ -563,7 +571,7 @@ impl FrameView {
 
     /// Explicit teardown: `None` (no current context) skips GL calls
     /// and reports each live name as leaked instead of deleting blind.
-    pub(crate) fn close(&mut self, current: Option<CurrentContext>) -> Vec<LeakedName> {
+    pub(crate) fn close(&mut self, current: Option<Current>) -> Vec<LeakedName> {
         // Teardown ledger policy: every missed delete counts (see `CloseReport`).
         let policy = DeletionPolicy::Count;
         let mut leaked = Vec::new();
@@ -681,13 +689,13 @@ mod tests {
 
     #[test]
     fn close_without_context_leaks_live_names() {
-        use nerust_glwrap::CurrentContext;
+        use nerust_glwrap::Current;
         let mut view = FrameView::new();
-        assert!(view.close(CurrentContext::assert_current(false)).is_empty());
+        assert!(view.close(Current::assert_current(false)).is_empty());
         let mut live = FrameView::new();
         live.frame_texture = 7;
         live.palette_texture = 8;
-        let leaked = live.close(CurrentContext::assert_current(false));
+        let leaked = live.close(Current::assert_current(false));
         assert_eq!(leaked.len(), 2);
         assert_eq!(live.frame_texture, 0);
     }

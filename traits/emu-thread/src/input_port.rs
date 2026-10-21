@@ -1,5 +1,5 @@
 //! GUI/emu thread-shared input endpoints behind [`InputPort`].
-//! Moved from `traits/input::profile` so input traits stay topology-pure.
+//! Mailbox transport implementing the core-facing input receiver contract.
 
 use std::sync::{
     Arc, Mutex,
@@ -7,7 +7,7 @@ use std::sync::{
 };
 
 use nerust_input_traits::{
-    BufferError, InputResources, InputStateBuffer, InputValue, UnifiedFieldMap,
+    BufferError, InputReceiver, InputResources, InputStateBuffer, InputValue, UnifiedFieldMap,
 };
 
 /// Shared-state factory behind the split endpoints.
@@ -200,6 +200,13 @@ impl EmuInput {
     }
 }
 
+impl InputReceiver for EmuInput {
+    fn receive(&mut self) -> &dyn InputStateBuffer {
+        self.take();
+        self.read_buffer()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,6 +274,37 @@ mod tests {
 
     fn bit_split() -> InputSplit {
         InputSplit::spawn_typed(BitBuffer::default)
+    }
+
+    #[test]
+    fn receiver_contract_delivers_latest_and_retains_snapshot() {
+        let split = bit_split();
+        let mut gui = split.gui_endpoint();
+        let mut receiver: Box<dyn InputReceiver> = Box::new(split.emu_endpoint());
+        let pressed = |receiver: &mut dyn InputReceiver| {
+            receiver
+                .receive()
+                .downcast_ref::<BitBuffer>()
+                .unwrap()
+                .pressed
+        };
+        assert!(!pressed(&mut *receiver));
+        gui.set(0, InputValue::Digital(true)).unwrap();
+        // Staging alone is not visible to the receiver.
+        assert!(!pressed(&mut *receiver));
+        gui.publish();
+        assert!(pressed(&mut *receiver));
+        assert!(pressed(&mut *receiver));
+        // Multiple pending publications coalesce to the latest full state.
+        gui.set(0, InputValue::Digital(false)).unwrap();
+        gui.publish();
+        gui.set(0, InputValue::Digital(true)).unwrap();
+        gui.publish();
+        assert!(pressed(&mut *receiver));
+        gui.clear();
+        gui.publish();
+        assert!(!pressed(&mut *receiver));
+        assert!(!pressed(&mut *receiver));
     }
 
     /// Test-only resources: `InputSplit::from_resources` is the single

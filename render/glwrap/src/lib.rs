@@ -3,7 +3,7 @@ mod error;
 pub mod raw;
 pub mod vertex;
 
-pub use context::{Current, CurrentContext, DeletionPolicy, GlObject, ScopeGuard};
+pub use context::{Current, DeletionPolicy, GlObject, ScopeGuard};
 pub use error::Error as GlError;
 /// Re-exported for typed test construction; production reads kinds from drains.
 pub use error::ErrorKind as GlErrorKind;
@@ -25,7 +25,7 @@ use self::{
 };
 
 /// Per-call drain in debug builds; release no-op to avoid a pipeline stall.
-/// Release builds rely on the batched [`check_frame`] drain once per frame.
+/// Release builds rely on [`check_frame`] at transaction boundaries.
 #[cfg(debug_assertions)]
 fn gl_error_handle<T, F: FnMut() -> T>(mut func: F) -> Result<T, Error> {
     let result = func();
@@ -55,8 +55,8 @@ fn gl_get_error() -> Result<(), Error> {
     Ok(())
 }
 
-/// Batched per-frame error drain. Call once at the end of a frame.
-/// In release this is the only check; in debug wrappers also drain per call.
+/// Batched error drain. Check before committing cached GL state and after
+/// frame/composite restoration. In debug wrappers also drain per call.
 pub fn check_frame() -> Result<(), Error> {
     gl_get_error()
 }
@@ -175,7 +175,7 @@ impl Shader {
 
     /// Delete the program when the context is current.
     /// `None` skips the GL call and reports failure (caller counts the orphan).
-    pub fn destroy_if_current(&mut self, current: Option<CurrentContext>) -> bool {
+    pub fn destroy_if_current(&mut self, current: Option<Current>) -> bool {
         if self.deleted {
             return false;
         }

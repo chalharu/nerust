@@ -10,7 +10,7 @@ use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
 use nerust_settings_core::model::app_state::RememberedWindowSize;
 #[cfg(test)]
 use std::path::PathBuf;
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::ElementState,
@@ -162,7 +162,7 @@ pub(crate) struct HostState {
     osd: OsdService,
     /// Last pushed menu signature plus window title, each with its own gate.
     chrome: ChromeSync,
-    /// Versioned frame cache: hot passes reuse the cached `Arc`.
+    /// Static chrome cache; tick metrics are never cached.
     frame_cache: FrameCache,
 }
 
@@ -215,9 +215,8 @@ impl HostState {
         })
     }
 
-    /// One capture per pass, versioned: hot passes reuse the cached
-    /// `Arc`, so per-frame clones happen only on content change.
-    pub(crate) fn frame_ctx(&mut self) -> Arc<FrameCtx> {
+    /// Fresh tick per pass, sharing static chrome until its sources change.
+    pub(crate) fn frame_ctx(&mut self) -> FrameCtx {
         self.frame_cache.frame_ctx(&self.session)
     }
 

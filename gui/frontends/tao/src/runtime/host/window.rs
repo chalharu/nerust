@@ -433,7 +433,7 @@ impl HostState {
             .window_size("main")
     }
 
-    pub(super) fn remember_fit_window_size(&self) {
+    pub(super) fn remember_fit_window_size(&mut self) {
         let Some(window) = self.windows.live() else {
             return;
         };

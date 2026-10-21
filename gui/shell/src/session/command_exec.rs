@@ -374,8 +374,7 @@ mod tests {
     fn coreless_save_and_load_map_to_empty_once() {
         use crate::session::test_util::test_session;
         let mut session = test_session();
-        session.emu.core = None;
-        session.emu.input = None;
+        session.emu.restore(None);
         let saved = session.run_save_op(SaveOp::CreateSlot);
         assert_eq!(saved.slot_failure, Some(SlotOpFailure::Empty));
         assert!(!saved.executed);
@@ -444,8 +443,7 @@ mod exec_cov_tests {
     #[test]
     fn save_op_maps_unavailable_besides_nocore() {
         let mut session = test_session();
-        session.emu.core = None;
-        session.emu.input = None;
+        session.emu.restore(None);
         let tick = TickMetrics::default();
         for op in [
             SaveOp::SaveActiveSlotOrNew,

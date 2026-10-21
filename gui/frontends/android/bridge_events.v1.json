@@ -1,6 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "nerust Android bridge events v1",
+  "x-settings-schema-version": 1,
+  "x-saf-chunk-bytes": 65536,
   "description": "Canonical schema for Kotlin→Rust bridge strings sent via MainActivity.onMenuAction. Kotlin builds every string with the BridgeContract builders; the Rust decoder in gui/frontends/android/src/android/menu.rs accepts v1 JSON only. The error-dialog ack travels on the dedicated onErrorDialogDismissed()V native.",
   "type": "object",
   "oneOf": [
@@ -73,6 +75,6 @@
   },
   "x-kotlin-constants": {
     "note": "Kotlin senders MUST use the single-source BridgeContract MenuAction/ControllerKey objects; the Rust decoder in gui/frontends/android/src/bridge_events.rs accepts v1 JSON only. A Rust unit test pins this schema version, action table, and key set.",
-    "file": "packaging/android/app/src/main/kotlin/io/github/chalharu/nerust/BridgeContract.kt"
+    "file": "packaging/android/app/src/main/kotlin/io/github/chalharu/nerust/BridgeWire.kt"
   }
 }

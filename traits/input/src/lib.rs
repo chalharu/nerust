@@ -11,8 +11,8 @@ pub use devices::{
     Controller, ControllerCollection, ControllerHub, FieldEntry, Port, SimplePort, StrobeTarget,
 };
 pub use events::{
-    BufferError, DigitalInputEvent, DigitalInputState, FieldId, InputEvent, InputStateBuffer,
-    InputValue, OpenBusReadResult,
+    BufferError, DigitalInputEvent, DigitalInputState, FieldId, InputEvent, InputReceiver,
+    InputStateBuffer, InputValue, OpenBusReadResult,
 };
 pub use ids::{
     AnalogControlId, AttachmentId, ControlId, DeviceKindId, DigitalControlId, PortId, ProfileId,

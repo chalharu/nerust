@@ -105,6 +105,10 @@ impl SessionHandle {
         self.media.persistence.slots()
     }
 
+    pub fn slots_arc(&self) -> std::sync::Arc<[nerust_persistence::model::StateSlotSummary]> {
+        self.media.persistence.slots_arc()
+    }
+
     pub fn active_slot_id(&self) -> Option<u64> {
         self.media.persistence.active_slot_id()
     }

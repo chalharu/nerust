@@ -1,7 +1,4 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::Arc;
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -138,8 +135,20 @@ impl std::error::Error for RendererError {
     }
 }
 
-/// In-frame OSD layer, cropped over the game image. `rgba` is shared;
-/// `generation` orders re-stages without a memcmp.
+/// In-frame OSD layer, cropped over the game image.
+/// Clones share immutable pixels and their construction-time digest.
+///
+/// Pixels cannot be replaced or mutated through the public API:
+/// ```compile_fail
+/// use nerust_render_traits::renderer::OsdLayer;
+/// let mut layer = OsdLayer::new(0, 0, 1, 1, vec![0; 4]);
+/// layer.rgba = vec![255; 4].into();
+/// ```
+/// ```compile_fail
+/// use nerust_render_traits::renderer::OsdLayer;
+/// let mut layer = OsdLayer::new(0, 0, 1, 1, vec![0; 4]);
+/// layer.rgba()[0] = 255;
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OsdLayer {
     /// Top-left corner in physical surface pixels.
@@ -148,100 +157,46 @@ pub struct OsdLayer {
     pub width: u32,
     pub height: u32,
     /// Row-major straight-alpha RGBA, `width * height * 4` bytes.
-    pub rgba: Arc<[u8]>,
-    /// Monotonic stage counter; zero means "unset" (struct literals, tests).
-    pub generation: u64,
-    /// FNV-1a content hash minted at stage time; skips the memcmp.
-    content_hash: u64,
-}
-
-/// Staging-owner generation clock. Ports stay pure: only the stager
-/// (the OSD rasterizer) owns a clock and mints generations.
-#[derive(Debug, Default)]
-pub struct GenerationClock {
-    next: AtomicU64,
-}
-
-impl GenerationClock {
-    /// Clock starting at generation 1; zero stays reserved for "unset".
-    pub fn new() -> Self {
-        Self {
-            next: AtomicU64::new(1),
-        }
-    }
-
-    /// Mint the next generation. Wraps past 2^64, skipping zero.
-    pub fn next(&self) -> u64 {
-        let mut generation = self.next.fetch_add(1, Ordering::Relaxed);
-        if generation == 0 {
-            generation = self.next.fetch_add(1, Ordering::Relaxed);
-        }
-        generation
-    }
+    rgba: Arc<[u8]>,
+    payload_hash: u64,
 }
 
 impl OsdLayer {
-    /// Unstaged layer: generation zero, hash still minted for the fast path.
+    /// Freeze the pixels and compute their digest once.
     pub fn new(x: u32, y: u32, width: u32, height: u32, rgba: Vec<u8>) -> Self {
-        Self::with_generation(x, y, width, height, rgba, 0)
-    }
-
-    /// Staged layer: the staging owner passes `clock.next()`.
-    pub fn with_generation(
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
-        generation: u64,
-    ) -> Self {
+        let payload_hash = content_hash(&rgba);
         Self {
             x,
             y,
             width,
             height,
-            content_hash: content_hash(&rgba),
             rgba: Arc::from(rgba),
-            generation,
+            payload_hash,
         }
     }
 
-    /// Stage-time content hash; zero only for empty input.
-    pub fn content_hash(&self) -> u64 {
-        self.content_hash
+    /// Read-only row-major straight-alpha RGBA pixels.
+    pub fn rgba(&self) -> &[u8] {
+        &self.rgba
     }
 
-    /// Cheap content equality: identity, generation, hash, then bytes.
+    /// Construction-time pixel digest, independent of mutable geometry.
+    pub fn content_hash(&self) -> u64 {
+        self.payload_hash
+    }
+
+    /// Exact visual equality: shared pixels skip hashing and byte comparison;
+    /// distinct buffers use the digest only to reject, never to prove equality.
     pub fn same_content(&self, other: Option<&Self>) -> bool {
         let Some(other) = other else {
             return false;
         };
-        if Arc::ptr_eq(&self.rgba, &other.rgba)
-            && self.x == other.x
-            && self.y == other.y
-            && self.width == other.width
-            && self.height == other.height
-        {
-            return true;
-        }
-        if self.generation != 0 && other.generation != 0 && self.generation == other.generation {
-            return true;
-        }
-        if self.x == other.x
-            && self.y == other.y
-            && self.width == other.width
-            && self.height == other.height
-            && self.content_hash != 0
-            && self.content_hash == other.content_hash
-        {
-            return true;
-        }
         self.x == other.x
             && self.y == other.y
             && self.width == other.width
             && self.height == other.height
-            && self.rgba.len() == other.rgba.len()
-            && self.rgba == other.rgba
+            && (Arc::ptr_eq(&self.rgba, &other.rgba)
+                || (self.payload_hash == other.payload_hash && self.rgba == other.rgba))
     }
 
     /// Option-level equality for layer caches on both sides.
@@ -330,7 +285,6 @@ impl OsdAnchor {
 }
 
 /// Viewport edge padding in physical pixels, on top of the layout margin.
-/// [`SafeInsets`] is the historical alias.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ViewInsets {
     pub top: u32,
@@ -338,9 +292,6 @@ pub struct ViewInsets {
     pub bottom: u32,
     pub left: u32,
 }
-
-/// Historical alias for [`ViewInsets`].
-pub type SafeInsets = ViewInsets;
 
 /// Base OSD font size from the client height. The 6px floor keeps tiny
 /// surfaces legible on both sides.
@@ -515,14 +466,15 @@ mod tests {
         assert!(!OsdLayer::same_option(Some(&base), None));
         let shifted = OsdLayer::new(9, 2, 2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(!base.same_content(Some(&shifted)));
-        let mut bytes = base.rgba.to_vec();
+        let mut bytes = base.rgba().to_vec();
         bytes[7] = 9;
         let edited = OsdLayer::new(1, 2, 2, 1, bytes);
+        assert_ne!(base.content_hash(), edited.content_hash());
         assert!(!base.same_content(Some(&edited)));
     }
 
     #[test]
-    fn layer_generation_skips_memcmp_for_shared_handles() {
+    fn layer_equality_skips_memcmp_for_shared_handles() {
         let base = OsdLayer::new(0, 0, 2, 1, vec![9; 8]);
         let shared = base.clone();
         assert!(Arc::ptr_eq(&base.rgba, &shared.rgba));
@@ -530,13 +482,11 @@ mod tests {
     }
 
     #[test]
-    fn layer_hash_skips_memcmp_for_distinct_buffers() {
-        // Same bytes, distinct allocations: the stage-time hash agrees.
-        let clock = GenerationClock::new();
-        let first = OsdLayer::with_generation(0, 0, 2, 1, vec![9; 8], clock.next());
-        let second = OsdLayer::with_generation(0, 0, 2, 1, vec![9; 8], clock.next());
+    fn layer_equality_compares_distinct_buffers() {
+        // Same bytes, distinct allocations.
+        let first = OsdLayer::new(0, 0, 2, 1, vec![9; 8]);
+        let second = OsdLayer::new(0, 0, 2, 1, vec![9; 8]);
         assert!(!Arc::ptr_eq(&first.rgba, &second.rgba));
-        assert_ne!(first.generation, second.generation);
         assert_eq!(first.content_hash(), second.content_hash());
         assert!(first.same_content(Some(&second)));
         assert!(OsdLayer::same_option(Some(&first), Some(&second)));
@@ -546,19 +496,36 @@ mod tests {
     }
 
     #[test]
-    fn generation_clock_mints_monotonic_nonzero() {
-        let clock = GenerationClock::new();
-        let first = clock.next();
-        let second = clock.next();
-        assert_ne!(first, 0);
-        assert!(second > first);
-        // Independent clocks never share state.
-        let other = GenerationClock::new();
-        assert_eq!(other.next(), first);
+    fn matching_digest_does_not_prove_byte_equality() {
+        let first = OsdLayer::new(0, 0, 2, 1, vec![9; 8]);
+        let mut collision = OsdLayer::new(0, 0, 2, 1, vec![8; 8]);
+        // Private test seam simulates a digest collision without exposing mutation.
+        collision.payload_hash = first.content_hash();
+        assert!(!first.same_content(Some(&collision)));
+        assert!(!OsdLayer::same_option(Some(&first), Some(&collision)));
+    }
+
+    #[test]
+    fn geometry_changes_preserve_the_immutable_payload_and_digest() {
+        let base = OsdLayer::new(0, 0, 2, 1, vec![9; 8]);
+        let mut changed = base.clone();
+        changed.x = 1;
+        assert!(!base.same_content(Some(&changed)));
+        assert!(Arc::ptr_eq(&base.rgba, &changed.rgba));
+        assert_eq!(changed.rgba(), &[9; 8]);
+        assert_eq!(changed.content_hash(), content_hash(changed.rgba()));
+        assert_eq!(base.content_hash(), changed.content_hash());
+        changed.x = base.x;
+        changed.width = 1;
+        changed.height = 2;
+        assert!(!base.same_content(Some(&changed)));
+    }
+
+    #[test]
+    fn layer_payload_is_thread_safe() {
         // Layers are Send + Sync: no Rc payload crosses threads.
         fn assert_thread_safe<T: Send + Sync>() {}
         assert_thread_safe::<OsdLayer>();
-        assert_thread_safe::<GenerationClock>();
     }
 
     #[test]

@@ -33,7 +33,7 @@ pub(super) const OVERLAY_SCALE_MIN: u8 = 50;
 pub(super) const OVERLAY_SCALE_MAX: u8 = 150;
 pub(super) const OVERLAY_OFFSET_MIN: i8 = -30;
 pub(super) const OVERLAY_OFFSET_MAX: i8 = 30;
-pub(super) const SETTINGS_SCHEMA_VERSION: u32 = 1;
+pub(super) use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 
 // Data model.
 
@@ -562,7 +562,7 @@ impl AndroidSettings {
     /// Stale entries from an older shape never validate.
     const DEFS_CACHE_VERSION: u64 = 1;
 
-    fn defs_fingerprint(&self) -> u64 {
+    pub(super) fn defs_fingerprint(&self) -> u64 {
         // FNV-1a over every field `setting_defs` reads; deterministic
         // across processes, unlike the default SipHash builder.
         fn push(hash: &mut u64, bytes: &[u8]) {

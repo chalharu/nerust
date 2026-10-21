@@ -29,21 +29,10 @@ pub(crate) enum FrontendEvent {
     ErrorDialogDismissed,
 }
 
-/// Bridge event schema version: decoder rejects anything else with a warn.
-pub(crate) const BRIDGE_EVENT_VERSION: u32 = 1;
+use crate::bridge_contract::*;
 
-pub(crate) const ACTION_EXIT: &str = "exit";
-pub(crate) const ACTION_LOAD_STATE: &str = "load_state";
-pub(crate) const ACTION_OPEN_ROM: &str = "open_rom";
-pub(crate) const ACTION_OPEN_SETTINGS: &str = "open_settings";
-pub(crate) const ACTION_ORIENTATION_CHANGED: &str = "orientation_changed";
-pub(crate) const ACTION_RESET: &str = "reset";
-pub(crate) const ACTION_SAVE_STATE: &str = "save_state";
-pub(crate) const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
-pub(crate) const ACTION_UNLOAD: &str = "unload";
-
-/// Canonical controller key table: the single source for the decoder, the JSON schema enum, and the
-/// Kotlin `KEY_*` constants. A new key fails loudly in all three pins, never as a silent drop.
+/// Typed controller-key mapping, checked against the shared JSON schema.
+/// Kotlin names are generated from that schema; new keys must also map here.
 pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, AbstractKey)] = &[
     ("button1", AbstractKey::Button1),
     ("button2", AbstractKey::Button2),
@@ -106,7 +95,7 @@ fn decode_json_menu_action(
     key: Option<&str>,
     pressed: Option<bool>,
 ) -> Option<FrontendEvent> {
-    if action == "controller" {
+    if action == ACTION_CONTROLLER {
         let (device_id, key, pressed) = match (device_id, key, pressed) {
             (Some(device_id), Some(key), Some(pressed)) => (device_id, key, pressed),
             _ => {
@@ -256,6 +245,14 @@ mod tests {
             doc["definitions"]["errorDialogDismissedEvent"]["properties"]["v"]["const"],
             BRIDGE_EVENT_VERSION
         );
+        assert_eq!(
+            doc["x-settings-schema-version"],
+            crate::bridge_contract::SETTINGS_SCHEMA_VERSION
+        );
+        assert_eq!(
+            doc["x-saf-chunk-bytes"],
+            crate::bridge_contract::SAF_CHUNK_BYTES
+        );
         let actions = doc["definitions"]["menuEvent"]["properties"]["action"]["enum"]
             .as_array()
             .expect("action enum must list every menu action");
@@ -263,6 +260,11 @@ mod tests {
             .iter()
             .map(|value| value.as_str().expect("action enum entries are strings"))
             .collect();
+        assert_eq!(
+            names.len(),
+            10,
+            "new actions must also be handled by the decoder"
+        );
         for action in [
             ACTION_EXIT,
             ACTION_LOAD_STATE,

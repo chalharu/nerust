@@ -62,16 +62,10 @@ impl StagingBuf {
         Self::default()
     }
 
-    /// Grow-only staging of at least `need` bytes; growth reserves without zero-fill.
-    /// Callers overwrite every staged byte before any read, so no uninit byte escapes.
+    /// Grow-only staging of at least `need` initialized bytes.
     pub fn staging(&mut self, need: usize) -> &mut [u8] {
         if self.0.len() < need {
-            self.0.reserve_exact(need - self.0.len());
-            // SAFETY: capacity reserved above; every caller fully
-            // overwrites `[..need]` before reading (fill/pack paths).
-            unsafe {
-                self.0.set_len(need);
-            }
+            self.0.resize(need, 0);
         }
         &mut self.0[..need]
     }
@@ -139,8 +133,7 @@ mod tests {
         assert_eq!(buf.staging(4).as_ptr(), ptr);
         assert_eq!(buf.len(), 8);
         assert_eq!(&buf.staging(8)[..4], &[0xAB; 4]);
-        // Growth reserves; the caller overwrites before reading.
-        buf.staging(10)[8..].fill(0);
+        // Growth initializes bytes before exposing a safe slice.
         assert_eq!(&buf.staging(10)[8..], &[0, 0]);
     }
 }

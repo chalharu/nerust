@@ -38,8 +38,7 @@ impl HostState {
         }
     }
 
-    /// Menu sync against one pass capture: scalars first, then the
-    /// fingerprint and the exact slice compare only on a scalar hit.
+    /// Menu sync using scalar state and immutable snapshot identities only.
     pub(crate) fn sync_menu_state(&mut self, ctx: &FrameCtx) {
         use super::chrome::ChromeScalars;
         let settings_open = self.settings_open();
@@ -51,18 +50,9 @@ impl HostState {
             settings_open,
             language,
             active_slot,
-            slots_len: ctx.slots().len(),
-            shortcuts_len: ctx.shortcuts().len(),
         };
-        // Cheap gate first: the fingerprint below runs only when the
-        // scalars already match, never on an obvious change.
-        let mut generation = None;
-        if self.chrome.cheap_same(&scalars) {
-            let fresh = MenuSig::fingerprint(ctx.slots(), ctx.shortcuts());
-            if self.chrome.menu_same(fresh, ctx.slots(), ctx.shortcuts()) {
-                return;
-            }
-            generation = Some(fresh);
+        if self.chrome.cheap_same(&scalars) && self.chrome.menu_same(ctx.slots(), ctx.shortcuts()) {
+            return;
         }
         let sig = MenuSig {
             loaded: scalars.loaded,
@@ -72,8 +62,6 @@ impl HostState {
             active_slot,
             slots: std::sync::Arc::clone(ctx.slots()),
             shortcuts: std::sync::Arc::clone(ctx.shortcuts()),
-            generation: generation
-                .unwrap_or_else(|| MenuSig::fingerprint(ctx.slots(), ctx.shortcuts())),
         };
         self.app_menu.update(crate::menu::MenuSync {
             loaded: sig.loaded,
@@ -178,9 +166,7 @@ impl HostState {
         let ctx = self.frame_ctx();
         self.sync_chrome(&ctx, true);
         Ok(SettingsResult {
-            renderer_needs_rebuild: plan.renderer_rebuild_required
-                || plan.session_rebuild_required
-                || plan.window_settings_changed,
+            renderer_needs_rebuild: plan.renderer_rebuild_required || plan.window_settings_changed,
             fullscreen_default_changed: plan.fullscreen_default_changed,
             scaling_changed: false,
         })
@@ -198,7 +184,7 @@ mod tests {
         let ctx = host.frame_ctx();
         host.sync_menu_state(&ctx);
         assert_eq!(support.menu.updates().len(), 1);
-        // Same capture: cheap gate plus fingerprint both hold.
+        // Same capture: scalar state and Arc identities both hold.
         let ctx = host.frame_ctx();
         host.sync_menu_state(&ctx);
         assert_eq!(support.menu.updates().len(), 1);

@@ -71,7 +71,7 @@ pub(crate) fn create_core_and_adapter_with_inputs(
     };
     // The backend stays silent until `start`; the emu thread owns it after.
     speaker.start();
-    let core = GbaConsoleCore::new(emu_input);
+    let core = GbaConsoleCore::new(Box::new(emu_input));
     Ok(CoreParts {
         core: Box::new(core),
         audio: speaker,

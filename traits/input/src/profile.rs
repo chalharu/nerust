@@ -4,7 +4,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use super::{
     devices::ControllerCollection,
-    events::{InputStateBuffer, InputValue},
+    events::InputStateBuffer,
     ids::{AttachmentId, ControlId, DeviceKindId, ProfileId},
 };
 
@@ -228,7 +228,7 @@ pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
 }
 
 /// Init-time factory output: field map plus a buffer factory.
-/// Thread endpoints live behind `nerust_emu_thread::InputPort`; this stays thread-free.
+/// Endpoint construction belongs to the caller; this stays transport-free.
 pub struct InputResources {
     field_map: UnifiedFieldMap,
     new_buffer: BufferFactory,
@@ -254,39 +254,10 @@ impl InputResources {
         &self.field_map
     }
 
-    /// Replace the field map with revalidation: field indices must be
-    /// unique, so two controls can never alias one absolute field.
-    pub fn replace_field_map(
-        &mut self,
-        next: HashMap<(AttachmentId, ControlId), usize>,
-    ) -> Result<(), CreateSplitError> {
-        let mut owner = std::collections::HashMap::with_capacity(next.len());
-        for ((attachment, _), field) in &next {
-            if let Some(first) = owner.insert(*field, *attachment) {
-                return Err(CreateSplitError::SlotConflict {
-                    a: first,
-                    b: *attachment,
-                });
-            }
-        }
-        self.field_map = next;
-        Ok(())
-    }
-
     /// Single move-out for the endpoint constructor: the map plus the
-    /// factory travel together into `InputSplit`, never separately.
+    /// factory travel together, never separately.
     pub fn into_parts(self) -> (UnifiedFieldMap, BufferFactory) {
         (self.field_map, self.new_buffer)
-    }
-
-    /// Write one absolute field through a fresh buffer (init-time helper).
-    pub fn probe_set(
-        &self,
-        field: usize,
-        value: InputValue,
-    ) -> Result<(), super::events::BufferError> {
-        let mut buf = (self.new_buffer)();
-        buf.set(field, value)
     }
 }
 
@@ -496,7 +467,7 @@ mod tests {
     }
 
     #[test]
-    fn resources_probe_set_and_map_access() {
+    fn resources_map_and_buffer_factory_access() {
         use crate::{BufferError, InputStateBuffer};
         #[derive(Debug, Default)]
         struct Bit;
@@ -523,7 +494,7 @@ mod tests {
                 }
             }
         }
-        let mut resources = InputResources::new(
+        let resources = InputResources::new(
             HashMap::from([(
                 (
                     AttachmentId::new("test.p1"),
@@ -533,37 +504,14 @@ mod tests {
             )]),
             Box::new(|| Box::new(Bit) as Box<dyn InputStateBuffer>),
         );
-        assert!(resources.probe_set(0, InputValue::Digital(true)).is_ok());
-        assert!(resources.probe_set(9, InputValue::Digital(true)).is_err());
-        assert_eq!(resources.field_map().len(), 1);
-        // Revalidation refuses aliased fields; disjoint maps replace cleanly.
-        let mut dup = HashMap::from([
-            (
-                (
-                    AttachmentId::new("test.p1"),
-                    ControlId::digital(DigitalControlId::new("test.a")),
-                ),
-                0,
-            ),
-            (
-                (
-                    AttachmentId::new("test.p1"),
-                    ControlId::digital(DigitalControlId::new("test.b")),
-                ),
-                0,
-            ),
-        ]);
-        assert!(resources.replace_field_map(dup.clone()).is_err());
-        dup.remove(&(
-            AttachmentId::new("test.p1"),
-            ControlId::digital(DigitalControlId::new("test.b")),
-        ));
-        resources.replace_field_map(dup).unwrap();
         assert_eq!(resources.field_map().len(), 1);
         // Single move-out: the map plus the factory travel together.
         let (map, factory) = resources.into_parts();
         assert_eq!(map.len(), 1);
-        assert!((factory)().downcast_ref::<Bit>().is_some());
+        let mut buffer = factory();
+        assert!(buffer.downcast_ref::<Bit>().is_some());
+        assert!(buffer.set(0, InputValue::Digital(true)).is_ok());
+        assert!(buffer.set(9, InputValue::Digital(true)).is_err());
         let port = SimplePort::new(0, "test.p1");
         let _ = (&port as &dyn Port).port_id();
         let mut target = ProbePadTarget;

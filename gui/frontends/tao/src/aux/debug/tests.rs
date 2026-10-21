@@ -428,10 +428,9 @@ fn uishell_headless_build_pump_relayout_draw() {
         &mut messages,
     );
     assert!(messages.is_empty());
-    shell.push_message(DebugMessage::RefreshPressed);
     let invalidated = AtomicBool::new(true);
     shell.process_messages(
-        vec![DebugMessage::FollowPcToggle],
+        [DebugMessage::RefreshPressed, DebugMessage::FollowPcToggle],
         &mut backend,
         &invalidated,
     );

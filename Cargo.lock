@@ -3411,7 +3411,6 @@ name = "nerust_android"
 version = "0.1.0-dev"
 dependencies = [
  "android_logger",
- "base64",
  "jni 0.22.4",
  "log",
  "nerust_core_traits",
@@ -3487,7 +3486,6 @@ dependencies = [
  "crc",
  "log",
  "nerust_core_traits",
- "nerust_emu_thread",
  "nerust_gba_settings",
  "nerust_input_traits",
  "nerust_render_traits",
@@ -3506,7 +3504,6 @@ dependencies = [
 name = "nerust_gba_device"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_emu_thread",
  "nerust_input_traits",
 ]
 
@@ -3548,7 +3545,6 @@ dependencies = [
  "crc",
  "log",
  "nerust_core_traits",
- "nerust_emu_thread",
  "nerust_gbc_settings",
  "nerust_input_traits",
  "nerust_render_traits",
@@ -3564,7 +3560,6 @@ dependencies = [
 name = "nerust_gbc_device"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_emu_thread",
  "nerust_input_traits",
 ]
 
@@ -3685,7 +3680,6 @@ name = "nerust_gui_viewmodel"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
- "nerust_emu_thread",
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_settings_core",
@@ -3731,7 +3725,6 @@ dependencies = [
  "hound",
  "log",
  "nerust_core_traits",
- "nerust_emu_thread",
  "nerust_input_traits",
  "nerust_render_traits",
  "nerust_serialize",
@@ -3749,7 +3742,6 @@ dependencies = [
 name = "nerust_nes_device"
 version = "0.1.0-dev"
 dependencies = [
- "nerust_emu_thread",
  "nerust_input_traits",
 ]
 

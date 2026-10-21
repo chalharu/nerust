@@ -19,7 +19,6 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
-use nerust_frontend_kernel::SnapshotCache;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
@@ -47,7 +46,6 @@ pub(crate) struct State {
     session: SessionHandle,
     ctx: FrontendContext,
     renderer_reload_pending: bool,
-    snapshot_cache: SnapshotCache<SettingsSnapshot>,
 }
 
 impl State {
@@ -74,7 +72,6 @@ impl State {
             session,
             ctx,
             renderer_reload_pending: false,
-            snapshot_cache: SnapshotCache::default(),
         }
     }
 
@@ -215,10 +212,7 @@ impl SessionControl for State {
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
         let plan = self.session.apply_settings(settings)?;
-        if plan.renderer_rebuild_required
-            || plan.session_rebuild_required
-            || plan.window_settings_changed
-        {
+        if plan.renderer_rebuild_required || plan.window_settings_changed {
             self.renderer_reload_pending = true;
         }
         Ok(SettingsResult {
@@ -229,7 +223,7 @@ impl SessionControl for State {
     }
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
-        if plan.session_rebuild_required || plan.window_settings_changed {
+        if plan.renderer_rebuild_required || plan.window_settings_changed {
             self.renderer_reload_pending = true;
         }
         Ok(SettingsResult {
@@ -265,15 +259,9 @@ impl State {
         self.session.settings_snapshot()
     }
 
-    /// Eq-gated snapshot share for per-frame readers: steady frames skip
-    /// the full-snapshot clone behind one `Arc`.
-    pub(crate) fn settings_arc(&mut self) -> Arc<SettingsSnapshot> {
-        let Self {
-            session,
-            snapshot_cache,
-            ..
-        } = self;
-        snapshot_cache.get(session.settings_snapshot())
+    /// Share the authoritative session allocation without structural comparison.
+    pub(crate) fn settings_arc(&self) -> Arc<SettingsSnapshot> {
+        self.session.settings_arc()
     }
 }
 
@@ -591,44 +579,6 @@ mod tests {
         assert!(labels.iter().any(|label| label == "Save Active Slot (F2)"));
         assert!(labels.iter().any(|label| label == "Open Debugger"));
         assert!(!labels.iter().any(|label| label.contains("(F4)")));
-    }
-
-    fn test_snapshot() -> SettingsSnapshot {
-        SettingsSnapshot {
-            shared: nerust_settings_core::model::shared::DesktopSharedSettings::default(),
-            local: nerust_settings_core::model::local::HostBackendLocalSettings::default(),
-            app_state: nerust_settings_core::model::app_state::DesktopAppState::default(),
-        }
-    }
-
-    #[test]
-    fn snapshot_cache_reuses_arc_on_steady_frames() {
-        let mut cache = SnapshotCache::default();
-        let snapshot = test_snapshot();
-        let first = cache.get(&snapshot);
-        let second = cache.get(&snapshot);
-        // Generation gate: no clone, same allocation shared.
-        assert!(std::sync::Arc::ptr_eq(&first, &second));
-        assert_eq!(std::sync::Arc::strong_count(&first), 3);
-    }
-
-    #[test]
-    fn snapshot_cache_reclones_on_change() {
-        let mut cache = SnapshotCache::default();
-        let snapshot = test_snapshot();
-        let first = cache.get(&snapshot);
-        let mut changed = snapshot.clone();
-        // Force a real change through the notification toggle.
-        changed.local.notifications.status_enabled = !snapshot.local.notifications.status_enabled;
-        let second = cache.get(&changed);
-        assert!(!std::sync::Arc::ptr_eq(&first, &second));
-        assert_eq!(
-            second.local.notifications.status_enabled,
-            changed.local.notifications.status_enabled
-        );
-        // Steady again: gate re-arms on the new generation.
-        let third = cache.get(&changed);
-        assert!(std::sync::Arc::ptr_eq(&second, &third));
     }
 
     #[test]

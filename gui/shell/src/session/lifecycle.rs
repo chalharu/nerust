@@ -71,23 +71,8 @@ impl SessionHandle {
         {
             log::warn!("mapper save flush before close failed: {error}");
         }
-        // Reload from the manager before persisting, so pending changes
-        // are not overwritten by a stale snapshot.
-        match self.settings.manager.reload() {
-            Ok(snapshot) => {
-                self.settings.snapshot = snapshot;
-            }
-            Err(error) => {
-                log::warn!("settings reload before exit failed: {error}");
-            }
-        }
-        if let Err(error) = self
-            .settings
-            .manager
-            .save_snapshot(self.settings.snapshot.clone())
-        {
-            log::warn!("settings save on exit failed: {error}");
-        }
+        // Settings are persisted at their mutation boundary. Reloading or saving
+        // again here could overwrite committed app state with an older copy.
     }
 
     pub(crate) fn drain_notifications(&mut self) -> Vec<super::notification::UiNotification> {

@@ -81,15 +81,27 @@ impl GlRenderer {
         &mut self,
         profile: &VideoRenderProfile,
     ) -> Result<(FrameView, crate::osd_view::OsdView), RendererError> {
+        // Building temporaries changes live GL bindings even if loading fails.
+        self.frame.set_current_program(None);
         let mut frame = FrameView::new();
         frame.set_use_vao(true);
-        let is_gles = frame
-            .load_frame(profile)
-            .map_err(nerust_render_traits::renderer::RendererError::from)?;
+        let is_gles = match frame.load_frame(profile) {
+            Ok(is_gles) => is_gles,
+            Err(e) => {
+                let _ = frame.close(nerust_glwrap::Current::assert_current(true));
+                return Err(e.into());
+            }
+        };
         let mut osd = crate::osd_view::OsdView::new();
         osd.set_osd_policy(self.osd_policy.create_policy());
         osd.reset_for_load();
         osd.init_osd(is_gles);
+        if let Err(e) = crate::frame_view::ok_gl(nerust_glwrap::check_frame()) {
+            let current = nerust_glwrap::Current::assert_current(true);
+            let _ = frame.close(current);
+            let _ = osd.close(current);
+            return Err(e.into());
+        }
         osd.set_osd_layer(self.osd_staged.clone());
         Ok((frame, osd))
     }
@@ -97,7 +109,7 @@ impl GlRenderer {
     /// Load path shared by attach and profile rebuilds: tear down while
     /// current, then build the frame and overlay views on the profile.
     fn on_load(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        let _ = self.on_close(nerust_glwrap::CurrentContext::assert_current(true));
+        let _ = self.on_close(nerust_glwrap::Current::assert_current(true));
         debug_assert_eq!(self.frame.frame_texture, 0);
         self.surface.reset();
         let (frame, osd) = self.fresh_views(profile)?;
@@ -114,7 +126,7 @@ impl GlRenderer {
             .as_ref()
             .map(|ctx| ctx.is_current())
             .unwrap_or(false);
-        let report = self.on_close(nerust_glwrap::CurrentContext::assert_current(current));
+        let report = self.on_close(nerust_glwrap::Current::assert_current(current));
         self.log_close_report(&report);
     }
 
@@ -198,7 +210,7 @@ impl GlRenderer {
             .as_ref()
             .map(|ctx| ctx.is_current())
             .unwrap_or(false);
-        let current = nerust_glwrap::CurrentContext::assert_current(current);
+        let current = nerust_glwrap::Current::assert_current(current);
         if current.is_none() {
             log::debug!("GlRenderer: detach without current context");
         }
@@ -212,8 +224,9 @@ impl GlRenderer {
     /// and reports each live name as leaked instead of deleting blind.
     fn on_close(
         &mut self,
-        current: Option<nerust_glwrap::CurrentContext>,
+        current: Option<nerust_glwrap::Current>,
     ) -> crate::surface_view::CloseReport {
+        self.last_palette = None;
         let mut report = crate::surface_view::CloseReport::default();
         for name in self.frame.close(current) {
             report.leak(name);
@@ -248,7 +261,14 @@ impl GlRenderer {
         // Memoized viewport skips the per-frame `GetIntegerv`;
         // empty stages skip all GL work inside the overlay view.
         let viewport = surface.game_viewport();
-        let (outcome, applied) = osd.draw_osd(surface_w, surface_h, frame, viewport)?;
+        let (outcome, applied) = match osd.draw_osd(surface_w, surface_h, frame, viewport) {
+            Ok(result) => result,
+            Err(e) => {
+                frame.set_current_program(None);
+                surface.reset();
+                return Err(e);
+            }
+        };
         if let Some(viewport) = applied {
             surface.set_game_viewport(viewport);
         }
@@ -286,6 +306,8 @@ impl GlRenderer {
         if surface.resize_hit(viewport_width, viewport_height, strip) {
             return Ok(());
         }
+        // A partial GL failure may already have changed the viewport.
+        surface.reset();
         let game_box = frame.apply_viewport(viewport_width, viewport_height, strip)?;
         surface.record_resize(viewport_width, viewport_height, strip, game_box);
         Ok(())
@@ -326,11 +348,12 @@ impl GlRenderer {
             return RenderResult::Error;
         }
         if let Some(next) = frame_buffer.palette_as_rgba8() {
-            if palette_needs_upload(self.last_palette, next)
-                && let Err(e) = self.frame.update_palette_texture(&next)
-            {
-                log::warn!("GlRenderer: palette upload failed: {e}");
-                return RenderResult::Error;
+            if palette_needs_upload(self.last_palette, next) {
+                self.last_palette = None;
+                if let Err(e) = self.frame.update_palette_texture(&next) {
+                    log::warn!("GlRenderer: palette upload failed: {e}");
+                    return RenderResult::Error;
+                }
             }
             self.last_palette = Some(next);
         }
@@ -373,6 +396,12 @@ impl GlRenderer {
             Err(e) => {
                 log::debug!("GlRenderer: OSD composite failed: {e}");
             }
+        }
+        if let Err(e) = nerust_glwrap::check_frame() {
+            self.frame.set_current_program(None);
+            self.surface.reset();
+            log::warn!("GlRenderer: composite boundary failed: {e}");
+            return RenderResult::Error;
         }
         let (Some(ctx), Some(surf)) = (self.context.as_ref(), self.gl_surface.as_ref()) else {
             return RenderResult::Skipped;
@@ -440,10 +469,6 @@ impl StripSink for GlRenderer {
 
 impl ProfileSwitch for GlRenderer {
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        self.render_profile = profile.clone();
-        // The pre-GLES3 pack buffer only ever grows per frame; a
-        // profile change is the one safe point to give memory back.
-        self.tight.shrink_to_fit();
         let Some(ref ctx) = self.context else {
             return Err(RendererError::not_attached("update"));
         };
@@ -456,6 +481,9 @@ impl ProfileSwitch for GlRenderer {
         self.close_live_views();
         self.frame = frame;
         self.osd = osd;
+        self.render_profile = profile.clone();
+        // Reset the active length, retaining capacity across profile switches.
+        self.tight.clear();
         Ok(())
     }
 }
@@ -487,13 +515,11 @@ fn upload_frame(
             })),
         }
     } else {
-        if tight.len() < layout.need {
-            tight.reserve_exact(layout.need - tight.len());
-            // SAFETY: `pack_rows_stripped` overwrites all `need` bytes below.
-            unsafe {
-                tight.set_len(layout.need);
-            }
-        }
+        let packed_need = layout
+            .height
+            .checked_mul(layout.row_bytes)
+            .ok_or(FrameError::DimensionsOverflow { have: data.len() })?;
+        tight.resize(packed_need, 0);
         pack_rows_stripped(data, layout.stride, layout.height, tight, layout.row_bytes);
         frame.on_update(tight, width_i32)
     }
@@ -715,7 +741,7 @@ mod tests {
         assert!(OsdLayer::same_option(Some(&layer), Some(&layer.clone())));
         assert!(!OsdLayer::same_option(
             Some(&layer),
-            Some(&OsdLayer::new(1, 0, 2, 1, layer.rgba.to_vec()))
+            Some(&OsdLayer::new(1, 0, 2, 1, layer.rgba().to_vec()))
         ));
         assert!(OsdLayer::same_option(None, None));
         assert!(!OsdLayer::same_option(Some(&layer), None));
@@ -755,7 +781,7 @@ mod tests {
             inside.y,
             inside.width,
             inside.height,
-            inside.rgba.to_vec(),
+            inside.rgba().to_vec(),
         );
         assert_eq!(
             checked_osd_rect(&outside, 64, 64),
@@ -886,7 +912,10 @@ mod tests {
         // Memo miss without a program fails typed after the pure fit.
         frame.logical_width = 64;
         frame.logical_height = 64;
+        surface.record_resize(32, 32, strip, [0, 0, 32, 32]);
         assert!(super::GlRenderer::resize_views(&mut frame, &mut surface, 64, 64, strip).is_err());
+        assert!(!surface.resize_hit(32, 32, strip));
+        assert_eq!(surface.game_viewport(), None);
         // Recorded inputs hit the memo and skip all GL work.
         surface.record_resize(64, 64, strip, [0, 0, 64, 64]);
         assert!(super::GlRenderer::resize_views(&mut frame, &mut surface, 64, 64, strip).is_ok());
@@ -941,8 +970,51 @@ mod tests {
         };
         let mut tight = Vec::new();
         assert!(super::upload_frame(&mut tight_frame, &mut tight, &padded, &[7; 12]).is_err());
-        // Tight staging holds the packed row; the tail stays zeroed.
-        assert_eq!(&tight[..8], &[7; 8]);
+        // Only initialized packed pixels remain, never source padding.
+        assert_eq!(tight, [7; 8]);
+        let capacity = tight.capacity();
+        let smaller = FrameLayout {
+            width: 1,
+            row_bytes: 4,
+            ..padded
+        };
+        assert!(super::upload_frame(&mut tight_frame, &mut tight, &smaller, &[9; 12]).is_err());
+        assert_eq!(tight, [9; 4]);
+        assert_eq!(tight.capacity(), capacity);
+    }
+
+    #[test]
+    fn tight_upload_packs_all_rows_and_rejects_overflow() {
+        use crate::layout::{FrameError, FrameLayout};
+        use nerust_render_traits::logical::LogicalSize;
+        let source = [1, 2, 3, 4, 99, 99, 99, 99, 5, 6, 7, 8, 88, 88, 88, 88];
+        let layout = FrameLayout::checked(
+            LogicalSize {
+                width: 1,
+                height: 2,
+            },
+            4,
+            8,
+            source.len(),
+            false,
+        )
+        .unwrap();
+        let mut frame = FrameView::new();
+        let mut tight = vec![255; 32];
+        // Packing completes before the missing program refuses the GL upload.
+        assert!(super::upload_frame(&mut frame, &mut tight, &layout, &source).is_err());
+        assert_eq!(tight, [1, 2, 3, 4, 5, 6, 7, 8]);
+        let overflow = FrameLayout {
+            height: usize::MAX,
+            ..layout
+        };
+        assert!(matches!(
+            super::upload_frame(&mut frame, &mut tight, &overflow, &source),
+            Err(super::ViewError::Frame(
+                FrameError::DimensionsOverflow { .. }
+            ))
+        ));
+        assert_eq!(tight, [1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]
@@ -1061,14 +1133,53 @@ mod tests {
             nerust_render_traits::PixelFormat::Rgba,
         );
         assert!(matches!(renderer.render(&empty), RenderResult::Skipped));
-        assert!(renderer.update_render_profile(&profile).is_err());
+        let mut rejected = profile.clone();
+        rejected.logical_size.width = usize::MAX;
+        assert!(renderer.update_render_profile(&rejected).is_err());
+        assert_eq!(
+            renderer.render_profile.logical_size.width,
+            profile.logical_size.width
+        );
         renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
         renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
         let (frame, osd) = renderer.fresh_views(&profile).unwrap();
         renderer.frame = frame;
         renderer.osd = osd;
         renderer.context = Some(current.context);
-        renderer.update_render_profile(&profile).unwrap();
+        let old_texture = renderer.frame.frame_texture;
+        let old_osd = renderer.osd.osd_texture;
+        renderer.last_palette = Some([0x12; 256]);
+        renderer.tight = vec![7; 12];
+        let tight_capacity = renderer.tight.capacity();
+        assert!(renderer.update_render_profile(&rejected).is_err());
+        assert_eq!(
+            renderer.render_profile.logical_size.width,
+            profile.logical_size.width
+        );
+        assert_eq!(renderer.frame.frame_texture, old_texture);
+        assert_eq!(renderer.osd.osd_texture, old_osd);
+        assert_eq!(renderer.last_palette, Some([0x12; 256]));
+        assert_eq!(renderer.tight, vec![7; 12]);
+        // Failed temporary construction changed bindings: the old view must rebind.
+        renderer
+            .frame
+            .on_update(&vec![0x80; 64 * 64 * 4], 64)
+            .unwrap();
+        let mut next = profile.clone();
+        next.logical_size.width = 32;
+        renderer.update_render_profile(&next).unwrap();
+        assert_eq!(
+            renderer.render_profile.logical_size.width,
+            next.logical_size.width
+        );
+        assert_eq!(renderer.frame.logical_width, 32);
+        assert_eq!(renderer.last_palette, None);
+        assert!(renderer.tight.is_empty());
+        assert_eq!(renderer.tight.capacity(), tight_capacity);
+        // Attach/load and teardown share the palette invalidation path.
+        renderer.last_palette = Some([0x12; 256]);
+        renderer.on_load(&profile).unwrap();
+        assert_eq!(renderer.last_palette, None);
         renderer.resize(SurfaceSize::new(64, 64));
         // Invalid surface skips instead of truncating.
         renderer.resize(SurfaceSize::new(u32::MAX, u32::MAX));
@@ -1080,13 +1191,66 @@ mod tests {
         renderer.detach();
     }
 
+    /// Invalid GL operations must fail in release too, without committing caches.
+    #[cfg(unix)]
+    #[test]
+    fn gl_errors_propagate_before_cache_commit() {
+        use nerust_glwrap::Current;
+        let _serial = crate::test_display::lock_display();
+        let Some(display) = crate::test_display::TestDisplay::connect() else {
+            return;
+        };
+        let Some(_current) = display.make_pbuffer_current(64, 64) else {
+            return;
+        };
+        FrameView::load_with(super::proc_loader(&display.display));
+        let mut frame = FrameView::new();
+        frame.set_use_vao(true);
+        let is_gles = frame.load_frame(&gl_test_profile()).unwrap();
+        // TexSubImage rejects a negative width; on_update must propagate its drain.
+        frame.logical_width = -1;
+        assert!(frame.on_update(&vec![0x80; 64 * 64 * 4], 64).is_err());
+        frame.logical_width = 64;
+        frame.on_update(&vec![0x80; 64 * 64 * 4], 64).unwrap();
+
+        let mut osd = OsdView::new();
+        osd.init_osd(is_gles);
+        osd.set_osd_layer(Some(gl_test_layer()));
+        // Claim the placeholder is full sized: the blit exceeds its actual storage.
+        osd.osd_size = (64, 64);
+        assert!(osd.draw_osd(64, 64, &mut frame, None).is_err());
+        assert!(osd.osd_dirty);
+        assert_eq!(osd.osd_prev, None);
+        osd.osd_size = (1, 1);
+        osd.draw_osd(64, 64, &mut frame, None).unwrap();
+        // An invalid uniform must not become a successful matrix/sampler memo.
+        let matrix = osd.osd_matrix;
+        osd.osd_matrix = Some(i32::MAX);
+        osd.last_osd_matrix = None;
+        assert!(osd.draw_osd(64, 64, &mut frame, None).is_err());
+        assert_eq!(osd.last_osd_matrix, None);
+        osd.osd_matrix = matrix;
+        osd.draw_osd(64, 64, &mut frame, None).unwrap();
+        let sampler = osd.osd_texture_loc;
+        osd.osd_texture_loc = Some(i32::MAX);
+        osd.last_osd_sampler = None;
+        assert!(osd.draw_osd(64, 64, &mut frame, None).is_err());
+        assert_eq!(osd.last_osd_sampler, None);
+        osd.osd_texture_loc = sampler;
+        osd.draw_osd(64, 64, &mut frame, None).unwrap();
+        assert!(nerust_glwrap::check_frame().is_ok());
+        let current = Current::assert_current(true);
+        assert!(osd.close(current).is_empty());
+        assert!(frame.close(current).is_empty());
+    }
+
     /// Full view drive on a real context (Xvfb + llvmpipe in CI). Skips without a display so
     /// headless runs stay green. Drives the three views directly: no facade stands between them.
     #[cfg(unix)]
     #[test]
     fn gl_views_full_drive() {
         use crate::osd_view::{OsdOutcome, OsdView};
-        use nerust_glwrap::CurrentContext;
+        use nerust_glwrap::Current;
 
         let _serial = crate::test_display::lock_display();
         let Some(display) = crate::test_display::TestDisplay::connect() else {
@@ -1106,7 +1270,7 @@ mod tests {
             frame.set_use_vao(true);
             // Load path: close stale, reset memo, build frame, init overlay.
             let load = |frame: &mut FrameView, osd: &mut OsdView, surface: &mut SurfaceView| {
-                let _ = frame.close(CurrentContext::assert_current(true));
+                let _ = frame.close(Current::assert_current(true));
                 surface.reset();
                 let is_gles = frame.load_frame(&profile).unwrap();
                 osd.reset_for_load();
@@ -1114,6 +1278,37 @@ mod tests {
             };
             load(&mut frame, &mut osd, &mut surface);
             load(&mut frame, &mut osd, &mut surface);
+            // Force the GLES2-style fallback even on desktop GL and prove the
+            // exact packed length/pixels via texture readback.
+            let unpack_row_length = frame.unpack_row_length;
+            frame.unpack_row_length = false;
+            let mut padded = vec![0xEE; 260 * 64];
+            for (row, bytes) in padded.chunks_exact_mut(260).enumerate() {
+                bytes[..256].fill(row as u8);
+            }
+            let layout = crate::layout::FrameLayout::checked(
+                profile.logical_size,
+                4,
+                260,
+                padded.len(),
+                false,
+            )
+            .unwrap();
+            let mut tight = Vec::new();
+            super::upload_frame(&mut frame, &mut tight, &layout, &padded).unwrap();
+            assert_eq!(tight.len(), 256 * 64);
+            let mut readback = vec![0; tight.len()];
+            nerust_glwrap::raw::get_tex_image(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                readback.as_mut_ptr().cast(),
+            )
+            .unwrap();
+            assert_eq!(readback, tight);
+            assert!(nerust_glwrap::check_frame().is_ok());
+            frame.unpack_row_length = unpack_row_length;
             frame.on_update(&vec![0x80; 64 * 64 * 4], 64).unwrap();
             assert_eq!(
                 super::GlRenderer::composite_osd(&mut osd, &mut frame, &mut surface, 64, 64)
@@ -1178,7 +1373,7 @@ mod tests {
                 nerust_render_traits::ReservedStrip::default(),
             )
             .unwrap();
-            let current = CurrentContext::assert_current(true);
+            let current = Current::assert_current(true);
             assert!(frame.close(current).is_empty());
             assert!(osd.close(current).is_empty());
             drop(frame);

@@ -51,7 +51,8 @@ pub(crate) fn create_core_and_adapter(
     speaker.start();
     let (accelerometer_handle, accelerometer_port) = accelerometer_channel();
     let (rumble_handle, rumble_port) = rumble_channel();
-    let core = GbcConsoleCore::with_peripherals(emu_input, accelerometer_port, rumble_port);
+    let core =
+        GbcConsoleCore::with_peripherals(Box::new(emu_input), accelerometer_port, rumble_port);
     let logical_size = LogicalSize {
         width: 160,
         height: 144,

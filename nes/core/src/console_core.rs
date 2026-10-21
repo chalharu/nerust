@@ -4,8 +4,7 @@ use nerust_core_traits::{
     debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
 };
-use nerust_emu_thread::EmuInput;
-use nerust_input_traits::{ControllerCollection, ControllerHub as _};
+use nerust_input_traits::{ControllerCollection, ControllerHub as _, InputReceiver};
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
@@ -24,7 +23,7 @@ unsafe impl Send for SendCore {}
 pub struct NesConsoleCore {
     core: SendCore,
     controller: ControllerCollection,
-    emu_input: EmuInput,
+    emu_input: Box<dyn InputReceiver>,
     paused: bool,
     /// Device sample rate for the APU resampler, stamped at load.
     /// Data only; the backend lives in the session layer.
@@ -53,7 +52,7 @@ impl NesConsoleCore {
     pub fn new(
         cartridge_data: CartridgeData,
         controller: ControllerCollection,
-        emu_input: EmuInput,
+        emu_input: Box<dyn InputReceiver>,
     ) -> Result<Self, CoreError> {
         let core = Core::new(cartridge_data).map_err(CoreError::Core)?;
         Ok(Self {
@@ -67,7 +66,7 @@ impl NesConsoleCore {
 
     /// Creates a NesConsoleCore with no ROM loaded.
     /// Call `load()` before `render_frame()`.
-    pub fn new_empty(controller: ControllerCollection, emu_input: EmuInput) -> Self {
+    pub fn new_empty(controller: ControllerCollection, emu_input: Box<dyn InputReceiver>) -> Self {
         Self {
             core: SendCore(None),
             controller,
@@ -97,12 +96,7 @@ impl NesConsoleCore {
         let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
 
         // Take latest input and sync to controller
-        self.emu_input.take();
-        if let Some(state) = self
-            .emu_input
-            .read_buffer()
-            .downcast_ref::<NesInputBuffer>()
-        {
+        if let Some(state) = self.emu_input.receive().downcast_ref::<NesInputBuffer>() {
             self.controller.sync_input(&state.0);
         }
 
@@ -315,7 +309,6 @@ mod tests {
     use std::collections::HashMap;
 
     use nerust_core_traits::{CoreConfig, debugger::Debugger as _};
-    use nerust_emu_thread::{EmuInput, InputPort as _, InputSplit};
     use nerust_input_traits::{
         Controller, ControllerCollection, OpenBusReadResult, Port, StrobeTarget,
     };
@@ -328,8 +321,53 @@ mod tests {
         nrom_test_data,
     };
 
-    fn test_emu_input() -> EmuInput {
-        InputSplit::spawn_typed(NesInputBuffer::default).emu_endpoint()
+    fn test_emu_input() -> Box<dyn InputReceiver> {
+        Box::<NesInputBuffer>::default()
+    }
+
+    #[test]
+    fn receiver_is_polled_once_per_frame_not_per_instruction() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        struct Receiver {
+            state: NesInputBuffer,
+            calls: Arc<AtomicUsize>,
+        }
+
+        impl InputReceiver for Receiver {
+            fn receive(&mut self) -> &dyn nerust_input_traits::InputStateBuffer {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                &self.state
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut core = NesConsoleCore::new(
+            nrom_test_data(),
+            ControllerCollection::new(vec![]),
+            Box::new(Receiver {
+                state: NesInputBuffer::default(),
+                calls: Arc::clone(&calls),
+            }),
+        )
+        .unwrap();
+        let mut frame = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0; 256]),
+            },
+        );
+        let mut audio = Vec::new();
+        core.render_frame(&mut frame, &mut audio).unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        core.step_instruction_cycles(&mut frame).unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        core.render_frame(&mut frame, &mut audio).unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
     }
 
     #[derive(Debug)]

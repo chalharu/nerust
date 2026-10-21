@@ -492,7 +492,7 @@ impl WindowExtend for Window {
         if w > 0 && h > 0 {
             let state = self.state();
             let _ = state
-                .borrow()
+                .borrow_mut()
                 .session
                 .update_window_size(w as u32, h as u32);
         }

@@ -6,7 +6,7 @@ use nerust_core_traits::{
     debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
 };
-use nerust_emu_thread::EmuInput;
+use nerust_input_traits::InputReceiver;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
@@ -30,7 +30,7 @@ struct LoadedGba {
 
 pub struct GbaConsoleCore {
     loaded: Option<LoadedGba>,
-    emu_input: EmuInput,
+    emu_input: Box<dyn InputReceiver>,
     paused: bool,
     /// Device sample rate for the APU resampler, stamped at load.
     /// Data only; the core never sees the backend.
@@ -38,7 +38,7 @@ pub struct GbaConsoleCore {
 }
 
 impl GbaConsoleCore {
-    pub fn new(emu_input: EmuInput) -> Self {
+    pub fn new(emu_input: Box<dyn InputReceiver>) -> Self {
         Self {
             loaded: None,
             emu_input,
@@ -47,7 +47,7 @@ impl GbaConsoleCore {
         }
     }
 
-    pub fn new_empty(emu_input: EmuInput) -> Self {
+    pub fn new_empty(emu_input: Box<dyn InputReceiver>) -> Self {
         Self::new(emu_input)
     }
 
@@ -87,10 +87,9 @@ impl GbaConsoleCore {
         frame_slot: &mut FrameBuffer,
         audio_out: &mut Vec<StereoSample>,
     ) -> Result<u64, CoreError> {
-        self.emu_input.take();
         let input = self
             .emu_input
-            .read_buffer()
+            .receive()
             .downcast_ref::<GbaInputBuffer>()
             .ok_or_else(|| CoreError::Core(Box::new(GbaLoadError::InvalidInputBuffer)))?
             .0;
@@ -385,13 +384,12 @@ mod tests {
     use std::collections::HashMap;
 
     use nerust_core_traits::CoreConfig;
-    use nerust_emu_thread::{EmuInput, InputPort as _, InputSplit};
 
     use super::*;
     use crate::{debugger::SPACE_MEMORY, input_types::GbaInputBuffer};
 
-    fn test_emu_input() -> EmuInput {
-        InputSplit::spawn_typed(GbaInputBuffer::default).emu_endpoint()
+    fn test_emu_input() -> Box<dyn InputReceiver> {
+        Box::<GbaInputBuffer>::default()
     }
 
     #[test]

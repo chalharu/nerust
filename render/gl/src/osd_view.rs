@@ -5,12 +5,12 @@ use std::ptr;
 
 use gl::types::GLint;
 use nerust_glwrap::{
-    CurrentContext, DeletionPolicy, Shader,
+    Current, DeletionPolicy, Shader,
     raw::{
         active_texture, bind_buffer, bind_vertex_array, blend_func, blend_func_separate,
-        delete_textures, disable, draw_arrays, enable, gen_textures, get_integer_u32, get_viewport,
-        is_enabled, tex_image_2d, tex_sub_image_2d, uniform_1i, uniform_matrix_4fv, use_program,
-        viewport,
+        check_frame, delete_textures, disable, draw_arrays, enable, gen_textures, get_integer_u32,
+        get_viewport, is_enabled, tex_image_2d, tex_sub_image_2d, uniform_1i, uniform_matrix_4fv,
+        use_program, viewport,
     },
 };
 use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
@@ -214,8 +214,6 @@ pub(crate) struct OsdView {
     pub(crate) osd_retry: Box<dyn OsdUploadPolicy>,
     pub(crate) osd_shader: Option<Shader>,
     pub(crate) osd_layer: Option<OsdLayer>,
-    /// Grow-only staging reused across OSD uploads (no steady allocs).
-    pub(crate) osd_upload_scratch: StagingBuf,
     /// Grow-only zeros reused for OSD clears (no steady allocs).
     pub(crate) osd_clear_scratch: StagingBuf,
     pub(crate) osd_matrix: Option<GLint>,
@@ -237,7 +235,6 @@ impl Default for OsdView {
             osd_retry: Box::new(BoundedUploadPolicy::new(MAX_OSD_UPLOAD_RETRIES)),
             osd_shader: None,
             osd_layer: None,
-            osd_upload_scratch: StagingBuf::new(),
             osd_clear_scratch: StagingBuf::new(),
             osd_matrix: None,
             last_osd_matrix: None,
@@ -274,7 +271,9 @@ impl OsdView {
         };
         let id = shader.id();
         if frame.current_program() != Some(id) {
+            frame.set_current_program(None);
             ok_gl(shader.use_program())?;
+            ok_gl(check_frame())?;
             frame.set_current_program(Some(id));
         }
         Ok(())
@@ -323,6 +322,7 @@ impl OsdView {
                         gl::FALSE,
                         identity.as_ptr(),
                     ))?;
+                    ok_gl(check_frame())?;
                     self.last_osd_matrix = Some(mat);
                 } else if self.osd_shader.is_some() {
                     // Structural matrix missing from the OSD program:
@@ -340,6 +340,7 @@ impl OsdView {
             && self.last_osd_sampler != Some(0)
         {
             ok_gl(uniform_1i(sampler, 0))?;
+            ok_gl(check_frame())?;
             self.last_osd_sampler = Some(0);
         }
         use_texture(0, self.osd_texture)?;
@@ -348,14 +349,15 @@ impl OsdView {
         // The memoized viewport skips the per-frame `GetIntegerv`.
         let _composite = CompositeGuard::fullscreen(surface_w, surface_h, game_viewport)?;
         let applied_viewport = Some(_composite.saved_viewport());
-        ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
-        // Guard drops here restoring game state; mark program unknown so
-        // the next game upload re-binds explicitly.
-        drop(_composite);
+        // Guard restoration must not leave a successful program memo on error.
         frame.set_current_program(None);
+        ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
+        // Guard drops here restoring game state; the program memo is unknown.
+        drop(_composite);
         // Explicit restore: rebind the game texture so the next frame
         // never samples the overlay.
         frame.restore_game_binding()?;
+        ok_gl(check_frame())?;
         Ok((OsdOutcome::Presented, applied_viewport))
     }
 
@@ -412,6 +414,7 @@ impl OsdView {
                 gl::UNSIGNED_BYTE,
                 ptr::null(),
             ))?;
+            ok_gl(check_frame())?;
             let _ = (w, h);
             self.osd_size = (surface_w, surface_h);
         }
@@ -432,8 +435,8 @@ impl OsdView {
             y: ly,
             w: lw,
             h: lh,
-            stride,
             need,
+            ..
         } = staged;
         let rect = (lx, ly, lw, lh);
         if self.osd_prev != Some(rect) {
@@ -441,26 +444,14 @@ impl OsdView {
                 let texture = self.osd_texture;
                 self.clear_rect(texture, surface_h, px, py, pw, ph)?;
             }
-            self.osd_prev = Some(rect);
         }
         let Some(layer) = self.osd_layer.as_ref() else {
             return Ok(());
         };
         let texture = self.osd_texture;
-        if layer.rgba.len() == need {
-            Self::blit_bytes(texture, surface_h, lx, ly, lw, lh, &layer.rgba[..need])?;
-            return Ok(());
-        }
-        {
-            let scratch = self.osd_upload_scratch.staging(need);
-            scratch.fill(0);
-            for (index, row) in layer.rgba.chunks_exact(stride).enumerate() {
-                scratch[index * stride..index * stride + stride].copy_from_slice(row);
-            }
-        }
-        // Re-borrow after the staging fill: the scratch grew at most once above.
-        let staged: &[u8] = self.osd_upload_scratch.staging(need);
-        Self::blit_bytes(texture, surface_h, lx, ly, lw, lh, staged)?;
+        // Validated RGBA is already tight; ignore any trailing bytes.
+        Self::blit_bytes(texture, surface_h, lx, ly, lw, lh, &layer.rgba()[..need])?;
+        self.osd_prev = Some(rect);
         Ok(())
     }
 
@@ -499,6 +490,7 @@ impl OsdView {
             rect,
             "clear",
         )?;
+        ok_osd_gl(check_frame(), rect, "clear")?;
         Ok(())
     }
 
@@ -535,6 +527,7 @@ impl OsdView {
             rect,
             "blit",
         )?;
+        ok_osd_gl(check_frame(), rect, "blit")?;
         Ok(())
     }
 
@@ -586,7 +579,7 @@ impl OsdView {
 
     /// Explicit teardown: drop the overlay texture plus program.
     /// `None` (no current context) reports live names instead of deleting blind.
-    pub(crate) fn close(&mut self, current: Option<CurrentContext>) -> Vec<LeakedName> {
+    pub(crate) fn close(&mut self, current: Option<Current>) -> Vec<LeakedName> {
         let policy = DeletionPolicy::Count;
         let mut leaked = Vec::new();
         let has_context = current.is_some();
@@ -702,12 +695,12 @@ mod tests {
 
     #[test]
     fn close_report_without_context_counts_names() {
-        use nerust_glwrap::CurrentContext;
+        use nerust_glwrap::Current;
         let mut view = OsdView {
             osd_texture: 7,
             ..OsdView::default()
         };
-        let leaked = view.close(CurrentContext::assert_current(false));
+        let leaked = view.close(Current::assert_current(false));
         assert_eq!(leaked.len(), 1);
         assert_eq!(view.osd_texture, 0);
     }

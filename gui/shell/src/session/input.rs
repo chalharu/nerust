@@ -8,7 +8,6 @@ use crate::{
     settings::bindings::events::shortcut::shortcut_action_for_key,
 };
 
-pub use nerust_gui_viewmodel::settings::{build_topology, device_kind};
 pub use nerust_settings_core::input::clear_multi_port_conflicts;
 
 fn touch_role_for_abstract_key(key: AbstractKey) -> Option<TouchControlRole> {
@@ -87,9 +86,9 @@ impl SessionHandle {
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
         if let Some(&field) = self
-            .input
-            .field_map
-            .get(&(event.attachment, ControlId::from(event.control)))
+            .emu
+            .field_map()
+            .and_then(|fields| fields.get(&(event.attachment, ControlId::from(event.control))))
             && let Some(gui_input) = self.emu.input_mut()
         {
             let _ = gui_input.set(field, InputValue::Digital(event.is_pressed()));
@@ -143,8 +142,10 @@ impl SessionHandle {
         });
         // The department owns the map; the session only resolves which
         // profile is active.
-        self.input
-            .rebuild_key_field_map(bindings.map(|p| p.bindings.as_slice()));
+        self.input.rebuild_key_field_map(
+            bindings.map(|p| p.bindings.as_slice()),
+            self.emu.field_map(),
+        );
     }
 }
 
@@ -152,6 +153,7 @@ impl SessionHandle {
 mod tests {
     use std::{collections::HashMap, rc::Rc};
 
+    use nerust_gui_viewmodel::settings::{build_topology, device_kind};
     use nerust_input_traits::{
         AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, ControllerProfile,
         DeviceKindId, DigitalControlId, InputAssignments, PortSet, ProfileId, SlotInfo,
@@ -377,6 +379,22 @@ mod tests {
         let empty = super::build_touch_overlay(7, &InputAssignments::new(vec![]));
         assert_eq!(empty.revision, 7);
         assert!(empty.controls.is_empty());
+    }
+
+    #[test]
+    fn settings_commit_invalidates_overlay_even_with_same_caller_revision() {
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        let before = session.touch_overlay_model_cached(42).clone();
+        assert_eq!(before.controls.len(), 1);
+        let next = session.settings_snapshot().clone();
+        session.apply_settings(next).unwrap();
+        let expected = session.touch_overlay_model(42);
+        assert_ne!(expected, before);
+        assert_eq!(session.touch_overlay_model_cached(42), &expected);
     }
 
     #[test]

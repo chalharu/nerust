@@ -5,6 +5,6 @@ pub mod cache;
 pub mod hash;
 pub mod history;
 
-pub use cache::{SnapshotCache, Versioned};
+pub use cache::Versioned;
 pub use hash::Fnv1a;
 pub use history::level_visible;
