@@ -38,18 +38,16 @@ pub(crate) fn create_core_and_adapter(
         )));
     }
 
-    let resources = nerust_input_traits::InputResources::new(
+    let resources = nerust_input_traits::TypedInputResources::new(
         nerust_input_traits::collect_first_wins(
             nerust_gbc_device::StandardPad::input_fields(&crate::input_profiles::GBC_PORT)
                 .into_iter()
                 .map(|entry| ((entry.attachment, entry.control), entry.field)),
         ),
-        Box::new(|| Box::<GbcInputBuffer>::default()),
+        GbcInputBuffer::default,
     );
     // Unified map travels end to end; no lossy projection.
-    let (gui_input, emu_input, field_map) =
-        nerust_emu_thread::InputSplit::typed_resources::<GbcInputBuffer>(resources)
-            .map_err(|e| FactoryError::Create(e.to_string()))?;
+    let (gui_input, emu_input, field_map) = nerust_emu_thread::InputSplit::typed_split(resources);
     speaker.start();
     let (accelerometer_handle, accelerometer_port) = accelerometer_channel();
     let (rumble_handle, rumble_port) = rumble_channel();

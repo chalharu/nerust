@@ -35,18 +35,16 @@ pub(crate) fn create_core_and_adapter(
         )));
     }
 
-    let resources = nerust_input_traits::InputResources::new(
+    let resources = nerust_input_traits::TypedInputResources::new(
         nerust_input_traits::collect_first_wins(
             nerust_gba_device::StandardPad::input_fields(&crate::input_profiles::GBA_PORT)
                 .into_iter()
                 .map(|entry| ((entry.attachment, entry.control), entry.field)),
         ),
-        Box::new(|| Box::<GbaInputBuffer>::default()),
+        GbaInputBuffer::default,
     );
     // Unified map travels end to end; no lossy projection.
-    let (gui_input, emu_input, field_map) =
-        nerust_emu_thread::InputSplit::typed_resources::<GbaInputBuffer>(resources)
-            .map_err(|e| FactoryError::Create(e.to_string()))?;
+    let (gui_input, emu_input, field_map) = nerust_emu_thread::InputSplit::typed_split(resources);
     let logical_size = LogicalSize {
         width: 240,
         height: 160,

@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use nerust_input_traits::{
     AttachmentId, ControllerCollection, ControllerProfile, CreateSplitError, InputAssignments,
-    InputPorts, InputResources, InputSystemFactory, ProfileId, SlotInfo,
+    InputPorts, InputSystemFactory, ProfileId, SlotInfo,
 };
 use nerust_nes_core::input_types::NesInputBuffer;
 
@@ -41,7 +41,7 @@ impl crate::NesFactory {
     pub(crate) fn create_split(
         &self,
         controllers: &ControllerCollection,
-    ) -> Result<InputResources, CreateSplitError> {
+    ) -> Result<nerust_input_traits::TypedInputResources<NesInputBuffer>, CreateSplitError> {
         use nerust_nes_core::controller::NES_PORTS;
 
         if controllers.len() > NES_PORTS.len() {
@@ -65,9 +65,9 @@ impl crate::NesFactory {
             });
         }
 
-        Ok(InputResources::new(
+        Ok(nerust_input_traits::TypedInputResources::new(
             field_map,
-            Box::new(|| Box::<NesInputBuffer>::default()),
+            NesInputBuffer::default,
         ))
     }
 }
@@ -75,6 +75,7 @@ impl crate::NesFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_input_traits::InputStateBuffer as _;
     use nerust_nes_device::standard_pad::StandardPad;
 
     #[test]
@@ -111,7 +112,6 @@ mod tests {
                 .set(0, nerust_input_traits::InputValue::Digital(true))
                 .is_ok()
         );
-        assert!(buffer.downcast_ref::<NesInputBuffer>().is_some());
         let empty = ControllerCollection::new(vec![]);
         assert!(crate::NesFactory.create_split(&empty).is_err());
         let extra = ControllerCollection::new(vec![

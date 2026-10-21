@@ -7,7 +7,8 @@ use std::sync::{
 };
 
 use nerust_input_traits::{
-    BufferError, InputReceiver, InputResources, InputStateBuffer, InputValue, UnifiedFieldMap,
+    BufferError, InputReceiver, InputResources, InputStateBuffer, InputValue, TypedInputResources,
+    UnifiedFieldMap,
 };
 
 /// Shared-state factory behind the split endpoints.
@@ -28,6 +29,31 @@ pub struct InputSplit {
 }
 
 impl InputSplit {
+    /// Typed assembly: no erasure, no downcast. Factories build
+    /// [`TypedInputResources`] and split here once per core build.
+    pub fn typed_split<B: InputStateBuffer>(
+        resources: TypedInputResources<B>,
+    ) -> (
+        impl nerust_input_traits::GuiInputPort,
+        InputReceiver<B>,
+        UnifiedFieldMap,
+    ) {
+        let (fields, make) = resources.into_parts();
+        let shared = Arc::new(Mutex::new(make()));
+        let flag = Arc::new(AtomicBool::new(false));
+        let gui = TypedGuiInput {
+            shared: Arc::clone(&shared),
+            flag: Arc::clone(&flag),
+            state: make(),
+            write: make(),
+            dirty: false,
+        };
+        let receiver = InputReceiver::new(make(), move |state| {
+            consume(&shared, &flag, state, || {});
+        });
+        (gui, receiver, fields)
+    }
+
     /// Check the erased factory once at assembly, then use typed swaps on the
     /// frame path. No core or frame-time receive needs a runtime downcast.
     pub fn typed_resources<B: InputStateBuffer + 'static>(
