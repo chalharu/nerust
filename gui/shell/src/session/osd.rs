@@ -97,13 +97,13 @@ impl OsdManager {
                 ModalRoute::Transient => {}
             }
             let renderer = super::notification::NotificationRenderer { language };
-            let base: std::rc::Rc<str> = renderer.render_message(&message).into();
+            let base: std::sync::Arc<str> = renderer.render_message(&message).into();
             let item = OsdItem {
                 row: counted_row(
                     &base,
                     n.count,
                     policy.color(n.level),
-                    std::rc::Rc::from(level_tag(n.level)),
+                    std::sync::Arc::from(level_tag(n.level)),
                 ),
                 level: n.level,
                 message,

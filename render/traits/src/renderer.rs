@@ -237,16 +237,16 @@ pub enum OsdAnchor {
 /// Port-owned DTO; the rasterizer and the shell share this type.
 #[derive(Debug, Clone)]
 pub struct OsdRow {
-    pub tag: std::rc::Rc<str>,
-    pub text: std::rc::Rc<str>,
+    pub tag: std::sync::Arc<str>,
+    pub text: std::sync::Arc<str>,
     pub rgb: (u8, u8, u8),
 }
 
 /// Status readout: label plus right-aligned value.
 #[derive(Debug, Clone)]
 pub struct OsdStatus {
-    pub label: std::rc::Rc<str>,
-    pub value: std::rc::Rc<str>,
+    pub label: std::sync::Arc<str>,
+    pub value: std::sync::Arc<str>,
     pub rgb: (u8, u8, u8),
 }
 
@@ -260,8 +260,8 @@ pub struct OsdContent {
 }
 
 impl OsdRow {
-    /// Shared tag handle; clones the `Rc` without reallocating.
-    pub fn tag_shared(&self) -> std::rc::Rc<str> {
+    /// Shared tag handle; clones the `Arc` without reallocating.
+    pub fn tag_shared(&self) -> std::sync::Arc<str> {
         self.tag.clone()
     }
 }
@@ -569,6 +569,9 @@ mod tests {
         // Layers are Send + Sync: no Rc payload crosses threads.
         fn assert_thread_safe<T: Send + Sync>() {}
         assert_thread_safe::<OsdLayer>();
+        assert_thread_safe::<OsdRow>();
+        assert_thread_safe::<OsdStatus>();
+        assert_thread_safe::<OsdContent>();
     }
 
     #[test]

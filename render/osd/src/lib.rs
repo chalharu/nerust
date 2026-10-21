@@ -4,7 +4,7 @@
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use cosmic_text::{CacheKey, SwashContent};
 use nerust_render_traits::renderer::{OsdAnchor, OsdLayer, ViewInsets, osd_font_px};
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 /// Port-owned OSD DTOs, re-exported for frontends that only name the rasterizer crate.
 pub use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
@@ -68,7 +68,7 @@ struct ShapedSpan {
 
 /// Cache key for one shaped line: interned text plus pixel size.
 /// Single flat map (no nested maps, no linear rescan): hits never allocate.
-type ShapeKey = (Rc<str>, u32);
+type ShapeKey = (Arc<str>, u32);
 
 /// Interned gap and empty spans: every pill shares one allocation.
 /// String literals are `'static` constants, so no global map is needed.
@@ -89,8 +89,8 @@ pub struct OsdRaster {
     /// Flat shape cache keyed by (text, size); LRU order in `shape_lru`.
     shape_cache: HashMap<ShapeKey, Rc<ShapedSpan>>,
     shape_lru: std::collections::VecDeque<ShapeKey>,
-    gap_key: Rc<str>,
-    empty_key: Rc<str>,
+    gap_key: Arc<str>,
+    empty_key: Arc<str>,
 }
 
 impl OsdRaster {
@@ -120,8 +120,8 @@ impl OsdRaster {
             safe_insets: ViewInsets::default(),
             shape_cache: HashMap::new(),
             shape_lru: std::collections::VecDeque::new(),
-            gap_key: Rc::from(GAP_STR),
-            empty_key: Rc::from(EMPTY_STR),
+            gap_key: Arc::from(GAP_STR),
+            empty_key: Arc::from(EMPTY_STR),
         }
     }
 
@@ -259,8 +259,8 @@ impl OsdRaster {
         let mut bottom: Vec<Entry<'_>> = Vec::new();
         for row in &content.rows {
             let entry = Entry::Line {
-                tag: Rc::clone(&row.tag),
-                text: Rc::clone(&row.text),
+                tag: Arc::clone(&row.tag),
+                text: Arc::clone(&row.text),
                 rgb: row.rgb,
                 anchor: content.position,
             };
@@ -466,11 +466,11 @@ impl OsdRaster {
     }
 
     /// Cached shape: identical lines shape once per pixel size.
-    /// Flat-key lookup hits without allocating; misses intern one `Rc<str>`.
+    /// Flat-key lookup hits without allocating; misses intern one `Arc<str>`.
     #[cfg(test)]
     fn shape_cached(&mut self, line: &str, font_px: u32) -> Rc<ShapedSpan> {
-        let key: Rc<str> = Rc::from(line);
-        if let Some(hit) = self.shape_cache.get(&(Rc::clone(&key), font_px)).cloned() {
+        let key: Arc<str> = Arc::from(line);
+        if let Some(hit) = self.shape_cache.get(&(Arc::clone(&key), font_px)).cloned() {
             self.touch_lru(&key, font_px);
             return hit;
         }
@@ -479,22 +479,22 @@ impl OsdRaster {
         span
     }
 
-    /// Shared-key shape: the caller's `Rc` keys the cache, so hits never allocate.
-    fn shape_cached_shared(&mut self, key: &Rc<str>, font_px: u32) -> Rc<ShapedSpan> {
-        if let Some(hit) = self.shape_cache.get(&(Rc::clone(key), font_px)).cloned() {
+    /// Shared-key shape: the caller's `Arc` keys the cache, so hits never allocate.
+    fn shape_cached_shared(&mut self, key: &Arc<str>, font_px: u32) -> Rc<ShapedSpan> {
+        if let Some(hit) = self.shape_cache.get(&(Arc::clone(key), font_px)).cloned() {
             self.touch_lru(key, font_px);
             return hit;
         }
         let span = Rc::new(self.shape_uncached(key, font_px));
-        self.insert_lru(Rc::clone(key), font_px, Rc::clone(&span));
+        self.insert_lru(Arc::clone(key), font_px, Rc::clone(&span));
         span
     }
 
     /// Interned-key variant: gap and empty spans share one allocation.
     fn shape_cached_rc(&mut self, key: &'static str, font_px: u32) -> Rc<ShapedSpan> {
         let interned = match key {
-            GAP_STR => Rc::clone(&self.gap_key),
-            EMPTY_STR => Rc::clone(&self.empty_key),
+            GAP_STR => Arc::clone(&self.gap_key),
+            EMPTY_STR => Arc::clone(&self.empty_key),
             _ => unreachable!("only gap and empty literals use the interned path"),
         };
         self.shape_cached_shared(&interned, font_px)
@@ -508,7 +508,7 @@ impl OsdRaster {
 
     /// Mark a hit most-recently-used; linear move, cap is tiny.
     /// Content compare: callers pass a freshly interned key each lookup.
-    fn touch_lru(&mut self, text: &Rc<str>, font_px: u32) {
+    fn touch_lru(&mut self, text: &Arc<str>, font_px: u32) {
         if let Some(pos) = self
             .shape_lru
             .iter()
@@ -520,8 +520,8 @@ impl OsdRaster {
     }
 
     /// Record a miss; past the cap evict the single oldest entry (proper LRU).
-    fn insert_lru(&mut self, key: Rc<str>, font_px: u32, span: Rc<ShapedSpan>) {
-        self.shape_cache.insert((Rc::clone(&key), font_px), span);
+    fn insert_lru(&mut self, key: Arc<str>, font_px: u32, span: Rc<ShapedSpan>) {
+        self.shape_cache.insert((Arc::clone(&key), font_px), span);
         self.shape_lru.push_back((key, font_px));
         while self.shape_lru.len() > SHAPE_CACHE_CAP {
             if let Some(oldest) = self.shape_lru.pop_front() {
@@ -655,11 +655,11 @@ struct PlacedRow {
 }
 
 /// Layout entry: each carries its own anchor corner for split placement.
-/// Borrows the content; tag shares the row's `Rc`, body shapes as cached spans, never one string.
+/// Borrows the content; tag shares the row's `Arc`, body shapes as cached spans, never one string.
 enum Entry<'a> {
     Line {
-        tag: Rc<str>,
-        text: Rc<str>,
+        tag: Arc<str>,
+        text: Arc<str>,
         rgb: (u8, u8, u8),
         anchor: OsdAnchor,
     },
@@ -743,8 +743,8 @@ mod tests {
     fn content() -> OsdContent {
         OsdContent {
             rows: vec![OsdRow {
-                tag: Rc::from("[INFO]"),
-                text: Rc::from("Paused"),
+                tag: Arc::from("[INFO]"),
+                text: Arc::from("Paused"),
                 rgb: (255, 255, 255),
             }],
             status: None,
@@ -820,8 +820,8 @@ mod tests {
         // 720p: font 16px, row 16*16/10+4 = 29.
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: Rc::from("[INFO]"),
-                text: Rc::from("Paused"),
+                tag: Arc::from("[INFO]"),
+                text: Arc::from("Paused"),
                 rgb: (255, 255, 255),
             }],
             status: None,
@@ -876,8 +876,8 @@ mod tests {
         }
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: Rc::from("[INFO]"),
-                text: Rc::from("一時停止しました"),
+                tag: Arc::from("[INFO]"),
+                text: Arc::from("一時停止しました"),
                 rgb: (255, 255, 255),
             }],
             status: None,
@@ -896,8 +896,8 @@ mod tests {
         // Body-only: the tag alone must not satisfy the assert above.
         let body = OsdContent {
             rows: vec![OsdRow {
-                tag: Rc::from(""),
-                text: Rc::from("一時停止しました"),
+                tag: Arc::from(""),
+                text: Arc::from("一時停止しました"),
                 rgb: (255, 255, 255),
             }],
             ..content
@@ -939,8 +939,8 @@ mod tests {
         let content = |label: &str, value: &str, anchor: OsdAnchor| OsdContent {
             rows: Vec::new(),
             status: Some(OsdStatus {
-                label: Rc::from(label),
-                value: Rc::from(value),
+                label: Arc::from(label),
+                value: Arc::from(value),
                 rgb: (200, 200, 200),
             }),
             position: OsdAnchor::BottomLeft,
@@ -1001,8 +1001,8 @@ mod tests {
         let content = |label: &str| OsdContent {
             rows: Vec::new(),
             status: Some(OsdStatus {
-                label: Rc::from(label),
-                value: Rc::from("60.1 fps"),
+                label: Arc::from(label),
+                value: Arc::from("60.1 fps"),
                 rgb: (200, 200, 200),
             }),
             position: OsdAnchor::BottomLeft,
@@ -1027,13 +1027,13 @@ mod tests {
         // spanning margin to margin instead of stacking.
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: Rc::from("[INFO]"),
-                text: Rc::from("Paused"),
+                tag: Arc::from("[INFO]"),
+                text: Arc::from("Paused"),
                 rgb: (255, 255, 255),
             }],
             status: Some(OsdStatus {
-                label: Rc::from(""),
-                value: Rc::from("60.1 fps"),
+                label: Arc::from(""),
+                value: Arc::from("60.1 fps"),
                 rgb: (200, 200, 200),
             }),
             position: OsdAnchor::BottomLeft,
@@ -1104,7 +1104,7 @@ mod tests {
                     .keys()
                     .find(|(text, size)| &**text == literal && *size == 16)
                     .unwrap();
-                assert!(Rc::ptr_eq(cached, &key));
+                assert!(Arc::ptr_eq(cached, &key));
             }
         }
     }
@@ -1112,8 +1112,8 @@ mod tests {
     #[test]
     fn tag_handles_share_one_allocation() {
         let row = OsdRow {
-            tag: Rc::from("[INFO]"),
-            text: Rc::from("Paused"),
+            tag: Arc::from("[INFO]"),
+            text: Arc::from("Paused"),
             rgb: (255, 255, 255),
         };
         // Shared handle: clones the row's `Rc`; shaping keys by value.

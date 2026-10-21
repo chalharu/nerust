@@ -1,7 +1,7 @@
 //! Transient OSD queue: folding, merge/preempt/replace, burst caps.
 //! Pure queue discipline; orchestration lives in [`OsdManager`](crate::session::osd::OsdManager).
 
-use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use nerust_settings_core::model::local::NotificationSettings;
@@ -10,9 +10,9 @@ use crate::session::notification::{Message, NotificationLevel, ReplaceGroup, app
 
 #[derive(Debug, Clone)]
 pub struct OsdRow {
-    pub text: Rc<str>,
+    pub text: Arc<str>,
     pub rgb: (u8, u8, u8),
-    pub tag: Rc<str>,
+    pub tag: Arc<str>,
 }
 
 #[derive(Debug)]
@@ -22,7 +22,7 @@ pub(crate) struct OsdItem {
     /// Structured coalescing key: domain message plus count, never formatted text.
     pub(crate) message: crate::session::notification::Message,
     /// Rendered base text for the row rebuild; identity lives in `message`.
-    pub(crate) base: std::rc::Rc<str>,
+    pub(crate) base: std::sync::Arc<str>,
     pub(crate) count: u32,
     /// Display duration, stamped at promotion so a queued label always shows its full duration.
     pub(crate) duration: Duration,
@@ -147,7 +147,7 @@ impl TransientPolicy {
     }
 }
 
-pub(crate) fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: Rc<str>) -> OsdRow {
+pub(crate) fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: Arc<str>) -> OsdRow {
     OsdRow {
         text: append_count(base.to_string(), count).into(),
         rgb,
@@ -182,7 +182,7 @@ impl TransientQueue {
                 &item.base,
                 item.count,
                 policy.color(item.level),
-                Rc::clone(&item.row.tag),
+                Arc::clone(&item.row.tag),
             );
             item.duration = policy.duration(item.level);
             item.deadline = item.deadline.min(now + item.duration);
@@ -261,7 +261,7 @@ impl TransientQueue {
                 &item.base,
                 back.count,
                 item.row.rgb,
-                Rc::clone(&item.row.tag),
+                Arc::clone(&item.row.tag),
             );
             back.deadline = item.deadline;
             return Some(MergeTarget::Queued);
@@ -277,7 +277,7 @@ impl TransientQueue {
             &item.base,
             current.count,
             item.row.rgb,
-            Rc::clone(&item.row.tag),
+            Arc::clone(&item.row.tag),
         );
         current.deadline = item.deadline;
         Some(MergeTarget::Showing)
@@ -505,7 +505,7 @@ mod tests {
             ),
         };
         OsdItem {
-            row: counted_row(key, 1, (200, 200, 200), Rc::from("[I]")),
+            row: counted_row(key, 1, (200, 200, 200), Arc::from("[I]")),
             level,
             message,
             base: key.into(),
@@ -716,13 +716,13 @@ mod transient_cov_tests {
             let _ = policy.color(level);
         }
         assert_eq!(
-            counted_row("a", 1, (1, 2, 3), Rc::from("[INFO]"))
+            counted_row("a", 1, (1, 2, 3), Arc::from("[INFO]"))
                 .text
                 .as_ref(),
             "a"
         );
         assert_eq!(
-            counted_row("a", 2, (1, 2, 3), Rc::from("[INFO]"))
+            counted_row("a", 2, (1, 2, 3), Arc::from("[INFO]"))
                 .text
                 .as_ref(),
             "a ×2"
