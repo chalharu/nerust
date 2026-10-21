@@ -127,67 +127,51 @@ impl CoreFailure {
         }
     }
 
-    pub(crate) fn thread_status(self) -> debug_vm::StatusMessage {
+    /// Shared refusal mapping: transport and absence stay typed, the rest
+    /// carries the once-rendered detail.
+    fn refused(
+        self,
+        wrap: impl FnOnce(String) -> debug_vm::StatusMessage,
+    ) -> debug_vm::StatusMessage {
         match self {
             Self::OutcomeUnknown => debug_vm::StatusMessage::OutcomeUnknown,
             Self::NoCore => debug_vm::StatusMessage::NoCore,
             Self::TransportGone => {
                 debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
             }
-            failure => debug_vm::StatusMessage::ThreadFailed(failure.detail()),
+            failure => wrap(failure.detail()),
         }
+    }
+
+    pub(crate) fn thread_status(self) -> debug_vm::StatusMessage {
+        self.refused(debug_vm::StatusMessage::ThreadFailed)
     }
 
     pub(crate) fn register_status(self) -> debug_vm::StatusMessage {
-        match self {
-            Self::OutcomeUnknown => debug_vm::StatusMessage::OutcomeUnknown,
-            Self::NoCore => debug_vm::StatusMessage::NoCore,
-            Self::TransportGone => {
-                debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
+        self.refused(|detail| {
+            if detail.is_empty() {
+                debug_vm::StatusMessage::RegisterRefused("refused".to_string())
+            } else {
+                debug_vm::StatusMessage::RegisterRefused(detail)
             }
-            failure => {
-                let detail = failure.detail();
-                if detail.is_empty() {
-                    debug_vm::StatusMessage::RegisterRefused("refused".to_string())
-                } else {
-                    debug_vm::StatusMessage::RegisterRefused(detail)
-                }
-            }
-        }
+        })
     }
 
     pub(crate) fn write_status(self) -> debug_vm::StatusMessage {
-        match self {
-            Self::OutcomeUnknown => debug_vm::StatusMessage::OutcomeUnknown,
-            Self::NoCore => debug_vm::StatusMessage::NoCore,
-            Self::TransportGone => {
-                debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
-            }
-            failure => debug_vm::StatusMessage::WriteRefused(failure.detail()),
-        }
+        self.refused(debug_vm::StatusMessage::WriteRefused)
     }
 
     pub(crate) fn pause_status(self, pausing: bool) -> debug_vm::StatusMessage {
-        match (self, pausing) {
-            (Self::OutcomeUnknown, _) => debug_vm::StatusMessage::OutcomeUnknown,
-            (Self::NoCore, _) => debug_vm::StatusMessage::NoCore,
-            (Self::TransportGone, _) => {
-                debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
-            }
-            (failure, true) => debug_vm::StatusMessage::PauseFailed(failure.detail()),
-            (failure, false) => debug_vm::StatusMessage::ResumeFailed(failure.detail()),
+        // Pause/Resume share the refusal mapping with a site-specific wrap.
+        if pausing {
+            self.refused(debug_vm::StatusMessage::PauseFailed)
+        } else {
+            self.refused(debug_vm::StatusMessage::ResumeFailed)
         }
     }
 
     pub(crate) fn step_status(self) -> debug_vm::StatusMessage {
-        match self {
-            Self::OutcomeUnknown => debug_vm::StatusMessage::OutcomeUnknown,
-            Self::NoCore => debug_vm::StatusMessage::NoCore,
-            Self::TransportGone => {
-                debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
-            }
-            failure => debug_vm::StatusMessage::StepFailed(failure.detail()),
-        }
+        self.refused(debug_vm::StatusMessage::StepFailed)
     }
 }
 

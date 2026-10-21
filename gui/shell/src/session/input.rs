@@ -371,7 +371,7 @@ mod tests {
             if reverse {
                 entries.reverse();
             }
-            let fields = entries.into_iter().collect();
+            let fields = nerust_input_traits::collect_first_wins(entries);
             let mut result = HashMap::new();
             let error = rebuild_input_map(&fields, &bindings, &mut result).unwrap_err();
             assert_eq!(error.control, "test.b");
