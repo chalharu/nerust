@@ -39,10 +39,11 @@ pub(crate) fn create_core_and_adapter(
     }
 
     let resources = nerust_input_traits::InputResources::new(
-        nerust_gbc_device::StandardPad::input_fields(&crate::input_profiles::GBC_PORT)
-            .into_iter()
-            .map(|entry| ((entry.attachment, entry.control), entry.field))
-            .collect(),
+        nerust_input_traits::collect_first_wins(
+            nerust_gbc_device::StandardPad::input_fields(&crate::input_profiles::GBC_PORT)
+                .into_iter()
+                .map(|entry| ((entry.attachment, entry.control), entry.field)),
+        ),
         Box::new(|| Box::<GbcInputBuffer>::default()),
     );
     // Unified map travels end to end; no lossy projection.

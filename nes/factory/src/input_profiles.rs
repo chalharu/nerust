@@ -56,7 +56,7 @@ impl crate::NesFactory {
                 continue;
             };
             for entry in dev.field_entries(port) {
-                field_map.insert((entry.attachment, entry.control), entry.field);
+                let _ = field_map.insert((entry.attachment, entry.control), entry.field);
             }
         }
         if field_map.is_empty() {
