@@ -69,19 +69,25 @@ impl SurfaceExtend for Surface {
 
         // Contended borrows skip loudly: the next tick retries (backoff),
         // never a silent dropped frame.
-        let mut state = match s.state.try_borrow_mut() {
-            Ok(state) => state,
+        let swap = match s.state.try_borrow_mut() {
+            Ok(mut state) => {
+                state.swap_frame_buffer();
+                state.render_profile().cloned().map(|profile| {
+                    (
+                        profile,
+                        state.renderer_reload_pending || !s.renderer.borrow().attached(),
+                    )
+                })
+            }
             Err(_) => {
                 log::warn!("gtk tick: state busy, skipping frame");
                 return true;
             }
         };
         let now = std::time::Instant::now();
-        state.swap_frame_buffer();
-        let rebuild = state.renderer_reload_pending || !s.renderer.borrow().attached();
         if s.retry.borrow().ready(now)
+            && let Some((profile, rebuild)) = swap
             && (rebuild || physical_size != s.last_size.get())
-            && let Some(profile) = state.render_profile().cloned()
         {
             let result = s.window.surface().and_then(|surf| {
                 let display = gdk::Display::default()?;
@@ -94,6 +100,14 @@ impl SurfaceExtend for Surface {
                     }
                 })
             });
+            // GPU attach runs outside the state borrow; outcome handling re-borrows briefly.
+            let mut state = match s.state.try_borrow_mut() {
+                Ok(state) => state,
+                Err(_) => {
+                    log::warn!("gtk tick: state busy after attach, skipping frame");
+                    return true;
+                }
+            };
             match result {
                 Some(Ok(())) => {
                     s.last_size.set(physical_size);
@@ -116,6 +130,14 @@ impl SurfaceExtend for Surface {
 
         // Destination-generation invalidation and uploads precede the first
         // frame on a fresh surface, including a same-size recovery attach.
+        // The poll/render borrow starts here: attach already ran borrow-free.
+        let mut state = match s.state.try_borrow_mut() {
+            Ok(state) => state,
+            Err(_) => {
+                log::warn!("gtk tick: state busy before poll, skipping frame");
+                return true;
+            }
+        };
         let surface = self.clone();
         s.osd
             .borrow_mut()
