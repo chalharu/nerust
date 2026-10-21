@@ -202,7 +202,7 @@ impl SessionHandle {
         if tick.paused {
             return Ok(SessionCommandOutcome::default());
         }
-        crate::emu_core::LivePlayback::pause(self.emu.require_live()?)?;
+        crate::emu_core::LiveCore::pause(self.emu.require_live()?)?;
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
@@ -214,7 +214,7 @@ impl SessionHandle {
         if !tick.paused || self.execution_held {
             return Ok(SessionCommandOutcome::default());
         }
-        crate::emu_core::LivePlayback::resume(self.emu.require_live()?)?;
+        crate::emu_core::LiveCore::resume(self.emu.require_live()?)?;
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: tick.loaded,
@@ -225,7 +225,7 @@ impl SessionHandle {
     fn cmd_reset(&mut self) -> Result<SessionCommandOutcome, SessionError> {
         self.emu.invalidate_debug();
         self.debug_clear_write();
-        crate::emu_core::LivePlayback::reset(self.emu.require_live()?)?;
+        crate::emu_core::LiveCore::reset(self.emu.require_live()?)?;
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
