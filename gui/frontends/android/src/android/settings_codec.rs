@@ -20,12 +20,8 @@ impl AndroidSettings {
         current: &Self,
         defs: &[SettingDef],
     ) -> Option<Self> {
-        if values
-            .keys()
-            .any(|key| !defs.iter().any(|def| def.key.as_str() == key.as_str()))
-        {
-            return None;
-        }
+        // Unknown keys are ignored: a newer dialog may send rows this build
+        // does not know; only visible rows are required to be present.
         if defs
             .iter()
             .any(|def| def.visible && !values.contains_key(&def.key))
@@ -854,14 +850,14 @@ mod tests {
     }
 
     #[test]
-    fn keyed_indices_reject_unknown_keys_and_missing_visible_rows() {
+    fn keyed_indices_tolerate_unknown_keys_but_require_visible_rows() {
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
         let mut values = current_values(&android);
         values.insert("mystery.key".to_string(), 0);
         assert!(
             AndroidSettings::from_keyed_indices(&values, &android, &android.setting_defs())
-                .is_none()
+                .is_some()
         );
         let mut values = current_values(&android);
         values.remove("audio_muted");
