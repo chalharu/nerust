@@ -180,14 +180,34 @@ def _enum_body(decoder):
     raise ContractError(MISSING_DECODER)
 
 
+def _variant_gaps(body):
+    """Decoder body split into gaps and variant pairs; commas stay in gaps."""
+    gaps = []
+    variants = []
+    pos = 0
+    for match in re.finditer(r'(\w+)\s*\{([^{}]*+)\}', body):
+        gaps.append(body[pos:match.start()])
+        variants.append(match.groups())
+        pos = match.end()
+    gaps.append(body[pos:])
+    return gaps, variants
+
+
+def _gap_commas_ok(gap, allow_comma):
+    """Gap holds only whitespace plus at most one separator comma."""
+    if gap.replace(",", "").strip():
+        return False
+    return gap.count(",") <= (1 if allow_comma else 0)
+
+
 def validate_decoder(definitions, decoder):
     decoder = uncomment(decoder)
     require(re.search(r'#\[serde\(tag = "type", rename_all = "snake_case"\)\]\s*enum BridgeEventV1', decoder),
             "unsupported decoder enum representation")
     body = _enum_body(decoder)
-    variant_pattern = r'(\w+)\s*\{([^{}]*+)\}\s*+,?+'
-    variants = re.findall(variant_pattern, body)
-    require(not re.sub(variant_pattern, '', body).strip(), "unparsed decoder variant")
+    gaps, variants = _variant_gaps(body)
+    require(_gap_commas_ok(gaps[0], False), "unparsed decoder variant")
+    require(all(_gap_commas_ok(gap, True) for gap in gaps[1:]), "unparsed decoder variant")
     expected = {}
     for variant, body in variants:
         event = re.sub(r'(?<!^)(?=[A-Z])', '_', variant).lower()
