@@ -49,9 +49,25 @@ expect_process_termination() {
     output="$(adb shell am instrument -w -r -e class "${test}" "${TEST_RUNNER}" 2>&1 || true)"
     printf '%s\n' "${output}"
     if grep -Eq 'FAILURES!!!|AssertionError|INSTRUMENTATION_STATUS_CODE: -2' <<< "${output}"; then
+        dump_shutdown_threads
         return 1
     fi
-    ! adb shell pidof "${APP_PACKAGE}" >/dev/null
+    if adb shell pidof "${APP_PACKAGE}" >/dev/null; then
+        dump_shutdown_threads
+        return 1
+    fi
+}
+
+# A lingering process means shutdown hung: capture thread stacks while alive.
+# Failure path only; the SIGQUIT dump lands in logcat for the next triage.
+dump_shutdown_threads() {
+    local pid
+    pid="$(adb shell pidof "${APP_PACKAGE}" 2>/dev/null | tr -d '\r' || true)"
+    if [ -n "${pid}" ]; then
+        echo "App process ${pid} survived termination; dumping threads:"
+        adb shell kill -QUIT "${pid}" || true
+        sleep 2
+    fi
 }
 
 rm -rf "${JNI_LIBS_DIR}"
