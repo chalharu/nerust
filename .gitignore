@@ -22,3 +22,6 @@ roms/gba/diffs/
 roms/gba/screenshots/
 # Save-state sidecars created by manual/RPA runs (regenerated on demand)
 *.states/
+# Python bytecode caches
+__pycache__/
+*.py[cod]
