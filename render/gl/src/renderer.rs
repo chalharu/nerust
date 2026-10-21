@@ -541,18 +541,22 @@ fn upload_frame(
     if frame.supports_unpack_row_length() {
         match data.get(..layout.need) {
             Some(bytes) => frame.on_update(bytes, layout.stride_px),
-            None => Err(ViewError::from(FrameError::TooShort {
-                need: layout.need,
-                have: data.len(),
-            })),
+            None => Err(ViewError::from(FrameError::Shared(
+                nerust_render_traits::FrameError::TooShort {
+                    need: layout.need,
+                    have: data.len(),
+                },
+            ))),
         }
     } else if layout.stride == layout.row_bytes {
         match data.get(..layout.need) {
             Some(bytes) => frame.on_update(bytes, width_i32),
-            None => Err(ViewError::from(FrameError::TooShort {
-                need: layout.need,
-                have: data.len(),
-            })),
+            None => Err(ViewError::from(FrameError::Shared(
+                nerust_render_traits::FrameError::TooShort {
+                    need: layout.need,
+                    have: data.len(),
+                },
+            ))),
         }
     } else {
         let packed_need = layout
@@ -789,7 +793,9 @@ mod tests {
 
     #[test]
     fn frame_error_reports_sizes() {
-        let err = super::ViewError::from(crate::layout::FrameError::TooShort { need: 8, have: 2 });
+        let err = super::ViewError::from(crate::layout::FrameError::Shared(
+            nerust_render_traits::FrameError::TooShort { need: 8, have: 2 },
+        ));
         assert!(err.to_string().contains('8'));
     }
 

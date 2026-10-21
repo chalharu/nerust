@@ -524,10 +524,12 @@ impl OsdView {
     ) -> Result<(), ViewError> {
         let need = checked_clear_need(w, h).map_err(|_| ViewError::InvalidOsdClear { w, h })?;
         if bytes.len() < need {
-            return Err(crate::layout::FrameError::TooShort {
-                need,
-                have: bytes.len(),
-            }
+            return Err(crate::layout::FrameError::Shared(
+                nerust_render_traits::FrameError::TooShort {
+                    need,
+                    have: bytes.len(),
+                },
+            )
             .into());
         }
         let gl_y = checked_osd_y(surface_h, y, h).map_err(|_| ViewError::InvalidOsdFlip {

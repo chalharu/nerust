@@ -2,11 +2,13 @@
 //! [`FrameError`]; the view wraps it via `#[from]`.
 
 /// Frame validation faults. Structured so logs name the fault instead
-/// of a `&'static str` tag.
+/// of a `&'static str` tag. Port-level faults pass through unchanged;
+/// only GL-specific context (byte counts, `i32` bounds) gets a variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FrameError {
-    #[error("frame format or dimensions do not match the render profile")]
-    ProfileMismatch,
+    /// Port validation fault; texts match the shared error exactly.
+    #[error(transparent)]
+    Shared(#[from] nerust_render_traits::FrameError),
     /// Width/height/row-bytes math overflowed.
     #[error("frame dimensions overflow (have {have} bytes)")]
     DimensionsOverflow { have: usize },
@@ -16,9 +18,6 @@ pub enum FrameError {
     /// Pixel stride does not fit the GL `i32` upload path.
     #[error("frame stride overflows i32 (have {have} bytes)")]
     StrideTooWide { have: usize },
-    /// Buffer shorter than the validated need.
-    #[error("frame buffer too small: need {need}, have {have}")]
-    TooShort { need: usize, have: usize },
     /// Surface or content size unusable for viewport fitting.
     #[error("invalid viewport {w}x{h}")]
     InvalidViewport { w: i32, h: i32 },
@@ -27,14 +26,12 @@ pub enum FrameError {
 impl FrameError {
     fn from_shared(error: nerust_render_traits::FrameError, have: usize) -> Self {
         match error {
-            nerust_render_traits::FrameError::ProfileMismatch => Self::ProfileMismatch,
+            nerust_render_traits::FrameError::ProfileMismatch
+            | nerust_render_traits::FrameError::TooShort { .. } => Self::Shared(error),
             nerust_render_traits::FrameError::InvalidDimensions => {
                 Self::DimensionsOverflow { have }
             }
             nerust_render_traits::FrameError::InvalidStride => Self::StrideOverflow { have },
-            nerust_render_traits::FrameError::TooShort { need, have } => {
-                Self::TooShort { need, have }
-            }
         }
     }
 }
@@ -223,7 +220,16 @@ mod tests {
                     usize::MAX,
                     FrameError::StrideOverflow { have: usize::MAX },
                 ),
-                (size, 4, 12, 19, FrameError::TooShort { need: 20, have: 19 }),
+                (
+                    size,
+                    4,
+                    12,
+                    19,
+                    FrameError::Shared(nerust_render_traits::FrameError::TooShort {
+                        need: 20,
+                        have: 19,
+                    }),
+                ),
             ] {
                 assert_eq!(
                     super::FrameLayout::checked(size, bpp, stride, have, unpack).err(),
@@ -364,7 +370,8 @@ mod tests {
     #[test]
     fn frame_errors_name_sizes() {
         assert_eq!(
-            FrameError::TooShort { need: 8, have: 2 }.to_string(),
+            FrameError::Shared(nerust_render_traits::FrameError::TooShort { need: 8, have: 2 })
+                .to_string(),
             "frame buffer too small: need 8, have 2"
         );
         assert_eq!(
@@ -401,7 +408,9 @@ mod tests {
         // Short buffer refuses on the padded path.
         assert!(matches!(
             FrameLayout::checked(fs, 4, 260, 100, true),
-            Err(FrameError::TooShort { .. })
+            Err(FrameError::Shared(
+                nerust_render_traits::FrameError::TooShort { .. }
+            ))
         ));
         // Stride wider than i32 refuses instead of truncating.
         assert!(matches!(
