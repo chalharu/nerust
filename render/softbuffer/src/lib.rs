@@ -56,6 +56,8 @@ pub struct SoftbufferRenderer {
     osd: Option<nerust_render_traits::renderer::OsdLayer>,
     /// Shared OSD upload budget: repeated rejections drop the layer.
     osd_policy: UploadBudget,
+    /// Per-frame converted palette; the hot loop only indexes into it.
+    palette_table: [[u8; 4]; 256],
     /// Last tap-coverage verdict keyed by the full struct; a key match
     /// skips the scan, and the `lut_rev` epoch invalidates on rebuild.
     taps_cache: Option<(TapKey, bool)>,
@@ -90,12 +92,13 @@ impl TapKey {}
 pub(crate) enum PixelIndexer<'a> {
     /// Tight RGBA bytes; short rows fall back to opaque black.
     Rgba { src: &'a [u8] },
-    /// Palette indices plus the console palette (u32 `0xRRGGBBAA` words).
+    /// Test-only direct palette path; production uses the converted table.
+    #[cfg(test)]
     Palette { src: &'a [u8], palette: &'a [u32] },
     /// Palette indices with the per-frame converted table (no per-texel convert).
     PaletteTable {
         src: &'a [u8],
-        table: [[u8; 4]; 256],
+        table: &'a [[u8; 4]; 256],
     },
     /// Pre-simulated NTSC words (`0xRRGGBBAA` layout, see [`Ntsc`]).
     Ntsc { buf: &'a [u32] },
@@ -113,6 +116,7 @@ fn rgba_texel(src: &[u8], row_base: usize, i: usize) -> [u8; 4] {
 }
 
 /// Palette-index texel at `i` past a hoisted row base.
+#[cfg(test)]
 fn palette_texel(src: &[u8], palette: &[u32], row_base: usize, i: usize) -> [u8; 4] {
     let index = src.get(row_base.saturating_add(i)).copied().unwrap_or(0) as usize;
     RgbaWord::from_u32(palette.get(index).copied().unwrap_or(0)).to_bytes_be()
@@ -162,6 +166,7 @@ impl SoftbufferRenderer {
             reserved: nerust_render_traits::ReservedStrip::default(),
             osd: None,
             osd_policy: UploadBudget::new(max_upload_retries),
+            palette_table: [[0, 0, 0, 255]; 256],
             lut: LutEntry::new(),
             resize_buffer: Vec::new(),
             ntsc_buffer: Vec::new(),
@@ -236,6 +241,7 @@ impl SoftbufferRenderer {
                         rgba_texel(src, row_base, i)
                     });
                 }
+                #[cfg(test)]
                 PixelIndexer::Palette { src, palette } => {
                     Self::horizontal_row(dst_y_index, dst_w, lut, px, resize_buffer, |i| {
                         palette_texel(src, palette, src_y_index, i)
@@ -632,9 +638,10 @@ impl FrameSink for SoftbufferRenderer {
                     // Out-of-range indices render black instead of
                     // panicking the UI thread (see mismatch guard).
                     // Convert once per frame; the hot loop only indexes.
+                    self.palette_table = palette_table(palette);
                     let indexer = PixelIndexer::PaletteTable {
                         src,
-                        table: palette_table(palette),
+                        table: &self.palette_table,
                     };
                     Self::rendering(
                         dst,
