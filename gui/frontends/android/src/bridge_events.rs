@@ -29,7 +29,11 @@ pub(crate) enum FrontendEvent {
     ErrorDialogDismissed(crate::error_dialog_controller::DialogRequestId),
 }
 
-use crate::bridge_contract::*;
+use crate::bridge_contract::{
+    ACTION_CONTROLLER, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
+    ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE,
+    ACTION_UNLOAD, BRIDGE_EVENT_VERSION, validate_bridge_event,
+};
 
 /// Typed controller-key mapping, checked against the shared JSON schema.
 /// Kotlin names are generated from that schema; new keys must also map here.

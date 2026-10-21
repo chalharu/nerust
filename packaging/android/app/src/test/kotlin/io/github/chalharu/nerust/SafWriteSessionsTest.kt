@@ -29,7 +29,7 @@ class SafWriteSessionsTest {
         assertTrue(sessions.write(id, byteArrayOf(1, 2)))
         assertTrue(sessions.write(id, byteArrayOf(3)))
         assertTrue(sessions.finish(id, true))
-        assertArrayEquals(byteArrayOf(1, 2, 3), (tx.stream as ByteArrayOutputStream).toByteArray())
+        assertArrayEquals(byteArrayOf(1, 2, 3), tx.stream.toByteArray())
         assertEquals(listOf("flush", "close", "commit"), tx.calls)
         assertFalse(sessions.finish(id, true))
     }

@@ -69,19 +69,23 @@ def kotlin_signature(arguments, result):
     return "(" + "".join(args) + ")" + KOTLIN_TYPES[result.rstrip("?")]
 
 
-def validate_jni(registration, table, activity, callbacks):
-    registration, table, activity = map(uncomment, (registration, table, activity))
+def _registration_entries(registration):
+    """Declared native methods with their JNI signatures."""
     entries = re.findall(
         r'jni::NativeMethod::from_raw_parts\(\s*jni_str!\("(\w+)"\),\s*'
         r'jni_str!\("([^"\n]+)"\),\s*([\w:]+)\s+as\s+\*mut\s+c_void\s*,?\s*\)', registration)
     require(entries and len(entries) == registration.count("jni::NativeMethod::from_raw_parts("),
             "unparsed native registration")
-    native = {}
+    return entries
+
+
+def _callback_symbols(callbacks):
+    """Rust extern callbacks keyed by symbol with JNI signatures."""
     symbols = {}
     for text in callbacks:
         for match in re.finditer(
-                r'pub\s+extern\s+"system"\s+fn\s+(Java_\w+)\s*\((.*?)\)\s*([^\{]*)\{',
-                uncomment(text), re.DOTALL):
+                r'pub\s+extern\s+"system"\s+fn\s+(Java_\w+)\s*\(([^()]*)\)\s*([^\{]*)\{',
+                uncomment(text)):
             symbol, args, result = match.groups()
             require(not result.strip(), f"unsupported JNI callback return: {symbol}")
             args = [arg.strip() for arg in args.split(",") if arg.strip()]
@@ -95,6 +99,12 @@ def validate_jni(registration, table, activity, callbacks):
                 descriptors.append(RUST_TYPES[kind[1]])
             require(symbol not in symbols, f"duplicate Rust callback: {symbol}")
             symbols[symbol] = "(" + "".join(descriptors) + ")V"
+    return symbols
+
+
+def _checked_native(entries, symbols):
+    """Registered names bound to matching Rust callbacks."""
+    native = {}
     for name, signature, pointer in entries:
         symbol = pointer.split("::")[-1]
         require(symbol == "Java_io_github_chalharu_nerust_MainActivity_" + name,
@@ -104,11 +114,13 @@ def validate_jni(registration, table, activity, callbacks):
         native[name] = signature
     require(set(symbols) == {pointer.split("::")[-1] for _, _, pointer in entries},
             "unregistered Rust MainActivity callback")
-    kotlin_native = {}
+    return native
+
+
+def _kotlin_methods(activity, call_names):
+    """Kotlin bridge methods with the external native subset."""
     methods = {}
-    calls = re.findall(r'bridge_method!\(\s*\w+\s*,\s*"(\w+)"\s*,\s*"([^"]+)"\s*\)', table)
-    require(calls and len(calls) == table.count("bridge_method!("), "unparsed Rust bridge table")
-    call_names = {name for name, _ in calls}
+    kotlin_native = {}
     for match in re.finditer(r'\b(external\s+)?fun\s+(\w+)\s*\(([^()]*)\)\s*(?::\s*([\w?]+))?', activity):
         external, name, args, result = match.groups()
         if external or name in call_names:
@@ -116,9 +128,11 @@ def validate_jni(registration, table, activity, callbacks):
             methods[name] = kotlin_signature(args, result or "Unit")
             if external:
                 kotlin_native[name] = methods[name]
-    require(kotlin_native == native, f"native registration/Kotlin ABI mismatch: {native} != {kotlin_native}")
-    require(len(kotlin_native) == len(re.findall(r'\bexternal\s+fun\b', activity)),
-            "unparsed Kotlin native declaration")
+    return methods, kotlin_native
+
+
+def _checked_outbound(calls, methods):
+    """Rust bridge table entries bound to Kotlin methods."""
     outbound = {}
     for name, signature in calls:
         require(name not in outbound, f"duplicate bridge method: {name}")
@@ -126,21 +140,50 @@ def validate_jni(registration, table, activity, callbacks):
         actual = methods.get(name, "()V" if name == "finish" else None)
         require(signature == actual, f"Rust table/Kotlin ABI mismatch: {name}: {signature} != {actual}")
         outbound[name] = signature
+    return outbound
+
+
+def validate_jni(registration, table, activity, callbacks):
+    registration, table, activity = map(uncomment, (registration, table, activity))
+    entries = _registration_entries(registration)
+    native = _checked_native(entries, _callback_symbols(callbacks))
+    calls = re.findall(r'bridge_method!\(\s*\w+\s*,\s*"(\w+)"\s*,\s*"([^"]+)"\s*\)', table)
+    require(calls and len(calls) == table.count("bridge_method!("), "unparsed Rust bridge table")
+    methods, kotlin_native = _kotlin_methods(activity, {name for name, _ in calls})
+    require(kotlin_native == native, f"native registration/Kotlin ABI mismatch: {native} != {kotlin_native}")
+    require(len(kotlin_native) == len(re.findall(r'\bexternal\s+fun\b', activity)),
+            "unparsed Kotlin native declaration")
+    outbound = _checked_outbound(calls, methods)
     require("writeSafFileChunkBytes" not in outbound
             and not re.search(r'\bfun\s+writeSafFileChunkBytes\b', activity),
             "obsolete SAF chunk method")
     return {"native": native, "outbound": outbound}
 
 
+def _enum_body(decoder):
+    """Raw text inside the typed event enum braces."""
+    match = re.search(r'enum BridgeEventV1\s*\{', decoder)
+    require(match, "missing typed event decoder")
+    depth = 0
+    for index in range(match.end() - 1, len(decoder)):
+        if decoder[index] == "{":
+            depth += 1
+        elif decoder[index] == "}":
+            depth -= 1
+            if depth == 0:
+                require(decoder[index - 1] == "\n", "missing typed event decoder")
+                return decoder[match.end():index - 1]
+    raise ContractError("missing typed event decoder")
+
+
 def validate_decoder(definitions, decoder):
     decoder = uncomment(decoder)
     require(re.search(r'#\[serde\(tag = "type", rename_all = "snake_case"\)\]\s*enum BridgeEventV1', decoder),
             "unsupported decoder enum representation")
-    enum = re.search(r'enum BridgeEventV1\s*\{(.*?)\n\}', decoder, re.DOTALL)
-    require(enum, "missing typed event decoder")
+    body = _enum_body(decoder)
     variant_pattern = r'(\w+)\s*\{([^{}]*)\}\s*,?'
-    variants = re.findall(variant_pattern, enum[1], re.DOTALL)
-    require(not re.sub(variant_pattern, '', enum[1], flags=re.DOTALL).strip(), "unparsed decoder variant")
+    variants = re.findall(variant_pattern, body)
+    require(not re.sub(variant_pattern, '', body).strip(), "unparsed decoder variant")
     expected = {}
     for variant, body in variants:
         event = re.sub(r'(?<!^)(?=[A-Z])', '_', variant).lower()
@@ -171,6 +214,50 @@ def validate_decoder(definitions, decoder):
             "decoder must validate the same JSON value before typed dispatch")
 
 
+def _producer_arg_types(args):
+    """Producer parameters mapped to schema kinds."""
+    arg_types = {}
+    for arg in args.split(","):
+        if arg.strip():
+            match = re.fullmatch(r'\s*(\w+):\s*(String|Int|Boolean)\s*', arg)
+            require(match, "unsupported producer parameter")
+            arg_types[match[1]] = {"String": "string", "Int": "integer", "Boolean": "boolean"}[match[2]]
+    return arg_types
+
+
+def _producer_puts(body):
+    """Producer field assignments emitted into the JSON object."""
+    puts = re.findall(r'\.put\("(\w+)",\s*("[^"\n]*"|[\w.]+)\)', body)
+    require(re.sub(r'\.put\("(\w+)",\s*("[^"\n]*"|[\w.]+)\)', '', body).strip() == '',
+            "unsupported producer expression")
+    return puts
+
+
+def _check_producer_event(name, puts, arg_types, definitions):
+    """Producer fields, types, and envelope against the schema."""
+    fields = {}
+    for key, value in puts:
+        require(key not in fields, "duplicate producer field")
+        kind = arg_types.get(value)
+        if value == "BRIDGE_EVENT_VERSION":
+            kind = "integer"
+        elif value.startswith(('"', "MenuAction.")):
+            kind = "string"
+        require(kind is not None, f"unsupported producer value: {value}")
+        fields[key] = kind
+    menu = definitions["menu"]
+    required = set(menu["required"])
+    if name == "controllerEventJson":
+        required |= set(menu["then"]["required"])
+    require(required <= fields.keys() <= menu["properties"].keys(), "producer fields differ from schema")
+    require(all(GEN.field_type(menu["properties"][key]) == kind for key, kind in fields.items()),
+            "producer field type differs from schema")
+    require(dict(puts).get("v") == "BRIDGE_EVENT_VERSION" and dict(puts).get("type") == '"menu"',
+            "producer envelope/version drift")
+    require(dict(puts).get("action") == ("action" if name == "menuEventJson" else "MenuAction.CONTROLLER"),
+            "producer action drift")
+
+
 def validate_producer(definitions, producer):
     producer = uncomment(producer)
     builders = re.findall(r'internal fun (\w+)\(([^()]*)\): String\s*=\s*JSONObject\(\)(.*?)\.toString\(\)',
@@ -178,36 +265,7 @@ def validate_producer(definitions, producer):
     require({name for name, _, _ in builders} == {"menuEventJson", "controllerEventJson"},
             "unparsed event producers")
     for name, args, body in builders:
-        arg_types = {}
-        for arg in args.split(","):
-            if arg.strip():
-                match = re.fullmatch(r'\s*(\w+):\s*(String|Int|Boolean)\s*', arg)
-                require(match, "unsupported producer parameter")
-                arg_types[match[1]] = {"String": "string", "Int": "integer", "Boolean": "boolean"}[match[2]]
-        puts = re.findall(r'\.put\("(\w+)",\s*("[^"\n]*"|[\w.]+)\)', body)
-        require(re.sub(r'\.put\("(\w+)",\s*("[^"\n]*"|[\w.]+)\)', '', body).strip() == '',
-                "unsupported producer expression")
-        fields = {}
-        for key, value in puts:
-            require(key not in fields, "duplicate producer field")
-            kind = arg_types.get(value)
-            if value == "BRIDGE_EVENT_VERSION":
-                kind = "integer"
-            elif value.startswith(('"', "MenuAction.")):
-                kind = "string"
-            require(kind is not None, f"unsupported producer value: {value}")
-            fields[key] = kind
-        menu = definitions["menu"]
-        required = set(menu["required"])
-        if name == "controllerEventJson":
-            required |= set(menu["then"]["required"])
-        require(required <= fields.keys() <= menu["properties"].keys(), "producer fields differ from schema")
-        require(all(GEN.field_type(menu["properties"][key]) == kind for key, kind in fields.items()),
-                "producer field type differs from schema")
-        require(dict(puts).get("v") == "BRIDGE_EVENT_VERSION" and dict(puts).get("type") == '"menu"',
-                "producer envelope/version drift")
-        require(dict(puts).get("action") == ("action" if name == "menuEventJson" else "MenuAction.CONTROLLER"),
-                "producer action drift")
+        _check_producer_event(name, _producer_puts(body), _producer_arg_types(args), definitions)
 
 
 def verify(schema, source):

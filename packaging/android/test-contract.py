@@ -255,8 +255,9 @@ class StructureTests(unittest.TestCase):
         ) {}''']
         self.assertEqual(VERIFY.validate_jni(registration, table, activity, callbacks)["native"],
                          {"onProbeAck": "(J)V"})
+        broken = registration.replace("(J)V", "()V")
         with self.assertRaises(VERIFY.ContractError):
-            VERIFY.validate_jni(registration.replace("(J)V", "()V"), table, activity, callbacks)
+            VERIFY.validate_jni(broken, table, activity, callbacks)
 
     def test_unsupported_bridge_syntax_does_not_silently_pass(self):
         self.source["producer"] = self.source["producer"].replace(

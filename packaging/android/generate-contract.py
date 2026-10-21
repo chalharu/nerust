@@ -14,62 +14,105 @@ RUST = ROOT / "gui/frontends/android"
 KOTLIN = ROOT / "packaging/android/app/src/main/kotlin/io/github/chalharu/nerust"
 
 
-def event_definitions(schema):
-    """Supported schema subset, fail closed when a new rule needs codegen."""
+def _require_top_level_schema(schema):
+    """Top-level schema shape this codegen understands."""
     require(schema.get("$schema") == "http://json-schema.org/draft-07/schema#")
     require(set(schema) <= {"$schema", "title", "description", "type", "oneOf", "definitions",
                             "x-settings-schema-version", "x-saf-chunk-bytes",
                             "x-menu-action-table", "x-kotlin-constants"})
     require(schema["type"] == "object")
-    result = {}
     require(type(schema["oneOf"]) is list and schema["oneOf"])
     require(len(schema["oneOf"]) == len(schema["definitions"]))
+
+
+def _definition_props(definition):
+    """Single event definition shape with its properties and required names."""
+    require(set(definition) <= {"type", "required", "properties", "additionalProperties", "if", "then"})
+    require(definition["type"] == "object" and definition["additionalProperties"] is False)
+    props, required = definition["properties"], definition["required"]
+    require(type(props) is dict and type(required) is list)
+    require(all(type(name) is str for name in required))
+    require(len(required) == len(set(required)) and set(required) <= props.keys())
+    require({"v", "type"} <= set(required))
+    return props, required
+
+
+def _require_integer_bounds(prop):
+    """Integer range this codegen can emit."""
+    require(type(prop.get("minimum")) is int and type(prop.get("maximum")) is int)
+    require(-(2**63) <= prop["minimum"] <= prop["maximum"] < 2**63)
+
+
+def _require_enum_values(prop, kind):
+    """Closed string set this codegen can emit."""
+    require(kind == "string" and type(prop["enum"]) is list and prop["enum"]
+        and all(type(value) is str for value in prop["enum"]))
+    require(len(prop["enum"]) == len(set(prop["enum"])))
+
+
+def _require_const_value(prop, kind):
+    """Pinned value consistent with its declared kind."""
+    require(type(prop["const"]) in {int, str, bool})
+    require(field_type({"const": prop["const"]}) == kind)
+    require(not {"enum", "minimum", "maximum"} & prop.keys())
+
+
+def _require_prop(prop):
+    """Single property rule this codegen supports."""
+    require(set(prop) <= {"type", "const", "enum", "minimum", "maximum"})
+    kind = field_type(prop)
+    require(kind in {"integer", "string", "boolean"})
+    if kind == "integer" and "const" not in prop:
+        _require_integer_bounds(prop)
+    if "enum" in prop:
+        _require_enum_values(prop, kind)
+    if "const" in prop:
+        _require_const_value(prop, kind)
+    require(not ({"minimum", "maximum"} & prop.keys()) or kind == "integer")
+
+
+def _require_conditional(definition, props):
+    """Optional gate requiring extra fields for one enum value."""
+    if "if" not in definition and "then" not in definition:
+        return
+    require("if" in definition and "then" in definition)
+    condition, consequence = definition["if"], definition["then"]
+    require(set(condition) == {"properties", "required"})
+    require(set(consequence) == {"required"})
+    require(len(condition["properties"]) == 1)
+    require(set(condition["required"]) == condition["properties"].keys())
+    for key, value in condition["properties"].items():
+        require(key in props and set(value) == {"const"} and type(value["const"]) is str)
+        require(value["const"] in props[key]["enum"])
+    require(type(consequence["required"]) is list
+            and len(consequence["required"]) == len(set(consequence["required"]))
+            and set(consequence["required"]) <= props.keys())
+
+
+def _envelope_event(props, seen):
+    """Shared type/version marker, returning the event name."""
+    event = props["type"]["const"]
+    require(set(props["type"]) <= {"type", "const"})
+    require(field_type(props["type"]) == "string")
+    require(set(props["v"]) <= {"type", "const"})
+    require(field_type(props["v"]) == "integer" and props["v"]["const"] == 1)
+    require(type(event) is str and event not in seen)
+    require(type(props["v"]["const"]) is int)
+    return event
+
+
+def event_definitions(schema):
+    """Supported schema subset, fail closed when a new rule needs codegen."""
+    _require_top_level_schema(schema)
+    result = {}
     for ref in schema["oneOf"]:
         require(set(ref) == {"$ref"} and ref["$ref"].startswith("#/definitions/"))
         definition = schema["definitions"][ref["$ref"].removeprefix("#/definitions/")]
-        require(set(definition) <= {"type", "required", "properties", "additionalProperties", "if", "then"})
-        require(definition["type"] == "object" and definition["additionalProperties"] is False)
-        props, required = definition["properties"], definition["required"]
-        require(type(props) is dict and type(required) is list)
-        require(all(type(name) is str for name in required))
-        require(len(required) == len(set(required)) and set(required) <= props.keys())
-        require({"v", "type"} <= set(required))
+        props, _ = _definition_props(definition)
         for prop in props.values():
-            require(set(prop) <= {"type", "const", "enum", "minimum", "maximum"})
-            kind = field_type(prop)
-            require(kind in {"integer", "string", "boolean"})
-            if kind == "integer" and "const" not in prop:
-                require(type(prop.get("minimum")) is int and type(prop.get("maximum")) is int)
-                require(-(2**63) <= prop["minimum"] <= prop["maximum"] < 2**63)
-            if "enum" in prop:
-                require(kind == "string" and type(prop["enum"]) is list and prop["enum"]
-                    and all(type(v) is str for v in prop["enum"]))
-                require(len(prop["enum"]) == len(set(prop["enum"])))
-            if "const" in prop:
-                require(type(prop["const"]) in {int, str, bool})
-                require(field_type({"const": prop["const"]}) == kind)
-                require(not {"enum", "minimum", "maximum"} & prop.keys())
-            require(not ({"minimum", "maximum"} & prop.keys()) or kind == "integer")
-        if "if" in definition or "then" in definition:
-            require("if" in definition and "then" in definition)
-            condition, consequence = definition["if"], definition["then"]
-            require(set(condition) == {"properties", "required"})
-            require(set(consequence) == {"required"})
-            require(len(condition["properties"]) == 1)
-            require(set(condition["required"]) == condition["properties"].keys())
-            for key, value in condition["properties"].items():
-                require(key in props and set(value) == {"const"} and type(value["const"]) is str)
-                require(value["const"] in props[key]["enum"])
-            require(type(consequence["required"]) is list
-                    and len(consequence["required"]) == len(set(consequence["required"]))
-                    and set(consequence["required"]) <= props.keys())
-        event = props["type"]["const"]
-        require(set(props["type"]) <= {"type", "const"})
-        require(field_type(props["type"]) == "string")
-        require(set(props["v"]) <= {"type", "const"})
-        require(field_type(props["v"]) == "integer" and props["v"]["const"] == 1)
-        require(type(event) is str and event not in result)
-        require(type(props["v"]["const"]) is int)
+            _require_prop(prop)
+        _require_conditional(definition, props)
+        event = _envelope_event(props, result)
         result[event] = definition
     require(result and len({d["properties"]["v"]["const"] for d in result.values()}) == 1)
     return result
