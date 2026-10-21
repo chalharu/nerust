@@ -151,7 +151,13 @@ pub(super) fn take_result() -> Option<RomPickerResult> {
 }
 
 pub(super) fn has_pending_result() -> bool {
-    bridge::with_picker(|state| state.in_flight || state.result.is_some())
+    bridge::with_picker(|state| {
+        state.in_flight
+            || state
+                .result
+                .as_ref()
+                .is_some_and(|(seq, _)| FETCH_SEQ.is_latest(*seq))
+    })
 }
 
 pub(super) fn reset_transient() {
@@ -511,5 +517,32 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onDirectoryPi
             publish_result(RomPickerResult::Cancelled);
         }
         jni::Outcome::Panic(_) => publish_result(RomPickerResult::Cancelled),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_and_take_agree_on_stale_results() {
+        reset_transient();
+        // A leftover from a superseded request counts as nothing.
+        let stale = FETCH_SEQ.next();
+        let current = FETCH_SEQ.next();
+        bridge::with_picker(|state| {
+            state.result = Some((stale, RomPickerResult::Failed("old".into())));
+        });
+        assert!(!has_pending_result());
+        assert!(take_result().is_none());
+        // The latest unconsumed result counts until taken.
+        bridge::with_picker(|state| {
+            state.result = Some((current, RomPickerResult::Failed("new".into())));
+        });
+        assert!(has_pending_result());
+        assert!(take_result().is_some());
+        assert!(!has_pending_result());
+        reset_transient();
+        assert!(!has_pending_result());
     }
 }
