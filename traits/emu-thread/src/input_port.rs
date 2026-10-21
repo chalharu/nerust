@@ -220,7 +220,9 @@ impl EmuInput {
         }
     }
 
-    /// Borrow the latest emu-side snapshot without taking it.
+    /// Test-only peek at the latest emu-side snapshot; production cores
+    /// receive through the typed [`InputReceiver`] instead.
+    #[cfg(test)]
     pub fn read_buffer(&self) -> &dyn InputStateBuffer {
         &*self.read_buf
     }
@@ -416,16 +418,17 @@ mod tests {
     /// Test-only resources: `InputSplit::from_resources` is the single
     /// move-out; nothing here touches the private triplets.
     fn bit_resources() -> nerust_input_traits::InputResources {
-        use nerust_input_traits::{AttachmentId, ControlId, DigitalControlId};
-        use std::collections::HashMap;
+        use nerust_input_traits::{AttachmentId, ControlId, DigitalControlId, UnifiedFieldMap};
         nerust_input_traits::InputResources::new(
-            HashMap::from([(
+            [(
                 (
                     AttachmentId::new("test.p1"),
                     ControlId::digital(DigitalControlId::new("test.a")),
                 ),
                 0,
-            )]),
+            )]
+            .into_iter()
+            .collect::<UnifiedFieldMap>(),
             Box::new(|| Box::new(BitBuffer::default()) as Box<dyn InputStateBuffer>),
         )
     }
