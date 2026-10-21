@@ -1158,7 +1158,7 @@ mod tests {
         renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
         renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
         for _ in 0..3 {
-            renderer.osd.note_osd_upload_failure();
+            renderer.osd.note_osd_upload_rejected();
         }
         assert!(renderer.osd.osd_layer.is_none());
         renderer.osd_drop_warned = true;
