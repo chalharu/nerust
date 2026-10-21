@@ -44,16 +44,20 @@ fn controllers_for_assignments(
     for placement in plan {
         let device: Option<Box<dyn Controller + Send>> = match placement {
             None => None,
-            Some((pid, group)) if pid == ProfileId::new("nes.famicom") => Some(match group {
-                0 => Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new()),
-                _ => Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()),
-            }),
-            Some((pid, _)) if pid == ProfileId::new("nes.standard_pad") => Some(Box::new(
-                nerust_nes_device::standard_pad::StandardPad::new(0x1F),
-            )),
-            Some((controller, _)) => {
+            Some((profile, group)) if profile.profile_id() == ProfileId::new("nes.famicom") => {
+                Some(match group {
+                    0 => Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new()),
+                    _ => Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()),
+                })
+            }
+            Some((profile, _)) if profile.profile_id() == ProfileId::new("nes.standard_pad") => {
+                Some(Box::new(nerust_nes_device::standard_pad::StandardPad::new(
+                    0x1F,
+                )))
+            }
+            Some((profile, _)) => {
                 return Err(nerust_input_traits::CreateSplitError::ControllerNotFound {
-                    controller,
+                    controller: profile.profile_id(),
                 });
             }
         };

@@ -208,15 +208,10 @@ fn resolve_pad_buttons(
         .map_err(|error| construction(case_id, format!("input assignments: {error}")))?;
     let mut pad_buttons = Vec::with_capacity(plan.len());
     for (slot, placement) in ports.slots().iter().zip(plan) {
-        let Some((controller, group_index)) = placement else {
+        let Some((profile, group_index)) = placement else {
             pad_buttons.push(Vec::new());
             continue;
         };
-        let profile = ports
-            .resolve_controller(controller.as_str())
-            .ok_or_else(|| {
-                construction(case_id, format!("controller profile missing: {controller}"))
-            })?;
         let group = profile.port_groups().get(group_index).ok_or_else(|| {
             construction(case_id, format!("slot {} has no control group", slot.id))
         })?;
