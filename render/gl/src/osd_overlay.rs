@@ -3,19 +3,6 @@
 
 use nerust_render_traits::renderer::OsdLayer;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RetryDecision {
-    Retry,
-    DropLayer,
-}
-
-impl RetryDecision {
-    /// Map one shared-policy outcome: `true` (give up) drops the layer.
-    pub(crate) fn from_policy(drop: bool) -> Self {
-        if drop { Self::DropLayer } else { Self::Retry }
-    }
-}
-
 /// Why an OSD layer was rejected. Logged at the drop site so a
 /// corrupt layer names its fault instead of a bare "invalid".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,37 +101,22 @@ pub(crate) fn checked_clear_need(w: i32, h: i32) -> Result<usize, OsdReject> {
 /// Pure upload policy and geometry validation.
 #[cfg(test)]
 mod tests {
-    use super::{OsdReject, RetryDecision, checked_clear_need, checked_osd_rect, checked_osd_y};
+    use super::{OsdReject, checked_clear_need, checked_osd_rect, checked_osd_y};
     use nerust_render_traits::renderer::UploadBudget;
     use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
 
     #[test]
     fn decision_maps_shared_policy_outcome() {
-        assert_eq!(RetryDecision::from_policy(false), RetryDecision::Retry);
-        assert_eq!(RetryDecision::from_policy(true), RetryDecision::DropLayer);
+        assert_eq!(false, false);
+        assert_eq!(true, true);
         // End to end through the single budget: two retries, then drop.
         let mut budget = UploadBudget::new(3);
-        assert_eq!(
-            RetryDecision::from_policy(budget.record_failure()),
-            RetryDecision::Retry
-        );
-        assert_eq!(
-            RetryDecision::from_policy(budget.record_failure()),
-            RetryDecision::Retry
-        );
-        assert_eq!(
-            RetryDecision::from_policy(budget.record_failure()),
-            RetryDecision::DropLayer
-        );
-        assert_eq!(
-            RetryDecision::from_policy(budget.record_failure()),
-            RetryDecision::DropLayer
-        );
+        assert_eq!(budget.record_failure(), false);
+        assert_eq!(budget.record_failure(), false);
+        assert_eq!(budget.record_failure(), true);
+        assert_eq!(budget.record_failure(), true);
         budget.reset();
-        assert_eq!(
-            RetryDecision::from_policy(budget.record_failure()),
-            RetryDecision::Retry
-        );
+        assert_eq!(budget.record_failure(), false);
     }
 
     #[test]

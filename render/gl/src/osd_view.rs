@@ -19,9 +19,7 @@ use crate::error::ViewError;
 use crate::frame_textures::use_texture;
 use crate::frame_view::{FrameView, ok_gl};
 use crate::mat4::Mat4;
-use crate::osd_overlay::{
-    OSDRect, RetryDecision, checked_clear_need, checked_osd_rect, checked_osd_y,
-};
+use crate::osd_overlay::{OSDRect, checked_clear_need, checked_osd_rect, checked_osd_y};
 use crate::surface_view::LeakedName;
 
 /// Outcome of one OSD draw. Transient failures propagate as `Err` (retried);
@@ -299,7 +297,7 @@ impl OsdView {
                     self.osd_retry.reset();
                 }
                 Err(e) => {
-                    if matches!(self.note_osd_upload_failure(), RetryDecision::DropLayer) {
+                    if self.note_osd_upload_rejected() {
                         return Ok((OsdOutcome::Dropped, game_viewport));
                     }
                     return Err(e);
@@ -361,22 +359,21 @@ impl OsdView {
         Ok((OsdOutcome::Presented, applied_viewport))
     }
 
-    /// Record one failed OSD upload (pure state; GL stays out).
-    /// Returns the retry decision directly; the caller matches it.
-    pub(crate) fn note_osd_upload_failure(&mut self) -> RetryDecision {
-        let Some(_) = self.osd_layer.as_ref() else {
-            return RetryDecision::Retry;
-        };
-        match RetryDecision::from_policy(self.osd_retry.record_failure()) {
-            RetryDecision::Retry => RetryDecision::Retry,
-            RetryDecision::DropLayer => {
-                // No ghost composite, and the next identical push
-                // re-stages via the equality gate.
-                self.osd_layer = None;
-                self.osd_dirty = false;
-                RetryDecision::DropLayer
-            }
+    /// Record one failed OSD upload; `true` means the layer was dropped.
+    /// Shared budget owns the count; the next identical push re-stages.
+    pub(crate) fn note_osd_upload_rejected(&mut self) -> bool {
+        if self.osd_layer.is_none() {
+            return false;
         }
+        let dropped = nerust_render_traits::renderer::note_osd_upload(
+            false,
+            &mut self.osd_layer,
+            &mut self.osd_retry,
+        );
+        if dropped {
+            self.osd_dirty = false;
+        }
+        dropped
     }
 
     /// Upload the staged layer into the full-surface texture (draw path only binds).
@@ -646,7 +643,7 @@ impl OsdView {
 
 #[cfg(test)]
 mod tests {
-    use super::{OsdOutcome, OsdView, RetryDecision};
+    use super::{OsdOutcome, OsdView};
     use nerust_render_traits::renderer::{OsdLayer, UploadBudget};
 
     fn staged_view() -> OsdView {
@@ -671,15 +668,15 @@ mod tests {
     #[test]
     fn upload_failures_retry_then_drop_layer() {
         let mut view = staged_view();
-        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
+        assert!(!view.note_osd_upload_rejected());
         assert!(view.osd_layer.is_some());
         assert!(view.osd_dirty);
-        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
+        assert!(!view.note_osd_upload_rejected());
         assert!(view.osd_layer.is_some());
-        assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
+        assert!(view.note_osd_upload_rejected());
         assert!(view.osd_layer.is_none());
         assert!(!view.osd_dirty);
-        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
+        assert!(!view.note_osd_upload_rejected());
         assert!(view.osd_layer.is_none());
         assert!(!view.osd_dirty);
     }
@@ -688,7 +685,7 @@ mod tests {
     fn injected_policy_drives_drop_decision() {
         let mut view = staged_view();
         view.set_osd_policy(UploadBudget::new(1));
-        assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
+        assert!(view.note_osd_upload_rejected());
         assert!(view.osd_layer.is_none());
         assert!(!view.osd_dirty);
     }
@@ -698,13 +695,13 @@ mod tests {
         // Rebuilt shared budget: two failures then drop.
         let mut view = staged_view();
         view.set_osd_policy(UploadBudget::new(3));
-        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
-        assert_eq!(view.note_osd_upload_failure(), RetryDecision::Retry);
-        assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
+        assert!(!view.note_osd_upload_rejected());
+        assert!(!view.note_osd_upload_rejected());
+        assert!(view.note_osd_upload_rejected());
         // Zero clamps to one attempt, never drops live layers at once.
         let mut view = staged_view();
         view.set_osd_policy(UploadBudget::new(0));
-        assert_eq!(view.note_osd_upload_failure(), RetryDecision::DropLayer);
+        assert!(view.note_osd_upload_rejected());
     }
 
     #[test]
