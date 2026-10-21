@@ -602,7 +602,7 @@ impl WindowExtend for Window {
     }
 
     fn refresh_title(&self) {
-        let title = self.state().borrow().title();
+        let title = self.state().borrow_mut().title_cached();
         self.window().set_title(Some(title.as_str()));
     }
 

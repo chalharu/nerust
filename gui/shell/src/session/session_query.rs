@@ -73,6 +73,8 @@ impl SessionHandle {
 
     /// Window title from one already-fetched tick: no metrics lock
     /// here, so per-frame title refreshes share the pass tick.
+    /// One-shot title for cold paths (window creation, tests).
+    /// Per-frame callers use `window_title_cached` to avoid reallocating.
     pub fn window_title(&self, tick: &TickMetrics) -> String {
         let name = self.active_system_display_name();
         super::title::title(TitleInput {
@@ -90,6 +92,8 @@ impl SessionHandle {
         self.notifications.history()
     }
 
+    /// Owned rows for change-gated dialogs; the per-frame OSD path
+    /// uses `notification_history_lines_cached` instead.
     pub fn notification_history_lines(
         &self,
         language: nerust_settings_core::model::language::AppLanguage,
