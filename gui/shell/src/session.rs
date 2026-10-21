@@ -322,6 +322,7 @@ pub struct SessionHandle {
     execution_held: bool,
     registry: Arc<SystemRegistry>,
     active_system_id: Option<Box<dyn SystemId>>,
+    cached_display_name: Option<&'static str>,
     input: InputDept,
     emu: EmuCluster,
     capabilities: HostBackendCapabilities,
@@ -334,6 +335,14 @@ pub struct SessionHandle {
     notifications: notification::NotificationCenter,
     title_cache: title::TitleCache,
     history_view: session_query::HistoryView,
+}
+
+fn display_name_for(
+    registry: &Arc<SystemRegistry>,
+    id: Option<&dyn SystemId>,
+) -> Option<&'static str> {
+    id.and_then(|id| registry.find_by_id(id))
+        .map(|factory| factory.display_name())
 }
 
 impl SessionHandle {
@@ -500,12 +509,14 @@ impl SessionHandle {
         } else {
             (None, InputAssignments::new(vec![]))
         };
+        let cached_display_name = display_name_for(&registry, active_system_id.as_deref());
         let mut result = Self {
             execution_held: false,
             input: InputDept::new(assignments),
             emu: EmuCluster::new(),
             registry,
             active_system_id,
+            cached_display_name,
             capabilities,
             settings,
             media: MediaDept::new(),
@@ -668,7 +679,7 @@ impl SessionHandle {
     /// Narrow active-system query: display name for titles, without
     /// exposing the factory or the registry.
     pub fn active_system_display_name(&self) -> Option<&'static str> {
-        self.with_active_factory(|factory| factory.display_name())
+        self.cached_display_name
     }
 
     /// Narrow active-system query: owned id for settings lookups.
@@ -710,7 +721,7 @@ impl SessionHandle {
 
     /// Cached window title for the current tick; rebuilds only on tick, selection, or name change.
     pub fn window_title_cached(&mut self, tick: &osd::TickMetrics) -> &str {
-        let name = self.active_system_display_name();
+        let name = self.cached_display_name;
         let input = title::TitleInput {
             paused: tick.paused,
             loaded: tick.loaded,
@@ -801,6 +812,10 @@ impl SessionHandle {
         }
 
         self.active_system_id = Some(system_id.clone_box());
+        self.cached_display_name = self
+            .registry
+            .find_by_id(system_id)
+            .map(|factory| factory.display_name());
         self.input.current_assignments = created.applied_assignments;
         self.emu.replace(ActiveRuntime::from(created.runtime));
         self.media.clear_runtime();
