@@ -548,11 +548,11 @@ pub(super) fn composed_shader_source() -> String {
 pub(crate) fn set_osd_layer(
     pipeline: &mut RenderPipeline,
     layer: Option<&nerust_render_traits::renderer::OsdLayer>,
-) {
+) -> bool {
     let surface = pipeline.osd_surface;
     pipeline.osd_visible = false;
     if surface.width == 0 || surface.height == 0 {
-        return;
+        return false;
     }
     let sized = pipeline.osd_texture.as_ref().is_some_and(|texture| {
         texture.width() == surface.width && texture.height() == surface.height
@@ -593,12 +593,11 @@ pub(crate) fn set_osd_layer(
         pipeline.osd_prev = None;
     }
     let Some(texture) = pipeline.osd_texture.as_ref() else {
-        return;
+        return false;
     };
     // Clear the previous rect so moved/shrunk layers leave no ghosts.
-    let clear_rect = pipeline.osd_prev;
-    if let Some((x, y, w, h)) = clear_rect {
-        upload_rect(
+    if let Some((x, y, w, h)) = pipeline.osd_prev
+        && !upload_rect(
             &pipeline.queue,
             &mut pipeline.osd_staging,
             texture,
@@ -609,19 +608,21 @@ pub(crate) fn set_osd_layer(
                 h.min(surface.height.saturating_sub(y)),
             ),
             None,
-        );
+        )
+    {
+        return false;
     }
     let Some(layer) = layer else {
         pipeline.osd_visible = false;
         pipeline.osd_prev = None;
-        return;
+        return true;
     };
     pipeline.osd_prev = None;
     if layer.width == 0 || layer.height == 0 {
-        return;
+        return false;
     }
     let Some(source_pitch) = (layer.width as usize).checked_mul(4) else {
-        return;
+        return false;
     };
     if nerust_render_traits::FrameLayout::checked(
         LogicalSize {
@@ -634,22 +635,25 @@ pub(crate) fn set_osd_layer(
     )
     .is_err()
     {
-        return;
+        return false;
     }
     let w = layer.width.min(surface.width.saturating_sub(layer.x));
     let h = layer.height.min(surface.height.saturating_sub(layer.y));
     if w == 0 || h == 0 {
-        return;
+        return false;
     }
-    upload_rect(
+    if !upload_rect(
         &pipeline.queue,
         &mut pipeline.osd_staging,
         texture,
         (layer.x, layer.y, w, h),
         Some((layer.rgba(), source_pitch)),
-    );
+    ) {
+        return false;
+    }
     pipeline.osd_visible = true;
     pipeline.osd_prev = Some((layer.x, layer.y, w, h));
+    true
 }
 
 /// Upload RGBA rows (or zeros) into a texture subrect with 256-byte
@@ -660,10 +664,10 @@ fn upload_rect(
     texture: &wgpu::Texture,
     rect: (u32, u32, u32, u32),
     rgba: Option<(&[u8], usize)>,
-) {
+) -> bool {
     let (x, y, w, h) = rect;
     let Some((pitch, needed)) = pack_osd_rect(staging, w, h, rgba) else {
-        return;
+        return false;
     };
     queue.write_texture(
         TexelCopyTextureInfo {
@@ -684,6 +688,7 @@ fn upload_rect(
             depth_or_array_layers: 1,
         },
     );
+    true
 }
 
 /// Pack clipped rows using the original source pitch. Clear reused bytes even

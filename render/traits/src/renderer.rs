@@ -394,6 +394,52 @@ pub trait OsdUploadPolicy: std::fmt::Debug {
     fn reset(&mut self);
 }
 
+/// Bounded OSD upload budget shared by every backend.
+/// Floor of one attempt: zero never drops live layers at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UploadBudget {
+    max: u8,
+    fails: u8,
+}
+
+impl UploadBudget {
+    /// Mint a budget from the config knob; the floor is one attempt.
+    pub fn new(max: u8) -> Self {
+        Self {
+            max: max.max(1),
+            fails: 0,
+        }
+    }
+}
+
+impl OsdUploadPolicy for UploadBudget {
+    fn record_failure(&mut self) -> bool {
+        self.fails = self.fails.saturating_add(1);
+        self.fails >= self.max
+    }
+
+    fn reset(&mut self) {
+        self.fails = 0;
+    }
+}
+
+/// Fold one OSD upload attempt into the slot and budget.
+/// Drops a repeatedly rejected layer so identical pushes re-stage.
+pub fn note_osd_upload(
+    accepted: bool,
+    slot: &mut Option<OsdLayer>,
+    budget: &mut UploadBudget,
+) -> bool {
+    if accepted {
+        budget.reset();
+        return false;
+    }
+    if budget.record_failure() {
+        slot.take();
+        return true;
+    }
+    false
+}
 /// Factory minting one upload policy per rebuilt view; impl crates provide it.
 pub trait OsdUploadPolicyFactory: std::fmt::Debug {
     /// Mint a fresh policy budget for one view lifetime.
@@ -627,6 +673,37 @@ mod tests {
         // Zero clamps to one attempt, never drops live layers at once.
         assert_eq!(config.upload_budget(), 1);
         assert_eq!(DEFAULT_OSD_UPLOAD_RETRIES, 3);
+    }
+
+    #[test]
+    fn shared_budget_counts_then_drops_and_rearms() {
+        let mut budget = UploadBudget::new(2);
+        assert!(!budget.record_failure());
+        assert!(budget.record_failure());
+        // Saturating counter never wraps on a dead driver.
+        assert!(budget.record_failure());
+        budget.reset();
+        assert!(!budget.record_failure());
+        // Zero config never drops live layers at once.
+        let mut floored = UploadBudget::new(0);
+        assert!(floored.record_failure());
+    }
+
+    #[test]
+    fn upload_fold_drops_rejected_layers_and_rearms_on_success() {
+        let layer = OsdLayer::new(0, 0, 2, 1, vec![9; 8]);
+        let mut slot = Some(layer);
+        let mut budget = UploadBudget::new(2);
+        assert!(!note_osd_upload(false, &mut slot, &mut budget));
+        assert!(slot.is_some());
+        assert!(note_osd_upload(false, &mut slot, &mut budget));
+        assert!(slot.is_none());
+        // Success re-arms: a fresh push survives one blip again.
+        slot = Some(OsdLayer::new(0, 0, 2, 1, vec![9; 8]));
+        assert!(!note_osd_upload(true, &mut slot, &mut budget));
+        assert!(slot.is_some());
+        assert!(!note_osd_upload(false, &mut slot, &mut budget));
+        assert!(slot.is_some());
     }
 
     #[test]

@@ -213,7 +213,7 @@ pub(crate) struct OsdView {
     pub(crate) osd_size: (i32, i32),
     pub(crate) osd_prev: Option<(i32, i32, i32, i32)>,
     pub(crate) osd_dirty: bool,
-    /// Bounded retry for the staged layer (impl-owned `BoundedUploadPolicy`).
+    /// Bounded retry for the staged layer (shared `UploadBudget`).
     pub(crate) osd_retry: Box<dyn OsdUploadPolicy>,
     pub(crate) osd_shader: Option<Shader>,
     pub(crate) osd_layer: Option<OsdLayer>,
