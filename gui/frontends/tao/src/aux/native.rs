@@ -8,9 +8,23 @@ use super::tao_map::{keycode_to_key, tao_button_to_aux, tao_modifiers_to_domain}
 
 /// Map a toolkit window id to the domain routing key.
 /// Hashing stays in this outer adapter; the domain never names `tao`.
+/// FNV-1a with fixed constants: stable across runs, unlike the
+/// randomly-seeded default hasher, so logs and tests compare equal.
 pub(crate) fn native_id_of(id: tao::window::WindowId) -> NativeWindowId {
     use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    struct Fnv(u64);
+    impl Hasher for Fnv {
+        fn write(&mut self, bytes: &[u8]) -> () {
+            for &byte in bytes {
+                self.0 ^= u64::from(byte);
+                self.0 = self.0.wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        fn finish(&self) -> u64 {
+            self.0
+        }
+    }
+    let mut hasher = Fnv(0xcbf2_9ce4_8422_2325);
     id.hash(&mut hasher);
     NativeWindowId::new(hasher.finish())
 }
