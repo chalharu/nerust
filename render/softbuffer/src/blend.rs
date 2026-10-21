@@ -7,19 +7,20 @@ use super::SoftbufferRenderer;
 
 impl SoftbufferRenderer {
     /// Straight-alpha blend of the OSD layer, clipped to the buffer.
+    /// Reports whether the layer was well-formed; clipping still counts.
     pub(crate) fn blend_osd(
         buffer: &mut [u32],
         dst_w: usize,
         dst_h: usize,
         layer: &nerust_render_traits::renderer::OsdLayer,
-    ) {
+    ) -> bool {
         let src_w = layer.width as usize;
         let src_h = layer.height as usize;
         let rgba = layer.rgba();
         let need = src_w.checked_mul(src_h).and_then(|px| px.checked_mul(4));
-        let Some(need) = need else { return };
+        let Some(need) = need else { return false };
         if src_w == 0 || src_h == 0 || rgba.len() < need {
-            return;
+            return false;
         }
         for row in 0..src_h {
             let dst_y = layer.y as usize + row;
@@ -47,6 +48,7 @@ impl SoftbufferRenderer {
                 *dst_word = dst.blend_src_over(src).as_argb_word();
             }
         }
+        true
     }
 }
 
@@ -94,6 +96,20 @@ mod tests {
         let empty = OsdLayer::new(0, 0, 0, 0, vec![]);
         SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &empty);
         assert_eq!(buffer, before);
+    }
+
+    #[test]
+    fn blend_reports_acceptance_for_policy_fold() {
+        let mut buffer = vec![0xFF00_0000u32; 4];
+        let good = layer_at(0, 0, vec![255u8; 16]);
+        assert!(SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &good));
+        // Off-buffer clipping still blends what fits.
+        let clipped = layer_at(9, 9, vec![255u8; 16]);
+        assert!(SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &clipped));
+        let short = layer_at(0, 0, vec![255u8; 3]);
+        assert!(!SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &short));
+        let empty = OsdLayer::new(0, 0, 0, 0, vec![]);
+        assert!(!SoftbufferRenderer::blend_osd(&mut buffer, 2, 2, &empty));
     }
 
     #[test]

@@ -4,8 +4,9 @@ use log::warn;
 use nerust_render_traits::{
     FrameBuffer, PixelFormat, SurfaceSize, VideoRenderProfile,
     renderer::{
-        FrameSink, OpaqueError, OsdSink, PipelineFactory, ProfileSwitch, RenderPipeline,
-        RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle,
+        FrameSink, OpaqueError, OsdSink, OsdUploadPolicy, PipelineFactory, ProfileSwitch,
+        RenderPipeline, RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle,
+        UploadBudget, note_osd_upload,
     },
     rgb::RgbaWord,
 };
@@ -53,6 +54,8 @@ pub struct SoftbufferRenderer {
     resize_buffer: Vec<u32>,
     ntsc_buffer: Vec<u32>,
     osd: Option<nerust_render_traits::renderer::OsdLayer>,
+    /// Shared OSD upload budget: repeated rejections drop the layer.
+    osd_policy: UploadBudget,
     /// Last tap-coverage verdict keyed by the full struct; a key match
     /// skips the scan, and the `lut_rev` epoch invalidates on rebuild.
     taps_cache: Option<(TapKey, bool)>,
@@ -131,7 +134,7 @@ unsafe impl Send for SoftbufferRenderer {}
 unsafe impl Sync for SoftbufferRenderer {}
 
 impl SoftbufferRenderer {
-    fn new(profile: &VideoRenderProfile) -> Self {
+    fn new(profile: &VideoRenderProfile, max_upload_retries: u8) -> Self {
         Self {
             ctx: None,
             surface: None,
@@ -139,6 +142,7 @@ impl SoftbufferRenderer {
             size: SurfaceSize::new(0, 0),
             reserved: nerust_render_traits::ReservedStrip::default(),
             osd: None,
+            osd_policy: UploadBudget::new(max_upload_retries),
             lut: LutEntry::new(),
             resize_buffer: Vec::new(),
             ntsc_buffer: Vec::new(),
@@ -619,7 +623,10 @@ impl FrameSink for SoftbufferRenderer {
         }
 
         if let Some(layer) = self.osd.as_ref() {
-            Self::blend_osd(buffer.as_mut(), dst_w, dst_h, layer);
+            let accepted = Self::blend_osd(buffer.as_mut(), dst_w, dst_h, layer);
+            if note_osd_upload(accepted, &mut self.osd, &mut self.osd_policy) {
+                warn!("softbuffer: dropping OSD layer after repeated upload failures");
+            }
         }
         match buffer.present() {
             Ok(()) => RenderResult::Presented,
@@ -638,6 +645,7 @@ impl OsdSink for SoftbufferRenderer {
             return;
         }
         self.osd = layer;
+        self.osd_policy.reset();
     }
 }
 
@@ -666,7 +674,10 @@ impl PipelineFactory for SoftbufferFactory {
         config: &RendererConfig,
         _display_handle: raw_window_handle::RawDisplayHandle,
     ) -> Result<Box<dyn RenderPipeline>, RendererError> {
-        Ok(Box::new(SoftbufferRenderer::new(&config.render_profile)))
+        Ok(Box::new(SoftbufferRenderer::new(
+            &config.render_profile,
+            config.upload_budget(),
+        )))
     }
 }
 
@@ -731,7 +742,7 @@ mod tests {
     #[test]
     fn render_skips_mismatched_frame_instead_of_panicking() {
         use nerust_render_traits::{FrameBuffer, PixelFormat};
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         // GBA-sized frame against an NES profile: must skip, and
         // above all must not panic on the UI thread.
         let mut frame = FrameBuffer::with_capacity(240, 160, PixelFormat::Rgba);
@@ -745,7 +756,7 @@ mod tests {
     #[test]
     fn render_skips_without_surface() {
         use nerust_render_traits::{FrameBuffer, PixelFormat};
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
         frame.resize(256, 240);
         assert_eq!(
@@ -872,7 +883,7 @@ mod tests {
 
     #[test]
     fn taps_cover_accepts_well_formed_lut() {
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
         assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
@@ -883,7 +894,7 @@ mod tests {
 
     #[test]
     fn taps_cache_stays_hot_on_identical_rebuild() {
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
         assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
@@ -920,7 +931,7 @@ mod tests {
 
     #[test]
     fn taps_cache_misses_on_rev_change() {
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
         assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
@@ -936,7 +947,7 @@ mod tests {
     #[test]
     fn render_skips_without_surface_before_tap_scan() {
         use nerust_render_traits::{FrameBuffer, PixelFormat};
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
         // No surface attached: must skip even with a valid tap key.
@@ -950,14 +961,14 @@ mod tests {
 
     #[test]
     fn taps_cover_rejects_short_lut() {
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         assert!(!renderer.taps_covered(8, 8, 16, 4, 0));
     }
 
     #[test]
     fn taps_cover_rejects_out_of_range_taps() {
         // x tap beyond the source stride.
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         renderer.lut = LutEntry {
             x_lut: vec![Some((999, 1)), None],
             y_lut: vec![None, None],
@@ -999,7 +1010,7 @@ mod tests {
     fn tap_key_distinguishes_shape_and_reservation() {
         // Same dst/tap numbers but different src geometry or strips
         // must not hit the stale-true cache.
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
         assert!(renderer.taps_covered(8, 8, 1024, 256, 0));
@@ -1030,7 +1041,7 @@ mod tests {
 
     #[test]
     fn private_state_exposes_narrow_accessors() {
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
         assert_eq!(renderer.output_size(), SurfaceSize::new(8, 8));
@@ -1043,6 +1054,30 @@ mod tests {
         // OSD payload is thread-safe: no Rc forces the Send/Sync impls.
         fn assert_thread_safe<T: Send + Sync>() {}
         assert_thread_safe::<nerust_render_traits::renderer::OsdLayer>();
+    }
+
+    #[test]
+    fn factory_mints_shared_budget_with_floor() {
+        use nerust_render_traits::renderer::OsdUploadPolicy;
+        let mut starved = SoftbufferRenderer::new(&test_profile(), 0);
+        assert!(starved.osd_policy.record_failure());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
+        assert!(!renderer.osd_policy.record_failure());
+        assert!(!renderer.osd_policy.record_failure());
+        assert!(renderer.osd_policy.record_failure());
+    }
+
+    #[test]
+    fn new_layer_rearms_exhausted_budget() {
+        use nerust_render_traits::renderer::{OsdLayer, OsdSink, OsdUploadPolicy};
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 2);
+        assert!(!renderer.osd_policy.record_failure());
+        assert!(renderer.osd_policy.record_failure());
+        renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
+        assert!(!renderer.osd_policy.record_failure());
+        // Identical pushes keep the gate, so the budget stays spent.
+        renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
+        assert!(renderer.osd_policy.record_failure());
     }
 
     #[test]
@@ -1183,7 +1218,7 @@ mod tests {
     #[test]
     fn validate_rejects_dimension_mismatch() {
         use nerust_render_traits::{FrameBuffer, PixelFormat};
-        let renderer = SoftbufferRenderer::new(&test_profile());
+        let renderer = SoftbufferRenderer::new(&test_profile(), 3);
         let mut frame = FrameBuffer::with_capacity(240, 160, PixelFormat::Rgba);
         frame.resize(240, 160);
         assert!(renderer.validate_frame(&frame).is_none());
@@ -1192,7 +1227,7 @@ mod tests {
     #[test]
     fn validate_rejects_zero_surface() {
         use nerust_render_traits::{FrameBuffer, PixelFormat};
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         renderer.size = SurfaceSize::new(0, 0);
         let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
         frame.resize(256, 240);
@@ -1202,7 +1237,7 @@ mod tests {
     #[test]
     fn validate_accepts_matching_frame() {
         use nerust_render_traits::{FrameBuffer, PixelFormat};
-        let mut renderer = SoftbufferRenderer::new(&test_profile());
+        let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
         // No surface attached: geometry passes but attach gate refuses.

@@ -2,8 +2,8 @@ use nerust_render_traits::{
     FrameBuffer, FrameLayout, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation,
     VideoRenderProfile,
     renderer::{
-        FrameSink, OpaqueError, OsdLayer, OsdSink, ProfileSwitch, RenderResult, RendererConfig,
-        RendererError, StripSink, SurfaceLifecycle,
+        FrameSink, OpaqueError, OsdLayer, OsdSink, OsdUploadPolicy, ProfileSwitch, RenderResult,
+        RendererConfig, RendererError, StripSink, SurfaceLifecycle, UploadBudget, note_osd_upload,
     },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -26,6 +26,8 @@ pub struct WgpuRenderer {
     last_render_error: Option<String>,
     osd: Option<OsdLayer>,
     osd_dirty: bool,
+    /// Shared OSD upload budget: repeated rejections drop the layer.
+    osd_policy: UploadBudget,
     reserved: ReservedStrip,
     vsync: bool,
 }
@@ -174,8 +176,12 @@ impl FrameSink for WgpuRenderer {
             pipeline.update_palette_texture(&p);
         }
         if self.osd_dirty {
-            crate::renderer::setup::set_osd_layer(pipeline, self.osd.as_ref());
-            self.osd_dirty = false;
+            let accepted = crate::renderer::setup::set_osd_layer(pipeline, self.osd.as_ref());
+            if note_osd_upload(accepted, &mut self.osd, &mut self.osd_policy) {
+                log::warn!("wgpu: dropping OSD layer after repeated upload failures");
+            }
+            // Retry while a layer remains; a drop clears the slot.
+            self.osd_dirty = self.osd.is_some();
         }
 
         let outcome = pipeline.render(surface, self.size, frame.as_ref(), frame.stride());
@@ -192,6 +198,7 @@ impl OsdSink for WgpuRenderer {
         }
         self.osd = layer;
         self.osd_dirty = true;
+        self.osd_policy.reset();
     }
 }
 
@@ -252,6 +259,7 @@ impl WgpuFactory {
             last_render_error: None,
             osd: None,
             osd_dirty: false,
+            osd_policy: UploadBudget::new(config.upload_budget()),
             reserved: ReservedStrip::default(),
             vsync: config.vsync,
         })
@@ -457,6 +465,7 @@ mod tests {
             last_render_error: None,
             osd: None,
             osd_dirty: false,
+            osd_policy: super::UploadBudget::new(3),
             reserved: nerust_render_traits::ReservedStrip::default(),
             vsync: false,
         }
@@ -568,6 +577,35 @@ mod tests {
                 .to_string()
                 .contains("update")
         );
+    }
+
+    #[test]
+    fn factory_mints_shared_budget_with_floor() {
+        use nerust_render_traits::renderer::{OsdUploadPolicy, RendererConfig};
+        let mut config = RendererConfig {
+            render_profile: test_profile(),
+            vsync: false,
+            max_osd_upload_retries: 0,
+        };
+        let mut floored = super::WgpuFactory::build(&config).unwrap();
+        assert!(floored.osd_policy.record_failure());
+        config.max_osd_upload_retries = 3;
+        let mut renderer = super::WgpuFactory::build(&config).unwrap();
+        assert!(!renderer.osd_policy.record_failure());
+        assert!(!renderer.osd_policy.record_failure());
+        assert!(renderer.osd_policy.record_failure());
+    }
+
+    #[test]
+    fn new_layer_rearms_exhausted_budget() {
+        use nerust_render_traits::renderer::{OsdLayer, OsdSink, OsdUploadPolicy};
+        let mut renderer = detached_renderer();
+        assert!(!renderer.osd_policy.record_failure());
+        assert!(!renderer.osd_policy.record_failure());
+        assert!(renderer.osd_policy.record_failure());
+        renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
+        assert!(renderer.osd_dirty);
+        assert!(!renderer.osd_policy.record_failure());
     }
 
     #[test]

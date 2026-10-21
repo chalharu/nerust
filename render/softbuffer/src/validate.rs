@@ -119,7 +119,7 @@ mod tests {
         let valid = SoftbufferRenderer::validate_input(&palette, &frame).unwrap();
         assert_eq!(valid.size(), palette.source_logical_size);
         // A non-NTSC palette profile resizes from the original image, not the filtered dimensions.
-        let mut renderer = SoftbufferRenderer::new(&palette);
+        let mut renderer = SoftbufferRenderer::new(&palette, 3);
         renderer.size = nerust_render_traits::SurfaceSize::new(8, 8);
         renderer.resize_lut();
         assert_eq!(renderer.resize_buffer.len(), 8 * 2);

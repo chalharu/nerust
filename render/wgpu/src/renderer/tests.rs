@@ -253,35 +253,35 @@ fn device_osd_resize_recreates_texture_and_invalid_layers_clear_visibility() {
         super::DeviceLimitProfile::Default,
     ))
     .unwrap();
-    super::setup::set_osd_layer(
+    assert!(super::setup::set_osd_layer(
         &mut pipeline,
         Some(&OsdLayer::new(62, 3, 4, 2, (0..32).collect())),
-    );
+    ));
     assert_eq!(pipeline.osd_prev, Some((62, 3, 2, 2)));
     assert_eq!(
         &pipeline.osd_staging[256..264],
         &[16, 17, 18, 19, 20, 21, 22, 23]
     );
     pipeline.reconfigure_surface(&surface, SurfaceSize::new(96, 80));
-    super::setup::set_osd_layer(
+    assert!(super::setup::set_osd_layer(
         &mut pipeline,
         Some(&OsdLayer::new(62, 3, 4, 2, (0..32).collect())),
-    );
+    ));
     let texture = pipeline.osd_texture.as_ref().unwrap();
     assert_eq!((texture.width(), texture.height()), (96, 80));
     assert!(pipeline.osd_visible);
     assert_eq!(pipeline.osd_prev, Some((62, 3, 4, 2)));
     pipeline.reconfigure_surface(&surface, SurfaceSize::new(16, 16));
-    super::setup::set_osd_layer(
+    assert!(!super::setup::set_osd_layer(
         &mut pipeline,
         Some(&OsdLayer::new(62, 3, 4, 2, (0..32).collect())),
-    );
+    ));
     assert!(!pipeline.osd_visible);
     pipeline.reconfigure_surface(&surface, SurfaceSize::new(96, 80));
-    super::setup::set_osd_layer(
+    assert!(super::setup::set_osd_layer(
         &mut pipeline,
         Some(&OsdLayer::new(62, 3, 4, 2, (0..32).collect())),
-    );
+    ));
     assert!(pipeline.osd_visible);
     assert_eq!(pipeline.osd_prev, Some((62, 3, 4, 2)));
     for layer in [
@@ -289,7 +289,7 @@ fn device_osd_resize_recreates_texture_and_invalid_layers_clear_visibility() {
         OsdLayer::new(0, 0, 0, 0, vec![]),
         OsdLayer::new(999, 999, 1, 1, vec![255; 4]),
     ] {
-        super::setup::set_osd_layer(&mut pipeline, Some(&layer));
+        assert!(!super::setup::set_osd_layer(&mut pipeline, Some(&layer)));
         assert!(!pipeline.osd_visible);
         assert!(pipeline.osd_prev.is_none());
     }

@@ -1,36 +1,8 @@
-//! Impl-owned OSD upload budget plus byte staging: the port crate keeps
-//! only the `OsdUploadPolicy`/`OsdUploadPolicyFactory` traits.
+//! Shared OSD upload budget plus byte staging: the budget lives in
+//! the port crate so every backend mints the same policy.
 
+pub use nerust_render_traits::renderer::UploadBudget as BoundedUploadPolicy;
 use nerust_render_traits::renderer::{OsdUploadPolicy, OsdUploadPolicyFactory};
-
-/// Bounded retry: floor of one attempt, saturating counter.
-#[derive(Debug)]
-pub struct BoundedUploadPolicy {
-    max: u8,
-    fails: u8,
-}
-
-impl BoundedUploadPolicy {
-    /// Zero would drop live layers on the first transient failure, so
-    /// the floor is one attempt: the constructor clamps, not callers.
-    pub fn new(max: u8) -> Self {
-        Self {
-            max: max.max(1),
-            fails: 0,
-        }
-    }
-}
-
-impl OsdUploadPolicy for BoundedUploadPolicy {
-    fn record_failure(&mut self) -> bool {
-        self.fails = self.fails.saturating_add(1);
-        self.fails >= self.max
-    }
-
-    fn reset(&mut self) {
-        self.fails = 0;
-    }
-}
 
 /// Factory minting one bounded budget per rebuilt overlay view.
 /// Renderers hold this, never a concrete policy type.
