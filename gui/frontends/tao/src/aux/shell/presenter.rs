@@ -206,7 +206,9 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
                 },
             )),
         );
-        self.finish(outcome, &mut messages, &AtomicBool::new(false));
+        // Full render presents unconditionally: rebuild reports go nowhere.
+        let no_report = &AtomicBool::new(false);
+        self.finish(outcome, &mut messages, no_report);
         self.ui_state.restore_scratch(messages);
         self.surface
             .present(&viewport, style.background_color, log_tag)
