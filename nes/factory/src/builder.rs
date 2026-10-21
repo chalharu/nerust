@@ -154,8 +154,8 @@ mod tests {
             assert!(
                 resources
                     .field_map()
-                    .keys()
-                    .all(|(attachment, _)| *attachment == P2)
+                    .iter()
+                    .all(|((attachment, _), _)| *attachment == P2)
             );
             let (_, make) = resources.into_parts();
             let mut state = make();

@@ -326,7 +326,7 @@ impl EmuCore {
 pub type CoreSpawnParts = (
     EmuCore,
     Box<dyn nerust_input_traits::GuiInputPort>,
-    std::collections::HashMap<(AttachmentId, ControlId), usize>,
+    nerust_input_traits::UnifiedFieldMap,
     nerust_core_traits::peripheral::HostPeripheralHandles,
 );
 

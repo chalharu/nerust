@@ -8,8 +8,53 @@ use super::{
 };
 
 /// Unified session field map: (attachment, control) → absolute field.
-/// End-to-end lookup key shared by factories and shells.
-pub type UnifiedFieldMap = HashMap<(AttachmentId, ControlId), usize>;
+/// End-to-end lookup key shared by factories and shells. Built only through
+/// `insert`, which reports displaced fields so factories keep first-wins explicit.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UnifiedFieldMap(HashMap<(AttachmentId, ControlId), usize>);
+
+impl UnifiedFieldMap {
+    /// Empty map; entries arrive through `insert`.
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    /// Insert one field; returns the displaced field, if any.
+    pub fn insert(&mut self, key: (AttachmentId, ControlId), field: usize) -> Option<usize> {
+        self.0.insert(key, field)
+    }
+
+    /// Look up one absolute field.
+    pub fn get(&self, key: &(AttachmentId, ControlId)) -> Option<&usize> {
+        self.0.get(key)
+    }
+
+    /// Whether one entry is mapped.
+    pub fn contains_key(&self, key: &(AttachmentId, ControlId)) -> bool {
+        self.0.contains_key(key)
+    }
+
+    /// Entry count.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether no fields are mapped.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Iterate all mapped entries.
+    pub fn iter(&self) -> impl Iterator<Item = (&(AttachmentId, ControlId), &usize)> {
+        self.0.iter()
+    }
+}
+
+impl FromIterator<((AttachmentId, ControlId), usize)> for UnifiedFieldMap {
+    fn from_iter<T: IntoIterator<Item = ((AttachmentId, ControlId), usize)>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
 
 /// Factory minting one input buffer per call; shared by every endpoint.
 pub type BufferFactory = Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>;
@@ -269,7 +314,6 @@ impl InputResources {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::rc::Rc;
 
     use super::{
@@ -479,13 +523,15 @@ mod tests {
             }
         }
         let resources = InputResources::new(
-            HashMap::from([(
+            [(
                 (
                     AttachmentId::new("test.p1"),
                     ControlId::digital(DigitalControlId::new("test.a")),
                 ),
                 0,
-            )]),
+            )]
+            .into_iter()
+            .collect(),
             Box::new(|| Box::new(Bit) as Box<dyn InputStateBuffer>),
         );
         assert_eq!(resources.field_map().len(), 1);
@@ -500,6 +546,24 @@ mod tests {
         let _ = (&port as &dyn Port).port_id();
         let mut target = ProbePadTarget;
         StrobeTarget::strobe(&mut target, 1);
+    }
+
+    #[test]
+    fn field_map_reports_displaced_entries() {
+        use super::UnifiedFieldMap;
+        let mut map = UnifiedFieldMap::new();
+        assert!(map.is_empty());
+        let key = (
+            AttachmentId::new("test.pad"),
+            ControlId::digital(DigitalControlId::new("test.a")),
+        );
+        assert_eq!(map.insert(key, 3), None);
+        assert_eq!(map.insert(key, 5), Some(3));
+        assert_eq!(map.get(&key), Some(&5));
+        assert_eq!(map.len(), 1);
+        let collected: UnifiedFieldMap = [(key, 7)].into_iter().collect();
+        assert_eq!(collected.get(&key), Some(&7));
+        assert!(collected.contains_key(&key));
     }
 
     #[derive(Debug)]

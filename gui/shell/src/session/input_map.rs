@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use nerust_input_traits::{AttachmentId, ControlId};
+use nerust_input_traits::UnifiedFieldMap;
 use nerust_keyboard::Key;
 use nerust_settings_core::model::input::KeyboardBinding;
 
@@ -18,7 +18,7 @@ pub(crate) struct DuplicateBinding {
 /// Resolve bindings at the settings boundary; first active registration wins.
 /// Runs only on settings/assignment change, never per key event.
 pub(crate) fn rebuild_input_map(
-    field_map: &HashMap<(AttachmentId, ControlId), usize>,
+    field_map: &UnifiedFieldMap,
     bindings: &[KeyboardBinding],
     target: &mut HashMap<Key, usize>,
 ) -> Result<(), DuplicateBinding> {
