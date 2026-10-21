@@ -10,8 +10,6 @@ use nerust_render_traits::{
 };
 use nerust_system_traits::factory::{CoreParts, FactoryError, settings::FactorySettingsView};
 
-use crate::input_profiles::GBC_ATTACHMENT;
-
 pub(crate) fn create_core_and_adapter(
     view: &FactorySettingsView,
     mut speaker: Box<dyn AudioBackend>,
@@ -61,6 +59,7 @@ mod tests {
     use nerust_system_traits::factory::settings::Language;
 
     use super::*;
+    use crate::input_profiles::GBC_ATTACHMENT;
 
     #[test]
     fn builds_rgba_core_parts() {
