@@ -286,8 +286,44 @@ pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
     fn default_assignments(&self) -> InputAssignments;
 }
 
+/// Init-time typed factory output: field map plus a concrete buffer maker.
+/// No erasure, no downcast: factories name their buffer type once.
+#[derive(Debug)]
+pub struct TypedInputResources<B> {
+    field_map: UnifiedFieldMap,
+    make: fn() -> B,
+}
+
+impl<B> TypedInputResources<B> {
+    /// Assemble from a first-wins field map and a buffer maker.
+    pub fn new(field_map: UnifiedFieldMap, make: fn() -> B) -> Self {
+        Self { field_map, make }
+    }
+
+    /// Single move-out: the map plus the maker travel together, never separately.
+    pub fn into_parts(self) -> (UnifiedFieldMap, fn() -> B) {
+        (self.field_map, self.make)
+    }
+
+    /// Borrow the unified field map.
+    pub fn field_map(&self) -> &UnifiedFieldMap {
+        &self.field_map
+    }
+
+    /// Entry count for assembly guards.
+    pub fn len(&self) -> usize {
+        self.field_map.len()
+    }
+
+    /// Whether no fields are mapped.
+    pub fn is_empty(&self) -> bool {
+        self.field_map.is_empty()
+    }
+}
+
 /// Init-time factory output: field map plus a buffer factory.
 /// Endpoint construction belongs to the caller; this stays transport-free.
+/// Prefer [`TypedInputResources`]: this erased form exists for tests.
 pub struct InputResources {
     field_map: UnifiedFieldMap,
     new_buffer: BufferFactory,

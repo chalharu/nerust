@@ -24,9 +24,7 @@ pub(crate) fn create_core_and_adapter_with_assignments(
         .create_split(&controller_collection)
         .map_err(|e| FactoryError::Create(e.to_string()))?;
     // Unified map travels end to end; no lossy projection.
-    let (gui_input, emu_input, field_map) =
-        nerust_emu_thread::InputSplit::typed_resources::<NesInputBuffer>(resources)
-            .map_err(|e| FactoryError::Create(e.to_string()))?;
+    let (gui_input, emu_input, field_map) = nerust_emu_thread::InputSplit::typed_split(resources);
     create_core_and_adapter(
         view,
         speaker,
@@ -124,7 +122,7 @@ pub(crate) fn video_assets_for_filter(filter: FilterType) -> (VideoRenderProfile
 mod tests {
     use super::*;
     use nerust_input_traits::{
-        AttachmentId, ControllerHub, CreateSplitError, InputPorts, InputValue,
+        AttachmentId, ControllerHub, CreateSplitError, InputPorts, InputStateBuffer, InputValue,
     };
     use nerust_nes_core::controller::NES_PORTS;
 
@@ -160,7 +158,7 @@ mod tests {
             let (_, make) = resources.into_parts();
             let mut state = make();
             state.set(8, InputValue::Digital(true)).unwrap();
-            devices.sync_input(&state.downcast_ref::<NesInputBuffer>().unwrap().0);
+            devices.sync_input(&state.0);
             devices.write_strobe(1);
             assert_eq!(
                 devices.read_port(&NES_PORTS[0]),
