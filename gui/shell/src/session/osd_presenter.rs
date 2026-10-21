@@ -1095,7 +1095,7 @@ mod presenter_cov_tests {
         ));
         assert!(matches!(
             unpresented.route(&Message::persistence_unavailable()),
-            ModalRoute::Modal | ModalRoute::Transient
+            ModalRoute::Modal
         ));
         let off = TransientPolicy {
             info_enabled: false,
